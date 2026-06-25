@@ -36,7 +36,8 @@ import { makeChecklist } from '../canvas/boards/planning/elements'
 import { clearClipboard } from '../canvas/boards/planning/elementClipboard'
 import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
-import { e2eTerminals, e2eTerminalInput, e2eTerminalLink } from './e2eRegistry'
+import { e2eTerminals, e2eTerminalInput, e2eTerminalLink, e2eTerminalHeld } from './e2eRegistry'
+import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
@@ -170,6 +171,12 @@ export interface CanvasE2E {
   panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
   terminalMounted: (id: string) => boolean
+  /** Lane A — whether useTerminalLiveness currently rates this terminal LIVE (on-screen ∧ ≥ LOD).
+   *  Default-true for an unreconciled board; false once gated off-screen / below-LOD. */
+  terminalLive: (id: string) => boolean
+  /** Lane A — the write coalescer's HELD byte count for a terminal (PTY bytes buffered but not yet
+   *  rendered). Grows while the board is gated (proves the PTY keeps producing); ~0 while live. */
+  terminalHeldBytes: (id: string) => number
   /** The live xterm font size for a terminal board (px), or undefined if not mounted. */
   terminalFontSize: (id: string) => number | undefined
   /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
@@ -554,6 +561,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalMounted(id) {
       return e2eTerminals.has(id)
+    },
+    terminalLive(id) {
+      return isTerminalLive(id)
+    },
+    terminalHeldBytes(id) {
+      return e2eTerminalHeld.get(id)?.() ?? 0
     },
     terminalFontSize(id) {
       return e2eTerminals.get(id)?.options.fontSize

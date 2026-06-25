@@ -54,12 +54,15 @@ import {
   e2eTerminals,
   e2eTerminalInput,
   e2eTerminalLink,
+  e2eTerminalHeld,
   appendTerminalInput
 } from '../../../smoke/e2eRegistry'
 import { handleTerminalKey, TERMINAL_NEWLINE } from './terminalKeymap'
 import { isIdleOnMount, clearIdleOnMount } from '../../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
+import { useTerminalLivenessStore, isTerminalLive } from '../../../store/terminalLivenessStore'
 import { installSelectionShim } from './terminalSelection'
+import { createTerminalWriteCoalescer, type TerminalWriteCoalescer } from './terminalWriteCoalescer'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
 import { resolveInitialScrollback } from './terminalScrollback'
@@ -87,6 +90,16 @@ const FULL_VIEW_INSET = 0.9
 /** Min ConPTY build for xterm to keep reflow ON under the `windowsPty` hint (its `_isReflowEnabled`
  *  gate). Below this, setting `windowsPty` would DISABLE reflow → widen-loses-data; so we skip it. */
 const CONPTY_REFLOW_MIN_BUILD = 21376
+
+/**
+ * Lane A held-buffer cap. While a terminal is hidden (off-screen / below-LOD) its PTY output is
+ * HELD by the write coalescer, not rendered; this bounds the hold to roughly the configured
+ * scrollback so a hidden firehose can't grow unbounded — past the cap the OLDEST held bytes are
+ * dropped, exactly what xterm's scrollback would evict once the data rendered. ~512 chars/line is
+ * generous for a heavily-SGR-coloured line; floored so a scrollback-0 terminal still holds the
+ * recent screen. The cap is read per-enqueue (a thunk) so a live scrollback edit is honoured. */
+const HOLD_BYTES_PER_LINE = 512
+const HOLD_FLOOR_BYTES = 64_000
 
 /**
  * A-Win: xterm's `windowsPty` constructor hint (terminal-scrollback fix § A-Win). On a Windows 11
@@ -314,6 +327,26 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const next = resolveInitialScrollback(board.scrollback)
     if (term && term.options.scrollback !== next) term.options.scrollback = next
   }, [board.scrollback])
+
+  // ── Lane A: render-liveness gate (xterm #880) ────────────────────────────────
+  // useTerminalLiveness (mounted once in CanvasInner) publishes whether THIS board is on-screen
+  // ∧ ≥ LOD. We mirror its flag into a ref the spawn closure's write coalescer reads: while hidden
+  // the coalescer HOLDS incoming PTY data (the session never pauses — bytes still arrive and
+  // accumulate, bounded by ~scrollback) and renders nothing; on becoming visible it flushes the
+  // held bytes losslessly so the revealed terminal catches up. Read via a NON-reactive store
+  // subscription (never a React re-render): a flip is a ref write + at most one rAF flush.
+  const liveRef = useRef(true)
+  const coalescerRef = useRef<TerminalWriteCoalescer | null>(null)
+  useEffect(() => {
+    const apply = (live: boolean): void => {
+      if (live === liveRef.current) return
+      liveRef.current = live
+      if (live) coalescerRef.current?.onVisible() // reveal → catch up on the held buffer
+    }
+    apply(isTerminalLive(board.id)) // seed (default-true until the first reconcile assigns it)
+    // The store holds ONLY the live map, so every change is a liveness change; apply() diff-guards.
+    return useTerminalLivenessStore.subscribe((s) => apply(s.live[board.id] ?? true))
+  }, [board.id])
 
   // Live camera zoom source for the selection shim. We read it from the React Flow store
   // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
@@ -635,6 +668,26 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const stopKeys = (e: KeyboardEvent): void => e.stopPropagation()
     el.addEventListener('keydown', stopKeys)
 
+    // Lane A write coalescer (xterm #880): batch PTY chunks into one rAF flush, and HOLD them
+    // while this board is hidden (liveRef false — off-screen / below-LOD), flushing losslessly on
+    // reveal. The PTY + xterm buffer stay alive; only the render is gated. The hold is bounded to
+    // ~scrollback (read live via the thunk) so a hidden firehose can't grow unbounded.
+    const coalescer = createTerminalWriteCoalescer({
+      write: (chunk) => term.write(chunk),
+      isLive: () => liveRef.current,
+      schedule: (fn) => requestAnimationFrame(fn),
+      cancel: (h) => cancelAnimationFrame(h),
+      holdCap: () =>
+        Math.max(
+          HOLD_FLOOR_BYTES,
+          resolveInitialScrollback(scrollbackRef.current) * HOLD_BYTES_PER_LINE
+        )
+    })
+    coalescerRef.current = coalescer
+    // e2e: surface the held-byte count so a spec can prove a hidden terminal's PTY keeps producing
+    // (buffer accumulating) while its rendered framebuffer stays frozen.
+    if (isE2E()) e2eTerminalHeld.set(board.id, () => coalescer.held())
+
     const onWinMsg = (e: MessageEvent): void => {
       const data = e.data as { __ptyPort?: boolean; id?: string }
       if (!data || !data.__ptyPort || data.id !== board.id) return
@@ -642,11 +695,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       portRef.current = port
       port.onmessage = (ev): void => {
         const m = ev.data as PortMessage
-        if (m.t === 'data' && m.d) term.write(m.d)
+        if (m.t === 'data' && m.d) coalescer.enqueue(m.d)
         else if (m.t === 'state' && m.state) setState(m.state)
         else if (m.t === 'exit') {
+          // Route the final line through the coalescer so it stays ORDERED after any bytes still
+          // held while hidden (a direct write would jump ahead of them); the state flip is chrome
+          // and applies immediately.
+          coalescer.enqueue(`\r\n\x1b[90m[process exited: ${m.code ?? 0}]\x1b[0m\r\n`)
           setState('exited')
-          term.write(`\r\n\x1b[90m[process exited: ${m.code ?? 0}]\x1b[0m\r\n`)
         }
       }
       port.start()
@@ -793,9 +849,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         /* port already closed */
       }
       portRef.current = null
+      // Lane A: drop the held buffer + cancel any scheduled flush (the term is disposed below).
+      coalescer.clear()
+      if (coalescerRef.current === coalescer) coalescerRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
       if (isE2E()) e2eTerminalInput.delete(board.id)
       if (isE2E()) e2eTerminalLink.delete(board.id)
+      if (isE2E()) e2eTerminalHeld.delete(board.id)
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -853,6 +913,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     }
     portRef.current = null
     term.reset()
+    // Lane A: discard any coalesced/held bytes from the prior session so they can't flush into the
+    // freshly-reset terminal (the term is reused on this path — no new spawn closure runs).
+    coalescerRef.current?.clear()
     setState('spawning')
     // #23: only spawn now if the well is laid out (finite proposed dims). A board
     // restarted entirely under LOD has a display:none well where fit.fit() no-ops

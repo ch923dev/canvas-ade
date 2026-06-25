@@ -70,6 +70,7 @@ import { BoardActionsContext } from './boardActions'
 import { FullViewModal, type FullViewRect } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
+import { useTerminalLiveness } from './boards/useTerminalLiveness'
 import { BackdropLayer } from './backdrop/BackdropLayer'
 import { GroupBoxLayer } from './GroupBoxLayer'
 import { ConnectorDragOverlay } from './ConnectorDragOverlay'
@@ -794,6 +795,11 @@ function CanvasInner(): ReactElement {
   // Settle watcher riding the mirror above: snaps a settled zoom near 100% to exactly
   // 1 + publishes settled zoom for the terminal WebGL policy (useZoomSettle docs).
   useZoomSettle()
+
+  // Terminal-crisp Lane A: gate live xterm rendering for off-screen / below-LOD terminals
+  // (the PTY session stays alive; only the write/DOM-mutation path pauses, catching up
+  // losslessly on reveal — xterm #880). The twin of useOffscreenLiveness for Terminal boards.
+  useTerminalLiveness(paneRef, fullViewId)
 
   // Apply the stored camera when a project becomes `open` (restore on load/switch);
   // fall back to fitView when there's no persisted viewport (fit-on-load).

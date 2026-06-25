@@ -162,8 +162,9 @@ async function assertStreaming(page: Parameters<typeof evalIn>[0], ids: string[]
   expect(growing, `all ${ids.length} terminals streaming (buffer growing)`).toBe(ids.length)
 }
 
-function report(n: number, fitZoom: number, phases: PhaseStats[]): void {
-  const rows = phases
+/** Format the per-phase stat lines (shared by both the all-visible report and the gating report). */
+function phaseRows(phases: PhaseStats[]): string {
+  return phases
     .map(
       (p) =>
         `  ${p.mode.padEnd(6)} fps=${String(p.fps).padStart(5)}  p50=${String(p.p50).padStart(5)}ms` +
@@ -172,9 +173,12 @@ function report(n: number, fitZoom: number, phases: PhaseStats[]): void {
         `  jank>50ms=${String(p.jank50).padStart(5)}%`
     )
     .join('\n')
+}
+
+function report(n: number, fitZoom: number, phases: PhaseStats[]): void {
   console.log(
     `\n=== TERMINAL LOAD BENCH — N=${n} terminals streaming, fitZoom=${fitZoom.toFixed(3)}` +
-      `${fitZoom < 0.4 ? ' (BELOW LOD — not live!)' : ' (live)'} ===\n${rows}\n`
+      `${fitZoom < 0.4 ? ' (BELOW LOD — not live!)' : ' (live)'} ===\n${phaseRows(phases)}\n`
   )
 }
 
@@ -190,6 +194,113 @@ test.describe('@bench terminal DOM renderer under streaming load', () => {
       report(n, fitZoom, phases)
       // Soft floor only — a benchmark must not silently pass while producing a slideshow.
       // Real thresholds are judged from the printed report, not asserted here.
+      for (const p of phases) {
+        expect(p.frames, `${p.mode}: rAF actually ran`).toBeGreaterThan(10)
+      }
+    })
+  }
+})
+
+// ── Lane A: liveness gating (terminal-crisp umbrella) ─────────────────────────────────────────
+// The all-visible runs above are the WORST case Lane A was built for: at N=8 every streamer is
+// on-screen, so all 8 pay the (renderer-agnostic) write/DOM-mutation cost and static drops to
+// ~45fps. Real usage is far lighter — most boards are off-screen / below LOD at any moment — and
+// Lane A makes that concrete: an off-screen terminal HOLDS its PTY output (session still running,
+// nothing rendered) so it costs ~0 on the main thread. This scenario seeds N streamers but frames
+// only K of them, then measures the frame cadence: the visible terminals' fps should track the
+// "K visible, all live" baseline regardless of how many gated streamers run off-screen — NOT the
+// N-all-visible number above. (Run on demand; Windows PowerShell STREAM_CMD; not part of the gate.)
+
+const liveExpr = (id: string): string => `window.__canvasE2E.terminalLive(${JSON.stringify(id)})`
+const heldExpr = (id: string): string =>
+  `window.__canvasE2E.terminalHeldBytes(${JSON.stringify(id)})`
+
+/** Seed N streamers but place only the first `visible` in a tight on-screen row (the rest far
+ *  off-screen), then frame the visible cluster. Asserts the gate took effect: the visible ones are
+ *  LIVE, the off-screen ones are GATED (held, not rendered). Returns the id split + fit zoom. */
+async function seedPartiallyVisibleGrid(
+  page: Parameters<typeof evalIn>[0],
+  n: number,
+  visible: number
+): Promise<{ visibleIds: string[]; hiddenIds: string[]; fitZoom: number }> {
+  await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '${PINNED}')`)
+  const ids: string[] = []
+  for (let i = 0; i < n; i++) ids.push(await seed(page, 'terminal', { launchCommand: STREAM_CMD }))
+  const visibleIds = ids.slice(0, visible)
+  const hiddenIds = ids.slice(visible)
+  // Visible: a tight row near the origin so framing the first board keeps the rest in view at ~1×.
+  for (let i = 0; i < visibleIds.length; i++) {
+    await evalIn(
+      page,
+      `window.__canvasE2E.patchBoard(${JSON.stringify(visibleIds[i])}, { x: ${i * CELL_W}, y: 0 })`
+    )
+  }
+  // Hidden: far past any viewport (above LOD ⇒ gated by OFF-SCREEN, not by zoom), spread apart.
+  for (let i = 0; i < hiddenIds.length; i++) {
+    await evalIn(
+      page,
+      `window.__canvasE2E.patchBoard(${JSON.stringify(hiddenIds[i])}, { x: ${100000 + i * CELL_W}, y: 0 })`
+    )
+  }
+  for (const id of ids) {
+    await expect
+      .poll(() => evalIn(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`), {
+        timeout: 12_000
+      })
+      .toBe(true)
+  }
+  // Frame the visible cluster only (fit to the first visible board; its tight-row neighbours stay
+  // in view, the far boards do not). Then let the debounced liveness reconcile settle. Generous
+  // gating timeouts: this is a retries:0 measurement tool and the box is under heavy cold-start
+  // load (N concurrent PowerShell streamers), so the reconcile can lag a cold first run.
+  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(visibleIds[0])})`)
+  await page.waitForTimeout(500)
+  for (const id of visibleIds) {
+    await expect
+      .poll(() => evalIn(page, `${liveExpr(id)} === true`), { timeout: 10_000 })
+      .toBe(true)
+  }
+  for (const id of hiddenIds) {
+    await expect
+      .poll(() => evalIn(page, `${liveExpr(id)} === false`), { timeout: 10_000 })
+      .toBe(true)
+  }
+  const fitZoom = await evalIn<number>(page, `window.__canvasE2E.getZoom()`)
+  return { visibleIds, hiddenIds, fitZoom }
+}
+
+test.describe('@bench terminal liveness gating (off-screen streamers cost ~0)', () => {
+  for (const { n, visible } of [
+    { n: 8, visible: 2 },
+    { n: 8, visible: 1 }
+  ]) {
+    test(`N=${n} streamers, only K=${visible} visible — visible fps tracks the K-visible baseline`, async ({
+      page
+    }) => {
+      const { visibleIds, hiddenIds, fitZoom } = await seedPartiallyVisibleGrid(page, n, visible)
+      // The visible terminals render (buffers grow) ...
+      await assertStreaming(page, visibleIds)
+      // ... while the gated ones HOLD their PTY output (session alive, nothing rendered): held
+      // bytes are accumulating for every off-screen streamer.
+      for (const id of hiddenIds) {
+        await expect.poll(() => evalIn(page, `${heldExpr(id)} > 0`), { timeout: 8_000 }).toBe(true)
+      }
+      const heldTotals = await Promise.all(
+        hiddenIds.map((id) => evalIn<number>(page, heldExpr(id)))
+      )
+      const phases: PhaseStats[] = []
+      for (const mode of ['static', 'pan', 'zoom'] as const) {
+        phases.push(await measurePhase(page, mode, PHASE_MS))
+      }
+      console.log(
+        `\n=== TERMINAL LIVENESS BENCH — N=${n} streamers, K=${visible} VISIBLE` +
+          ` (${hiddenIds.length} gated off-screen), fitZoom=${fitZoom.toFixed(3)} ===\n` +
+          `  gated held bytes (PTY alive, not rendered): [${heldTotals.join(', ')}]\n` +
+          `  visible-terminal frame cadence (the ${hiddenIds.length} off-screen streamers cost ~0):\n` +
+          `${phaseRows(phases)}\n` +
+          `  ^ this should track N=${visible} ALL-VISIBLE — Lane A keeps the visible fps there\n` +
+          `    regardless of the ${hiddenIds.length} off-screen streamers (vs N=${n} all-visible's lower fps).`
+      )
       for (const p of phases) {
         expect(p.frames, `${p.mode}: rAF actually ran`).toBeGreaterThan(10)
       }
