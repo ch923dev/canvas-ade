@@ -1122,3 +1122,41 @@ Docker 215, retries:2); cheap gate green (typecheck · lint 0-err · format). CI
 claude-review — reviewer clean, no `[critical]`/`[warning]`, zero inline). An `@mcp:497` (`spawn_board` title)
 failure seen during triage was an **environment artifact** (orphan Electron from a SIGKILL-ed matrix run + a stale
 `node_modules` after #254 landed mid-session) — passes on clean main; not a defect.
+
+## 2026-06-26 — Terminal crispness umbrella → main · DOM renderer + theming + render-liveness gating — #259 (`78088bbc`, 2026-06-26)
+
+Fixes the reported terminal blur under the camera: terminal text went soft inside React Flow's `scale(z)`
+camera, and **busy/long-running agent terminals blurred worse than fresh ones at the same zoom** — xterm's
+WebGL renderer is a fixed-DPR `<canvas>` the compositor can only resample at any zoom ≠ 1. The umbrella
+switches the live terminal to xterm's **built-in DOM renderer** (Chromium re-rasters crisp at any CSS scale,
+like the whiteboard), then builds theming + perf on top. Umbrella `feat/terminal-crisp-umbrella` (seed
+`07a700bf`); P1/P2 built on it directly, Lanes A/B PR'd in, merged to main once.
+
+**What landed:**
+- **P1 — DOM-renderer default.** Drop the WebGL addon; the live grid is DOM text, crisp under pan/zoom with no
+  counter-scale. Preserves Pure-A1 full-view scrollback (#235), find (#232), configurable scrollback (#237), the
+  scale-correct selection shim, and `settledZoomStore` (OSR preview dep). No `will-change:transform` on the
+  terminal host. Net −211 LOC.
+- **P2 — perf decision.** Load-tested 1–8 streaming terminals (`e2e/terminalLoad.bench.ts`, not gated): camera
+  motion is never the bottleneck (`zoom ≥ static` at every N) → the WebGL-at-zoom-1 hybrid was **ruled out** (it
+  would optimize a non-existent cost while re-introducing during-motion blur). Residual cost is the
+  write/DOM-mutation path → Lane A.
+- **Lane B (#257) — terminal theming + font family.** Per-board colour theme + font picker, live `term.options`
+  swap (no respawn). `TERMINAL_THEMES`/`TERMINAL_FONT_FAMILIES` registries + sticky defaults. **Schema v16
+  writer-only** (`MIN_READER_VERSION` stays 15; an unknown id degrades at render). Design-artifact-first.
+- **Lane A (#258) — render-liveness gating + write coalescing (xterm #880).** Off-screen / below-LOD terminals
+  HOLD their writes (the PTY stays alive), catch up losslessly on reveal; writes batched per frame +
+  scrollback-bounded. Reuses the OSR liveness pattern (additive store sub, not the single-slot
+  `useOnViewportChange`). ~3× fps for visible terminals under multi-stream load (N=8, 6 gated: 133.9 vs 43.5 fps).
+- **Lane C — superseded** by #254 (web-links + Unicode 11), rebased through.
+
+**Verification:** rebased onto `6d42547` (#255/#256); the one overlap (`e2eHooks.ts`) auto-merged. Pre-merge
+full e2e matrix GREEN both legs (Windows 220 = 218 + 2 `@preview` env flakes retry-recovered; Linux Docker
+220/220 clean) — the mandatory once-per-PR cross-OS gate. CI green (check · CodeQL · analyze · claude-review —
+zero `claude-review` inline). Flake fixes folded in: rebasing onto #255 killed the `browserNetwork`
+library-panel-overlap flake; `terminalFont` de-flaked by asserting the metric-independent integer pin/sticky
+instead of the live `term.options.fontSize` (the clip-free step-down #125 nudges it sub-pixel below the pin on
+the Linux leg's mono metrics — failed only Linux, green on Windows); a CodeQL `js/bad-code-sanitization` on the
+new pin asserts was cleared with `JSON.stringify`. Each lane shipped with its own gate + `@terminal` e2e +
+manual dev check; both lane PRs had clean claude-review. Research/decision record:
+`docs/research/2026-06-25-terminal-dom-renderer/` (REPORT.md / HANDOFFS.md).
