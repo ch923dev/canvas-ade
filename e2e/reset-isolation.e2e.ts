@@ -49,4 +49,35 @@ test.describe('@core reset() clean-slate contract (test isolation)', () => {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  // Cross-spec "library-panel-overlap" guard. The Project Library panel is a fixed 320px right-docked
+  // overlay (z-index 70). Its open state lives in libraryStore so reset() can close it; before that it
+  // was panel-local useState that reset() could not reach, so browserLibrary left it open and it
+  // occluded the next @preview spec's real-click target (browserNetwork "Close inspector"), failing
+  // only in-suite (passing in isolation / on retry in a fresh worker). Pin the close here.
+  test('reset() closes a left-open Project Library panel (cross-spec overlap guard)', async ({
+    page
+  }) => {
+    // Open it via its reopen tab — the exact path browserLibrary takes to leak it open.
+    await evalIn(page, `document.querySelector('[data-test="library-open"]').click()`)
+    expect(
+      await pollEval(
+        page,
+        `document.querySelector('[data-test="library-panel"]').getAttribute('data-open') === 'true'`,
+        3000
+      ),
+      'precondition: the Library panel opened'
+    ).toBe(true)
+
+    // reset() (the per-test isolation hook) must close it so it cannot leak into the next spec.
+    await evalIn(page, 'window.__canvasE2E.reset()')
+    expect(
+      await pollEval(
+        page,
+        `document.querySelector('[data-test="library-panel"]').getAttribute('data-open') === 'false'`,
+        3000
+      ),
+      'reset() closed the Library panel'
+    ).toBe(true)
+  })
 })
