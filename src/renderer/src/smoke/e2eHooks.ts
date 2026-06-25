@@ -174,6 +174,11 @@ export interface CanvasE2E {
   terminalFontSize: (id: string) => number | undefined
   /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
   terminalScrollback: (id: string) => number | undefined
+  /** Lane B: the live xterm theme background hex for a terminal board (a stable representative of
+   *  the applied ANSI palette), or undefined if not mounted. Asserts a theme switch applied live. */
+  terminalThemeBg: (id: string) => string | undefined
+  /** Lane B: the live xterm font-family literal stack for a terminal board, or undefined. */
+  terminalFontFamily: (id: string) => string | undefined
   /** Phase 4: the active Unicode width-table version ('11' once the Unicode11Addon loaded), or
    *  undefined if not mounted. The links e2e asserts the addon took effect at construction. */
   terminalUnicodeVersion: (id: string) => string | undefined
@@ -555,6 +560,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalScrollback(id) {
       return e2eTerminals.get(id)?.options.scrollback
+    },
+    terminalThemeBg(id) {
+      return e2eTerminals.get(id)?.options.theme?.background
+    },
+    terminalFontFamily(id) {
+      return e2eTerminals.get(id)?.options.fontFamily
     },
     terminalUnicodeVersion(id) {
       return e2eTerminals.get(id)?.unicode.activeVersion

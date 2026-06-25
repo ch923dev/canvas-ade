@@ -49,8 +49,13 @@
  *   "update the app" message. This bump ALSO introduces the forward-compat clamp in `fromObject`
  *   (an UNRECOGNIZED viewport coerces to `desktop` instead of failing) — so this is the LAST
  *   viewport-enum floor bump: every future preset value rides through additively (floor stays 15).
+ * - v16 = optional TerminalBoard `themeId` + `fontFamilyId` (terminal theming, Lane B). Both are
+ *   closed-registry ids (terminalThemes.ts) persisted as free strings + defaulted/degraded at read,
+ *   so this is ADDITIVE (writer-only bump, floor STAYS 15 — ADR 0007): an older reader ignores the
+ *   unknown keys, and `assertBoard` only type-checks them as strings (it does NOT reject an unknown
+ *   id), so a doc carrying a future theme id never fails validation. The migration is identity.
  */
-export const SCHEMA_VERSION = 15
+export const SCHEMA_VERSION = 16
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as

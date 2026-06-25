@@ -44,6 +44,15 @@ import {
   resolveInitialScrollback,
   writeStickyScrollback
 } from './terminalScrollback'
+import {
+  TERMINAL_THEMES,
+  TERMINAL_FONT_FAMILIES,
+  DEFAULT_TERMINAL_THEME_ID,
+  resolveInitialThemeId,
+  resolveInitialFontFamilyId,
+  writeStickyThemeId,
+  writeStickyFontFamilyId
+} from './terminalThemes'
 
 const DEFAULT_PRESET = 'claude'
 
@@ -98,6 +107,13 @@ export function NewTerminalDialog({
   // writes the sticky default for the next new terminal.
   const seedScrollback = resolveInitialScrollback(board.scrollback)
   const [scrollback, setScrollback] = useState(seedScrollback)
+  // Theme + font family (Lane B): seed from the board pin else the sticky last-used (a present-but-
+  // unknown id degrades to the default). Like scrollback, the dialog is the ONLY entry point, so
+  // apply both pins the board AND writes the sticky default for the next new terminal.
+  const seedTheme = resolveInitialThemeId(board.themeId)
+  const [themeId, setThemeId] = useState(seedTheme)
+  const seedFontFamily = resolveInitialFontFamilyId(board.fontFamilyId)
+  const [fontFamilyId, setFontFamilyId] = useState(seedFontFamily)
 
   // Shell list (OS-aware). Only PERSIST a shell the user actually picked: the select auto-seeds
   // to list[0] for display when the board has no explicit shell, but persisting that auto-seed
@@ -146,12 +162,17 @@ export function NewTerminalDialog({
       // Create omits the key when monitoring is on (stays absent = true); edit writes the
       // explicit boolean so the user can toggle it back ON after a prior opt-out.
       ...(editing ? { monitorActivity: monitor } : monitor ? {} : { monitorActivity: false }),
-      // Only pin a font/scrollback that differs from the seed (else follow the sticky default).
+      // Only pin a font/scrollback/theme/font-family that differs from the seed (else follow the
+      // sticky default). Lane B theme/font ids mirror the fontSize/scrollback pin-only-on-change rule.
       ...(font !== seedFont ? { fontSize: font } : {}),
-      ...(scrollback !== seedScrollback ? { scrollback } : {})
+      ...(scrollback !== seedScrollback ? { scrollback } : {}),
+      ...(themeId !== seedTheme ? { themeId } : {}),
+      ...(fontFamilyId !== seedFontFamily ? { fontFamilyId } : {})
     })
-    // Scrollback's only entry point is this dialog → it owns the sticky new-terminal default.
+    // These controls' only entry point is this dialog → it owns each sticky new-terminal default.
     if (scrollback !== seedScrollback) writeStickyScrollback(scrollback)
+    if (themeId !== seedTheme) writeStickyThemeId(themeId)
+    if (fontFamilyId !== seedFontFamily) writeStickyFontFamilyId(fontFamilyId)
     onClose()
   }, [
     beginChange,
@@ -168,6 +189,10 @@ export function NewTerminalDialog({
     seedFont,
     scrollback,
     seedScrollback,
+    themeId,
+    seedTheme,
+    fontFamilyId,
+    seedFontFamily,
     editing,
     onClose
   ])
@@ -305,6 +330,65 @@ export function NewTerminalDialog({
         </>
       ) : (
         <>
+          <Field label="Theme">
+            <div style={themeGrid} data-test="terminal-theme">
+              {TERMINAL_THEMES.map((t) => {
+                const on = t.id === themeId
+                const c = t.colors
+                const swatches = [c.red, c.green, c.yellow, c.blue, c.magenta, c.cyan]
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    style={on ? { ...themeCard, ...themeCardOn } : themeCard}
+                    onClick={() => setThemeId(t.id)}
+                    aria-pressed={on}
+                    data-test={`theme-${t.id}`}
+                  >
+                    <span style={{ ...preview, background: c.background, color: c.foreground }}>
+                      <span style={dots}>
+                        {swatches.map((sw, i) => (
+                          <span key={i} style={{ ...dot, background: sw }} />
+                        ))}
+                      </span>
+                      <span style={pvLine}>
+                        <span style={{ color: c.blue }}>~/proj</span>{' '}
+                        <span style={{ color: c.green }}>$</span> npm run dev
+                      </span>
+                    </span>
+                    <span style={on ? { ...themeName, ...themeNameOn } : themeName}>
+                      <span>{t.label}</span>
+                      {t.id === DEFAULT_TERMINAL_THEME_ID && <span style={themePin}>default</span>}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </Field>
+          <Field label="Font">
+            <div style={sbRow} data-test="terminal-font">
+              {TERMINAL_FONT_FAMILIES.map((f) => {
+                const on = f.id === fontFamilyId
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    style={on ? { ...fontChip, ...sbChipOn } : fontChip}
+                    onClick={() => setFontFamilyId(f.id)}
+                    aria-pressed={on}
+                    data-test={`font-${f.id}`}
+                  >
+                    <span style={{ ...fontChipName, fontFamily: `var(${f.cssVar})` }}>
+                      {f.label}
+                    </span>
+                    <span style={{ ...fontChipSample, fontFamily: `var(${f.cssVar})` }}>
+                      Ag {'{}'} 0→1
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </Field>
           <Field label="Font size">
             <div style={fontRow}>
               <button
@@ -574,6 +658,73 @@ const sbHint: CSSProperties = {
   color: 'var(--text-3)',
   marginTop: 2
 }
+// ── Theme picker (Lane B) — 2-col swatch grid with a live mini-terminal preview ──
+const themeGrid: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }
+const themeCard: CSSProperties = {
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--r-inner)',
+  background: 'var(--inset)',
+  padding: 7,
+  cursor: 'pointer',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  textAlign: 'left'
+}
+const themeCardOn: CSSProperties = {
+  borderColor: 'var(--accent)',
+  background: 'var(--accent-wash)',
+  boxShadow: '0 0 0 1px var(--accent)'
+}
+const preview: CSSProperties = {
+  borderRadius: 4,
+  padding: '7px 8px',
+  fontFamily: 'var(--term-mono)',
+  fontSize: 10.5,
+  lineHeight: 1.5,
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
+  border: '1px solid rgba(255,255,255,0.05)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2
+}
+const pvLine: CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis' }
+const dots: CSSProperties = { display: 'inline-flex', gap: 3 }
+const dot: CSSProperties = { width: 7, height: 7, borderRadius: 'var(--r-pill)', flex: 'none' }
+const themeName: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  fontSize: 12,
+  fontWeight: 500,
+  color: 'var(--text-2)'
+}
+const themeNameOn: CSSProperties = { color: 'var(--accent)' }
+const themePin: CSSProperties = {
+  fontSize: 9,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  opacity: 0.85
+}
+// Font-family chips — like the scrollback chips but taller (name + glyph sample), each in its own face.
+const fontChip: CSSProperties = {
+  flex: 1,
+  height: 40,
+  borderRadius: 'var(--r-ctl)',
+  border: '1px solid var(--border-subtle)',
+  background: 'var(--inset)',
+  color: 'var(--text-2)',
+  cursor: 'pointer',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 1,
+  lineHeight: 1.15
+}
+const fontChipName: CSSProperties = { fontSize: 12.5 }
+const fontChipSample: CSSProperties = { fontSize: 11, opacity: 0.85 }
 const footer: CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
