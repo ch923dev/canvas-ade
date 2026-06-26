@@ -774,6 +774,14 @@ const api = {
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
   },
+  // ── Phase 5 · S1: save the live terminal buffer to a user-chosen .txt (MAIN dialog + atomic write) ──
+  terminal: {
+    saveOutput: (args: {
+      text: string
+      suggestedName: string
+    }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
+      ipcRenderer.invoke('terminal:saveOutput', args)
+  },
   // ── M-memory T-M4: read cached Tier-2 prose for the panel (pure disk read; MAIN-guarded) ──
   memory: {
     readBoards: (ids: string[]): Promise<Record<string, string>> =>
