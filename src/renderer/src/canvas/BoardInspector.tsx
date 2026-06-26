@@ -154,6 +154,11 @@ export function BoardInspector(): ReactElement | null {
       <aside
         className="ca-inspector"
         data-revealed={revealed}
+        // `inert` (React 19) pulls the hidden panel out of the tab order AND the a11y tree while it
+        // is not revealed — without it, Tab reaches the invisible Jump/Duplicate buttons, and the
+        // focus-pin (onFocus → revealed) would then pop the panel open from a stray tab stop. It
+        // stays mounted (not conditionally rendered) so the 0.14s hide transition can still play.
+        inert={!revealed}
         aria-hidden={!revealed}
         aria-label="Board inspector"
         data-test="board-inspector"
