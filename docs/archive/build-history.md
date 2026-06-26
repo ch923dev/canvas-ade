@@ -1160,3 +1160,41 @@ the Linux leg's mono metrics — failed only Linux, green on Windows); a CodeQL 
 new pin asserts was cleared with `JSON.stringify`. Each lane shipped with its own gate + `@terminal` e2e +
 manual dev check; both lane PRs had clean claude-review. Research/decision record:
 `docs/research/2026-06-25-terminal-dom-renderer/` (REPORT.md / HANDOFFS.md).
+
+## 2026-06-26 — Phase 1 accounts: cloud sign-in (WorkOS AuthKit, local-first) — #260 (`a1b8dbf2`)
+
+First phase of the **SaaS conversion** (free desktop app → monthly subscription). Adds **optional,
+local-first cloud accounts** — the app still opens straight to the canvas with no account; signing in
+just adds identity + a cached `free` entitlement. **No payments here** (Stripe = Phase 2). Strategy:
+`docs/research/2026-06-26-saas-productization/`; spec + signed-off design: `docs/specs/accounts-phase1/`.
+
+**What landed:**
+- **Auth runs entirely in MAIN — PKCE, no `client_secret`.** `workosAuth.ts` (S256 challenge + authorize
+  URL + code→token exchange via Node `fetch`, public client), `authService.ts` (orchestrator: in-memory
+  state Map 5-min TTL, never persisted/IPC'd), `authConfig.ts` (pinned public Client ID + `expanse://auth/callback`
+  + license URL), `authIpc.ts` + preload `auth` ns (`isForeignSender`-guarded, **presence-only** `auth:status`
+  — a token never crosses IPC). System browser only (`shell.openExternal`); `expanse://` deep-link routed via
+  `open-url`/`second-instance` behind a **packaged-only single-instance lock** (`authDeepLink.ts`).
+- **Storage.** Tokens in `safeStorage` (`authTokenStore.ts`, clones `llmKeyStore`); session + entitlement as
+  plain JSON in `userData` (never in a project's `.canvas/`). `safeStorage` unavailable → sign-in blocked,
+  never plaintext.
+- **Entitlement** = a Supabase Edge Function (`supabase/functions/license/`) that verifies the WorkOS JWT via
+  JWKS (signature + issuer + expiry, **not** `aud`); cached + offline-tolerant; returns `free` in Phase 1.
+- **Renderer.** `accountStore.ts` (Zustand + `useAccountSync` hydrate via `window.api.auth.status()` + the
+  `auth:statusChanged` push), `SignInView.tsx` (idle/waiting/keyring-error), `AccountAvatar`/`AccountPill`
+  (chrome control before the Settings gear; pill extracted to keep `AppChrome` under the 700 max-lines ratchet),
+  a Settings "Account" section, and a default-OFF `__REQUIRE_ACCOUNT__` build flag wiring a forced gate for a
+  future distribution build.
+
+**Verification:** 41 MAIN unit tests + 3 `@chrome` e2e (`e2e/accounts.e2e.ts`; OAuth mocked at the IPC boundary,
+real `auth:signOut` round-trip). Full e2e matrix GREEN both legs at the pre-merge gate (Windows 222 clean; Linux
+Docker 222 + 1 retry-recovered `dataFlow` flake — a recurring Linux-leg env flake on a file this branch does not
+touch). CI green (check · CodeQL · analyze · claude-review). Reviewer: **2 [warning]s, both resolved in
+`dd11299f`** (license fail-fast guard; documented intentional non-enforcement of session `expiresAt` + the Phase 2
+refresh-token obligation) — incremental re-review clean. **Live OAuth round-trip validated on a packaged build**
+(real Google sign-in → `expanse://` callback → exchange → entitlement → signed-in avatar).
+
+**Known separate blocker (NOT this PR):** the **packaged** build has a pre-existing electron-builder + pnpm
+nested-deps crash (`write-file-atomic → signal-exit@4` `MODULE_NOT_FOUND`) — tracked on `fix/packaging-pnpm-deps`
+(diagnosis: `docs/research/2026-06-26-packaging-pnpm-nested-deps.md`). Accounts does not regress it; dev + e2e
+(unpacked) unaffected. Next: **Phase 2 = Stripe billing**.
