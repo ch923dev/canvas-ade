@@ -120,3 +120,33 @@ node scripts/gen-icon-mac.mjs      # build/icon.png → build/icon-mac.png (padd
 - **`hideAttribution`** is set on the React Flow canvas, so no badge ships in the packaged build.
 - **node-pty** native binary is unpacked (`**/*.node`, `node_modules/node-pty/**`); on Windows the
   source build needs the MSVC Spectre-mitigated libs (see `CLAUDE.md` › Stack).
+
+## Packaging dependency pins (do not remove)
+
+`package.json` carries two dependencies — **`ajv`** and **`signal-exit`** — that **no app code imports**.
+They exist solely to make the **packaged** build correct, and removing them as "unused" reintroduces a
+crash that only manifests in a packaged `.exe`/`.app` (never in `pnpm dev` or the unpacked e2e). A
+`"//packaging-pins"` key in `package.json` says the same thing inline.
+
+**Why:** electron-builder's pnpm dependency collector only walks **depth-1** from each package
+([electron-builder #6289](https://github.com/electron-userland/electron-builder/issues/6289)), so it
+misses pnpm's **nested transitive versions**. The production closure needs `signal-exit@4` (pulled by
+`write-file-atomic@8`) and `ajv@8` (pulled by `@expanse-ade/mcp` → MCP SDK), but **devDependencies hoist
+the incompatible `signal-exit@3` / `ajv@6` to the node_modules root**, so electron-builder packs the
+**wrong** versions. Symptoms in the packaged app: `Error: Cannot find module 'signal-exit'`
+(`MODULE_NOT_FOUND`) before the window opens, and — if a stale v3 is packed — `onExit is not a function`
+on the first project save.
+
+**The fix:** declaring `ajv@^8` and `signal-exit@^4` as **direct dependencies** forces pnpm to place
+those versions at the node_modules **root** (direct deps always take the root slot); the dev-only
+`ajv@6`/`signal-exit@3` are then nested under their specific consumers (which still resolve them
+correctly). electron-builder now collects the right versions at depth-1. Verify after any dependency
+change: `node -e "console.log(require('./node_modules/signal-exit/package.json').version,
+require('./node_modules/ajv/package.json').version)"` must print `4.x 8.x`. Also requires
+**electron-builder ≥ 26.15.5** (the older 26.8.x mis-handles pnpm dedup; fix commit `b348df0`).
+
+**Acceptance test (the only way to catch this class):** `pnpm pack:dir` → launch
+`release/win-unpacked/Expanse.exe` → window titled **"Expanse"** (not "Error") → create/open a project
+and confirm an autosave succeeds. The e2e suite runs the **unpacked** build and cannot catch a
+packaged-only fault. If a future dep adds another prod-vs-dev version split, electron-builder prints
+`dependency not found on disk: [...]` during `pack:dir` — pin each listed package the same way.
