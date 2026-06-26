@@ -83,6 +83,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const encryptionAvailable = deps.encryptionAvailable()
     const s = deps.session.read()
     if (!s) return { isLoggedIn: false, encryptionAvailable }
+    // INTENTIONAL: `s.expiresAt` (the ACCESS-token exp, ~1h) is NOT enforced here. Phase 1 has no
+    // refresh-token renewal, so signing the user out when it passes would force a re-auth every hour.
+    // Sign-in stays durable until an explicit signOut (local-first; plan is always 'free', so there is
+    // no entitlement to leak by trusting a stale session). Phase 2 MUST add a refresh-token flow that
+    // renews the access token BEFORE this code starts reading `expiresAt` — otherwise a lapsed
+    // subscription would be gated indefinitely on an unrefreshable cache.
     return {
       isLoggedIn: true,
       email: s.email,

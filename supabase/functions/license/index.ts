@@ -17,7 +17,10 @@ const WORKOS_CLIENT_ID = Deno.env.get('WORKOS_CLIENT_ID')
 const ISSUER = 'https://api.workos.com/' // trailing slash per WorkOS
 
 if (!WORKOS_CLIENT_ID) {
+  // Fail fast: without the Client ID the JWKS URL below would be `…/jwks/undefined`, so every
+  // jwtVerify would throw and ALL entitlement checks would silently 401. Refuse to start instead.
   console.error('[license] WORKOS_CLIENT_ID secret is not set — set it with `supabase secrets set`')
+  throw new Error('WORKOS_CLIENT_ID must be set')
 }
 
 // jose caches + auto-rotates the key set; the JWKS URL is keyed by the WorkOS Client ID.
