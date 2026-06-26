@@ -1,0 +1,171 @@
+/* ── Board Inspector (P0 shell): docked RIGHT, auto-hide — a right-edge mirror of .ca-sidepanel ──
+   Screen-space chrome, rendered OUTSIDE the React Flow transform, so it is camera-independent
+   (never clips/shrinks with zoom like the on-board title-bar actions it will eventually replace).
+   z-index 45 keeps it below the 50 app-chrome islands (Dock / SidePanel / CameraCluster). */
+.ca-inspector-wrap {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  /* Hidden panel lets canvas clicks through; the revealed panel opts back in (CSS). */
+  pointer-events: none;
+}
+.ca-inspector {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  pointer-events: auto;
+  transition:
+    opacity 0.14s ease-out,
+    transform 0.14s ease-out;
+}
+.ca-inspector[data-revealed='false'] {
+  opacity: 0;
+  /* Slide AWAY from the canvas (to the right) when hiding — the mirror of SidePanel's -12px. */
+  transform: translateX(12px);
+  pointer-events: none;
+}
+
+/* Sticky identity header: type glyph + micro type tag + Jump-to-board, then the board title. */
+.ca-inspector-head {
+  flex: 0 0 auto;
+  padding: 10px 10px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ca-inspector-id {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ca-inspector-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+.ca-inspector-type {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ca-inspector-jump {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.ca-inspector-jump:hover {
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ca-inspector-jump:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-title {
+  margin-top: 6px;
+  font-size: var(--fs-label);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Footer — universal board action(s). Pinned to the bottom. Grows as later phases land. */
+.ca-inspector-foot {
+  margin-top: auto;
+  flex: 0 0 auto;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ca-inspector-act {
+  height: 28px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  text-align: left;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-act:hover {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.ca-inspector-act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+/* The handle: a slim vertical grabber advertising where the panel lives whenever a single board is
+   selected — NEVER interactive (the reveal is the window-level zone listener). Fades out under the
+   revealed panel, and is absent entirely when there is no single selection (nothing to summon). */
+.ca-inspector-handle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease-out;
+}
+.ca-inspector-handle[data-active='true'] {
+  opacity: 1;
+}
+.ca-inspector-handle[data-revealed='true'] {
+  opacity: 0;
+}
+.ca-inspector-handle::after {
+  content: '';
+  width: 5px;
+  height: 56px;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+/* Reduced-motion: drop the slide/fade transitions on BOTH the new right Inspector AND the existing
+   left SidePanel (the back-port the redesign flagged — SidePanel shipped without this override).
+   Visibility still toggles, just without the 0.14s translate+fade. */
+@media (prefers-reduced-motion: reduce) {
+  .ca-inspector,
+  .ca-inspector-handle,
+  .ca-sidepanel,
+  .ca-sidepanel-handle {
+    transition: none;
+  }
+  .ca-inspector[data-revealed='false'],
+  .ca-sidepanel[data-revealed='false'] {
+    transform: none;
+  }
+}
