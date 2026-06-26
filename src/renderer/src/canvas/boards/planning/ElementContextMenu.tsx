@@ -49,7 +49,13 @@ export interface MenuSwatchRowEntry {
   }[]
 }
 
-export type MenuEntry = MenuActionEntry | MenuIconRowEntry | MenuSwatchRowEntry
+/** A non-interactive hairline that groups the actions above/below it (no roving focus). */
+export interface MenuSeparatorEntry {
+  kind: 'separator'
+  id: string
+}
+
+export type MenuEntry = MenuActionEntry | MenuIconRowEntry | MenuSwatchRowEntry | MenuSeparatorEntry
 
 interface Props {
   x: number
@@ -97,6 +103,8 @@ export function ElementContextMenu({ x, y, entries, onClose }: Props): ReactElem
           >
             {entry.label}
           </button>
+        ) : entry.kind === 'separator' ? (
+          <div key={entry.id} role="separator" className="w3-sep" />
         ) : entry.kind === 'swatchRow' ? (
           <div
             key={entry.id}
@@ -167,6 +175,7 @@ const MENU_CSS = `
 .w3-menu .w3-mi.danger { color: var(--err); }
 .w3-menu .w3-mi.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 12%, transparent); }
 .w3-menu .w3-mi:disabled { color: var(--text-faint); cursor: default; }
+.w3-menu .w3-sep { height: 1px; margin: 4px 6px; background: var(--border); }
 .w3-menu .w3-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; }
 .w3-menu .w3-row-label { color: var(--text-2); font-size: 12px; min-width: 60px; }
 .w3-menu .w3-row[data-disabled] .w3-row-label { color: var(--text-faint); }

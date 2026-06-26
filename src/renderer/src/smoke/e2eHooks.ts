@@ -181,6 +181,10 @@ export interface CanvasE2E {
   terminalFontSize: (id: string) => number | undefined
   /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
   terminalScrollback: (id: string) => number | undefined
+  /** Phase 5 · S4: scroll a terminal's viewport by N lines (negative = up) — drives the jump badge. */
+  scrollTerminal: (id: string, lines: number) => void
+  /** Phase 5 · S4: whether a terminal is scrolled above its live tail (viewportY < baseY), or undefined. */
+  terminalScrolledUp: (id: string) => boolean | undefined
   /** Lane B: the live xterm theme background hex for a terminal board (a stable representative of
    *  the applied ANSI palette), or undefined if not mounted. Asserts a theme switch applied live. */
   terminalThemeBg: (id: string) => string | undefined
@@ -573,6 +577,15 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalScrollback(id) {
       return e2eTerminals.get(id)?.options.scrollback
+    },
+    scrollTerminal(id, lines) {
+      e2eTerminals.get(id)?.scrollLines(lines)
+    },
+    terminalScrolledUp(id) {
+      const t = e2eTerminals.get(id)
+      if (!t) return undefined
+      const b = t.buffer.active
+      return b.viewportY < b.baseY
     },
     terminalThemeBg(id) {
       return e2eTerminals.get(id)?.options.theme?.background
