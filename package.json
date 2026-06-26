@@ -43,15 +43,18 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux"
   },
+  "//packaging-pins": "ajv + signal-exit are NOT imported by app code — they pin their PROD transitive versions (ajv@8 via @expanse-ade/mcp's MCP SDK; signal-exit@4 via write-file-atomic@8) into the node_modules ROOT. electron-builder only collects depth-1 deps; pnpm otherwise nests these under their consumers while the dev-hoisted ajv@6/signal-exit@3 take root, so the PACKAGED app crashes (MODULE_NOT_FOUND on signal-exit / onExit-not-a-function on save). DO NOT remove as 'unused'. See docs/contributing/releasing.md › Packaging dependency pins.",
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@expanse-ade/mcp": "^0.17.0",
     "@uiw/codemirror-extensions-langs": "^4.25.10",
     "@uiw/react-codemirror": "^4.25.10",
+    "ajv": "^8.20.0",
     "chokidar": "^5.0.0",
     "electron-updater": "^6.8.3",
     "node-pty": "1.2.0-beta.13",
+    "signal-exit": "^4.1.0",
     "simple-git": "^3.27.0",
     "write-file-atomic": "^8.0.0"
   },
@@ -75,7 +78,7 @@
     "@xterm/xterm": "^5.5.0",
     "@xyflow/react": "^12.11.0",
     "electron": "^42.3.3",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.15.5",
     "electron-vite": "^5.0.0",
     "eslint": "^10.4.1",
     "eslint-config-prettier": "^10.1.8",
