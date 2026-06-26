@@ -1198,3 +1198,34 @@ refresh-token obligation) — incremental re-review clean. **Live OAuth round-tr
 nested-deps crash (`write-file-atomic → signal-exit@4` `MODULE_NOT_FOUND`) — tracked on `fix/packaging-pnpm-deps`
 (diagnosis: `docs/research/2026-06-26-packaging-pnpm-nested-deps.md`). Accounts does not regress it; dev + e2e
 (unpacked) unaffected. Next: **Phase 2 = Stripe billing**.
+
+## 2026-06-26 — Packaging crash fix: pnpm-nested prod deps — #263 (`f5b0b549`)
+
+Fixed the **pre-existing release blocker** found on the first real launch of a packaged build during the
+accounts work (#260): a packaged `Expanse.exe`/`.app` crashed at startup (`Cannot find module
+'signal-exit'`, `MODULE_NOT_FOUND`, window titled "Error") before `createWindow`. Predated accounts;
+invisible until now because Phase 5 only verified `pnpm pack:dir` *builds* and the e2e harness launches
+the *unpacked* `out/main`.
+
+**Root cause:** electron-builder's pnpm dependency collector walks only **depth-1**
+([#6289](https://github.com/electron-userland/electron-builder/issues/6289)), missing pnpm's nested
+transitive versions. Prod needs `signal-exit@4` (via `write-file-atomic@8`) + `ajv@8` (via
+`@expanse-ade/mcp` → MCP SDK), but devDependencies hoisted the incompatible `signal-exit@3` / `ajv@6` to
+the node_modules root, so electron-builder packed the wrong versions → `MODULE_NOT_FOUND` at boot (and
+`onExit is not a function` on the first save if a stale v3 was packed).
+
+**Fix (3-file diff, no pipeline rewrite):** declare `ajv@^8.20.0` + `signal-exit@^4.1.0` as **direct
+dependencies** so pnpm puts those versions at the node_modules **root** (direct deps always take the
+root slot; the dev-only v3/v6 nest under their consumers, which still resolve them). Bump
+electron-builder 26.8.1 → 26.15.5 (better pnpm dedup; fix `b348df0`). A `"//packaging-pins"` key in
+`package.json` + a `docs/contributing/releasing.md` › Packaging dependency pins section document why the
+two deps must not be removed as "unused". The original diagnosis floated a heavier `pnpm deploy --prod`
+staging + CI rewrite; the direct-dep pin is platform-agnostic (pure-JS) and needs no CI change.
+
+**Verified (Windows, local):** `pack:dir` → zero "dependency not found on disk" warnings; the asar
+contains `signal-exit@4.1.0` + `ajv@8.20.0` + `write-file-atomic@8.0.0`; packaged `Expanse.exe` boots
+clean (`exit 0`, `RENDERER_SMOKE` + `SELFTEST_DONE pty:true`); `write-file-atomic` sync+async saves
+succeed against the packed `signal-exit@4`. Full e2e matrix GREEN both legs at the push gate (Windows 222
++ 1 flaky; Linux Docker 223 clean); CI green (check · CodeQL · analyze · claude-review LGTM, zero inline).
+mac/linux packaged-launch remains a manual desktop check (`docs/testing/MANUAL-CHECKS.md`); the pin
+mechanism is identical there.
