@@ -105,6 +105,13 @@ export default defineConfig({
       alias: { '@renderer': resolve('src/renderer/src') }
     },
     plugins: [react(), cspMeta()],
+    // Phase 1 accounts gate. When REQUIRE_ACCOUNT=1 the renderer hard-gates the app behind
+    // <SignInView/>; default false → sign-in is OPTIONAL / local-first, so `pnpm dev` and current
+    // builds behave exactly as before (the gate seam exists for a later distribution build to flip).
+    // Mirrors the main-process __ENABLE_AUTO_UPDATE__ build constant (see `main.define` above).
+    define: {
+      __REQUIRE_ACCOUNT__: JSON.stringify(process.env.REQUIRE_ACCOUNT === '1')
+    },
     // Pre-bundle the CodeMirror 6 stack (file-tree S3) at dev startup. The File board is a
     // LAZY chunk (BoardNode code-splits it), and CM6 fans out into many small packages
     // (@codemirror/*, @lezer/*) that Vite's initial scan misses. Without this, the FIRST file

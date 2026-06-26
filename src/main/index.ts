@@ -93,12 +93,23 @@ import { registerRecapIpc } from './recapIpc'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
+import { parseAuthDeepLink, deepLinkFromArgv } from './authDeepLink'
+import { createAuthTokenStore } from './authTokenStore'
+import { readSession, writeSession, clearSession } from './authSession'
+import { readEntitlement, writeEntitlement, clearEntitlement } from './entitlementCache'
+import { createAuthService, type AuthService } from './authService'
+import { registerAuthHandlers, pushAuthStatus } from './authIpc'
+import { AUTH_CONFIG } from './authConfig'
 
 // Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
 // production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
 declare const __ENABLE_AUTO_UPDATE__: boolean
 
 let mainWindow: BrowserWindow | null = null
+// Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
+// safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
+let authService: AuthService | null = null
+let pendingDeepLink: string | null = null
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
@@ -241,8 +252,73 @@ function createWindow(): void {
   }
 }
 
+// ── Phase 1 accounts: OAuth deep-link (expanse://) + single-instance lock ───────────────────────
+// The OAuth callback from the system browser returns to the app via the custom scheme. On
+// Windows/Linux the OS launches a SECOND instance carrying the URL in argv, which the running
+// primary receives through 'second-instance' — that requires the single-instance lock, acquired
+// BEFORE whenReady (calling it later is a silent no-op). macOS delivers it via 'open-url' instead.
+//
+// PACKAGED-ONLY: dev intentionally allows several concurrent instances (multiple worktrees /
+// title-stamped PR checks — see CLAUDE.md "Manual dev check"), and the e2e harness runs UNPACKAGED
+// against a shared persistent userData; the lock is keyed on userData, so taking it there would
+// deny the second launch. app.isPackaged is false in both, so the lock is only ever taken in a real
+// packaged build (where the deep-link actually matters). Verify via `pnpm pack:dir`.
+const gotSingleInstanceLock = app.isPackaged ? app.requestSingleInstanceLock() : true
+if (!gotSingleInstanceLock) {
+  // A second instance (e.g. the OS opening an expanse:// link) — the primary handles it; exit now.
+  app.quit()
+}
+
+// Step 3 is LOG-ONLY: validate the scheme + surface host/path. NEVER log the query string — it
+// carries the auth code + state. Step 4 adds PKCE state matching + the MAIN-only code→token exchange.
+function handleAuthDeepLink(url: string): void {
+  const link = parseAuthDeepLink(url)
+  if (!link) {
+    console.warn('[auth] ignored a non-expanse / malformed deep-link URL')
+    return
+  }
+  // authService re-parses the raw URL to read the code/state query and does the state-match +
+  // MAIN-only exchange. If the callback arrives before the service exists (open-url can fire
+  // pre-ready), buffer it and flush on ready.
+  if (authService) {
+    void authService.handleCallback(url)
+  } else {
+    pendingDeepLink = url
+  }
+}
+
+function focusPrimaryWindow(): void {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+}
+
+if (app.isPackaged && gotSingleInstanceLock) {
+  // electron-builder's `protocols:` block writes the OS registration (NSIS registry / Info.plist /
+  // .desktop); this makes the running process the live handler so open-url / second-instance fire.
+  app.setAsDefaultProtocolClient('expanse')
+  // macOS delivery (can arrive before ready; Electron buffers until a handler exists).
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    handleAuthDeepLink(url)
+  })
+  // Windows/Linux delivery: a second launch carrying the URL routes here on the primary instance.
+  app.on('second-instance', (_event, argv) => {
+    const url = deepLinkFromArgv(argv)
+    if (url) handleAuthDeepLink(url)
+    focusPrimaryWindow()
+  })
+}
+
 app.whenReady().then(async () => {
+  // A second packaged instance (no lock) is already quitting — don't build a window or wire IPC.
+  if (!gotSingleInstanceLock) return
   electronApp.setAppUserModelId('com.expanse.app')
+  // Cold start via the scheme (Windows/Linux first launch): the deep-link URL is in our own argv.
+  if (app.isPackaged) {
+    const coldLink = deepLinkFromArgv(process.argv)
+    if (coldLink) handleAuthDeepLink(coldLink)
+  }
   // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
   // Linux the default menu's Alt mnemonics (Alt+V = View) eat it, and Chromium handles
   // Ctrl+C/V natively in inputs there, so dropping the menu is safe. On macOS the Edit
@@ -407,6 +483,34 @@ app.whenReady().then(async () => {
     isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
     encryptString: (s) => safeStorage.encryptString(s),
     decryptString: (b) => safeStorage.decryptString(b)
+  }
+
+  // ── Phase 1 accounts: construct the sign-in service (reuses the safeStorage encryptor) + register
+  //    its IPC, then flush any deep-link that arrived before the service existed (open-url pre-ready).
+  authService = createAuthService({
+    config: AUTH_CONFIG,
+    tokenStore: createAuthTokenStore(userData, llmEncryptor),
+    session: {
+      read: () => readSession(userData),
+      write: (s) => writeSession(userData, s),
+      clear: () => clearSession(userData)
+    },
+    entitlement: {
+      read: () => readEntitlement(userData),
+      write: (e) => writeEntitlement(userData, e),
+      clear: () => clearEntitlement(userData)
+    },
+    openExternal: (url) => {
+      void shell.openExternal(url)
+    },
+    encryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
+  })
+  registerAuthHandlers(ipcMain, () => mainWindow, authService)
+  if (pendingDeepLink) {
+    const url = pendingDeepLink
+    pendingDeepLink = null
+    void authService.handleCallback(url)
   }
   // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the

@@ -45,6 +45,7 @@ import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
 import { useCommandStore, commandStoreDefaults, type CommandTask } from '../store/commandStore'
 import { useLibraryStore } from '../store/libraryStore'
+import { useAccountStore } from '../store/accountStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
@@ -342,6 +343,19 @@ export interface CanvasE2E {
    *  The ER a11y contrast spec renders an erDiagram with EXACTLY these and asserts the row
    *  backgrounds are dark — proving the builder's var names still match what Mermaid reads. */
   diagramThemeVars: () => Record<string, string>
+  /**
+   * Phase 1 accounts — drive the renderer account store directly: the deterministic stand-in for
+   * MAIN's `auth:statusChanged` push (no live WorkOS in e2e). It runs the SAME `apply` the real
+   * onStatusChanged handler runs (presence-only payload), so the chrome pill / SignInView / Settings
+   * Account section react exactly as in production. Sign-OUT is tested via the real IPC (no external
+   * dependency); only the sign-IN side needs this mock.
+   */
+  setAuthStatus: (status: {
+    isLoggedIn: boolean
+    email?: string
+    plan?: 'free' | 'pro'
+    encryptionAvailable: boolean
+  }) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -795,6 +809,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // left a fixed 320px right-docked overlay covering a later @preview spec's click target (the
       // "Close inspector" button) — the cross-spec library-panel-overlap flake. Close it.
       useLibraryStore.getState().setOpen(false)
+      // Phase 1 accounts: a spec that drove the account store to signed-in (the pill avatar +
+      // the Settings Account row) must not leak that identity into the next spec. Restore the
+      // shipped signed-out default (the same cross-spec global-state class as the stores above).
+      useAccountStore.getState().apply({ isLoggedIn: false, encryptionAvailable: true })
       // Phase 3: the in-app element clipboard (planning Ctrl+C/X/V) is a renderer module
       // singleton — it intentionally persists for the whole app session, so a spec that did a
       // Ctrl+C/X would leak an armed clipboard into the next spec (the cross-spec module-state
@@ -943,6 +961,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     diagramThemeVars() {
       return buildDiagramThemeVars()
+    },
+    setAuthStatus(status) {
+      useAccountStore.getState().apply(status)
     }
   }
   window.__canvasE2E = api

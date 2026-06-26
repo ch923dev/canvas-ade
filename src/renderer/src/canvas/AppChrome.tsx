@@ -35,6 +35,8 @@ import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
 import { SidePanel } from './SidePanel'
 import { OrchestrationModals } from './OrchestrationModals'
+import { SignInView } from './SignInView'
+import { AccountPill } from './AccountPill'
 
 export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
@@ -47,6 +49,7 @@ export interface AppChromeProps {
 
 export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
+  const [showSignIn, setShowSignIn] = useState(false)
   const [askRecap, setAskRecap] = useState(false)
   // Re-run whenever the user switches to a different project (project.dir changes).
   // Each project persists its own consent answer; an undecided project prompts once.
@@ -79,10 +82,24 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
         onTidy={onTidy}
         onSettings={() => setShowSettings(true)}
         onFocusGroup={onFocusGroup}
+        onSignIn={() => setShowSignIn(true)}
+        onAccount={() => setShowSettings(true)}
       />
       <SidePanel />
       <Dock />
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          // Account section's "Sign in" CTA: close Settings first, then open SignInView — stacking
+          // two shared Modals would duel their focus traps + Esc handling (the orchestration-modal
+          // pattern). The pill's own signed-out click opens SignInView directly.
+          onSignIn={() => {
+            setShowSettings(false)
+            setShowSignIn(true)
+          }}
+        />
+      )}
+      {showSignIn && <SignInView onClose={() => setShowSignIn(false)} />}
       {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
       {askRecap && projectDir !== null && <RecapConsentModal onClose={() => setAskRecap(false)} />}
       {/* Agent Orchestration Onboarding (P2): the Enable/Sync host owns its own first-init
@@ -348,11 +365,17 @@ function SaveStatus(): ReactElement {
 function CameraCluster({
   onTidy,
   onSettings,
-  onFocusGroup
+  onFocusGroup,
+  onSignIn,
+  onAccount
 }: {
   onTidy: (preset: LayoutPreset) => void
   onSettings: () => void
   onFocusGroup: () => void
+  /** Account pill, signed-out → open SignInView. */
+  onSignIn: () => void
+  /** Account pill, signed-in → open Settings at the Account section (top of the modal). */
+  onAccount: () => void
 }): ReactElement {
   const rf = useReactFlow()
   const zoom = useStore((s) => s.transform[2])
@@ -386,6 +409,9 @@ function CameraCluster({
         {/* Backdrop wallpaper picker (docs/canvas-backdrop spec §3) — Tidy's sibling. */}
         <BackdropPicker />
         <span style={styles.divider} />
+        {/* Phase 1 accounts: the account pill sits immediately before the Settings gear
+            (DESIGN.md › Surface 1). Signed-out → SignInView; signed-in → Settings/Account. */}
+        <AccountPill onSignIn={onSignIn} onAccount={onAccount} />
         <ToolBtn name="settings" title="Settings" onClick={onSettings} />
       </div>
     </div>

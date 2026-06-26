@@ -2,6 +2,8 @@ node_modules/
 out/
 dist/
 release/
+# Supabase Edge Functions (Deno) + SQL migrations — separate runtime, not app source.
+supabase/
 design-reference/
 # Local Claude Code skill/plugin artifacts (mirrors the .claude/** eslint ignore).
 .claude/
