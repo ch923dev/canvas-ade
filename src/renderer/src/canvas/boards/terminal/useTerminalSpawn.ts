@@ -45,8 +45,10 @@ import { useStoreApi } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { applyResizeBackstop, colsChanged } from './terminalResizeBackstop'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
@@ -258,6 +260,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
 
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // Phase 5 · S2: the SerializeAddon snapshots the buffer for the lossless drag-resize backstop.
+  // `resizeBackstopRef` holds the write coalescer while a snapshot→reset→rewrite is in flight so
+  // in-flight PTY bytes queue and flush AFTER the restored scrollback (never into the reset buffer).
+  const serializeAddonRef = useRef<SerializeAddon | null>(null)
+  const resizeBackstopRef = useRef(false)
   // Phase 2 find-in-terminal: the SearchAddon is loaded onto the term alongside fit (so it is
   // re-created with every respawn), and the open-state lives here because the Ctrl/Cmd+F chord is
   // detected in this hook's xterm key handler. The bar's query/result state stays LOCAL to
@@ -431,10 +438,32 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // exception: it has no scrollback to corrupt and DOES need an initial fit, so we don't freeze it.
     // Read off the refs (fullViewRef is kept current by a layout effect).
     if (fullViewRef.current && establishedRef.current) return
-    try {
-      fit.fit()
-    } catch {
-      return // well not laid out (LOD / display:none)
+    // Phase 5 · S2 — lossless drag-resize. An ESTABLISHED grid whose COLS change (a real board
+    // drag-resize — the last live reflow path now that zoom rides counterScale and full view is
+    // frozen) would hit xterm's lossy buffer reflow (#5319). Snapshot → resize → reset → re-write so
+    // xterm re-WRAPS cleanly at the new width instead. Fresh/first-layout fits (not yet established)
+    // and rows-only resizes take the plain fit — neither reflows.
+    const proposed = fit.proposeDimensions()
+    if (establishedRef.current && proposed && colsChanged(term.cols, proposed.cols)) {
+      applyResizeBackstop(proposed.cols, proposed.rows, {
+        serialize: () => serializeAddonRef.current?.serialize() ?? '',
+        resize: (c, r) => term.resize(c, r),
+        reset: () => term.reset(),
+        write: (data, done) => term.write(data, done),
+        pausePump: () => {
+          resizeBackstopRef.current = true
+        },
+        resumePump: () => {
+          resizeBackstopRef.current = false
+          coalescerRef.current?.onVisible() // flush PTY bytes held during the snapshot, in order
+        }
+      })
+    } else {
+      try {
+        fit.fit()
+      } catch {
+        return // well not laid out (LOD / display:none)
+      }
     }
     // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
     // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
@@ -562,6 +591,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // drift Phase 1 fought. Proposed API (allowProposedApi is set above).
     term.loadAddon(new Unicode11Addon())
     term.unicode.activeVersion = '11'
+    // Phase 5 · S2: buffer snapshot for the lossless drag-resize backstop (no DOM binding needed).
+    const serializeAddon = new SerializeAddon()
+    term.loadAddon(serializeAddon)
+    serializeAddonRef.current = serializeAddon
     term.open(el)
     termRef.current = term
     fitRef.current = fit
@@ -674,7 +707,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // ~scrollback (read live via the thunk) so a hidden firehose can't grow unbounded.
     const coalescer = createTerminalWriteCoalescer({
       write: (chunk) => term.write(chunk),
-      isLive: () => liveRef.current,
+      // Hold while hidden (Lane A) OR while a resize-backstop snapshot is in flight (S2), so PTY
+      // bytes queue instead of interleaving into the reset buffer; they flush in order on resume.
+      isLive: () => liveRef.current && !resizeBackstopRef.current,
       schedule: (fn) => requestAnimationFrame(fn),
       cancel: (h) => cancelAnimationFrame(h),
       holdCap: () =>
@@ -860,6 +895,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       termRef.current = null
       fitRef.current = null
       searchAddonRef.current = null // disposed with the term above
+      // S2: drop the snapshot addon ref + clear any in-flight backstop hold so a reused/replaced
+      // term never starts with the pump stuck paused.
+      serializeAddonRef.current = null
+      resizeBackstopRef.current = false
       // Phase 2: a FULL xterm replacement (reconfigure shell/cwd/launchCommand) disposes the old
       // SearchAddon. Close any open find bar so it re-subscribes to the FRESH addon on reopen — its
       // onDidChangeResults binds once at mount on the stable `api` and can't re-target in place, so
