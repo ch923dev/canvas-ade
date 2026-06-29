@@ -6,7 +6,9 @@
  *
  * Additive: the title-bar actions stay as-is in this slice; this surfaces the same controls as labeled
  * rows (plus the keyboard-only Find and the otherwise-opaque shell/command/cwd config) — the
- * visibility win. Sections mirror docs/research/mocks/board-inspector-mock.
+ * visibility win. Sections mirror docs/research/mocks/board-inspector-popover-mock; to keep the
+ * compact popover short, Appearance + Session start expanded while Configuration + Linking start
+ * COLLAPSED (click a header to expand).
  */
 import type { ReactElement } from 'react'
 import { Icon } from '../../Icon'
@@ -138,7 +140,7 @@ export function TerminalInspector({
         </InspectorAction>
       </InspectorSection>
 
-      <InspectorSection label="Configuration">
+      <InspectorSection label="Configuration" defaultOpen={false}>
         {shell && <InspectorMeta label="Shell" value={shell} />}
         {command && <InspectorMeta label="Command" value={command} />}
         {cwd && <InspectorMeta label="cwd" value={cwd} />}
@@ -151,7 +153,7 @@ export function TerminalInspector({
         </InspectorAction>
       </InspectorSection>
 
-      <InspectorSection label="Linking">
+      <InspectorSection label="Linking" defaultOpen={false}>
         <InspectorAction icon={<Icon name="globe" size={14} />} primary onClick={onPushPreview}>
           Push to preview
         </InspectorAction>
