@@ -46,6 +46,17 @@ describe('repoScopedEnv (shared MAIN read-only git env)', () => {
     expect(env.GIT_EXTERNAL_DIFF).toBeUndefined()
   })
 
+  it('clears SSH_ASKPASS (+ companion) — the non-GIT_* var simple-git blocks the spawn on', () => {
+    // OpenSSH vars with NO GIT_ prefix → the GIT_* sweep misses them, but simple-git's
+    // blockUnsafeOperationsPlugin still refuses to spawn when SSH_ASKPASS is set. A shell like
+    // Git Bash exports SSH_ASKPASS=/mingw64/bin/git-askpass.exe, which broke gitDiff/gitPermalink.
+    process.env.SSH_ASKPASS = '/mingw64/bin/git-askpass.exe'
+    process.env.SSH_ASKPASS_REQUIRE = 'force'
+    const env = repoScopedEnv()
+    expect(env.SSH_ASKPASS).toBeUndefined()
+    expect(env.SSH_ASKPASS_REQUIRE).toBeUndefined()
+  })
+
   it('sets GIT_TERMINAL_PROMPT=0 (never block on a credential prompt) — overriding any inherited value', () => {
     delete process.env.GIT_TERMINAL_PROMPT
     expect(repoScopedEnv().GIT_TERMINAL_PROMPT).toBe('0')
