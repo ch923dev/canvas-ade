@@ -18,17 +18,12 @@ describe('inspectorEligible — the Inspector has content only for one board at 
   })
 })
 
-describe('inspectorRevealed — given content, reveal on proximity or focus (never selection alone in P0)', () => {
-  it('stays hidden when eligible but neither in the edge zone nor focused', () => {
-    expect(inspectorRevealed(true, false, false)).toBe(false)
+describe('inspectorRevealed — v2 reveal-on-select: shown whenever a single board is eligible', () => {
+  it('reveals as soon as content is eligible (selecting a board IS the trigger)', () => {
+    expect(inspectorRevealed(true)).toBe(true)
   })
 
-  it('reveals on right-edge proximity OR focus-within once eligible', () => {
-    expect(inspectorRevealed(true, true, false)).toBe(true)
-    expect(inspectorRevealed(true, false, true)).toBe(true)
-  })
-
-  it('never reveals without content, regardless of zone/focus', () => {
-    expect(inspectorRevealed(false, true, true)).toBe(false)
+  it('stays hidden when there is no eligible single selection', () => {
+    expect(inspectorRevealed(false)).toBe(false)
   })
 })

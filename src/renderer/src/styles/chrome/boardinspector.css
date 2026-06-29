@@ -1,39 +1,56 @@
-/* ── Board Inspector (P0 shell): docked RIGHT, auto-hide — a right-edge mirror of .ca-sidepanel ──
+/* ── Board Inspector (v2 shell): a COMPACT POPOVER docked LEFT, reveal-on-select ────────────────
    Screen-space chrome, rendered OUTSIDE the React Flow transform, so it is camera-independent
    (never clips/shrinks with zoom like the on-board title-bar actions it will eventually replace).
-   z-index 45 keeps it below the 50 app-chrome islands (Dock / SidePanel / CameraCluster). */
+   z-index 45 keeps it below the 50 app-chrome islands (Dock / SidePanel / CameraCluster).
+
+   Layout (signed off 2026-06-29): docked LEFT, vertically CENTRED, sized to its CONTENT (caps at the
+   viewport height, then the body scrolls). It sits FLUSH-LEFT by default (left:12, like the
+   reference) and only shifts RIGHT to clear the file-tree SidePanel's 240px lane WHILE that panel is
+   open — so the two never overlap, but the inspector reclaims the edge the moment the tree hides
+   (the adaptive `:has()` rule below). Reveal is purely selection-driven (see BoardInspector.tsx) —
+   no proximity zone / edge handle. */
 .ca-inspector-wrap {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   z-index: 45;
-  /* Hidden panel lets canvas clicks through; the revealed panel opts back in (CSS). */
+  /* Hidden popover lets canvas clicks through; the revealed popover opts back in (CSS). */
   pointer-events: none;
 }
 .ca-inspector {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  bottom: 12px;
-  width: 240px;
+  left: 12px;
+  top: 50%;
+  /* translateY centres it; the hidden state adds a small left slide on top (see below). */
+  transform: translateY(-50%);
+  width: 234px;
+  /* Content-height: the column is only as tall as head + body + foot, capped at the viewport. */
+  max-height: calc(100% - 28px);
   display: flex;
   flex-direction: column;
   background: var(--surface-overlay);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-board);
   box-shadow: var(--shadow-pop);
   overflow: hidden;
   pointer-events: auto;
   transition:
     opacity 0.14s ease-out,
-    transform 0.14s ease-out;
+    transform 0.14s ease-out,
+    left 0.16s ease-out;
 }
 .ca-inspector[data-revealed='false'] {
   opacity: 0;
-  /* Slide AWAY from the canvas (to the right) when hiding — the mirror of SidePanel's -12px. */
-  transform: translateX(12px);
+  /* Slide in FROM the left when revealing (mirror of SidePanel's -12px), keeping vertical centring. */
+  transform: translate(-12px, -50%);
   pointer-events: none;
+}
+
+/* Adaptive offset: while the file-tree SidePanel (the sibling rendered just before BoardInspector in
+   AppChrome) is REVEALED, slide the inspector right to clear its lane (left:12 + 240 + 12 gap = 264)
+   so the two coexist side-by-side. When the tree hides, the inspector returns flush-left. Pure CSS —
+   `:has()` reads the panel's data-revealed, `~` reaches the following inspector wrap. */
+.ca-sidepanel-wrap:has(.ca-sidepanel[data-revealed='true']) ~ .ca-inspector-wrap .ca-inspector {
+  left: 264px;
 }
 
 /* Sticky identity header: type glyph + micro type tag + Jump-to-board, then the board title. */
@@ -91,9 +108,10 @@
   text-overflow: ellipsis;
 }
 
-/* Footer — universal board action(s). Pinned to the bottom. Grows as later phases land. */
+/* Footer — universal board action(s). flex:none so it keeps its height when the body scrolls; NOT
+   margin-top:auto (that would stretch the popover to full max-height even with short content — we
+   want content-height). Grows as later phases land. */
 .ca-inspector-foot {
-  margin-top: auto;
   flex: 0 0 auto;
   display: grid;
   gap: 4px;
@@ -123,48 +141,194 @@
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
 }
+/* Action extras: icon / flex label / shortcut chip, plus accent (primary), washed (active),
+   danger, and disabled variants. */
+.ca-inspector-act-ico {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+.ca-inspector-act:hover .ca-inspector-act-ico {
+  color: var(--text-2);
+}
+.ca-inspector-act-lab {
+  flex: 1;
+}
+.ca-inspector-act-kbd {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.ca-inspector-act[data-primary],
+.ca-inspector-act[data-active] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ca-inspector-act[data-active] {
+  background: var(--accent-wash);
+}
+.ca-inspector-act[data-primary]:hover {
+  background: var(--accent-wash);
+}
+.ca-inspector-act[data-primary] .ca-inspector-act-ico,
+.ca-inspector-act[data-active] .ca-inspector-act-ico {
+  color: var(--accent);
+}
+.ca-inspector-act[data-danger],
+.ca-inspector-act[data-danger] .ca-inspector-act-ico {
+  color: var(--err);
+}
+.ca-inspector-act:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  border-color: var(--border-subtle);
+}
+.ca-inspector-act:disabled .ca-inspector-act-ico {
+  color: var(--text-faint);
+}
 
-/* The handle: a slim vertical grabber advertising where the panel lives whenever a single board is
-   selected — NEVER interactive (the reveal is the window-level zone listener). Fades out under the
-   revealed panel, and is absent entirely when there is no single selection (nothing to summon). */
-.ca-inspector-handle {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 72px;
+/* Content slot — the selected board portals its per-type inspector here. flex:0 1 auto so the
+   popover is content-height when short (doesn't grow to fill), but the body shrinks + scrolls when
+   the total exceeds the viewport cap (head/foot are flex:none, so only this scrolls). Collapses to
+   nothing for a board type that has no inspector yet (empty slot). */
+.ca-inspector-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ca-inspector-body:empty {
+  display: none;
+}
+
+/* ── Primitives toolkit (shared by every per-type inspector) ────────────────────── */
+.ca-inspector-section {
+  border-top: 1px solid var(--border-subtle);
+}
+.ca-inspector-section:first-child {
+  border-top: none;
+}
+.ca-inspector-section-hd {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.ca-inspector-section-lab {
+  flex: 1;
+  text-align: left;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-3);
+}
+.ca-inspector-section-hd:hover .ca-inspector-section-lab {
+  color: var(--text-2);
+}
+.ca-inspector-chev {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.12s ease-out;
+}
+.ca-inspector-chev[data-open='true'] {
+  transform: rotate(90deg);
+}
+.ca-inspector-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px 9px;
+}
+
+.ca-inspector-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ca-inspector-row-lab {
+  flex: 1;
+  font-size: var(--fs-label);
+  color: var(--text-2);
+}
+
+/* −/value/+ stepper */
+.ca-inspector-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ca-inspector-step button {
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.14s ease-out;
+  font-size: 14px;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
 }
-.ca-inspector-handle[data-active='true'] {
-  opacity: 1;
+.ca-inspector-step button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
-.ca-inspector-handle[data-revealed='true'] {
-  opacity: 0;
+.ca-inspector-step button:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
-.ca-inspector-handle::after {
-  content: '';
-  width: 5px;
-  height: 56px;
-  border-radius: 3px;
-  background: var(--border);
+.ca-inspector-step-val {
+  min-width: 30px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: var(--text);
 }
 
-/* Reduced-motion: drop the slide/fade transitions on BOTH the new right Inspector AND the existing
-   left SidePanel (the back-port the redesign flagged — SidePanel shipped without this override).
-   Visibility still toggles, just without the 0.14s translate+fade. */
+/* Read-only meta row (mono key/value), e.g. shell / command / cwd */
+.ca-inspector-meta {
+  min-height: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+.ca-inspector-meta-lab {
+  flex: none;
+  color: var(--text-3);
+}
+.ca-inspector-meta-val {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Reduced-motion: drop the slide/fade transitions on BOTH the Inspector AND the existing left
+   SidePanel (the back-port the redesign flagged — SidePanel shipped without this override).
+   Visibility still toggles, just without the 0.14s translate+fade. The hidden Inspector keeps its
+   translateY(-50%) centring (only the slide is dropped); the SidePanel resets to none as before. */
 @media (prefers-reduced-motion: reduce) {
   .ca-inspector,
-  .ca-inspector-handle,
   .ca-sidepanel,
   .ca-sidepanel-handle {
     transition: none;
   }
-  .ca-inspector[data-revealed='false'],
+  .ca-inspector[data-revealed='false'] {
+    transform: translateY(-50%);
+  }
   .ca-sidepanel[data-revealed='false'] {
     transform: none;
   }

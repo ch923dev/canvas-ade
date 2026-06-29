@@ -12,9 +12,10 @@ export function inspectorEligible(selectedCount: number, zoom: number): boolean 
   return selectedCount === 1 && zoom >= MIN_ZOOM
 }
 
-/** Given content exists, the panel reveals on right-edge proximity or focus-within — never on
- *  selection alone in P0, so synthetic e2e clicks (which never sweep to the screen edge) can't
- *  raise it over a board. */
-export function inspectorRevealed(eligible: boolean, inZone: boolean, focused: boolean): boolean {
-  return eligible && (inZone || focused)
+/** v2 reveal-on-select: the compact left-docked popover is shown whenever there is a single
+ *  eligible selection — selecting a board IS the trigger (mirrors a properties panel). There is no
+ *  proximity/focus gate anymore. Dismissal is deselection (click empty canvas / select another
+ *  board), which the canvas already does — so reveal simply tracks eligibility. */
+export function inspectorRevealed(eligible: boolean): boolean {
+  return eligible
 }

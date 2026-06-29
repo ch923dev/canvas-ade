@@ -14,8 +14,9 @@
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
-import { BoardFrame, IconBtn } from '../BoardFrame'
+import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
@@ -61,14 +62,16 @@ import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 import { TerminalFindBar } from './terminal/TerminalFindBar'
+import { TerminalActions } from './terminal/TerminalActions'
+import { TerminalInspector } from './terminal/TerminalInspector'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 import {
   shell,
   shellHidden,
   screenWrap,
   screen,
   idleOverlay,
-  startBtn,
-  interruptChip
+  startBtn
 } from './terminal/terminalBoardStyles'
 
 export function TerminalBoard({
@@ -157,7 +160,8 @@ export function TerminalBoard({
     restart,
     counterScale,
     findOpen,
-    findApi
+    findApi,
+    openFind
   } = useTerminalSpawn({
     board,
     projectDir,
@@ -184,6 +188,10 @@ export function TerminalBoard({
   const [restartMenu, setRestartMenu] = useState(false)
   const restartBtnRef = useRef<HTMLSpanElement>(null)
   const canResume = !!board.agentSessionId
+  // P0.5 Board Inspector: non-null only when THIS terminal is the single eligible selection (the
+  // shell publishes its content slot then). We portal our per-type inspector into it below — reusing
+  // the very same handlers the title-bar actions use, so there is no duplicated wiring or state.
+  const inspectorSlot = useInspectorSlot(board.id)
   // D4-A: consume palette restart intents for this board (resume/new — same launch
   // override + respawn path as the Restart menu below).
   usePaletteRestart(board.id, board.agentSessionId, launchOverrideRef, restart)
@@ -436,75 +444,25 @@ export function TerminalBoard({
   // the ± buttons disable at the same pin regardless of zoom (the render font is pin × cs).
   const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
   const actions = (
-    <>
-      {/* TERM-06: transient "interrupt sent" chip (sits by the pill, before the buttons). */}
-      {interruptSent && (
-        <span className="nodrag" style={interruptChip} data-test="interrupt-sent">
-          ⏹ interrupt sent
-        </span>
-      )}
-      {(selected || hovered) && (
-        <>
-          <IconBtn
-            name="minus"
-            title="Smaller font (Ctrl -)"
-            onClick={() => nudgeFont(-1)}
-            disabled={effectiveFont <= MIN_TERMINAL_FONT}
-          />
-          <IconBtn
-            name="plus"
-            title="Bigger font (Ctrl +)"
-            onClick={() => nudgeFont(1)}
-            disabled={effectiveFont >= MAX_TERMINAL_FONT}
-          />
-        </>
-      )}
-      {running && (
-        <IconBtn
-          name="stop"
-          title="Interrupt (Ctrl-C)"
-          active={interruptSent}
-          onClick={interrupt}
-        />
-      )}
-      <IconBtn
-        name="globe"
-        title="Click: preview in linked browser · Hold / right-click: choose browser(s)"
-        onClick={() => void onPreview('tap')}
-        onLongPress={() => void onPreview('hold')}
-        onContextMenu={() => void onPreview('hold')}
-      />
-      {/* Configure opens the unified New Terminal dialog in edit mode (a modal). The data-test
-          span gives the e2e a click handle (IconBtn forwards no ref/data-test). */}
-      <span data-test={`config-${board.id}`} style={{ display: 'inline-flex' }}>
-        <IconBtn
-          name="settings"
-          title="Configure terminal"
-          active={configOpen}
-          onClick={() => setConfigOpen(true)}
-        />
-      </span>
-      {/* The restart span anchors the resume/new menu (IconBtn forwards no ref): it's the
-          menu's outside-close exclusion, so the trigger click toggles. */}
-      <span ref={restartBtnRef} style={{ display: 'inline-flex' }}>
-        <IconBtn
-          name="restart"
-          title={canResume ? 'Restart (resume or new session)' : 'Restart'}
-          active={restartMenu}
-          onClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
-        />
-      </span>
-      {/* T15: flip to the recap back-face. IconBtn has no data-test prop, so the e2e/test
-          hook (`flip-<id>`) rides a wrapping span. */}
-      <span data-test={`flip-${board.id}`} style={{ display: 'inline-flex' }}>
-        <IconBtn
-          name="back"
-          title={flipped ? 'Show terminal' : 'Show recap'}
-          active={flipped}
-          onClick={flip.toggle}
-        />
-      </span>
-    </>
+    <TerminalActions
+      boardId={board.id}
+      selected={selected}
+      hovered={hovered}
+      running={running}
+      interruptSent={interruptSent}
+      onInterrupt={interrupt}
+      effectiveFont={effectiveFont}
+      onNudgeFont={nudgeFont}
+      onPreview={(g) => void onPreview(g)}
+      configOpen={configOpen}
+      onConfigure={() => setConfigOpen(true)}
+      restartBtnRef={restartBtnRef}
+      canResume={canResume}
+      restartMenuOpen={restartMenu}
+      onRestartClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
+      flipped={flipped}
+      onToggleFlip={flip.toggle}
+    />
   )
 
   // Right-click context menu over the well. Reuses the planning menu component. When the
@@ -546,6 +504,43 @@ export function TerminalBoard({
   // running agent still pulses `--ok` while zoomed out.
   return (
     <>
+      {/* P0.5 Board Inspector content — portaled into the shell's slot only while this terminal is the
+          single eligible selection. Same handlers as the title-bar actions (kept), zero duplication. */}
+      {inspectorSlot &&
+        createPortal(
+          <TerminalInspector
+            running={running}
+            interruptSent={interruptSent}
+            onInterrupt={interrupt}
+            font={effectiveFont}
+            defaultFont={DEFAULT_TERMINAL_FONT}
+            onDecFont={() => nudgeFont(-1)}
+            onIncFont={() => nudgeFont(1)}
+            decFontDisabled={effectiveFont <= MIN_TERMINAL_FONT}
+            incFontDisabled={effectiveFont >= MAX_TERMINAL_FONT}
+            onResetFont={resetFont}
+            canResume={canResume}
+            onRestart={restart}
+            onResume={() => {
+              launchOverrideRef.current = resumeCommand(board.agentSessionId)
+              restart()
+            }}
+            onNew={() => {
+              launchOverrideRef.current = undefined
+              restart()
+            }}
+            recapShown={flipped}
+            onToggleRecap={flip.toggle}
+            onFind={openFind}
+            shell={board.shell}
+            command={board.launchCommand}
+            cwd={board.cwd}
+            onConfigure={() => setConfigOpen(true)}
+            onPushPreview={() => void onPreview('tap')}
+            onChooseTarget={() => void onPreview('hold')}
+          />,
+          inspectorSlot
+        )}
       <BoardFrame
         type="terminal"
         boardId={board.id}
