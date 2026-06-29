@@ -249,6 +249,9 @@ export interface TerminalSpawnApi {
   findOpen: boolean
   /** Stable handle the host passes to TerminalFindBar. */
   findApi: TerminalFindApi
+  /** Open the find bar (Ctrl/Cmd+F equivalent) — surfaces the keyboard-only Find as a clickable
+   *  affordance for the Board Inspector's Session section. */
+  openFind: () => void
 }
 
 /** Requires ReactFlowProvider (useStoreApi) + BoardFullViewContext in the render tree. */
@@ -265,6 +268,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const [findOpen, setFindOpen] = useState(false)
   const closeFind = useCallback(() => setFindOpen(false), [])
+  const openFind = useCallback(() => setFindOpen(true), [])
   const findApi = useMemo<TerminalFindApi>(
     () => ({ close: closeFind, addonRef: searchAddonRef, termRef }),
     [closeFind]
@@ -943,6 +947,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     restart,
     counterScale,
     findOpen,
-    findApi
+    findApi,
+    openFind
   }
 }

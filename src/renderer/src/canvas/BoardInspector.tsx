@@ -2,9 +2,14 @@
  * Board Inspector — P0 SHELL (the floating right-edge, selection-retargeted options island).
  *
  * The redesign home for the per-board header long-tail (see docs/research/mocks/board-inspector-mock).
- * This first slice is the SHELL ONLY: no per-type controls have moved yet. It proves the mechanism —
- * a single screen-space panel, rendered as app chrome OUTSIDE the React Flow transform, so it stays
+ * A single screen-space panel, rendered as app chrome OUTSIDE the React Flow transform, so it stays
  * crisp + clickable at any zoom and at the LOD threshold where on-board chrome is sub-pixel.
+ *
+ * The shell owns the chrome + identity (TypeGlyph / type tag / title / Jump / Duplicate, all store-
+ * driven) and exposes a CONTENT SLOT (`inspectorSlotStore`); the single eligible board portals its
+ * OWN per-type inspector (`TerminalInspector`, …) into that slot — so per-type controls reuse the
+ * board's exact handlers with zero duplication (P0.5). A board type with no inspector yet (browser,
+ * planning, …) simply leaves the slot empty until its phase lands.
  *
  * It is a right-edge mirror of `SidePanel.tsx`: same auto-hide reveal machine (proximity zone with
  * entrance/exit hysteresis, registered ONCE with closure-locals so a deps-driven re-register can't
@@ -21,10 +26,11 @@
  * `pendingFocusId` intent a Canvas effect consumes; `duplicateBoard`) — it never writes selection,
  * never touches React Flow internals, and never reparents board content.
  */
-import { useEffect, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import type { BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
 import { inspectorEligible, inspectorRevealed } from './boardInspectorReveal'
+import { useInspectorSlotStore } from './inspector/inspectorSlotStore'
 import { TypeGlyph } from './TypeGlyph'
 
 /** Revealed-panel width (px) — mirrors SidePanel. */
@@ -61,6 +67,19 @@ export function BoardInspector(): ReactElement | null {
 
   const eligible = inspectorEligible(board ? 1 : 0, zoom)
   const revealed = inspectorRevealed(eligible, inZone, focused)
+
+  // Publish which board owns the content slot (the single eligible one) so that board can portal
+  // its per-type inspector in. Tracks eligibility, NOT reveal — the content stays mounted while
+  // hidden (behind `inert`/opacity) so it is ready the instant the panel reveals.
+  const activeBoardId = eligible && board ? board.id : null
+  useEffect(() => {
+    useInspectorSlotStore.getState().setActiveBoardId(activeBoardId)
+  }, [activeBoardId])
+  // Stable callback ref (recreating it each render would detach/reattach the slot every render and
+  // thrash every board's portal). Publishes the slot DOM node on mount / null on unmount.
+  const setSlotRef = useCallback((el: HTMLDivElement | null) => {
+    useInspectorSlotStore.getState().setSlotEl(el)
+  }, [])
 
   // Right-edge proximity machine — the SidePanel reveal machine mirrored to the right edge. All
   // mutable state lives in closure locals and the listeners are registered ONCE (mid-dispatch-safe);
@@ -191,6 +210,9 @@ export function BoardInspector(): ReactElement | null {
               </div>
               <div className="ca-inspector-title">{board.title}</div>
             </div>
+
+            {/* Per-type content slot — the selected board portals its own <XInspector> in here. */}
+            <div className="ca-inspector-body" ref={setSlotRef} />
 
             <div className="ca-inspector-foot">
               <button

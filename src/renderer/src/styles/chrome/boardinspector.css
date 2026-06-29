@@ -123,6 +123,178 @@
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
 }
+/* Action extras: icon / flex label / shortcut chip, plus accent (primary), washed (active),
+   danger, and disabled variants. */
+.ca-inspector-act-ico {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+.ca-inspector-act:hover .ca-inspector-act-ico {
+  color: var(--text-2);
+}
+.ca-inspector-act-lab {
+  flex: 1;
+}
+.ca-inspector-act-kbd {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.ca-inspector-act[data-primary],
+.ca-inspector-act[data-active] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ca-inspector-act[data-active] {
+  background: var(--accent-wash);
+}
+.ca-inspector-act[data-primary]:hover {
+  background: var(--accent-wash);
+}
+.ca-inspector-act[data-primary] .ca-inspector-act-ico,
+.ca-inspector-act[data-active] .ca-inspector-act-ico {
+  color: var(--accent);
+}
+.ca-inspector-act[data-danger],
+.ca-inspector-act[data-danger] .ca-inspector-act-ico {
+  color: var(--err);
+}
+.ca-inspector-act:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  border-color: var(--border-subtle);
+}
+.ca-inspector-act:disabled .ca-inspector-act-ico {
+  color: var(--text-faint);
+}
+
+/* Content slot — the selected board portals its per-type inspector here; scrolls independently of
+   the head/foot. Collapses to nothing for a board type that has no inspector yet (empty slot). */
+.ca-inspector-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ca-inspector-body:empty {
+  display: none;
+}
+
+/* ── Primitives toolkit (shared by every per-type inspector) ────────────────────── */
+.ca-inspector-section {
+  border-top: 1px solid var(--border-subtle);
+}
+.ca-inspector-section:first-child {
+  border-top: none;
+}
+.ca-inspector-section-hd {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.ca-inspector-section-lab {
+  flex: 1;
+  text-align: left;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-3);
+}
+.ca-inspector-section-hd:hover .ca-inspector-section-lab {
+  color: var(--text-2);
+}
+.ca-inspector-chev {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.12s ease-out;
+}
+.ca-inspector-chev[data-open='true'] {
+  transform: rotate(90deg);
+}
+.ca-inspector-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px 9px;
+}
+
+.ca-inspector-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ca-inspector-row-lab {
+  flex: 1;
+  font-size: var(--fs-label);
+  color: var(--text-2);
+}
+
+/* −/value/+ stepper */
+.ca-inspector-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ca-inspector-step button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-step button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.ca-inspector-step button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.ca-inspector-step-val {
+  min-width: 30px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: var(--text);
+}
+
+/* Read-only meta row (mono key/value), e.g. shell / command / cwd */
+.ca-inspector-meta {
+  min-height: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+.ca-inspector-meta-lab {
+  flex: none;
+  color: var(--text-3);
+}
+.ca-inspector-meta-val {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* The handle: a slim vertical grabber advertising where the panel lives whenever a single board is
    selected — NEVER interactive (the reveal is the window-level zone listener). Fades out under the
