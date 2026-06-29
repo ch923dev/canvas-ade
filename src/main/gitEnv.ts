@@ -17,7 +17,9 @@
  *  2. simple-git's safety net. The moment we pass an EXPLICIT env object, simple-git inspects it
  *     and REFUSES to spawn if it carries a dangerous git var (GIT_EDITOR, GIT_SSH, GIT_PAGER,
  *     GIT_ASKPASS, GIT_EXTERNAL_DIFF, …) unless the matching `allowUnsafe*` flag is set — and we
- *     will not enable those flags (that would weaken the model).
+ *     will not enable those flags (that would weaken the model). NOTE: that block-list also covers
+ *     `SSH_ASKPASS`, an OpenSSH var with NO `GIT_` prefix — so the `GIT_*` sweep misses it and the
+ *     guard still trips. It is stripped explicitly below (a shell like Git Bash exports it).
  *
  * Clearing the whole `GIT_*` prefix is the robust fix for (1) and the simplest way to satisfy (2)
  * without version-coupling to simple-git's block-list. It is also strictly SAFER than the default
@@ -37,5 +39,12 @@ export function repoScopedEnv(): NodeJS.ProcessEnv {
   // prompt (these reads are local + read-only, but a misconfigured repo shouldn't pin the call).
   // Not one of simple-git's flagged vars, so it never trips the spawn check.
   env.GIT_TERMINAL_PROMPT = '0'
+  // SSH_ASKPASS is an OpenSSH var (no GIT_ prefix) so the strip above misses it, yet simple-git's
+  // blockUnsafeOperationsPlugin still refuses to spawn when it is set (unless allowUnsafeAskPass —
+  // which we will NOT enable; that weakens the model). A read-only LOCAL git read needs no askpass
+  // helper, so drop it (and its companion) too. Repro: launch from a shell that exports SSH_ASKPASS
+  // (Git Bash → /mingw64/bin/git-askpass.exe) and a gitDiff/gitPermalink call errors out.
+  delete env.SSH_ASKPASS
+  delete env.SSH_ASKPASS_REQUIRE
   return env
 }
