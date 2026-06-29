@@ -1229,3 +1229,30 @@ succeed against the packed `signal-exit@4`. Full e2e matrix GREEN both legs at t
 + 1 flaky; Linux Docker 223 clean); CI green (check · CodeQL · analyze · claude-review LGTM, zero inline).
 mac/linux packaged-launch remains a manual desktop check (`docs/testing/MANUAL-CHECKS.md`); the pin
 mechanism is identical there.
+
+## 2026-06-29 — gitEnv: strip `SSH_ASKPASS` in `repoScopedEnv` (simple-git spawn guard) — #265 (`e2577bc8`)
+
+Fixed a **real user-facing robustness bug** in the shared MAIN read-only git-env scrubber. Surfaced
+when the pre-push e2e gate false-failed from a **Git Bash** shell (it sets
+`SSH_ASKPASS=/mingw64/bin/git-askpass.exe`); the dev box normally runs the suite from PowerShell,
+where the var is unset, so it masqueraded as a flake.
+
+**Root cause:** `repoScopedEnv()` (behind every `simple-git` seam — `boardGitDiff`, `file:gitPermalink`)
+strips every `GIT_*` var so git's directory discovery falls back to the spawn path, which *also* clears
+the dangerous vars `simple-git`'s `blockUnsafeOperationsPlugin` refuses to spawn on (`GIT_ASKPASS`,
+`GIT_SSH`, …). But **`SSH_ASKPASS` is an OpenSSH var with no `GIT_` prefix**, so the sweep missed it and
+the guard still tripped (`GitPluginError: Use of "SSH_ASKPASS" is not permitted without enabling
+allowUnsafeAskPass`) → broken `gitDiff` / `gitPermalink` for any user whose shell exports it.
+
+**Fix (1-commit, `src/main/gitEnv.ts` + test):** after the `GIT_*` strip, explicitly
+`delete env.SSH_ASKPASS` + `env.SSH_ASKPASS_REQUIRE`. The guard is **kept** — trigger removed, NOT
+`allowUnsafeAskPass` enabled (that would weaken the model). A read-only LOCAL git read never needs an
+askpass helper. Both call sites already route through `repoScopedEnv()` (`gitDiff.ts`, `fileIpc.ts`) —
+no stray env site. The `env -u SSH_ASKPASS` gate workaround (memory `e2e-ssh-askpass-gitbash`) is now
+obsolete for these seams.
+
+**Verified:** unit (`gitEnv.test.ts`, 6/6 — new case asserts both vars cleared, non-GIT vars
+preserved). e2e **contrast** from Git Bash **with `SSH_ASKPASS` set** (the exact regression condition):
+un-fixed code → `gitDiff.e2e.ts:104 @terminal` FAILS; fixed code → 3/3 pass. Full e2e matrix GREEN both
+legs (Windows 222 + Linux Docker 223). CI green (check · CodeQL · analyze · claude-review, zero inline).
+The review-package handoff collapsed to `docs/reviews/2026-06-29-gitenv-ssh-askpass/SUMMARY.md` + index row.
