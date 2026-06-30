@@ -1256,3 +1256,29 @@ preserved). e2e **contrast** from Git Bash **with `SSH_ASKPASS` set** (the exact
 un-fixed code → `gitDiff.e2e.ts:104 @terminal` FAILS; fixed code → 3/3 pass. Full e2e matrix GREEN both
 legs (Windows 222 + Linux Docker 223). CI green (check · CodeQL · analyze · claude-review, zero inline).
 The review-package handoff collapsed to `docs/reviews/2026-06-29-gitenv-ssh-askpass/SUMMARY.md` + index row.
+
+## 2026-06-30 — Configurable MCP orchestrator spawn cap (default 4) — #266 (`1dcf560d`)
+
+Made the orchestrator's runaway-swarm guard — the cap on concurrently-spawned worker boards — a
+**user setting** (Settings → Agent orchestration → "Max concurrent workers"), defaulting to 4. It was
+hard-coded at `MCP_SPAWN_CAP = 4` (MAIN) mirrored by `WORKER_SPAWN_CAP = 4` (renderer).
+
+**Design:** **app-level** config (`<userData>/orchestration-config.json`), not per-project — the MCP
+server is a process singleton, so the cap is app-wide (a machine-resource guard); no `canvas.json`
+schema bump. **Live-updatable:** `buildOrchestrator`/`createMcpLifecycle` now accept `number | (() =>
+number)`; `index.ts` passes a getter that reads the config FRESH per spawn check, so a Settings change
+applies with no restart (and `describeApp`'s reported `rules.spawnCap` reflects it). **Clamp `[1,16]`,
+default 4** (unbounded would defeat the guard). Lowering below the live count blocks NEW spawns and
+leaves running workers alone (the existing reject-on-cap behavior — never kills in-flight work).
+
+**Chain:** `orchestrationConfig.ts` (new MAIN: pure I/O + `clampSpawnCap` + frame-guarded
+`orchestration:getSpawnCap`/`setSpawnCap` IPC; `DEFAULT_SPAWN_CAP` lock-stepped to `MCP_SPAWN_CAP`) ·
+`mcpRegistry`/`mcpOrchestrator`/`mcpLifecycle`/`mcp`/`index` (number-or-getter cap) · renderer
+`workerPool` (cap arg + clamp) + `orchestrationConfigStore` (new reactive cache, hydrate-on-mount /
+update-after-write) + `CommandBoard` (PoolStrip + dispatch pump read it live) · `SettingsModal` (the field).
+
+**Verified:** typecheck · lint · format · 3802 unit/integration tests (incl. the new orchestrationConfig
+suite, a live-cap lifecycle test proving raise→spawn / lower→block / nothing-killed, workerPool + 3
+SettingsModal tests). Full e2e matrix GREEN both legs (Windows 222 + Linux Docker 223). CI green
+(check · CodeQL · analyze · claude-review, zero inline). Manual dev check confirmed the field, the live
+cap, and the PoolStrip update.
