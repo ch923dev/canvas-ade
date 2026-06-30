@@ -1282,3 +1282,35 @@ suite, a live-cap lifecycle test proving raise→spawn / lower→block / nothing
 SettingsModal tests). Full e2e matrix GREEN both legs (Windows 222 + Linux Docker 223). CI green
 (check · CodeQL · analyze · claude-review, zero inline). Manual dev check confirmed the field, the live
 cap, and the PoolStrip update.
+
+## 2026-06-30 — Planning export text-wrap + checklist empty-until-resize fix — #267 (`fc20956b`)
+
+Two Planning-board bugs surfaced by a real export (notes/text overflowing every box in the exported
+PNG; checklists sometimes rendering empty).
+
+**1. Exported text didn't wrap.** `whiteboardExport.ts` emitted one SVG `<text>`/`<tspan>` per SOURCE
+line — SVG `<text>` has no auto-wrap — so notes, area-text, and checklist labels (all of which soft-wrap
+on-canvas) overflowed their boxes, overlapped neighbours, and ran off the frame; the SVG canvas also
+sized from `elementBBox` with no measurement (notes used the stale `h:96`, free text `TEXT_NOMINAL
+120×22`), clipping even correctly-placed text. **Fix:** pure `wrapText()` + `estimateLineWidth` in
+`textStyle.ts` (greedy word-wrap + hard-split for overlong tokens); `boardToSvg(board, assets, measure?)`
+takes an injected `MeasureText`, and each element now reports the box it ACTUALLY occupies, so the
+note/checklist boxes + the SVG canvas grow to fit; `exportBoard.ts` backs the measurer with a real
+`canvas.measureText` (export font stack → pixel-accurate), with the heuristic as the node-test fallback.
+Auto-text (no `width`) stays single-line, matching `FreeText`.
+
+**2. Checklist rendered empty until resized.** `ChecklistCard` auto-sizes its label textareas in a
+`useLayoutEffect`; `BoardNode` renders board content into a DETACHED portal host and re-attaches it in a
+PARENT layout effect that runs AFTER the card's child one — so a LOD zoom-out→in remount measured
+`scrollHeight===0` while detached → every label collapsed to `height:0px`, and nothing re-fired
+`[items,w]` until a resize. (`NoteCard` is unaffected — it auto-sizes in a passive `useEffect`, which
+runs after the re-attach.) **Fix:** `autoSizeRow` no longer collapses a row to `0px` on a zero-layout
+read, and the card's `ResizeObserver` re-sizes rows once it has layout (guarded for envs without
+`ResizeObserver`).
+
+No schema change; renderer-scoped (`planning/{whiteboardExport,textStyle,exportBoard,ChecklistCard}` +
+tests). **Verified:** typecheck · lint · format · 354/354 planning unit tests (incl. 11 new — wrapText/
+estimateLineWidth, note/area-text/checklist wrap+grow, the injected-measurer DI seam). Full e2e matrix
+GREEN both legs (Windows 223 — two unrelated @core/@preview env flakes rerun 15/15 — + Linux Docker 223).
+CI green (check · CodeQL · analyze · claude-review, zero inline). Manual dev check confirmed the live
+export wrap + the checklist LOD-remount.
