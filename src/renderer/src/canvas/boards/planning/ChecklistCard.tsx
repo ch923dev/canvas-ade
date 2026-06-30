@@ -80,7 +80,13 @@ function Checkbox({ done }: { done: boolean }): ReactElement {
 function autoSizeRow(el: HTMLTextAreaElement | null): void {
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = `${el.scrollHeight}px`
+  const h = el.scrollHeight
+  // `scrollHeight === 0` means the card has no layout yet — the BoardNode portal host is detached
+  // when this runs (its re-attach is a PARENT layout effect, which runs AFTER this child one on a
+  // LOD zoom-in remount). Collapsing the row to `0px` here is the "checklist renders empty until you
+  // resize it" bug: nothing re-fires `[items, w]`, so it stays collapsed. Leave the row at its
+  // natural one-row height (`auto`) and let the card's ResizeObserver re-run this once it has layout.
+  el.style.height = h > 0 ? `${h}px` : ''
 }
 
 // Memoized: stable callbacks from PlanningBoard + an element object that only changes
@@ -142,12 +148,21 @@ export const ChecklistCard = memo(function ChecklistCard({
   // offsetHeight is in board-local px (the card lives inside the unzoomed well).
   useEffect(() => {
     const el = cardRef.current
-    if (!el || (!onMeasureBottom && !onMeasure)) return
+    if (!el) return
     const report = (): void => {
+      // Re-size every label first: when the card transitions from no-layout (detached portal host,
+      // font swap) to laid-out, the row auto-size that ran too early measured 0 and bailed — this
+      // heals it the moment the card has real layout (the "empty until resize" fix). Idempotent:
+      // once heights are stable scrollHeight stops changing, so this converges (no RO loop).
+      itemRefs.current.forEach(autoSizeRow)
       onMeasureBottom?.(element.id, element.y + el.offsetHeight)
       onMeasure?.(element.id, el.offsetWidth, el.offsetHeight)
     }
     report()
+    // The one-shot report() above already heals the rows on (re)mount-after-attach — the
+    // ResizeObserver is the live follow-up for subsequent layout changes (width drag, font swap).
+    // Guard its construction so a test/headless env without ResizeObserver still gets the heal.
+    if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(report)
     ro.observe(el)
     return () => ro.disconnect()

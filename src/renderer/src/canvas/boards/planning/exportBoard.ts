@@ -7,6 +7,29 @@
  */
 import type { PlanningBoard } from '../../../lib/boardSchema'
 import { boardToSvg, type ExportResult } from './whiteboardExport'
+import { FAMILY_EXPORT, type MeasureText } from './textStyle'
+
+/**
+ * Real text measurer for the export wrap, backed by an offscreen `canvas.measureText` using the
+ * EXPORT font stacks (what the rasterized SVG actually renders with in this Chromium) — so wrapped
+ * lines fit the output pixel-for-pixel instead of the pure heuristic's char-count estimate. Created
+ * once and reused. `undefined` when 2d is unavailable (headless) → boardToSvg falls back to the
+ * heuristic. Weight is not modelled (matches the heuristic); the box padding absorbs bold drift.
+ */
+let measurer: MeasureText | null | undefined
+function exportMeasurer(): MeasureText | undefined {
+  if (measurer !== undefined) return measurer ?? undefined
+  const ctx = document.createElement('canvas').getContext('2d')
+  if (!ctx) {
+    measurer = null
+    return undefined
+  }
+  measurer = (text, px, family) => {
+    ctx.font = `${px}px ${FAMILY_EXPORT[family]}`
+    return ctx.measureText(text).width
+  }
+  return measurer
+}
 
 /** Bytes → `data:<mime>;base64,<…>` (chunked to avoid a call-stack blowup on large blobs). */
 function bytesToDataUri(bytes: Uint8Array, mime: string): string {
@@ -98,7 +121,7 @@ export async function buildExport(
   format: 'png' | 'svg'
 ): Promise<BuiltExport> {
   const assets = await gatherAssets(board)
-  const result = boardToSvg(board, assets)
+  const result = boardToSvg(board, assets, exportMeasurer())
   if (format === 'svg') {
     return { result, bytes: new TextEncoder().encode(result.svg), ext: 'svg' }
   }

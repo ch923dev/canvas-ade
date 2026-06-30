@@ -85,6 +85,70 @@ export function estimateTextWidth(text: string, px: number, family: FontFamilyTo
   return Math.max(MIN_TEXT_WIDTH_PX, Math.round(longest * px * CHAR_ADVANCE[family]))
 }
 
+/**
+ * Signature of a single-line text-width measurer (px) for a string at a given size + family. The
+ * SVG export injects a real `canvas.measureText`-backed measurer so the wrap matches the rasterized
+ * output pixel-for-pixel; pure callers (unit tests, node env) fall back to `estimateLineWidth`.
+ */
+export type MeasureText = (text: string, px: number, family: FontFamilyToken) => number
+
+/**
+ * Heuristic single-line width (px), NO DOM: glyph count × size × per-family advance. The pure
+ * fallback for `wrapText` (and the export) when no real measurer is supplied. Unlike
+ * `estimateTextWidth` it neither floors at MIN_TEXT_WIDTH_PX nor scans for the longest line — it is a
+ * raw one-line measure the wrap algorithm calls per candidate.
+ */
+export function estimateLineWidth(text: string, px: number, family: FontFamilyToken): number {
+  return text.length * px * CHAR_ADVANCE[family]
+}
+
+/**
+ * Word-wrap `raw` to `maxWidth` px, keeping explicit '\n' as hard line breaks. Greedy by
+ * whitespace; a single token wider than `maxWidth` is hard-split mid-word (URLs, long identifiers)
+ * so it can never overflow its box. Returns the ordered display lines (always ≥1 — an empty/blank
+ * paragraph yields one empty line, matching a one-row textarea). `measure` defaults to the heuristic
+ * so this stays pure + node-testable; the SVG export passes a real canvas-backed measurer.
+ */
+export function wrapText(
+  raw: string,
+  maxWidth: number,
+  px: number,
+  family: FontFamilyToken,
+  measure: MeasureText = estimateLineWidth
+): string[] {
+  const lines: string[] = []
+  for (const paragraph of raw.split('\n')) {
+    if (paragraph === '') {
+      lines.push('')
+      continue
+    }
+    let line = ''
+    for (let word of paragraph.split(' ')) {
+      // Hard-split a single token that alone exceeds the box so it wraps instead of overflowing.
+      while (word.length > 1 && measure(word, px, family) > maxWidth) {
+        let cut = word.length - 1
+        while (cut > 1 && measure(word.slice(0, cut), px, family) > maxWidth) cut--
+        if (line) {
+          lines.push(line)
+          line = ''
+        }
+        lines.push(word.slice(0, cut))
+        word = word.slice(cut)
+      }
+      if (word === '') continue
+      const candidate = line ? `${line} ${word}` : word
+      if (line && measure(candidate, px, family) > maxWidth) {
+        lines.push(line)
+        line = word
+      } else {
+        line = candidate
+      }
+    }
+    lines.push(line)
+  }
+  return lines
+}
+
 /** Live color (CSS custom prop). */
 export const COLOR_CSS: Record<TextColorToken, string> = {
   default: 'var(--text)',
