@@ -120,6 +120,37 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     await expect(life.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
   })
 
+  it('reads a getter cap FRESH per spawn so a live config change applies (no rebuild)', async () => {
+    // buildOrchestrator passes a getter (the Settings-backed config) instead of a fixed number, so
+    // raising/lowering the cap takes effect on the next spawn check without rebuilding anything.
+    const clock = 0
+    const { registry, boards } = liveReg()
+    let cap = 2
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: () => cap,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boards)
+    })
+    // Fill to the initial cap of 2 → the 3rd spawn is rejected.
+    await life.spawnBoard({ type: 'terminal' })
+    await life.spawnBoard({ type: 'terminal' })
+    await expect(life.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+    // Raise the cap LIVE → the next spawn now succeeds (the getter is re-read).
+    cap = 4
+    await expect(life.spawnBoard({ type: 'terminal' })).resolves.toMatchObject({
+      id: expect.any(String)
+    })
+    // 3 boards live now; LOWER the cap below the live count → a new spawn rejects, but the existing
+    // boards are untouched (the chosen "leave running, block new" semantics).
+    cap = 2
+    await expect(life.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+    expect(boards.length).toBe(3)
+  })
+
   it('🔒 BUG-009: closeBoard frees the cap slot even when removeBoard fails (PTY already dead)', async () => {
     const clock = 0
     const drained: string[] = []

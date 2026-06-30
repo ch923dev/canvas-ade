@@ -840,7 +840,12 @@ const api = {
     getProvisionStatus: (): Promise<OrchestrationProvisionStatus | null> =>
       ipcRenderer.invoke('orchestration:getProvisionStatus'),
     sync: (ids: OrchestrationCliId[]): Promise<OrchestrationSyncResult[]> =>
-      ipcRenderer.invoke('orchestration:syncProvisioners', ids)
+      ipcRenderer.invoke('orchestration:syncProvisioners', ids),
+    // App-wide MCP spawn concurrency cap (runaway-swarm guard). getSpawnCap returns the effective
+    // cap (default 4); setSpawnCap persists an in-range integer [1,16] and returns a typed result.
+    getSpawnCap: (): Promise<number> => ipcRenderer.invoke('orchestration:getSpawnCap'),
+    setSpawnCap: (cap: number): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke('orchestration:setSpawnCap', cap)
   },
 
   // ── Phase 5 auto-update (electron-updater; main owns the feed/download) ──

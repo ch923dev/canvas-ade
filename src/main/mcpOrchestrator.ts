@@ -103,7 +103,13 @@ export function buildOrchestrator(
   opts: OrchestratorOpts = {}
 ): LifecycleOrchestrator {
   const now = opts.now ?? Date.now
-  const cap = opts.cap ?? MCP_SPAWN_CAP
+  // The spawn cap may be a fixed number OR a getter (the live Settings-backed config). Normalize to
+  // a getter so the lifecycle's cap check + describeApp's reported rule always read the CURRENT
+  // value — a user raising/lowering the cap takes effect without rebuilding the orchestrator.
+  // Capture into a const first so the typeof-narrowing survives into the constant-getter closure.
+  const capOpt = opts.cap
+  const getCap: () => number =
+    typeof capOpt === 'function' ? capOpt : (): number => capOpt ?? MCP_SPAWN_CAP
   const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
   // BUG-007: output-silence dormancy threshold for the idle-reaper (see MCP_IDLE_ACTIVITY_MS).
@@ -400,7 +406,7 @@ export function buildOrchestrator(
   const lifecycle = createMcpLifecycle({
     registry,
     now,
-    cap,
+    cap: getCap,
     idleTtlMs,
     spawnGraceMs,
     idleActivityMs,
@@ -1014,7 +1020,7 @@ export function buildOrchestrator(
           boardIds: [...g.boardIds]
         })),
         rules: {
-          spawnCap: cap,
+          spawnCap: getCap(),
           everyWriteGated: true,
           idleTtlMs,
           idleActivityMs

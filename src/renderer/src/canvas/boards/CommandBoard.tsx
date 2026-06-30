@@ -12,7 +12,7 @@
  * Owns this file; the shared surface (BoardFrame, schema, stores) is consumed, never modified. The
  * submit well, task card, and dispatch hook live in `./command/`.
  */
-import { useCallback, useMemo, type CSSProperties, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, type CSSProperties, type ReactElement } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import type { CommandBoard as CommandBoardData } from '../../lib/boardSchema'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
@@ -27,6 +27,7 @@ import {
   type TaskStatus
 } from '../../store/commandStore'
 import { deriveWorkerPool } from '../../store/workerPool'
+import { useOrchestrationConfigStore } from '../../store/orchestrationConfigStore'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { prefersReducedMotion } from '../../lib/motion'
@@ -93,16 +94,24 @@ export function CommandBoard({
   // W1-A (H6): the empty-state guard. Dispatch silently no-ops until this project grants
   // orchestration consent, so an empty board with `enabled === false` is misleading without it.
   const orchestrationEnabled = useOrchestrationStore((s) => s.enabled)
+  // The user-configurable spawn cap (Settings → Agent orchestration). Hydrated once from MAIN; the
+  // PoolStrip readout + the dispatch pump's pre-check both flow from it, so raising/lowering the cap
+  // in Settings takes effect here immediately (the MAIN enforcement reads the same config live).
+  const spawnCap = useOrchestrationConfigStore((s) => s.spawnCap)
+  useEffect(() => {
+    void useOrchestrationConfigStore.getState().load()
+  }, [])
 
   // `poolKey` IS the cache key: it changes exactly when the board-list inputs deriveWorkerPool reads
   // change (membership/type/monitorActivity), and `running` covers busy↔idle transitions. The live
   // boards snapshot is read via getState() (this render was triggered by the key change), so the
   // pool never re-derives on a position-only board update. The linter can't see the getState() read
-  // is gated by poolKey, so it reads as "unnecessary"; it is load-bearing.
+  // is gated by poolKey, so it reads as "unnecessary"; it is load-bearing. `spawnCap` is a dep so a
+  // Settings cap change re-derives the pool (updates the readout + the pump's capRef).
   const pool = useMemo(
-    () => deriveWorkerPool(useCanvasStore.getState().boards, running),
+    () => deriveWorkerPool(useCanvasStore.getState().boards, running, spawnCap),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [poolKey, running]
+    [poolKey, running, spawnCap]
   )
   // The Phase C dispatch choreography: submit → engineer → worker-config dialog → spawn group →
   // handoff → advance the kanban, serialized at the worker-pool cap. The board is a singleton, so

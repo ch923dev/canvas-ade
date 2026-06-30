@@ -46,6 +46,7 @@ import { createMemoryEngine } from './memoryEngine'
 import { performGuardedQuit, makeCrashHandler } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
+import { readOrchestrationConfig, registerSpawnCapHandlers } from './orchestrationConfig'
 import {
   listBoardMirror,
   listConnectors,
@@ -417,49 +418,57 @@ app.whenReady().then(async () => {
   // `?? Promise.resolve()` short-circuit), leaving an invisible gap in the forensic trail.
   // Append-only JSONL under userData (NEVER the project folder — must outlive any project).
   registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: userData }))
-  mcp = await startMcpServer({
-    listBoards: listBoardMirror,
-    // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
-    listConnectors,
-    // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
-    listGroups,
-    listSessions: listPtySessions,
-    // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
-    // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
-    boardActivityStaleMs: getTerminalActivityStaleMs,
-    subscribeStatus: subscribeBoardStatus,
-    readOutput: readPtyOutput,
-    readResult: readBoardResult,
-    readMemory: readProjectMemory,
-    readSummary: readBoardSummary,
-    // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
-    sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
-    // Graceful PTY drain before an MCP close_board removes the board (T3.2).
-    drainPty: (id) => drainPty(id),
-    // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
-    // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
-    writeToPty: (id, text) => writeToPty(id, text),
-    // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
-    gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
-    // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
-    confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
-    // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
-    // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
-    audit: (e) =>
-      getAuditLog()
-        ?.append(e)
-        .then(() => {})
-        .catch((err: unknown) => {
-          // A failed audit write is a forensic gap — surface it in the log even if a future
-          // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
-          // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
-          console.error('[mcp-audit] append failed', err)
-          throw err
-        }) ?? Promise.resolve(),
-    // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
-    // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
-    recordResult: (id, result) => recordBoardResult(id, result)
-  })
+  mcp = await startMcpServer(
+    {
+      listBoards: listBoardMirror,
+      // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
+      listConnectors,
+      // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
+      listGroups,
+      listSessions: listPtySessions,
+      // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
+      // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
+      boardActivityStaleMs: getTerminalActivityStaleMs,
+      subscribeStatus: subscribeBoardStatus,
+      readOutput: readPtyOutput,
+      readResult: readBoardResult,
+      readMemory: readProjectMemory,
+      readSummary: readBoardSummary,
+      // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
+      sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
+      // Graceful PTY drain before an MCP close_board removes the board (T3.2).
+      drainPty: (id) => drainPty(id),
+      // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
+      // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
+      writeToPty: (id, text) => writeToPty(id, text),
+      // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
+      gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
+      // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
+      confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
+      // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
+      // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
+      audit: (e) =>
+        getAuditLog()
+          ?.append(e)
+          .then(() => {})
+          .catch((err: unknown) => {
+            // A failed audit write is a forensic gap — surface it in the log even if a future
+            // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
+            // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
+            console.error('[mcp-audit] append failed', err)
+            throw err
+          }) ?? Promise.resolve(),
+      // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
+      // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
+      recordResult: (id, result) => recordBoardResult(id, result)
+    },
+    {
+      // The runaway-swarm spawn cap is user-configurable (orchestration-config.json in userData).
+      // Pass a getter read FRESH per spawn check so a Settings change to the cap applies live —
+      // no MAIN restart, no orchestrator rebuild. Unset/absent config ⇒ MCP_SPAWN_CAP (4).
+      cap: () => readOrchestrationConfig(userData).spawnCap
+    }
+  )
   // Phase C / C1: the renderer → MAIN orchestrator drive (Command board). Frame-guarded
   // handle() channels (spawnGroup/dispatchPrompt/interrupt) + the per-board status push that
   // advances the kanban. `() => mcp` is null until the loopback server is up (or if it failed
@@ -679,6 +688,10 @@ app.whenReady().then(async () => {
     }
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
+  // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
+  // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated
+  // llmDataDir; the orchestrator reads the same file via the `cap` getter passed to startMcpServer.
+  registerSpawnCapHandlers(ipcMain, () => mainWindow, userData)
   // Project Library (list/reveal/open files saved under <project>/.canvas/{downloads,assets}).
   registerProjectLibraryIpc(ipcMain, () => mainWindow)
 

@@ -58,7 +58,12 @@ export type DispatchStatus =
 /** Tuning + clock seam for the lifecycle cap/reaper (all optional; injected by tests). */
 export interface OrchestratorOpts {
   now?: () => number
-  cap?: number
+  /**
+   * The runaway-swarm spawn cap. A fixed number, OR a getter read fresh on each spawn check so a
+   * user's Settings change to the cap applies live (no orchestrator rebuild). Defaults to
+   * {@link MCP_SPAWN_CAP} when unset. Tests pass a plain number.
+   */
+  cap?: number | (() => number)
   idleTtlMs?: number
   spawnGraceMs?: number
   /**

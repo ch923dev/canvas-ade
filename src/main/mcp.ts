@@ -160,7 +160,16 @@ export interface RunningMcp {
  * fn. A bind/load failure is non-fatal (the server is a convenience layer, not a
  * boot dependency) — log and return null, mirroring startLocalServer.
  */
-export async function startMcpServer(registry: BoardRegistry): Promise<RunningMcp | null> {
+export async function startMcpServer(
+  registry: BoardRegistry,
+  opts: {
+    /**
+     * Live getter for the runaway-swarm spawn cap (the Settings-backed config). Read fresh on each
+     * spawn check so a user's cap change applies without restarting MAIN. Omitted ⇒ MCP_SPAWN_CAP.
+     */
+    cap?: () => number
+  } = {}
+): Promise<RunningMcp | null> {
   try {
     const { createMcpHttpServer, TokenStore, mintBoardToken } = await import('@expanse-ade/mcp')
     const tokens = new TokenStore()
@@ -168,7 +177,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       boardId: 'app',
       tier: 'orchestrator'
     })
-    const orchestrator = buildOrchestrator(registry, { idleTtlMs: IDLE_TTL_MS })
+    const orchestrator = buildOrchestrator(registry, { idleTtlMs: IDLE_TTL_MS, cap: opts.cap })
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
     // drive orchestration cables it doesn't own. Matches the orchestratorToken's boardId.
