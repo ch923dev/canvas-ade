@@ -25,7 +25,11 @@ const SPAWN_GROUP_MAX_NAME = 80
 export interface McpLifecycleDeps {
   registry: BoardRegistry
   now: () => number
-  cap: number
+  /**
+   * The runaway-swarm spawn cap. A fixed number, OR a getter read fresh on each spawn check so a
+   * user's Settings change applies live (buildOrchestrator passes a getter; tests pass a number).
+   */
+  cap: number | (() => number)
   idleTtlMs: number
   spawnGraceMs: number
   /**
@@ -84,7 +88,11 @@ export interface McpLifecycle {
 }
 
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
-  const { registry, now, cap, idleTtlMs, spawnGraceMs, idleActivityMs, listBoards } = deps
+  const { registry, now, cap: capInput, idleTtlMs, spawnGraceMs, idleActivityMs, listBoards } = deps
+  // Normalize the cap to a getter so it can be read fresh per spawn attempt (live config). Each
+  // spawn reads it ONCE into a local `cap` so the check and the error message agree even if the
+  // configured value changes mid-flight.
+  const getCap = typeof capInput === 'function' ? capInput : (): number => capInput
   // Boards this orchestrator has spawned — the cap budget (T3.1). `spawnedAt` gates
   // reconciliation (T3.4): an id absent from the live mirror is dropped only after the
   // spawn grace, so a just-spawned not-yet-published board isn't pruned. `idleSince`
@@ -118,6 +126,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // slot can be reused), then reject BEFORE minting/sending so a capped spawn has
     // no side effects.
     reconcile()
+    const cap = getCap()
     if (tracked.size >= cap) {
       throw new Error(
         `MCP spawn concurrency cap reached (${cap} live spawned boards); close one first`
@@ -185,6 +194,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // reject BEFORE minting/sending if the WHOLE cluster would exceed the cap — so a capped group
     // spawn has no side effects (no half-built zone).
     reconcile()
+    const cap = getCap()
     if (tracked.size + memberCount > cap) {
       throw new Error(
         `MCP spawn concurrency cap reached (${cap} live spawned boards); spawning this group of ` +
