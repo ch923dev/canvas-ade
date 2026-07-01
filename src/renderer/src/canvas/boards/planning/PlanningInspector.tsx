@@ -17,6 +17,8 @@ import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchem
 import { Icon } from '../../Icon'
 import { InspectorRow, InspectorSection, InspectorToggle } from '../../inspector/primitives'
 import { ExportPopover } from './ExportPopover'
+import { ElementInspectorSection } from './inspector/ElementInspectorSection'
+import type { ElementInspectorModel } from './inspector/usePlanningElementInspector'
 import { TOOL_META, type PlanTool } from './tools'
 
 const TOOLS: ReadonlyArray<{
@@ -37,6 +39,9 @@ export interface PlanningInspectorProps {
   board: PlanningBoardData
   tool: PlanTool
   snapEnabled: boolean
+  /** The selected element(s) model (P4) — the inspector grows an Element section at the top when an
+   *  element is selected in select mode; null otherwise (baseline P3 = Tools + Canvas only). */
+  element: ElementInspectorModel | null
   /** Pick a tool (the board also clears the element selection on a switch — never the board). */
   onPickTool: (tool: PlanTool) => void
   onToggleSnap: () => void
@@ -46,11 +51,16 @@ export function PlanningInspector({
   board,
   tool,
   snapEnabled,
+  element,
   onPickTool,
   onToggleSnap
 }: PlanningInspectorProps): ReactElement {
   return (
     <>
+      {/* Element section (P4) — TOP, above Tools/Canvas: the current selection is the focus, so its
+          controls lead. Absent (no placeholder) when nothing is selected — baseline P3 panel. */}
+      {element && <ElementInspectorSection model={element} />}
+
       <InspectorSection label="Tools">
         {/* The 8-tool palette as a 4×2 icon grid. Radiogroup semantics (one active tool); the
             bare-letter shortcut (from TOOL_META) sits in the corner + the tooltip, mirroring the

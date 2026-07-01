@@ -28,10 +28,12 @@ export interface ContextMenuDeps {
   elements: PlanningElement[]
   /** The group-expanded selection the menu was opened with. */
   sel: ReadonlySet<string>
-  /** Well content box (board-local px) so align/distribute flush + clamp to the BOARD. */
-  wb: AlignBoard
-  /** Live DOM sizes for the auto-sized kinds (text, checklist). */
-  measured: Map<string, Measured>
+  /** Well content box (board-local px) so align/distribute flush + clamp to the BOARD. THUNK: the
+   *  caller reads live refs (well size / measured map) at INVOKE time, not build time, so this
+   *  builder stays render-safe — the Board Inspector (P4) builds the same entries during render. */
+  wb: () => AlignBoard
+  /** Live DOM sizes for the auto-sized kinds (text, checklist). Thunk, same reason as `wb`. */
+  measured: () => Map<string, Measured>
   beginChange: () => void
   commit: (next: PlanningElement[]) => void
   clearSel: () => void
@@ -68,7 +70,7 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
       id: edge,
       title: `Align ${edge}`,
       icon: `align-${edge === 'centerX' ? 'center-h' : edge === 'centerY' ? 'middle' : edge}`,
-      onSelect: () => run(alignElements(elements, sel, edge, wb, measured))
+      onSelect: () => run(alignElements(elements, sel, edge, wb(), measured()))
     })
   )
   // Tintable = unlocked notes in the (group-expanded) selection; the Tint row is
@@ -153,13 +155,13 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
           id: 'h',
           title: 'Distribute horizontally',
           icon: 'distribute-h',
-          onSelect: () => run(distributeElements(elements, sel, 'h', wb, measured))
+          onSelect: () => run(distributeElements(elements, sel, 'h', wb(), measured()))
         },
         {
           id: 'v',
           title: 'Distribute vertically',
           icon: 'distribute-v',
-          onSelect: () => run(distributeElements(elements, sel, 'v', wb, measured))
+          onSelect: () => run(distributeElements(elements, sel, 'v', wb(), measured()))
         }
       ]
     },
