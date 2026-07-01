@@ -64,7 +64,7 @@ import {
   isLocked,
   setNoteTint
 } from './planning/elements'
-import { buildContextMenuEntries } from './planning/contextMenuEntries'
+import { usePlanningElementInspector } from './planning/inspector/usePlanningElementInspector'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { CrossBoardDragGhost } from './planning/CrossBoardDragGhost'
 import { useSendToBoard } from './planning/useSendToBoard'
@@ -414,33 +414,36 @@ export function PlanningBoard({
     [board.id, board.h, dragPosRef]
   )
 
-  // Build the right-click menu entries off an explicit selection set (the
-  // post-select-then-act set; React state is async, so the handler can't read it back
-  // — it passes the set in). The construction lives in planning/contextMenuEntries.ts
-  // (verbatim extraction, D3-A); this wrapper threads the store callbacks + the well's
-  // content box in. Called from the event handler (NOT render), so `measuredRef`
-  // access is allowed (react-hooks/refs).
-  const buildMenuEntries = useCallback(
-    (sel: ReadonlySet<string>): MenuEntry[] =>
-      buildContextMenuEntries({
-        elements,
-        sel,
-        // Align/distribute reference the well's content box (board-local px) so edges
-        // flush to the BOARD and results clamp inside it.
-        wb: {
-          w: wellRef.current?.offsetWidth || board.w,
-          h: wellRef.current?.offsetHeight || board.h
-        },
-        measured: measuredRef.current,
-        beginChange,
-        commit,
-        clearSel,
-        setSelectedIds,
-        newId,
-        onOpenSendTo
-      }),
-    [elements, beginChange, commit, clearSel, board.w, board.h, onOpenSendTo]
+  // The element-action model (P4). ONE hook owns both consumers so the right-click menu and the
+  // always-visible Board Inspector can't drift: `buildMenuEntries` is the SAME builder the pointer /
+  // keyboard hooks consume for the context menu (moved here off PlanningBoard to hold the max-lines
+  // ratchet), and `element` is the inspector's Element-section model (null unless an element is
+  // selected in select mode). See planning/inspector/usePlanningElementInspector.
+  // Align/distribute reference the well's content box + measured DOM sizes; both are read from refs
+  // at CLICK time via these thunks (never during render), so the inspector can build the same entries
+  // in render without tripping the react-hooks refs rule (see usePlanningElementInspector).
+  const wbThunk = useCallback(
+    () => ({
+      w: wellRef.current?.offsetWidth || board.w,
+      h: wellRef.current?.offsetHeight || board.h
+    }),
+    [board.w, board.h]
   )
+  const measuredThunk = useCallback(() => measuredRef.current, [])
+  const { buildMenuEntries, element: elementInspector } = usePlanningElementInspector({
+    elements,
+    selectedIds,
+    interactive,
+    boardId: board.id,
+    wb: wbThunk,
+    measured: measuredThunk,
+    beginChange,
+    commit,
+    clearSel,
+    setSelectedIds,
+    newId,
+    onOpenSendTo
+  })
 
   // ── Well keyboard handlers (D3-C extraction) ─────────────────────────────────
   // Delete/Backspace, arrow-key nudge, Ctrl+G/Ctrl+Shift+G group/ungroup,
@@ -595,6 +598,7 @@ export function PlanningBoard({
             board={board}
             tool={tool}
             snapEnabled={snapEnabled}
+            element={elementInspector}
             onPickTool={(t) => {
               setTool(t)
               clearSel()

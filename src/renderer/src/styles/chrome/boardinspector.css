@@ -557,6 +557,116 @@
   color: var(--accent);
 }
 
+/* ── P4 PlanningInspector — the Element section (re-homed TextToolbar + ElementContextMenu) ──────
+   The inspector morphs by the selected element(s): a swatch row (tint / text colour), a compact
+   icon cluster (align / distribute), a 2-up action grid (lock / group / duplicate / send), and the
+   section's selection-count chip. Typography reuses the shipped .ca-inspector-seg / -toggle. */
+
+/* Selection-count chip in the Element section header (accent for a homogeneous kind; muted when the
+   selection mixes kinds — see [data-mixed]). */
+.ca-inspector-count {
+  flex: none;
+  height: 15px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-pill);
+}
+.ca-inspector-count[data-mixed] {
+  color: var(--text-3);
+  background: transparent;
+  border-color: var(--border);
+}
+
+/* Swatch row (tint / text colour). */
+.ca-inspector-swatches {
+  display: flex;
+  flex: 1;
+  gap: 5px;
+}
+.ca-inspector-swatch {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-swatch:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.ca-inspector-swatch[data-on] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+  border-color: var(--accent);
+}
+.ca-inspector-swatch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-swatch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ca-inspector-swatch-g {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-3);
+}
+
+/* Compact icon cluster (align edges / distribute axes). Disables as a unit. */
+.ca-inspector-iconbtns {
+  display: inline-flex;
+  flex: 1;
+  gap: 2px;
+  padding: 2px;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+}
+.ca-inspector-iconbtns button {
+  flex: 1;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.ca-inspector-iconbtns button:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+.ca-inspector-iconbtns button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-iconbtns[data-disabled] {
+  opacity: 0.45;
+}
+.ca-inspector-iconbtns[data-disabled] button {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* 2-up action grid so the shared arrange actions (lock / group / duplicate / send) read as a
+   cluster, not a tall stack. Each cell is a full-width .ca-inspector-act. */
+.ca-inspector-actgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-inspector-toggle-knob {
     transition: none;

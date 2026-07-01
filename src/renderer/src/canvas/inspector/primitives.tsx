@@ -17,14 +17,17 @@ export interface InspectorContentProps {
 }
 
 /** A collapsible labelled section (uppercase micro label + chevron). Open by default; collapse state
- *  is local for now (localStorage-persisted in a later polish phase). */
+ *  is local for now (localStorage-persisted in a later polish phase). `aside` renders a trailing node
+ *  (e.g. the Element section's selection-count chip) between the label and the chevron. */
 export function InspectorSection({
   label,
   defaultOpen = true,
+  aside,
   children
 }: {
   label: string
   defaultOpen?: boolean
+  aside?: ReactNode
   children: ReactNode
 }): ReactElement {
   const [open, setOpen] = useState(defaultOpen)
@@ -37,6 +40,7 @@ export function InspectorSection({
         onClick={() => setOpen((v) => !v)}
       >
         <span className="ca-inspector-section-lab">{label}</span>
+        {aside}
         <svg
           className="ca-inspector-chev"
           data-open={open}
@@ -268,5 +272,91 @@ export function InspectorSlider({
       aria-valuetext={valueText}
       onChange={(e) => onChange(Number(e.target.value) / 100)}
     />
+  )
+}
+
+/** A swatch row (e.g. note tint or text colour) — the always-visible mirror of the context menu's
+ *  swatchRow. Each swatch shows its `fill` (with an optional `edge` border); the `current` one gets
+ *  the accent ring. `glyph` renders a mark inside a swatch that has no distinct fill (e.g. "plain").
+ *  Radiogroup semantics (one current value). First landed by the Planning inspector's Element
+ *  section (P4). */
+export function InspectorSwatches({
+  swatches,
+  onPick,
+  disabled,
+  ariaLabel
+}: {
+  swatches: ReadonlyArray<{
+    id: string
+    fill: string
+    edge?: string
+    title: string
+    current?: boolean
+    glyph?: string
+  }>
+  onPick: (id: string) => void
+  disabled?: boolean
+  ariaLabel?: string
+}): ReactElement {
+  return (
+    <div className="ca-inspector-swatches" role="radiogroup" aria-label={ariaLabel}>
+      {swatches.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          role="radio"
+          aria-checked={s.current || false}
+          aria-label={s.current ? `${s.title} (current)` : s.title}
+          title={s.current ? `${s.title} (current)` : s.title}
+          className="ca-inspector-swatch"
+          data-on={s.current || undefined}
+          disabled={disabled}
+          style={{ background: s.fill, borderColor: s.edge }}
+          onClick={() => onPick(s.id)}
+        >
+          {s.glyph != null && (
+            <span className="ca-inspector-swatch-g" aria-hidden>
+              {s.glyph}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** A compact icon-button cluster (e.g. align edges / distribute axes) — the always-visible mirror of
+ *  the context menu's iconRow. Icon-agnostic: the caller supplies each button's `icon` node. The whole
+ *  cluster disables as a unit (align needs ≥2 elements, distribute ≥3). First landed by the Planning
+ *  inspector's Element section (P4). */
+export function InspectorIconButtons({
+  buttons,
+  disabled,
+  ariaLabel
+}: {
+  buttons: ReadonlyArray<{ id: string; title: string; icon: ReactNode; onSelect: () => void }>
+  disabled?: boolean
+  ariaLabel?: string
+}): ReactElement {
+  return (
+    <div
+      className="ca-inspector-iconbtns"
+      data-disabled={disabled || undefined}
+      role="group"
+      aria-label={ariaLabel}
+    >
+      {buttons.map((b) => (
+        <button
+          key={b.id}
+          type="button"
+          title={b.title}
+          aria-label={b.title}
+          disabled={disabled}
+          onClick={b.onSelect}
+        >
+          {b.icon}
+        </button>
+      ))}
+    </div>
   )
 }

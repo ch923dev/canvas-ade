@@ -320,4 +320,117 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  test('selecting a text element grows the Element section; a typography patch round-trips + keeps the board selected', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'inspector-pe-',
+      'inspector-pe'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const id = await seed(page, 'planning')
+      // Seed one free-text element (M size) mid-board via the store, ids flow as DATA (not
+      // interpolated into eval'd code — the #82/#114 CodeQL pattern, mirroring noteTint.e2e.ts).
+      await page.evaluate((bid) => {
+        ;(
+          globalThis as { __canvasE2E: { patchBoard: (id: string, p: unknown) => void } }
+        ).__canvasE2E.patchBoard(bid, {
+          elements: [{ id: 'tp-1', kind: 'text', x: 220, y: 140, text: 'hello', fontSize: 'M' }]
+        })
+      }, id)
+      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      // fitView frames the board large + centred, clear of the left-docked inspector lane, so a REAL
+      // click can reach board content without the popover occluding it (zoom stays ≥ 0.4 → revealed).
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+
+      // No element selected yet → the inspector shows Tools/Canvas but NO Element section (empty state).
+      await pollEval(
+        page,
+        `!!document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-select"]')`,
+        5000
+      )
+      const beforeLabels = await evalIn<string>(
+        page,
+        `Array.from(document.querySelectorAll('[data-test="board-inspector"] .ca-inspector-section-lab')).map((e) => e.textContent).join('|')`
+      )
+      expect(beforeLabels, 'no Element section until an element is selected').not.toContain(
+        'Element'
+      )
+
+      // A fresh project shows the recap-consent modal CENTRED over the canvas; the other inspector
+      // tests drive the left panel via evalIn (so they work through its scrim), but this one needs a
+      // REAL pointer on board content — decline it first so it can't occlude the grip.
+      await page
+        .locator('[data-test="recap-decline"]')
+        .click({ timeout: 5000 })
+        .catch(() => {})
+
+      // Select the text element with a REAL click on its drag grip (fires the board's selectOnPress) —
+      // the select tool is the default, so the board is interactive.
+      const grip = page.locator(`[data-id="${id}"] .pl-text-grip`)
+      await grip.waitFor({ state: 'visible' })
+      await grip.click()
+
+      // The Element section appears at the top with the typography controls (homogeneous text).
+      const typographyPresent = await pollEval(
+        page,
+        `!!document.querySelector('[data-test="board-inspector"] [aria-label="Font size"]')`,
+        3000
+      )
+      expect(typographyPresent, 'selecting a text element grows the typography controls').toBe(true)
+
+      const revealed = await evalIn<boolean>(
+        page,
+        `document.querySelector('[data-test="board-inspector"]')?.getAttribute('data-revealed') === 'true'`
+      )
+      expect(revealed, 'the board stays selected + the inspector revealed').toBe(true)
+
+      // Click a different size (L) in the inspector → fires the board's REAL typography patch; read it
+      // back off the store to prove the round-trip (M → L).
+      const sizeOf = (): Promise<string | undefined> =>
+        page.evaluate((bid) => {
+          const boards = (
+            globalThis as {
+              __canvasE2E: {
+                getBoards: () => {
+                  id: string
+                  type: string
+                  elements?: { id: string; fontSize?: string }[]
+                }[]
+              }
+            }
+          ).__canvasE2E.getBoards()
+          const b = boards.find((x) => x.id === bid)
+          return b?.type === 'planning'
+            ? b.elements?.find((e) => e.id === 'tp-1')?.fontSize
+            : undefined
+        }, id)
+      expect(await sizeOf(), 'text starts at M').toBe('M')
+
+      await evalIn(
+        page,
+        `Array.from(document.querySelectorAll('[data-test="board-inspector"] [aria-label="Font size"] button')).find((b) => b.textContent.trim() === 'L').click()`
+      )
+      await expect
+        .poll(sizeOf, { message: 'the inspector L segment patches the element via the real store' })
+        .toBe('L')
+
+      // The typography patch must NOT deselect the board — the inspector stays revealed.
+      const stillRevealed = await evalIn<boolean>(
+        page,
+        `document.querySelector('[data-test="board-inspector"]')?.getAttribute('data-revealed') === 'true'`
+      )
+      expect(
+        stillRevealed,
+        'a typography patch keeps the board selected / inspector revealed'
+      ).toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
 })
