@@ -303,6 +303,13 @@ export interface CanvasE2E {
   setOsrAudible: (id: string, audible: boolean) => void
   /** 4A — read a Browser board's ephemeral audio state (mute + volume) to assert control behavior. */
   getOsrAudio: (id: string) => { muted: boolean; volume: number }
+  /**
+   * #269 — force a Browser board's MAX_LIVE existence flag — exactly what the liveness manager writes
+   * on evict (false) / revive (true). Bypasses the >4-board + camera choreography (like
+   * `setCommandTasks` bypasses spawn choreography) so the revive-sizing regression guard can drive an
+   * evict→revive deterministically without staging five boards and a pan.
+   */
+  setOsrAlive: (id: string, alive: boolean) => void
   /** SLICE-010 — replace a board's captured Network records with `count` synthetic rows, so the
    *  virtualization probe can prove only ~viewport rows mount as `<tr>` at the 1000-record cap. */
   seedOsrNet: (id: string, count: number) => void

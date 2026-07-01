@@ -19,6 +19,9 @@ export interface TerminalIdleAffordanceProps {
   /** Agent/shell identity for the Start label (e.g. "claude"). */
   identity: string
   onStart: () => void
+  /** #270: the board's theme background, so the fresh-idle overlay matches a themed terminal instead
+   *  of flashing the default --inset. Falls back to idleOverlay's own bg when absent. */
+  background?: string
   /** The board has a resumable agent session → the restored bar also offers Resume (reattach the
    *  agent conversation via its transcript), beside Start. Ignored by the fresh-idle overlay. */
   canResume?: boolean
@@ -29,6 +32,7 @@ export function TerminalIdleAffordance({
   state,
   restored,
   identity,
+  background,
   onStart,
   canResume,
   onResume
@@ -44,7 +48,11 @@ export function TerminalIdleAffordance({
       />
     )
   return (
-    <div className="nodrag" style={idleOverlay} onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className="nodrag"
+      style={background ? { ...idleOverlay, background } : idleOverlay}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       <button style={startBtn} onClick={onStart}>
         Start {identity}
       </button>

@@ -15,6 +15,7 @@ import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
 import { useOsrNetworkStore } from '../store/osrNetworkStore'
+import { useOsrLivenessStore } from '../store/osrLivenessStore'
 import { useDataFlowStore } from '../store/dataFlowStore'
 import { mergeShapes, type ShapeSample, type ShapeNode, type FormatHint } from '../lib/schemaInfer'
 import { useFileTreeUiStore } from '../store/fileTreeUiStore'
@@ -110,6 +111,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     getOsrAudio(id) {
       const s = useOsrWidgetStore.getState()
       return { muted: s.muted[id] ?? false, volume: s.volume[id] ?? 1 }
+    },
+    setOsrAlive(id, alive) {
+      const s = useOsrLivenessStore.getState()
+      s.setAlive({ ...s.alive, [id]: alive })
     },
     listSceneIds() {
       return listScenes().map((s) => s.id)
