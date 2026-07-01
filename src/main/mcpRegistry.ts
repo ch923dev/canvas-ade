@@ -3,6 +3,7 @@ import type { AuditInput } from './auditLog'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
+import type { LayoutDigest } from './layoutModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
@@ -88,7 +89,10 @@ export interface OrchestratorOpts {
  * concrete `AppModel` / `SpawnGroupResult` types so MAIN keeps full typing (a plain intersection
  * would resolve the call to the package's looser signature first).
  */
-export type LifecycleOrchestrator = Omit<Orchestrator, 'describeApp' | 'spawnGroup'> & {
+export type LifecycleOrchestrator = Omit<
+  Orchestrator,
+  'describeApp' | 'spawnGroup' | 'describeLayout'
+> & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
   /**
@@ -97,6 +101,14 @@ export type LifecycleOrchestrator = Omit<Orchestrator, 'describeApp' | 'spawnGro
    * does not own that type). Now wired over the wire as the `canvas://app-model` resource (W1-G / C1).
    */
   describeApp(): Promise<AppModel>
+  /**
+   * Assemble the read-only SPATIAL digest (bbox · per-board geometry+group · overlaps · arrangement).
+   * NARROWS the package's `describeLayout(): Promise<unknown>` to the concrete `LayoutDigest` (the
+   * package does not own that type — same discipline as `describeApp`). Wired as the `canvas://layout`
+   * resource (P1b, @expanse-ade/mcp ≥ 0.18.0). Omitting `describeLayout` from the base is a harmless
+   * no-op on a package that predates it, so this type compiles against 0.17.0 AND 0.18.0-rc.1.
+   */
+  describeLayout(): Promise<LayoutDigest>
   /**
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally

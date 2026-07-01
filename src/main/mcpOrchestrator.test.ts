@@ -156,6 +156,25 @@ describe('buildOrchestrator', () => {
     ])
   })
 
+  it('describeLayout projects board geometry + groups into the canvas://layout digest (P1b)', async () => {
+    const orch = buildOrchestrator({
+      ...reg([]),
+      // Two placed terminals side by side, one grouped; a planning board WITHOUT geometry is dropped.
+      listBoards: () => [
+        { id: 'a', type: 'terminal', title: 'A', status: 'idle', x: 0, y: 0, w: 100, h: 80 },
+        { id: 'b', type: 'terminal', title: 'B', status: 'idle', x: 140, y: 0, w: 100, h: 80 },
+        { id: 'noGeo', type: 'planning', title: 'P', status: 'static' }
+      ],
+      listGroups: () => [{ id: 'g1', name: 'Zone', boardIds: ['a'] }]
+    })
+    const digest = await orch.describeLayout()
+    expect(digest.count).toBe(2) // the geometry-less planning board is not placed
+    expect(digest.arrangement).toBe('row') // shared y-band, disjoint x → one row
+    expect(digest.bbox).toEqual({ x: 0, y: 0, w: 240, h: 80 })
+    expect(digest.boards.find((bd) => bd.id === 'a')?.groupId).toBe('g1')
+    expect('groupId' in (digest.boards.find((bd) => bd.id === 'b') ?? {})).toBe(false)
+  })
+
   it('falls back to a PTY/presence-derived bucket when the mirror carries no status', async () => {
     const orch = buildOrchestrator(
       reg(

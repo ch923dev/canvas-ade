@@ -14,6 +14,7 @@ import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
 import { buildAppModel, type AppModel } from './appModel'
+import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -1044,6 +1045,22 @@ export function buildOrchestrator(
           idleActivityMs
         }
       })
+    },
+    async describeLayout(): Promise<LayoutDigest> {
+      // P1b: assemble the read-only SPATIAL digest served as `canvas://layout`. Read-only — projects
+      // the live board geometry (P1 canvas awareness) + the Named-Group mirror through
+      // buildLayoutDigest, which derives bbox / overlaps / row·column·grid·scattered arrangement.
+      // Same injected-mirror discipline as describeApp; a registry that doesn't wire listGroups reads
+      // [] (an ungrouped digest). Boards without geometry are dropped by the digest, not here.
+      const summaries = await listBoardSummaries()
+      return buildLayoutDigest(
+        summaries.map((b) => ({ id: b.id, type: b.type, x: b.x, y: b.y, w: b.w, h: b.h })),
+        (registry.listGroups?.() ?? []).map((g) => ({
+          id: g.id,
+          name: g.name,
+          boardIds: [...g.boardIds]
+        }))
+      )
     }
   }
 }
