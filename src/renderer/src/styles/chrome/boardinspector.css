@@ -512,6 +512,51 @@
   background: var(--accent);
 }
 
+/* ── P3 PlanningInspector — the whiteboard tool palette as a compact icon grid ───────
+   The 8 tools in a 4-column grid; the active tool is accent-washed with its bare-letter
+   shortcut in the corner. Radiogroup semantics (one active tool). The ONLY P3-specific
+   block — snap reuses .ca-inspector-toggle, export reuses .ca-inspector-act. */
+.ca-inspector-toolgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.ca-inspector-tool {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-tool:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+.ca-inspector-tool[data-on] {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent);
+}
+.ca-inspector-tool:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-tool-k {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  color: var(--text-faint);
+}
+.ca-inspector-tool[data-on] .ca-inspector-tool-k {
+  color: var(--accent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-inspector-toggle-knob {
     transition: none;
