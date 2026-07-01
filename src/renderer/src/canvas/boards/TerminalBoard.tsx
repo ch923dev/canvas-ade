@@ -56,6 +56,8 @@ import {
 } from './terminal/terminalFont'
 import { useTerminalAppearance } from './terminal/useTerminalAppearance'
 import { useTerminalReraster } from './terminal/useTerminalReraster'
+import { useTerminalFullViewFill } from './terminal/useTerminalFullViewFill'
+import { resolveInitialThemeId, terminalThemeColors } from './terminal/terminalThemes'
 import { useRunTimer } from './terminal/useRunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
@@ -106,6 +108,16 @@ export function TerminalBoard({
   // retroactively driving THIS one once the board exists.) A lazy-init useState (not a ref) so it
   // can be read during render without tripping react-hooks/refs; the setter is intentionally unused.
   const [bornFont] = useState<number>(() => resolveInitialFont(board.fontSize))
+
+  // Terminal-theming chrome bg (Lane B follow-up): the xterm SURFACE is repainted by the theme, but
+  // the board chrome around it (content-well, the 12px well padding, the full-view letterbox gutter)
+  // was hardcoded `--inset` — so a non-default theme (e.g. Dracula #282a36, Solarized Light #fdf6e3)
+  // showed a mismatched near-black frame around themed text. Drive the chrome bg from the SAME resolved
+  // palette xterm renders: `board.themeId ?? bornThemeId` (unpinned falls back to the sticky id this
+  // board was born with, mirroring useTerminalAppearance). Default resolves to #0e0e10 == --inset ⇒
+  // existing/default boards are pixel-identical (zero regression).
+  const [bornThemeId] = useState<string>(() => resolveInitialThemeId(board.themeId))
+  const themeBg = terminalThemeColors(board.themeId ?? bornThemeId).background ?? 'var(--inset)'
 
   // A board with no explicit cwd spawns in the open project folder, not os.homedir().
   const projectDir = useCanvasStore((s) => s.project.dir)
@@ -308,6 +320,11 @@ export function TerminalBoard({
     termRef,
     fitWhole
   })
+
+  // Full-view row-fill: in full view, grow/shrink term.rows (rows-only ⇒ cols frozen ⇒ NO reflow) so
+  // the frozen-width grid fills the modal height, and scroll to the bottom so the agent's input prompt
+  // is visible. Removes the letterbox gutter and fixes "Claude input not visible in a long session".
+  useTerminalFullViewFill(termRef)
 
   // Clear the burst timer on unmount.
   useEffect(
@@ -557,7 +574,7 @@ export function TerminalBoard({
         spawning={state === 'spawning'}
         status={displayStatus}
         actions={actions}
-        contentBg="var(--inset)"
+        contentBg={themeBg}
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
@@ -610,7 +627,7 @@ export function TerminalBoard({
               {state === 'idle' && (
                 <div
                   className="nodrag"
-                  style={idleOverlay}
+                  style={{ ...idleOverlay, background: themeBg }}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
                   <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
@@ -657,7 +674,7 @@ export function TerminalBoard({
               click and swallows keystrokes until a restart (the "can't type" bug). */}
               <div
                 className="nodrag nowheel"
-                style={screenWrap}
+                style={{ ...screenWrap, background: themeBg }}
                 onMouseDown={(e) => {
                   e.stopPropagation()
                   termRef.current?.focus()
