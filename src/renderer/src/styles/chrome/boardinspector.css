@@ -22,7 +22,7 @@
   top: 50%;
   /* translateY centres it; the hidden state adds a small left slide on top (see below). */
   transform: translateY(-50%);
-  width: 234px;
+  width: 252px;
   /* Content-height: the column is only as tall as head + body + foot, capped at the viewport. */
   max-height: calc(100% - 28px);
   display: flex;
@@ -199,6 +199,10 @@
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* overflow-y:auto with the default overflow-x:visible COMPUTES overflow-x to auto (CSS spec) — a
+     few px of sub-pixel rounding then shows a spurious HORIZONTAL scrollbar. Clip x explicitly so the
+     popover only ever scrolls vertically (and only when content exceeds the viewport cap). */
+  overflow-x: hidden;
 }
 .ca-inspector-body:empty {
   display: none;
