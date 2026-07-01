@@ -12,6 +12,7 @@
  * read (id-lineage) is MAIN-side + value-less over IPC. Page strings are React-escaped (no innerHTML).
  */
 import { useEffect, useMemo, useCallback, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   Board,
   DataFlowBoard as DataFlowBoardData,
@@ -38,6 +39,8 @@ import { layoutGraph } from '../../lib/graphLayout'
 import { toErMermaid, erDiagramSize } from '../../lib/erMermaid'
 import { useSharedOsrNet } from './osr/useSharedOsrNet'
 import { GraphCanvas, SequenceView } from './osr/DataFlowGraphView'
+import { DataFlowInspector } from './dataflow/DataFlowInspector'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 
 const NO_RECORDS: never[] = []
 const NO_SCHEMAS: Record<string, SchemaState> = {}
@@ -81,6 +84,8 @@ export function DataFlowBoard({
 
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const addBoard = useCanvasStore((s) => s.addBoard)
+  // Board Inspector slot (P2): non-null only while THIS board is the single eligible selection.
+  const inspectorSlot = useInspectorSlot(board.id)
   // Stable fingerprint of the bindable Browser boards (id+title only — not position, so a drag never
   // re-renders this subtree). Parsed into options below.
   const browserKey = useCanvasStore((s) =>
@@ -396,22 +401,51 @@ export function DataFlowBoard({
   }
 
   return (
-    <BoardFrame
-      type={board.type}
-      boardId={board.id}
-      title={board.title}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      onFull={onFull}
-      onDuplicate={onDuplicate}
-      onDelete={onDelete}
-      onAddToGroup={onAddToGroup}
-      onRemoveFromGroup={onRemoveFromGroup}
-      onRemoveFromAllGroups={onRemoveFromAllGroups}
-      onStartConnect={onStartConnect}
-    >
-      <div className="df-root">{body}</div>
-    </BoardFrame>
+    <>
+      {inspectorSlot &&
+        createPortal(
+          <DataFlowInspector
+            browsers={browsers}
+            sourceId={sourceId}
+            sourceTitle={browsers.find((b) => b.id === sourceId)?.title}
+            onBindSource={(id) => updateBoard(board.id, { sourceBoardId: id } as Partial<Board>)}
+            hasRecords={allRecords.length > 0}
+            routeCount={groups.length}
+            lineageCount={lineage.length}
+            tab={tab}
+            onTab={(t) => setTab(board.id, t)}
+            inferShapes={inferShapes}
+            onToggleInfer={toggleInfer}
+            apiOnly={apiOnly}
+            onSetApiOnly={(next) => setApiOnly(board.id, next)}
+            firstParty={firstParty}
+            onSetFirstParty={(next) => setFirstParty(board.id, next)}
+            firstPartyAvailable={!!sourceDomain}
+            hiddenCount={hiddenCount}
+            diffAdded={diff.added.size}
+            diffChanged={diff.changed.size}
+            onRegenerate={regenerate}
+            onExportPlanning={exportPlanning}
+          />,
+          inspectorSlot
+        )}
+      <BoardFrame
+        type={board.type}
+        boardId={board.id}
+        title={board.title}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
+        onAddToGroup={onAddToGroup}
+        onRemoveFromGroup={onRemoveFromGroup}
+        onRemoveFromAllGroups={onRemoveFromAllGroups}
+        onStartConnect={onStartConnect}
+      >
+        <div className="df-root">{body}</div>
+      </BoardFrame>
+    </>
   )
 }
