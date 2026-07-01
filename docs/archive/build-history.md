@@ -1464,3 +1464,27 @@ mirror into the `ConfirmRequest.choices` field (structurally identical over the 
 integration pass** / 1 skipped (F25 drift green). **Full e2e matrix GREEN both legs** at the pre-merge gate —
 Windows 232 passed (lone `osrCropSupersample` @preview env flake reran green in isolation) + Linux Docker
 `exit 0` 232 passed (1 flaky `dataFlow` @preview retry-recovered — the known Linux-Docker flake).
+
+## 2026-07-02 — macOS window-close PTY-orphan fix (deep-review finding) — direct-to-main (`b2a2a9f`)
+
+First fix off the **2026-07-02 deep review** (57-agent map→review→adversarial-verify workflow; 0 Crit/High in
+shipped code, exposure was process/release-shaped + this one Med lifecycle bug). On **darwin**, closing the
+last window does NOT quit the app (`window-all-closed` is a no-op there), so the `before-quit` →
+`shutdown()` → `disposeAllPtys()` drain never fires and every live + parked agent PTY is orphaned — running,
+burning tokens, unreachable via adopt — until Cmd+Q.
+
+**Fix:** extract the `'closed'`-handler cleanup to a pure, unit-tested `performWindowCloseCleanup({platform,
+disposeOsr, disposeDiagramWorker, disposePtys})` in `src/main/quit.ts` (same testability rationale as
+`performGuardedQuit`/`makeCrashHandler`); `src/main/index.ts` `createWindow` wires it into the `'closed'`
+handler. Reaps PTYs **darwin-only** — Win/Linux keep the AWAITED `before-quit` drain untouched (disposing there
+too would clear the session maps first, turning the awaited `disposeAllPtys()` into a no-op and moving the real
+async `taskkill` reap OFF the awaited path → re-orphaning where it currently works). Terminal scrollback
+snapshots are captured renderer-side on `beforeunload` from the xterm buffer (independent of the live PTY), so
+the tree-kill here cannot lose them. So the change is a **no-op on win32/linux** (guarded out) — the darwin
+branch is not observable on the Win/Linux e2e legs; the +5 `quit.test.ts` cases pin the platform guard instead.
+
+**Verified:** typecheck (node+preload+web) 0 · lint 0 errors (37 pre-existing STYLE-02 warnings) · format clean
+· **3998 unit+integration pass** / 1 skipped (+5 new `quit.test.ts`). **Full e2e matrix GREEN both legs** —
+Windows 233 (`osrCropSupersample` @preview OSR-teardown env flake reran green in isolation) + Linux Docker
+`exit 0` 233 passed. Headless smoke green (RENDERER reactflow/xterm/webgl true, `pty:true`, no destroyed/throw)
+— confirms boot + the normal close/quit path is un-regressed. Direct-to-main (small, self-contained fix).
