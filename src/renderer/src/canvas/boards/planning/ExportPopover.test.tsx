@@ -85,7 +85,7 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
   it('a write failure raises an error toast (fixed copy, raw OS error kept off-screen)', async () => {
     const save = vi.fn(async () => ({ ok: false, canceled: false, error: 'EACCES: /tmp/x.svg' }))
     ;(window as unknown as { api: unknown }).api = { export: { save } }
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<ExportPopover board={board()} />)
 
     clickExportSvg()
@@ -96,6 +96,9 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
     expect(toasts[0].id).toBe('export-failed-b1') // board-keyed: repeats replace in place
     expect(toasts[0].kind).toBe('error')
     expect(toasts[0].message).toBe('Export failed — check file permissions and disk space')
+    // The raw OS error also lands on the console side-channel (kept off the fixed-copy toast).
+    expect(errSpy).toHaveBeenCalled()
+    expect(errSpy.mock.calls.flat().join(' ')).toContain('EACCES')
   })
 
   it('a repeat failure replaces the keyed toast instead of stacking', async () => {
@@ -117,15 +120,17 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
     expect(useToastStore.getState().toasts).toHaveLength(1)
   })
 
-  it('an explicit user cancel stays silent', async () => {
+  it('an explicit user cancel stays silent (no toast, no console.error)', async () => {
     const save = vi.fn(async () => ({ ok: false, canceled: true }))
     ;(window as unknown as { api: unknown }).api = { export: { save } }
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<ExportPopover board={board()} />)
 
     clickExportSvg()
     await settleExport(save)
 
     expect(useToastStore.getState().toasts).toEqual([])
+    expect(errSpy).not.toHaveBeenCalled()
   })
 
   it('a thrown export error raises the generic error toast', async () => {
@@ -143,5 +148,28 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
     expect(toasts).toHaveLength(1)
     expect(toasts[0].kind).toBe('error')
     expect(toasts[0].message).toBe('Export failed')
+  })
+})
+
+describe('ExportPopover — inspector variant (P3, re-homed into the Board Inspector)', () => {
+  it('renders a labelled Export action that opens the same PNG/SVG menu and wires save', async () => {
+    const save = vi.fn(async () => ({ ok: true }))
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    render(<ExportPopover board={board()} variant="inspector" />)
+
+    // The inspector variant renders a labelled InspectorAction (data-test), NOT the toolbar IconBtn
+    // (no title="Export"). Opening it portals the same PNG/SVG menu the toolbar variant does.
+    const trigger = document.querySelector('[data-test="inspector-export"]') as HTMLElement
+    expect(trigger, 'the inspector Export action renders').not.toBeNull()
+    expect(trigger.textContent).toContain('Export')
+
+    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const items = Array.from(document.querySelectorAll('button.board-menu-item')) as HTMLElement[]
+    const svg = items.find((b) => b.textContent?.includes('SVG'))
+    expect(svg, 'the PNG/SVG menu opens from the inspector trigger').toBeTruthy()
+    act(() => svg!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    await settleExport(save)
+
+    expect(save).toHaveBeenCalledTimes(1)
   })
 })

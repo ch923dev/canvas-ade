@@ -167,75 +167,7 @@ describe('PlanningBoard image write failure — surfaced, not swallowed [Fix 2]'
   })
 })
 
-describe('PlanningBoard export — returned-error surfaced [Fix 3]', () => {
-  beforeEach(() => {
-    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
-  })
-
-  /** Click the portaled "Export SVG" button (opens the popover first via the toolbar btn).
-   *  SVG (not PNG) so buildExport stays pure (TextEncoder + boardToSvg) — PNG's offscreen
-   *  rasterize relies on Image.onload / canvas.toBlob, which jsdom does not implement, so a
-   *  PNG export would land in runExport's THROW catch, not the returned-error branch under test. */
-  function clickExportSvg(): void {
-    const trigger = document.querySelector('[title="Export"]') as HTMLElement
-    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const items = Array.from(document.querySelectorAll('button.board-menu-item')) as HTMLElement[]
-    const svg = items.find((b) => b.textContent?.includes('SVG'))
-    if (!svg) throw new Error('Export SVG menu item not found')
-    act(() => svg.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-  }
-
-  /** runExport dynamically imports exportBoard then awaits buildExport + export.save; flush
-   *  the resulting microtasks (in act) until `save` has actually been called. TIME-bounded,
-   *  not iteration-bounded: under a loaded full-suite run vitest can take longer to
-   *  transform+load the dynamic import('./exportBoard') than 50 zero-delay macrotask turns,
-   *  which made the old `i < 50` loop a scheduling flake (always green isolated — the
-   *  PlanningBoard.images full-suite flake first logged on the D2-D row). */
-  async function settleExport(saveSpy: ReturnType<typeof vi.fn>): Promise<void> {
-    const deadline = Date.now() + 5000
-    while (saveSpy.mock.calls.length === 0 && Date.now() < deadline) {
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 10))
-      })
-    }
-    // One more turn so the .then/await after export.save (the result branch) runs.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-  }
-
-  it('logs res.error when export.save resolves { ok:false, error }', async () => {
-    const id = seedPlanning()
-    const save = vi.fn(async () => ({ ok: false, error: 'permission denied' }))
-    ;(window as unknown as { api: unknown }).api = {
-      asset: { write: vi.fn() },
-      export: { save }
-    }
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    render(<Harness id={id} />)
-
-    clickExportSvg()
-    await settleExport(save)
-
-    expect(save).toHaveBeenCalled()
-    expect(errSpy).toHaveBeenCalled()
-    expect(errSpy.mock.calls.flat().join(' ')).toContain('permission denied')
-  })
-
-  it('does NOT log when export.save resolves { ok:false, canceled:true }', async () => {
-    const id = seedPlanning()
-    const save = vi.fn(async () => ({ ok: false, canceled: true }))
-    ;(window as unknown as { api: unknown }).api = {
-      asset: { write: vi.fn() },
-      export: { save }
-    }
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    render(<Harness id={id} />)
-
-    clickExportSvg()
-    await settleExport(save)
-
-    expect(save).toHaveBeenCalled()
-    expect(errSpy).not.toHaveBeenCalled()
-  })
-})
+// NOTE: the Planning export UI MOVED off the board into the Inspector (P3) — it is now the
+// extracted ExportPopover. Its returned-error / cancel console.error surfacing (formerly the
+// on-board "[Fix 3]" cases here) lives in ExportPopover.test.tsx, rendering ExportPopover
+// directly; a bare PlanningBoard no longer owns an export trigger.

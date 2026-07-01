@@ -243,3 +243,81 @@ test.describe('@chrome @preview Board Inspector — Data-Flow per-type content',
     }
   })
 })
+
+test.describe('@chrome @planning Board Inspector — Planning per-type content', () => {
+  test('selecting a planning board reveals the inspector; the tool palette round-trips + keeps the board selected', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'inspector-p-',
+      'inspector-p'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const id = await seed(page, 'planning')
+      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await evalIn(page, `window.__canvasE2E.setZoom(1)`) // eligibility requires zoom >= 0.4
+
+      // The tool palette MOVED off the board into the Inspector (P3); the Select tool cell is a stable
+      // presence probe (Tools is always open). Poll it — the shell reveals a tick before the portal mounts.
+      const present = await pollEval(
+        page,
+        `!!document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-select"]')`,
+        5000
+      )
+      expect(present, 'PlanningInspector tool palette is portaled into the shell slot').toBe(true)
+
+      const revealed = await pollEval(
+        page,
+        `document.querySelector('[data-test="board-inspector"]')?.getAttribute('data-revealed') === 'true'`,
+        3000
+      )
+      expect(revealed, 'selecting a single planning board reveals the inspector').toBe(true)
+
+      const labels = await evalIn<string>(
+        page,
+        `Array.from(document.querySelectorAll('[data-test="board-inspector"] .ca-inspector-section-lab')).map((e) => e.textContent).join('|')`
+      )
+      for (const section of ['Tools', 'Canvas']) {
+        expect(labels, `the ${section} section renders`).toContain(section)
+      }
+
+      // Default tool is 'select' → its cell starts checked. Clicking the Pen cell fires the board's REAL
+      // setTool; the change round-trips back into the presentation-only grid (value is driven by the
+      // board's tool state).
+      const selectStartsOn = await evalIn<boolean>(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-select"]')?.getAttribute('aria-checked') === 'true'`
+      )
+      expect(selectStartsOn, 'the Select tool starts active').toBe(true)
+
+      await evalIn(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-pen"]').click()`
+      )
+      const penActive = await pollEval(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-pen"]')?.getAttribute('aria-checked') === 'true'`,
+        3000
+      )
+      expect(penActive, 'clicking the inspector Pen cell sets the tool via the real handler').toBe(
+        true
+      )
+
+      // D3: picking a tool clears only the element selection, never the board's — so the board stays the
+      // single eligible selection and the inspector stays revealed through the pick (no mid-draw hide).
+      const stillRevealed = await evalIn<boolean>(
+        page,
+        `document.querySelector('[data-test="board-inspector"]')?.getAttribute('data-revealed') === 'true'`
+      )
+      expect(stillRevealed, 'picking a tool does not deselect the board / hide the inspector').toBe(
+        true
+      )
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})

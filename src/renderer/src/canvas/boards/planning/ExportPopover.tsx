@@ -11,8 +11,22 @@ import { createPortal } from 'react-dom'
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
 import { runBoardExport } from './runExport'
 import { IconBtn } from '../../BoardFrame'
+import { Icon } from '../../Icon'
+import { InspectorAction } from '../../inspector/primitives'
 
-export function ExportPopover({ board }: { board: PlanningBoardData }): ReactElement {
+/**
+ * `toolbar` = the original BoardFrame action-slot IconBtn. `inspector` = a labelled
+ * InspectorAction (P3, the PlanningInspector re-home) that opens the SAME PNG/SVG menu —
+ * the positioning + menu markup below are shared verbatim, only the trigger differs.
+ */
+export function ExportPopover({
+  board,
+  variant = 'toolbar'
+}: {
+  board: PlanningBoardData
+  variant?: 'toolbar' | 'inspector'
+}): ReactElement {
+  const inspector = variant === 'inspector'
   const [exportOpen, setExportOpen] = useState(false)
   const exportTriggerRef = useRef<HTMLDivElement>(null)
   const [exportPos, setExportPos] = useState<{ top: number; left: number }>({
@@ -55,14 +69,28 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
     setExportPos({ top: t.bottom + 4, left })
   }, [exportOpen])
   return (
-    <div ref={exportTriggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
-      <IconBtn
-        name="download"
-        title="Export"
-        size={15}
-        active={exportOpen}
-        onClick={() => setExportOpen((v) => !v)}
-      />
+    <div
+      ref={exportTriggerRef}
+      style={{ position: 'relative', display: inspector ? 'block' : 'inline-flex' }}
+    >
+      {inspector ? (
+        <InspectorAction
+          icon={<Icon name="download" size={14} />}
+          active={exportOpen}
+          onClick={() => setExportOpen((v) => !v)}
+          dataTest="inspector-export"
+        >
+          Export…
+        </InspectorAction>
+      ) : (
+        <IconBtn
+          name="download"
+          title="Export"
+          size={15}
+          active={exportOpen}
+          onClick={() => setExportOpen((v) => !v)}
+        />
+      )}
       {exportOpen &&
         createPortal(
           <div

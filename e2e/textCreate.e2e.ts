@@ -2,25 +2,6 @@ import { test, expect } from './fixtures'
 import { evalIn, mainCall, pollEval, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
-/** Read the screen-center of a named element inside a planning board node, or null if absent. */
-async function boardBtnCenter(
-  page: Page,
-  planId: string,
-  selector: string
-): Promise<{ cx: number; cy: number } | null> {
-  return evalIn<{ cx: number; cy: number } | null>(
-    page,
-    `(() => {
-       const n = document.querySelector('.react-flow__node[data-id=${JSON.stringify(planId)}]');
-       const b = n && n.querySelector(${JSON.stringify(selector)});
-       if (!b) return null;
-       const r = b.getBoundingClientRect();
-       if (!(r.width > 0)) return null;
-       return { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) };
-     })()`
-  )
-}
-
 /** Read the current React Flow viewport zoom from the DOM transform. */
 async function rfZoom(page: Page): Promise<number> {
   return evalIn<number>(
@@ -50,15 +31,12 @@ test.describe('@planning text create + edit (real OS input)', () => {
   }) => {
     const planId = await seed(page, 'planning', { w: 560, h: 420 })
 
-    // The board is selected after seed (addBoard sets selectedId), so the tool strip is
-    // rendered. Poll for the Text tool button to confirm the board has mounted and React
-    // has rendered the toolbar row.
-    await expect
-      .poll(() => boardBtnCenter(page, planId, 'button[title="Text (X)"]'), {
-        message: 'Text tool button appeared in the planning board toolbar',
-        timeout: 4000
-      })
-      .not.toBeNull()
+    // Confirm the board + its well mounted (React rendered) before driving input.
+    const wellSel = `.react-flow__node[data-id=${JSON.stringify(planId)}] .pl-well`
+    expect(
+      await pollEval(page, `!!document.querySelector('${wellSel}')`, 4000),
+      'planning well mounted'
+    ).toBe(true)
 
     // Force zoom = 1 AFTER the board has rendered (seed + first fitView sets it to ~1.5+).
     // At zoom=1: screen-px drag == board-px → a 90px drag → tokenFromHeight(90) = 'XL'.
@@ -72,25 +50,12 @@ test.describe('@planning text create + edit (real OS input)', () => {
       // toBeCloseTo(1, 3) — sub-0.05 settle jitter would make this flaky.
       .toBeCloseTo(1, 1)
 
-    // Re-read button and well coords NOW (they shifted when zoom changed).
-    const tbtn = await boardBtnCenter(page, planId, 'button[title="Text (X)"]')
-    expect(tbtn, 'Text tool button visible at zoom=1').not.toBeNull()
-
-    // Click the Text tool button with real OS input.
-    await mainCall(electronApp, 'sendInput', {
-      type: 'mouseDown',
-      x: tbtn!.cx,
-      y: tbtn!.cy,
-      button: 'left',
-      clickCount: 1
-    })
-    await mainCall(electronApp, 'sendInput', {
-      type: 'mouseUp',
-      x: tbtn!.cx,
-      y: tbtn!.cy,
-      button: 'left',
-      clickCount: 1
-    })
+    // Select the Text tool via its always-on bare-letter shortcut `x`. The palette MOVED off the
+    // board into the Board Inspector (P3), but the S/N/X/C/D/A/P/E shortcuts stay the always-on
+    // fast path — handled by the focused well's keydown (shortcutTool → setTool('text')). Focus
+    // the well, then press x (real key via CDP, routed to the focused element).
+    await evalIn(page, `document.querySelector('${wellSel}').focus()`)
+    await page.keyboard.press('x')
 
     // Read the well's top-left to compute absolute drag start coords.
     const well = await evalIn<{ x: number; y: number }>(
