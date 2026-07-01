@@ -97,6 +97,7 @@ export type LifecycleOrchestrator = Omit<
   | 'spawnGroup'
   | 'describeLayout'
   | 'boardCards'
+  | 'tidyCanvas'
   | 'addCard'
   | 'moveCard'
   | 'updateCard'
@@ -127,6 +128,15 @@ export type LifecycleOrchestrator = Omit<
    * matches the concrete method on 0.18.0-rc.4 at integration.
    */
   boardCards(boardId: string): Promise<BoardCards>
+  /**
+   * 🔒 Tidy the whole canvas (P2) — reposition every board into a clean, non-overlapping arrangement
+   * via the renderer's deterministic packer (`canvasStore.tidyBoards`). NARROWS the package's
+   * `tidyCanvas(): Promise<unknown>` to the concrete host-owned `{ moved }` (the package does not own
+   * that type — same discipline as `describeLayout`). UN-GATED + content-less (reposition-only, one
+   * host-undo reversible). Omitting `tidyCanvas` from the base is a harmless no-op on a package
+   * predating it (0.17.0), and matches the concrete method on 0.18.0-rc.5 at integration.
+   */
+  tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
   /**
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally

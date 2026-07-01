@@ -94,8 +94,33 @@
   (bundled with P1b/P3a/P5a): pin bump `^0.17.0`→`0.18.0-rc.4` + install (a READ resource, not a tool —
   `APP_TOOLS`/F25 unaffected). The resource serves LIVE only once MAIN consumes the rc at integration.
 - **P4.2 — DONE (see the dedicated bullet above).**
-- **P2** — not started. (P5's remaining polish — the mock's placement mini-preview — folds into a later
-  pass.)
+- **P2 — DONE (the `tidy_canvas` tool), goes live at integration. The epic is now feature-complete.**
+  A write tool that reposition-packs the WHOLE canvas via the app's already-built, already-undoable
+  deterministic packer (`tidyLayout` + `canvasStore.tidyBoards`) — so P2 is pure MCP plumbing, no new
+  layout math, no UI, no schema change. Package `@expanse-ade/mcp@0.18.0-rc.5` (`feat/canvas-layout`,
+  tag `v0.18.0-rc.5`; npm `next`): `tidy_canvas` tool (`mode?: 'smart'|'by-type'|'grid'`, Zod enum) →
+  `Orchestrator.tidyCanvas(input):Promise<unknown>` + mock stub. **Orchestrator-tier only** (registered
+  beside `spawn_group` in `factory.ts`, absent from worker/connected `tools/list` — rearranging
+  everyone's boards is an orchestrator-scope act) and **UN-GATED** (content-less + reposition-only —
+  never resizes/creates/deletes a board — and reversible in ONE Ctrl+Z, the `spawn_group` precedent, so
+  it does NOT sit behind the `planningWrite` human-confirm gate). Host: `tidyCanvas` extracted to a
+  `createTidyMethod` factory (`mcpTidy.ts`) + spread into `mcpOrchestrator.ts` to keep it under the
+  max-lines gate (the P3b/P5a extract pattern; the base was AT the 700 cap — also DRY'd the describeApp
+  board map to net −5 lines). It is the simplest write method: no cap/mint/sanitize/confirm/audit — it
+  just forwards a `tidyBoards` command and returns the moved count. Shared `McpCommand` gains a
+  `tidyBoards` variant + the success `McpCommandAck` gains an optional `moved`; the renderer applier
+  re-validates `mode` (defense in depth → falls back to `smart`), calls the existing
+  `store.tidyBoards(mode)` directly (NO `beginChange` — it is already one undoable `trackedChange` step
+  that no-ops when nothing moved), and reports the moved count on the ack. `LifecycleOrchestrator`
+  narrows + Omits `tidyCanvas` (compiles vs installed 0.17.0 AND 0.18.0-rc.5). Tool shape:
+  `tidy_canvas({ mode? }) → { moved }` (0 ⇒ already tidy). MVP = whole-canvas, mode-only — the
+  `boardIds` subset param + the `aspect` grid knob are deliberately deferred (a subset needs a new
+  scoped store action). **NO UI, NO schema change** → no design artifact / dev-check / e2e (like
+  P1b/P3a/P5a/P3b). Gate GREEN: app typecheck/lint/format 0 · **3936 unit+integration** (+7) · **pkg
+  258 test / lint 0** (+6 tidy contract). **Integration owes** (bundled with P1b/P3a/P5a/P3b): pin
+  `^0.17.0`→`0.18.0-rc.5` + `APP_TOOLS` +`tidy_canvas` (F25 runs vs installed 0.17.0, so adding it now
+  would red the drift guard) + install. Once MAIN consumes the rc at integration, `tidy_canvas`
+  registers + serves live.
 
 ## Why
 
@@ -147,7 +172,7 @@ one orientation the agent can pick; it is no longer a user-facing requirement.)
 | Phase | What | Package release | Schema |
 |---|---|---|---|
 | **P1 · Awareness** | Geometry (`x/y/w/h/groupId`) on the `canvas://boards` projection + `AppModelBoard`; new digested `canvas://layout` resource (bbox, row/col structure, overlaps). | layout resource: yes | none |
-| **P2 · Tidy** | `tidy_canvas` tool + `tidyBoards` `McpCommand` → `tidyLayout` + `canvasStore.tidyBoards`. orientation/mode/subset params. Reposition-only, undoable. | yes | none |
+| **P2 · Tidy** ✅ | `tidy_canvas` tool + `tidyBoards` `McpCommand` → `tidyLayout` + `canvasStore.tidyBoards`. Mode param (`smart`/`by-type`/`grid`); subset/`aspect` deferred. Reposition-only, undoable, orchestrator-tier, un-gated. | rc.5 | none |
 | **P3 · Mutate** | `canvas://board/{id}/elements` read resource + `update`/`remove`/`move` element tools + commands. The "delete/update resource." | yes | none |
 | **P4 · Kanban board** | `kanban` board type: schema, store slice, `KanbanBoard.tsx`, persistence, drag-between-columns; spawn/close wiring. | wiring | **v18 + floor** |
 | **P5 · Visualize prompt** | Upgrade the confirm gate into the layout chooser; agent proposes from P1 awareness; placement tidy-aware. | yes | none |

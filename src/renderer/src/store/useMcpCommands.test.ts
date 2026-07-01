@@ -735,3 +735,50 @@ describe('applyMcpCommand — visualizePlan (P5)', () => {
     expect(useCanvasStore.getState().boards).toHaveLength(0)
   })
 })
+
+describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
+  /** Seed three terminals stacked on ONE spot so a tidy must move at least two of them. */
+  function seedOverlapping(): void {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b1', type: 'terminal' } })
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b2', type: 'terminal' } })
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b3', type: 'terminal' } })
+    useCanvasStore.setState((s) => ({
+      boards: s.boards.map((b) => ({ ...b, x: 100, y: 100 })),
+      past: [],
+      future: []
+    }))
+  }
+
+  it('repositions overlapping boards, reports the moved count, and is ONE undo step', () => {
+    seedOverlapping()
+    const ack = applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    expect(ack).toMatchObject({ ok: true, type: 'tidyBoards' })
+    if (!ack.ok) throw new Error('expected ok')
+    expect(ack.moved).toBeGreaterThan(0)
+    // The packer separates them — no two boards share a position afterwards.
+    const boards = useCanvasStore.getState().boards
+    expect(new Set(boards.map((b) => `${b.x},${b.y}`)).size).toBe(boards.length)
+    // One tracked step for the whole re-pack (no beginChange wrapper in the applier).
+    expect(useCanvasStore.getState().past).toHaveLength(1)
+  })
+
+  it('falls back to smart for an off-enum mode (defense in depth) and still tidies', () => {
+    seedOverlapping()
+    const ack = applyMcpCommand({
+      type: 'tidyBoards',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mode: 'diagonal' as any
+    })
+    expect(ack.ok).toBe(true)
+    if (!ack.ok) throw new Error('expected ok')
+    expect(ack.moved).toBeGreaterThan(0)
+  })
+
+  it('no-ops with < 2 boards — acks moved:0 and pushes no undo step', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'solo', type: 'terminal' } })
+    useCanvasStore.setState({ past: [], future: [] })
+    const ack = applyMcpCommand({ type: 'tidyBoards' })
+    expect(ack).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
+    expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
+})

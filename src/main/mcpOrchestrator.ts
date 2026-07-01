@@ -18,6 +18,7 @@ import { createVisualizeMethod } from './mcpVisualizeGate'
 import { buildAppModel, type AppModel } from './appModel'
 import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { createBoardCardsMethod } from './mcpBoardCards'
+import { createTidyMethod } from './mcpTidy'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -460,6 +461,10 @@ export function buildOrchestrator(
     // grouped from the live mirror). Built in ./mcpBoardCards + spread here to keep this file under the
     // max-lines gate. Read-only (no PTY / nonce / confirm) — card TEXT the human already sees on-canvas.
     ...createBoardCardsMethod(registry.listBoards),
+    // 🔒 P2 tidy_canvas — reposition the whole canvas via the renderer's deterministic packer. Built
+    // in ./mcpTidy + spread here to keep this file under the max-lines gate. UN-GATED + content-less
+    // (reposition-only, one host-undo reversible — the spawn_group precedent): no cap/mint/confirm/audit.
+    ...createTidyMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.
@@ -1049,19 +1054,13 @@ export function buildOrchestrator(
       // that doesn't wire listGroups reads [].)
       const summaries = await listBoardSummaries()
       return buildAppModel({
-        boards: summaries.map((b) => ({
-          id: b.id,
-          type: b.type,
-          title: b.title,
-          status: b.status ?? 'static',
-          ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
-          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),
-          // P1: geometry rides onto the app self-model's live canvas too, so an orchestrator
-          // reasoning over `canvas://app-model` sees the same spatial data as `canvas://boards`.
-          ...(b.x !== undefined ? { x: b.x } : {}),
-          ...(b.y !== undefined ? { y: b.y } : {}),
-          ...(b.w !== undefined ? { w: b.w } : {}),
-          ...(b.h !== undefined ? { h: b.h } : {})
+        // Drop the file-context fields (path/fileRefs) the app-model doesn't carry + default status;
+        // everything else — agentKind/monitorActivity + P1 geometry (x/y/w/h) — rides through via
+        // `...rest`, so an orchestrator reasoning over `canvas://app-model` sees the same spatial data
+        // as `canvas://boards`. (`_`-prefixed drops are ignored by noUnusedLocals; keeps this <700.)
+        boards: summaries.map(({ path: _path, fileRefs: _fileRefs, status, ...rest }) => ({
+          ...rest,
+          status: status ?? 'static'
         })),
         connectors: registry.listConnectors().map((c) => ({
           id: c.id,

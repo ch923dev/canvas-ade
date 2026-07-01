@@ -155,6 +155,11 @@ export interface PlanItem {
  *   later lifecycle tools can address each member); the renderer lays out the cluster (free-slot
  *   placement, per-type defaults) and folds the browser's `previewSourceId` onto the terminal.
  *   Content-less like `addBoard` (empty boards), so it is cap-checked, not human-gated.
+ * - `tidyBoards` (P2) repositions the WHOLE canvas into a clean, non-overlapping arrangement via the
+ *   existing `canvasStore.tidyBoards` action (`smart`/`by-type`/`grid`). Reposition-only + content-less
+ *   (never resizes/creates/deletes a board); `tidyBoards` is ALREADY one undoable `trackedChange` step
+ *   that no-ops when nothing moved, so the renderer applier calls it directly (no `beginChange`
+ *   wrapper). The applier re-validates `mode` (defense in depth) and reports the moved count on the ack.
  */
 export type McpCommand =
   | { type: 'ping' }
@@ -185,9 +190,16 @@ export type McpCommand =
         browser?: { id: string }
       }
     }
+  | { type: 'tidyBoards'; mode?: 'smart' | 'by-type' | 'grid' }
 
-/** The renderer's reply to a McpCommand. `type` echoes the handled command. */
-export type McpCommandAck = { ok: true; type: string } | { ok: false; error: string }
+/**
+ * The renderer's reply to a McpCommand. `type` echoes the handled command. The optional `moved` (P2)
+ * rides on a successful `tidyBoards` ack — the count of boards whose position changed (0 ⇒ already
+ * tidy) — so the host can surface it to the agent; absent on every other command.
+ */
+export type McpCommandAck =
+  | { ok: true; type: string; moved?: number }
+  | { ok: false; error: string }
 
 // ── Audit entry types (formerly hand-mirrored in auditLog.ts + AuditLogViewer.tsx) ──
 

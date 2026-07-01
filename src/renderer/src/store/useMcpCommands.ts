@@ -255,6 +255,26 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       store.spawnGroup({ at, group, members })
       return { ok: true, type: 'spawnGroup' }
     }
+    case 'tidyBoards': {
+      // 🔒 P2: reposition the WHOLE canvas via the existing deterministic packer. Reposition-only +
+      // content-less — MAIN sends no geometry; the renderer's OWN `tidyBoards` action computes the
+      // clean arrangement. Re-validate `mode` (defense in depth, mirroring spawnGroup): fall back to
+      // 'smart' for an absent/off-enum value rather than trusting the IPC-crossed string.
+      const raw = command.mode
+      const mode = raw === 'smart' || raw === 'by-type' || raw === 'grid' ? raw : 'smart'
+      // `tidyBoards` is ALREADY ONE undoable `trackedChange` step that no-ops when nothing moved — do
+      // NOT wrap it in beginChange() (that's for the additive content writes). Snapshot positions
+      // around the call so the ack can report how many boards actually moved (0 ⇒ already tidy).
+      const store = useCanvasStore.getState()
+      const before = new Map(store.boards.map((b) => [b.id, { x: b.x, y: b.y }]))
+      store.tidyBoards(mode)
+      let moved = 0
+      for (const b of useCanvasStore.getState().boards) {
+        const prev = before.get(b.id)
+        if (prev && (prev.x !== b.x || prev.y !== b.y)) moved++
+      }
+      return { ok: true, type: 'tidyBoards', moved }
+    }
     case 'visualizePlan': {
       // 🔒 P5: CREATE a new board from a sanitized plan in the shape the human PICKED in the confirm
       // chooser. MAIN validated + sanitized + capped the items, minted the board id, and confirmed the
