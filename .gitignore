@@ -62,6 +62,13 @@ canvas.json.bak
 # writes canvas.json / assets / memory / tmp scratch here. Never tracked.
 .canvas/
 
+# MCP-provisioner output (agent-orch per-CLI provisioners): when the app connects a
+# Terminal-board CLI (Claude Code -> .mcp.json, opencode -> opencode.json, ...) to its own
+# canvas-ade MCP server, it writes a client config here carrying an EPHEMERAL localhost port
+# + a per-run bearer TOKEN (a secret). Runtime artifact — never tracked.
+.mcp.json
+opencode.json
+
 # Playwright (T4 e2e)
 /test-results/
 /playwright-report/
