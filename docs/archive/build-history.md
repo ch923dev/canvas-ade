@@ -1314,3 +1314,32 @@ estimateLineWidth, note/area-text/checklist wrap+grow, the injected-measurer DI 
 GREEN both legs (Windows 223 — two unrelated @core/@preview env flakes rerun 15/15 — + Linux Docker 223).
 CI green (check · CodeQL · analyze · claude-review, zero inline). Manual dev check confirmed the live
 export wrap + the checklist LOD-remount.
+
+## 2026-07-01 — OSR revive sizing (MAX_LIVE) fix — #269 (`b0f74d97`)
+
+Found during an OSR-subsystem review and reproduced deterministically before fixing. When more than 4
+Browser boards exist (the `MAX_LIVE=4` existence cap is in play), an evicted board's offscreen window is
+DESTROYED (its frozen frame stays on the `<canvas>`) and `useOffscreenPreview` REOPENS a fresh one when
+the board climbs back into the cap. That reopened window is born at the OSR default (`OSR_WIDTH×OSR_HEIGHT`
+= 1280×800, S=1), but `useOffscreenSizing`'s effect deps excluded the board's `alive` flag, so no
+`preview:osrResize` was re-sent — the revived board reflowed its page at desktop width in its (e.g.
+mobile) device frame and lost its supersample (blurry) until the next zoom-settle. Real-world trigger: a
+pan-only (zoom-unchanged) revive, since a zoom change would re-drive sizing and mask it.
+
+**Fix:** `useOffscreenSizing` now reads `alive` from `osrLivenessStore` (mirroring its sibling
+`useOffscreenPreview`), skips sizing while evicted, and re-pushes the preset size on revive (`alive` added
+to the effect deps). A full-viewed board is always forced alive by the liveness manager, so full view is
+never skipped. ~4 runtime lines; renderer-scoped, no schema change.
+
+**Regression guard:** `e2e/osrReviveSizing.e2e.ts` (`@preview`) drives an evict→revive via the `alive`
+flag (what the liveness manager writes) and asserts the revived mobile board settles back to its 390
+preset `logicalW` — RED without the fix (1280), GREEN with it. Adds two e2e affordances: an
+`osrLogicalSize` MAIN probe (`getContentSize()/getZoomFactor()`) and a `setOsrAlive` renderer hook;
+`smoke/e2eHooks.ts` (the Playwright harness) joined the `max-lines` test-exemption. The board id is passed
+as a BOUND `page.evaluate` argument (not an eval-string), clearing two CodeQL `js/bad-code-sanitization`
+false-positive advisories at the source.
+
+**Verified:** typecheck · lint · format · full `@preview` e2e 37/37 (incl. all 5 fullview specs). Full
+e2e matrix GREEN both legs ×2 (223 passed + the documented dataFlow Linux-Docker flake retry-recovered /
+224 passed). CI green (check · CodeQL · analyze · claude-review 0/0 inline). Manual dev check confirmed
+the titled build launches clean.
