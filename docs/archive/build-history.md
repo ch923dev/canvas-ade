@@ -1421,3 +1421,46 @@ reran green in isolation) + Linux Docker 229 passed. New specs green: `terminalP
 critical/warning findings**). Known follow-up (accepted, out of epic scope): a board permanently deleted
 while idle/restored/exited leaves an orphaned `.canvas/terminal/*.snapshot` (harmless, git-ignored) with no
 GC path — a TTL sweep mirroring `pty.ts`'s parked-PTY reap is the fix.
+
+## 2026-07-01 — MCP canvas-awareness epic (P1–P5) → main · geometry/layout awareness · Kanban board type · card mutate+read · visualize gate · tidy_canvas (merge `d07a7af1`)
+
+The whole `feat/mcp-canvas-awareness-umbrella` epic, integrated onto `main` as one `--no-ff` merge (`d07a7af1`)
++ a bundled integration commit. Makes the MCP layer spatially aware, gives it the element update/delete +
+layout surface it lacked, and adds a dedicated Kanban board type. Sub-phases (previously merged into the
+umbrella; details in the phase memory):
+
+- **P1 canvas awareness** — board geometry (`x/y/w/h`) threaded into `canvas://boards` + `AppModelBoard`;
+  pure `layoutModel.ts` `buildLayoutDigest` (bbox/overlaps/row·column·grid·scattered) behind
+  `canvas://layout` + `Orchestrator.describeLayout`.
+- **P4 Kanban board type** — dedicated `kanban` board TYPE (full-board, Data-Flow template). **Breaking
+  schema v17 / reader-floor 17** (ordered `columns` + flat `cards` bound by `columnId`; shapes in leaf
+  `kanbanSchema.ts`). P4.2 = HTML5-native drag between columns + inline card/column authoring + soft WIP,
+  each edit one undoable `beginChange`+`updateBoard` step (`kanbanEdit.ts`, same-ref no-op guard).
+- **P3 card mutate + read** — flag-gated (`planningWrite`) `add_card`/`move_card`/`update_card`/`remove_card`
+  end-to-end (pkg tool → host gate: resolve→sanitize→human-confirm→`patchKanban`→audit → renderer
+  `kanbanMcpApply`); MAIN mints card ids. P3b READ half = `canvas://board/{id}/cards` per-board projection
+  (rides the board mirror, count-/field-capped on IPC ingress).
+- **P5 visualize gate** — `visualize_plan`: agent proposes a flat plan + suggested shape; the UPGRADED
+  human-confirm gate surfaces a layout CHOOSER (kanban/grid/checklist/columns) that RE-VALIDATES the pick
+  fail-safe to the suggestion, then creates a new board tidied into open space. `ConfirmRequest.choices` +
+  `ConfirmDecision.choice` reuse the whole fail-closed confirm machinery.
+- **P2 tidy_canvas** — orchestrator-tier, **un-gated** (content-less, reposition-only, one-undo reversible —
+  the `spawn_group` precedent) `tidy_canvas({ mode?: 'smart'|'by-type'|'grid' }) → { moved }`; drives the
+  existing `canvasStore.tidyBoards` packer. No schema/UI.
+
+**Package:** consumes **`@expanse-ade/mcp@0.18.0-rc.5`** (published to npm `next`; `latest` stays 0.17.0).
+Host `LifecycleOrchestrator` narrows+Omits the host-owned methods (`describeLayout`/`boardCards`/
+`tidyCanvas` + kanban/visualize) so it compiled vs both installed 0.17.0 AND the rc through the epic.
+
+**Integration commit (pin bump + drift catch-up):** app pin `^0.17.0`→`0.18.0-rc.5` + `pnpm install`
+(lockfile) + `appModel.ts APP_TOOLS` +`tidy_canvas`/`add_card`/`move_card`/`update_card`/`remove_card`/
+`visualize_plan` (the F25 drift guard now matches the installed rc.5 orchestrator tool set). `APP_BOARD_TYPES`
+intentionally NOT given `kanban` (dataflow likewise absent; F25 guards tools only). Rebase onto `b003fb0`
+(#275) was conflict-free; the only cap fallout was `src/preload/index.ts` tipping to 701 code-lines after the
+additive merge (#275 terminal channels + P5 confirm mirrors) — trimmed by inlining the `ConfirmChoices`
+mirror into the `ConfirmRequest.choices` field (structurally identical over the IPC boundary), no ratchet bump.
+
+**Verified:** typecheck 0 · lint 0 errors (37 pre-existing STYLE-02 warnings) · format clean · **3994 unit+
+integration pass** / 1 skipped (F25 drift green). **Full e2e matrix GREEN both legs** at the pre-merge gate —
+Windows 232 passed (lone `osrCropSupersample` @preview env flake reran green in isolation) + Linux Docker
+`exit 0` 232 passed (1 flaky `dataFlow` @preview retry-recovered — the known Linux-Docker flake).

@@ -116,6 +116,7 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     purpose: 'Spawn a feature-zone cluster (terminal + optional planning/browser + Named Group).',
     tier: 'orchestrator'
   },
+  { name: 'tidy_canvas', purpose: 'Reposition-pack all boards; un-gated.', tier: 'orchestrator' },
   {
     name: 'close_board',
     purpose: 'Remove a board (graceful PTY drain first).',
@@ -145,6 +146,32 @@ export const APP_TOOLS: readonly AppModelTool[] = [
   {
     name: 'add_planning_elements',
     purpose: 'Seed planning elements into a planning board (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'add_card',
+    purpose: 'Add a card to a Kanban board column (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'move_card',
+    purpose: 'Move a Kanban card to another column (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'update_card',
+    purpose: 'Update fields on a Kanban card (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'remove_card',
+    purpose: 'Remove a card from a Kanban board (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'visualize_plan',
+    purpose:
+      'Propose a plan visualization; the human picks the layout and a new board is created (gated).',
     tier: 'orchestrator'
   },
   { name: 'wait_for_idle', purpose: 'Block until a board settles idle.', tier: 'orchestrator' },

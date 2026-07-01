@@ -7,21 +7,14 @@ import { terminalApi } from './terminalApi'
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
 export type PtyState = 'spawning' | 'running' | 'exited' | 'spawn-failed'
 
-/** An optional layout chooser attached to a confirm request (P5; mirrors main `ConfirmChoices`). */
-export interface ConfirmChoices {
-  label?: string
-  options: Array<{ id: string; label: string }>
-  default: string
-}
-
 /** A human-confirm request surfaced to the modal (mirrors main `ConfirmRequest`, T4.2). */
 export interface ConfirmRequest {
   title: string
   body: string
   confirmLabel?: string
   denyLabel?: string
-  /** P5: when set, the modal renders a chooser and the reply carries the picked `choice`. */
-  choices?: ConfirmChoices
+  /** P5: layout chooser (mirrors main `ConfirmChoices`); when set the modal renders it and the reply carries the picked `choice`. */
+  choices?: { label?: string; options: Array<{ id: string; label: string }>; default: string }
 }
 
 /** The modal's reply to a confirm request; P5 adds the optional chooser `choice`. */
