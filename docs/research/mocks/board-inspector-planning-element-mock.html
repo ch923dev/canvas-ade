@@ -1,0 +1,590 @@
+<!doctype html>
+<!--
+  THROWAWAY pixel mock — Board Inspector **P4: PlanningInspector element bridge**.
+  Design-artifact gate per CLAUDE.md › "Design artifact before code". NOT wired into src/ or build.
+
+  P4 makes the Planning inspector morph by the SELECTED ELEMENT(s): pick a note/text/arrow/etc.
+  and the inspector grows an ELEMENT section with that element's controls — all of which already
+  exist today, split across the floating TextToolbar (typography) + the right-click
+  ElementContextMenu (tint / lock / group / align / distribute / duplicate / send-to-board / delete).
+  P4 surfaces them in the always-visible inspector, keyed off element selection. No new store.
+
+  This mock surfaces the FOUR open decisions for sign-off (annotated inline):
+    (1) SCOPE — no-schema v1 (re-home existing controls) vs schema-touching (stroke/opacity/z-order).
+    (2) TextToolbar — MOVE vs MIRROR vs ADDITIVE (keep the on-board editing toolbar?).
+    (3) MULTI-SELECT gating — homogeneous → per-kind controls; mixed → shared only.
+    (4) ELEMENT-section PLACEMENT + empty state.
+
+  Tokens + inspector classes copied VERBATIM from the shipped P3 mock (index.css / DESIGN.md §2-4).
+  Calm/dense Linear-Raycast feel; one accent (#4f8cff), functional only; no gradients/glass/glow.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Board Inspector P4 — PlanningInspector (element bridge)</title>
+    <style>
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --serif: Georgia, 'Times New Roman', serif;
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --err: #f2545b;
+        /* note tints (index.css --note-*) */
+        --note-yellow-fill: #2a2a17;
+        --note-yellow-edge: #4a4a2a;
+        --note-blue-fill: #16233a;
+        --note-blue-edge: #294061;
+        --note-green-fill: #16281f;
+        --note-green-edge: #294a38;
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --r-pill: 999px;
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+        --fs-micro: 10px;
+        --fs-meta: 11px;
+        --fs-label: 12px;
+        --fs-body: 13px;
+        --tr-micro: 0.06em;
+        --titlebar-h: 34px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 18px 18px,
+          var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        padding: 26px 26px 40px;
+      }
+      h1.page { font-size: 14px; font-weight: 600; margin: 0 0 3px; letter-spacing: -0.01em; }
+      p.page-sub { font-size: var(--fs-meta); color: var(--text-3); margin: 0 0 18px; font-family: var(--mono); }
+      .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 0 0 16px; font-size: var(--fs-meta);
+        color: var(--text-3); font-family: var(--mono); }
+      .legend span b { color: var(--accent); font-weight: 400; }
+      .legend span i { color: var(--ok); font-style: normal; }
+      .frame-label { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); margin: 26px 0 10px;
+        border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+
+      /* ── on-canvas scene ─────────────────────────────────────────────── */
+      .scene {
+        position: relative; height: 560px; border-radius: var(--r-board);
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 18px 18px,
+          var(--void);
+        border: 1px solid var(--border-subtle); overflow: hidden;
+      }
+      .board {
+        position: absolute; border-radius: var(--r-board); background: var(--surface);
+        border: 1px solid var(--border-subtle); box-shadow: var(--shadow-board);
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      .board.sel { box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-board); }
+      .board-tb {
+        height: var(--titlebar-h); flex: none; display: flex; align-items: center; gap: 8px;
+        padding: 0 6px 0 10px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-raised);
+      }
+      .board.sel .board-tb { background: var(--accent-wash); }
+      .glyph { font-family: var(--mono); font-size: 13px; color: var(--text-3); flex: none; }
+      .tag { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        color: var(--text-3); flex: none; }
+      .b-title { font-size: var(--fs-label); font-weight: 500; color: var(--text-2); flex: 1; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .board.sel .b-title { color: var(--text); }
+      .tb-ctl { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--r-ctl);
+        color: var(--text-3); flex: none; font-size: 13px; }
+      .board-body { flex: 1; min-height: 0; padding: 0; background: var(--inset); position: relative; }
+      /* faux whiteboard content */
+      .wb-note { position: absolute; border-radius: 4px; background: var(--note-yellow-fill);
+        border: 1px solid var(--note-yellow-edge); color: #d8d8b0; font-size: 10px; padding: 6px; font-family: var(--ui); }
+      .wb-note.blue { background: var(--note-blue-fill); border-color: var(--note-blue-edge); color: #b8cdec; }
+      .wb-note.green { background: var(--note-green-fill); border-color: var(--note-green-edge); color: #a9d6bf; }
+      .wb-note.sel, .wb-text.sel { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+      .wb-text { position: absolute; font-family: var(--serif); color: var(--text); }
+      .wb-arrow { position: absolute; height: 1.5px; background: var(--text-3); transform-origin: left center; }
+      .wb-arrow::after { content: '▸'; position: absolute; right: -6px; top: -7px; color: var(--text-3); font-size: 11px; }
+      .grip { position: absolute; width: 7px; height: 7px; background: var(--accent); border: 1px solid var(--void);
+        border-radius: 1px; }
+
+      /* ── Board Inspector popover (shared shell — verbatim from the shipped P3 mock) ── */
+      .bi {
+        width: 234px; background: var(--surface-overlay); border: 1px solid var(--border);
+        border-radius: var(--r-board); box-shadow: var(--shadow-pop); overflow: hidden;
+        display: flex; flex-direction: column;
+      }
+      .bi.dock-left {
+        position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+        max-height: calc(100% - 28px);
+      }
+      .bi-scroll { overflow-y: auto; display: flex; flex-direction: column; }
+
+      .bi-head { padding: 10px 10px 9px; border-bottom: 1px solid var(--border-subtle);
+        background: var(--surface-overlay); flex: none; }
+      .bi-head-r1 { display: flex; align-items: center; gap: 7px; }
+      .bi-head-glyph { font-family: var(--mono); font-size: 13px; color: var(--text-3); flex: none; }
+      .bi-head-type { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); flex: 1; }
+      .bi-jump { width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--r-ctl);
+        color: var(--text-3); border: 1px solid transparent; cursor: pointer; background: transparent; }
+      .bi-jump:hover { color: var(--text-2); background: rgba(255,255,255,.04); }
+      .bi-head-title { font-size: var(--fs-label); font-weight: 500; color: var(--text); margin-top: 6px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bi-head-status { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); margin-top: 2px;
+        display: flex; align-items: center; gap: 6px; }
+
+      .sec { border-top: 1px solid var(--border-subtle); padding: 7px 10px 9px; }
+      .sec:first-child { border-top: none; }
+      .sec-hd { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 0 6px; }
+      .sec-lab { font-size: var(--fs-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+        font-weight: 500; color: var(--text-3); flex: 1; }
+      .chev { color: var(--text-3); font-size: 10px; }
+      /* count chip on the ELEMENT section header (e.g. "1" / "3" / "MIXED") */
+      .sec-count { font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em; color: var(--accent);
+        background: var(--accent-wash); border: 1px solid var(--accent); border-radius: var(--r-pill);
+        padding: 0 6px; height: 15px; display: inline-flex; align-items: center; }
+      .sec-count.muted { color: var(--text-3); background: transparent; border-color: var(--border); }
+
+      .row { min-height: 28px; display: flex; align-items: center; gap: 8px; }
+      .row + .row { margin-top: 4px; }
+      .row-lab { font-size: var(--fs-label); color: var(--text-2); flex: none; width: 46px; }
+
+      .act { width: 100%; height: 28px; border-radius: var(--r-ctl); border: 1px solid var(--border-subtle);
+        background: var(--surface-raised); color: var(--text); font-size: var(--fs-label); cursor: pointer;
+        display: flex; align-items: center; gap: 8px; padding: 0 9px; font-family: var(--ui); text-align: left; }
+      .act:hover { border-color: var(--border); background: var(--surface); }
+      .act .ai { color: var(--text-3); width: 15px; text-align: center; flex: none; }
+      .act:hover .ai { color: var(--text-2); }
+      .act .kbd { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+        border: 1px solid var(--border-subtle); border-radius: 3px; padding: 0 4px; }
+      .act.danger, .act.danger .ai { color: var(--err); }
+      .act[disabled] { color: var(--text-faint); cursor: default; }
+      .act[disabled] .ai { color: var(--text-faint); }
+      /* a compact 2-up action grid so Lock/Group/Duplicate/Send read as a cluster, not a stack */
+      .act-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+      .act.mini { height: 26px; padding: 0 8px; font-size: 11px; }
+
+      .meta { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); }
+      .meta b { color: var(--text-2); font-weight: 450; }
+
+      .bi-foot { border-top: 1px solid var(--border-subtle); padding: 8px 10px; display: grid; gap: 4px;
+        background: var(--surface-overlay); flex: none; }
+
+      /* toggle (verbatim) */
+      .tog { width: 34px; height: 20px; border-radius: 999px; background: var(--surface-raised);
+        border: 1px solid var(--border); position: relative; cursor: pointer; flex: none; }
+      .tog.on { background: var(--accent-wash); border-color: var(--accent); }
+      .tog .knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px;
+        background: var(--text-3); }
+      .tog.on .knob { left: 16px; background: var(--accent); }
+
+      /* segmented (verbatim) — used for font / size / align */
+      .seg { display: inline-flex; align-items: center; gap: 1px; padding: 2px; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); flex: 1; }
+      .seg button { flex: 1; height: 22px; padding: 0 6px; display: inline-flex; align-items: center;
+        justify-content: center; gap: 5px; border: none; border-radius: 4px; background: transparent;
+        color: var(--text-3); cursor: pointer; font-size: 11px; font-weight: 500; font-family: var(--ui); }
+      .seg button.on { background: var(--accent-wash); color: var(--accent); }
+      .seg button.mono { font-family: var(--mono); }
+
+      /* toolgrid (verbatim P3) */
+      .toolgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+      .toolgrid button { position: relative; aspect-ratio: 1 / 1; display: grid; place-items: center;
+        border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); background: var(--surface-raised);
+        color: var(--text-2); cursor: pointer; font-size: 15px; }
+      .toolgrid button:hover { color: var(--text); border-color: var(--border); }
+      .toolgrid button.on { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
+      .toolgrid button .k { position: absolute; bottom: 1px; right: 3px; font-family: var(--mono);
+        font-size: 8.5px; color: var(--text-faint); }
+      .toolgrid button.on .k { color: var(--accent); }
+
+      /* ── PROPOSED NEW PRIMITIVES for P4 (added to primitives.tsx / boardinspector.css) ──
+         Only two small blocks; everything else composes from the shipped toolkit. */
+      /* .ca-inspector-swatches — a swatch row for note tint + text color (mirrors the context
+         menu's swatchRow). Active swatch = accent ring. */
+      .swatches { display: flex; gap: 5px; flex: 1; }
+      .swatches button { width: 22px; height: 22px; border-radius: var(--r-ctl); border: 1px solid var(--border);
+        cursor: pointer; padding: 0; position: relative; }
+      .swatches button.on { box-shadow: 0 0 0 1.5px var(--accent); border-color: var(--accent); }
+      .swatches button .none { position: absolute; inset: 0; display: grid; place-items: center;
+        color: var(--text-3); font-size: 12px; }
+      /* .ca-inspector-iconbtns — a compact icon cluster for align (6) + distribute (2). */
+      .iconbtns { display: inline-flex; gap: 2px; padding: 2px; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); flex: 1; }
+      .iconbtns button { flex: 1; height: 22px; display: grid; place-items: center; border: none;
+        border-radius: 4px; background: transparent; color: var(--text-3); cursor: pointer; font-size: 12px; }
+      .iconbtns button:hover:not([disabled]) { color: var(--text); background: var(--surface-raised); }
+      .iconbtns button[disabled] { color: var(--text-faint); cursor: default; }
+      .iconbtns.dim { opacity: .45; }
+
+      /* the P4b-deferred (schema-touching) controls, shown greyed to mark them out-of-scope for v1 */
+      .deferred { opacity: .4; }
+      .deferred-tag { font-family: var(--mono); font-size: 8.5px; letter-spacing: .04em; text-transform: uppercase;
+        color: var(--warn); border: 1px solid var(--warn); border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+
+      /* callout + annotation */
+      .callout { position: absolute; font-family: var(--mono); font-size: var(--fs-meta); color: var(--accent);
+        background: var(--accent-wash); border: 1px solid var(--accent); border-radius: var(--r-ctl);
+        padding: 4px 8px; }
+      .note { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); line-height: 1.7;
+        margin: 8px 0 0; max-width: 940px; }
+      .note b { color: var(--accent); font-weight: 400; }
+      .note .ok { color: var(--ok); }
+      .note .warn { color: var(--warn); }
+
+      .cols { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+      .scol { display: flex; flex-direction: column; gap: 8px; width: 252px; }
+      .scap { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); }
+      .scap b { color: var(--ok); font-weight: 400; }
+      .glyph-key { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); margin: 0 0 14px;
+        display: flex; gap: 14px; flex-wrap: wrap; }
+      .glyph-key span b { color: var(--text-2); font-weight: 400; }
+      .caption { margin-top: 30px; text-align: center; font-family: var(--mono); font-size: var(--fs-meta);
+        color: var(--text-faint); }
+    </style>
+  </head>
+  <body>
+    <h1 class="page">Board Inspector P4 — PlanningInspector (the element bridge)</h1>
+    <p class="page-sub">select an element on a Planning board → the inspector grows an ELEMENT section · re-homes the TextToolbar + ElementContextMenu controls · no new store · index.css · throwaway mock</p>
+
+    <div class="legend">
+      <span><i>green dot</i> = live status</span>
+      <span><b>blue</b> = active / accent / selected</span>
+      <span><b class="warn" style="color:var(--warn)">amber</b> = deferred to P4b (schema-touching)</span>
+      <span>controls all already exist — P4 only re-homes them into the always-visible inspector</span>
+    </div>
+
+    <p class="glyph-key">
+      <span>Element glyphs (mock stand-ins for the real Icon set):</span>
+      <span><b>▢</b> Note</span><span><b>T</b> Text</span><span><b>↗</b> Arrow</span>
+      <span><b>⌘</b> Lock</span><span><b>⧉</b> Group</span><span><b>⿻</b> Duplicate</span>
+      <span><b>⇥</b> Send-to-board</span><span><b>⌫</b> Delete</span>
+    </p>
+
+    <!-- ═══════════ HERO: single TEXT element selected → ELEMENT section at top (recommended placement) ═══════════ -->
+    <div class="frame-label">Recommended — select a text element → the inspector's ELEMENT section (typography + arrange) appears at the TOP, above the always-present Tools/Canvas</div>
+    <div class="scene">
+      <!-- selected Planning board with one selected text element -->
+      <div class="board sel" style="left: 545px; top: 120px; width: 400px; height: 320px;">
+        <div class="board-tb">
+          <span class="glyph">◳</span><span class="tag">PLANNING</span>
+          <span class="b-title">Auth flow — sketch</span>
+          <span class="tb-ctl" title="Full view">⤢</span>
+          <span class="tb-ctl" title="More">⋯</span>
+        </div>
+        <div class="board-body">
+          <div class="wb-note" style="left: 22px; top: 24px; width: 92px; height: 54px;">login screen → POST /session</div>
+          <div class="wb-note blue" style="left: 250px; top: 30px; width: 96px; height: 50px;">JWT in httpOnly cookie</div>
+          <!-- the SELECTED text element (grips) -->
+          <div class="wb-text sel" style="left: 60px; top: 150px; font-size: 18px; font-weight: 700;">Session lifecycle</div>
+          <div class="grip" style="left: 54px; top: 144px;"></div>
+          <div class="grip" style="left: 190px; top: 144px;"></div>
+          <div class="grip" style="left: 54px; top: 170px;"></div>
+          <div class="grip" style="left: 190px; top: 170px;"></div>
+          <div class="wb-note green" style="left: 250px; top: 160px; width: 110px; height: 60px;">refresh: rotate + revoke on reuse</div>
+        </div>
+      </div>
+
+      <div class="callout" style="left: 300px; top: 150px;">text selected → ELEMENT section ↙</div>
+
+      <!-- PlanningInspector with the ELEMENT section (text) on top -->
+      <aside class="bi dock-left" role="region" aria-label="Board inspector">
+        <div class="bi-scroll">
+          <div class="bi-head">
+            <div class="bi-head-r1">
+              <span class="bi-head-glyph">◳</span>
+              <span class="bi-head-type">Planning</span>
+              <button class="bi-jump" title="Jump to board" aria-label="Jump to board">⤿</button>
+            </div>
+            <div class="bi-head-title">Auth flow — sketch</div>
+            <div class="bi-head-status"><span style="color:var(--text-faint)">⌖</span>Select · 1 selected</div>
+          </div>
+
+          <!-- ELEMENT section (conditional on selectedIds.size > 0) — homogeneous TEXT -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Element · text</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+            <!-- Typography (mirrors TextToolbar) -->
+            <div class="row"><span class="row-lab">Font</span>
+              <div class="seg"><button>A</button><button class="mono">&lt;/&gt;</button><button style="font-family:var(--serif)">A</button></div>
+            </div>
+            <div class="row"><span class="row-lab">Size</span>
+              <div class="seg"><button>S</button><button class="on">M</button><button>L</button><button>XL</button></div>
+            </div>
+            <div class="row"><span class="row-lab">Align</span>
+              <div class="seg"><button class="on">⇤</button><button>⇔</button><button>⇥</button></div>
+            </div>
+            <div class="row"><span class="row-lab">Bold</span><div class="tog on"><div class="knob"></div></div></div>
+            <div class="row"><span class="row-lab">Color</span>
+              <div class="swatches">
+                <button class="on" style="background:var(--text)" title="Default"></button>
+                <button style="background:var(--text-2)" title="Muted"></button>
+                <button style="background:var(--text-3)" title="Faint"></button>
+                <button style="background:var(--accent)" title="Accent"></button>
+              </div>
+            </div>
+            <!-- Arrange (shared) — 2-up action grid + align/distribute (disabled for a single element) -->
+            <div class="act-grid" style="margin-top:7px;">
+              <button class="act mini"><span class="ai">⌘</span>Lock</button>
+              <button class="act mini" disabled><span class="ai">⧉</span>Group</button>
+              <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+              <button class="act mini"><span class="ai">⇥</span>Send…</button>
+            </div>
+            <div class="row" style="margin-top:4px;"><span class="row-lab">Align</span>
+              <div class="iconbtns dim"><button disabled>⇤</button><button disabled>⇔</button><button disabled>⇥</button><button disabled>⤒</button><button disabled>⇕</button><button disabled>⤓</button></div>
+            </div>
+            <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete<span class="kbd">⌦</span></button>
+          </section>
+
+          <!-- Tools (always present, P3) -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Tools</span><span class="chev">▾</span></div>
+            <div class="toolgrid">
+              <button class="on" title="Select">⌖<span class="k">S</span></button>
+              <button title="Note">▢<span class="k">N</span></button>
+              <button title="Text">T<span class="k">X</span></button>
+              <button title="Checklist">☑<span class="k">C</span></button>
+              <button title="Diagram">◈<span class="k">D</span></button>
+              <button title="Arrow">↗<span class="k">A</span></button>
+              <button title="Pen">✎<span class="k">P</span></button>
+              <button title="Eraser">⌫<span class="k">E</span></button>
+            </div>
+          </section>
+
+          <!-- Canvas (always present, P3) -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Canvas</span><span class="chev">▾</span></div>
+            <div class="row"><span class="row-lab" style="width:auto;flex:1;">Snap to grid</span><div class="tog on"><div class="knob"></div></div></div>
+            <div class="row"><button class="act"><span class="ai">⤓</span>Export…<span class="kbd">PNG · SVG</span></button></div>
+          </section>
+
+          <div class="bi-foot">
+            <button class="act"><span class="ai">⧉</span>Duplicate board</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+    <p class="note">
+      <b>Placement (Decision 4):</b> the ELEMENT section sits at the <b>top</b>, under the identity head and above the always-present Tools/Canvas — the selection is the current focus, so its controls lead
+      (Figma's right panel does the same). When the selection clears, the section unmounts and the panel returns to Tools-first. The board is never deselected by picking a tool (P3 rule), so the panel stays
+      revealed throughout. <b>Empty state</b> (no element selected) = today's P3 panel exactly: <span class="ok">head · Tools · Canvas · Duplicate-board foot</span>, no Element section.
+      Note the two Duplicates are disambiguated: element <b>Duplicate</b> (in the section) vs <b>Duplicate board</b> (foot).
+    </p>
+
+    <!-- ═══════════ STATES: note · homogeneous multi · mixed multi · empty ═══════════ -->
+    <div class="frame-label">Element-section states — how the section morphs by the selection (Decision 3, multi-select gating)</div>
+    <div class="cols">
+      <!-- single NOTE -->
+      <div class="scol">
+        <span class="scap"><b>1 note</b> — tint + arrange</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · note</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Tint</span>
+                <div class="swatches">
+                  <button class="on" style="background:var(--note-yellow-fill);border-color:var(--note-yellow-edge)" title="Yellow"></button>
+                  <button style="background:var(--note-blue-fill);border-color:var(--note-blue-edge)" title="Blue"></button>
+                  <button style="background:var(--note-green-fill);border-color:var(--note-green-edge)" title="Green"></button>
+                  <button style="background:var(--surface-raised)" title="Plain"><span class="none">∅</span></button>
+                </div>
+              </div>
+              <div class="act-grid" style="margin-top:7px;">
+                <button class="act mini"><span class="ai">⌘</span>Lock</button>
+                <button class="act mini" disabled><span class="ai">⧉</span>Group</button>
+                <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+                <button class="act mini"><span class="ai">⇥</span>Send…</button>
+              </div>
+              <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete<span class="kbd">⌦</span></button>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Homogeneous note → the per-kind <b>Tint</b> swatch row (the context menu's swatchRow, re-homed). Align/distribute hidden (needs ≥2).</p>
+      </div>
+
+      <!-- homogeneous MULTI (3 notes) -->
+      <div class="scol">
+        <span class="scap"><b>3 notes</b> — homogeneous → per-kind + align</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · notes</span><span class="sec-count">3</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Tint</span>
+                <div class="swatches">
+                  <button style="background:var(--note-yellow-fill);border-color:var(--note-yellow-edge)"></button>
+                  <button class="on" style="background:var(--note-blue-fill);border-color:var(--note-blue-edge)"></button>
+                  <button style="background:var(--note-green-fill);border-color:var(--note-green-edge)"></button>
+                  <button style="background:var(--surface-raised)"><span class="none">∅</span></button>
+                </div>
+              </div>
+              <div class="act-grid" style="margin-top:7px;">
+                <button class="act mini"><span class="ai">⌘</span>Lock</button>
+                <button class="act mini"><span class="ai">⧉</span>Group</button>
+                <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+                <button class="act mini"><span class="ai">⇥</span>Send…</button>
+              </div>
+              <div class="row" style="margin-top:6px;"><span class="row-lab">Align</span>
+                <div class="iconbtns"><button>⇤</button><button>⇔</button><button>⇥</button><button>⤒</button><button>⇕</button><button>⤓</button></div>
+              </div>
+              <div class="row"><span class="row-lab">Dist.</span>
+                <div class="iconbtns dim" style="flex:0 0 auto;width:96px;"><button disabled>↔</button><button disabled>↕</button></div>
+                <span class="meta" style="flex:1;">needs ≥3</span>
+              </div>
+              <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete</button>
+            </section>
+          </div>
+        </aside>
+        <p class="note">All-notes → Tint applies to the set; <b>Group</b> + <b>Align</b> enabled (≥2). Distribute stays disabled until ≥3 (shown here at exactly 3 → it would be enabled; dimmed only to illustrate the gate).</p>
+      </div>
+
+      <!-- mixed MULTI (note + text + arrow) -->
+      <div class="scol">
+        <span class="scap">mixed (note+text+arrow) — shared only</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · mixed</span><span class="sec-count muted">3</span><span class="chev">▾</span></div>
+              <div class="row"><span class="meta" style="flex:1;padding:2px 0;">▢ note · T text · ↗ arrow — no shared type controls</span></div>
+              <div class="act-grid" style="margin-top:2px;">
+                <button class="act mini"><span class="ai">⌘</span>Lock</button>
+                <button class="act mini"><span class="ai">⧉</span>Group</button>
+                <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+                <button class="act mini"><span class="ai">⇥</span>Send…</button>
+              </div>
+              <div class="row" style="margin-top:6px;"><span class="row-lab">Align</span>
+                <div class="iconbtns"><button>⇤</button><button>⇔</button><button>⇥</button><button>⤒</button><button>⇕</button><button>⤓</button></div>
+              </div>
+              <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete</button>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Mixed kinds → <b>no</b> per-kind row (no typography, no tint); only the shared arrange actions. Kind label reads <b>mixed</b> + count (chip muted, not accent).</p>
+      </div>
+
+      <!-- empty (baseline P3) -->
+      <div class="scol">
+        <span class="scap"><b>no element</b> — baseline (P3, unchanged)</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Tools</span><span class="chev">▾</span></div>
+              <div class="toolgrid">
+                <button class="on" title="Select">⌖<span class="k">S</span></button>
+                <button title="Note">▢<span class="k">N</span></button>
+                <button title="Text">T<span class="k">X</span></button>
+                <button title="Checklist">☑<span class="k">C</span></button>
+                <button title="Diagram">◈<span class="k">D</span></button>
+                <button title="Arrow">↗<span class="k">A</span></button>
+                <button title="Pen">✎<span class="k">P</span></button>
+                <button title="Eraser">⌫<span class="k">E</span></button>
+              </div>
+            </section>
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Canvas</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab" style="width:auto;flex:1;">Snap to grid</span><div class="tog on"><div class="knob"></div></div></div>
+              <div class="row"><button class="act"><span class="ai">⤓</span>Export…</button></div>
+            </section>
+          </div>
+          <div class="bi-foot"><button class="act"><span class="ai">⧉</span>Duplicate board</button></div>
+        </aside>
+        <p class="note">Nothing selected → the section is <b>absent</b> (no empty-state placeholder). Identical to the shipped P3 panel.</p>
+      </div>
+    </div>
+
+    <!-- ═══════════ DECISION 1: scope — no-schema v1 vs schema-touching P4b ═══════════ -->
+    <div class="frame-label">Decision 1 — SCOPE. (left) no-schema v1 = re-home existing controls · (right) the P4b schema-touching extras, deferred</div>
+    <div class="cols">
+      <div class="scol" style="width: 260px;">
+        <span class="scap"><b>v1 (recommended)</b> — re-home existing controls only · NO schema bump</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · text</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Font</span><div class="seg"><button class="on">A</button><button class="mono">&lt;/&gt;</button><button style="font-family:var(--serif)">A</button></div></div>
+              <div class="row"><span class="row-lab">Size</span><div class="seg"><button>S</button><button class="on">M</button><button>L</button><button>XL</button></div></div>
+              <div class="row"><span class="row-lab">Align</span><div class="seg"><button class="on">⇤</button><button>⇔</button><button>⇥</button></div></div>
+              <div class="row"><span class="row-lab">Bold</span><div class="tog"><div class="knob"></div></div></div>
+              <div class="row"><span class="row-lab">Color</span><div class="swatches"><button class="on" style="background:var(--text)"></button><button style="background:var(--text-2)"></button><button style="background:var(--text-3)"></button><button style="background:var(--accent)"></button></div></div>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Everything here already ships (TextToolbar + context menu). Zero schema/persistence change → fast, low-risk, own reviewable PR.</p>
+      </div>
+      <div class="scol" style="width: 260px;">
+        <span class="scap">P4b — additive props <span class="deferred-tag">defer</span></span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · text</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Size</span><div class="seg"><button>S</button><button class="on">M</button><button>L</button><button>XL</button></div></div>
+              <div class="deferred">
+                <div class="row"><span class="row-lab">Opacity</span><input type="range" style="flex:1" value="80" /></div>
+                <div class="row"><span class="row-lab">Stroke</span><div class="swatches"><button style="background:var(--text)"></button><button style="background:var(--accent)"></button><button style="background:var(--ok)"></button></div></div>
+                <div class="row"><span class="row-lab">Order</span><div class="iconbtns"><button>⤒ front</button><button>⤓ back</button></div></div>
+              </div>
+            </section>
+          </div>
+        </aside>
+        <p class="note"><span class="warn">amber = NOT in v1.</span> Opacity/stroke are <b>additive-optional</b> element fields → per ADR 0007 they bump <b>schemaVersion only</b> (writer), <b>not</b> the minReaderVersion floor. Z-order is array reorder → <b>no</b> schema change. Shipping these as a separate P4b keeps the schema touch its own reviewable change.</p>
+      </div>
+    </div>
+
+    <!-- ═══════════ DECISION 2: TextToolbar — MOVE vs MIRROR vs ADDITIVE ═══════════ -->
+    <div class="frame-label">Decision 2 — the floating on-board TextToolbar's fate once typography lives in the inspector</div>
+    <div class="cols">
+      <div class="scol" style="width: 300px;">
+        <span class="scap"><b>MIRROR</b> (recommended) — keep the on-board bar AND the inspector</span>
+        <div class="scene" style="height: 150px;">
+          <div class="board sel" style="left: 30px; top: 20px; width: 250px; height: 110px;">
+            <div class="board-tb"><span class="glyph">◳</span><span class="tag">PLANNING</span><span class="b-title">sketch</span></div>
+            <div class="board-body">
+              <!-- on-board TextToolbar floating above the edited text -->
+              <div style="position:absolute;left:14px;top:20px;display:inline-flex;gap:1px;padding:2px;background:var(--surface-overlay);border:1px solid var(--border);border-radius:var(--r-inner);box-shadow:var(--shadow-pop);">
+                <button style="width:20px;height:20px;border:none;border-radius:3px;background:var(--accent-wash);color:var(--accent);font-size:11px;">A</button>
+                <button style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--text-3);font-size:11px;">M</button>
+                <button style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--text-3);font-size:11px;">B</button>
+              </div>
+              <div class="wb-text" style="left:16px;top:54px;font-size:14px;border-bottom:1px solid var(--accent);">Editing…|</div>
+            </div>
+          </div>
+        </div>
+        <p class="note">The on-board bar follows the element + appears <b>while editing</b> (before a grip-select); the inspector typography appears on <b>grip-select</b>. Complementary, not redundant — keep both for v1. Revisit a MOVE in P5 if it proves duplicative.</p>
+      </div>
+      <div class="scol" style="width: 300px;">
+        <span class="scap">MOVE — delete the on-board bar (like P3 did the palette)</span>
+        <div class="scene" style="height: 150px;">
+          <div class="board sel" style="left: 30px; top: 20px; width: 250px; height: 110px;">
+            <div class="board-tb"><span class="glyph">◳</span><span class="tag">PLANNING</span><span class="b-title">sketch</span></div>
+            <div class="board-body" style="display:grid;place-items:center;">
+              <div class="wb-text" style="font-size:14px;border-bottom:1px solid var(--accent);">Editing…|</div>
+            </div>
+          </div>
+        </div>
+        <p class="note">Single source of typography (inspector only). But loses the <b>in-place, at-the-glyph</b> edit affordance during text entry — the inspector is docked far left. Higher regression risk for the edit flow. <b>Context menu stays either way</b> (additive; muscle-memory reach).</p>
+      </div>
+    </div>
+
+    <div class="caption">Board Inspector P4 · PlanningInspector element bridge · pixel mock (index.css tokens) · not wired into build · sign-off gate before code</div>
+  </body>
+</html>
