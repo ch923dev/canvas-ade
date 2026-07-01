@@ -48,7 +48,8 @@ import { SearchAddon } from '@xterm/addon-search'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { applyResizeBackstop, colsChanged } from './terminalResizeBackstop'
+import { runBackstopFit } from './terminalResizeBackstop'
+import type { BackstopGate } from './terminalResizeBackstop'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
@@ -265,6 +266,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // in-flight PTY bytes queue and flush AFTER the restored scrollback (never into the reset buffer).
   const serializeAddonRef = useRef<SerializeAddon | null>(null)
   const resizeBackstopRef = useRef(false)
+  // Re-entrancy gate for the backstop: a continuous drag fires the ResizeObserver per-frame while
+  // a prior backstop's async `term.write` is still parsing (large scrollback spans frames). Without
+  // this, a second fit would snapshot a half-written buffer and reset() away the pre-drag scrollback
+  // — the #5319 corruption this slice removes. `pending` coalesces skipped frames into one catch-up.
+  const backstopGateRef = useRef<BackstopGate>({ pending: false })
+  // The backstop's coalesced catch-up re-fit (see runBackstopFit) is invoked through its OWN ref,
+  // not `fitWholeRef` directly, so `fitWhole` never statically captures `fitWholeRef` — which would
+  // make the `[fitWhole]`-keyed mirror effect a forbidden self-referential mutation
+  // (react-hooks/immutability). This ref is wired in a mount-only effect below.
+  const refitRef = useRef<() => void>(() => {})
   // Phase 2 find-in-terminal: the SearchAddon is loaded onto the term alongside fit (so it is
   // re-created with every respawn), and the open-state lives here because the Ctrl/Cmd+F chord is
   // detected in this hook's xterm key handler. The bar's query/result state stays LOCAL to
@@ -442,29 +453,44 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // drag-resize — the last live reflow path now that zoom rides counterScale and full view is
     // frozen) would hit xterm's lossy buffer reflow (#5319). Snapshot → resize → reset → re-write so
     // xterm re-WRAPS cleanly at the new width instead. Fresh/first-layout fits (not yet established)
-    // and rows-only resizes take the plain fit — neither reflows.
-    const proposed = fit.proposeDimensions()
-    if (establishedRef.current && proposed && colsChanged(term.cols, proposed.cols)) {
-      applyResizeBackstop(proposed.cols, proposed.rows, {
-        serialize: () => serializeAddonRef.current?.serialize() ?? '',
-        resize: (c, r) => term.resize(c, r),
-        reset: () => term.reset(),
-        write: (data, done) => term.write(data, done),
-        pausePump: () => {
-          resizeBackstopRef.current = true
-        },
-        resumePump: () => {
-          resizeBackstopRef.current = false
-          coalescerRef.current?.onVisible() // flush PTY bytes held during the snapshot, in order
+    // and rows-only resizes take the plain fit — neither reflows. `runBackstopFit` also GUARDS
+    // re-entry: a continuous drag fires this per-frame while a prior backstop's async write is still
+    // parsing, so it defers (coalesces to one catch-up refit) instead of overlapping two
+    // serialize/reset pairs — which would snapshot a half-written buffer and lose scrollback.
+    // Returns false when it skipped (backstop in flight) or the well is not laid out → skip the
+    // row-shed below.
+    const didFit = runBackstopFit(backstopGateRef.current, {
+      currentCols: () => term.cols,
+      propose: () => {
+        const p = fit.proposeDimensions()
+        return p && Number.isFinite(p.cols) && Number.isFinite(p.rows)
+          ? { cols: p.cols, rows: p.rows }
+          : undefined
+      },
+      established: () => establishedRef.current,
+      plainFit: () => {
+        try {
+          fit.fit()
+          return true
+        } catch {
+          return false // well not laid out (LOD / display:none)
         }
-      })
-    } else {
-      try {
-        fit.fit()
-      } catch {
-        return // well not laid out (LOD / display:none)
+      },
+      isInFlight: () => resizeBackstopRef.current,
+      refit: () => refitRef.current(),
+      serialize: () => serializeAddonRef.current?.serialize() ?? '',
+      resize: (c, r) => term.resize(c, r),
+      reset: () => term.reset(),
+      write: (data, done) => term.write(data, done),
+      pausePump: () => {
+        resizeBackstopRef.current = true
+      },
+      resumePump: () => {
+        resizeBackstopRef.current = false
+        coalescerRef.current?.onVisible() // flush PTY bytes held during the snapshot, in order
       }
-    }
+    })
+    if (!didFit) return
     // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
     // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
     // `screenRef` is the term.open() host; `.closest('.nowheel')` walks up to the screenWrap.
@@ -496,6 +522,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   useEffect(() => {
     fitWholeRef.current = fitWhole
   }, [fitWhole])
+  // Mount-only: forward the backstop's catch-up re-fit to the current fitWhole. `[]` deps (NOT
+  // `[fitWhole]`) so `fitWhole` — which captures `refitRef` — is never a dependency of the effect
+  // that assigns it; the arrow reads `fitWholeRef.current` lazily, so it always calls the latest fit.
+  useEffect(() => {
+    refitRef.current = () => fitWholeRef.current()
+  }, [])
 
   // Fire a fresh PTY spawn into the CURRENT term. Shared by the Restart action and
   // the ResizeObserver's deferred-respawn path (#23). The async .then()/.catch()
@@ -899,6 +931,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // term never starts with the pump stuck paused.
       serializeAddonRef.current = null
       resizeBackstopRef.current = false
+      backstopGateRef.current.pending = false // drop any coalesced re-fit so a reused term starts clean
       // Phase 2: a FULL xterm replacement (reconfigure shell/cwd/launchCommand) disposes the old
       // SearchAddon. Close any open find bar so it re-subscribes to the FRESH addon on reopen — its
       // onDidChangeResults binds once at mount on the stable `api` and can't re-target in place, so
