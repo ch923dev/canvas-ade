@@ -31,7 +31,14 @@ function makeEntries(over: Partial<Record<string, Partial<MenuEntry>>> = {}): Me
       label: 'Tint',
       swatches: [
         { id: 'yellow', title: 'Yellow tint', fill: '#0', edge: '#0', onSelect: vi.fn() },
-        { id: 'blue', title: 'Blue tint', fill: '#0', edge: '#0', current: true, onSelect: vi.fn() },
+        {
+          id: 'blue',
+          title: 'Blue tint',
+          fill: '#0',
+          edge: '#0',
+          current: true,
+          onSelect: vi.fn()
+        },
         { id: 'plain', title: 'Plain tint', fill: '#0', edge: '#0', onSelect: vi.fn() }
       ]
     }),
@@ -49,14 +56,23 @@ function makeEntries(over: Partial<Record<string, Partial<MenuEntry>>> = {}): Me
       id: 'distribute',
       label: 'Distribute',
       disabled: true,
-      buttons: [{ id: 'h', title: 'Distribute horizontally', icon: 'distribute-h', onSelect: vi.fn() }]
+      buttons: [
+        { id: 'h', title: 'Distribute horizontally', icon: 'distribute-h', onSelect: vi.fn() }
+      ]
     }),
     merge({ kind: 'action', id: 'delete', label: 'Delete', danger: true, onSelect: vi.fn() })
   ]
 }
 
 const typography = (over: Partial<TypographyControls['current']> = {}): TypographyControls => ({
-  current: { fontFamily: 'sans', fontSize: 'M', align: 'left', color: 'default', bold: false, ...over },
+  current: {
+    fontFamily: 'sans',
+    fontSize: 'M',
+    align: 'left',
+    color: 'default',
+    bold: false,
+    ...over
+  },
   apply: vi.fn()
 })
 
@@ -104,7 +120,9 @@ describe('ElementInspectorSection', () => {
 
   it('a homogeneous note selection shows the tint row (not typography)', () => {
     const entries = makeEntries()
-    render(<ElementInspectorSection model={model({ kindLabel: 'note', showTint: true, entries })} />)
+    render(
+      <ElementInspectorSection model={model({ kindLabel: 'note', showTint: true, entries })} />
+    )
     const tint = screen.getByRole('radiogroup', { name: 'Note tint' })
     expect(tint).toBeTruthy()
     expect(screen.queryByRole('radiogroup', { name: 'Font family' })).toBeNull()
