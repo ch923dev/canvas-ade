@@ -43,7 +43,7 @@ import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
 import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
-import { performGuardedQuit, makeCrashHandler } from './quit'
+import { performGuardedQuit, makeCrashHandler, performWindowCloseCleanup } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { readOrchestrationConfig, registerSpawnCapHandlers } from './orchestrationConfig'
@@ -166,9 +166,16 @@ function createWindow(): void {
   // automatically with their window — close them on window destruction so a macOS
   // close -> activate reopen recreates them fresh per persisted board (and no
   // renderer process leaks while no window exists).
+  // macOS PTY-orphan fix: on darwin, window-all-closed does NOT quit, so the before-quit
+  // PTY drain never fires and live/parked agent PTYs are orphaned — performWindowCloseCleanup
+  // reaps them here (darwin only; Win/Linux keep the awaited before-quit drain). See quit.ts.
   mainWindow.on('closed', () => {
-    disposeAllOsr() // close offscreen preview renderers
-    disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
+    performWindowCloseCleanup({
+      platform: process.platform,
+      disposeOsr: disposeAllOsr, // close offscreen preview renderers
+      disposeDiagramWorker, // close the hidden Mermaid render worker (S4)
+      disposePtys: disposeAllPtys // darwin-only PTY-tree reap (guarded inside)
+    })
     // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
     // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
     // would hit the .webContents getter — which THROWS on a destroyed window before any

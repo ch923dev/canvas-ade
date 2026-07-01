@@ -46,3 +46,38 @@ export function makeCrashHandler(deps: {
     deps.exit(exitCode)
   }
 }
+
+/**
+ * The window `'closed'` cleanup, extracted (same testability reason as the two above) so the
+ * darwin-only PTY-dispose guard — the whole point of this fix — is unit-pinned.
+ *
+ * The main window's `'closed'` handler always tears down the offscreen preview renderers + the
+ * Mermaid worker (BUG-005: they don't die with their window, so they'd leak while no window
+ * exists). On **darwin ONLY** it must ALSO reap the PTY trees: closing the last window on macOS
+ * does NOT quit the app (`window-all-closed` is a no-op there), so the `before-quit` →
+ * `shutdown()` → `disposeAllPtys()` drain never fires and every live + parked agent PTY is
+ * orphaned — running, burning tokens, unreachable (adopt only reattaches *parked* sessions, not
+ * live ones) — until Cmd+Q.
+ *
+ * Why the guard (do NOT drop it): on Win/Linux `window-all-closed` routes through `app.quit()` →
+ * the **awaited** `before-quit` drain, so `app.exit(0)` cannot race the tree-kill. Disposing here
+ * as well would clear the session maps first, turning that awaited `disposeAllPtys()` into a no-op
+ * and moving the real (async `taskkill`) reap OFF the awaited path — re-introducing the orphan on
+ * the platform that currently gets it right. So the dispose is darwin-only; Win/Linux keep the
+ * before-quit path untouched.
+ *
+ * `disposePtys` is fire-and-forget here: on darwin the app keeps running, so the async tree-kill
+ * completes in the background with nothing racing it. Terminal scrollback snapshots are captured
+ * renderer-side on `beforeunload` (useAutosave `onUnload`) from the xterm buffer — independent of
+ * the live PTY — so killing the tree here cannot lose them.
+ */
+export function performWindowCloseCleanup(deps: {
+  platform: NodeJS.Platform
+  disposeOsr: () => void
+  disposeDiagramWorker: () => void
+  disposePtys: () => Promise<void> | void
+}): void {
+  deps.disposeOsr()
+  deps.disposeDiagramWorker()
+  if (deps.platform === 'darwin') void deps.disposePtys()
+}
