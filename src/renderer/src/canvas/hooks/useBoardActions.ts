@@ -7,6 +7,7 @@
  */
 import { useMemo, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { applyPush, planFullViewAction } from '../../lib/canvasDecisions'
 import type { BoardActions } from '../boardActions'
 
@@ -90,9 +91,12 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
         // so it can't surface as an unhandled promise — mirrors Canvas.tsx's memory.* guards.
         if (removed?.type === 'terminal') {
           void window.api.parkTerminal(id).catch(() => {})
-          // S3: drop the persisted scrollback sidecar (undo re-adopts the PARKED live session, not
-          // the snapshot). Safe no-op when none exists.
-          void window.api.terminal.deleteSnapshot(id).catch(() => {})
+          // S3: drop the sidecar ONLY when the terminal had a LIVE session — park preserves that for
+          // undo, so the snapshot is redundant. A restored-but-never-started (or exited) board has
+          // nothing parkable, so keep its sidecar so an immediate undo can still restore the buffer.
+          if (useTerminalRuntimeStore.getState().running[id]) {
+            void window.api.terminal.deleteSnapshot(id).catch(() => {})
+          }
         }
         if (fullViewIdRef.current === id) hardCloseFullView()
         if (cameraFullViewIdRef.current === id) exitCameraFullView()

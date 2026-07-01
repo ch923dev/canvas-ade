@@ -16,14 +16,18 @@ import { renderHook } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useBoardActions, type BoardActionsDeps } from './useBoardActions'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 
 const park = vi.fn<(id: string) => Promise<boolean>>()
-// S3: remove() also drops the terminal's persisted scrollback sidecar beside parkTerminal.
+// S3: remove() drops the terminal's persisted scrollback sidecar beside parkTerminal — but ONLY when
+// the terminal had a live session (park keeps that for undo); a never-started/exited board keeps its
+// sidecar so undo can restore it.
 const deleteSnapshot = vi.fn<(id: string) => Promise<boolean>>()
 
 beforeEach(() => {
   vi.clearAllMocks()
   deleteSnapshot.mockResolvedValue(true)
+  useTerminalRuntimeStore.setState({ running: {} })
   // Reset the singleton store (mirrors Canvas.pushundo.test.ts) and seed via the real addBoard.
   useCanvasStore.setState({ boards: [], connectors: [], past: [], future: [] })
   ;(
@@ -87,6 +91,27 @@ describe('#BUG-015 — useBoardActions.remove guards the parkTerminal rejection'
     const { result } = renderHook(() => useBoardActions(makeDeps()))
     result.current.remove(id)
     expect(park).not.toHaveBeenCalled()
+  })
+})
+
+describe('S3 — remove() deletes the scrollback sidecar only for a LIVE terminal (undo safety)', () => {
+  it('deletes the snapshot when the terminal had a live session (park keeps it for undo)', async () => {
+    const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    useTerminalRuntimeStore.getState().setRunning(id, 'running')
+    const { result } = renderHook(() => useBoardActions(makeDeps()))
+    result.current.remove(id)
+    await Promise.resolve()
+    expect(deleteSnapshot).toHaveBeenCalledWith(id)
+  })
+
+  it('KEEPS the snapshot for a restored-but-never-started (idle) terminal — undo must restore it', async () => {
+    const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    // no setRunning → idle/never-started: nothing parkable, so the sidecar is the only copy.
+    const { result } = renderHook(() => useBoardActions(makeDeps()))
+    result.current.remove(id)
+    await Promise.resolve()
+    expect(park).toHaveBeenCalledWith(id)
+    expect(deleteSnapshot).not.toHaveBeenCalled()
   })
 })
 

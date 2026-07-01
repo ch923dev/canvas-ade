@@ -313,6 +313,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
+  // S3: this mount has gone live via an explicit Start/Resume — set by startLaunchRef AND restart()
+  // so the async snapshot-restore (readSnapshot resolves a frame later) can't write a stale buffer
+  // INTO a session the user already started on the same term. Reset per new term in spawn().
+  const startedRef = useRef(false)
   // board.fontSize for the spawn closure's INITIAL xterm construction, read via a ref so
   // a size change never becomes a spawn dep (which would respawn the PTY).
   const fontSizeRef = useRef<number | undefined>(board.fontSize)
@@ -643,6 +647,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // terminalSnapshotRegistry). Unregistered on teardown. A new term starts un-restored.
     registerTerminalSnapshotter(board.id, () => serializeAddonRef.current?.serialize() ?? null)
     setRestored(false)
+    startedRef.current = false // a fresh term: no explicit Start/Resume has run on it yet
     term.open(el)
     termRef.current = term
     fitRef.current = fit
@@ -860,6 +865,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // spawns normally. The Start button wires back through `startLaunchRef` → launch().
     startLaunchRef.current = () => {
       clearIdleOnMount(board.id)
+      startedRef.current = true // going live — suppress any still-in-flight snapshot restore
       // S3: a restored terminal shows its prior (read-only) scrollback; Start spawns a FRESH PTY, so
       // clear that snapshot first — the live output replaces it rather than appending after it.
       if (restoredSnapshot) {
@@ -883,7 +889,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         // by board id, so a duplicate (new id) has no sidecar and stays a blank idle. A later resize
         // that changes cols re-wraps this buffer losslessly via the S2 backstop (established grid).
         void window.api.terminal.readSnapshot(board.id).then((snap) => {
-          if (disposed || termRef.current !== term || !snap) return
+          // startedRef guards the race where the user hits Start/Resume (which spawns on THIS term)
+          // before this async read settles — writing then would splice the stale buffer into the
+          // now-live session. disposed/termRef cover a remount; startedRef covers same-term-went-live.
+          if (disposed || termRef.current !== term || startedRef.current || !snap) return
           term.write(snap, () => term.scrollToBottom())
           restoredSnapshot = true
           setRestored(true)
@@ -1019,8 +1028,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     clearIdleOnMount(board.id)
     // S3: a Restart/Resume from a RESTORED idle term goes live — drop the restored flag so the
     // "Session restored" bar can't linger (it is gated on state==='idle', but clearing keeps the
-    // flag honest). term.reset() below clears the read-only snapshot buffer for the fresh session.
+    // flag honest), and mark started so an in-flight snapshot restore can't write into this now-live
+    // session. term.reset() below clears the read-only snapshot buffer for the fresh session.
     setRestored(false)
+    startedRef.current = true
     void window.api.killTerminal(board.id)
     try {
       portRef.current?.close()
