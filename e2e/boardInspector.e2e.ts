@@ -548,10 +548,9 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
 
       // Each is one undo step: undo restores the order, then undo restores the opacity.
       await evalIn(page, 'window.__canvasE2E.undo()')
-      await expect.poll(orderOf, { message: 'one undo restores the z-order' }).toEqual([
-        'ap-1',
-        'ap-2'
-      ])
+      await expect
+        .poll(orderOf, { message: 'one undo restores the z-order' })
+        .toEqual(['ap-1', 'ap-2'])
       await evalIn(page, 'window.__canvasE2E.undo()')
       await expect
         .poll(opacityOf, { message: 'one undo restores the opacity (back to absent/opaque)' })
