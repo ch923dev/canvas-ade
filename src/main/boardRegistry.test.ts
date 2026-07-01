@@ -122,6 +122,83 @@ describe('boardRegistry', () => {
     expect('fileRefs' in out[1]).toBe(false)
   })
 
+  it('keeps a kanban projection, drops malformed lanes/cards, wip only finite+positive (P3b)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [
+            { id: 'a', title: 'A', wip: 3 },
+            { id: 'b', title: 'B', wip: 0 }, // wip 0 → dropped (not positive), column kept
+            { id: 'c', title: 'C', wip: NaN }, // wip NaN → dropped, column kept
+            { id: '', title: 'Empty' }, // empty id → column dropped
+            { id: 'd' } // missing title → column dropped
+          ],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'a',
+              title: 'One',
+              tag: 'feature',
+              assignee: 'claude',
+              ref: 'PR #1'
+            },
+            { id: 'c2', columnId: 'a' }, // missing title → dropped
+            { id: 'c3', title: 'no-col' }, // missing columnId → dropped
+            { columnId: 'a', title: 'no-id' } // missing id → dropped
+          ]
+        }
+      },
+      { id: 'k2', type: 'kanban', title: 'K2', kanban: 'nope' } // non-object → field dropped
+    ])
+    expect(out[0].kanban).toEqual({
+      columns: [
+        { id: 'a', title: 'A', wip: 3 },
+        { id: 'b', title: 'B' },
+        { id: 'c', title: 'C' }
+      ],
+      cards: [
+        { id: 'c1', columnId: 'a', title: 'One', tag: 'feature', assignee: 'claude', ref: 'PR #1' }
+      ]
+    })
+    expect('kanban' in out[1]).toBe(false)
+  })
+
+  it('count-caps kanban columns + cards and drops over-length fields (P3b)', () => {
+    const longTitle = 'T'.repeat(300)
+    const out = sanitizeSnapshot([
+      {
+        id: 'k',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: Array.from({ length: 60 }, (_, i) => ({ id: `col${i}`, title: `c${i}` })),
+          cards: Array.from({ length: 400 }, (_, i) => ({
+            id: `c${i}`,
+            columnId: 'col0',
+            title: `n${i}`
+          }))
+        }
+      },
+      {
+        id: 'k2',
+        type: 'kanban',
+        title: 'K2',
+        kanban: {
+          columns: [{ id: 'a', title: longTitle }], // over-length title → column dropped
+          cards: [{ id: 'c1', columnId: 'a', title: 'x', tag: longTitle }] // over-length tag → chip dropped
+        }
+      }
+    ])
+    expect(out[0].kanban?.columns).toHaveLength(50) // MAX_KANBAN_COLUMNS
+    expect(out[0].kanban?.cards).toHaveLength(300) // MAX_KANBAN_CARDS
+    // k2: the only column was dropped (over-length), but a valid card survives → projection kept.
+    expect(out[1].kanban?.columns).toEqual([])
+    expect(out[1].kanban?.cards).toEqual([{ id: 'c1', columnId: 'a', title: 'x' }]) // tag dropped
+  })
+
   it('listBoardMirror returns the last stored snapshot (empty by default)', () => {
     __setMirrorForTest([{ id: 'x', type: 'terminal', title: 'X' }])
     expect(listBoardMirror()).toEqual([{ id: 'x', type: 'terminal', title: 'X' }])

@@ -48,12 +48,42 @@ export interface BoardMirror {
   y?: number
   w?: number
   h?: number
+  /**
+   * Kanban board's bounded columns + cards (P3b; `type:'kanban'` only) — validated + capped on ingest
+   * ({@link sanitizeKanban}) since `mcp:boards` is an IPC channel, then served GROUPED (cards nested
+   * under their column) as the per-board `canvas://board/{id}/cards` read resource. Card TEXT the human
+   * already sees on-canvas — never file content / PTY bytes. Absent on every non-kanban board.
+   */
+  kanban?: KanbanMirror
 }
 
 /** A single agent-readable file reference on the board mirror (file-tree S5). Path only, no content. */
 export interface FileRefMirror {
   path: string
   label: string
+}
+
+/** One column (lane) in a Kanban board's mirror projection (P3b) — id/title + optional WIP limit. */
+export interface KanbanColumnMirror {
+  id: string
+  title: string
+  wip?: number
+}
+
+/** One card in a Kanban board's mirror projection (P3b) — flat, bound to a column by `columnId`. */
+export interface KanbanCardMirror {
+  id: string
+  columnId: string
+  title: string
+  tag?: string
+  assignee?: string
+  ref?: string
+}
+
+/** A Kanban board's bounded columns + cards on the mirror (P3b). The host groups it on read. */
+export interface KanbanMirror {
+  columns: KanbanColumnMirror[]
+  cards: KanbanCardMirror[]
 }
 
 /**
@@ -208,6 +238,9 @@ const MAX_GROUPS = 200
 const MAX_GROUP_MEMBERS = 500
 /** Cap a single planning board's mirrored file references (file-tree S5) so a forged push can't grow MAIN memory. */
 const MAX_FILEREFS = 500
+/** Cap a single kanban board's mirrored lanes + cards (P3b) so a forged push can't grow MAIN memory. */
+const MAX_KANBAN_COLUMNS = 50
+const MAX_KANBAN_CARDS = 300
 const MAX_FIELD_LEN = 256
 
 /**
@@ -236,6 +269,60 @@ function sanitizeFileRefs(input: unknown): FileRefMirror[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
+/** A non-empty, length-capped string, or undefined (a bad/over-length/empty value drops the field). */
+function boundedStr(v: unknown): string | undefined {
+  if (typeof v !== 'string' || v.length === 0 || v.length > MAX_FIELD_LEN) return undefined
+  return v
+}
+
+/**
+ * Keep only well-formed Kanban lanes + cards; drop anything else (P3b). Bounded like the other
+ * snapshot fields — `mcp:boards` is an IPC channel, so trust nothing: cap columns
+ * ({@link MAX_KANBAN_COLUMNS}) + cards ({@link MAX_KANBAN_CARDS}), each string field
+ * {@link MAX_FIELD_LEN}; `wip` kept only as a finite positive number; a card/column missing a required
+ * id/title (or over-length) is dropped. Returns `undefined` (not an empty projection) when nothing
+ * survives, so {@link sanitizeSnapshot} omits the field. Does NOT cross-validate a card's `columnId`
+ * against the columns — the host GROUPER ({@link buildBoardCards}) drops a dangling card on read.
+ */
+function sanitizeKanban(input: unknown): KanbanMirror | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  const { columns, cards } = input as { columns?: unknown; cards?: unknown }
+  const cols: KanbanColumnMirror[] = []
+  if (Array.isArray(columns)) {
+    for (const c of columns) {
+      if (cols.length >= MAX_KANBAN_COLUMNS) break
+      if (!c || typeof c !== 'object') continue
+      const id = boundedStr((c as KanbanColumnMirror).id)
+      const title = boundedStr((c as KanbanColumnMirror).title)
+      if (id === undefined || title === undefined) continue
+      const col: KanbanColumnMirror = { id, title }
+      const wip = (c as KanbanColumnMirror).wip
+      if (typeof wip === 'number' && Number.isFinite(wip) && wip > 0) col.wip = wip
+      cols.push(col)
+    }
+  }
+  const out: KanbanCardMirror[] = []
+  if (Array.isArray(cards)) {
+    for (const c of cards) {
+      if (out.length >= MAX_KANBAN_CARDS) break
+      if (!c || typeof c !== 'object') continue
+      const id = boundedStr((c as KanbanCardMirror).id)
+      const columnId = boundedStr((c as KanbanCardMirror).columnId)
+      const title = boundedStr((c as KanbanCardMirror).title)
+      if (id === undefined || columnId === undefined || title === undefined) continue
+      const card: KanbanCardMirror = { id, columnId, title }
+      const tag = boundedStr((c as KanbanCardMirror).tag)
+      if (tag !== undefined) card.tag = tag
+      const assignee = boundedStr((c as KanbanCardMirror).assignee)
+      if (assignee !== undefined) card.assignee = assignee
+      const ref = boundedStr((c as KanbanCardMirror).ref)
+      if (ref !== undefined) card.ref = ref
+      out.push(card)
+    }
+  }
+  return cols.length > 0 || out.length > 0 ? { columns: cols, cards: out } : undefined
+}
+
 /**
  * Keep only well-formed {id,type,title} string entries; drop anything else.
  * Bounded: at most MAX_BOARDS entries, each field at most MAX_FIELD_LEN chars —
@@ -256,8 +343,21 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       typeof (b as BoardMirror).type === 'string' &&
       typeof (b as BoardMirror).title === 'string'
     ) {
-      const { id, type, title, status, agentKind, monitorActivity, path, fileRefs, x, y, w, h } =
-        b as BoardMirror
+      const {
+        id,
+        type,
+        title,
+        status,
+        agentKind,
+        monitorActivity,
+        path,
+        fileRefs,
+        x,
+        y,
+        w,
+        h,
+        kanban
+      } = b as BoardMirror
       if (
         id.length > MAX_FIELD_LEN ||
         type.length > MAX_FIELD_LEN ||
@@ -291,6 +391,9 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       if (typeof y === 'number' && Number.isFinite(y)) entry.y = y
       if (typeof w === 'number' && Number.isFinite(w)) entry.w = w
       if (typeof h === 'number' && Number.isFinite(h)) entry.h = h
+      // P3b: a kanban board's bounded lanes+cards (validated/capped; absent otherwise).
+      const sanitizedKanban = sanitizeKanban(kanban)
+      if (sanitizedKanban !== undefined) entry.kanban = sanitizedKanban
       out.push(entry)
     }
   }

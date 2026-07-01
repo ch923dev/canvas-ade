@@ -5,6 +5,7 @@ import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { LayoutDigest } from './layoutModel'
+import type { BoardCards } from './mcpBoardCards'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
@@ -95,6 +96,7 @@ export type LifecycleOrchestrator = Omit<
   | 'describeApp'
   | 'spawnGroup'
   | 'describeLayout'
+  | 'boardCards'
   | 'addCard'
   | 'moveCard'
   | 'updateCard'
@@ -117,6 +119,14 @@ export type LifecycleOrchestrator = Omit<
    * no-op on a package that predates it, so this type compiles against 0.17.0 AND 0.18.0-rc.1.
    */
   describeLayout(): Promise<LayoutDigest>
+  /**
+   * Project one Kanban board's lanes + cards (P3b) — the read half of the card loop, served as
+   * `canvas://board/{id}/cards`. NARROWS the package's `boardCards(): Promise<unknown>` to the concrete
+   * host-owned `BoardCards` (the package does not own that type — same discipline as `describeLayout`).
+   * Omitting `boardCards` from the base is a harmless no-op on a package predating it (0.17.0), and
+   * matches the concrete method on 0.18.0-rc.4 at integration.
+   */
+  boardCards(boardId: string): Promise<BoardCards>
   /**
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally
@@ -202,6 +212,19 @@ export interface BoardRegistry {
     y?: number
     w?: number
     h?: number
+    /** P3b: a kanban board's bounded lanes + cards (mirror-sanitized), grouped + served as
+     *  `canvas://board/{id}/cards`. Absent on every non-kanban board. */
+    kanban?: {
+      columns: Array<{ id: string; title: string; wip?: number }>
+      cards: Array<{
+        id: string
+        columnId: string
+        title: string
+        tag?: string
+        assignee?: string
+        ref?: string
+      }>
+    }
   }>
   /**
    * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize

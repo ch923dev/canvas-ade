@@ -71,8 +71,31 @@
   owes** (bundled with P1b/P3a): pin bump `^0.17.0`→`0.18.0-rc.3` + `APP_TOOLS` +`visualize_plan` +
   install. No live UI in the worktree (like P1b/P3a — the package isn't consumed here); the chooser is
   proven by `ConfirmModal.chooser.test` + the gate/applier tests, and the visual is the signed-off mock.
-- **P2 · P3b · P4.2** — not started. (P5's remaining polish — the mock's placement mini-preview — folds
-  into a later pass.)
+- **P3b — DONE (the card READ resource), goes live at integration.** The read half that closes the card
+  loop: new per-board `canvas://board/{id}/cards` resource — a read-only JSON projection of one Kanban
+  board's lanes + cards, so an agent can SEE a board's live columns/cards before it mutates them (P3a's
+  add/move/update/remove_card). Package `@expanse-ade/mcp@0.18.0-rc.4` (`feat/canvas-layout`, tag
+  `v0.18.0-rc.4`; npm `next`): `Orchestrator.boardCards(id): Promise<unknown>` + the `board-cards`
+  resource (registered in `registerBoardResources` → BOTH tiers, observation is safe) + mock stub +
+  orientation-prompt line + `MAX_KANBAN_COLUMNS/CARDS` constants. Rides the **board mirror** (option A —
+  the P1a-geometry / fileRefs precedent): the renderer projects a bounded `{columns,cards}` onto the
+  snapshot (`boardStatus.ts` `deriveKanban`, count-capped), the host **sanitizes + caps** it on the
+  `mcp:boards` IPC ingress (`boardRegistry.ts` `sanitizeKanban` — column/card counts, field lengths,
+  `wip` finite+positive; drop malformed), and `boardCards` **groups** it (cards nested under their
+  column, dangling dropped) via the pure `mcpBoardCards.ts` `buildBoardCards`. Shape:
+  `{ boardId, title, isKanban, columns: [{ id, title, wip|null, cards: [{ id, title, tag?, assignee?,
+  ref? }] }] }`; a non-kanban board reads the graceful shell `{ …, isKanban: false, columns: [] }`, a
+  missing board throws. Host `BoardCards` type is host-owned (package types it `unknown`, like
+  `describeLayout`); `LifecycleOrchestrator` narrows + Omits `boardCards` (compiles vs installed 0.17.0
+  AND 0.18.0-rc.4). **NO UI, NO schema change** → no design artifact, no manual dev-check, no e2e (like
+  P1b/P3a/P5a). `mcpOrchestrator.ts` stayed under the max-lines gate by extracting the method to a
+  `createBoardCardsMethod` factory + DRY-ing the duplicated groups projection. Gate GREEN: app typecheck/
+  lint/format 0 · **3929 unit+integration pass** (+13) · **pkg 219 contract** (+3). **Integration owes**
+  (bundled with P1b/P3a/P5a): pin bump `^0.17.0`→`0.18.0-rc.4` + install (a READ resource, not a tool —
+  `APP_TOOLS`/F25 unaffected). The resource serves LIVE only once MAIN consumes the rc at integration.
+- **P4.2 — DONE (see the dedicated bullet above).**
+- **P2** — not started. (P5's remaining polish — the mock's placement mini-preview — folds into a later
+  pass.)
 
 ## Why
 

@@ -17,6 +17,7 @@ import { createKanbanMethods } from './mcpKanbanGate'
 import { createVisualizeMethod } from './mcpVisualizeGate'
 import { buildAppModel, type AppModel } from './appModel'
 import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
+import { createBoardCardsMethod } from './mcpBoardCards'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -438,6 +439,15 @@ export function buildOrchestrator(
     listBoards: listBoardSummaries
   })
 
+  // PR-5/P1b: the Named-Group mirror projected to the shape BOTH self-models consume (describeApp's
+  // `canvas.groups` + describeLayout's digest input). Defined once so the projection isn't duplicated.
+  const listGroupsProjection = (): Array<{ id: string; name: string; boardIds: string[] }> =>
+    (registry.listGroups?.() ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      boardIds: [...g.boardIds]
+    }))
+
   return {
     listBoards: listBoardSummaries,
     ...lifecycle,
@@ -446,6 +456,10 @@ export function buildOrchestrator(
       if (!board) throw new Error(`board not found: ${boardId}`)
       return deriveStatus(board, sessionLookup())
     },
+    // 🔒 P3b canvas://board/{id}/cards — the READ half of the card loop (one kanban board's lanes+cards,
+    // grouped from the live mirror). Built in ./mcpBoardCards + spread here to keep this file under the
+    // max-lines gate. Read-only (no PTY / nonce / confirm) — card TEXT the human already sees on-canvas.
+    ...createBoardCardsMethod(registry.listBoards),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.
@@ -1055,11 +1069,7 @@ export function buildOrchestrator(
           targetId: c.targetId,
           kind: c.kind
         })),
-        groups: (registry.listGroups?.() ?? []).map((g) => ({
-          id: g.id,
-          name: g.name,
-          boardIds: [...g.boardIds]
-        })),
+        groups: listGroupsProjection(),
         rules: {
           spawnCap: getCap(),
           everyWriteGated: true,
@@ -1077,11 +1087,7 @@ export function buildOrchestrator(
       const summaries = await listBoardSummaries()
       return buildLayoutDigest(
         summaries.map((b) => ({ id: b.id, type: b.type, x: b.x, y: b.y, w: b.w, h: b.h })),
-        (registry.listGroups?.() ?? []).map((g) => ({
-          id: g.id,
-          name: g.name,
-          boardIds: [...g.boardIds]
-        }))
+        listGroupsProjection()
       )
     }
   }

@@ -217,6 +217,61 @@ describe('buildOrchestrator', () => {
     await expect(orch.boardStatus('nope')).rejects.toThrow(/not found/)
   })
 
+  it('boardCards groups a kanban board lanes+cards from the mirror projection (P3b)', async () => {
+    const orch = buildOrchestrator({
+      ...reg([]),
+      listBoards: () => [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          status: 'static',
+          kanban: {
+            columns: [
+              { id: 'backlog', title: 'Backlog' },
+              { id: 'wip', title: 'In Progress', wip: 2 }
+            ],
+            cards: [
+              { id: 'c1', columnId: 'backlog', title: 'One', tag: 'feature' },
+              { id: 'c2', columnId: 'ghost', title: 'dangling' } // no such column → dropped
+            ]
+          }
+        }
+      ]
+    })
+    expect(await orch.boardCards('k1')).toEqual({
+      boardId: 'k1',
+      title: 'Sprint',
+      isKanban: true,
+      columns: [
+        {
+          id: 'backlog',
+          title: 'Backlog',
+          wip: null,
+          cards: [{ id: 'c1', title: 'One', tag: 'feature' }]
+        },
+        { id: 'wip', title: 'In Progress', wip: 2, cards: [] }
+      ]
+    })
+  })
+
+  it('boardCards returns the non-kanban shell for a non-kanban board (P3b)', async () => {
+    const orch = buildOrchestrator(
+      reg([{ id: 'p1', type: 'planning', title: 'Plan', status: 'static' }])
+    )
+    expect(await orch.boardCards('p1')).toEqual({
+      boardId: 'p1',
+      title: 'Plan',
+      isKanban: false,
+      columns: []
+    })
+  })
+
+  it('boardCards throws for an unknown board (P3b)', async () => {
+    const orch = buildOrchestrator(reg([]))
+    await expect(orch.boardCards('nope')).rejects.toThrow(/board not found: nope/)
+  })
+
   it('boardOutput delegates the cursor to the registry and returns its page', async () => {
     let seenCursor: number | undefined = -1
     const page: BoardOutput = {
