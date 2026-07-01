@@ -22,6 +22,7 @@ import type {
 } from '../../../lib/boardSchema'
 import { noteRotation, TINT_CYCLE } from './tints'
 import { MIN_TEXT_WIDTH_PX, type FontSizeToken } from './textStyle'
+import type { StrokeColorToken, StrokeWidthToken } from './strokeStyle'
 // Geometry lives in the unified rail now; `BBox` is used internally by anchors()/unionBBox()
 // and `elementBBox` by the transfer engine's origin-normalization.
 import { elementBBox, type BBox } from './elementRegistry'
@@ -624,4 +625,149 @@ export function insertTransferred(
     inserts.push(copy)
   }
   return { elements: [...targetEls, ...inserts], newIds }
+}
+
+// ── P4b: z-order (paint order == array order) + appearance batch setters ─────────
+// Paint order IS `elements[]` order — later in the array = drawn on top. These four reorders and the
+// three value setters power the inspector's Appearance sub-block. Every one is REF-STABLE on a no-op
+// (returns the input `els` by reference when nothing moves/changes) so — like `setNoteTint` — a
+// redundant action never consumes the pending undo checkpoint (no phantom step). A LOCKED element
+// ignores every inspector edit (mirrors `setNoteTint` skipping locked notes); the caller passes the
+// group-expanded selection, and these operate on the unlocked members of it.
+
+/** The selected AND unlocked ids — the set the P4b transforms actually touch. */
+function editableSet(els: PlanningElement[], ids: Iterable<string>): Set<string> {
+  const want = ids instanceof Set ? ids : new Set(ids)
+  const set = new Set<string>()
+  for (const el of els) if (want.has(el.id) && !isLocked(el)) set.add(el.id)
+  return set
+}
+
+/** Same element identities in the same order (per-slot ref compare)? Drives the no-op ref return. */
+function sameOrder(a: PlanningElement[], b: PlanningElement[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+/**
+ * Move the (unlocked) selected elements to the FRONT — the end of the array = painted last = on top —
+ * preserving their relative order and the relative order of the rest. Ref-stable no-op when the
+ * selection is already the contiguous tail.
+ */
+export function bringToFront(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = editableSet(els, ids)
+  if (set.size === 0) return els
+  const rest = els.filter((el) => !set.has(el.id))
+  const sel = els.filter((el) => set.has(el.id))
+  const next = [...rest, ...sel]
+  return sameOrder(els, next) ? els : next
+}
+
+/** Move the (unlocked) selected elements to the BACK (start of the array = painted first = behind). */
+export function sendToBack(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = editableSet(els, ids)
+  if (set.size === 0) return els
+  const sel = els.filter((el) => set.has(el.id))
+  const rest = els.filter((el) => !set.has(el.id))
+  const next = [...sel, ...rest]
+  return sameOrder(els, next) ? els : next
+}
+
+/**
+ * Raise each (unlocked) selected element ONE step toward the front — past its next unselected
+ * neighbour. A contiguous selected block moves forward together. Ref-stable no-op when nothing rises.
+ */
+export function bringForward(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = editableSet(els, ids)
+  if (set.size === 0) return els
+  const arr = [...els]
+  let changed = false
+  // Top-down so a selected block hops its unselected neighbour as a unit without a selected element
+  // overtaking another selected element.
+  for (let i = arr.length - 2; i >= 0; i--) {
+    if (set.has(arr[i].id) && !set.has(arr[i + 1].id)) {
+      const tmp = arr[i]
+      arr[i] = arr[i + 1]
+      arr[i + 1] = tmp
+      changed = true
+    }
+  }
+  return changed ? arr : els
+}
+
+/** Lower each (unlocked) selected element ONE step toward the back — behind its previous unselected
+ *  neighbour. Ref-stable no-op when nothing sinks. */
+export function sendBackward(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = editableSet(els, ids)
+  if (set.size === 0) return els
+  const arr = [...els]
+  let changed = false
+  for (let i = 1; i < arr.length; i++) {
+    if (set.has(arr[i].id) && !set.has(arr[i - 1].id)) {
+      const tmp = arr[i]
+      arr[i] = arr[i - 1]
+      arr[i - 1] = tmp
+      changed = true
+    }
+  }
+  return changed ? arr : els
+}
+
+/** A line kind carries stroke colour/width (arrow = SVG stroke, pen = perfect-freehand fill). */
+function isLineKind(el: PlanningElement): boolean {
+  return el.kind === 'arrow' || el.kind === 'stroke'
+}
+
+/** Set `opacity` on every (unlocked) selected element (all kinds). Ref-stable when nothing changes. */
+export function setOpacity(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  opacity: number
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  let changed = false
+  const next = els.map((el) => {
+    if (!set.has(el.id) || isLocked(el) || el.opacity === opacity) return el
+    changed = true
+    return { ...el, opacity }
+  })
+  return changed ? next : els
+}
+
+/** Set `strokeColor` on every (unlocked) selected LINE element (arrow/pen). Non-line kinds + locked
+ *  are skipped. Ref-stable when nothing changes. */
+export function setStrokeColor(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  strokeColor: StrokeColorToken
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  let changed = false
+  const next = els.map((el) => {
+    if (!set.has(el.id) || isLocked(el) || !isLineKind(el) || el.strokeColor === strokeColor) {
+      return el
+    }
+    changed = true
+    return { ...el, strokeColor }
+  })
+  return changed ? next : els
+}
+
+/** Set `strokeWidth` on every (unlocked) selected LINE element (arrow/pen). Ref-stable when unchanged. */
+export function setStrokeWidth(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  strokeWidth: StrokeWidthToken
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  let changed = false
+  const next = els.map((el) => {
+    if (!set.has(el.id) || isLocked(el) || !isLineKind(el) || el.strokeWidth === strokeWidth) {
+      return el
+    }
+    changed = true
+    return { ...el, strokeWidth }
+  })
+  return changed ? next : els
 }

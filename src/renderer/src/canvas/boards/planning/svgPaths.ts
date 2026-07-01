@@ -41,9 +41,10 @@ export function arrowheadMarkerId(boardId: string): string {
   return `pl-arrowhead-${boardId}`
 }
 
-/** Flat board-local point list → an SVG fill path for a perfect-freehand outline. */
-export function strokeToPath(points: number[]): string {
-  const outline = getStroke(pointsToPairs(points), STROKE_OPTIONS)
+/** Flat board-local point list → an SVG fill path for a perfect-freehand outline. `size` overrides
+ *  the pen width (P4b `strokeWidth`); omitted ⇒ STROKE_OPTIONS.size (4), byte-identical to pre-P4b. */
+export function strokeToPath(points: number[], size: number = STROKE_OPTIONS.size ?? 4): string {
+  const outline = getStroke(pointsToPairs(points), { ...STROKE_OPTIONS, size })
   if (outline.length === 0) return ''
   const d = outline.reduce(
     (acc: string, [x, y]: [number, number], i: number) =>

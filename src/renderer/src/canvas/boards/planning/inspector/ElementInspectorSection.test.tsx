@@ -12,7 +12,11 @@ import { render, screen, cleanup, fireEvent, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MenuEntry } from '../ElementContextMenu'
 import { ElementInspectorSection } from './ElementInspectorSection'
-import type { ElementInspectorModel, TypographyControls } from './usePlanningElementInspector'
+import type {
+  AppearanceControls,
+  ElementInspectorModel,
+  TypographyControls
+} from './usePlanningElementInspector'
 
 afterEach(cleanup)
 
@@ -76,6 +80,23 @@ const typography = (over: Partial<TypographyControls['current']> = {}): Typograp
   apply: vi.fn()
 })
 
+function appearance(over: Partial<AppearanceControls> = {}): AppearanceControls {
+  return {
+    opacity: 1,
+    setOpacity: vi.fn(),
+    showStroke: false,
+    strokeColor: null,
+    setStrokeColor: vi.fn(),
+    strokeWidth: null,
+    setStrokeWidth: vi.fn(),
+    bringToFront: vi.fn(),
+    bringForward: vi.fn(),
+    sendBackward: vi.fn(),
+    sendToBack: vi.fn(),
+    ...over
+  }
+}
+
 function model(over: Partial<ElementInspectorModel> = {}): ElementInspectorModel {
   return {
     count: 1,
@@ -84,6 +105,7 @@ function model(over: Partial<ElementInspectorModel> = {}): ElementInspectorModel
     typography: null,
     showTint: false,
     showArrange: false,
+    appearance: appearance(),
     entries: makeEntries(),
     ...over
   }
@@ -158,5 +180,61 @@ describe('ElementInspectorSection', () => {
     const chip = screen.getByText('3')
     expect(chip).toBeTruthy()
     expect(chip.getAttribute('data-mixed')).toBe('true')
+  })
+
+  // ── P4b Appearance sub-block ──────────────────────────────────────────────────
+  it('opacity slider is always present, reads the common value, and fires setOpacity', () => {
+    const ap = appearance({ opacity: 0.5 })
+    render(<ElementInspectorSection model={model({ appearance: ap })} />)
+    const slider = screen.getByRole('slider', { name: 'Element opacity' }) as HTMLInputElement
+    expect(slider.value).toBe('50')
+    expect(screen.getByText('50%')).toBeTruthy()
+    fireEvent.change(slider, { target: { value: '80' } })
+    expect(ap.setOpacity).toHaveBeenCalledWith(0.8)
+  })
+
+  it('an indeterminate opacity reads "Mixed"', () => {
+    render(<ElementInspectorSection model={model({ appearance: appearance({ opacity: null }) })} />)
+    expect(screen.getByText('Mixed')).toBeTruthy()
+  })
+
+  it('stroke colour + width rows appear ONLY when showStroke (line kinds)', () => {
+    const { rerender } = render(
+      <ElementInspectorSection model={model({ appearance: appearance({ showStroke: false }) })} />
+    )
+    expect(screen.queryByRole('radiogroup', { name: 'Stroke color' })).toBeNull()
+    expect(screen.queryByRole('radiogroup', { name: 'Stroke width' })).toBeNull()
+    rerender(
+      <ElementInspectorSection
+        model={model({
+          kindLabel: 'arrow',
+          appearance: appearance({ showStroke: true, strokeColor: 'accent', strokeWidth: 'm' })
+        })}
+      />
+    )
+    expect(screen.getByRole('radiogroup', { name: 'Stroke color' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Stroke width' })).toBeTruthy()
+  })
+
+  it('stroke swatch + width fire their setters', () => {
+    const ap = appearance({ showStroke: true, strokeColor: 'default', strokeWidth: 'm' })
+    render(<ElementInspectorSection model={model({ kindLabel: 'arrow', appearance: ap })} />)
+    fireEvent.click(screen.getByRole('radio', { name: 'Accent' }))
+    expect(ap.setStrokeColor).toHaveBeenCalledWith('accent')
+    fireEvent.click(screen.getByRole('radio', { name: 'L' }))
+    expect(ap.setStrokeWidth).toHaveBeenCalledWith('l')
+  })
+
+  it('the 4 z-order buttons fire their reorder callbacks', () => {
+    const ap = appearance()
+    render(<ElementInspectorSection model={model({ appearance: ap })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Bring to front' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Bring forward' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send backward' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send to back' }))
+    expect(ap.bringToFront).toHaveBeenCalledTimes(1)
+    expect(ap.bringForward).toHaveBeenCalledTimes(1)
+    expect(ap.sendBackward).toHaveBeenCalledTimes(1)
+    expect(ap.sendToBack).toHaveBeenCalledTimes(1)
   })
 })

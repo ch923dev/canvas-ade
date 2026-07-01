@@ -38,7 +38,14 @@ import {
   fitImageSize,
   makeFileRef,
   FILEREF_SIZE,
-  setArrowEndpoint
+  setArrowEndpoint,
+  bringToFront,
+  sendToBack,
+  bringForward,
+  sendBackward,
+  setOpacity,
+  setStrokeColor,
+  setStrokeWidth
 } from './elements'
 import { TINT_CYCLE } from './tints'
 
@@ -779,5 +786,96 @@ describe('cross-board transfer engine (extractForTransfer / insertTransferred)',
     expect(second.elements).toHaveLength(2)
     expect(first.newIds[0]).not.toBe(second.newIds[0])
     expect(second.elements[0]).not.toBe(second.elements[1])
+  })
+})
+
+describe('P4b z-order transforms (paint order == array order)', () => {
+  const anyEl = (id: string): PlanningElement => ({
+    id,
+    kind: 'note',
+    x: 0,
+    y: 0,
+    w: 10,
+    h: 10,
+    text: '',
+    tint: 'yellow'
+  })
+  const order = (els: PlanningElement[]): string[] => els.map((e) => e.id)
+
+  it('bringToFront moves the selection to the end, preserving relative order', () => {
+    const els = [anyEl('a'), anyEl('b'), anyEl('c'), anyEl('d')]
+    expect(order(bringToFront(els, new Set(['a', 'c'])))).toEqual(['b', 'd', 'a', 'c'])
+  })
+  it('sendToBack moves the selection to the start, preserving relative order', () => {
+    const els = [anyEl('a'), anyEl('b'), anyEl('c'), anyEl('d')]
+    expect(order(sendToBack(els, new Set(['b', 'd'])))).toEqual(['b', 'd', 'a', 'c'])
+  })
+  it('bringForward raises the selection one step past its unselected neighbour', () => {
+    const els = [anyEl('a'), anyEl('b'), anyEl('c')]
+    expect(order(bringForward(els, new Set(['a'])))).toEqual(['b', 'a', 'c'])
+  })
+  it('sendBackward lowers the selection one step behind its unselected neighbour', () => {
+    const els = [anyEl('a'), anyEl('b'), anyEl('c')]
+    expect(order(sendBackward(els, new Set(['c'])))).toEqual(['a', 'c', 'b'])
+  })
+  it('a contiguous selected block moves forward together (one step past the neighbour)', () => {
+    const els = [anyEl('a'), anyEl('b'), anyEl('c')]
+    expect(order(bringForward(els, new Set(['a', 'b'])))).toEqual(['c', 'a', 'b'])
+  })
+  it('is a ref-stable no-op when the selection is already at the extreme (no phantom undo)', () => {
+    const els = [anyEl('a'), anyEl('b'), anyEl('c')]
+    expect(bringToFront(els, new Set(['b', 'c']))).toBe(els)
+    expect(sendToBack(els, new Set(['a', 'b']))).toBe(els)
+    expect(bringForward(els, new Set(['c']))).toBe(els)
+    expect(sendBackward(els, new Set(['a']))).toBe(els)
+    expect(bringToFront(els, new Set())).toBe(els)
+  })
+  it('skips locked elements (a locked member is not reordered)', () => {
+    const els = [{ ...anyEl('a'), locked: true }, anyEl('b'), anyEl('c')]
+    expect(bringToFront(els, new Set(['a']))).toBe(els)
+  })
+})
+
+describe('P4b appearance batch setters', () => {
+  const note = (id: string): NoteElement => ({
+    id,
+    kind: 'note',
+    x: 0,
+    y: 0,
+    w: 10,
+    h: 10,
+    text: '',
+    tint: 'yellow'
+  })
+  const arrow = (id: string): ArrowElement => ({ id, kind: 'arrow', x: 0, y: 0, x2: 1, y2: 1 })
+
+  it('setOpacity sets opacity on every selected element (all kinds)', () => {
+    const els = [note('a'), arrow('b'), note('c')]
+    const out = setOpacity(els, new Set(['a', 'b']), 0.5)
+    expect(out[0].opacity).toBe(0.5)
+    expect(out[1].opacity).toBe(0.5)
+    expect(out[2].opacity).toBeUndefined()
+  })
+  it('setOpacity is a ref-stable no-op when all selected already have that opacity', () => {
+    const els = [{ ...note('a'), opacity: 0.5 }]
+    expect(setOpacity(els, new Set(['a']), 0.5)).toBe(els)
+  })
+  it('setStrokeColor / setStrokeWidth only touch LINE kinds (arrow/pen), skipping notes', () => {
+    const els = [note('a'), arrow('b')]
+    const c = setStrokeColor(els, new Set(['a', 'b']), 'accent')
+    expect((c[0] as NoteElement).strokeColor).toBeUndefined()
+    expect((c[1] as ArrowElement).strokeColor).toBe('accent')
+    const w = setStrokeWidth(els, new Set(['a', 'b']), 'l')
+    expect(w[0].strokeWidth).toBeUndefined()
+    expect(w[1].strokeWidth).toBe('l')
+  })
+  it('setStrokeColor is a ref-stable no-op when the selection has no line kinds', () => {
+    const els = [note('a')]
+    expect(setStrokeColor(els, new Set(['a']), 'accent')).toBe(els)
+  })
+  it('appearance setters skip locked elements', () => {
+    const els = [{ ...arrow('a'), locked: true }]
+    expect(setOpacity(els, new Set(['a']), 0.5)).toBe(els)
+    expect(setStrokeColor(els, new Set(['a']), 'accent')).toBe(els)
   })
 })

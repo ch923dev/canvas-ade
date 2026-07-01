@@ -17,6 +17,7 @@ import {
   type TextAlignToken,
   type TextColorToken
 } from '../textStyle'
+import { OPACITY_DEFAULT, type StrokeColorToken, type StrokeWidthToken } from '../strokeStyle'
 
 /** The selection's kind: a single element kind when homogeneous, or `mixed` across ≥2 kinds. */
 export type SelectionKind = PlanningElement['kind'] | 'mixed'
@@ -42,8 +43,15 @@ export interface ElementSelectionSummary {
   kindLabel: string
   isAllText: boolean
   isAllNotes: boolean
+  /** Every selected element is a LINE kind (arrow / pen) → the P4b stroke controls apply. */
+  isAllLine: boolean
   /** Common typography across a homogeneous text selection; `null` for any other selection. */
   typography: TypographyCommon | null
+  /** P4b appearance commons (`null` = the selection disagrees → indeterminate control). `opacity`
+   *  covers ALL kinds; `strokeColor`/`strokeWidth` are computed over the line selection only. */
+  opacity: number | null
+  strokeColor: StrokeColorToken | null
+  strokeWidth: StrokeWidthToken | null
 }
 
 const EMPTY: ElementSelectionSummary = {
@@ -54,8 +62,15 @@ const EMPTY: ElementSelectionSummary = {
   kindLabel: '',
   isAllText: false,
   isAllNotes: false,
-  typography: null
+  isAllLine: false,
+  typography: null,
+  opacity: null,
+  strokeColor: null,
+  strokeWidth: null
 }
+
+/** Line kinds carry stroke colour/width (arrow = SVG stroke, pen = perfect-freehand fill). */
+const LINE_KINDS: ReadonlySet<PlanningElement['kind']> = new Set(['arrow', 'stroke'])
 
 /** The single common value across `vals`, or `null` when they disagree (or the list is empty). */
 function common<T>(vals: T[]): T | null {
@@ -86,6 +101,7 @@ export function summarizeSelection(
   const kind: SelectionKind = mixed ? 'mixed' : sel[0].kind
   const isAllText = kind === 'text'
   const isAllNotes = kind === 'note'
+  const isAllLine = sel.every((e) => LINE_KINDS.has(e.kind))
   return {
     ids: sel.map((e) => e.id),
     count: sel.length,
@@ -94,6 +110,12 @@ export function summarizeSelection(
     kindLabel: mixed ? 'mixed' : kind,
     isAllText,
     isAllNotes,
-    typography: isAllText ? typographyOf(sel as TextElement[]) : null
+    isAllLine,
+    typography: isAllText ? typographyOf(sel as TextElement[]) : null,
+    // opacity is a per-element common (all kinds); absent ⇒ the opaque default.
+    opacity: common(sel.map((e) => e.opacity ?? OPACITY_DEFAULT)),
+    // stroke commons are meaningful only for an all-line selection; absent ⇒ the legacy token.
+    strokeColor: isAllLine ? common(sel.map((e) => e.strokeColor ?? 'default')) : null,
+    strokeWidth: isAllLine ? common(sel.map((e) => e.strokeWidth ?? 'm')) : null
   }
 }

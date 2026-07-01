@@ -460,6 +460,27 @@
   cursor: pointer;
 }
 
+/* P4b: an in-section sub-divider label ("Appearance") between the per-kind rows and Arrange. */
+.ca-inspector-subhd {
+  margin-top: 5px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-3);
+}
+/* P4b: the opacity slider's live value readout (mono, right-aligned). */
+.ca-inspector-slider-val {
+  flex: none;
+  width: 40px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+
 /* Connection status chip (Preview section). Tone → dot colour. */
 .ca-inspector-status {
   display: inline-flex;

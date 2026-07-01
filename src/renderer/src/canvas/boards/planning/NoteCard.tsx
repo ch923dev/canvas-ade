@@ -131,6 +131,8 @@ export const NoteCard = memo(function NoteCard({
         boxShadow: 'var(--shadow-pop)',
         outline: selected ? '1.5px solid var(--accent)' : 'none',
         outlineOffset: 2,
+        // v17 (P4b) element opacity — absent ⇒ undefined ⇒ renders opaque, byte-identical to pre-P4b.
+        opacity: note.opacity,
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {

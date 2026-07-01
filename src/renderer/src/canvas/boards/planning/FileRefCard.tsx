@@ -197,6 +197,8 @@ export const FileRefCard = memo(function FileRefCard({
         border: '1px solid var(--border-subtle)',
         outline: selected ? '1.5px solid var(--accent)' : 'none',
         outlineOffset: 2,
+        // v17 (P4b) element opacity — absent ⇒ opaque, byte-identical to pre-P4b.
+        opacity: element.opacity,
         cursor: interactive ? 'pointer' : 'default',
         overflow: 'hidden'
       }}

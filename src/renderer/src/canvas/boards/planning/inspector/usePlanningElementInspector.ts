@@ -20,7 +20,19 @@ import { useCanvasStore } from '../../../../store/canvasStore'
 import type { MenuEntry } from '../ElementContextMenu'
 import { type AlignBoard } from '../align'
 import { buildContextMenuEntries } from '../contextMenuEntries'
-import { expandGroups, patchElement, type Measured } from '../elements'
+import {
+  expandGroups,
+  patchElement,
+  setOpacity as applyOpacityT,
+  setStrokeColor as applyStrokeColorT,
+  setStrokeWidth as applyStrokeWidthT,
+  bringToFront as zBringToFront,
+  bringForward as zBringForward,
+  sendBackward as zSendBackward,
+  sendToBack as zSendToBack,
+  type Measured
+} from '../elements'
+import { clampOpacity, type StrokeColorToken, type StrokeWidthToken } from '../strokeStyle'
 import type { TextStylePatch } from '../TextToolbar'
 import { summarizeSelection, type TypographyCommon } from './elementModel'
 
@@ -35,6 +47,27 @@ export interface TypographyControls {
   apply: (patch: TextStylePatch) => void
 }
 
+/** P4b Appearance controls (always present when ≥1 element is selected). Each setter is ONE undo step
+ *  with the live-read guard (a vanished selection never arms a checkpoint); the underlying transforms
+ *  are ref-stable on a no-op, so re-picking the current value never pushes a phantom undo. Common
+ *  values are `null` when the selection disagrees (indeterminate → no active control state). */
+export interface AppearanceControls {
+  /** Common opacity across the selection; `null` = indeterminate. Setter clamps to [0.1, 1]. */
+  opacity: number | null
+  setOpacity: (v: number) => void
+  /** Stroke controls only when EVERY selected element is a line kind (arrow / pen). */
+  showStroke: boolean
+  strokeColor: StrokeColorToken | null
+  setStrokeColor: (c: StrokeColorToken) => void
+  strokeWidth: StrokeWidthToken | null
+  setStrokeWidth: (w: StrokeWidthToken) => void
+  /** Z-order (4 buttons): pure `elements[]` reorders — no schema. */
+  bringToFront: () => void
+  bringForward: () => void
+  sendBackward: () => void
+  sendToBack: () => void
+}
+
 /** The presentation model for the inspector's Element section. */
 export interface ElementInspectorModel {
   count: number
@@ -47,6 +80,8 @@ export interface ElementInspectorModel {
   showTint: boolean
   /** Selection ≥2 → show align/distribute (distribute self-disables under 3, via its entry). */
   showArrange: boolean
+  /** P4b appearance controls (opacity / stroke / z-order). */
+  appearance: AppearanceControls
   /** The shared action + tint + align/distribute entries — the SAME model the context menu uses. */
   entries: MenuEntry[]
 }
@@ -130,6 +165,21 @@ export function usePlanningElementInspector({
     [boardId, beginChange, commit]
   )
 
+  // P4b batch runner — apply a pure elements[] transform to the selection in ONE undo step, with the
+  // same live-read guard as applyTypography. The transforms (setOpacity / setStroke* / z-order) are
+  // ref-stable on a no-op, so a redundant action returns the same array ref → applyBoardPatch's
+  // reference compare treats it as a no-op and never pushes a phantom undo (BUG M3 class).
+  const runBatch = useCallback(
+    (ids: string[], transform: (cur: PlanningElement[]) => PlanningElement[]) => {
+      const live = useCanvasStore.getState().boards.find((b) => b.id === boardId)
+      const els = live?.type === 'planning' ? live.elements : []
+      if (!ids.some((id) => els.some((e) => e.id === id))) return
+      beginChange()
+      commit(transform)
+    },
+    [boardId, beginChange, commit]
+  )
+
   const element = useMemo<ElementInspectorModel | null>(() => {
     if (!interactive || selectedIds.size === 0) return null
     // Build against the group-expanded set — the same set the right-click menu operates on, so the
@@ -141,6 +191,20 @@ export function usePlanningElementInspector({
     const typography: TypographyControls | null = summary.typography
       ? { current: summary.typography, apply: (patch) => applyTypography(summary.ids, patch) }
       : null
+    const ids = summary.ids
+    const appearance: AppearanceControls = {
+      opacity: summary.opacity,
+      setOpacity: (v) => runBatch(ids, (cur) => applyOpacityT(cur, ids, clampOpacity(v))),
+      showStroke: summary.isAllLine,
+      strokeColor: summary.strokeColor,
+      setStrokeColor: (c) => runBatch(ids, (cur) => applyStrokeColorT(cur, ids, c)),
+      strokeWidth: summary.strokeWidth,
+      setStrokeWidth: (w) => runBatch(ids, (cur) => applyStrokeWidthT(cur, ids, w)),
+      bringToFront: () => runBatch(ids, (cur) => zBringToFront(cur, ids)),
+      bringForward: () => runBatch(ids, (cur) => zBringForward(cur, ids)),
+      sendBackward: () => runBatch(ids, (cur) => zSendBackward(cur, ids)),
+      sendToBack: () => runBatch(ids, (cur) => zSendToBack(cur, ids))
+    }
     return {
       count: summary.count,
       kindLabel: summary.kindLabel,
@@ -148,9 +212,10 @@ export function usePlanningElementInspector({
       typography,
       showTint: summary.isAllNotes,
       showArrange: summary.count >= 2,
+      appearance,
       entries
     }
-  }, [interactive, selectedIds, elements, buildMenuEntries, applyTypography])
+  }, [interactive, selectedIds, elements, buildMenuEntries, applyTypography, runBatch])
 
   return { buildMenuEntries, element }
 }

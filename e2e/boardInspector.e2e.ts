@@ -433,4 +433,131 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  test('P4b: the Element Appearance block round-trips opacity + z-order through the real store', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'inspector-p4b-',
+      'inspector-p4b'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const id = await seed(page, 'planning')
+      // Two text elements: ap-1 is first in the array (painted at the BACK), ap-2 last (FRONT). Text
+      // is used (not a note) because its grip selects with a real click without the note grip's
+      // drag-capture; opacity + z-order are all-kind, so text exercises them fully. Ids flow as DATA,
+      // never interpolated into eval'd code (the #82/#114 CodeQL pattern).
+      await page.evaluate((bid) => {
+        ;(
+          globalThis as unknown as { __canvasE2E: { patchBoard: (id: string, p: unknown) => void } }
+        ).__canvasE2E.patchBoard(bid, {
+          elements: [
+            { id: 'ap-1', kind: 'text', x: 200, y: 140, text: 'AAA', fontSize: 'M' },
+            { id: 'ap-2', kind: 'text', x: 360, y: 200, text: 'BBB', fontSize: 'M' }
+          ]
+        })
+      }, id)
+      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await pollEval(
+        page,
+        `!!document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-select"]')`,
+        5000
+      )
+      // Decline the fresh-project recap modal so it can't occlude the grip.
+      await page
+        .locator('[data-test="recap-decline"]')
+        .click({ timeout: 5000 })
+        .catch(() => {})
+
+      // Select ap-1 (the back element) with a REAL click on its drag grip — the select tool is default.
+      const grip = page.locator(`[data-id="${id}"] .pl-text-grip`).first()
+      await grip.waitFor({ state: 'visible' })
+      await grip.click()
+
+      // The Element section grows the Appearance sub-block — the opacity slider is always present.
+      const opacityPresent = await pollEval(
+        page,
+        `!!document.querySelector('[data-test="board-inspector"] [aria-label="Element opacity"]')`,
+        3000
+      )
+      expect(opacityPresent, 'selecting an element grows the Appearance opacity slider').toBe(true)
+
+      // Read helpers off the real store.
+      const opacityOf = (): Promise<number | undefined> =>
+        page.evaluate((bid) => {
+          const boards = (
+            globalThis as unknown as {
+              __canvasE2E: {
+                getBoards: () => {
+                  id: string
+                  type: string
+                  elements?: { id: string; opacity?: number }[]
+                }[]
+              }
+            }
+          ).__canvasE2E.getBoards()
+          const b = boards.find((x) => x.id === bid)
+          return b?.type === 'planning'
+            ? b.elements?.find((e) => e.id === 'ap-1')?.opacity
+            : undefined
+        }, id)
+      const orderOf = (): Promise<string[] | undefined> =>
+        page.evaluate((bid) => {
+          const boards = (
+            globalThis as unknown as {
+              __canvasE2E: {
+                getBoards: () => { id: string; type: string; elements?: { id: string }[] }[]
+              }
+            }
+          ).__canvasE2E.getBoards()
+          const b = boards.find((x) => x.id === bid)
+          return b?.type === 'planning' ? b.elements?.map((e) => e.id) : undefined
+        }, id)
+
+      expect(await opacityOf(), 'starts fully opaque (absent)').toBeUndefined()
+      expect(await orderOf(), 'ap-1 starts at the back (index 0)').toEqual(['ap-1', 'ap-2'])
+
+      // Drag the opacity slider to 40% — set the native range value + dispatch the input event so
+      // React's onChange fires (synthetic .value assignment alone doesn't notify React).
+      await evalIn(
+        page,
+        `(() => {
+          const s = document.querySelector('[data-test="board-inspector"] [aria-label="Element opacity"]');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(s, '40');
+          s.dispatchEvent(new Event('input', { bubbles: true }));
+        })()`
+      )
+      await expect
+        .poll(opacityOf, { message: 'the opacity slider patches the element via the real store' })
+        .toBe(0.4)
+
+      // Bring ap-1 to front → it moves to the end of the array (painted last / on top).
+      await evalIn(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [aria-label="Z-order"] button[title="Bring to front"]').click()`
+      )
+      await expect
+        .poll(orderOf, { message: 'bring-to-front reorders ap-1 to the front (array end)' })
+        .toEqual(['ap-2', 'ap-1'])
+
+      // Each is one undo step: undo restores the order, then undo restores the opacity.
+      await evalIn(page, 'window.__canvasE2E.undo()')
+      await expect.poll(orderOf, { message: 'one undo restores the z-order' }).toEqual([
+        'ap-1',
+        'ap-2'
+      ])
+      await evalIn(page, 'window.__canvasE2E.undo()')
+      await expect
+        .poll(opacityOf, { message: 'one undo restores the opacity (back to absent/opaque)' })
+        .toBeUndefined()
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
 })

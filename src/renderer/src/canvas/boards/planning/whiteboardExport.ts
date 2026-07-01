@@ -23,6 +23,7 @@ import {
   lineHeightFor,
   estimateTextWidth
 } from './textStyle'
+import { strokeColorExport, arrowWidthPx, penWidthPx, type StrokeColorToken } from './strokeStyle'
 
 /** assetId → data-URI (base64) for image elements; missing ids are absent. */
 export type ExportAssets = Record<string, string>
@@ -95,18 +96,35 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
   let imageCount = 0
   let embeddedCount = 0
   const body: string[] = []
+  const usedArrowColors = new Set<StrokeColorToken>()
   for (const el of els) {
     const r = renderElement(el, assets)
-    body.push(r.markup)
+    // v17 (P4b) opacity — wrap the element markup in an opacity group when < 1 (absent ⇒ no wrapper,
+    // byte-identical). Nests fine with the note's own rotate <g> (SVG composes group opacity).
+    const op = el.opacity
+    body.push(op !== undefined && op < 1 ? `<g opacity="${op}">${r.markup}</g>` : r.markup)
+    if (el.kind === 'arrow' && el.strokeColor && el.strokeColor !== 'default') {
+      usedArrowColors.add(el.strokeColor)
+    }
     if (el.kind === 'image') {
       imageCount++
       if (r.embedded) embeddedCount++
     }
   }
 
+  // One arrowhead marker per DISTINCT arrow stroke colour on the board so the exported SVG stays
+  // portable (no reliance on SVG2 `context-stroke`, which not every standalone viewer honours). The
+  // DEFAULT marker keeps its bare id, so a board with no custom arrow colour exports byte-identical.
+  const arrowMarker = (idSuffix: string, color: string): string =>
+    `<marker id="${ARROW_MARKER_ID}${idSuffix}" markerWidth="8" markerHeight="8" ` +
+    `refX="6" refY="4" orient="auto"><path d="M0 0 L7 4 L0 8 z" fill="${color}"/></marker>`
   const defs =
-    `<defs><marker id="${ARROW_MARKER_ID}" markerWidth="8" markerHeight="8" ` +
-    `refX="6" refY="4" orient="auto"><path d="M0 0 L7 4 L0 8 z" fill="${ARROW_COLOR}"/></marker></defs>`
+    `<defs>` +
+    arrowMarker('', ARROW_COLOR) +
+    [...usedArrowColors]
+      .map((t) => arrowMarker(`-${t}`, strokeColorExport(t, ARROW_COLOR)))
+      .join('') +
+    `</defs>`
 
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
@@ -126,16 +144,29 @@ function renderElement(
   assets: ExportAssets
 ): { markup: string; embedded: boolean } {
   switch (el.kind) {
-    case 'arrow':
+    case 'arrow': {
+      // v17 (P4b): resolve the token stroke colour + width (absent/`default` ⇒ legacy border-strong /
+      // 1.5, byte-identical). The arrowhead references the matching per-colour marker (bare id for
+      // default) so the head colour tracks the line.
+      const stroke = strokeColorExport(el.strokeColor, ARROW_COLOR)
+      const width = arrowWidthPx(el.strokeWidth)
+      const markerId =
+        el.strokeColor && el.strokeColor !== 'default'
+          ? `${ARROW_MARKER_ID}-${el.strokeColor}`
+          : ARROW_MARKER_ID
       return {
         markup:
-          `<path d="${arrowPath(el)}" fill="none" stroke="${ARROW_COLOR}" ` +
-          `stroke-width="1.5" marker-end="url(#${ARROW_MARKER_ID})"/>`,
+          `<path d="${arrowPath(el)}" fill="none" stroke="${stroke}" ` +
+          `stroke-width="${width}" marker-end="url(#${markerId})"/>`,
         embedded: false
       }
+    }
     case 'stroke': {
-      const d = strokeToPath(el.points)
-      return { markup: d ? `<path d="${d}" fill="${STROKE_FILL}"/>` : '', embedded: false }
+      // v17 (P4b): the pen `size` = the token width (absent ⇒ 4, byte-identical); fill = token colour
+      // (absent/`default` ⇒ legacy text-2).
+      const d = strokeToPath(el.points, penWidthPx(el.strokeWidth))
+      const fill = strokeColorExport(el.strokeColor, STROKE_FILL)
+      return { markup: d ? `<path d="${d}" fill="${fill}"/>` : '', embedded: false }
     }
     case 'note': {
       const t = EXPORT_NOTE_TINTS[el.tint]

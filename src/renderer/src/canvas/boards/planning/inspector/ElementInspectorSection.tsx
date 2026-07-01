@@ -18,9 +18,17 @@ import {
   InspectorRow,
   InspectorSection,
   InspectorSegmented,
+  InspectorSlider,
   InspectorSwatches,
   InspectorToggle
 } from '../../../inspector/primitives'
+import {
+  STROKE_COLOR_TOKENS,
+  STROKE_WIDTH_TOKENS,
+  OPACITY_MAX,
+  type StrokeColorToken,
+  type StrokeWidthToken
+} from '../strokeStyle'
 import type {
   MenuActionEntry,
   MenuEntry,
@@ -51,6 +59,33 @@ const COLOR_LABEL: Record<TextColorToken, string> = {
   faint: 'Faint',
   accent: 'Accent'
 }
+
+// P4b Appearance presentation maps. The swatch FILL is the display colour (the `default` token shows
+// the arrow's legacy border-strong ink); labels drive the a11y titles.
+const STROKE_SWATCH_CSS: Record<StrokeColorToken, string> = {
+  default: 'var(--border-strong)',
+  white: 'var(--text)',
+  accent: 'var(--accent)',
+  green: 'var(--ok)',
+  amber: 'var(--warn)'
+}
+const STROKE_COLOR_LABEL: Record<StrokeColorToken, string> = {
+  default: 'Default',
+  white: 'White',
+  accent: 'Accent',
+  green: 'Green',
+  amber: 'Amber'
+}
+const STROKE_WIDTH_LABEL: Record<StrokeWidthToken, string> = { s: 'S', m: 'M', l: 'L' }
+
+// Z-order button glyphs (to-front / forward / backward / to-back). The Icon set has no layer/order
+// icons, so these use arrow marks; the `title` carries the accessible name.
+const Z_ORDER_BUTTONS = [
+  { id: 'front', title: 'Bring to front', glyph: '⤒' },
+  { id: 'forward', title: 'Bring forward', glyph: '↑' },
+  { id: 'backward', title: 'Send backward', glyph: '↓' },
+  { id: 'back', title: 'Send to back', glyph: '⤓' }
+] as const
 
 /** Typed entry lookups — the ids are fixed by contextMenuEntries; guard defensively (a missing entry
  *  simply omits its control rather than throwing). */
@@ -92,7 +127,7 @@ function ActionButton({
 }
 
 export function ElementInspectorSection({ model }: { model: ElementInspectorModel }): ReactElement {
-  const { typography, entries } = model
+  const { typography, entries, appearance } = model
   const tint = model.showTint ? swatchRow(entries, 'tint') : null
   const align = model.showArrange ? iconRow(entries, 'align') : null
   const distribute = model.showArrange ? iconRow(entries, 'distribute') : null
@@ -183,6 +218,66 @@ export function ElementInspectorSection({ model }: { model: ElementInspectorMode
           />
         </InspectorRow>
       )}
+
+      {/* Appearance (P4b) — a sub-block under the per-kind rows, above Arrange. Opacity for ALL kinds;
+          Stroke colour + width only for an all-line selection (arrow / pen); Z-order (4) for all. */}
+      <div className="ca-inspector-subhd">Appearance</div>
+      <InspectorRow label="Opacity">
+        <InspectorSlider
+          value={appearance.opacity ?? OPACITY_MAX}
+          onChange={appearance.setOpacity}
+          ariaLabel="Element opacity"
+          valueText={
+            appearance.opacity == null ? 'Mixed' : `${Math.round(appearance.opacity * 100)}%`
+          }
+        />
+        <span className="ca-inspector-slider-val" aria-hidden>
+          {appearance.opacity == null ? 'Mixed' : `${Math.round(appearance.opacity * 100)}%`}
+        </span>
+      </InspectorRow>
+      {appearance.showStroke && (
+        <>
+          <InspectorRow label="Stroke">
+            <InspectorSwatches
+              ariaLabel="Stroke color"
+              swatches={STROKE_COLOR_TOKENS.map((t) => ({
+                id: t,
+                fill: STROKE_SWATCH_CSS[t],
+                title: STROKE_COLOR_LABEL[t],
+                current: appearance.strokeColor === t
+              }))}
+              onPick={(id) => appearance.setStrokeColor(id as StrokeColorToken)}
+            />
+          </InspectorRow>
+          <InspectorRow label="Width">
+            <InspectorSegmented<StrokeWidthToken>
+              value={(appearance.strokeWidth ?? '') as StrokeWidthToken}
+              options={STROKE_WIDTH_TOKENS.map((w) => ({ value: w, label: STROKE_WIDTH_LABEL[w] }))}
+              onChange={appearance.setStrokeWidth}
+              fill
+              ariaLabel="Stroke width"
+            />
+          </InspectorRow>
+        </>
+      )}
+      <InspectorRow label="Order">
+        <InspectorIconButtons
+          ariaLabel="Z-order"
+          buttons={Z_ORDER_BUTTONS.map((b) => ({
+            id: b.id,
+            title: b.title,
+            icon: <span aria-hidden>{b.glyph}</span>,
+            onSelect:
+              b.id === 'front'
+                ? appearance.bringToFront
+                : b.id === 'forward'
+                  ? appearance.bringForward
+                  : b.id === 'backward'
+                    ? appearance.sendBackward
+                    : appearance.sendToBack
+          }))}
+        />
+      </InspectorRow>
 
       {/* Shared arrange actions — a 2-up cluster. Ungroup only surfaces when the selection is grouped
           (the context menu keeps it always-visible; the inspector hides the dead affordance). */}

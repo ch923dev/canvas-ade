@@ -54,8 +54,24 @@
  *   so this is ADDITIVE (writer-only bump, floor STAYS 15 — ADR 0007): an older reader ignores the
  *   unknown keys, and `assertBoard` only type-checks them as strings (it does NOT reject an unknown
  *   id), so a doc carrying a future theme id never fails validation. The migration is identity.
+ * - v17 = optional Planning ELEMENT appearance props on `ElementCommon` — `opacity` (0.1–1, all
+ *   kinds), `strokeColor` + `strokeWidth` tokens (line kinds: arrow / pen). All optional +
+ *   defaulted-at-read (absent ⇒ opaque / the kind's legacy ink + width), so this is ADDITIVE (Board
+ *   Inspector P4b): writer-only bump, floor STAYS 15. An older reader ignores the unknown optional
+ *   keys and they survive the `fromObject` structuredClone round-trip; `assertPlanningElement`
+ *   range/token-checks them without rejecting the element. z-order is a pure `elements[]` reorder
+ *   (paint order == array order) → NO schema change.
+ *
+ *   ⚠️ UMBRELLA→MAIN RE-NUMBER HAZARD (do not skip at epic end). This `17` is claimed on the
+ *   `feat/board-inspector-umbrella` branch, but `main` ALREADY ships a DIFFERENT v17 (the MCP
+ *   canvas-awareness epic's breaking Kanban board type, floor → 17). The two v17s are different
+ *   shapes. At the epic-end umbrella→main rebase (after P5), THIS additive bump MUST be
+ *   re-sequenced to 18 (additive, on top of Kanban's 17), and MIN_READER_VERSION becomes 17
+ *   (INHERITED from Kanban's breaking floor — P4b does NOT itself raise the floor). Coordinate at
+ *   the merge; see the board-inspector-redesign memory + ADR 0007 (worktree-skew version-collision
+ *   class). Until then, keep it at 17 on the umbrella.
  */
-export const SCHEMA_VERSION = 16
+export const SCHEMA_VERSION = 17
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -84,6 +100,8 @@ export const SCHEMA_VERSION = 16
  * set, so `assertBoard` rejects a board carrying one and would `.bak`-fallback. Stamping
  * `minReaderVersion: 15` gives the clean update prompt instead. v15 is the LAST viewport floor bump —
  * it adds the `fromObject` clamp (unknown viewport → `desktop`), so every app from 15 on reads all
- * future additive viewport docs.
+ * future additive viewport docs. Floor STAYS 15 through v16 (terminal theming) and v17 (Planning
+ * element appearance props, P4b) — both ADDITIVE. (At the umbrella→main re-number the floor becomes
+ * 17, but only because it INHERITS main's Kanban v17 breaking floor — see the SCHEMA_VERSION claim.)
  */
 export const MIN_READER_VERSION = 15

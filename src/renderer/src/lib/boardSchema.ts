@@ -21,6 +21,14 @@ import {
   type TextAlignToken,
   type TextColorToken
 } from '../canvas/boards/planning/textStyle'
+import {
+  STROKE_COLOR_TOKENS,
+  STROKE_WIDTH_TOKENS,
+  OPACITY_MIN,
+  OPACITY_MAX,
+  type StrokeColorToken,
+  type StrokeWidthToken
+} from '../canvas/boards/planning/strokeStyle'
 import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/terminalFont'
 import { clampScrollback } from '../canvas/boards/terminal/terminalScrollback'
 import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
@@ -201,6 +209,13 @@ interface ElementCommon {
   locked?: boolean
   /** W3: lightweight grouping (move/delete-together). Absent ⇒ ungrouped. */
   groupId?: string
+  /** v17 (P4b): element opacity in [OPACITY_MIN, OPACITY_MAX]. Absent ⇒ 1 (fully opaque). All kinds. */
+  opacity?: number
+  /** v17 (P4b): stroke colour token — LINE kinds only (arrow / pen `stroke`). Absent ⇒ the kind's
+   *  legacy ink (`strokeColorCss`). Ignored by the fill/box kinds. */
+  strokeColor?: StrokeColorToken
+  /** v17 (P4b): stroke width token (s/m/l) — LINE kinds only. Absent ⇒ the kind's legacy width (`m`). */
+  strokeWidth?: StrokeWidthToken
 }
 
 export interface NoteElement extends ElementCommon {
@@ -659,7 +674,13 @@ const MIGRATIONS: Record<number, Migration> = {
   // v16: optional TerminalBoard `themeId` + `fontFamilyId` (terminal theming, Lane B). Both optional +
   // degraded-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 15 (assertBoard type-checks
   // them as strings without rejecting an unknown id, so a future theme id never fails the load).
-  15: (doc) => ({ ...doc, schemaVersion: 16 })
+  15: (doc) => ({ ...doc, schemaVersion: 16 }),
+  // v17: optional Planning ELEMENT appearance props on ElementCommon — opacity (all kinds) + strokeColor
+  // /strokeWidth tokens (line kinds). All optional + defaulted-at-read → identity bump; ADDITIVE so
+  // MIN_READER_VERSION stays 15 (assertPlanningElement range/token-checks them without rejecting the
+  // element; unknown keys ride through the structuredClone round-trip). z-order is a pure elements[]
+  // reorder → no schema. ⚠️ Re-sequences to 17→18 at the umbrella→main rebase (boardSchemaVersion.ts).
+  16: (doc) => ({ ...doc, schemaVersion: 17 })
 }
 
 /**
@@ -774,6 +795,27 @@ export function assertPlanningElement(el: unknown): void {
   }
   if (el.groupId !== undefined && typeof el.groupId !== 'string') {
     fail('planning element has a non-string groupId')
+  }
+  // v17 (P4b) appearance props — all OPTIONAL + common to every kind. Type/range-check without
+  // rejecting unknowns: opacity is a finite number in [OPACITY_MIN, OPACITY_MAX]; strokeColor /
+  // strokeWidth are closed token strings (the line kinds consume them; other kinds ignore them).
+  if (
+    el.opacity !== undefined &&
+    (!isFiniteNum(el.opacity) || el.opacity < OPACITY_MIN || el.opacity > OPACITY_MAX)
+  ) {
+    fail(`planning element has an out-of-range opacity ${String(el.opacity)}`)
+  }
+  if (
+    el.strokeColor !== undefined &&
+    !STROKE_COLOR_TOKENS.includes(el.strokeColor as StrokeColorToken)
+  ) {
+    fail(`planning element has an invalid strokeColor ${String(el.strokeColor)}`)
+  }
+  if (
+    el.strokeWidth !== undefined &&
+    !STROKE_WIDTH_TOKENS.includes(el.strokeWidth as StrokeWidthToken)
+  ) {
+    fail(`planning element has an invalid strokeWidth ${String(el.strokeWidth)}`)
   }
 
   switch (el.kind) {
