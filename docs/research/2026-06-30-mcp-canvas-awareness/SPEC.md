@@ -26,6 +26,19 @@
   DEFERRED to later slices: drag/inline-edit (P4.2), MCP card mutate (P3), the visualize gate (P5),
   and the `kanban` `APP_BOARD_TYPES` self-model entry (added in P3/P5 once tools target it — mirrors
   `dataflow`, which is likewise absent from that table until it has agent tools).
+- **P4.2 — DONE (human interaction), ships in the worktree.** The board is now interactive:
+  **drag a card between columns** (HTML5-native — no camera inverse-scale math, free DOM drop-zones;
+  a foreign card's drop is cleanly refused), **inline add / rename (double-click) / delete a card**,
+  and **column authoring** — add/rename/delete a lane (delete reflows its cards to the neighbour so
+  none are lost; the last lane can't be deleted) + set/clear a **soft WIP limit** (a full column
+  paints its badge warn but never blocks a move — the chosen UX). Every edit commits through
+  `updateBoard` → the `columns`/`cards` PATCHABLE_KEYS as ONE undoable, autosaved step (`beginChange`
+  lazy checkpoint, mirroring the MCP handlers); the pure transforms live in the unit-tested
+  `kanbanEdit.ts` so `KanbanBoard.tsx` stays presentational (under the max-lines gate). NO package
+  change / NO schema change (P4.2 is renderer-only; it writes the same v17 keys the P3a agent path
+  does). Gate GREEN: typecheck/lint/format 0 · **3916 unit+integration pass** (+22: `kanbanEdit` pure
+  ops + `KanbanBoard` interaction) · **e2e `kanban.e2e.ts` 4/4** — incl. a REAL HTML5 drag re-parent
+  under the React Flow transform (the running-app verification, not a synthetic dispatch).
 - **P3a — DONE (MCP card mutation), goes live at integration.** Four flag-gated tools —
   `add_card`/`move_card`/`update_card`/`remove_card` — the epic's headline (the mock's
   `move_card #08 → Review`). Package `@expanse-ade/mcp@0.18.0-rc.2` (`feat/canvas-layout`, tag
