@@ -56,6 +56,42 @@ export type PlanningOp =
   | { kind: 'arrow'; dx: number; dy: number; section?: string }
   | { kind: 'diagram'; source: string; section?: string }
 
+// ── Kanban card op types (P3 — MCP card mutation, MAIN → renderer) ──
+
+/**
+ * One SANITIZED Kanban card write op (P3), MAIN → renderer. The orchestrator's addCard / moveCard /
+ * updateCard / removeCard resolves + kanban-checks the board, validates + sanitizes + caps the
+ * agent's content, and MINTS the card id (for `add`) BEFORE minting these — so the renderer receives
+ * clean, fully-specified ops. The renderer's applier re-validates (board exists + is kanban, the
+ * target column/card exists) as defense in depth, then commits via `updateBoard` (the
+ * `PATCHABLE_KEYS.kanban` `cards` key) as one undoable edit. 🔒 Untrusted passive content: a card
+ * renders on the board, never auto-arms an action.
+ *
+ * - `add` carries the FULLY-SPECIFIED card (host-minted id + the target column + sanitized chips).
+ * - `move` re-parents an existing card to another column (`toColumnId`).
+ * - `update` merges the supplied fields onto an existing card (only present keys change).
+ * - `remove` deletes an existing card by id.
+ */
+export type KanbanOp =
+  | {
+      op: 'add'
+      card: {
+        id: string
+        columnId: string
+        title: string
+        tag?: string
+        assignee?: string
+        ref?: string
+      }
+    }
+  | { op: 'move'; cardId: string; toColumnId: string }
+  | {
+      op: 'update'
+      cardId: string
+      patch: { title?: string; tag?: string; assignee?: string; ref?: string }
+    }
+  | { op: 'remove'; cardId: string }
+
 // ── Command union (formerly hand-mirrored in mcpCommand.ts + useMcpCommands.ts) ──
 
 /**
@@ -80,6 +116,9 @@ export type PlanningOp =
  * - `patchPlanning` (S2) appends agent-authored CONTENT (notes/checklists/text/arrows) to a
  *   planning board's `elements`; the ops are already validated + sanitized + capped + human-
  *   confirmed by the orchestrator before this carries them.
+ * - `patchKanban` (P3) mutates a KANBAN board's `cards` — add / move / update / remove, one or more
+ *   ops per confirmed call. The orchestrator resolved + kanban-checked the board, minted any new card
+ *   id, and human-confirmed the ops before this carries them; the renderer re-validates + applies.
  * - `spawnGroup` (PR-5b) creates a whole feature-zone cluster — a terminal (always) + an
  *   optional planning + browser member, plus a Named Group over them and the browser→terminal
  *   preview wiring — in ONE undoable step. MAIN mints every id (so the tool can return them and
@@ -97,6 +136,7 @@ export type McpCommand =
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
+  | { type: 'patchKanban'; id: string; ops: KanbanOp[] }
   | {
       type: 'spawnGroup'
       group: { id: string; name: string }

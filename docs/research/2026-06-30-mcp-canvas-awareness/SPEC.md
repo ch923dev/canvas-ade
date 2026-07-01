@@ -26,7 +26,20 @@
   DEFERRED to later slices: drag/inline-edit (P4.2), MCP card mutate (P3), the visualize gate (P5),
   and the `kanban` `APP_BOARD_TYPES` self-model entry (added in P3/P5 once tools target it — mirrors
   `dataflow`, which is likewise absent from that table until it has agent tools).
-- **P2 · P3 · P4.2 · P5** — not started.
+- **P3a — DONE (MCP card mutation), goes live at integration.** Four flag-gated tools —
+  `add_card`/`move_card`/`update_card`/`remove_card` — the epic's headline (the mock's
+  `move_card #08 → Review`). Package `@expanse-ade/mcp@0.18.0-rc.2` (`feat/canvas-layout`, tag
+  `v0.18.0-rc.2`): new `Orchestrator` methods + tools, gated behind the SAME `planningWrite` gate as
+  `add_planning_elements` (orchestrator + connected tiers; worker never). Host: 4 methods run the
+  shared resolve→kanban-check→sanitize→**human-confirm**→`patchKanban`→audit gate (`mcpKanban.ts` +
+  `mcpKanbanGate.ts`, extracted to keep `mcpOrchestrator.ts` under the max-lines gate); MAIN mints +
+  returns the card id. Shared `KanbanOp` + `patchKanban` McpCommand variant; renderer `kanbanMcpApply`
+  re-validates (column/card exists) + commits one undoable `cards` edit. Gate GREEN: app typecheck/
+  lint/format 0 · **3861 app unit + 210 pkg contract pass**. Read resource `canvas://board/{id}/cards`
+  (P3b) + human drag/edit (P4.2) still open. **Integration owes** (bundled with P1b's): pin bump
+  `^0.17.0`→`0.18.0-rc.2` + `APP_TOOLS` +4 card tools (F25 runs against installed 0.17.0, so adding
+  them now would red the drift guard) + install.
+- **P2 · P3b · P4.2 · P5** — not started.
 
 ## Why
 

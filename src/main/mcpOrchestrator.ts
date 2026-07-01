@@ -13,6 +13,7 @@ import { createDispatchGuard } from './dispatchGuard'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
+import { createKanbanMethods } from './mcpKanbanGate'
 import { buildAppModel, type AppModel } from './appModel'
 import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { canRelay } from './orchestration/seam'
@@ -236,6 +237,16 @@ export function buildOrchestrator(
   const writeAudit = (
     input: Omit<AuditInput, 'status'> & { status: DispatchStatus }
   ): Promise<void> => registry.audit(input)
+
+  // 🔒 P3 Kanban card writes (add/move/update/remove) — the resolve→kanban-check→confirm→patchKanban
+  // →audit gate + the four methods live in ./mcpKanbanGate (keeps this file under the max-lines gate);
+  // spread into the returned object below. No PTY / nonce — a card is passive content (ADR 0003).
+  const kanbanMethods = createKanbanMethods({
+    listBoards: () => registry.listBoards(),
+    confirm: (req) => registry.confirm(req),
+    sendCommand: (cmd) => registry.sendCommand(cmd),
+    audit: writeAudit
+  })
 
   /**
    * 🔒 The single, unskippable write gate shared by ALL four PTY-dispatch tools
@@ -678,6 +689,8 @@ export function buildOrchestrator(
       // (6) Record the landed write — the FULL content in `prompt` for the forensic trail.
       await auditPlanning('applied', { prompt: body, detail: `${ops.length} elements` })
     },
+    // 🔒 P3 Kanban card writes (add/move/update/remove) — built in ./mcpKanbanGate (see kanbanMethods).
+    ...kanbanMethods,
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
       // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +
       // prove it is a terminal HERE; the shared write gate then runs the unskippable

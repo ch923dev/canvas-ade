@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint } from '../shared/mcpTypes'
+import type {
+  McpCommand,
+  McpCommandAck,
+  PlanningOp,
+  PlanningOpTint,
+  KanbanOp
+} from '../shared/mcpTypes'
 
 /**
  * The MCP control-plane types (`McpCommand`, `McpCommandAck`, `PlanningOp`, `PlanningOpTint`)
@@ -11,7 +17,7 @@ import type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint } from '../s
  * with the canonical definitions there. Re-exported from here so MAIN call sites + tests that
  * import them from `./mcpCommand` keep resolving unchanged.
  */
-export type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint }
+export type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint, KanbanOp }
 
 const ACK_TIMEOUT_MS = 2000
 

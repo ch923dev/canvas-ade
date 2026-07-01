@@ -9,6 +9,7 @@ import {
   neededBoardWidth,
   MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
+import { applyKanbanOps } from './kanbanMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /**
@@ -168,6 +169,39 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
         }
       }
       return { ok: true, type: 'patchPlanning' }
+    }
+    case 'patchKanban': {
+      // 🔒 P3: mutate a kanban board's cards (add/move/update/remove). MAIN already resolved +
+      // kanban-checked the board, minted any new card id, and human-confirmed the ops; the renderer
+      // re-validates (board exists + is kanban, target column/card exists) as defense in depth,
+      // mirroring patchPlanning, then commits as ONE undoable edit.
+      if (typeof command.id !== 'string' || command.id.length === 0) {
+        return { ok: false, error: `invalid patchKanban id: ${JSON.stringify(command.id)}` }
+      }
+      if (!Array.isArray(command.ops) || command.ops.length === 0) {
+        return { ok: false, error: 'patchKanban ops must be a non-empty array' }
+      }
+      const store = useCanvasStore.getState()
+      const board = store.boards.find((b) => b.id === command.id)
+      if (!board) return { ok: false, error: `patchKanban: board not found: ${command.id}` }
+      if (board.type !== 'kanban') {
+        return { ok: false, error: `patchKanban: board ${command.id} is not a kanban board` }
+      }
+      let nextCards
+      try {
+        nextCards = applyKanbanOps(board, command.ops)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `patchKanban: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      // beginChange() FIRST (lazy checkpoint, like patchPlanning/configureBoard) so the agent's card
+      // mutation is ONE discrete undo step that chains with human edits; updateBoard filters to
+      // PATCHABLE_KEYS.kanban ('cards'). Geometry is untouched (cards flow inside the fixed lanes).
+      store.beginChange()
+      store.updateBoard(command.id, { cards: nextCards })
+      return { ok: true, type: 'patchKanban' }
     }
     case 'spawnGroup': {
       // 🔒 PR-5b: create a feature-zone cluster (boards + Named Group + preview wiring) in one

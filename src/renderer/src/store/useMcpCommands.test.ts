@@ -571,4 +571,70 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
       expect(useCanvasStore.getState().boards).toHaveLength(0)
     })
   })
+
+  describe('patchKanban (P3 card mutation)', () => {
+    const seedKanban = (): string => useCanvasStore.getState().addBoard('kanban', { x: 0, y: 0 })
+
+    it('add + move + update mutate the board cards as undoable edits', () => {
+      const id = seedKanban()
+      const add = applyMcpCommand({
+        type: 'patchKanban',
+        id,
+        ops: [
+          { op: 'add', card: { id: 'c1', columnId: 'backlog', title: 'Wire auth', tag: 'feature' } }
+        ]
+      })
+      expect(add).toEqual({ ok: true, type: 'patchKanban' })
+      applyMcpCommand({
+        type: 'patchKanban',
+        id,
+        ops: [{ op: 'move', cardId: 'c1', toColumnId: 'review' }]
+      })
+      applyMcpCommand({
+        type: 'patchKanban',
+        id,
+        ops: [{ op: 'update', cardId: 'c1', patch: { assignee: 'claude' } }]
+      })
+      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      expect(board?.type).toBe('kanban')
+      if (board?.type === 'kanban') {
+        expect(board.cards).toEqual([
+          { id: 'c1', columnId: 'review', title: 'Wire auth', tag: 'feature', assignee: 'claude' }
+        ])
+      }
+      // Each applied op checkpoints onto `past` (undoable, chains with human edits).
+      expect(useCanvasStore.getState().past.length).toBeGreaterThan(0)
+    })
+
+    it('rejects a non-kanban board and an unknown card WITHOUT mutating', () => {
+      const planId = useCanvasStore.getState().addBoard('planning', { x: 0, y: 0 })
+      expect(
+        applyMcpCommand({ type: 'patchKanban', id: planId, ops: [{ op: 'remove', cardId: 'x' }] })
+          .ok
+      ).toBe(false)
+
+      const id = seedKanban()
+      expect(
+        applyMcpCommand({
+          type: 'patchKanban',
+          id,
+          ops: [{ op: 'move', cardId: 'ghost', toColumnId: 'done' }]
+        }).ok
+      ).toBe(false)
+      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      if (board?.type === 'kanban') expect(board.cards).toEqual([])
+    })
+
+    it('rejects an empty ops array and an unknown board id', () => {
+      const id = seedKanban()
+      expect(applyMcpCommand({ type: 'patchKanban', id, ops: [] }).ok).toBe(false)
+      expect(
+        applyMcpCommand({
+          type: 'patchKanban',
+          id: 'nope',
+          ops: [{ op: 'remove', cardId: 'x' }]
+        }).ok
+      ).toBe(false)
+    })
+  })
 })

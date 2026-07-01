@@ -91,7 +91,13 @@ export interface OrchestratorOpts {
  */
 export type LifecycleOrchestrator = Omit<
   Orchestrator,
-  'describeApp' | 'spawnGroup' | 'describeLayout'
+  | 'describeApp'
+  | 'spawnGroup'
+  | 'describeLayout'
+  | 'addCard'
+  | 'moveCard'
+  | 'updateCard'
+  | 'removeCard'
 > & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
@@ -123,6 +129,26 @@ export type LifecycleOrchestrator = Omit<
    * no nonce, no confirm, no PTY write. Resolves with the board's result.
    */
   awaitSettled(boardId: string): Promise<BoardResult>
+  /**
+   * 🔒 Kanban card writes (P3) — add / move / update / remove a card on a kanban board. Each resolves
+   * + kanban-checks the target, sanitizes + caps the content, human-confirms the op, applies it via
+   * the `patchKanban` command, and audits every branch (mirrors `addPlanningElements`). `addCard`
+   * MINTS the card id and returns it. Host-local inline types (the installed package predates the
+   * `@expanse-ade/mcp` `KanbanCardSpec`/`KanbanCardPatch`); Omitting them from the base is a harmless
+   * no-op on 0.17.0 and matches the concrete methods on 0.18.0-rc.2 at integration — same discipline
+   * as `describeLayout`.
+   */
+  addCard(
+    boardId: string,
+    spec: { columnId: string; title: string; tag?: string; assignee?: string; ref?: string }
+  ): Promise<{ id: string }>
+  moveCard(boardId: string, cardId: string, toColumnId: string): Promise<void>
+  updateCard(
+    boardId: string,
+    cardId: string,
+    patch: { title?: string; tag?: string; assignee?: string; ref?: string }
+  ): Promise<void>
+  removeCard(boardId: string, cardId: string): Promise<void>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
