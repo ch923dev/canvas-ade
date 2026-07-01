@@ -837,7 +837,7 @@ export function PlanningBoard({
               }}
             >
               {selected
-                ? 'pick a tool above · note · text · check · diagram · arrow · pen · erase'
+                ? 'pick a tool from the Inspector (or press its letter) · note · text · check · diagram · arrow · pen · erase'
                 : 'empty plan'}
             </div>
           )}

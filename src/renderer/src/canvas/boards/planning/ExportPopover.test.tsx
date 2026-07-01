@@ -150,3 +150,26 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
     expect(toasts[0].message).toBe('Export failed')
   })
 })
+
+describe('ExportPopover — inspector variant (P3, re-homed into the Board Inspector)', () => {
+  it('renders a labelled Export action that opens the same PNG/SVG menu and wires save', async () => {
+    const save = vi.fn(async () => ({ ok: true }))
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    render(<ExportPopover board={board()} variant="inspector" />)
+
+    // The inspector variant renders a labelled InspectorAction (data-test), NOT the toolbar IconBtn
+    // (no title="Export"). Opening it portals the same PNG/SVG menu the toolbar variant does.
+    const trigger = document.querySelector('[data-test="inspector-export"]') as HTMLElement
+    expect(trigger, 'the inspector Export action renders').not.toBeNull()
+    expect(trigger.textContent).toContain('Export')
+
+    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const items = Array.from(document.querySelectorAll('button.board-menu-item')) as HTMLElement[]
+    const svg = items.find((b) => b.textContent?.includes('SVG'))
+    expect(svg, 'the PNG/SVG menu opens from the inspector trigger').toBeTruthy()
+    act(() => svg!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    await settleExport(save)
+
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+})
