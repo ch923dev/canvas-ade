@@ -13,6 +13,12 @@
 import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import writeFileAtomic from 'write-file-atomic'
 import { isForeignSender } from './ipcGuard'
+import { getCurrentDir } from './projectStore'
+import {
+  writeTerminalSnapshot,
+  readTerminalSnapshot,
+  deleteTerminalSnapshot
+} from './terminalSnapshot'
 
 export interface TerminalSaveArgs {
   text: string
@@ -52,4 +58,32 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
       }
     }
   )
+
+  // ── Phase 5 · S3: persist/restore terminal scrollback across restart ──
+  // The renderer serializes its live xterm buffer and hands the ANSI string over; MAIN writes it to
+  // a per-board sidecar under the open project's `.canvas/terminal/`. All three resolve the dir via
+  // getCurrentDir() (never a renderer-supplied path) and no-op when no project is open — the write
+  // target is confined to `.canvas/` by construction, so no path escapes the sandbox. Read-only
+  // w.r.t. the shell (serialize reads the renderer buffer): the PTY-write invariants are untouched.
+  ipc.handle('terminal:writeSnapshot', (e, boardId: string, text: string): boolean => {
+    if (guard(e)) return false
+    const dir = getCurrentDir()
+    if (!dir) return false
+    return writeTerminalSnapshot(dir, String(boardId), typeof text === 'string' ? text : '')
+  })
+
+  ipc.handle('terminal:readSnapshot', (e, boardId: string): string | null => {
+    if (guard(e)) return null
+    const dir = getCurrentDir()
+    if (!dir) return null
+    return readTerminalSnapshot(dir, String(boardId))
+  })
+
+  ipc.handle('terminal:deleteSnapshot', (e, boardId: string): boolean => {
+    if (guard(e)) return false
+    const dir = getCurrentDir()
+    if (!dir) return false
+    deleteTerminalSnapshot(dir, String(boardId))
+    return true
+  })
 }

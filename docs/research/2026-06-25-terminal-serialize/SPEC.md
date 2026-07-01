@@ -294,8 +294,13 @@ state and that Start spawns live. Cover the park→snapshot→adopt path.
 
 ### Status
 **UNBLOCKED 2026-06-26** — terminal-crisp landed (#259); this branch is rebased onto post-#259 `main`
-(`c6c1e404`) and the spec is re-validated against the landed code (see Coordination & sequencing). UI
-design SIGNED OFF (2026-06-25). **Implementation in progress, starting with S4 then S1.**
+and the spec is re-validated against the landed code (see Coordination & sequencing). UI design SIGNED
+OFF (2026-06-25). **S4 + S1 shipped (#261), S2 shipped (#268 — lossless drag-resize backstop) — both
+merged into the umbrella. S3 implemented 2026-07-01 on `feat/terminal-persist-scrollback`** (sidecar
+`.canvas/terminal/<id>.snapshot`; write on quit/close/switch via a runtime serializer registry; restore
+into a frozen idle term with a "Session restored" bottom bar — the opaque idle overlay would hide the
+buffer; delete on board-remove; no schema bump). Gate + unit + `terminalPersist.e2e.ts` green; the
+restore-render is covered by the manual dev check. Umbrella → `main` once, after S3, full e2e matrix.
 
 ## Out of scope
 - **xterm 6.0 bump** (REPORT B1) — the reflow bug is unfixed in 6.0 too; a bump buys only adjacent

@@ -59,6 +59,7 @@ import { useTerminalReraster } from './terminal/useTerminalReraster'
 import { useRunTimer } from './terminal/useRunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
+import { TerminalIdleAffordance } from './terminal/TerminalIdleAffordance'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 import { TerminalFindBar } from './terminal/TerminalFindBar'
 import { TerminalJumpButton } from './terminal/TerminalJumpButton'
@@ -67,8 +68,6 @@ import {
   shellHidden,
   screenWrap,
   screen,
-  idleOverlay,
-  startBtn,
   interruptChip
 } from './terminal/terminalBoardStyles'
 
@@ -150,6 +149,7 @@ export function TerminalBoard({
   // strips exhaustive-deps' stable-identity recognition (the useGroupInteractions lesson).
   const {
     state,
+    restored,
     termRef,
     portRef,
     launchOverrideRef,
@@ -606,19 +606,23 @@ export function TerminalBoard({
                 isolation: 'isolate'
               }}
             >
-              {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
-              explicit Start that spawns the shell + fires launchCommand on click. */}
-              {state === 'idle' && (
-                <div
-                  className="nodrag"
-                  style={idleOverlay}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
-                    Start {identity}
-                  </button>
-                </div>
-              )}
+              {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn) with an explicit
+              Start. S3: a fresh idle uses the opaque overlay; a restored one uses a bottom bar so its
+              read-only scrollback stays visible (see TerminalIdleAffordance). */}
+              <TerminalIdleAffordance
+                state={state}
+                restored={restored}
+                identity={identity}
+                onStart={() => startLaunchRef.current?.()}
+                canResume={canResume}
+                onResume={() => {
+                  // Resume a restored agent board: spawn `claude --resume <id>` via the restart path
+                  // (which consumes launchOverrideRef), reattaching the agent's conversation — the
+                  // snapshot restored only the screen. restart() resets the read-only buffer first.
+                  launchOverrideRef.current = resumeCommand(board.agentSessionId)
+                  restart()
+                }}
+              />
               {portChoices && portChoices.urls.length > 1 && (
                 <div
                   className="ca-port-picker nodrag"
