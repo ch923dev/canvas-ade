@@ -486,6 +486,32 @@
   background: var(--err);
 }
 
+/* ── P2 (Command / Data-Flow / File) additions ─────────────────────────────────────
+   Command surfaces a roll-up of its kanban counts (reusing the status chip above, one per
+   lifecycle bucket) + a slim done-ratio bar; File/Data-Flow reuse the existing primitives. */
+
+/* A wrapping cluster of status chips (Command's running / reporting / failed roll-up). */
+.ca-inspector-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Slim progress bar (Command done ratio). Width is set inline (a fraction, not a colour). */
+.ca-inspector-pbar {
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+}
+.ca-inspector-pfill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-inspector-toggle-knob {
     transition: none;

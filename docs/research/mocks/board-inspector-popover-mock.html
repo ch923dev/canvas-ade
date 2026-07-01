@@ -495,6 +495,148 @@
       </div>
     </div>
 
+    <!-- ═══════════ P2: COMMAND · DATA-FLOW · FILE inspectors (per-type content, same shell) ═══════════ -->
+    <div class="frame-label">P2 — three more per-type inspectors in the same shell. Left→right: Command (orchestrator) · Data-Flow (API surface) · File (viewer/editor). Each surfaces its buried header / in-body controls as labelled rows.</div>
+    <div class="states" style="gap: 14px;">
+
+      <!-- ── CommandInspector ─────────────────────────────────────────── -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap">Command — orchestrator hub</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <div class="bi-head">
+              <div class="bi-head-r1">
+                <span class="bi-head-glyph">◫</span>
+                <span class="bi-head-type">Command</span>
+                <button class="bi-jump" title="Jump to board" aria-label="Jump to board">⤿</button>
+              </div>
+              <div class="bi-head-title">Orchestrator</div>
+              <div class="bi-head-status"><span class="pulse"></span>3 running · 6 / 9 done</div>
+            </div>
+
+            <!-- View: the titlebar Kanban/Groups seg + recap flip + collapse (expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">View</span><span class="chev">▾</span></div>
+              <div class="row"><div class="seg full"><button class="on">Kanban</button><button>Groups</button></div></div>
+              <div class="row"><button class="act"><span class="ai">⟲</span>Flip to recap</button></div>
+              <div class="row"><button class="act"><span class="ai">⤡</span>Collapse to rail</button></div>
+            </section>
+
+            <!-- Status: the rail roll-up counts, at a glance (collapsed) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Status</span><span class="chev">▾</span></div>
+              <div class="row"><div class="chips">
+                <span class="chip"><span class="d"></span>3 running</span>
+                <span class="chip"><span class="d" style="background:var(--warn)"></span>1 reporting</span>
+                <span class="chip"><span class="d" style="background:var(--err)"></span>1 failed</span>
+              </div></div>
+              <div class="row"><span class="meta"><b>6 / 9</b>&nbsp; done</span></div>
+              <div class="row"><div style="flex:1;height:6px;border-radius:3px;background:var(--inset);border:1px solid var(--border-subtle);overflow:hidden;"><span style="display:block;height:100%;width:67%;background:var(--accent);"></span></div></div>
+            </section>
+
+            <!-- Worker pool + Orchestration start collapsed -->
+            <section class="sec"><div class="sec-hd"><span class="sec-lab">Worker pool</span><span class="chev">▸</span></div></section>
+            <section class="sec"><div class="sec-hd"><span class="sec-lab">Orchestration</span><span class="chev">▸</span></div></section>
+
+            <div class="bi-foot"><button class="act"><span class="ai">⧉</span>Duplicate</button></div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- ── DataFlowInspector ────────────────────────────────────────── -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap">Data-Flow — bound API surface</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <div class="bi-head">
+              <div class="bi-head-r1">
+                <span class="bi-head-glyph" style="color: var(--text-3)">◇</span>
+                <span class="bi-head-type">Data Flow</span>
+                <button class="bi-jump" title="Jump to board" aria-label="Jump to board">⤿</button>
+              </div>
+              <div class="bi-head-title">API surface</div>
+              <div class="bi-head-status"><span class="pulse"></span>12 routes · 3 lineage</div>
+            </div>
+
+            <!-- View: the in-body Graph/Sequence tabs (expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">View</span><span class="chev">▾</span></div>
+              <div class="row"><div class="seg full"><button class="on">⟲ Graph</button><button>⇉ Sequence</button></div></div>
+            </section>
+
+            <!-- Filters: the in-body infer/API/first-party checkboxes → toggles (expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Filters</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Infer shapes</span><div class="tog"><div class="knob"></div></div></div>
+              <div class="row"><span class="row-lab">API only</span><div class="tog on"><div class="knob"></div></div></div>
+              <div class="row"><span class="row-lab">First-party</span><div class="tog on"><div class="knob"></div></div></div>
+              <div class="row"><span class="meta">hidden <b>42</b></span></div>
+            </section>
+
+            <!-- Actions: Regenerate + → Planning + diff since last run (expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Actions</span><span class="chev">▾</span></div>
+              <div class="row"><button class="act"><span class="ai">⟳</span>Regenerate</button></div>
+              <div class="row"><button class="act primary"><span class="ai">→</span>Sketch to Planning</button></div>
+              <div class="row"><span class="meta" style="color:var(--accent)">+3 new · 1 changed<span style="color:var(--text-faint)"> · since last run</span></span></div>
+            </section>
+
+            <!-- Source binding collapsed -->
+            <section class="sec"><div class="sec-hd"><span class="sec-lab">Source</span><span class="chev">▸</span></div></section>
+
+            <div class="bi-foot"><button class="act"><span class="ai">⧉</span>Duplicate</button></div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- ── FileInspector ────────────────────────────────────────────── -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap">File — viewer / editor (markdown, unsaved)</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <div class="bi-head">
+              <div class="bi-head-r1">
+                <span class="bi-head-glyph" style="color: var(--text-3)">◧</span>
+                <span class="bi-head-type">File</span>
+                <button class="bi-jump" title="Jump to board" aria-label="Jump to board">⤿</button>
+              </div>
+              <div class="bi-head-title">README.md</div>
+              <div class="bi-head-status"><span class="pulse" style="background:var(--warn)"></span>markdown · 4.2 KB · unsaved</div>
+            </div>
+
+            <!-- View: the markdown Preview/Split/Source seg (markdown boards only; expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">View</span><span class="chev">▾</span></div>
+              <div class="row"><div class="seg full"><button class="on">Preview</button><button>Split</button><button>Source</button></div></div>
+            </section>
+
+            <!-- Appearance: the A- / A+ font steppers (expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Appearance</span><span class="chev">▾</span></div>
+              <div class="row">
+                <span class="row-lab">Font size</span>
+                <div class="step"><button aria-label="Smaller">−</button><span class="val">13</span><button aria-label="Bigger">+</button></div>
+              </div>
+            </section>
+
+            <!-- File: Save (dirty) + Find + Pin — Find was right-click-only before (expanded) -->
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">File</span><span class="chev">▾</span></div>
+              <div class="row"><button class="act primary"><span class="ai">▪</span>Save<span class="kbd">^S</span></button></div>
+              <div class="row"><button class="act"><span class="ai">⌕</span>Find in file<span class="kbd">^F</span></button></div>
+              <div class="row"><button class="act"><span class="ai">⌂</span>Pin (keep on canvas)</button></div>
+            </section>
+
+            <!-- Configuration collapsed: path / language / size -->
+            <section class="sec"><div class="sec-hd"><span class="sec-lab">Configuration</span><span class="chev">▸</span></div></section>
+
+            <div class="bi-foot"><button class="act"><span class="ai">⧉</span>Duplicate</button></div>
+          </div>
+        </aside>
+      </div>
+
+    </div>
+
     <!-- ═══════════ states ═══════════ -->
     <div class="frame-label">States</div>
     <div class="states">
