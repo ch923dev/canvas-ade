@@ -143,6 +143,12 @@ export interface BoardRegistry {
     path?: string
     /** file-tree S5: a planning board's `fileref` paths+labels — forwarded to `canvas://boards`. */
     fileRefs?: Array<{ path: string; label: string }>
+    /** P1 canvas awareness: world-space board geometry (top-left x/y + size w/h), forwarded to
+     *  `canvas://boards` + the app self-model so an agent can reason about the spatial layout. */
+    x?: number
+    y?: number
+    w?: number
+    h?: number
   }>
   /**
    * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize

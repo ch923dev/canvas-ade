@@ -37,6 +37,17 @@ export interface BoardMirror {
    * ({@link MAX_FILEREFS}) and length-capped per entry. Absent when none.
    */
   fileRefs?: FileRefMirror[]
+  /**
+   * World-space board geometry (P1 canvas awareness) — top-left `x`/`y` + size `w`/`h` in canvas
+   * world px, forwarded to `canvas://boards` (and the app self-model) so an agent can reason about
+   * the SPATIAL layout and drive an informed tidy. Validated as FINITE numbers on ingest
+   * ({@link sanitizeSnapshot}) — `mcp:boards` is an IPC channel, so a non-finite/non-number value
+   * drops the field (keeps the board). Absent on a renderer predating P1.
+   */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /** A single agent-readable file reference on the board mirror (file-tree S5). Path only, no content. */
@@ -245,7 +256,7 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       typeof (b as BoardMirror).type === 'string' &&
       typeof (b as BoardMirror).title === 'string'
     ) {
-      const { id, type, title, status, agentKind, monitorActivity, path, fileRefs } =
+      const { id, type, title, status, agentKind, monitorActivity, path, fileRefs, x, y, w, h } =
         b as BoardMirror
       if (
         id.length > MAX_FIELD_LEN ||
@@ -274,6 +285,12 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       }
       const refs = sanitizeFileRefs(fileRefs)
       if (refs !== undefined) entry.fileRefs = refs
+      // P1 canvas awareness: attach world-space geometry only as FINITE numbers (a non-number /
+      // NaN / ∞ over IPC drops that field, keeps the board — mirrors the agentKind/path discipline).
+      if (typeof x === 'number' && Number.isFinite(x)) entry.x = x
+      if (typeof y === 'number' && Number.isFinite(y)) entry.y = y
+      if (typeof w === 'number' && Number.isFinite(w)) entry.w = w
+      if (typeof h === 'number' && Number.isFinite(h)) entry.h = h
       out.push(entry)
     }
   }

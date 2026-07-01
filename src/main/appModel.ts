@@ -54,6 +54,12 @@ export interface AppModelBoard {
   status: string
   agentKind?: string
   monitorActivity?: boolean
+  /** P1 canvas awareness: world-space geometry (top-left x/y + size w/h), so an orchestrator
+   *  reasoning over the self-model sees where each board sits + how big it is. Absent pre-P1. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /** A live board-to-board connector (directional: source -> target). */

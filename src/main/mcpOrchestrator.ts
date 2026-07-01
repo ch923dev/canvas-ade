@@ -49,6 +49,12 @@ export type {
 type BoardSummaryWithFiles = BoardSummary & {
   path?: string
   fileRefs?: Array<{ path: string; label: string }>
+  /** P1 canvas awareness: world-space board geometry (top-left x/y + size w/h), forwarded verbatim
+   *  onto `canvas://boards` (same JSON.stringify ride-through as path/fileRefs). Absent pre-P1. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /**
@@ -396,7 +402,13 @@ export function buildOrchestrator(
       // out verbatim on the `canvas://boards` resource (JSON.stringify of this projection), giving
       // an agent the path of an open File board + the files pinned to a plan — never file content.
       ...(b.path !== undefined ? { path: b.path } : {}),
-      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {})
+      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {}),
+      // P1 canvas awareness: forward world-space geometry when present (mirror-validated finite),
+      // so an agent can reason spatially over `canvas://boards`. Absent ⇒ omitted (pre-P1 renderer).
+      ...(b.x !== undefined ? { x: b.x } : {}),
+      ...(b.y !== undefined ? { y: b.y } : {}),
+      ...(b.w !== undefined ? { w: b.w } : {}),
+      ...(b.h !== undefined ? { h: b.h } : {})
     }))
   }
 
@@ -1006,7 +1018,13 @@ export function buildOrchestrator(
           title: b.title,
           status: b.status ?? 'static',
           ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
-          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
+          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),
+          // P1: geometry rides onto the app self-model's live canvas too, so an orchestrator
+          // reasoning over `canvas://app-model` sees the same spatial data as `canvas://boards`.
+          ...(b.x !== undefined ? { x: b.x } : {}),
+          ...(b.y !== undefined ? { y: b.y } : {}),
+          ...(b.w !== undefined ? { w: b.w } : {}),
+          ...(b.h !== undefined ? { h: b.h } : {})
         })),
         connectors: registry.listConnectors().map((c) => ({
           id: c.id,

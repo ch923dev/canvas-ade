@@ -127,6 +127,16 @@ export interface BoardMirrorEntry {
    * non-fileref snapshots byte-identical to before.
    */
   fileRefs?: FileRefSummary[]
+  /**
+   * World-space board geometry (P1 canvas awareness) — top-left `x`/`y` + size `w`/`h` in canvas
+   * world px, forwarded to `canvas://boards` so an agent can reason about the SPATIAL layout (where
+   * boards sit, how big, whether they overlap) and drive an informed tidy — not just the logical
+   * id/type/status. Ride out only when present, so a geometry-less test stub stays byte-identical.
+   */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /**
@@ -145,6 +155,12 @@ export interface BoardSnapshotInput {
   path?: string
   /** Present on a `'planning'` board (PlanningBoard.elements); read to derive `fileRefs`. */
   elements?: ReadonlyArray<{ kind: string; path?: string; label?: string }>
+  /** World-space geometry (P1) — every real `Board` carries these via `BoardCommon`; optional here
+   *  so a minimal test stub still satisfies the read shape. Forwarded to the mirror when finite. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /**
@@ -199,7 +215,13 @@ export function buildBoardSnapshot(
       ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
       ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),
       ...(path !== undefined ? { path } : {}),
-      ...(fileRefs !== undefined ? { fileRefs } : {})
+      ...(fileRefs !== undefined ? { fileRefs } : {}),
+      // P1 canvas awareness: forward world-space geometry when finite (every real board carries it;
+      // a Number.isFinite guard keeps a geometry-less test stub byte-identical + drops any NaN/∞).
+      ...(Number.isFinite(b.x) ? { x: b.x } : {}),
+      ...(Number.isFinite(b.y) ? { y: b.y } : {}),
+      ...(Number.isFinite(b.w) ? { w: b.w } : {}),
+      ...(Number.isFinite(b.h) ? { h: b.h } : {})
     }
   })
 }

@@ -188,4 +188,40 @@ describe('buildBoardSnapshot', () => {
     expect('path' in snapshot[0]).toBe(false)
     expect('fileRefs' in snapshot[1]).toBe(false)
   })
+
+  it('forwards world-space geometry x/y/w/h when present (P1 canvas awareness)', () => {
+    const snapshot = buildBoardSnapshot(
+      [{ id: 'b1', type: 'planning', title: 'Plan', x: 120, y: 40, w: 640, h: 480 }],
+      {
+        running: {},
+        preview: {}
+      }
+    )
+    expect(snapshot[0]).toEqual({
+      id: 'b1',
+      type: 'planning',
+      title: 'Plan',
+      status: 'static',
+      x: 120,
+      y: 40,
+      w: 640,
+      h: 480
+    })
+  })
+
+  it('omits geometry for a stub without it (byte-identical) + drops non-finite values (P1)', () => {
+    const [noGeo, badGeo] = buildBoardSnapshot(
+      [
+        { id: 'a', type: 'terminal', title: 'A' },
+        // A NaN/∞ must never reach the mirror — the finite guard drops it, keeps the board.
+        { id: 'b', type: 'terminal', title: 'B', x: NaN, y: Infinity, w: 300, h: 200 }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(noGeo).toEqual({ id: 'a', type: 'terminal', title: 'A', status: 'idle' })
+    expect('x' in noGeo).toBe(false)
+    expect('x' in badGeo).toBe(false)
+    expect('y' in badGeo).toBe(false)
+    expect(badGeo).toMatchObject({ w: 300, h: 200 })
+  })
 })

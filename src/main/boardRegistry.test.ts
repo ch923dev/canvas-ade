@@ -64,6 +64,18 @@ describe('boardRegistry', () => {
     ])
   })
 
+  it('keeps FINITE world-space geometry, drops non-finite/non-number (board kept) (P1)', () => {
+    const out = sanitizeSnapshot([
+      { id: 'a', type: 'planning', title: 'A', x: 120, y: 40, w: 640, h: 480 },
+      // NaN / ∞ / non-number values drop the offending field but keep the board.
+      { id: 'b', type: 'terminal', title: 'B', x: NaN, y: Infinity, w: '300', h: 200 }
+    ])
+    expect(out).toEqual([
+      { id: 'a', type: 'planning', title: 'A', x: 120, y: 40, w: 640, h: 480 },
+      { id: 'b', type: 'terminal', title: 'B', h: 200 } // only the finite-number h survives
+    ])
+  })
+
   it('keeps a file board path + planning fileRefs, drops malformed ones (board kept) (S5)', () => {
     const longPath = 'x'.repeat(300)
     const out = sanitizeSnapshot([
