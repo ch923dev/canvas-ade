@@ -21,12 +21,15 @@
  * Security: this never touches the PTY. URL edits + nav go through the additive
  * `preview:*` control channel to the board's OWN offscreen webContents only.
  */
-import { useState, useRef, useEffect, type CSSProperties, type ReactElement } from 'react'
+import { useState, useRef, useEffect, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import type { BrowserBoard as BrowserBoardData, BrowserViewport } from '../../lib/boardSchema'
 import { VIEWPORT_PRESETS, deviceFrameRect, TITLEBAR_H, URLBAR_H } from '../../lib/browserLayout'
 import { BoardFrame } from '../BoardFrame'
 import { Icon } from '../Icon'
-import { Menu } from '../Menu'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
+import { ViewportControl } from './browser/BrowserViewportControl'
+import { BrowserInspector, type ConnTone } from './browser/BrowserInspector'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
 import { useOsrLivenessStore } from '../../store/osrLivenessStore'
@@ -45,177 +48,6 @@ import { useLibraryStore } from '../../store/libraryStore'
 import { useOsrNetwork } from './osr/useOsrNetwork'
 import { OsrNetworkPanel } from './osr/OsrNetworkPanel'
 import { useOsrNetworkStore } from '../../store/osrNetworkStore'
-
-// The two device-class segments shown as icons; the wider desktop sizes collapse into the
-// DESKTOP_TIER dropdown so the control stays calm and scales to future presets (Candidate B).
-const DEVICE_SEGMENTS: readonly BrowserViewport[] = ['mobile', 'tablet']
-const DESKTOP_TIER: readonly BrowserViewport[] = ['desktop', 'qhd', 'uhd']
-const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
-  mobile: 'mobile',
-  tablet: 'tablet',
-  // The desktop tier shares one monitor glyph — the dropdown's text labels disambiguate the sizes.
-  desktop: 'desktop',
-  qhd: 'desktop',
-  uhd: 'desktop'
-}
-const VP_LABEL: Record<BrowserViewport, string> = {
-  mobile: 'Mobile',
-  tablet: 'Tablet',
-  desktop: 'Desktop',
-  qhd: '1440p',
-  uhd: '4K'
-}
-
-/** Shared segment chrome — mirrors the original VpToggle box so every segment lines up. */
-function segStyle(active: boolean): CSSProperties {
-  return {
-    height: 22,
-    padding: '0 8px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 5,
-    border: 'none',
-    borderRadius: 4,
-    cursor: 'pointer',
-    background: active ? 'var(--accent-wash)' : 'transparent',
-    color: active ? 'var(--accent)' : 'var(--text-3)',
-    fontSize: 11,
-    fontWeight: 500,
-    fontFamily: 'var(--ui)'
-  }
-}
-
-/** One device-class segment (icon; active also shows the label). */
-function VpToggle({
-  vp,
-  active,
-  onClick
-}: {
-  vp: BrowserViewport
-  active: boolean
-  onClick: () => void
-}): ReactElement {
-  return (
-    <button
-      title={VP_LABEL[vp]}
-      onClick={onClick}
-      onMouseDown={(e) => e.stopPropagation()}
-      style={segStyle(active)}
-    >
-      <Icon name={VP_ICON[vp]} size={13} />
-      {active && <span>{VP_LABEL[vp]}</span>}
-    </button>
-  )
-}
-
-/** The desktop-size dropdown segment: a monitor glyph + (when a desktop size is active) its
- *  label, plus a chevron. Clicking opens the shared Menu shell listing Desktop / 1440p / 4K with
- *  their CSS box dims and a check on the current size. Accent-active whenever a tier size is live. */
-function DesktopTierControl({
-  value,
-  onChange
-}: {
-  value: BrowserViewport
-  onChange: (vp: BrowserViewport) => void
-}): ReactElement {
-  const [open, setOpen] = useState(false)
-  const anchorRef = useRef<HTMLSpanElement>(null)
-  const active = DESKTOP_TIER.includes(value)
-  return (
-    <span ref={anchorRef} style={{ display: 'inline-flex' }}>
-      <button
-        title="Desktop size"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        onMouseDown={(e) => e.stopPropagation()}
-        style={segStyle(active)}
-      >
-        <Icon name="desktop" size={13} />
-        {active && <span>{VP_LABEL[value]}</span>}
-        <Icon name="chevron" size={11} />
-      </button>
-      {open && (
-        <Menu
-          anchor={anchorRef}
-          align="right"
-          label="Desktop size"
-          className="board-menu"
-          onClose={() => setOpen(false)}
-        >
-          {DESKTOP_TIER.map((vp) => {
-            const p = VIEWPORT_PRESETS[vp]
-            const on = vp === value
-            return (
-              <button
-                key={vp}
-                className="board-menu-item"
-                role="menuitemradio"
-                aria-checked={on}
-                onClick={() => {
-                  setOpen(false)
-                  onChange(vp)
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 14,
-                  color: on ? 'var(--accent)' : undefined
-                }}
-              >
-                <span>{VP_LABEL[vp]}</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      fontFamily: 'var(--mono)',
-                      fontSize: 10,
-                      color: on ? 'var(--accent)' : 'var(--text-3)'
-                    }}
-                  >
-                    {p.w}×{p.h}
-                  </span>
-                  {on ? <Icon name="check" size={12} /> : <span style={{ width: 12 }} />}
-                </span>
-              </button>
-            )
-          })}
-        </Menu>
-      )}
-    </span>
-  )
-}
-
-/** Viewport segmented control (title-bar actions slot): Mobile · Tablet icons + the
- *  desktop-size dropdown (Candidate B). */
-function ViewportControl({
-  value,
-  onChange
-}: {
-  value: BrowserViewport
-  onChange: (vp: BrowserViewport) => void
-}): ReactElement {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        padding: 2,
-        marginRight: 2,
-        background: 'var(--inset)',
-        borderRadius: 6,
-        border: '1px solid var(--border-subtle)'
-      }}
-    >
-      {DEVICE_SEGMENTS.map((vp) => (
-        <VpToggle key={vp} vp={vp} active={vp === value} onClick={() => onChange(vp)} />
-      ))}
-      <DesktopTierControl value={value} onChange={onChange} />
-    </div>
-  )
-}
 
 export function BrowserBoard({
   board,
@@ -444,256 +276,332 @@ export function BrowserBoard({
     void window.api.reloadOsrPreview(board.id)
   }
 
+  // ── Board Inspector (P1) ──────────────────────────────────────────────────────────────────────
+  // The portaled BrowserInspector is presentation-only; the reads/handlers it needs are the SAME
+  // paths the URL-bar controls use (OsrVolumeControl mute/volume, NavBtns, ViewportControl) — no
+  // duplicated state. The slot is non-null only while this board is the single eligible selection.
+  const inspectorSlot = useInspectorSlot(board.id)
+  const muted = useOsrWidgetStore((s) => s.muted[board.id] ?? false)
+  const volume = useOsrWidgetStore((s) => s.volume[board.id] ?? 1)
+  const urlInputRef = useRef<HTMLInputElement>(null)
+
+  const onMute = (next: boolean): void => {
+    useOsrWidgetStore.getState().setMuted(board.id, next)
+    void window.api.setOsrMuted(board.id, next)
+  }
+  const onVolume = (v: number): void => {
+    const clamped = v < 0 ? 0 : v > 1 ? 1 : v
+    useOsrWidgetStore.getState().setVolume(board.id, clamped)
+    void window.api.setOsrVolume(board.id, clamped)
+  }
+  // Configuration → Edit URL focuses the on-board URL field (reusing its exact commit/validate path —
+  // no duplicated editor); select() so the user can immediately overtype.
+  const onEditUrl = (): void => {
+    const el = urlInputRef.current
+    if (!el) return
+    el.focus()
+    el.select()
+  }
+
+  // Preview status word + semantic tone (CSS colours the dot off `data-tone`). An evicted board reads
+  // "paused" (its renderer is freed) regardless of the last connection status.
+  const statusTone: ConnTone = paused
+    ? 'idle'
+    : runtime.status === 'connected'
+      ? 'ok'
+      : runtime.status === 'connecting'
+        ? 'warn'
+        : runtime.status === 'load-failed' || runtime.status === 'crashed'
+          ? 'err'
+          : 'idle'
+  const statusWord = paused ? 'paused' : connWord(runtime.status)
+
   return (
-    <BoardFrame
-      type="browser"
-      boardId={board.id}
-      title={board.title}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      status={status}
-      contentBg="var(--surface)"
-      actions={<ViewportControl value={board.viewport} onChange={setViewport} />}
-      onFull={onFull}
-      onDuplicate={onDuplicate}
-      onDelete={onDelete}
-      onAddToGroup={onAddToGroup}
-      onRemoveFromGroup={onRemoveFromGroup}
-      onRemoveFromAllGroups={onRemoveFromAllGroups}
-      onStartConnect={onStartConnect}
-    >
-      {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
-      <div className="bb-urlbar" style={{ height: URLBAR_H }}>
-        {/* D0-2: interactive cluster at rest — faint is disabled-only */}
-        <div style={{ display: 'flex', gap: 2, color: 'var(--text-3)' }}>
-          <NavBtn
-            name="back"
-            title="Back"
-            disabled={!runtime.canGoBack}
-            onClick={() => void window.api.goBackOsrPreview(board.id)}
-          />
-          <NavBtn
-            name="forward"
-            title="Forward"
-            disabled={!runtime.canGoForward}
-            onClick={() => void window.api.goForwardOsrPreview(board.id)}
-          />
-          <NavBtn
-            name="refresh"
-            title="Reload"
-            onClick={() => void window.api.reloadOsrPreview(board.id)}
-          />
-          {/* 4A — audio control (mute + volume), shown only while the preview is playing media. */}
-          {osrAudibleNow && <OsrVolumeControl boardId={board.id} />}
-          <NavBtn
-            name="camera"
-            title="Screenshot"
-            // The screenshot IPC captures the offscreen window's last painted frame. Enable once
-            // the board can be captured: connected AND not evicted (over the MAX_LIVE cap).
-            disabled={runtime.status !== 'connected' || !osrAlive}
-            onClick={takeScreenshot}
-          />
-          <NavBtn name="external" title="Open in browser" onClick={openExternal} />
-          {/* DevTools Network inspector toggle — accent when the panel is open. */}
-          <button
-            title="Network inspector"
-            aria-label="Network inspector"
-            aria-pressed={netOpen}
-            onClick={toggleNet}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={'bb-navbtn' + (netOpen ? ' bb-navbtn-on' : '')}
-            style={{ cursor: 'pointer' }}
+    <>
+      {/* P1 Board Inspector content — portaled into the shell's slot only while this browser board is
+          the single eligible selection. Same handlers as the URL/title bar (kept), zero duplication. */}
+      {inspectorSlot &&
+        createPortal(
+          <BrowserInspector
+            viewport={board.viewport}
+            onViewport={setViewport}
+            onBack={() => void window.api.goBackOsrPreview(board.id)}
+            onForward={() => void window.api.goForwardOsrPreview(board.id)}
+            onReload={() => void window.api.reloadOsrPreview(board.id)}
+            canGoBack={runtime.canGoBack}
+            canGoForward={runtime.canGoForward}
+            statusWord={statusWord}
+            statusTone={statusTone}
+            audible={osrAudibleNow}
+            muted={muted}
+            volume={volume}
+            onMute={onMute}
+            onVolume={onVolume}
+            onScreenshot={takeScreenshot}
+            screenshotDisabled={runtime.status !== 'connected' || !osrAlive}
+            onOpenExternal={openExternal}
+            netOpen={netOpen}
+            onToggleNet={(next) => useOsrNetworkStore.getState().setOpen(board.id, next)}
+            netDock={netDock}
+            onNetDock={(dock) => useOsrNetworkStore.getState().setDock(board.id, dock)}
+            url={board.url}
+            onEditUrl={onEditUrl}
+          />,
+          inspectorSlot
+        )}
+      <BoardFrame
+        type="browser"
+        boardId={board.id}
+        title={board.title}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        status={status}
+        contentBg="var(--surface)"
+        actions={<ViewportControl value={board.viewport} onChange={setViewport} />}
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
+        onAddToGroup={onAddToGroup}
+        onRemoveFromGroup={onRemoveFromGroup}
+        onRemoveFromAllGroups={onRemoveFromAllGroups}
+        onStartConnect={onStartConnect}
+      >
+        {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
+        <div className="bb-urlbar" style={{ height: URLBAR_H }}>
+          {/* D0-2: interactive cluster at rest — faint is disabled-only */}
+          <div style={{ display: 'flex', gap: 2, color: 'var(--text-3)' }}>
+            <NavBtn
+              name="back"
+              title="Back"
+              disabled={!runtime.canGoBack}
+              onClick={() => void window.api.goBackOsrPreview(board.id)}
+            />
+            <NavBtn
+              name="forward"
+              title="Forward"
+              disabled={!runtime.canGoForward}
+              onClick={() => void window.api.goForwardOsrPreview(board.id)}
+            />
+            <NavBtn
+              name="refresh"
+              title="Reload"
+              onClick={() => void window.api.reloadOsrPreview(board.id)}
+            />
+            {/* 4A — audio control (mute + volume), shown only while the preview is playing media. */}
+            {osrAudibleNow && <OsrVolumeControl boardId={board.id} />}
+            <NavBtn
+              name="camera"
+              title="Screenshot"
+              // The screenshot IPC captures the offscreen window's last painted frame. Enable once
+              // the board can be captured: connected AND not evicted (over the MAX_LIVE cap).
+              disabled={runtime.status !== 'connected' || !osrAlive}
+              onClick={takeScreenshot}
+            />
+            <NavBtn name="external" title="Open in browser" onClick={openExternal} />
+            {/* DevTools Network inspector toggle — accent when the panel is open. */}
+            <button
+              title="Network inspector"
+              aria-label="Network inspector"
+              aria-pressed={netOpen}
+              onClick={toggleNet}
+              onMouseDown={(e) => e.stopPropagation()}
+              className={'bb-navbtn' + (netOpen ? ' bb-navbtn-on' : '')}
+              style={{ cursor: 'pointer' }}
+            >
+              <Icon name="activity" size={14} />
+            </button>
+          </div>
+          <div
+            className={
+              'bb-url-field' +
+              (urlError ? ' bb-url-invalid' : '') +
+              (urlFlash ? ' bb-url-flash' : '')
+            }
           >
-            <Icon name="activity" size={14} />
-          </button>
-        </div>
-        <div
-          className={
-            'bb-url-field' + (urlError ? ' bb-url-invalid' : '') + (urlFlash ? ' bb-url-flash' : '')
-          }
-        >
-          {/* D0-6 (A9): the dot is color-only — D2-C pairs it with an ALWAYS-VISIBLE
+            {/* D0-6 (A9): the dot is color-only — D2-C pairs it with an ALWAYS-VISIBLE
               status word (Linear pattern, colorblind-safe) plus the polite live
               region announcing transitions. The word IS the accessible label (no
               aria-hidden): a screen reader navigating here in a static state reads
               it directly; the live region only speaks transitions. An evicted board
               reads "paused" — its status may still say connected, but the renderer
               (and the page state) is gone until a live slot frees. */}
-          <span
-            className="bb-conn-dot"
-            aria-hidden
-            style={{ background: paused ? 'var(--text-3)' : connDot(runtime.status) }}
-          />
-          <span className="bb-conn-word">{paused ? 'paused' : connWord(runtime.status)}</span>
-          <span className="sr-only" role="status" aria-live="polite">
-            {srConn}
-          </span>
-          <input
-            className="bb-url-input"
-            value={draftUrl}
-            spellCheck={false}
-            // PREV-04 (a11y): the field has no visible <label>, so name it; flag the invalid state
-            // for AT when the committed draft failed the scheme/host check (mirrors .bb-url-invalid).
-            aria-label="Preview URL"
-            aria-invalid={urlError ? true : undefined}
-            onMouseDown={(e) => e.stopPropagation()}
-            onFocus={() => {
-              setEditingUrl(true)
-              urlDirty.current = false
-            }}
-            onChange={(e) => {
-              urlDirty.current = true
-              setUrlError(null) // re-validate on the next commit attempt
-              setDraftUrl(e.target.value)
-            }}
-            onBlur={() => {
-              setEditingUrl(false)
-              commitUrl()
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                ;(e.target as HTMLInputElement).blur()
-              } else if (e.key === 'Escape') {
-                // Discard the edit: blur's commitUrl sees a clean (non-dirty) draft
-                // and re-syncs from board.url instead of committing the typed text.
+            <span
+              className="bb-conn-dot"
+              aria-hidden
+              style={{ background: paused ? 'var(--text-3)' : connDot(runtime.status) }}
+            />
+            <span className="bb-conn-word">{paused ? 'paused' : connWord(runtime.status)}</span>
+            <span className="sr-only" role="status" aria-live="polite">
+              {srConn}
+            </span>
+            <input
+              ref={urlInputRef}
+              className="bb-url-input"
+              value={draftUrl}
+              spellCheck={false}
+              // PREV-04 (a11y): the field has no visible <label>, so name it; flag the invalid state
+              // for AT when the committed draft failed the scheme/host check (mirrors .bb-url-invalid).
+              aria-label="Preview URL"
+              aria-invalid={urlError ? true : undefined}
+              onMouseDown={(e) => e.stopPropagation()}
+              onFocus={() => {
+                setEditingUrl(true)
                 urlDirty.current = false
-                setUrlError(null)
-                setDraftUrl(board.url)
-                ;(e.target as HTMLInputElement).blur()
-              }
-            }}
-          />
-        </div>
-        {/* D2-C: the inline URL error takes the dims slot — INSIDE the bar's own height,
+              }}
+              onChange={(e) => {
+                urlDirty.current = true
+                setUrlError(null) // re-validate on the next commit attempt
+                setDraftUrl(e.target.value)
+              }}
+              onBlur={() => {
+                setEditingUrl(false)
+                commitUrl()
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur()
+                } else if (e.key === 'Escape') {
+                  // Discard the edit: blur's commitUrl sees a clean (non-dirty) draft
+                  // and re-syncs from board.url instead of committing the typed text.
+                  urlDirty.current = false
+                  setUrlError(null)
+                  setDraftUrl(board.url)
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
+            />
+          </div>
+          {/* D2-C: the inline URL error takes the dims slot — INSIDE the bar's own height,
             keeping all URL-bar feedback in one place rather than over the device stage. */}
-        {urlError ? (
-          <span className="bb-url-error" role="alert">
-            {urlError}
-          </span>
-        ) : (
-          <span className="bb-dims">
-            {preset.w} × {preset.h}
-          </span>
-        )}
-      </div>
+          {urlError ? (
+            <span className="bb-url-error" role="alert">
+              {urlError}
+            </span>
+          ) : (
+            <span className="bb-dims">
+              {preset.w} × {preset.h}
+            </span>
+          )}
+        </div>
 
-      {/* Device stage: a hatched backing well + the rounded HTML device frame. The offscreen
+        {/* Device stage: a hatched backing well + the rounded HTML device frame. The offscreen
           preview canvas fills the frame's inner area; the connecting/failed/crashed states sit
           UNDER it as the fallback layer. In full view the stage centres the frame so the
           letterbox (hatched backing) shows around an aspect-correct emulator. */}
-      <div
-        className="bb-stage"
-        style={
-          netOpen
-            ? {
-                top: URLBAR_H,
-                display: 'flex',
-                flexDirection: netDock === 'right' ? 'row' : 'column'
-              }
-            : fullView
-              ? // COLUMN, not a centred row: `.bb-stage-main`'s `flex:1 1 0` then grows the MAIN
-                // axis (height) to a DEFINITE size, so the emulator `.bb-frame { height:100% }`
-                // resolves instead of collapsing against an indefinite (align-items:center) height —
-                // the full-screen blank that only "appeared" once the Network panel was opened (the
-                // panel makes `.bb-stage` a column, which is what fixed it). `.bb-stage-main` keeps
-                // its own center alignment, so the emulator is still centred + letterboxed.
-                { top: URLBAR_H, display: 'flex', flexDirection: 'column' }
-              : { top: URLBAR_H }
-        }
-      >
-        {/* Browser region — a STABLE wrapper (never conditionally unmounted, so the offscreen
+        <div
+          className="bb-stage"
+          style={
+            netOpen
+              ? {
+                  top: URLBAR_H,
+                  display: 'flex',
+                  flexDirection: netDock === 'right' ? 'row' : 'column'
+                }
+              : fullView
+                ? // COLUMN, not a centred row: `.bb-stage-main`'s `flex:1 1 0` then grows the MAIN
+                  // axis (height) to a DEFINITE size, so the emulator `.bb-frame { height:100% }`
+                  // resolves instead of collapsing against an indefinite (align-items:center) height —
+                  // the full-screen blank that only "appeared" once the Network panel was opened (the
+                  // panel makes `.bb-stage` a column, which is what fixed it). `.bb-stage-main` keeps
+                  // its own center alignment, so the emulator is still centred + letterboxed.
+                  { top: URLBAR_H, display: 'flex', flexDirection: 'column' }
+                : { top: URLBAR_H }
+          }
+        >
+          {/* Browser region — a STABLE wrapper (never conditionally unmounted, so the offscreen
             <canvas> never remounts + the preview never reconnects). When the inspector is open
             (B3 split) or in full view it flexes + centres the emulator frame; otherwise it is a
             passthrough for the on-canvas absolute device-frame rect. */}
-        <div
-          className="bb-stage-main"
-          style={
-            fullView || netOpen
-              ? {
-                  position: 'relative',
-                  flex: '1 1 0',
-                  minWidth: 0,
-                  minHeight: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }
-              : { position: 'absolute', inset: 0 }
-          }
-        >
           <div
-            className="bb-frame"
-            data-bb-frame={board.id}
-            // In full view (or when the inspector splits the stage, B3) the frame is an EMULATOR:
-            // sized to the preset's ASPECT RATIO (height/width-bound, centred, letterboxed) within
-            // its region rather than the board-geometry rect. The offscreen canvas fills it and
-            // useOffscreenSizing reflows the page to the preset width, so the scale stays uniform.
-            // On canvas with the panel closed it keeps the fitted device-box rect.
+            className="bb-stage-main"
             style={
               fullView || netOpen
                 ? {
                     position: 'relative',
-                    height: '100%',
-                    width: 'auto',
-                    aspectRatio: `${preset.w} / ${preset.h}`,
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    borderRadius: preset.radius
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
                   }
-                : {
-                    left: frame.x,
-                    top: frameTopInStage,
-                    width: frame.width,
-                    height: frame.height,
-                    borderRadius: preset.radius
-                  }
+                : { position: 'absolute', inset: 0 }
             }
           >
-            {preset.notch && <div className="bb-notch" />}
-            <DeviceContent
-              runtime={runtime}
-              url={board.url}
-              willRetry={willRetry}
-              onReload={reloadCrashed}
-            />
-            {/* Offscreen-rendered frames paint here, OVER the connecting/failed/crashed state
+            <div
+              className="bb-frame"
+              data-bb-frame={board.id}
+              // In full view (or when the inspector splits the stage, B3) the frame is an EMULATOR:
+              // sized to the preset's ASPECT RATIO (height/width-bound, centred, letterboxed) within
+              // its region rather than the board-geometry rect. The offscreen canvas fills it and
+              // useOffscreenSizing reflows the page to the preset width, so the scale stays uniform.
+              // On canvas with the panel closed it keeps the fitted device-box rect.
+              style={
+                fullView || netOpen
+                  ? {
+                      position: 'relative',
+                      height: '100%',
+                      width: 'auto',
+                      aspectRatio: `${preset.w} / ${preset.h}`,
+                      maxWidth: '100%',
+                      maxHeight: '100%',
+                      borderRadius: preset.radius
+                    }
+                  : {
+                      left: frame.x,
+                      top: frameTopInStage,
+                      width: frame.width,
+                      height: frame.height,
+                      borderRadius: preset.radius
+                    }
+              }
+            >
+              {preset.notch && <div className="bb-notch" />}
+              <DeviceContent
+                runtime={runtime}
+                url={board.url}
+                willRetry={willRetry}
+                onReload={reloadCrashed}
+              />
+              {/* Offscreen-rendered frames paint here, OVER the connecting/failed/crashed state
               fallback. A normal DOM <canvas> clips/rounds with .bb-frame (the occlusion fix).
               When the preview isn't connected the canvas is blank and has nothing to forward, so
               it must NOT intercept the state layer's CTAs (e.g. the crashed Reload button) — drop
               its pointer events off the connected path. */}
-            <canvas
-              ref={osrCanvasRef}
-              className="bb-live nowheel nodrag"
-              style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
-            />
-            {/* The hidden proxy <textarea> is the keyboard/IME/clipboard target (Phase 3) —
+              <canvas
+                ref={osrCanvasRef}
+                className="bb-live nowheel nodrag"
+                style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
+              />
+              {/* The hidden proxy <textarea> is the keyboard/IME/clipboard target (Phase 3) —
               invisible + click-through, focused programmatically on canvas pointerdown. */}
-            <textarea
-              ref={osrProxyRef}
-              className="bb-ime-proxy nowheel nodrag"
-              aria-hidden="true"
-              tabIndex={-1}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-            />
-            {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
+              <textarea
+                ref={osrProxyRef}
+                className="bb-ime-proxy nowheel nodrag"
+                aria-hidden="true"
+                tabIndex={-1}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+              {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
               the offscreen bitmap can't composite. A DOM layer → clips/rounds with the frame. */}
-            <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
-            {/* OS-3 Phase 2 (2B): an evicted (over-cap) board's renderer is freed — its last frame
+              <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
+              {/* OS-3 Phase 2 (2B): an evicted (over-cap) board's renderer is freed — its last frame
               stays frozen on the canvas, so flag it "paused" until a live slot frees. */}
-            {paused && <span className="bb-paused-badge">paused</span>}
+              {paused && <span className="bb-paused-badge">paused</span>}
+            </div>
           </div>
-        </div>
-        {/* DevTools Network inspector — a flex SIBLING of the browser region (B3): it splits the
+          {/* DevTools Network inspector — a flex SIBLING of the browser region (B3): it splits the
             stage instead of overlaying, so the browser stays fully visible. Bottom drawer / right
             dock per the in-header switch. */}
-        <OsrNetworkPanel boardId={board.id} onFullView={onFull} paused={paused} />
-      </div>
-    </BoardFrame>
+          <OsrNetworkPanel boardId={board.id} onFullView={onFull} paused={paused} />
+        </div>
+      </BoardFrame>
+    </>
   )
 }
 
