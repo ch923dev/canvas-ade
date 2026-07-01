@@ -338,7 +338,7 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       // interpolated into eval'd code — the #82/#114 CodeQL pattern, mirroring noteTint.e2e.ts).
       await page.evaluate((bid) => {
         ;(
-          globalThis as { __canvasE2E: { patchBoard: (id: string, p: unknown) => void } }
+          globalThis as unknown as { __canvasE2E: { patchBoard: (id: string, p: unknown) => void } }
         ).__canvasE2E.patchBoard(bid, {
           elements: [{ id: 'tp-1', kind: 'text', x: 220, y: 140, text: 'hello', fontSize: 'M' }]
         })
@@ -395,7 +395,7 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       const sizeOf = (): Promise<string | undefined> =>
         page.evaluate((bid) => {
           const boards = (
-            globalThis as {
+            globalThis as unknown as {
               __canvasE2E: {
                 getBoards: () => {
                   id: string
