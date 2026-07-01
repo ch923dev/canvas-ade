@@ -4,6 +4,20 @@
 > once (full e2e matrix at the single pre-merge gate), per the terminal-crisp / planning-transfer
 > pattern. Design artifact: `mocks/kanban-and-visualize-prompt.{html,png}` (signed off 2026-06-30).
 
+## Status (2026-07-01)
+
+- **P1a — DONE, exposed.** Geometry (`x/y/w/h`) on `canvas://boards` + `app-model` (host+renderer,
+  no package release). Committed `50590c84`.
+- **P1b — DONE, wired; goes live at integration.** `buildLayoutDigest` (`b533df1c`) + host
+  `describeLayout` wiring (`10c01269`). Package published: **`@expanse-ade/mcp@0.18.0-rc.1`** on npm
+  (`next` dist-tag; `latest` still `0.17.0`) — `canvas://layout` resource + `Orchestrator.describeLayout`
+  (sibling `feat/canvas-layout`, tag `v0.18.0-rc.1`; publish workflow fixed to route prereleases →
+  `next`). The host type compiles against 0.17.0 (forward-compatible `Omit`), so **the one pending
+  action is the app pin bump `^0.17.0` → `0.18.0-rc.1` + install, deferred to the umbrella→main
+  integration** ("change deps on MAIN then merge" — avoids disturbing the shared node_modules the
+  other live worktrees junction to). `canvas://layout` is served only once the app consumes the rc.
+- **P2–P5** — not started.
+
 ## Why
 
 The MCP layer (`@expanse-ade/mcp` v0.17.0 + host `src/main/mcp*.ts`) can spawn, dispatch, and
