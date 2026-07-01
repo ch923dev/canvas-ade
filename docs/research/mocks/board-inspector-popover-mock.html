@@ -229,6 +229,42 @@
         border: 1px dashed var(--border); border-radius: 6px; display: grid; place-items: center;
         font-family: var(--mono); font-size: var(--fs-micro); color: var(--text-faint);
         text-transform: uppercase; letter-spacing: var(--tr-micro); }
+
+      /* ── P1 BrowserInspector — NEW primitives (Segmented / nav cluster / Toggle / Slider / status) ──
+         extracted from real Browser controls; all token-driven, no raw hex (STYLE-02). */
+      .seg { display: inline-flex; align-items: center; gap: 1px; padding: 2px; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); }
+      .seg button { height: 22px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px;
+        border: none; border-radius: 4px; background: transparent; color: var(--text-3); cursor: pointer;
+        font-size: 11px; font-weight: 500; font-family: var(--ui); }
+      .seg button:hover:not(.on) { color: var(--text-2); }
+      .seg button.on { background: var(--accent-wash); color: var(--accent); }
+      .seg.full { display: flex; flex: 1; }
+      .seg.full button { flex: 1; justify-content: center; }
+
+      .nav { display: flex; gap: 4px; flex: 1; }
+      .nav button { flex: 1; height: 28px; border-radius: var(--r-ctl); border: 1px solid var(--border-subtle);
+        background: var(--surface-raised); color: var(--text-2); cursor: pointer; display: grid; place-items: center;
+        font-size: 13px; }
+      .nav button:hover:not(:disabled) { border-color: var(--border); color: var(--text); }
+      .nav button:disabled { opacity: .38; cursor: default; }
+
+      .tog { width: 34px; height: 20px; border-radius: 999px; background: var(--surface-raised);
+        border: 1px solid var(--border); position: relative; cursor: pointer; flex: none; }
+      .tog.on { background: var(--accent-wash); border-color: var(--accent); }
+      .tog .knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px;
+        background: var(--text-3); }
+      .tog.on .knob { left: 16px; background: var(--accent); }
+
+      .sld { flex: 1; height: 4px; border-radius: 999px; background: var(--surface-raised); position: relative;
+        max-width: 110px; }
+      .sld .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--accent); }
+      .sld .thumb { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 999px;
+        background: var(--text); transform: translate(-50%, -50%); box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+
+      .stat { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: var(--fs-meta);
+        color: var(--text-2); }
+      .stat .d { width: 7px; height: 7px; border-radius: 999px; background: var(--ok); flex: none; }
     </style>
   </head>
   <body>
@@ -324,6 +360,139 @@
           </div>
         </div>
       </aside>
+    </div>
+
+    <!-- ═══════════ P1: BROWSER selected → BrowserInspector (per-type content in the SAME shell) ═══════════ -->
+    <div class="frame-label">P1 — click a Browser board → BrowserInspector: viewport · navigation · preview media · developer · config (all the buried nav-bar + title-bar controls, surfaced)</div>
+    <div class="scene">
+      <div class="tree-handle"></div>
+
+      <!-- unselected neighbour terminal, upper-right -->
+      <div class="board term" style="left: 730px; top: 40px; width: 290px; height: 150px;">
+        <div class="board-tb">
+          <span class="glyph run">›_</span><span class="tag">TERMINAL</span>
+          <span class="b-title">claude · api</span>
+          <span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+        <div class="board-body">⣷ working <span class="dim">00:41</span></div>
+      </div>
+
+      <!-- selected Browser board (the trigger), centre-right (clear of the flush-left popover) -->
+      <div class="board sel" style="left: 545px; top: 230px; width: 360px; height: 300px;">
+        <div class="board-tb">
+          <span class="glyph">▤</span><span class="tag">BROWSER</span>
+          <span class="b-title">localhost:5173</span>
+          <span class="tb-ctl" title="Viewport">▤</span>
+          <span class="tb-ctl" title="Full view">⤢</span>
+          <span class="tb-ctl" title="More">⋯</span>
+        </div>
+        <!-- mock URL bar (stays on-board; the Inspector is ADDITIVE, nothing is removed) -->
+        <div style="height: 30px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 8px;
+          border-bottom: 1px solid var(--border-subtle); background: var(--surface);">
+          <span style="color: var(--text-faint); font-size: 12px;">◀ ▶ ⟳</span>
+          <span style="flex: 1; height: 20px; border-radius: 5px; background: var(--inset);
+            border: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 6px; padding: 0 8px;
+            font-family: var(--mono); font-size: 11px; color: var(--text-2);"><span class="d" style="width:6px;height:6px;border-radius:999px;background:var(--ok);display:inline-block;"></span>localhost:5173</span>
+          <span style="font-family: var(--mono); font-size: 10px; color: var(--text-3);">1280 × 800</span>
+        </div>
+        <div class="board-body" style="background: var(--surface); color: var(--text-3); display: grid; place-items: center;">
+          <span style="font-family: var(--mono); font-size: 11px; color: var(--text-faint);">▤ live app preview</span>
+        </div>
+      </div>
+
+      <div class="callout" style="left: 512px; top: 266px;">clicked → inspector revealed ↙</div>
+
+      <!-- BrowserInspector: per-type content in the shared shell (head + foot are shell-owned) -->
+      <aside id="p1-browser" class="bi dock-left" role="region" aria-label="Board inspector">
+        <div class="bi-scroll">
+          <div class="bi-head">
+            <div class="bi-head-r1">
+              <span class="bi-head-glyph" style="color: var(--text-3)">▤</span>
+              <span class="bi-head-type">Browser</span>
+              <button class="bi-jump" title="Jump to board" aria-label="Jump to board">⤿</button>
+            </div>
+            <div class="bi-head-title">localhost:5173</div>
+            <div class="bi-head-status"><span class="pulse"></span>connected · 1280 × 800</div>
+          </div>
+
+          <!-- Viewport (most-used → expanded): device-class segmented + desktop-size sub-row -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Viewport</span><span class="chev">▾</span></div>
+            <div class="row">
+              <div class="seg full">
+                <button>▢ Mobile</button><button>▭ Tablet</button><button class="on">▤ Desktop</button>
+              </div>
+            </div>
+            <div class="row">
+              <span class="row-lab">Size</span>
+              <div class="seg"><button class="on">1280</button><button>1440p</button><button>4K</button></div>
+            </div>
+          </section>
+
+          <!-- Navigation (expanded): back / forward / reload cluster -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Navigation</span><span class="chev">▾</span></div>
+            <div class="row">
+              <div class="nav">
+                <button disabled title="Back">◀</button>
+                <button disabled title="Forward">▶</button>
+                <button title="Reload">⟳</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Preview (expanded): live status + media (mute/volume, shown while audible) + actions -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Preview</span><span class="chev">▾</span></div>
+            <div class="row"><span class="row-lab">Status</span><span class="stat"><span class="d"></span>connected</span></div>
+            <div class="row"><span class="row-lab">Mute</span><div class="tog"><div class="knob"></div></div></div>
+            <div class="row"><span class="row-lab">Volume</span><div class="sld"><div class="fill" style="width:70%"></div><div class="thumb" style="left:70%"></div></div></div>
+            <div class="row"><button class="act"><span class="ai">▢</span>Screenshot</button></div>
+            <div class="row"><button class="act"><span class="ai">↗</span>Open in browser</button></div>
+          </section>
+
+          <!-- Developer + Configuration start COLLAPSED (compact; click a header to expand) -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Developer</span><span class="chev">▸</span></div>
+          </section>
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Configuration</span><span class="chev">▸</span></div>
+          </section>
+
+          <div class="bi-foot">
+            <button class="act"><span class="ai">⧉</span>Duplicate</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ═══════════ P1: BrowserInspector — Developer + Configuration EXPANDED (the collapsed sections) ═══════════ -->
+    <div class="frame-label">P1 — the two collapsed sections expanded: Developer (network inspector toggle + dock) · Configuration (URL + edit)</div>
+    <div class="states">
+      <div class="scol" style="width: 250px;">
+        <span class="scap">Developer expanded</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <section class="sec" style="border-top: none;">
+              <div class="sec-hd"><span class="sec-lab">Developer</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Network inspector</span><div class="tog on"><div class="knob"></div></div></div>
+              <div class="row"><span class="row-lab">Dock</span><div class="seg"><button class="on">Bottom</button><button>Right</button></div></div>
+            </section>
+          </div>
+        </aside>
+      </div>
+      <div class="scol" style="width: 250px;">
+        <span class="scap">Configuration expanded</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <section class="sec" style="border-top: none;">
+              <div class="sec-hd"><span class="sec-lab">Configuration</span><span class="chev">▾</span></div>
+              <div class="row"><span class="meta"><b>URL</b>&nbsp; localhost:5173</span></div>
+              <div class="row"><button class="act"><span class="ai">✎</span>Edit URL…</button></div>
+            </section>
+          </div>
+        </aside>
+      </div>
     </div>
 
     <!-- ═══════════ states ═══════════ -->
