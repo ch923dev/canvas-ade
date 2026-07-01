@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import type { Page } from '@playwright/test'
+import { mainCall, seed } from './helpers'
 
 // Regression guard — MAX_LIVE revive sizing. An evicted (over-cap) Browser board's offscreen window
 // is destroyed and REOPENED at the OSR default (1280×800, S=1) when it climbs back into the cap. The
@@ -17,8 +18,33 @@ type OsrSize = {
   logicalH: number
 } | null
 
-const runtimeStatus = (id: string, status: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+// The e2e renderer-harness surface this spec drives (installed on the window under isE2E). The board id
+// is passed as a BOUND page.evaluate argument rather than interpolated into an eval'd string, so no code
+// is constructed from data (the recommended Playwright pattern). Each callback runs IN the browser and
+// can't close over a Node-scope helper, so the harness access is inlined per-callback; the type cast is
+// erased, leaving a plain `globalThis.__canvasE2E.*` call.
+interface CanvasE2EProbe {
+  getRuntime(id: string): { status: string } | null
+  setOsrAlive(id: string, alive: boolean): void
+}
+
+const statusOf = (page: Page, id: string): Promise<string | null> =>
+  page.evaluate(
+    (bid) =>
+      (globalThis as unknown as { __canvasE2E: CanvasE2EProbe }).__canvasE2E.getRuntime(bid)
+        ?.status ?? null,
+    id
+  )
+
+const setAlive = (page: Page, id: string, alive: boolean): Promise<void> =>
+  page.evaluate(
+    (arg) =>
+      (globalThis as unknown as { __canvasE2E: CanvasE2EProbe }).__canvasE2E.setOsrAlive(
+        arg.id,
+        arg.alive
+      ),
+    { id, alive }
+  )
 
 test.describe('@preview OSR revive keeps the preset logical width (MAX_LIVE regression)', () => {
   test('a revived mobile board re-sizes to its preset, not the 1280 desktop default', async ({
@@ -30,7 +56,7 @@ test.describe('@preview OSR revive keeps the preset logical width (MAX_LIVE regr
       const url = await mainCall<string>(electronApp, 'localUrl')
       // MOBILE preset → the offscreen page's logical (CSS) width should be 390.
       const id = await seed(page, 'browser', { url, viewport: 'mobile' })
-      expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000), 'connected').toBe(true)
+      await expect.poll(() => statusOf(page, id), { timeout: 12_000 }).toBe('connected')
 
       // Wait for the mount-time sizing send to land the mobile preset (the window is BORN at the 1280
       // default, then resized to 390 shortly after mount). Poll until it settles below desktop width.
@@ -44,14 +70,14 @@ test.describe('@preview OSR revive keeps the preset logical width (MAX_LIVE regr
 
       // ── EVICT: the manager writes alive=false → useOffscreenPreview closes the window (frozen frame
       //    stays on the <canvas>). The OSR window should be gone.
-      await evalIn(page, `window.__canvasE2E.setOsrAlive(${JSON.stringify(id)}, false)`)
+      await setAlive(page, id, false)
       await expect
         .poll(() => mainCall<OsrSize>(electronApp, 'osrLogicalSize', id), { timeout: 5000 })
         .toBeNull()
 
       // ── REVIVE: the manager writes alive=true → useOffscreenPreview reopens the window (born at the
       //    1280 default) AND useOffscreenSizing re-pushes the preset size (the fix).
-      await evalIn(page, `window.__canvasE2E.setOsrAlive(${JSON.stringify(id)}, true)`)
+      await setAlive(page, id, true)
       await expect
         .poll(() => mainCall<OsrSize>(electronApp, 'osrLogicalSize', id), { timeout: 8000 })
         .not.toBeNull()
