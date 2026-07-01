@@ -45,8 +45,11 @@ import { useStoreApi } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { runBackstopFit } from './terminalResizeBackstop'
+import type { BackstopGate } from './terminalResizeBackstop'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
@@ -60,6 +63,10 @@ import {
 import { handleTerminalKey, TERMINAL_NEWLINE } from './terminalKeymap'
 import { isIdleOnMount, clearIdleOnMount } from '../../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
+import {
+  registerTerminalSnapshotter,
+  unregisterTerminalSnapshotter
+} from '../../../store/terminalSnapshotRegistry'
 import { useTerminalLivenessStore, isTerminalLive } from '../../../store/terminalLivenessStore'
 import { installSelectionShim } from './terminalSelection'
 import { createTerminalWriteCoalescer, type TerminalWriteCoalescer } from './terminalWriteCoalescer'
@@ -229,6 +236,9 @@ export interface TerminalFindApi {
 
 export interface TerminalSpawnApi {
   state: TerminalState
+  /** Phase 5 · S3: this idle mount restored a persisted scrollback snapshot — the host shows the
+   *  restored (read-only) buffer with a bottom "Session restored" bar instead of the opaque overlay. */
+  restored: boolean
   /** Read-only from the host (it only reads `.current`); the hook's internals own writes. */
   termRef: RefObject<Terminal | null>
   portRef: RefObject<MessagePort | null>
@@ -258,6 +268,21 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
 
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // Phase 5 · S2: the SerializeAddon snapshots the buffer for the lossless drag-resize backstop.
+  // `resizeBackstopRef` holds the write coalescer while a snapshot→reset→rewrite is in flight so
+  // in-flight PTY bytes queue and flush AFTER the restored scrollback (never into the reset buffer).
+  const serializeAddonRef = useRef<SerializeAddon | null>(null)
+  const resizeBackstopRef = useRef(false)
+  // Re-entrancy gate for the backstop: a continuous drag fires the ResizeObserver per-frame while
+  // a prior backstop's async `term.write` is still parsing (large scrollback spans frames). Without
+  // this, a second fit would snapshot a half-written buffer and reset() away the pre-drag scrollback
+  // — the #5319 corruption this slice removes. `pending` coalesces skipped frames into one catch-up.
+  const backstopGateRef = useRef<BackstopGate>({ pending: false })
+  // The backstop's coalesced catch-up re-fit (see runBackstopFit) is invoked through its OWN ref,
+  // not `fitWholeRef` directly, so `fitWhole` never statically captures `fitWholeRef` — which would
+  // make the `[fitWhole]`-keyed mirror effect a forbidden self-referential mutation
+  // (react-hooks/immutability). This ref is wired in a mount-only effect below.
+  const refitRef = useRef<() => void>(() => {})
   // Phase 2 find-in-terminal: the SearchAddon is loaded onto the term alongside fit (so it is
   // re-created with every respawn), and the open-state lives here because the Ctrl/Cmd+F chord is
   // detected in this hook's xterm key handler. The bar's query/result state stays LOCAL to
@@ -288,6 +313,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
+  // S3: this mount has gone live via an explicit Start/Resume — set by startLaunchRef AND restart()
+  // so the async snapshot-restore (readSnapshot resolves a frame later) can't write a stale buffer
+  // INTO a session the user already started on the same term. Reset per new term in spawn().
+  const startedRef = useRef(false)
   // board.fontSize for the spawn closure's INITIAL xterm construction, read via a ref so
   // a size change never becomes a spawn dep (which would respawn the PTY).
   const fontSizeRef = useRef<number | undefined>(board.fontSize)
@@ -403,6 +432,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   )
 
   const [state, setState] = useState<TerminalState>('spawning')
+  // Phase 5 · S3: true when this idle mount restored a persisted scrollback snapshot from disk — the
+  // host then swaps the opaque "Start" overlay for a bottom bar so the restored (read-only) output
+  // stays visible. Reset per new term; set by the adopt fork when a sidecar is read + written back.
+  const [restored, setRestored] = useState(false)
 
   // Publish live PTY state so the preview-link edge can render stale when this
   // terminal is not running (bug 3); clear on unmount so a removed board stops
@@ -431,11 +464,48 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // exception: it has no scrollback to corrupt and DOES need an initial fit, so we don't freeze it.
     // Read off the refs (fullViewRef is kept current by a layout effect).
     if (fullViewRef.current && establishedRef.current) return
-    try {
-      fit.fit()
-    } catch {
-      return // well not laid out (LOD / display:none)
-    }
+    // Phase 5 · S2 — lossless drag-resize. An ESTABLISHED grid whose COLS change (a real board
+    // drag-resize — the last live reflow path now that zoom rides counterScale and full view is
+    // frozen) would hit xterm's lossy buffer reflow (#5319). Snapshot → resize → reset → re-write so
+    // xterm re-WRAPS cleanly at the new width instead. Fresh/first-layout fits (not yet established)
+    // and rows-only resizes take the plain fit — neither reflows. `runBackstopFit` also GUARDS
+    // re-entry: a continuous drag fires this per-frame while a prior backstop's async write is still
+    // parsing, so it defers (coalesces to one catch-up refit) instead of overlapping two
+    // serialize/reset pairs — which would snapshot a half-written buffer and lose scrollback.
+    // Returns false when it skipped (backstop in flight) or the well is not laid out → skip the
+    // row-shed below.
+    const didFit = runBackstopFit(backstopGateRef.current, {
+      currentCols: () => term.cols,
+      propose: () => {
+        const p = fit.proposeDimensions()
+        return p && Number.isFinite(p.cols) && Number.isFinite(p.rows)
+          ? { cols: p.cols, rows: p.rows }
+          : undefined
+      },
+      established: () => establishedRef.current,
+      plainFit: () => {
+        try {
+          fit.fit()
+          return true
+        } catch {
+          return false // well not laid out (LOD / display:none)
+        }
+      },
+      isInFlight: () => resizeBackstopRef.current,
+      refit: () => refitRef.current(),
+      serialize: () => serializeAddonRef.current?.serialize() ?? '',
+      resize: (c, r) => term.resize(c, r),
+      reset: () => term.reset(),
+      write: (data, done) => term.write(data, done),
+      pausePump: () => {
+        resizeBackstopRef.current = true
+      },
+      resumePump: () => {
+        resizeBackstopRef.current = false
+        coalescerRef.current?.onVisible() // flush PTY bytes held during the snapshot, in order
+      }
+    })
+    if (!didFit) return
     // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
     // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
     // `screenRef` is the term.open() host; `.closest('.nowheel')` walks up to the screenWrap.
@@ -467,6 +537,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   useEffect(() => {
     fitWholeRef.current = fitWhole
   }, [fitWhole])
+  // Mount-only: forward the backstop's catch-up re-fit to the current fitWhole. `[]` deps (NOT
+  // `[fitWhole]`) so `fitWhole` — which captures `refitRef` — is never a dependency of the effect
+  // that assigns it; the arrow reads `fitWholeRef.current` lazily, so it always calls the latest fit.
+  useEffect(() => {
+    refitRef.current = () => fitWholeRef.current()
+  }, [])
 
   // Fire a fresh PTY spawn into the CURRENT term. Shared by the Restart action and
   // the ResizeObserver's deferred-respawn path (#23). The async .then()/.catch()
@@ -562,6 +638,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // drift Phase 1 fought. Proposed API (allowProposedApi is set above).
     term.loadAddon(new Unicode11Addon())
     term.unicode.activeVersion = '11'
+    // Phase 5 · S2: buffer snapshot for the lossless drag-resize backstop (no DOM binding needed).
+    const serializeAddon = new SerializeAddon()
+    term.loadAddon(serializeAddon)
+    serializeAddonRef.current = serializeAddon
+    // S3: publish this term's buffer serializer so the app can flush its scrollback to the
+    // `.canvas/terminal/<id>.snapshot` sidecar on quit / window-close / project-switch (see
+    // terminalSnapshotRegistry). Unregistered on teardown. A new term starts un-restored.
+    registerTerminalSnapshotter(board.id, () => serializeAddonRef.current?.serialize() ?? null)
+    setRestored(false)
+    startedRef.current = false // a fresh term: no explicit Start/Resume has run on it yet
     term.open(el)
     termRef.current = term
     fitRef.current = fit
@@ -674,7 +760,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // ~scrollback (read live via the thunk) so a hidden firehose can't grow unbounded.
     const coalescer = createTerminalWriteCoalescer({
       write: (chunk) => term.write(chunk),
-      isLive: () => liveRef.current,
+      // Hold while hidden (Lane A) OR while a resize-backstop snapshot is in flight (S2), so PTY
+      // bytes queue instead of interleaving into the reset buffer; they flush in order on resume.
+      isLive: () => liveRef.current && !resizeBackstopRef.current,
       schedule: (fn) => requestAnimationFrame(fn),
       cancel: (h) => cancelAnimationFrame(h),
       holdCap: () =>
@@ -726,6 +814,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     let spawned = false
     let spawnAllowed = false
     let disposed = false
+    // S3: set once this idle mount wrote a persisted snapshot into the (frozen) term, so the Start
+    // handler resets that read-only buffer before the fresh PTY's output replaces it.
+    let restoredSnapshot = false
     // A fresh mount supersedes any respawn parked by a Restart on the prior term
     // incarnation (#23) — the initial launch() owns this term's first spawn.
     pendingRespawnRef.current = false
@@ -774,6 +865,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // spawns normally. The Start button wires back through `startLaunchRef` → launch().
     startLaunchRef.current = () => {
       clearIdleOnMount(board.id)
+      startedRef.current = true // going live — suppress any still-in-flight snapshot restore
+      // S3: a restored terminal shows its prior (read-only) scrollback; Start spawns a FRESH PTY, so
+      // clear that snapshot first — the live output replaces it rather than appending after it.
+      if (restoredSnapshot) {
+        term.reset()
+        restoredSnapshot = false
+        setRestored(false)
+      }
       spawnAllowed = true
       setState('spawning')
       launch()
@@ -785,6 +884,19 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         setState('running')
       } else if (decision === 'idle') {
         setState('idle')
+        // S3: an idle mount (disk-restored / duplicated) with a persisted snapshot restores its prior
+        // output into the frozen term so the user SEES their last session read-only until Start. Keyed
+        // by board id, so a duplicate (new id) has no sidecar and stays a blank idle. A later resize
+        // that changes cols re-wraps this buffer losslessly via the S2 backstop (established grid).
+        void window.api.terminal.readSnapshot(board.id).then((snap) => {
+          // startedRef guards the race where the user hits Start/Resume (which spawns on THIS term)
+          // before this async read settles — writing then would splice the stale buffer into the
+          // now-live session. disposed/termRef cover a remount; startedRef covers same-term-went-live.
+          if (disposed || termRef.current !== term || startedRef.current || !snap) return
+          term.write(snap, () => term.scrollToBottom())
+          restoredSnapshot = true
+          setRestored(true)
+        })
       } else {
         spawnAllowed = true
         launch()
@@ -841,6 +953,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       dataDisp.dispose()
       resizeDisp.dispose()
       ro.disconnect()
+      // S3: stop advertising this term's serializer (it is disposed below). The going-away flush
+      // (quit/close/switch) already ran on the live registry before teardown; a React unmount for a
+      // config-change respawn simply re-registers the fresh term.
+      unregisterTerminalSnapshotter(board.id)
       void window.api.killTerminal(board.id)
       void window.api.cleanupStagedImages(board.id)
       try {
@@ -860,6 +976,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       termRef.current = null
       fitRef.current = null
       searchAddonRef.current = null // disposed with the term above
+      // S2: drop the snapshot addon ref + clear any in-flight backstop hold so a reused/replaced
+      // term never starts with the pump stuck paused.
+      serializeAddonRef.current = null
+      resizeBackstopRef.current = false
+      backstopGateRef.current.pending = false // drop any coalesced re-fit so a reused term starts clean
       // Phase 2: a FULL xterm replacement (reconfigure shell/cwd/launchCommand) disposes the old
       // SearchAddon. Close any open find bar so it re-subscribes to the FRESH addon on reopen — its
       // onDidChangeResults binds once at mount on the stable `api` and can't re-target in place, so
@@ -905,6 +1026,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // Start button) so a later spawn-effect re-run (config Apply) doesn't render the
     // idle overlay over this now-live PTY and let Start spawn a 2nd session (PTY-2).
     clearIdleOnMount(board.id)
+    // S3: a Restart/Resume from a RESTORED idle term goes live — drop the restored flag so the
+    // "Session restored" bar can't linger (it is gated on state==='idle', but clearing keeps the
+    // flag honest), and mark started so an in-flight snapshot restore can't write into this now-live
+    // session. term.reset() below clears the read-only snapshot buffer for the fresh session.
+    setRestored(false)
+    startedRef.current = true
     void window.api.killTerminal(board.id)
     try {
       portRef.current?.close()
@@ -935,6 +1062,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
 
   return {
     state,
+    restored,
     termRef,
     portRef,
     launchOverrideRef,

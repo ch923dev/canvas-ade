@@ -61,15 +61,15 @@ import { resolveInitialThemeId, terminalThemeColors } from './terminal/terminalT
 import { useRunTimer } from './terminal/useRunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
+import { TerminalIdleAffordance } from './terminal/TerminalIdleAffordance'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 import { TerminalFindBar } from './terminal/TerminalFindBar'
+import { TerminalJumpButton } from './terminal/TerminalJumpButton'
 import {
   shell,
   shellHidden,
   screenWrap,
   screen,
-  idleOverlay,
-  startBtn,
   interruptChip
 } from './terminal/terminalBoardStyles'
 
@@ -161,6 +161,7 @@ export function TerminalBoard({
   // strips exhaustive-deps' stable-identity recognition (the useGroupInteractions lesson).
   const {
     state,
+    restored,
     termRef,
     portRef,
     launchOverrideRef,
@@ -196,6 +197,18 @@ export function TerminalBoard({
   const [restartMenu, setRestartMenu] = useState(false)
   const restartBtnRef = useRef<HTMLSpanElement>(null)
   const canResume = !!board.agentSessionId
+  // Shared respawn routines (D2-B) used by every re-run affordance — the idle restored bar,
+  // the end-state CTA, the recap face, and the Restart menu. Resume reattaches the agent's
+  // conversation (`claude --resume <id>` via the sanitising resumeCommand); New/Restart starts
+  // fresh (clears the override). Both consume launchOverrideRef then hit the shared respawn.
+  const resumeSession = useCallback((): void => {
+    launchOverrideRef.current = resumeCommand(board.agentSessionId)
+    restart()
+  }, [board.agentSessionId, launchOverrideRef, restart])
+  const restartFresh = useCallback((): void => {
+    launchOverrideRef.current = undefined
+    restart()
+  }, [launchOverrideRef, restart])
   // D4-A: consume palette restart intents for this board (resume/new — same launch
   // override + respawn path as the Restart menu below).
   usePaletteRestart(board.id, board.agentSessionId, launchOverrideRef, restart)
@@ -622,19 +635,20 @@ export function TerminalBoard({
                 isolation: 'isolate'
               }}
             >
-              {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
-              explicit Start that spawns the shell + fires launchCommand on click. */}
-              {state === 'idle' && (
-                <div
-                  className="nodrag"
-                  style={{ ...idleOverlay, background: themeBg }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
-                    Start {identity}
-                  </button>
-                </div>
-              )}
+              {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn) with an explicit
+              Start. S3: a fresh idle uses the opaque overlay; a restored one uses a bottom bar so its
+              read-only scrollback stays visible (see TerminalIdleAffordance). #270: the fresh-idle
+              overlay honors the board's theme background (themeBg), so a themed terminal doesn't flash
+              the default --inset while idle. */}
+              <TerminalIdleAffordance
+                state={state}
+                restored={restored}
+                identity={identity}
+                background={themeBg}
+                onStart={() => startLaunchRef.current?.()}
+                canResume={canResume}
+                onResume={resumeSession}
+              />
               {portChoices && portChoices.urls.length > 1 && (
                 <div
                   className="ca-port-picker nodrag"
@@ -702,6 +716,14 @@ export function TerminalBoard({
                 <div ref={screenRef} style={screenStyle} />
                 {/* Phase 2: find-in-terminal bar (Ctrl/Cmd+F). Floats top-right of the well. */}
                 {findOpen && <TerminalFindBar api={findApi} />}
+                {/* Phase 5 · S4: jump-to-bottom badge. Floats bottom-right; self-hides at the
+                    tail. `ready` gates its scroll subscription to a term that exists (≠ idle);
+                    `raised` lifts it above the TERM-04 end-CTA when that owns the bottom bar. */}
+                <TerminalJumpButton
+                  termRef={termRef}
+                  ready={state !== 'idle'}
+                  raised={state === 'exited' || state === 'spawn-failed'}
+                />
                 {/* TERM-04: an exited / spawn-failed terminal now offers an in-well re-run
                     CTA (bottom bar — never covers the scrollback). Restart re-runs (fresh),
                     Resume re-attaches a known session, Retry/Configure for a failed spawn.
@@ -711,14 +733,8 @@ export function TerminalBoard({
                     failed={state === 'spawn-failed'}
                     identity={identity}
                     canResume={canResume}
-                    onRestart={() => {
-                      launchOverrideRef.current = undefined
-                      restart()
-                    }}
-                    onResume={() => {
-                      launchOverrideRef.current = resumeCommand(board.agentSessionId)
-                      restart()
-                    }}
+                    onRestart={restartFresh}
+                    onResume={resumeSession}
                     onConfigure={() => setConfigOpen(true)}
                   />
                 )}
@@ -760,12 +776,9 @@ export function TerminalBoard({
                   boardId={board.id}
                   canResume={canResume}
                   onResume={() => {
-                    // Same resume routine as the Restart menu below: sanitized
-                    // `claude --resume <sessionId>` override, then the shared respawn.
-                    // Flip back to the terminal (like onStart) so the resumed session is
-                    // visible — staying on the recap face after acting is jarring.
-                    launchOverrideRef.current = resumeCommand(board.agentSessionId)
-                    restart()
+                    // Shared resume routine, then flip back to the terminal (like onStart) so the
+                    // resumed session is visible — staying on the recap face after acting is jarring.
+                    resumeSession()
                     flip.toggle()
                   }}
                   // No session to resume/restart → offer to START one from the recap. Spawns the
@@ -788,14 +801,8 @@ export function TerminalBoard({
             {restartMenu && (
               <TerminalRestartMenu
                 anchor={restartBtnRef}
-                onResume={() => {
-                  launchOverrideRef.current = resumeCommand(board.agentSessionId)
-                  restart()
-                }}
-                onNew={() => {
-                  launchOverrideRef.current = undefined
-                  restart()
-                }}
+                onResume={resumeSession}
+                onNew={restartFresh}
                 onClose={() => setRestartMenu(false)}
               />
             )}

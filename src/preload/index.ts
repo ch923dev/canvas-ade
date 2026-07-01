@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { authApi } from './authApi'
+import { terminalApi } from './terminalApi'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -779,6 +780,9 @@ const api = {
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
   },
+  // ── Phase 5 · S1: save the live terminal buffer to a user-chosen .txt (MAIN dialog + atomic write) ──
+  // ── Phase 5 · S1 save-output + S3 snapshot persist/restore (factored to terminalApi.ts) ──
+  terminal: terminalApi,
   // ── M-memory T-M4: read cached Tier-2 prose for the panel (pure disk read; MAIN-guarded) ──
   memory: {
     readBoards: (ids: string[]): Promise<Record<string, string>> =>

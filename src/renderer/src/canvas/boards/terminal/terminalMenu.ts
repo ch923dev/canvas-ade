@@ -10,7 +10,9 @@
 import type { RefObject } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { MenuEntry } from '../planning/ElementContextMenu'
+import { useCanvasStore } from '../../../store/canvasStore'
 import { pasteIntoTerminal } from './pasteIntoTerminal'
+import { runTerminalSave } from './terminalSaveOutput'
 
 export interface TerminalMenuParams {
   /** Selection present at open-time → enables Copy. */
@@ -63,6 +65,21 @@ export function buildTerminalMenuEntries(p: TerminalMenuParams): MenuEntry[] {
       label: 'Clear',
       onSelect: () => termRef.current?.clear()
     },
+    // Phase 5 · S1 — the export action reads as its own group (hairlines above + below).
+    { kind: 'separator', id: 'sep-save-top' },
+    {
+      kind: 'action',
+      id: 'save-output',
+      label: 'Save output…',
+      onSelect: () => {
+        const t = termRef.current
+        if (!t) return
+        // Title → filename slug; read at click time (the board may have been renamed).
+        const title = useCanvasStore.getState().boards.find((b) => b.id === boardId)?.title
+        void runTerminalSave(t, title, boardId)
+      }
+    },
+    { kind: 'separator', id: 'sep-save-bottom' },
     {
       kind: 'action',
       id: 'font-bigger',
