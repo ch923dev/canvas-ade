@@ -24,6 +24,8 @@ const colsOf = (id: string) =>
   `window.__canvasE2E.terminalCounterScale(${JSON.stringify(id)})?.cols`
 const fontOf = (id: string) =>
   `window.__canvasE2E.terminalCounterScale(${JSON.stringify(id)})?.effectiveFont`
+const rowsOf = (id: string) =>
+  `window.__canvasE2E.terminalCounterScale(${JSON.stringify(id)})?.rows`
 // 120 wrapping lines (each ~74 chars > any reasonable in-canvas column count), each uniquely tagged.
 const WRITE_LINES = `Array.from({length: 120}, (_, i) => 'L' + String(i).padStart(3,'0') + '=' + 'x'.repeat(70)).join('\\r\\n')`
 const EXPECTED_MARKERS = Array.from({ length: 120 }, (_, i) => 'L' + String(i).padStart(3, '0'))
@@ -49,6 +51,22 @@ async function settledCols(
     const c = await evalIn<number | undefined>(page, colsOf(id))
     if (typeof c === 'number' && c === prev) return c
     prev = c
+    await page.waitForTimeout(150)
+  }
+  return prev
+}
+
+// Rows analogue of settledCols — poll until term.rows stops changing (the in-canvas fit + no-clip
+// loop settle a few frames after seeding). Used as the frozen-grid baseline for the fill test.
+async function settledRows(
+  page: import('@playwright/test').Page,
+  id: string
+): Promise<number | undefined> {
+  let prev: number | undefined
+  for (let i = 0; i < 24; i++) {
+    const r = await evalIn<number | undefined>(page, rowsOf(id))
+    if (typeof r === 'number' && r === prev) return r
+    prev = r
     await page.waitForTimeout(150)
   }
   return prev
@@ -120,6 +138,62 @@ test.describe('@terminal full-view scrollback is preserved (Pure A1, no reflow)'
 
     // OUTCOME: no truncation, no duplication — exactly the same 120 lines, same order.
     expect(await readMarkers(page, id), 'every line survives the full-view round-trips').toEqual(
+      EXPECTED_MARKERS
+    )
+  })
+
+  test('full view fills the modal height with more rows (rows-only, cols frozen); rows restore on exit', async ({
+    page
+  }) => {
+    await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '${PINNED}')`)
+    // A wide, SHORT board so WIDTH binds the full-view scale — the case that left a big BOTTOM
+    // letterbox (image 3) and could hide the agent's input. The row-fill must grow rows to fill the
+    // modal height (rows-only ⇒ cols stay frozen ⇒ NO reflow), then restore on exit.
+    const id = await seed(page, 'terminal', { launchCommand: 'exit', w: 900, h: 200 })
+    await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    await fillBuffer(page, id)
+
+    const inCanvasRows = await settledRows(page, id)
+    const inCanvasCols = await settledCols(page, id)
+    expect((inCanvasRows ?? 0) > 0 && (inCanvasCols ?? 0) > 0, 'sanity: in-canvas grid read').toBe(
+      true
+    )
+
+    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+    expect(await pollEval(page, IN_MODAL, 4000), 'relocated to modal').toBe(true)
+
+    // FILL: rows grow to fill the modal height (the resize lands a few frames after the portal
+    // settles). More rows than in-canvas ⇒ no more bottom letterbox.
+    expect(
+      await pollEval(page, `(${rowsOf(id)} ?? 0) > ${inCanvasRows}`, 4000),
+      'rows grew to fill the modal height'
+    ).toBe(true)
+    // FREEZE preserved: cols never change on the toggle (rows-only ⇒ no scrollback reflow).
+    expect(await evalIn<number | undefined>(page, colsOf(id)), 'cols frozen').toBe(inCanvasCols)
+    // FILLED, not clipped: once the open-stretch settles (transform → identity, so the rect reads are
+    // layout-true), the grid bottom sits within ~one cell + the 12px well pad. The OLD font-only fill
+    // left MANY cells (hundreds of px) of black gutter here; this bounds it to one cell (~font×1.4)
+    // plus the padding. `vSlack` = well.bottom − grid.bottom (from terminalCounterScale, full-view-safe).
+    expect(
+      await pollEval(
+        page,
+        `(() => { const c = window.__canvasE2E.terminalCounterScale(${JSON.stringify(id)}); if (!c) return false; const v = c.vSlack; const maxGutter = (c.effectiveFont || 18) * 1.4 + 24; return v >= -2 && v <= maxGutter })()`,
+        4000
+      ),
+      'grid fills the modal height without clipping (no big bottom gutter)'
+    ).toBe(true)
+
+    await evalIn(page, `window.__canvasE2E.setFullView(null)`)
+    expect(await pollEval(page, `!(${IN_MODAL})`, 4000), 'back on canvas').toBe(true)
+
+    // RESTORE: the exact in-canvas rows come back (deterministic restore — no re-fit race).
+    expect(
+      await pollEval(page, `${rowsOf(id)} === ${inCanvasRows}`, 4000),
+      'rows restored to the in-canvas count on exit'
+    ).toBe(true)
+
+    // OUTCOME: every line survives — the rows-only resize never reflows the buffer.
+    expect(await readMarkers(page, id), 'every line survives the fill round-trip').toEqual(
       EXPECTED_MARKERS
     )
   })
