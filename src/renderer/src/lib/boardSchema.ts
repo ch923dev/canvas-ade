@@ -891,8 +891,10 @@ export function assertPlanningElement(el: unknown): void {
   }
 }
 
-/** Validate one board (common fields + per-type fields); throws on any mismatch. */
-function assertBoard(b: unknown): void {
+/** Validate one board (common fields + per-type fields); throws on any mismatch. Exported so the
+ *  MCP `visualizePlan` applier can re-validate a freshly-built board before it lands (defense in
+ *  depth), alongside {@link assertPlanningElement}. */
+export function assertBoard(b: unknown): void {
   if (!isRecord(b)) fail('board is not an object')
   if (typeof b.id !== 'string') fail('board has a non-string id')
   if (typeof b.title !== 'string') fail('board has a non-string title')

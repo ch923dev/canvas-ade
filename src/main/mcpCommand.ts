@@ -6,7 +6,9 @@ import type {
   McpCommandAck,
   PlanningOp,
   PlanningOpTint,
-  KanbanOp
+  KanbanOp,
+  PlanItem,
+  Visualization
 } from '../shared/mcpTypes'
 
 /**
@@ -17,7 +19,15 @@ import type {
  * with the canonical definitions there. Re-exported from here so MAIN call sites + tests that
  * import them from `./mcpCommand` keep resolving unchanged.
  */
-export type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint, KanbanOp }
+export type {
+  McpCommand,
+  McpCommandAck,
+  PlanningOp,
+  PlanningOpTint,
+  KanbanOp,
+  PlanItem,
+  Visualization
+}
 
 const ACK_TIMEOUT_MS = 2000
 

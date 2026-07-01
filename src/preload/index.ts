@@ -7,13 +7,25 @@ import { terminalApi } from './terminalApi'
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
 export type PtyState = 'spawning' | 'running' | 'exited' | 'spawn-failed'
 
+/** An optional layout chooser attached to a confirm request (P5; mirrors main `ConfirmChoices`). */
+export interface ConfirmChoices {
+  label?: string
+  options: Array<{ id: string; label: string }>
+  default: string
+}
+
 /** A human-confirm request surfaced to the modal (mirrors main `ConfirmRequest`, T4.2). */
 export interface ConfirmRequest {
   title: string
   body: string
   confirmLabel?: string
   denyLabel?: string
+  /** P5: when set, the modal renders a chooser and the reply carries the picked `choice`. */
+  choices?: ConfirmChoices
 }
+
+/** The modal's reply to a confirm request; P5 adds the optional chooser `choice`. */
+type ConfirmDecisionMsg = { approved: boolean; choice?: string }
 
 /** One MCP dispatch audit entry surfaced to the viewer (mirrors main `AuditEntry`, T4.1). */
 export interface AuditEntry {
@@ -909,7 +921,7 @@ const api = {
     // modal and replies the human's decision on MAIN's unique reply channel. Returns an
     // unsubscribe fn. MAIN owns the decision (it blocks the tool on this reply).
     onConfirm: (
-      handler: (request: ConfirmRequest, reply: (decision: { approved: boolean }) => void) => void
+      handler: (request: ConfirmRequest, reply: (decision: ConfirmDecisionMsg) => void) => void
     ): (() => void) => {
       const listener = (
         _e: IpcRendererEvent,

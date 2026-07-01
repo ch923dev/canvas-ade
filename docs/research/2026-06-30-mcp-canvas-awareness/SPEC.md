@@ -39,7 +39,27 @@
   (P3b) + human drag/edit (P4.2) still open. **Integration owes** (bundled with P1b's): pin bump
   `^0.17.0`→`0.18.0-rc.2` + `APP_TOOLS` +4 card tools (F25 runs against installed 0.17.0, so adding
   them now would red the drift guard) + install.
-- **P2 · P3b · P4.2 · P5** — not started.
+- **P5a — DONE (the visualize prompt gate), goes live at integration.** The epic CAPSTONE. New
+  `visualize_plan` tool — an agent hands a flat plan (items: title + optional status/tag/assignee/note)
+  + a suggested shape; the host surfaces the UPGRADED human-confirm gate as a layout CHOOSER (kanban /
+  grid / checklist / columns, the suggestion preselected) and, on approval, creates a NEW board in the
+  shape the human PICKED, tidied into open canvas space. Package `@expanse-ade/mcp@0.18.0-rc.3`
+  (`feat/canvas-layout`, tag `v0.18.0-rc.3`, run 28502797454 ✅; npm `next`). **Confirm protocol widened**
+  with a bounded `choices` chooser (`ConfirmRequest.choices` + `ConfirmDecision.choice`) — reuses the
+  whole fail-closed machinery (channels/timeout/foreign-frame guard/queue); the gate re-validates the
+  human's pick against the offered set (fail-safe to the suggestion), so a forged `choice` can never
+  produce an off-shape board. Host: `mcpVisualize.ts` (sanitize/cap/render — single-line short fields,
+  multi-line note, full-plan confirm body) + `mcpVisualizeGate.ts` (the gate, extracted to keep
+  `mcpOrchestrator.ts` under the max-lines gate); MAIN MINTS the board id. Renderer: `visualizeMcpApply`
+  builds the board (kanban columns from distinct statuses; grid/checklist/columns via the shared
+  planning masonry) → new `addPreparedBoard` store action inserts it as ONE undoable board, free-slot
+  placed + selected. `ConfirmModal` renders the chooser (choice held on the queue item). Gate GREEN:
+  app typecheck/lint/format 0 · **3579 unit + 315 integration + 216 pkg contract pass**. **Integration
+  owes** (bundled with P1b/P3a): pin bump `^0.17.0`→`0.18.0-rc.3` + `APP_TOOLS` +`visualize_plan` +
+  install. No live UI in the worktree (like P1b/P3a — the package isn't consumed here); the chooser is
+  proven by `ConfirmModal.chooser.test` + the gate/applier tests, and the visual is the signed-off mock.
+- **P2 · P3b · P4.2** — not started. (P5's remaining polish — the mock's placement mini-preview — folds
+  into a later pass.)
 
 ## Why
 

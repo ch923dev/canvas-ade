@@ -14,6 +14,7 @@ import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
 import { createKanbanMethods } from './mcpKanbanGate'
+import { createVisualizeMethod } from './mcpVisualizeGate'
 import { buildAppModel, type AppModel } from './appModel'
 import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { canRelay } from './orchestration/seam'
@@ -691,6 +692,14 @@ export function buildOrchestrator(
     },
     // 🔒 P3 Kanban card writes (add/move/update/remove) — built in ./mcpKanbanGate (see kanbanMethods).
     ...kanbanMethods,
+    // 🔒 P5 plan-visualize (visualize_plan) — the upgraded content-write gate (chooser + create),
+    // built in ./mcpVisualizeGate (keeps this file under the max-lines gate). NO PTY / nonce (a board
+    // is passive content, ADR 0003). Inlined into the spread to stay under the gate.
+    ...createVisualizeMethod({
+      confirm: (req) => registry.confirm(req),
+      sendCommand: (cmd) => registry.sendCommand(cmd),
+      audit: writeAudit
+    }),
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
       // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +
       // prove it is a terminal HERE; the shared write gate then runs the unskippable

@@ -1,6 +1,12 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
-import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
+import {
+  assertBoard,
+  assertPlanningElement,
+  type Board,
+  type BoardType,
+  type PlanningElement
+} from '../lib/boardSchema'
 import { freeSlot, overlapsAny, viewportCenterWorld } from '../lib/freeSlot'
 import { sanitizeBoardTitle } from '../../../shared/boardTitle'
 import {
@@ -10,6 +16,7 @@ import {
   MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
 import { applyKanbanOps } from './kanbanMcpApply'
+import { buildVisualizedContent, isVisualization } from './visualizeMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /**
@@ -247,6 +254,77 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
             )
       store.spawnGroup({ at, group, members })
       return { ok: true, type: 'spawnGroup' }
+    }
+    case 'visualizePlan': {
+      // 🔒 P5: CREATE a new board from a sanitized plan in the shape the human PICKED in the confirm
+      // chooser. MAIN validated + sanitized + capped the items, minted the board id, and confirmed the
+      // choice; the renderer builds the fully-populated board, tidies it into open space, and commits
+      // it as ONE undoable edit — re-validating the envelope + the assembled board (defense in depth).
+      const { id, visualization, items, title } = command
+      if (typeof id !== 'string' || id.length === 0) {
+        return { ok: false, error: `invalid visualizePlan id: ${JSON.stringify(id)}` }
+      }
+      if (!isVisualization(visualization)) {
+        return {
+          ok: false,
+          error: `invalid visualizePlan visualization: ${JSON.stringify(visualization)}`
+        }
+      }
+      if (!Array.isArray(items) || items.length === 0) {
+        return { ok: false, error: 'visualizePlan items must be a non-empty array' }
+      }
+      const store = useCanvasStore.getState()
+      // Idempotent by id (mirrors addBoard/spawnGroup): a re-delivered command whose board already
+      // exists is a no-op + ack ok, so it can't push a duplicate board.
+      if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'visualizePlan' }
+      let content
+      try {
+        content = buildVisualizedContent(visualization, items)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `visualizePlan: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      // Land where the user is looking (like spawnGroup) → free-slot off any overlap so the plan tucks
+      // into open canvas space (the mock's "tidied into open space"). Fallback to SPAWN_ANCHOR pre-fit
+      // OR outside a DOM (the node-env unit tests, where `window` is absent).
+      const at =
+        typeof window === 'undefined'
+          ? SPAWN_ANCHOR
+          : viewportCenterWorld(
+              store.viewport,
+              { w: window.innerWidth, h: window.innerHeight },
+              SPAWN_ANCHOR
+            )
+      const pos = freeSlot(store.boards, at, content.size)
+      const base = {
+        id,
+        x: pos.x,
+        y: pos.y,
+        w: content.size.w,
+        h: content.size.h,
+        title: sanitizeBoardTitle(title) ?? content.defaultTitle
+      }
+      const board: Board =
+        content.kind === 'kanban'
+          ? { ...base, type: 'kanban', columns: content.columns ?? [], cards: content.cards ?? [] }
+          : { ...base, type: 'planning', elements: content.elements ?? [] }
+      // Re-validate the assembled board against the schema before it lands (defense in depth, like
+      // patchPlanning re-validates each element) — a bad build acks {ok:false} and nothing inserts.
+      try {
+        assertBoard(board)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `visualizePlan: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      store.addPreparedBoard(board)
+      // Select the created plan (non-undoable, so the create stays ONE undo step) — the new board is
+      // the active selection, matching the mock's "created board on the canvas".
+      store.setSelection([id])
+      return { ok: true, type: 'visualizePlan' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }

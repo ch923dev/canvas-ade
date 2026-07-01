@@ -92,6 +92,31 @@ export type KanbanOp =
     }
   | { op: 'remove'; cardId: string }
 
+// ── Plan-visualization types (P5 — visualize_plan, MAIN → renderer) ──
+
+/** The layout shapes `visualize_plan` renders a plan into (P5) — the confirm-gate chooser options. */
+export type Visualization = 'kanban' | 'grid' | 'checklist' | 'columns'
+
+/**
+ * One SANITIZED plan item (P5), MAIN → renderer. The orchestrator's `visualizePlan` validates +
+ * sanitizes + caps the agent's flat plan and the human PICKS the shape in the confirm chooser BEFORE
+ * MAIN mints the `visualizePlan` command carrying these. The renderer groups items by `status` into
+ * kanban columns / `columns` sections and materializes the chosen board shape (reusing the planning
+ * masonry for grid/checklist/columns), re-validating as defense in depth before it lands. 🔒 Untrusted
+ * passive content: the board renders, never auto-arms an action.
+ */
+export interface PlanItem {
+  title: string
+  /** Status/stage bucket — groups items into kanban columns / `columns` sections. Absent ⇒ a default lane. */
+  status?: string
+  /** Free-text type chip (kanban card / note tag hint). */
+  tag?: string
+  /** Assignee agent-preset id — the kanban card dot. */
+  assignee?: string
+  /** Optional longer note body (grid/columns notes; ignored by kanban/checklist). */
+  note?: string
+}
+
 // ── Command union (formerly hand-mirrored in mcpCommand.ts + useMcpCommands.ts) ──
 
 /**
@@ -119,6 +144,11 @@ export type KanbanOp =
  * - `patchKanban` (P3) mutates a KANBAN board's `cards` — add / move / update / remove, one or more
  *   ops per confirmed call. The orchestrator resolved + kanban-checked the board, minted any new card
  *   id, and human-confirmed the ops before this carries them; the renderer re-validates + applies.
+ * - `visualizePlan` (P5) CREATES a new board from a flat plan in the shape the human picked in the
+ *   confirm chooser (kanban/grid/checklist/columns). MAIN minted the board id, sanitized + capped the
+ *   items, and confirmed the choice before this carries them; the renderer builds the fully-populated
+ *   board (kanban columns+cards, or a planning board via the masonry) + tidies it into open space in
+ *   ONE undoable step. Content-only like `patchPlanning` — the board renders, nothing runs.
  * - `spawnGroup` (PR-5b) creates a whole feature-zone cluster — a terminal (always) + an
  *   optional planning + browser member, plus a Named Group over them and the browser→terminal
  *   preview wiring — in ONE undoable step. MAIN mints every id (so the tool can return them and
@@ -137,6 +167,13 @@ export type McpCommand =
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
   | { type: 'patchKanban'; id: string; ops: KanbanOp[] }
+  | {
+      type: 'visualizePlan'
+      id: string
+      visualization: Visualization
+      title?: string
+      items: PlanItem[]
+    }
   | {
       type: 'spawnGroup'
       group: { id: string; name: string }

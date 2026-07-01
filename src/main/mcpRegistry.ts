@@ -1,5 +1,6 @@
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
+import type { ConfirmDecision, ConfirmRequest } from './mcpConfirm'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
@@ -98,6 +99,7 @@ export type LifecycleOrchestrator = Omit<
   | 'moveCard'
   | 'updateCard'
   | 'removeCard'
+  | 'visualizePlan'
 > & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
@@ -149,6 +151,19 @@ export type LifecycleOrchestrator = Omit<
     patch: { title?: string; tag?: string; assignee?: string; ref?: string }
   ): Promise<void>
   removeCard(boardId: string, cardId: string): Promise<void>
+  /**
+   * 🔒 Visualize a plan as a NEW board (P5) — validate/sanitize/cap the plan, surface the UPGRADED
+   * human-confirm CHOOSER (kanban/grid/checklist/columns), and on approval create the chosen board
+   * (tidied into open space) via the `visualizePlan` command; audits every branch. MINTS + returns the
+   * board id. Host-local inline types (the installed package predates `VisualizePlanSpec`); Omitting it
+   * from the base is a harmless no-op on 0.17.0 and matches the concrete method on 0.18.0-rc.3 — same
+   * discipline as `describeLayout` / the card methods.
+   */
+  visualizePlan(spec: {
+    items: Array<{ title: string; status?: string; tag?: string; assignee?: string; note?: string }>
+    suggested?: 'kanban' | 'grid' | 'checklist' | 'columns'
+    title?: string
+  }): Promise<{ id: string }>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
@@ -263,9 +278,11 @@ export interface BoardRegistry {
    * 🔒 Block on a mandatory human confirm (T4.2). MAIN injects `requestConfirm`
    * (fail-closed everywhere); resolves `{ approved }` only on an explicit human yes.
    * The decision authority is the human via our own trusted UI — never the
-   * worker-originated content that prompted the dispatch.
+   * worker-originated content that prompted the dispatch. P5: a request may carry a bounded
+   * `choices` chooser, and the decision then carries the human's `choice` (the requesting gate
+   * re-validates it against the offered set — see `ConfirmChoices`).
    */
-  confirm(req: { title: string; body: string }): Promise<{ approved: boolean }>
+  confirm(req: ConfirmRequest): Promise<ConfirmDecision>
   /**
    * 🔒 Append one dispatch audit entry (T4.1). MAIN injects `getAuditLog().append`.
    * Every dispatch attempt — rejected / denied / failed / completed — is recorded with

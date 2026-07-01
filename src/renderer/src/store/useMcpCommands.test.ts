@@ -638,3 +638,100 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     })
   })
 })
+
+describe('applyMcpCommand — visualizePlan (P5)', () => {
+  const PLAN = [
+    { title: 'Audit token flow', status: 'Backlog', tag: 'research' },
+    { title: 'Wire PKCE', status: 'In Progress', assignee: 'claude' },
+    { title: 'Wire callback', status: 'In Progress', assignee: 'codex' },
+    { title: 'Ship it', status: 'Done', tag: 'shipped' }
+  ]
+
+  it('kanban: creates a kanban board with columns derived from distinct statuses + cards bound', () => {
+    const ack = applyMcpCommand({
+      type: 'visualizePlan',
+      id: 'viz-1',
+      visualization: 'kanban',
+      title: 'Auth refactor',
+      items: PLAN
+    })
+    expect(ack).toEqual({ ok: true, type: 'visualizePlan' })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-1')
+    expect(board?.type).toBe('kanban')
+    if (board?.type !== 'kanban') throw new Error('expected a kanban board')
+    expect(board.title).toBe('Auth refactor')
+    expect(board.columns.map((c) => c.id)).toEqual(['backlog', 'in-progress', 'done'])
+    expect(board.columns.map((c) => c.title)).toEqual(['Backlog', 'In Progress', 'Done'])
+    expect(board.cards).toHaveLength(4)
+    expect(board.cards.map((c) => c.columnId)).toEqual([
+      'backlog',
+      'in-progress',
+      'in-progress',
+      'done'
+    ])
+    expect(board.cards[1]).toMatchObject({ title: 'Wire PKCE', assignee: 'claude' })
+  })
+
+  it('grid: creates a planning board with one note element per item', () => {
+    applyMcpCommand({ type: 'visualizePlan', id: 'viz-2', visualization: 'grid', items: PLAN })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-2')
+    expect(board?.type).toBe('planning')
+    if (board?.type !== 'planning') throw new Error('expected a planning board')
+    expect(board.elements.filter((e) => e.kind === 'note')).toHaveLength(4)
+    // No title supplied → the per-shape default.
+    expect(board.title).toBe('Plan')
+  })
+
+  it('checklist: creates a planning board with ONE checklist whose items mirror the plan', () => {
+    applyMcpCommand({ type: 'visualizePlan', id: 'viz-3', visualization: 'checklist', items: PLAN })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-3')
+    if (board?.type !== 'planning') throw new Error('expected a planning board')
+    const lists = board.elements.filter((e) => e.kind === 'checklist')
+    expect(lists).toHaveLength(1)
+    if (lists[0].kind !== 'checklist') throw new Error('expected a checklist element')
+    expect(lists[0].items.map((i) => i.label)).toEqual([
+      'Audit token flow',
+      'Wire PKCE',
+      'Wire callback',
+      'Ship it'
+    ])
+    // 'Done' status → the row is checked; an in-flight status is not.
+    expect(lists[0].items[3].done).toBe(true)
+    expect(lists[0].items[0].done).toBe(false)
+  })
+
+  it('columns: creates a planning board (one element per item, sectioned by status)', () => {
+    applyMcpCommand({ type: 'visualizePlan', id: 'viz-4', visualization: 'columns', items: PLAN })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-4')
+    if (board?.type !== 'planning') throw new Error('expected a planning board')
+    expect(board.elements.filter((e) => e.kind === 'note')).toHaveLength(4)
+  })
+
+  it('is idempotent by id — a re-delivered command yields one board and acks ok both times', () => {
+    const cmd = {
+      type: 'visualizePlan' as const,
+      id: 'viz-5',
+      visualization: 'grid' as const,
+      items: PLAN
+    }
+    expect(applyMcpCommand(cmd).ok).toBe(true)
+    expect(applyMcpCommand(cmd).ok).toBe(true)
+    expect(useCanvasStore.getState().boards.filter((b) => b.id === 'viz-5')).toHaveLength(1)
+  })
+
+  it('rejects an empty items array and an invalid visualization WITHOUT adding a board', () => {
+    expect(
+      applyMcpCommand({ type: 'visualizePlan', id: 'x', visualization: 'grid', items: [] }).ok
+    ).toBe(false)
+    expect(
+      applyMcpCommand({
+        type: 'visualizePlan',
+        id: 'x',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        visualization: 'bogus' as any,
+        items: PLAN
+      }).ok
+    ).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+})
