@@ -68,6 +68,15 @@ export interface E2EMain {
    * "stays blank" pixel check cannot be made RED here), but the code path always can.
    */
   osrReplayReadyInvalidations(id: string): number
+  /**
+   * A board's OSR logical size = physical content size ÷ page zoom factor (S). `logicalW` is the
+   * responsive-reflow width (the preset: 390 mobile / 834 tablet / 1280 desktop). The MAX_LIVE
+   * revive-sizing regression guard asserts a revived (un-evicted) board keeps its preset logicalW
+   * rather than the 1280×800 default its reopened window is born at. Null when no OSR window.
+   */
+  osrLogicalSize(
+    id: string
+  ): { physW: number; physH: number; zoom: number; logicalW: number; logicalH: number } | null
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -309,6 +318,23 @@ export function installE2EMain(
     },
     osrReplayReadyInvalidations(id) {
       return debugReplayOsrReadyInvalidations(id)
+    },
+    osrLogicalSize(id) {
+      const osrWin = getOsrWindow(id)
+      if (!osrWin || osrWin.isDestroyed()) return null
+      try {
+        const [physW, physH] = osrWin.getContentSize()
+        const zoom = osrWin.webContents.getZoomFactor() || 1
+        return {
+          physW,
+          physH,
+          zoom,
+          logicalW: Math.round(physW / zoom),
+          logicalH: Math.round(physH / zoom)
+        }
+      } catch {
+        return null
+      }
     },
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)

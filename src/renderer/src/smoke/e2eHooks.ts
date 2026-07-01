@@ -15,6 +15,7 @@ import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
 import { useOsrNetworkStore } from '../store/osrNetworkStore'
+import { useOsrLivenessStore } from '../store/osrLivenessStore'
 import { useDataFlowStore } from '../store/dataFlowStore'
 import { mergeShapes, type ShapeSample, type ShapeNode, type FormatHint } from '../lib/schemaInfer'
 import { useFileTreeUiStore } from '../store/fileTreeUiStore'
@@ -328,6 +329,13 @@ export interface CanvasE2E {
   setOsrAudible: (id: string, audible: boolean) => void
   /** 4A — read a Browser board's ephemeral audio state (mute + volume) to assert control behavior. */
   getOsrAudio: (id: string) => { muted: boolean; volume: number }
+  /**
+   * Force a Browser board's MAX_LIVE existence flag — exactly what the liveness manager writes on
+   * evict (false) / revive (true). Bypasses the >4-board + camera choreography (like `setCommandTasks`
+   * bypasses spawn choreography) so the revive-sizing regression guard can drive an evict→revive
+   * deterministically without staging five boards and a pan.
+   */
+  setOsrAlive: (id: string, alive: boolean) => void
   /** SLICE-010 — replace a board's captured Network records with `count` synthetic rows, so the
    *  virtualization probe can prove only ~viewport rows mount as `<tr>` at the 1000-record cap. */
   seedOsrNet: (id: string, count: number) => void
@@ -432,6 +440,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     getOsrAudio(id) {
       const s = useOsrWidgetStore.getState()
       return { muted: s.muted[id] ?? false, volume: s.volume[id] ?? 1 }
+    },
+    setOsrAlive(id, alive) {
+      const s = useOsrLivenessStore.getState()
+      s.setAlive({ ...s.alive, [id]: alive })
     },
     listSceneIds() {
       return listScenes().map((s) => s.id)
