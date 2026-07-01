@@ -1378,3 +1378,46 @@ native + Linux Docker) at the pre-push gate — 223 passed + the documented data
 retry-recovered. CI green on the rebased head (check · CodeQL · analyze · claude-review, 0 fails). Manual
 dev check on a titled build confirmed the themed frame matches and the full-view prompt is visible at the
 bottom with no gutter; default theme unchanged.
+
+## 2026-07-01 — Terminal-serialize epic (Phase 5): save / lossless resize / persist-restore scrollback — #275 (`39df174b`)
+
+The final Phase 5 slice landing — the whole terminal-serialize epic, integrated onto `main` as ONE squash
+commit. Four slices, previously merged into `feat/terminal-serialize-umbrella`:
+
+- **S1 — save output to file** (#261, `ad99812c`): dump a terminal's full buffer to a chosen path via the OS
+  save dialog (cancel = silent no-op; no path-traversal surface — the dialog picks the real path).
+- **S2 — lossless drag-resize backstop** (#268, `5344d83e`): a re-entrancy-guarded backstop
+  (`terminalResizeBackstop.ts`) so every scrollback line survives a widen→narrow with no reflow trim/dup;
+  matching unit tests exercise the in-flight/coalesce/no-overlap invariants.
+- **S4 — jump-to-bottom badge** (#261): a badge hidden at the tail, shown when scrolled up, click snaps to
+  the bottom.
+- **S3 — persist scrollback across restart** (#273, `98348e9d`): the screen is serialized (via
+  `@xterm/addon-serialize`) to a **`.canvas/terminal/<id>.snapshot` sidecar**, flushed on quit / close /
+  board-switch through a serializer registry (`terminalSnapshotRegistry.ts` + `useAutosave`/
+  `disposeLiveResources` wiring). On reopen the terminal mounts **idle + read-only** with a "Session
+  restored — read-only" bar (M-1: no silent auto-spawn); **Start** re-arms a fresh PTY, **Resume**
+  (`claude --resume <id>`) reattaches the agent transcript when the board has an `agentSessionId`. Snapshot
+  delete-on-remove is gated on `running[id]` (undo-safe). The MAIN surface (`terminalIpc.ts`/
+  `terminalSnapshot.ts`) is frame-guarded, `isSafeId`-confined to `.canvas/`, atomic, and size-capped
+  (skip-not-truncate).
+
+**Design:** the snapshot is a **sidecar, not a schema field** → NO `schemaVersion`/`minReaderVersion` bump.
+Adds one dep (`@xterm/addon-serialize`, package.json + pnpm-lock.yaml). No MCP files touched.
+
+**Merge-integration (this squash's merge commit `b6841e70`):** brought `main` (`aeb3bc9c`) in; two content
+conflicts resolved keeping BOTH sides — (1) `TerminalBoard.tsx`: kept S3's single `<TerminalIdleAffordance>`
+AND threaded #270's `themeBg` into the fresh-idle overlay (new optional `background` prop) so a themed
+terminal no longer flashes `--inset` while idle; #270's chrome-bg + full-view row-fill intact; (2)
+`smoke/e2eHooks.ts`: resolved to S3's type-surface split (`e2eHooks.types.ts`) and ported #269's `setOsrAlive`
+TYPE into it (the METHOD auto-merged). Consolidated 6 duplicated inline resume/new respawn handlers into
+shared `resumeSession`/`restartFresh` callbacks to keep `TerminalBoard` under its 627 max-lines ratchet after
+the merge (pins move downward only).
+
+**Verified:** typecheck · lint (0 errors) · format · build green. **Full e2e matrix GREEN both legs** at the
+once-per-PR pre-merge gate — Windows 228 passed (the lone `osrCropSupersample` 27ms cross-spec env flake
+reran green in isolation) + Linux Docker 229 passed. New specs green: `terminalPersist` · `terminalSave` ·
+`terminalJumpBottom` · `terminalResizeBackstop`. Boot smoke `RENDERER_SMOKE {reactflow,xterm,webgl:true}` +
+`pty:true` (no black screen). CI green on the PR head (check · CodeQL · analyze · claude-review — **no
+critical/warning findings**). Known follow-up (accepted, out of epic scope): a board permanently deleted
+while idle/restored/exited leaves an orphaned `.canvas/terminal/*.snapshot` (harmless, git-ignored) with no
+GC path — a TTL sweep mirroring `pty.ts`'s parked-PTY reap is the fix.
