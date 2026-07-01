@@ -559,4 +559,68 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  test('P4b: CREATING an element auto-selects it → the Element section appears immediately', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'inspector-p4bc-',
+      'inspector-p4bc'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const id = await seed(page, 'planning', { w: 560, h: 420 })
+      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+      const wellSel = `.react-flow__node[data-id=${JSON.stringify(id)}] .pl-well`
+      await pollEval(page, `!!document.querySelector('${wellSel}')`, 5000)
+      // Decline the fresh-project recap modal so it can't occlude the well tap.
+      await page
+        .locator('[data-test="recap-decline"]')
+        .click({ timeout: 5000 })
+        .catch(() => {})
+
+      // Baseline: nothing selected → no Element section (Appearance opacity slider absent).
+      const opacitySel = `[data-test="board-inspector"] [aria-label="Element opacity"]`
+      expect(
+        await evalIn<boolean>(page, `!!document.querySelector('${opacitySel}')`),
+        'no Element section before any element exists'
+      ).toBe(false)
+
+      // Arm the Note tool (real key routed to the focused well) + tap an empty spot to CREATE a note.
+      await evalIn(page, `document.querySelector('${wellSel}').focus()`)
+      await page.keyboard.press('n')
+      const well = await evalIn<{ x: number; y: number }>(
+        page,
+        `(() => { const w = document.querySelector('${wellSel}'); const r = w.getBoundingClientRect();
+                  return { x: Math.round(r.left + 90), y: Math.round(r.top + 90) }; })()`
+      )
+      // A note is created on pointerDOWN (onWellPointerDown); send a full tap for a clean gesture.
+      await mainCall(electronApp, 'sendInput', {
+        type: 'mouseDown',
+        x: well.x,
+        y: well.y,
+        button: 'left',
+        clickCount: 1
+      })
+      await mainCall(electronApp, 'sendInput', {
+        type: 'mouseUp',
+        x: well.x,
+        y: well.y,
+        button: 'left',
+        clickCount: 1
+      })
+
+      // The freshly-created note is auto-selected → the Element section's Appearance opacity slider
+      // appears WITHOUT any manual grip click (the maintainer's create-flow bug: PR #277).
+      const appeared = await pollEval(page, `!!document.querySelector('${opacitySel}')`, 3000)
+      expect(appeared, 'creating a note auto-selects it → the Element section shows').toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
 })
