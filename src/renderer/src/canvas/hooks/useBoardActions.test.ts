@@ -18,12 +18,19 @@ import { useBoardActions, type BoardActionsDeps } from './useBoardActions'
 import { useCanvasStore } from '../../store/canvasStore'
 
 const park = vi.fn<(id: string) => Promise<boolean>>()
+// S3: remove() also drops the terminal's persisted scrollback sidecar beside parkTerminal.
+const deleteSnapshot = vi.fn<(id: string) => Promise<boolean>>()
 
 beforeEach(() => {
   vi.clearAllMocks()
+  deleteSnapshot.mockResolvedValue(true)
   // Reset the singleton store (mirrors Canvas.pushundo.test.ts) and seed via the real addBoard.
   useCanvasStore.setState({ boards: [], connectors: [], past: [], future: [] })
-  ;(window as unknown as { api: { parkTerminal: typeof park } }).api = { parkTerminal: park }
+  ;(
+    window as unknown as {
+      api: { parkTerminal: typeof park; terminal: { deleteSnapshot: typeof deleteSnapshot } }
+    }
+  ).api = { parkTerminal: park, terminal: { deleteSnapshot } }
 })
 
 /** Stub deps: every callback is a no-op vi.fn(); the refs are real (remove() reads .current). */

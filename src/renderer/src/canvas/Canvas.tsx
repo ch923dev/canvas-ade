@@ -440,7 +440,12 @@ function CanvasInner(): ReactElement {
           const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
           // #BUG-015: swallow the invoke rejection (teardown/channel-gone race on a closing
           // window) so it can't surface as an unhandled promise — mirrors the memory.* guards above.
-          if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id).catch(() => {})
+          if (removed?.type === 'terminal') {
+            void window.api.parkTerminal(intent.id).catch(() => {})
+            // S3: drop the persisted scrollback sidecar for a removed terminal (undo re-adopts the
+            // PARKED live session, not the snapshot, so this can't strand an undo). Safe no-op if none.
+            void window.api.terminal.deleteSnapshot(intent.id).catch(() => {})
+          }
           // #BUG-012: keyboard-delete (deleteKeyCode) reaches removal HERE, bypassing
           // boardActions.remove — so tear down any full-view mode pointing at this board
           // FIRST (same guards boardActions.remove uses). Otherwise fullViewId/cameraFullViewId

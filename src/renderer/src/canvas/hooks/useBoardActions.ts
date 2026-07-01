@@ -88,7 +88,12 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
         const removed = useCanvasStore.getState().boards.find((x) => x.id === id)
         // #BUG-015: swallow the invoke rejection (teardown/channel-gone race on a closing window)
         // so it can't surface as an unhandled promise — mirrors Canvas.tsx's memory.* guards.
-        if (removed?.type === 'terminal') void window.api.parkTerminal(id).catch(() => {})
+        if (removed?.type === 'terminal') {
+          void window.api.parkTerminal(id).catch(() => {})
+          // S3: drop the persisted scrollback sidecar (undo re-adopts the PARKED live session, not
+          // the snapshot). Safe no-op when none exists.
+          void window.api.terminal.deleteSnapshot(id).catch(() => {})
+        }
         if (fullViewIdRef.current === id) hardCloseFullView()
         if (cameraFullViewIdRef.current === id) exitCameraFullView()
         removeBoard(id)

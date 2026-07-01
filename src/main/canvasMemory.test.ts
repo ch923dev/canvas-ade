@@ -12,7 +12,7 @@ import {
 // ADR 0009 ignore templates: default-private tracks ONLY canvas.json; committed also versions
 // assets/ + memory/ and ignores only the volatile files.
 const IGNORE_PRIVATE = '*\n!canvas.json\n'
-const IGNORE_COMMITTED = 'audit/\ntmp/\ncanvas.json.bak\n'
+const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\n'
 
 describe('canvasMemory', () => {
   let dir: string
@@ -205,6 +205,14 @@ describe('canvasMemory', () => {
       const m = createCanvasMemory(dir)
       m.ensureScaffold()
       writeFileSync(m.paths.gitignore, 'audit/\n', 'utf8') // pre-0009 committed
+      upgradeProjectGitignore(dir)
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_COMMITTED)
+    })
+
+    it('remaps the pre-S3 committed ignore (no terminal/) to the current template', () => {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold()
+      writeFileSync(m.paths.gitignore, 'audit/\ntmp/\ncanvas.json.bak', 'utf8') // pre-S3 committed
       upgradeProjectGitignore(dir)
       expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_COMMITTED)
     })
