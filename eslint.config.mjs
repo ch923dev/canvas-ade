@@ -266,7 +266,10 @@ export default tseslint.config(
   // See docs/contributing/file-size-doctrine.md.
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['**/*.test.{ts,tsx}', '**/*.integration.test.{ts,tsx}'],
+    // `smoke/e2eHooks.ts` is the Playwright `_electron` test harness (installed only under isE2E) —
+    // test infrastructure, exempt like `*.test.ts` per the "tests are exempt" rule above (its name
+    // just doesn't match the test glob). Additive probe surfaces (e.g. setOsrAlive) grow it healthily.
+    ignores: ['**/*.test.{ts,tsx}', '**/*.integration.test.{ts,tsx}', '**/smoke/e2eHooks.ts'],
     rules: { 'max-lines': ['error', { max: 700, skipBlankLines: true, skipComments: true }] }
   },
   {
