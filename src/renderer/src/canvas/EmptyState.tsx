@@ -24,7 +24,7 @@ export function EmptyState({ onAdd }: { onAdd: (type: BoardType) => void }): Rea
           plan.
         </div>
         <div style={styles.row}>
-          {(['terminal', 'browser', 'planning', 'command'] as const).map((type) => (
+          {(['terminal', 'browser', 'planning', 'command', 'kanban'] as const).map((type) => (
             <button key={type} style={styles.ghost} onClick={() => onAdd(type)}>
               <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
                 <TypeGlyph type={type} />

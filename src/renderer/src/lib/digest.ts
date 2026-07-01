@@ -13,6 +13,7 @@ import type {
   CommandBoard,
   DataFlowBoard,
   FileBoard,
+  KanbanBoard,
   PlanningBoard,
   TerminalBoard
 } from './boardSchema'
@@ -146,6 +147,25 @@ function digestDataFlow(b: DataFlowBoard): BoardDigest {
   }
 }
 
+function digestKanban(b: KanbanBoard): BoardDigest {
+  // Content-bearing (like planning): one line per column with its card count (+ WIP limit when set),
+  // so the reopen digest shows the plan's shape at a glance without any LLM/runtime state.
+  const lines: string[] = []
+  for (const col of b.columns) {
+    const n = b.cards.filter((c) => c.columnId === col.id).length
+    lines.push(`${col.title}: ${n}${col.wip !== undefined ? `/${col.wip}` : ''}`)
+  }
+  if (b.columns.length === 0) lines.push('Empty board')
+  const total = b.cards.length
+  return {
+    boardId: b.id,
+    type: 'kanban',
+    title: b.title,
+    status: `${total} card${total === 1 ? '' : 's'}`,
+    lines
+  }
+}
+
 function digestBoard(b: Board, d: DigestDoc): BoardDigest {
   switch (b.type) {
     case 'terminal':
@@ -160,6 +180,8 @@ function digestBoard(b: Board, d: DigestDoc): BoardDigest {
       return digestFile(b)
     case 'dataflow':
       return digestDataFlow(b)
+    case 'kanban':
+      return digestKanban(b)
   }
 }
 

@@ -21,7 +21,8 @@ const TYPE_TAG: Record<BoardType, string> = {
   planning: 'PLANNING',
   command: 'COMMAND',
   file: 'FILE',
-  dataflow: 'DATA FLOW'
+  dataflow: 'DATA FLOW',
+  kanban: 'KANBAN'
 }
 
 /** Status indicator: a coloured dot (`--ok` pulses) + optional mono label. */

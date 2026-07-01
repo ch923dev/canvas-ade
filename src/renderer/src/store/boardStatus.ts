@@ -53,6 +53,9 @@ export function boardStatusBucket(type: string, signals: BoardStatusSignals): Bo
           return 'idle'
       }
     case 'planning':
+    case 'kanban':
+      // Passive content boards — no liveness signal, so no pill (v17 kanban joins planning here;
+      // the `default` would already bucket it static, but the explicit case documents the intent).
       return 'static'
     default:
       return 'static'

@@ -54,8 +54,16 @@
  *   so this is ADDITIVE (writer-only bump, floor STAYS 15 — ADR 0007): an older reader ignores the
  *   unknown keys, and `assertBoard` only type-checks them as strings (it does NOT reject an unknown
  *   id), so a doc carrying a future theme id never fails validation. The migration is identity.
+ * - v17 = the `kanban` board TYPE (MCP canvas-awareness epic, P4) — a dedicated full-board
+ *   Trello-style plan visualizer. Unlike the `command`/`dataflow` boards (ephemeral bodies), a
+ *   Kanban board PERSISTS its content: ordered `columns` + a flat `cards` list (each card bound to a
+ *   column by `columnId`, so an MCP `move_card` is a single-field patch and within-column order is
+ *   array order — mirrors Planning's `elements[]`). A NEW board type is BREAKING per ADR 0007: a
+ *   pre-17 `assertBoard` default branch throws on the unknown type, so the compat floor moves to 17
+ *   too (see MIN_READER_VERSION below). The migration is identity (the type only appears on
+ *   newly-authored kanban boards).
  */
-export const SCHEMA_VERSION = 16
+export const SCHEMA_VERSION = 17
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -84,6 +92,9 @@ export const SCHEMA_VERSION = 16
  * set, so `assertBoard` rejects a board carrying one and would `.bak`-fallback. Stamping
  * `minReaderVersion: 15` gives the clean update prompt instead. v15 is the LAST viewport floor bump —
  * it adds the `fromObject` clamp (unknown viewport → `desktop`), so every app from 15 on reads all
- * future additive viewport docs.
+ * future additive viewport docs. Floor moves to 17 with the v17 `kanban` board type (P4): an app
+ * older than 17 has no `kanban` case in `assertBoard`, so it would HARD-FAIL on a doc containing one
+ * — pre-17 apps get the clean "update the app to open it" message instead of a `.bak`-fallback. (v16
+ * was additive and left the floor at 15; v17 is the next breaking bump, moving BOTH to 17.)
  */
-export const MIN_READER_VERSION = 15
+export const MIN_READER_VERSION = 17

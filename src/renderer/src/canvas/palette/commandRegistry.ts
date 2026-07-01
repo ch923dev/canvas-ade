@@ -98,7 +98,8 @@ const TYPE_LABEL: Record<BoardType, string> = {
   planning: 'planning',
   command: 'command',
   file: 'file',
-  dataflow: 'data flow'
+  dataflow: 'data flow',
+  kanban: 'kanban'
 }
 
 export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): PaletteCommand[] {
@@ -109,7 +110,7 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       : undefined
 
   // ── Boards ──
-  for (const type of ['terminal', 'browser', 'planning', 'command'] as const) {
+  for (const type of ['terminal', 'browser', 'planning', 'command', 'kanban'] as const) {
     out.push({
       id: `new-${type}`,
       section: 'Boards',

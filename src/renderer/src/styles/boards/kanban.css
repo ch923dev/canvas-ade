@@ -1,0 +1,138 @@
+/* Kanban board (v17, MCP canvas-awareness P4). A full-board Trello-style plan visualizer —
+   horizontal lanes of cards, read-only in P4.1 (drag/add controls land in P4.2). One accent, no
+   gradients/glow; tokens mirror DESIGN.md §2-4. Matches the signed-off mock (docs/research/
+   2026-06-30-mcp-canvas-awareness/mocks/kanban-and-visualize-prompt.png). */
+.kb-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--inset);
+  overflow: hidden;
+}
+.kb-cols {
+  display: flex;
+  gap: var(--space-12);
+  align-items: flex-start;
+  padding: var(--space-12);
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.kb-col {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 190px;
+  max-width: 260px;
+  max-height: 100%;
+  flex-direction: column;
+}
+.kb-col-h {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-4) var(--space-8);
+}
+.kb-col-title {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text);
+}
+.kb-col-count {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.kb-wip {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kb-wip-full {
+  color: var(--warn);
+}
+.kb-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) var(--space-2) var(--space-8);
+  overflow-y: auto;
+}
+.kb-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8) var(--space-12);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+}
+.kb-card-title {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+}
+.kb-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+.kb-tag {
+  padding: 1px var(--space-6);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+}
+.kb-tag-accent {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent-wash);
+}
+.kb-tag-ok {
+  color: var(--ok);
+  border-color: rgba(62, 207, 142, 0.22);
+}
+.kb-tag-warn {
+  color: var(--warn);
+  border-color: rgba(232, 179, 57, 0.26);
+}
+.kb-tag-muted {
+  color: var(--text-3);
+}
+.kb-assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.kb-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--ok);
+  border-radius: var(--r-pill);
+}
+.kb-ref {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.kb-col-empty {
+  padding: var(--space-8) var(--space-4);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  text-align: center;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-inner);
+}

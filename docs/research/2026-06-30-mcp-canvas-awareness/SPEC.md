@@ -16,7 +16,17 @@
   action is the app pin bump `^0.17.0` → `0.18.0-rc.1` + install, deferred to the umbrella→main
   integration** ("change deps on MAIN then merge" — avoids disturbing the shared node_modules the
   other live worktrees junction to). `canvas://layout` is served only once the app consumes the rc.
-- **P2–P5** — not started.
+- **P4.1 — DONE (board type + read-only render).** New `kanban` board type — breaking **schema v17 /
+  reader-floor 17** (ADR 0007). Persists `columns` + a flat `cards` list (bound by `columnId`; schema
+  shapes live in the leaf `kanbanSchema.ts` to keep `boardSchema.ts` under the max-lines gate).
+  `KanbanBoard.tsx` renders the lanes/cards/chips per the signed-off mock; creatable via ⌘K ("New
+  kanban board") + the empty-state row. `PATCHABLE_KEYS.kanban = [...common, columns, cards]` (so
+  human/agent edits round-trip), digest + status-bucket ('static') + type glyph wired. Gate GREEN:
+  typecheck/lint/format 0 · 3834 unit pass · manual dev-check screenshot matches the mock.
+  DEFERRED to later slices: drag/inline-edit (P4.2), MCP card mutate (P3), the visualize gate (P5),
+  and the `kanban` `APP_BOARD_TYPES` self-model entry (added in P3/P5 once tools target it — mirrors
+  `dataflow`, which is likewise absent from that table until it has agent tools).
+- **P2 · P3 · P4.2 · P5** — not started.
 
 ## Why
 
