@@ -1343,3 +1343,38 @@ false-positive advisories at the source.
 e2e matrix GREEN both legs ×2 (223 passed + the documented dataFlow Linux-Docker flake retry-recovered /
 224 passed). CI green (check · CodeQL · analyze · claude-review 0/0 inline). Manual dev check confirmed
 the titled build launches clean.
+
+## 2026-07-01 — Terminal theme-aware chrome bg + full-view row-fill (input visible) — #270 (`7290be4c`)
+
+Two user-reported terminal bugs, root-caused to specific file:line before coding.
+
+**Bug 1 — chrome bg didn't track the theme.** A non-default xterm theme (Dracula/Solarized/…) repainted
+the terminal SURFACE, but the board chrome stayed hardcoded `var(--inset)`, leaving a mismatched near-black
+frame/padding/full-view-gutter around themed text. **Fix:** `TerminalBoard` resolves
+`themeBg = terminalThemeColors(board.themeId ?? bornThemeId).background` (the same palette xterm renders;
+born fallback mirrors Lane B's `useTerminalAppearance`) and feeds it to `contentBg` + `screenWrap` +
+`idleOverlay` (were all `var(--inset)`). Default theme resolves to `#0e0e10` == `--inset`, so default boards
+are pixel-identical — zero regression.
+
+**Bug 2 — Claude input not visible in full view (long session).** Pure A1
+(`docs/research/2026-06-23-terminal-scrollback-reflow`) froze cols AND rows and scaled the render FONT only,
+leaving a large same-bg letterbox gutter below the text and the live prompt parked mid-scrollback. **Fix:**
+new `useTerminalFullViewFill(termRef)` hook does the report-blessed **rows-only** `term.resize(cols, fillRows)`
+in full view — columns never change, so xterm `_reflow` early-returns (`_cols === newCols`) ⇒ NO lossy
+scrollback reflow / corruption (Pure A1's guarantee preserved). Rows grow (or shrink) to fill the modal
+height + `scrollToBottom()` so the prompt sits at the true bottom; EXIT restores the exact in-canvas rows
+deterministically (never a re-fit → no font-transition race the shipped-A1 note warned about). **Impl
+gotcha:** cell height is measured via `screenEl.offsetHeight` (transform-INVARIANT), NOT
+`getBoundingClientRect` — the full-view modal's ~320ms open-stretch transform scales the rect, so a rect-based
+read mid-stretch over-counts rows ~2.5× and the grid clips (found via e2e: vSlack −412, rows 88 vs correct
+~35). Poll until per-cell height settles before the one-shot resize.
+
+**Regression guard:** a full-view fill test in `e2e/terminalScrollback.e2e.ts` seeds a wide-short board
+(width binds) and asserts rows grow to fill, cols frozen, rows restore on exit, all 120 scrollback markers
+survive, and vertical slack is bounded to ~1 cell.
+
+**Verified:** typecheck · lint (0 errors) · format · build green. Full e2e matrix GREEN both legs (Windows
+native + Linux Docker) at the pre-push gate — 223 passed + the documented dataFlow Linux-Docker flake
+retry-recovered. CI green on the rebased head (check · CodeQL · analyze · claude-review, 0 fails). Manual
+dev check on a titled build confirmed the themed frame matches and the full-view prompt is visible at the
+bottom with no gutter; default theme unchanged.
