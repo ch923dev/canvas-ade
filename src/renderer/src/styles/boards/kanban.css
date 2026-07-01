@@ -1,0 +1,293 @@
+/* Kanban board (v17, MCP canvas-awareness P4). A full-board Trello-style plan visualizer —
+   horizontal lanes of cards, read-only in P4.1 (drag/add controls land in P4.2). One accent, no
+   gradients/glow; tokens mirror DESIGN.md §2-4. Matches the signed-off mock (docs/research/
+   2026-06-30-mcp-canvas-awareness/mocks/kanban-and-visualize-prompt.png). */
+.kb-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--inset);
+  overflow: hidden;
+}
+.kb-cols {
+  display: flex;
+  gap: var(--space-12);
+  align-items: flex-start;
+  padding: var(--space-12);
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.kb-col {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 190px;
+  max-width: 260px;
+  max-height: 100%;
+  flex-direction: column;
+}
+.kb-col-h {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-4) var(--space-8);
+}
+.kb-col-title {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text);
+}
+.kb-col-count {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.kb-wip {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kb-wip-full {
+  color: var(--warn);
+}
+.kb-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) var(--space-2) var(--space-8);
+  overflow-y: auto;
+  min-height: 28px; /* keep an empty column a grabbable drop target */
+}
+.kb-card {
+  position: relative; /* anchors the hover-reveal delete × */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8) var(--space-12);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  cursor: grab;
+}
+.kb-card:active {
+  cursor: grabbing;
+}
+.kb-dragging {
+  opacity: 0.4;
+}
+.kb-card-title {
+  padding-right: 14px; /* clear the delete × */
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+}
+.kb-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+.kb-tag {
+  padding: 1px var(--space-6);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+}
+.kb-tag-accent {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent-wash);
+}
+.kb-tag-ok {
+  color: var(--ok);
+  border-color: rgba(62, 207, 142, 0.22);
+}
+.kb-tag-warn {
+  color: var(--warn);
+  border-color: rgba(232, 179, 57, 0.26);
+}
+.kb-tag-muted {
+  color: var(--text-3);
+}
+.kb-assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.kb-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--ok);
+  border-radius: var(--r-pill);
+}
+.kb-ref {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.kb-col-empty {
+  padding: var(--space-8) var(--space-4);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  text-align: center;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-inner);
+}
+
+/* ── P4.2 human interaction: drag, inline add/edit/delete, column authoring ── */
+
+/* Drop-target column: dashed accent frame + wash while a card hovers over it. */
+.kb-col.kb-dragover > .kb-cards {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -3px;
+  background: var(--accent-wash);
+  border-radius: var(--r-inner);
+}
+
+/* Shared inline editor (card title, add-card, column rename, add-column). */
+.kb-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px var(--space-6);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.kb-edit::placeholder {
+  color: var(--text-3);
+}
+/* The WIP number: compact, right-pinned like the badge it replaces. */
+.kb-edit-num {
+  flex: 0 0 auto;
+  width: 52px;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+
+/* Quiet "+ Add card" row at each column's foot — always present, low-contrast at rest. */
+.kb-add {
+  margin-top: var(--space-2);
+  padding: var(--space-6);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-inner);
+  cursor: pointer;
+}
+.kb-add:hover {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+
+/* Set-WIP affordance (shown when a column has no limit) — revealed on header hover. */
+.kb-wip-add {
+  margin-left: auto;
+  padding: 0 var(--space-4);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  opacity: 0;
+}
+.kb-col-h:hover .kb-wip-add {
+  opacity: 0.7;
+}
+.kb-wip-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+/* Column delete — revealed on header hover, warns on its own hover. */
+.kb-col-del {
+  flex: 0 0 auto;
+  padding: 0 var(--space-4);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  opacity: 0;
+}
+.kb-col-h:hover .kb-col-del {
+  opacity: 0.55;
+}
+.kb-col-del:hover {
+  color: var(--warn);
+  opacity: 1;
+}
+
+/* Card delete × — revealed on card hover. */
+.kb-card-del {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  padding: 0 3px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+.kb-card:hover .kb-card-del {
+  opacity: 0.5;
+}
+.kb-card-del:hover {
+  color: var(--warn);
+  opacity: 1;
+}
+
+/* Add-column lane at the right end — revealed on board hover. */
+.kb-addcol {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 36px;
+  min-height: 44px;
+  font-size: 18px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-inner);
+  cursor: pointer;
+  opacity: 0;
+}
+.kb-cols:hover .kb-addcol {
+  opacity: 0.8;
+}
+.kb-addcol:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+.kb-col-new {
+  padding: var(--space-8) var(--space-4);
+}

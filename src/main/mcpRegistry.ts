@@ -1,8 +1,11 @@
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
+import type { ConfirmDecision, ConfirmRequest } from './mcpConfirm'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
+import type { LayoutDigest } from './layoutModel'
+import type { BoardCards } from './mcpBoardCards'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
@@ -88,7 +91,19 @@ export interface OrchestratorOpts {
  * concrete `AppModel` / `SpawnGroupResult` types so MAIN keeps full typing (a plain intersection
  * would resolve the call to the package's looser signature first).
  */
-export type LifecycleOrchestrator = Omit<Orchestrator, 'describeApp' | 'spawnGroup'> & {
+export type LifecycleOrchestrator = Omit<
+  Orchestrator,
+  | 'describeApp'
+  | 'spawnGroup'
+  | 'describeLayout'
+  | 'boardCards'
+  | 'tidyCanvas'
+  | 'addCard'
+  | 'moveCard'
+  | 'updateCard'
+  | 'removeCard'
+  | 'visualizePlan'
+> & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
   /**
@@ -97,6 +112,31 @@ export type LifecycleOrchestrator = Omit<Orchestrator, 'describeApp' | 'spawnGro
    * does not own that type). Now wired over the wire as the `canvas://app-model` resource (W1-G / C1).
    */
   describeApp(): Promise<AppModel>
+  /**
+   * Assemble the read-only SPATIAL digest (bbox · per-board geometry+group · overlaps · arrangement).
+   * NARROWS the package's `describeLayout(): Promise<unknown>` to the concrete `LayoutDigest` (the
+   * package does not own that type — same discipline as `describeApp`). Wired as the `canvas://layout`
+   * resource (P1b, @expanse-ade/mcp ≥ 0.18.0). Omitting `describeLayout` from the base is a harmless
+   * no-op on a package that predates it, so this type compiles against 0.17.0 AND 0.18.0-rc.1.
+   */
+  describeLayout(): Promise<LayoutDigest>
+  /**
+   * Project one Kanban board's lanes + cards (P3b) — the read half of the card loop, served as
+   * `canvas://board/{id}/cards`. NARROWS the package's `boardCards(): Promise<unknown>` to the concrete
+   * host-owned `BoardCards` (the package does not own that type — same discipline as `describeLayout`).
+   * Omitting `boardCards` from the base is a harmless no-op on a package predating it (0.17.0), and
+   * matches the concrete method on 0.18.0-rc.4 at integration.
+   */
+  boardCards(boardId: string): Promise<BoardCards>
+  /**
+   * 🔒 Tidy the whole canvas (P2) — reposition every board into a clean, non-overlapping arrangement
+   * via the renderer's deterministic packer (`canvasStore.tidyBoards`). NARROWS the package's
+   * `tidyCanvas(): Promise<unknown>` to the concrete host-owned `{ moved }` (the package does not own
+   * that type — same discipline as `describeLayout`). UN-GATED + content-less (reposition-only, one
+   * host-undo reversible). Omitting `tidyCanvas` from the base is a harmless no-op on a package
+   * predating it (0.17.0), and matches the concrete method on 0.18.0-rc.5 at integration.
+   */
+  tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
   /**
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally
@@ -111,6 +151,39 @@ export type LifecycleOrchestrator = Omit<Orchestrator, 'describeApp' | 'spawnGro
    * no nonce, no confirm, no PTY write. Resolves with the board's result.
    */
   awaitSettled(boardId: string): Promise<BoardResult>
+  /**
+   * 🔒 Kanban card writes (P3) — add / move / update / remove a card on a kanban board. Each resolves
+   * + kanban-checks the target, sanitizes + caps the content, human-confirms the op, applies it via
+   * the `patchKanban` command, and audits every branch (mirrors `addPlanningElements`). `addCard`
+   * MINTS the card id and returns it. Host-local inline types (the installed package predates the
+   * `@expanse-ade/mcp` `KanbanCardSpec`/`KanbanCardPatch`); Omitting them from the base is a harmless
+   * no-op on 0.17.0 and matches the concrete methods on 0.18.0-rc.2 at integration — same discipline
+   * as `describeLayout`.
+   */
+  addCard(
+    boardId: string,
+    spec: { columnId: string; title: string; tag?: string; assignee?: string; ref?: string }
+  ): Promise<{ id: string }>
+  moveCard(boardId: string, cardId: string, toColumnId: string): Promise<void>
+  updateCard(
+    boardId: string,
+    cardId: string,
+    patch: { title?: string; tag?: string; assignee?: string; ref?: string }
+  ): Promise<void>
+  removeCard(boardId: string, cardId: string): Promise<void>
+  /**
+   * 🔒 Visualize a plan as a NEW board (P5) — validate/sanitize/cap the plan, surface the UPGRADED
+   * human-confirm CHOOSER (kanban/grid/checklist/columns), and on approval create the chosen board
+   * (tidied into open space) via the `visualizePlan` command; audits every branch. MINTS + returns the
+   * board id. Host-local inline types (the installed package predates `VisualizePlanSpec`); Omitting it
+   * from the base is a harmless no-op on 0.17.0 and matches the concrete method on 0.18.0-rc.3 — same
+   * discipline as `describeLayout` / the card methods.
+   */
+  visualizePlan(spec: {
+    items: Array<{ title: string; status?: string; tag?: string; assignee?: string; note?: string }>
+    suggested?: 'kanban' | 'grid' | 'checklist' | 'columns'
+    title?: string
+  }): Promise<{ id: string }>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
@@ -143,6 +216,25 @@ export interface BoardRegistry {
     path?: string
     /** file-tree S5: a planning board's `fileref` paths+labels — forwarded to `canvas://boards`. */
     fileRefs?: Array<{ path: string; label: string }>
+    /** P1 canvas awareness: world-space board geometry (top-left x/y + size w/h), forwarded to
+     *  `canvas://boards` + the app self-model so an agent can reason about the spatial layout. */
+    x?: number
+    y?: number
+    w?: number
+    h?: number
+    /** P3b: a kanban board's bounded lanes + cards (mirror-sanitized), grouped + served as
+     *  `canvas://board/{id}/cards`. Absent on every non-kanban board. */
+    kanban?: {
+      columns: Array<{ id: string; title: string; wip?: number }>
+      cards: Array<{
+        id: string
+        columnId: string
+        title: string
+        tag?: string
+        assignee?: string
+        ref?: string
+      }>
+    }
   }>
   /**
    * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize
@@ -219,9 +311,11 @@ export interface BoardRegistry {
    * 🔒 Block on a mandatory human confirm (T4.2). MAIN injects `requestConfirm`
    * (fail-closed everywhere); resolves `{ approved }` only on an explicit human yes.
    * The decision authority is the human via our own trusted UI — never the
-   * worker-originated content that prompted the dispatch.
+   * worker-originated content that prompted the dispatch. P5: a request may carry a bounded
+   * `choices` chooser, and the decision then carries the human's `choice` (the requesting gate
+   * re-validates it against the offered set — see `ConfirmChoices`).
    */
-  confirm(req: { title: string; body: string }): Promise<{ approved: boolean }>
+  confirm(req: ConfirmRequest): Promise<ConfirmDecision>
   /**
    * 🔒 Append one dispatch audit entry (T4.1). MAIN injects `getAuditLog().append`.
    * Every dispatch attempt — rejected / denied / failed / completed — is recorded with

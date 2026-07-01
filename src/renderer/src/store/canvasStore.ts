@@ -182,6 +182,13 @@ export interface CanvasState {
       browser?: { id: string }
     }
   }) => { groupId: string }
+  /**
+   * Insert a FULLY-PREPARED board (P5, the MCP `visualizePlan` write path) in ONE undoable step. The
+   * board arrives already placed + sized + populated (kanban columns+cards, or a planning board with
+   * elements) by the caller (`applyMcpCommand`, which did the free-slot + materialize). Mirrors
+   * `spawnGroup`'s complete-insert; the caller enforces idempotency-by-id + selects it (setSelection).
+   */
+  addPreparedBoard: (board: Board) => void
   /** Clear the New Terminal config-pending flag (dialog Create/Cancel), releasing the spawn. */
   clearConfigPending: () => void
   /**
@@ -685,6 +692,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     )
     return { groupId: group.id }
   },
+
+  // ONE tracked step inserts the whole populated board (P5 visualize_plan) → a single undo removes it.
+  // The board arrives placed + sized + populated (applyMcpCommand did free-slot + materialize); the
+  // applier selects it separately via setSelection (non-undoable). reflectPresent:false matches
+  // addBoard/spawnGroup (granularly undoable).
+  addPreparedBoard: (board) =>
+    set((s) => trackedChange(s, { boards: [...s.boards, board] }, { reflectPresent: false })),
 
   clearConfigPending: () => set({ configPendingId: null }),
 

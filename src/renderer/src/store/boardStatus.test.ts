@@ -188,4 +188,121 @@ describe('buildBoardSnapshot', () => {
     expect('path' in snapshot[0]).toBe(false)
     expect('fileRefs' in snapshot[1]).toBe(false)
   })
+
+  it('forwards world-space geometry x/y/w/h when present (P1 canvas awareness)', () => {
+    const snapshot = buildBoardSnapshot(
+      [{ id: 'b1', type: 'planning', title: 'Plan', x: 120, y: 40, w: 640, h: 480 }],
+      {
+        running: {},
+        preview: {}
+      }
+    )
+    expect(snapshot[0]).toEqual({
+      id: 'b1',
+      type: 'planning',
+      title: 'Plan',
+      status: 'static',
+      x: 120,
+      y: 40,
+      w: 640,
+      h: 480
+    })
+  })
+
+  it('omits geometry for a stub without it (byte-identical) + drops non-finite values (P1)', () => {
+    const [noGeo, badGeo] = buildBoardSnapshot(
+      [
+        { id: 'a', type: 'terminal', title: 'A' },
+        // A NaN/∞ must never reach the mirror — the finite guard drops it, keeps the board.
+        { id: 'b', type: 'terminal', title: 'B', x: NaN, y: Infinity, w: 300, h: 200 }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(noGeo).toEqual({ id: 'a', type: 'terminal', title: 'A', status: 'idle' })
+    expect('x' in noGeo).toBe(false)
+    expect('x' in badGeo).toBe(false)
+    expect('y' in badGeo).toBe(false)
+    expect(badGeo).toMatchObject({ w: 300, h: 200 })
+  })
+
+  it('projects a kanban board bounded columns+cards; chips + wip ride through (P3b)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          columns: [
+            { id: 'backlog', title: 'Backlog' },
+            { id: 'wip', title: 'In Progress', wip: 2 }
+          ],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'backlog',
+              title: 'One',
+              tag: 'feature',
+              assignee: 'claude',
+              ref: 'PR #1'
+            },
+            { id: 'c2', columnId: 'wip', title: 'Two' }
+          ]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(board.status).toBe('static')
+    expect(board.kanban).toEqual({
+      columns: [
+        { id: 'backlog', title: 'Backlog' },
+        { id: 'wip', title: 'In Progress', wip: 2 }
+      ],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          tag: 'feature',
+          assignee: 'claude',
+          ref: 'PR #1'
+        },
+        { id: 'c2', columnId: 'wip', title: 'Two' }
+      ]
+    })
+  })
+
+  it('omits kanban for every non-kanban board (byte-identical) even if it carries stray columns (P3b)', () => {
+    const [plan] = buildBoardSnapshot(
+      // A non-kanban board carrying stray `columns`/`cards` must not project a kanban field.
+      [{ id: 'p', type: 'planning', title: 'Plan', columns: [{ id: 'x', title: 'X' }], cards: [] }],
+      { running: {}, preview: {} }
+    )
+    expect(plan).toEqual({ id: 'p', type: 'planning', title: 'Plan', status: 'static' })
+    expect('kanban' in plan).toBe(false)
+  })
+
+  it('drops malformed columns/cards and count-caps the projection (P3b)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k',
+          type: 'kanban',
+          title: 'K',
+          columns: [
+            { id: 'ok', title: 'OK' },
+            // missing id → dropped
+            { id: '', title: 'Empty' } as { id: string; title: string }
+          ],
+          cards: Array.from({ length: 305 }, (_, i) => ({
+            id: `c${i}`,
+            columnId: 'ok',
+            title: `n${i}`
+          }))
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(board.kanban?.columns).toEqual([{ id: 'ok', title: 'OK' }])
+    expect(board.kanban?.cards).toHaveLength(300) // MAX_KANBAN_CARDS
+  })
 })

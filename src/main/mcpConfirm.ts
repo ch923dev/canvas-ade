@@ -18,6 +18,28 @@ import { isForeignSender } from './ipcGuard'
  * into another agent's shell.
  */
 
+/** One selectable option in a confirm CHOOSER (P5). `id` is the bounded value the host acts on. */
+export interface ConfirmChoiceOption {
+  id: string
+  label: string
+}
+
+/**
+ * 🔒 An optional CHOOSER attached to a confirm request (P5 — the upgraded `visualize_plan` gate). When
+ * present, the modal renders the options and the human's pick rides back on the decision's `choice`.
+ * The option ids are a BOUNDED, host-defined set — the requesting gate re-validates `decision.choice`
+ * against `options` and falls back to `default` for anything off-set, so a garbage/forged choice can
+ * never widen the action (the decision authority + the value space both stay MAIN's).
+ */
+export interface ConfirmChoices {
+  /** Segment label above the options (e.g. "Visualization"). */
+  label?: string
+  /** The selectable options (bounded, host-defined). */
+  options: ConfirmChoiceOption[]
+  /** The pre-selected option id (one of `options[].id`) — the agent's suggestion. */
+  default: string
+}
+
 export interface ConfirmRequest {
   /** Short modal title (e.g. "Dispatch to terminal"). */
   title: string
@@ -26,10 +48,14 @@ export interface ConfirmRequest {
   /** Optional button labels (default Approve / Deny). */
   confirmLabel?: string
   denyLabel?: string
+  /** 🔒 P5: an optional layout chooser — when set, the modal renders the options + returns `choice`. */
+  choices?: ConfirmChoices
 }
 
 export interface ConfirmDecision {
   approved: boolean
+  /** 🔒 P5: the option id the human picked when the request carried `choices`; absent otherwise. */
+  choice?: string
 }
 
 /**
@@ -88,11 +114,14 @@ export function requestConfirm(
     const onReply = (e: IpcMainEvent, decision: unknown): void => {
       if (isForeignSender(e, getWin)) return // a foreign frame can't decide — ignore
       // Fail-closed: ONLY an explicit `approved === true` approves; anything else denies.
-      const approved =
-        decision !== null &&
-        typeof decision === 'object' &&
-        (decision as ConfirmDecision).approved === true
-      finish({ approved })
+      const d =
+        decision !== null && typeof decision === 'object' ? (decision as ConfirmDecision) : null
+      const approved = d?.approved === true
+      // 🔒 P5: carry the chooser pick through as an OPAQUE string when present. It is meaningful only
+      // on an approve, and the requesting gate re-validates it against the offered option set (falling
+      // back to `default`), so a forged/garbage value here can never widen the action.
+      const choice = typeof d?.choice === 'string' ? d.choice : undefined
+      finish(choice !== undefined ? { approved, choice } : { approved })
     }
     // Backstop safety timeout (deny on expiry). Defaults to DEFAULT_TIMEOUT_MS so a frozen
     // renderer can't hang the awaiting tool forever (BUG-010). Arm only for a finite

@@ -13,7 +13,12 @@ import { createDispatchGuard } from './dispatchGuard'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
+import { createKanbanMethods } from './mcpKanbanGate'
+import { createVisualizeMethod } from './mcpVisualizeGate'
 import { buildAppModel, type AppModel } from './appModel'
+import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
+import { createBoardCardsMethod } from './mcpBoardCards'
+import { createTidyMethod } from './mcpTidy'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -49,6 +54,12 @@ export type {
 type BoardSummaryWithFiles = BoardSummary & {
   path?: string
   fileRefs?: Array<{ path: string; label: string }>
+  /** P1 canvas awareness: world-space board geometry (top-left x/y + size w/h), forwarded verbatim
+   *  onto `canvas://boards` (same JSON.stringify ride-through as path/fileRefs). Absent pre-P1. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /**
@@ -230,6 +241,16 @@ export function buildOrchestrator(
     input: Omit<AuditInput, 'status'> & { status: DispatchStatus }
   ): Promise<void> => registry.audit(input)
 
+  // 🔒 P3 Kanban card writes (add/move/update/remove) — the resolve→kanban-check→confirm→patchKanban
+  // →audit gate + the four methods live in ./mcpKanbanGate (keeps this file under the max-lines gate);
+  // spread into the returned object below. No PTY / nonce — a card is passive content (ADR 0003).
+  const kanbanMethods = createKanbanMethods({
+    listBoards: () => registry.listBoards(),
+    confirm: (req) => registry.confirm(req),
+    sendCommand: (cmd) => registry.sendCommand(cmd),
+    audit: writeAudit
+  })
+
   /**
    * 🔒 The single, unskippable write gate shared by ALL four PTY-dispatch tools
    * (handoff_prompt / assign_prompt / relay_prompt / interrupt). Centralising the gate IS
@@ -396,7 +417,13 @@ export function buildOrchestrator(
       // out verbatim on the `canvas://boards` resource (JSON.stringify of this projection), giving
       // an agent the path of an open File board + the files pinned to a plan — never file content.
       ...(b.path !== undefined ? { path: b.path } : {}),
-      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {})
+      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {}),
+      // P1 canvas awareness: forward world-space geometry when present (mirror-validated finite),
+      // so an agent can reason spatially over `canvas://boards`. Absent ⇒ omitted (pre-P1 renderer).
+      ...(b.x !== undefined ? { x: b.x } : {}),
+      ...(b.y !== undefined ? { y: b.y } : {}),
+      ...(b.w !== undefined ? { w: b.w } : {}),
+      ...(b.h !== undefined ? { h: b.h } : {})
     }))
   }
 
@@ -413,6 +440,15 @@ export function buildOrchestrator(
     listBoards: listBoardSummaries
   })
 
+  // PR-5/P1b: the Named-Group mirror projected to the shape BOTH self-models consume (describeApp's
+  // `canvas.groups` + describeLayout's digest input). Defined once so the projection isn't duplicated.
+  const listGroupsProjection = (): Array<{ id: string; name: string; boardIds: string[] }> =>
+    (registry.listGroups?.() ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      boardIds: [...g.boardIds]
+    }))
+
   return {
     listBoards: listBoardSummaries,
     ...lifecycle,
@@ -421,6 +457,14 @@ export function buildOrchestrator(
       if (!board) throw new Error(`board not found: ${boardId}`)
       return deriveStatus(board, sessionLookup())
     },
+    // 🔒 P3b canvas://board/{id}/cards — the READ half of the card loop (one kanban board's lanes+cards,
+    // grouped from the live mirror). Built in ./mcpBoardCards + spread here to keep this file under the
+    // max-lines gate. Read-only (no PTY / nonce / confirm) — card TEXT the human already sees on-canvas.
+    ...createBoardCardsMethod(registry.listBoards),
+    // 🔒 P2 tidy_canvas — reposition the whole canvas via the renderer's deterministic packer. Built
+    // in ./mcpTidy + spread here to keep this file under the max-lines gate. UN-GATED + content-less
+    // (reposition-only, one host-undo reversible — the spawn_group precedent): no cap/mint/confirm/audit.
+    ...createTidyMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.
@@ -665,6 +709,16 @@ export function buildOrchestrator(
       // (6) Record the landed write — the FULL content in `prompt` for the forensic trail.
       await auditPlanning('applied', { prompt: body, detail: `${ops.length} elements` })
     },
+    // 🔒 P3 Kanban card writes (add/move/update/remove) — built in ./mcpKanbanGate (see kanbanMethods).
+    ...kanbanMethods,
+    // 🔒 P5 plan-visualize (visualize_plan) — the upgraded content-write gate (chooser + create),
+    // built in ./mcpVisualizeGate (keeps this file under the max-lines gate). NO PTY / nonce (a board
+    // is passive content, ADR 0003). Inlined into the spread to stay under the gate.
+    ...createVisualizeMethod({
+      confirm: (req) => registry.confirm(req),
+      sendCommand: (cmd) => registry.sendCommand(cmd),
+      audit: writeAudit
+    }),
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
       // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +
       // prove it is a terminal HERE; the shared write gate then runs the unskippable
@@ -1000,13 +1054,13 @@ export function buildOrchestrator(
       // that doesn't wire listGroups reads [].)
       const summaries = await listBoardSummaries()
       return buildAppModel({
-        boards: summaries.map((b) => ({
-          id: b.id,
-          type: b.type,
-          title: b.title,
-          status: b.status ?? 'static',
-          ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
-          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
+        // Drop the file-context fields (path/fileRefs) the app-model doesn't carry + default status;
+        // everything else — agentKind/monitorActivity + P1 geometry (x/y/w/h) — rides through via
+        // `...rest`, so an orchestrator reasoning over `canvas://app-model` sees the same spatial data
+        // as `canvas://boards`. (`_`-prefixed drops are ignored by noUnusedLocals; keeps this <700.)
+        boards: summaries.map(({ path: _path, fileRefs: _fileRefs, status, ...rest }) => ({
+          ...rest,
+          status: status ?? 'static'
         })),
         connectors: registry.listConnectors().map((c) => ({
           id: c.id,
@@ -1014,11 +1068,7 @@ export function buildOrchestrator(
           targetId: c.targetId,
           kind: c.kind
         })),
-        groups: (registry.listGroups?.() ?? []).map((g) => ({
-          id: g.id,
-          name: g.name,
-          boardIds: [...g.boardIds]
-        })),
+        groups: listGroupsProjection(),
         rules: {
           spawnCap: getCap(),
           everyWriteGated: true,
@@ -1026,6 +1076,18 @@ export function buildOrchestrator(
           idleActivityMs
         }
       })
+    },
+    async describeLayout(): Promise<LayoutDigest> {
+      // P1b: assemble the read-only SPATIAL digest served as `canvas://layout`. Read-only — projects
+      // the live board geometry (P1 canvas awareness) + the Named-Group mirror through
+      // buildLayoutDigest, which derives bbox / overlaps / row·column·grid·scattered arrangement.
+      // Same injected-mirror discipline as describeApp; a registry that doesn't wire listGroups reads
+      // [] (an ungrouped digest). Boards without geometry are dropped by the digest, not here.
+      const summaries = await listBoardSummaries()
+      return buildLayoutDigest(
+        summaries.map((b) => ({ id: b.id, type: b.type, x: b.x, y: b.y, w: b.w, h: b.h })),
+        listGroupsProjection()
+      )
     }
   }
 }

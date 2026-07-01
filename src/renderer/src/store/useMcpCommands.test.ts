@@ -571,4 +571,214 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
       expect(useCanvasStore.getState().boards).toHaveLength(0)
     })
   })
+
+  describe('patchKanban (P3 card mutation)', () => {
+    const seedKanban = (): string => useCanvasStore.getState().addBoard('kanban', { x: 0, y: 0 })
+
+    it('add + move + update mutate the board cards as undoable edits', () => {
+      const id = seedKanban()
+      const add = applyMcpCommand({
+        type: 'patchKanban',
+        id,
+        ops: [
+          { op: 'add', card: { id: 'c1', columnId: 'backlog', title: 'Wire auth', tag: 'feature' } }
+        ]
+      })
+      expect(add).toEqual({ ok: true, type: 'patchKanban' })
+      applyMcpCommand({
+        type: 'patchKanban',
+        id,
+        ops: [{ op: 'move', cardId: 'c1', toColumnId: 'review' }]
+      })
+      applyMcpCommand({
+        type: 'patchKanban',
+        id,
+        ops: [{ op: 'update', cardId: 'c1', patch: { assignee: 'claude' } }]
+      })
+      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      expect(board?.type).toBe('kanban')
+      if (board?.type === 'kanban') {
+        expect(board.cards).toEqual([
+          { id: 'c1', columnId: 'review', title: 'Wire auth', tag: 'feature', assignee: 'claude' }
+        ])
+      }
+      // Each applied op checkpoints onto `past` (undoable, chains with human edits).
+      expect(useCanvasStore.getState().past.length).toBeGreaterThan(0)
+    })
+
+    it('rejects a non-kanban board and an unknown card WITHOUT mutating', () => {
+      const planId = useCanvasStore.getState().addBoard('planning', { x: 0, y: 0 })
+      expect(
+        applyMcpCommand({ type: 'patchKanban', id: planId, ops: [{ op: 'remove', cardId: 'x' }] })
+          .ok
+      ).toBe(false)
+
+      const id = seedKanban()
+      expect(
+        applyMcpCommand({
+          type: 'patchKanban',
+          id,
+          ops: [{ op: 'move', cardId: 'ghost', toColumnId: 'done' }]
+        }).ok
+      ).toBe(false)
+      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      if (board?.type === 'kanban') expect(board.cards).toEqual([])
+    })
+
+    it('rejects an empty ops array and an unknown board id', () => {
+      const id = seedKanban()
+      expect(applyMcpCommand({ type: 'patchKanban', id, ops: [] }).ok).toBe(false)
+      expect(
+        applyMcpCommand({
+          type: 'patchKanban',
+          id: 'nope',
+          ops: [{ op: 'remove', cardId: 'x' }]
+        }).ok
+      ).toBe(false)
+    })
+  })
+})
+
+describe('applyMcpCommand — visualizePlan (P5)', () => {
+  const PLAN = [
+    { title: 'Audit token flow', status: 'Backlog', tag: 'research' },
+    { title: 'Wire PKCE', status: 'In Progress', assignee: 'claude' },
+    { title: 'Wire callback', status: 'In Progress', assignee: 'codex' },
+    { title: 'Ship it', status: 'Done', tag: 'shipped' }
+  ]
+
+  it('kanban: creates a kanban board with columns derived from distinct statuses + cards bound', () => {
+    const ack = applyMcpCommand({
+      type: 'visualizePlan',
+      id: 'viz-1',
+      visualization: 'kanban',
+      title: 'Auth refactor',
+      items: PLAN
+    })
+    expect(ack).toEqual({ ok: true, type: 'visualizePlan' })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-1')
+    expect(board?.type).toBe('kanban')
+    if (board?.type !== 'kanban') throw new Error('expected a kanban board')
+    expect(board.title).toBe('Auth refactor')
+    expect(board.columns.map((c) => c.id)).toEqual(['backlog', 'in-progress', 'done'])
+    expect(board.columns.map((c) => c.title)).toEqual(['Backlog', 'In Progress', 'Done'])
+    expect(board.cards).toHaveLength(4)
+    expect(board.cards.map((c) => c.columnId)).toEqual([
+      'backlog',
+      'in-progress',
+      'in-progress',
+      'done'
+    ])
+    expect(board.cards[1]).toMatchObject({ title: 'Wire PKCE', assignee: 'claude' })
+  })
+
+  it('grid: creates a planning board with one note element per item', () => {
+    applyMcpCommand({ type: 'visualizePlan', id: 'viz-2', visualization: 'grid', items: PLAN })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-2')
+    expect(board?.type).toBe('planning')
+    if (board?.type !== 'planning') throw new Error('expected a planning board')
+    expect(board.elements.filter((e) => e.kind === 'note')).toHaveLength(4)
+    // No title supplied → the per-shape default.
+    expect(board.title).toBe('Plan')
+  })
+
+  it('checklist: creates a planning board with ONE checklist whose items mirror the plan', () => {
+    applyMcpCommand({ type: 'visualizePlan', id: 'viz-3', visualization: 'checklist', items: PLAN })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-3')
+    if (board?.type !== 'planning') throw new Error('expected a planning board')
+    const lists = board.elements.filter((e) => e.kind === 'checklist')
+    expect(lists).toHaveLength(1)
+    if (lists[0].kind !== 'checklist') throw new Error('expected a checklist element')
+    expect(lists[0].items.map((i) => i.label)).toEqual([
+      'Audit token flow',
+      'Wire PKCE',
+      'Wire callback',
+      'Ship it'
+    ])
+    // 'Done' status → the row is checked; an in-flight status is not.
+    expect(lists[0].items[3].done).toBe(true)
+    expect(lists[0].items[0].done).toBe(false)
+  })
+
+  it('columns: creates a planning board (one element per item, sectioned by status)', () => {
+    applyMcpCommand({ type: 'visualizePlan', id: 'viz-4', visualization: 'columns', items: PLAN })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'viz-4')
+    if (board?.type !== 'planning') throw new Error('expected a planning board')
+    expect(board.elements.filter((e) => e.kind === 'note')).toHaveLength(4)
+  })
+
+  it('is idempotent by id — a re-delivered command yields one board and acks ok both times', () => {
+    const cmd = {
+      type: 'visualizePlan' as const,
+      id: 'viz-5',
+      visualization: 'grid' as const,
+      items: PLAN
+    }
+    expect(applyMcpCommand(cmd).ok).toBe(true)
+    expect(applyMcpCommand(cmd).ok).toBe(true)
+    expect(useCanvasStore.getState().boards.filter((b) => b.id === 'viz-5')).toHaveLength(1)
+  })
+
+  it('rejects an empty items array and an invalid visualization WITHOUT adding a board', () => {
+    expect(
+      applyMcpCommand({ type: 'visualizePlan', id: 'x', visualization: 'grid', items: [] }).ok
+    ).toBe(false)
+    expect(
+      applyMcpCommand({
+        type: 'visualizePlan',
+        id: 'x',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        visualization: 'bogus' as any,
+        items: PLAN
+      }).ok
+    ).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+})
+
+describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
+  /** Seed three terminals stacked on ONE spot so a tidy must move at least two of them. */
+  function seedOverlapping(): void {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b1', type: 'terminal' } })
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b2', type: 'terminal' } })
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b3', type: 'terminal' } })
+    useCanvasStore.setState((s) => ({
+      boards: s.boards.map((b) => ({ ...b, x: 100, y: 100 })),
+      past: [],
+      future: []
+    }))
+  }
+
+  it('repositions overlapping boards, reports the moved count, and is ONE undo step', () => {
+    seedOverlapping()
+    const ack = applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    expect(ack).toMatchObject({ ok: true, type: 'tidyBoards' })
+    if (!ack.ok) throw new Error('expected ok')
+    expect(ack.moved).toBeGreaterThan(0)
+    // The packer separates them — no two boards share a position afterwards.
+    const boards = useCanvasStore.getState().boards
+    expect(new Set(boards.map((b) => `${b.x},${b.y}`)).size).toBe(boards.length)
+    // One tracked step for the whole re-pack (no beginChange wrapper in the applier).
+    expect(useCanvasStore.getState().past).toHaveLength(1)
+  })
+
+  it('falls back to smart for an off-enum mode (defense in depth) and still tidies', () => {
+    seedOverlapping()
+    const ack = applyMcpCommand({
+      type: 'tidyBoards',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mode: 'diagonal' as any
+    })
+    expect(ack.ok).toBe(true)
+    if (!ack.ok) throw new Error('expected ok')
+    expect(ack.moved).toBeGreaterThan(0)
+  })
+
+  it('no-ops with < 2 boards — acks moved:0 and pushes no undo step', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'solo', type: 'terminal' } })
+    useCanvasStore.setState({ past: [], future: [] })
+    const ack = applyMcpCommand({ type: 'tidyBoards' })
+    expect(ack).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
+    expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
 })

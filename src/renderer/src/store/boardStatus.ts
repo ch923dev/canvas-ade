@@ -53,6 +53,9 @@ export function boardStatusBucket(type: string, signals: BoardStatusSignals): Bo
           return 'idle'
       }
     case 'planning':
+    case 'kanban':
+      // Passive content boards — no liveness signal, so no pill (v17 kanban joins planning here;
+      // the `default` would already bucket it static, but the explicit case documents the intent).
       return 'static'
     default:
       return 'static'
@@ -98,6 +101,30 @@ export interface FileRefSummary {
   label: string
 }
 
+/**
+ * One column in a Kanban board's mirror projection (P3b) — mirrors `KanbanColumn` (id/title + optional
+ * WIP), so the host can serve it grouped as `canvas://board/{id}/cards`. Trusted-user text only.
+ */
+export interface KanbanColumnSummary {
+  id: string
+  title: string
+  wip?: number
+}
+
+/**
+ * One card in a Kanban board's mirror projection (P3b) — mirrors `KanbanCard` (flat, bound to a column
+ * by `columnId`, with optional chips), so the host can group cards under their column on read. Card
+ * TEXT the human already sees on-canvas; never file content / PTY bytes.
+ */
+export interface KanbanCardSummary {
+  id: string
+  columnId: string
+  title: string
+  tag?: string
+  assignee?: string
+  ref?: string
+}
+
 /** A board's metadata projection the mirror carries (control plane; no content). */
 export interface BoardMirrorEntry {
   id: string
@@ -127,6 +154,23 @@ export interface BoardMirrorEntry {
    * non-fileref snapshots byte-identical to before.
    */
   fileRefs?: FileRefSummary[]
+  /**
+   * World-space board geometry (P1 canvas awareness) — top-left `x`/`y` + size `w`/`h` in canvas
+   * world px, forwarded to `canvas://boards` so an agent can reason about the SPATIAL layout (where
+   * boards sit, how big, whether they overlap) and drive an informed tidy — not just the logical
+   * id/type/status. Ride out only when present, so a geometry-less test stub stays byte-identical.
+   */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  /**
+   * Kanban board's bounded columns + cards (P3b; `type:'kanban'` only) — the ordered lanes + flat
+   * cards, so the host can serve one board's plan as `canvas://board/{id}/cards` (grouped host-side).
+   * A BOUNDED projection (count-capped here, field-capped on the host ingest), NOT the raw arrays.
+   * Absent (not empty) on every non-kanban board, keeping their snapshots byte-identical.
+   */
+  kanban?: { columns: KanbanColumnSummary[]; cards: KanbanCardSummary[] }
 }
 
 /**
@@ -145,6 +189,23 @@ export interface BoardSnapshotInput {
   path?: string
   /** Present on a `'planning'` board (PlanningBoard.elements); read to derive `fileRefs`. */
   elements?: ReadonlyArray<{ kind: string; path?: string; label?: string }>
+  /** World-space geometry (P1) — every real `Board` carries these via `BoardCommon`; optional here
+   *  so a minimal test stub still satisfies the read shape. Forwarded to the mirror when finite. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  /** Present on a `'kanban'` board (KanbanBoard.columns); read to project the bounded kanban summary. */
+  columns?: ReadonlyArray<{ id: string; title: string; wip?: number }>
+  /** Present on a `'kanban'` board (KanbanBoard.cards); read to project the bounded kanban summary. */
+  cards?: ReadonlyArray<{
+    id: string
+    columnId: string
+    title: string
+    tag?: string
+    assignee?: string
+    ref?: string
+  }>
 }
 
 /**
@@ -173,6 +234,58 @@ function deriveFileRefs(
 }
 
 /**
+ * Bound the mirrored kanban projection so a pathological board can't push an unbounded payload over
+ * the `mcp:boards` IPC channel (the host re-caps authoritatively on ingest). Counts only — the field
+ * lengths are the host's trust-boundary job (mirrors the `deriveFileRefs` → host `sanitizeFileRefs`
+ * split, where the renderer projects and the host caps).
+ */
+const MAX_KANBAN_COLUMNS = 50
+const MAX_KANBAN_CARDS = 300
+
+/**
+ * Project a kanban board's `columns`/`cards` into the bounded mirror summary (P3b). Keeps only
+ * entries whose required ids/titles are non-empty strings, count-caps both lists, and carries the
+ * optional chips/WIP through when present. Returns `undefined` (not an empty projection) when there
+ * is nothing to project, so the conditional spread in {@link buildBoardSnapshot} omits the field.
+ */
+function deriveKanban(
+  columns: BoardSnapshotInput['columns'],
+  cards: BoardSnapshotInput['cards']
+): { columns: KanbanColumnSummary[]; cards: KanbanCardSummary[] } | undefined {
+  const cols: KanbanColumnSummary[] = []
+  if (columns) {
+    for (const c of columns) {
+      if (cols.length >= MAX_KANBAN_COLUMNS) break
+      if (typeof c?.id !== 'string' || c.id.length === 0 || typeof c.title !== 'string') continue
+      const col: KanbanColumnSummary = { id: c.id, title: c.title }
+      if (typeof c.wip === 'number' && Number.isFinite(c.wip)) col.wip = c.wip
+      cols.push(col)
+    }
+  }
+  const out: KanbanCardSummary[] = []
+  if (cards) {
+    for (const c of cards) {
+      if (out.length >= MAX_KANBAN_CARDS) break
+      if (
+        typeof c?.id !== 'string' ||
+        c.id.length === 0 ||
+        typeof c.columnId !== 'string' ||
+        c.columnId.length === 0 ||
+        typeof c.title !== 'string'
+      ) {
+        continue
+      }
+      const card: KanbanCardSummary = { id: c.id, columnId: c.columnId, title: c.title }
+      if (typeof c.tag === 'string' && c.tag.length > 0) card.tag = c.tag
+      if (typeof c.assignee === 'string' && c.assignee.length > 0) card.assignee = c.assignee
+      if (typeof c.ref === 'string' && c.ref.length > 0) card.ref = c.ref
+      out.push(card)
+    }
+  }
+  return cols.length > 0 || out.length > 0 ? { columns: cols, cards: out } : undefined
+}
+
+/**
  * Build the renderer→MAIN board snapshot: each board's `{id,type,title}` plus its
  * derived `status` bucket. Pure — no store/React access — so it is unit-testable and
  * the publish hook is a thin wiring layer over it. The v10 agent-identity fields and the
@@ -188,6 +301,8 @@ export function buildBoardSnapshot(
     // its fileref elements as path+label summaries. Both omitted (not empty) when absent.
     const path = b.type === 'file' && typeof b.path === 'string' ? b.path : undefined
     const fileRefs = b.type === 'planning' ? deriveFileRefs(b.elements) : undefined
+    // P3b: a kanban board projects its bounded columns+cards so the host serves canvas://board/{id}/cards.
+    const kanban = b.type === 'kanban' ? deriveKanban(b.columns, b.cards) : undefined
     return {
       id: b.id,
       type: b.type,
@@ -199,7 +314,15 @@ export function buildBoardSnapshot(
       ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
       ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),
       ...(path !== undefined ? { path } : {}),
-      ...(fileRefs !== undefined ? { fileRefs } : {})
+      ...(fileRefs !== undefined ? { fileRefs } : {}),
+      // P1 canvas awareness: forward world-space geometry when finite (every real board carries it;
+      // a Number.isFinite guard keeps a geometry-less test stub byte-identical + drops any NaN/∞).
+      ...(Number.isFinite(b.x) ? { x: b.x } : {}),
+      ...(Number.isFinite(b.y) ? { y: b.y } : {}),
+      ...(Number.isFinite(b.w) ? { w: b.w } : {}),
+      ...(Number.isFinite(b.h) ? { h: b.h } : {}),
+      // P3b: kanban lanes+cards ride out only for kanban boards (omitted ⇒ byte-identical elsewhere).
+      ...(kanban !== undefined ? { kanban } : {})
     }
   })
 }

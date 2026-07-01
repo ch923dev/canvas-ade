@@ -24,6 +24,12 @@ import {
 import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/terminalFont'
 import { clampScrollback } from '../canvas/boards/terminal/terminalScrollback'
 import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
+// v17 Kanban schema pieces live in a leaf module (keeps this file under the max-lines gate); the
+// back-reference to BoardCommon is type-only, so there is no runtime import cycle. Re-exported below
+// so every `import { KanbanBoard } from '.../boardSchema'` consumer is unchanged.
+import { DEFAULT_KANBAN_COLUMNS } from './kanbanSchema'
+import type { KanbanBoard, KanbanColumn, KanbanCard } from './kanbanSchema'
+export type { KanbanBoard, KanbanColumn, KanbanCard }
 
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
@@ -89,7 +95,14 @@ export { SCHEMA_VERSION, MIN_READER_VERSION }
  */
 // MIN_READER_VERSION is imported + re-exported above from ./boardSchemaVersion (see BUG-013/014).
 
-export type BoardType = 'terminal' | 'browser' | 'planning' | 'command' | 'file' | 'dataflow'
+export type BoardType =
+  | 'terminal'
+  | 'browser'
+  | 'planning'
+  | 'command'
+  | 'file'
+  | 'dataflow'
+  | 'kanban'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
 export type BrowserViewport = 'mobile' | 'tablet' | 'desktop' | 'qhd' | 'uhd'
@@ -348,6 +361,7 @@ export type Board =
   | CommandBoard
   | FileBoard
   | DataFlowBoard
+  | KanbanBoard
 
 // ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
 // A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
@@ -468,7 +482,9 @@ export const DEFAULT_BOARD_SIZE: Record<BoardType, { w: number; h: number }> = {
   command: { w: 760, h: 440 },
   file: { w: 520, h: 380 },
   // Wide enough for the focus-on-node graph + the bottom legend strip (the approved JD-4 mock).
-  dataflow: { w: 760, h: 520 }
+  dataflow: { w: 760, h: 520 },
+  // Wide enough for the four default columns side by side + a little header room (the P4 mock).
+  kanban: { w: 900, h: 520 }
 }
 
 const DEFAULT_TITLE: Record<BoardType, string> = {
@@ -477,7 +493,8 @@ const DEFAULT_TITLE: Record<BoardType, string> = {
   planning: 'Planning',
   command: 'Orchestrator',
   file: 'File',
-  dataflow: 'Data Flow'
+  dataflow: 'Data Flow',
+  kanban: 'Kanban'
 }
 
 /** Seed URL for a new Browser board (basic edit lands in 2.2; port assignment Phase 3). */
@@ -533,6 +550,9 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
     case 'dataflow':
       // Unbound by default; the opener (DataFlowView "→ board") passes opts.sourceBoardId to bind it.
       return { ...base, type, ...(opts.sourceBoardId ? { sourceBoardId: opts.sourceBoardId } : {}) }
+    case 'kanban':
+      // Starts with the four default lanes and no cards; the human/agent fills it in (P4.2/P3).
+      return { ...base, type, columns: DEFAULT_KANBAN_COLUMNS.map((c) => ({ ...c })), cards: [] }
   }
 }
 
@@ -659,7 +679,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v16: optional TerminalBoard `themeId` + `fontFamilyId` (terminal theming, Lane B). Both optional +
   // degraded-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 15 (assertBoard type-checks
   // them as strings without rejecting an unknown id, so a future theme id never fails the load).
-  15: (doc) => ({ ...doc, schemaVersion: 16 })
+  15: (doc) => ({ ...doc, schemaVersion: 16 }),
+  // v17: the `kanban` board type (P4). The type only appears on newly-authored kanban boards, so
+  // existing docs have nothing to backfill — identity bump. BREAKING (floor → 17): a pre-17 reader's
+  // assertBoard default branch throws on the unknown type (boardSchemaVersion.ts).
+  16: (doc) => ({ ...doc, schemaVersion: 17 })
 }
 
 /**
@@ -867,8 +891,10 @@ export function assertPlanningElement(el: unknown): void {
   }
 }
 
-/** Validate one board (common fields + per-type fields); throws on any mismatch. */
-function assertBoard(b: unknown): void {
+/** Validate one board (common fields + per-type fields); throws on any mismatch. Exported so the
+ *  MCP `visualizePlan` applier can re-validate a freshly-built board before it lands (defense in
+ *  depth), alongside {@link assertPlanningElement}. */
+export function assertBoard(b: unknown): void {
   if (!isRecord(b)) fail('board is not an object')
   if (typeof b.id !== 'string') fail('board has a non-string id')
   if (typeof b.title !== 'string') fail('board has a non-string title')
@@ -951,6 +977,33 @@ function assertBoard(b: unknown): void {
         fail('dataflow board sourceBoardId is not a string')
       }
       return
+    case 'kanban': {
+      // v17: columns + cards are required arrays. A column needs id/title strings (+ optional finite
+      // wip); a card needs id/columnId/title strings (+ optional string chips). A card whose columnId
+      // matches no column is a stale ref DROPPED in fromObject (not failed here) — a shape check only,
+      // matching the previewSourceId/dataflow reconcile discipline.
+      if (!Array.isArray(b.columns)) fail('kanban board columns is not an array')
+      for (const c of b.columns as unknown[]) {
+        if (!isRecord(c)) fail('kanban column is not an object')
+        if (typeof c.id !== 'string') fail('kanban column has a non-string id')
+        if (typeof c.title !== 'string') fail('kanban column has a non-string title')
+        if (c.wip !== undefined && !isFiniteNum(c.wip)) {
+          fail('kanban column wip is not a finite number')
+        }
+      }
+      if (!Array.isArray(b.cards)) fail('kanban board cards is not an array')
+      for (const c of b.cards as unknown[]) {
+        if (!isRecord(c)) fail('kanban card is not an object')
+        if (typeof c.id !== 'string') fail('kanban card has a non-string id')
+        if (typeof c.columnId !== 'string') fail('kanban card has a non-string columnId')
+        if (typeof c.title !== 'string') fail('kanban card has a non-string title')
+        for (const k of ['tag', 'assignee', 'ref'] as const) {
+          if (c[k] !== undefined && typeof c[k] !== 'string')
+            fail(`kanban card ${k} is not a string`)
+        }
+      }
+      return
+    }
     default:
       fail(`board has an unknown type ${String(b.type)}`)
   }
@@ -1143,6 +1196,16 @@ export function fromObject(doc: unknown): CanvasDoc {
   for (const b of owned.boards) {
     if (b.type === 'dataflow' && b.sourceBoardId && !browserIdSet.has(b.sourceBoardId)) {
       delete b.sourceBoardId
+    }
+  }
+  // v17: drop a Kanban card whose columnId matches no column on its OWN board — a stale ref (a
+  // hand-edited canvas.json, or a column removed out from under a card). assertBoard already proved
+  // columns/cards are well-formed arrays; this only prunes danglers so the rest of the board loads
+  // (mirrors the dangling-binding drops above — reconcile, never fail).
+  for (const b of owned.boards) {
+    if (b.type === 'kanban') {
+      const colIds = new Set(b.columns.map((c) => c.id))
+      b.cards = b.cards.filter((c) => colIds.has(c.columnId))
     }
   }
   const migrated = migrate(owned)
