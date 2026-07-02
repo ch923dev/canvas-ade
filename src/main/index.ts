@@ -32,6 +32,7 @@ import {
 } from './windowSecurity'
 import { registerMicPermissionPosture } from './micPermission'
 import { applyFakeMediaSwitches, registerVoiceHandlers } from './voiceIpc'
+import { runEngineSpike } from './voiceEngine'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
@@ -295,6 +296,13 @@ function createWindow(): void {
 // against a shared persistent userData; the lock is keyed on userData, so taking it there would
 // deny the second launch. app.isPackaged is false in both, so the lock is only ever taken in a real
 // packaged build (where the deep-link actually matters). Verify via `pnpm pack:dir`.
+//
+// Voice V2 spike (packaged leg): a spike run of the packaged .exe must not fight the user's REAL
+// installed instance for this lock (same app identity → silent quit before the spike gate runs),
+// nor touch real state — isolate its userData in a temp dir BEFORE the lock is keyed on it.
+if (process.env.CANVAS_VOICE_SPIKE) {
+  app.setPath('userData', mkdtempSync(join(tmpdir(), 'expanse-voice-spike-')))
+}
 const gotSingleInstanceLock = app.isPackaged ? app.requestSingleInstanceLock() : true
 if (!gotSingleInstanceLock) {
   // A second instance (e.g. the OS opening an expanse:// link) — the primary handles it; exit now.
@@ -345,6 +353,28 @@ if (app.isPackaged && gotSingleInstanceLock) {
 app.whenReady().then(async () => {
   // A second packaged instance (no lock) is already quitting — don't build a window or wire IPC.
   if (!gotSingleInstanceLock) return
+  // ── Voice V2 spike gate (CANVAS_VOICE_SPIKE): fork the engine host, prove the
+  // sherpa-onnx addon loads in THIS layout (dev out/ vs packaged asar-unpacked), print a
+  // marker, exit — no window, no IPC. Value '1' → stdout marker only; any other value is
+  // treated as a file path that ALSO receives the JSON result (the packaged-.exe leg on
+  // Windows has no reliable console). Never part of a normal boot.
+  if (process.env.CANVAS_VOICE_SPIKE) {
+    const spike = await runEngineSpike()
+    if (process.env.CANVAS_VOICE_SPIKE !== '1') {
+      try {
+        writeFileSync(process.env.CANVAS_VOICE_SPIKE, JSON.stringify(spike))
+      } catch (err) {
+        console.error('voice spike: result-file write failed', err)
+      }
+    }
+    smokeLog(
+      spike.ok
+        ? `VOICE_SPIKE_OK version=${spike.version} resolved=${spike.resolvedPath}`
+        : `VOICE_SPIKE_FAIL ${spike.error}`
+    )
+    app.exit(spike.ok ? 0 : 1)
+    return
+  }
   electronApp.setAppUserModelId('com.expanse.app')
   // Cold start via the scheme (Windows/Linux first launch): the deep-link URL is in our own argv.
   if (app.isPackaged) {

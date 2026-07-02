@@ -58,6 +58,20 @@ Files: `src/main/voiceEngineHost.ts` (utilityProcess entry, out/main bundle),
   precedent, sherpa issues #3108/#2622). macOS later needs rpath layout, not DYLD env
   (SIP); `allowLoadingUnsignedLibraries` available pre-certs. If the spike fails →
   in-MAIN host behind the same interface (one file), decision logged here.
+  - **✅ SPIKE PASSED 2026-07-02 (win-x64, both legs) → utilityProcess host is GO.**
+    Dev: loads via the shared node_modules. Packaged: resolves *through* `app.asar`
+    (Electron's patched fs) and the `.node` + DLLs auto-redirect to `app.asar.unpacked` —
+    **no custom loader needed on Windows** (keep the paseo loader in reserve for the macOS
+    rpath leg, V5). asarUnpack globs added (`sherpa-onnx-node/**`, `sherpa-onnx-*/**` —
+    whole-dir, DLLs must stay beside the .node). Gate machinery kept for V5:
+    `CANVAS_VOICE_SPIKE=1|<result-file>` env → forks the host, prints
+    `VOICE_SPIKE_OK|FAIL`, exits (spike runs isolate userData to a temp dir so the packaged
+    leg doesn't fight an installed Expanse for the single-instance lock). Environment
+    gotcha hit while packing: a RUNNING installed Expanse with a project watcher on the
+    repo permanently locks fresh `.asar` files (Electron asar-fs handle cache) →
+    electron-builder EBUSY; workaround = pruned `-c.electronDist` copy (robocopy /XF
+    default_app.asar version) + fresh output dir. Product fix owed: FileWatcher should
+    ignore `**/*.asar`.
 - Engine loop: `OnlineRecognizer` + per-session stream; `acceptWaveform` per frame;
   `getResult` → `{t:'partial'}`; `isEndpoint` → `{t:'final'}` + `reset`. Endpoint rules:
   start from example defaults (rule1 2.4 s / rule2 1.2 s), tune in V5.

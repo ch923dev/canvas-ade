@@ -100,7 +100,12 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') }
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // Voice V2: the sherpa-onnx engine host — forked as a utilityProcess by
+          // voiceEngine.ts, so it must exist as its own file at out/main/voiceEngineHost.js.
+          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts')
+        }
       }
     }
   },

@@ -2,6 +2,10 @@ node_modules/
 out/
 dist/
 release/
+# electron-builder alternate outputs + pruned electronDist copies (packaged-validation runs;
+# see the release-*/spike-* eslint ignore for the .asar-lock rationale).
+release-*/
+spike-*/
 # Supabase Edge Functions (Deno) + SQL migrations — separate runtime, not app source.
 supabase/
 design-reference/
