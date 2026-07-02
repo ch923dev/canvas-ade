@@ -15,6 +15,7 @@ import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
 import { createKanbanMethods } from './mcpKanbanGate'
 import { createVisualizeMethod } from './mcpVisualizeGate'
+import { createCloseBoardMethod } from './mcpCloseGate'
 import { buildAppModel, type AppModel } from './appModel'
 import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { createBoardCardsMethod } from './mcpBoardCards'
@@ -23,8 +24,6 @@ import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
   makeSessionLookup,
-  MCP_IDLE_ACTIVITY_MS,
-  MCP_IDLE_TTL_MS,
   MCP_SPAWN_CAP,
   MCP_SPAWN_GRACE_MS,
   type BoardRegistry,
@@ -35,7 +34,7 @@ import {
 
 // Re-export the registry/types surface so existing importers (mcp.ts + the test suites)
 // keep importing it from './mcpOrchestrator' unchanged after the mcpRegistry split.
-export { MCP_SPAWN_CAP, MCP_IDLE_TTL_MS, MCP_SPAWN_GRACE_MS } from './mcpRegistry'
+export { MCP_SPAWN_CAP, MCP_SPAWN_GRACE_MS } from './mcpRegistry'
 export type {
   BoardRegistry,
   ConnectorMirrorEntry,
@@ -104,6 +103,13 @@ const GITDIFF_MAX_BYTES = 100_000
  * so unit tests stay instant + deterministic; the two-write split itself is unconditional (and is
  * independent of the `opts.sleep` backstop seam, so a never-resolving test sleep can't stall a write).
  */
+/**
+ * Backstop deadline for the handoff await-idle (M5). Was aliased to the idle-reap TTL
+ * (`MCP_IDLE_TTL_MS`) before the reaper was removed (2026-07-02); kept at the same 5-minute
+ * value as its own named constant so handoff behavior is unchanged.
+ */
+const MCP_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000
+
 const SUBMIT_SETTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 100
 const settleBeforeSubmit = (): Promise<void> =>
   SUBMIT_SETTLE_MS <= 0
@@ -131,13 +137,10 @@ export function buildOrchestrator(
   const capOpt = opts.cap
   const getCap: () => number =
     typeof capOpt === 'function' ? capOpt : (): number => capOpt ?? MCP_SPAWN_CAP
-  const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
-  // BUG-007: output-silence dormancy threshold for the idle-reaper (see MCP_IDLE_ACTIVITY_MS).
-  const idleActivityMs = opts.idleActivityMs ?? MCP_IDLE_ACTIVITY_MS
   // 🔒 One single-use-nonce authority per orchestrator (T4.3 dispatch).
   const guard = opts.guard ?? createDispatchGuard()
-  const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_IDLE_TTL_MS
+  const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_HANDOFF_TIMEOUT_MS
   // The handoff await-idle backstop deadline, made CANCELLABLE: a fast-settling dispatch clears
   // the real timer in finish() instead of leaving a 5-min timer + closure alive until it no-ops
   // (the prior `void sleep(...).then()` never cancelled). The injected `opts.sleep` seam (tests)
@@ -412,9 +415,8 @@ export function buildOrchestrator(
     return { safeText, nonce, seq }
   }
 
-  // The read-only board projection (T1.1). Lifted out of the returned object so the
-  // extracted lifecycle cluster (reapIdle) can read the SAME derived per-board statuses
-  // through the injected `listBoards` dep, while mcp.ts still calls it via the spread.
+  // The read-only board projection (T1.1). Lifted out of the returned object so
+  // describeApp/describeLayout can reuse it, while mcp.ts still calls it via the spread.
   const listBoardSummaries = async (): Promise<BoardSummaryWithFiles[]> => {
     const sessionStatusFor = sessionLookup()
     return registry.listBoards().map((b) => ({
@@ -442,17 +444,13 @@ export function buildOrchestrator(
     }))
   }
 
-  // The board-lifecycle cluster (spawnBoard / closeBoard / reapIdle + the cap budget,
-  // reconcile, and the re-entrancy latch) extracted to a DI factory (mirrors the
-  // store-slice split #101). reapIdle reads derived statuses through `listBoardSummaries`.
+  // The board-lifecycle cluster (spawnBoard / spawnGroup / closeBoard + the cap budget and
+  // reconcile) extracted to a DI factory (mirrors the store-slice split #101).
   const lifecycle = createMcpLifecycle({
     registry,
     now,
     cap: getCap,
-    idleTtlMs,
     spawnGraceMs,
-    idleActivityMs,
-    listBoards: listBoardSummaries,
     onBoardClosed: opts.onBoardClosed
   })
 
@@ -468,6 +466,15 @@ export function buildOrchestrator(
   return {
     listBoards: listBoardSummaries,
     ...lifecycle,
+    // 🔒 Human-gated close (2026-07-02, replaces the removed idle reaper) — overrides the
+    // lifecycle's raw closeBoard from the spread above. Built in ./mcpCloseGate (keeps this
+    // file under the max-lines gate): confirm-by-name → teardown → audit every exit.
+    ...createCloseBoardMethod({
+      listBoards: () => registry.listBoards(),
+      confirm: (req) => registry.confirm(req),
+      audit: writeAudit,
+      closeBoard: (id) => lifecycle.closeBoard(id)
+    }),
     async boardStatus(boardId: BoardId): Promise<string> {
       const board = registry.listBoards().find((b) => b.id === boardId)
       if (!board) throw new Error(`board not found: ${boardId}`)
@@ -821,7 +828,7 @@ export function buildOrchestrator(
      * dispatch whose prompt was delivered as a LAUNCH ARG (`claude "<prompt>"`), so there is no
      * handoff write to gate. READ-ONLY: no nonce, no confirm, no PTY write. A live agent shell never
      * flips its derived status off 'running', so we settle on OUTPUT SILENCE — the PTY has been quiet
-     * for `SETTLE_QUIET_MS` AFTER first showing activity (reusing the idle-reaper's
+     * for `SETTLE_QUIET_MS` AFTER first showing activity (via the registry's
      * `boardActivityStaleMs`). A worker recording its OWN result (write_result) settles immediately
      * (fast-path); a board leaving the canvas settles; a one-shot backstop bounds the wait. Returns
      * the board's result (the same shape `handoffPrompt` returns).
@@ -1066,7 +1073,7 @@ export function buildOrchestrator(
     async describeApp(): Promise<AppModel> {
       // 🔒 PR-3/PR-5: assemble the read-only app self-model (hybrid agency layer). Read-only — no
       // write path, no token. boards/connectors/groups are projected from the live renderer mirror;
-      // rules come from this orchestrator's own cap/TTL budget. (PR-5 made `groups` live; a registry
+      // rules come from this orchestrator's own cap budget. (PR-5 made `groups` live; a registry
       // that doesn't wire listGroups reads [].)
       const summaries = await listBoardSummaries()
       return buildAppModel({
@@ -1087,9 +1094,7 @@ export function buildOrchestrator(
         groups: listGroupsProjection(),
         rules: {
           spawnCap: getCap(),
-          everyWriteGated: true,
-          idleTtlMs,
-          idleActivityMs
+          everyWriteGated: true
         }
       })
     },

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { BoardId, BoardSummary } from '@expanse-ade/mcp'
+import type { BoardId } from '@expanse-ade/mcp'
 import { sanitizeDispatchText } from './dispatchSanitize'
 import { sanitizeBoardTitle } from '../shared/boardTitle'
 import type { BoardRegistry } from './mcpRegistry'
@@ -21,14 +21,6 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  */
 const SPAWN_GROUP_MAX_NAME = 80
 
-/**
- * BUG-003: `reapIdle`'s status-bucket fallback (used for any board without a live PTY/preview
- * session, e.g. planning/kanban) must treat every bucket it doesn't recognize as idle-eligible,
- * not the reverse — mirrors `BoardStatusBucket` (`boardStatus.ts`) minus 'idle'/'static': the only
- * buckets that mean "still busy, don't reap" are liveness ('running') and the attention states.
- */
-const NON_IDLE_STATUSES = new Set(['running', 'awaiting-review', 'blocked', 'failed'])
-
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -38,19 +30,10 @@ export interface McpLifecycleDeps {
    * user's Settings change applies live (buildOrchestrator passes a getter; tests pass a number).
    */
   cap: number | (() => number)
-  idleTtlMs: number
   spawnGraceMs: number
   /**
-   * BUG-007: output-silence threshold (ms) above which a live terminal counts as dormant for the
-   * reaper. Only consulted on the terminal-with-live-session branch (where the status bucket is
-   * permanently 'running'); a board with no live session still uses its derived status bucket.
-   */
-  idleActivityMs: number
-  /** The orchestrator's read-only listBoards — reapIdle reads derived per-board statuses through it. */
-  listBoards: () => Promise<BoardSummary[]>
-  /**
-   * BUG-019: notified with a board's id right after `closeBoard` tears it down (close_board tool OR
-   * an idle-reap sweep), so the host can revoke that board's `connected`-tier MCP token in the same
+   * BUG-019: notified with a board's id right after `closeBoard` tears it down (the human-gated
+   * close_board tool), so the host can revoke that board's `connected`-tier MCP token in the same
    * step instead of leaving it live in the TokenStore. Optional; tests omit it.
    */
   onBoardClosed?: (boardId: BoardId) => void
@@ -98,32 +81,18 @@ export interface McpLifecycle {
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   closeBoard(boardId: BoardId): Promise<void>
-  reapIdle(): Promise<string[]>
 }
 
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
-  const {
-    registry,
-    now,
-    cap: capInput,
-    idleTtlMs,
-    spawnGraceMs,
-    idleActivityMs,
-    listBoards,
-    onBoardClosed
-  } = deps
+  const { registry, now, cap: capInput, spawnGraceMs, onBoardClosed } = deps
   // Normalize the cap to a getter so it can be read fresh per spawn attempt (live config). Each
   // spawn reads it ONCE into a local `cap` so the check and the error message agree even if the
   // configured value changes mid-flight.
   const getCap = typeof capInput === 'function' ? capInput : (): number => capInput
   // Boards this orchestrator has spawned — the cap budget (T3.1). `spawnedAt` gates
   // reconciliation (T3.4): an id absent from the live mirror is dropped only after the
-  // spawn grace, so a just-spawned not-yet-published board isn't pruned. `idleSince`
-  // tracks how long the board has been idle for the reaper.
-  const tracked = new Map<string, { spawnedAt: number; idleSince: number | null }>()
-  // 🔒 Re-entrancy latch for reapIdle (APP-N2): true while a sweep is in flight so an
-  // overlapping sweep (periodic interval vs an explicit call) can't double-close a board.
-  let sweeping = false
+  // spawn grace, so a just-spawned not-yet-published board isn't pruned.
+  const tracked = new Map<string, { spawnedAt: number }>()
 
   /** Drop tracked boards the user has since closed (gone from the mirror past the grace). */
   const reconcile = (): void => {
@@ -170,7 +139,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // by the check rather than both passing it and adding → cap+1. Release the reservation on
     // a failed ack so a rejected spawn doesn't permanently burn the slot (mirrors closeBoard's
     // finally-guarded delete).
-    tracked.set(id, { spawnedAt: now(), idleSince: null })
+    tracked.set(id, { spawnedAt: now() })
     try {
       const ack = await registry.sendCommand({
         type: 'addBoard',
@@ -238,7 +207,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // the check → cap+N. Release every reserved slot on a failed ack so a rejected group spawn
     // doesn't permanently burn the budget (mirrors spawnBoard's single-slot release).
     const at = now()
-    for (const id of boardIds) tracked.set(id, { spawnedAt: at, idleSince: null })
+    for (const id of boardIds) tracked.set(id, { spawnedAt: at })
     try {
       const ack = await registry.sendCommand({
         type: 'spawnGroup',
@@ -268,8 +237,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     await registry.drainPty(boardId)
     // The PTY is already drained/killed above, so the board is dead either way. Free the
     // cap budget in a `finally` so a failed removeBoard ack does NOT permanently burn the
-    // slot (BUG-009): leaving it tracked would also make every reapIdle sweep retry the
-    // same already-dead board forever. The throw still propagates to the caller.
+    // slot (BUG-009). The throw still propagates to the caller.
     try {
       const ack = await registry.sendCommand({ type: 'removeBoard', id: boardId })
       if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
@@ -283,76 +251,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
   }
 
-  const reapIdle = async (): Promise<string[]> => {
-    // 🔒 Re-entrancy guard (APP-N2): the periodic reaper interval and an explicit
-    // reapIdle() (e.g. the smoke) can overlap — each close awaits drainPty + a renderer
-    // round-trip — so two sweeps could read the same id and closeBoard it twice (and
-    // re-arm idleSince on an already-deleted record). Skip a sweep that starts while
-    // another is still in flight; the in-flight one already covers the idle set.
-    if (sweeping) return []
-    sweeping = true
-    try {
-      // 🔒 Idle-reaping (T3.4): close MCP-spawned boards that have stayed idle past the
-      // TTL — the swarm doesn't accrete dormant boards. `idleSince` is sweep-tracked:
-      // first idle sighting arms the clock; a return to running clears it; an idle span
-      // ≥ TTL reaps. Reconcile first so a user-closed board isn't reaped twice.
-      reconcile()
-      const statuses = new Map((await listBoards()).map((b) => [b.id, b.status] as const))
-      const t = now()
-      const reapable: string[] = []
-      for (const [id, rec] of tracked) {
-        // BUG-007: a live terminal's coarse status bucket is permanently 'running' (no per-task
-        // running->idle transition), so the reaper measures its dormancy by OUTPUT SILENCE — a
-        // board whose PTY has been quiet for >= idleActivityMs counts as idle. The activity
-        // predicate returns undefined for any board WITHOUT a live terminal session (non-terminal,
-        // or a closed/parked terminal), in which case we fall back to the derived status bucket
-        // (the browser/planning idle path, and a session-gone terminal that reads 'idle').
-        const staleMs = registry.boardActivityStaleMs?.(id)
-        let idle: boolean
-        if (staleMs !== undefined) {
-          idle = staleMs >= idleActivityMs
-        } else {
-          // BUG-003: invert to an explicit non-idle allowlist rather than an idle allowlist —
-          // a passive-content bucket like 'static' (planning/kanban boards, which never carry a
-          // live PTY/preview session and so never hit the staleMs branch above) must count as
-          // reapable, and a positive-match `=== 'idle'` check silently excluded it forever. Only
-          // the liveness/attention buckets ('running' + the attention states) are non-idle, so any
-          // future BoardStatusBucket addition defaults to idle-eligible instead of repeating the gap.
-          const status = statuses.get(id)
-          idle = status === undefined || !NON_IDLE_STATUSES.has(status)
-        }
-        if (!idle) {
-          rec.idleSince = null
-          continue
-        }
-        if (rec.idleSince === null) {
-          rec.idleSince = t
-          continue
-        }
-        if (t - rec.idleSince >= idleTtlMs) reapable.push(id)
-      }
-      // Close each reapable board independently: a single failed close (e.g. the renderer
-      // never acks removeBoard) must NOT abort the whole sweep and leave the rest of the
-      // idle boards un-reaped (BUG-009). Swallow per-id so the loop continues, and return
-      // only the ids that actually closed.
-      const reaped: string[] = []
-      for (const id of reapable) {
-        try {
-          await closeBoard(id)
-          reaped.push(id)
-        } catch {
-          // best-effort: skip a board that failed to close and continue the sweep. Its
-          // cap slot is already freed (closeBoard's finally), so it won't re-enter the
-          // budget. The id is also removed from `tracked`, so subsequent sweeps won't
-          // attempt to reap it again; it becomes invisible to the reaper (user can close
-          // the stale board manually if it is still visible in the canvas).
-        }
-      }
-      return reaped
-    } finally {
-      sweeping = false
-    }
-  }
-
-  return { spawnBoard, spawnGroup, closeBoard, reapIdle }
+  // NOTE (2026-07-02): the idle reaper (T3.4 `reapIdle`) that used to live here was REMOVED —
+  // it silently deleted agent-spawned boards after an idle TTL, which guaranteed the loss of
+  // every passive board (browser previews read 'idle' once loaded; planning/kanban are
+  // permanently 'static'). Boards are now deleted ONLY by the user, or by the human-gated
+  // `close_board` tool (the confirm gate lives in the orchestrator's closeBoard wrapper).
+  return { spawnBoard, spawnGroup, closeBoard }
 }

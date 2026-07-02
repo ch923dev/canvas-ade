@@ -4,7 +4,7 @@ import { buildAppModel, APP_TOOLS, APP_BOARD_TYPES, type AppModelInputs } from '
 const baseInputs = (over?: Partial<AppModelInputs>): AppModelInputs => ({
   boards: [],
   connectors: [],
-  rules: { spawnCap: 4, everyWriteGated: true, idleTtlMs: 300_000, idleActivityMs: 60_000 },
+  rules: { spawnCap: 4, everyWriteGated: true },
   ...over
 })
 
@@ -76,9 +76,7 @@ describe('buildAppModel (PR-3 app self-model)', () => {
   })
 
   it('carries the rules budget + the every-write-gated invariant', () => {
-    const m = buildAppModel(
-      baseInputs({ rules: { spawnCap: 7, everyWriteGated: true, idleTtlMs: 1, idleActivityMs: 2 } })
-    )
+    const m = buildAppModel(baseInputs({ rules: { spawnCap: 7, everyWriteGated: true } }))
     expect(m.rules.spawnCap).toBe(7)
     expect(m.rules.everyWriteGated).toBe(true)
   })

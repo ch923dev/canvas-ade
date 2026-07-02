@@ -10,24 +10,10 @@ import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
- * (the runaway-swarm guard, T3.1). Reconciled against the live mirror + idle-reaped
- * (T3.4). Spawns past the cap are rejected with a clear error.
+ * (the runaway-swarm guard, T3.1). Reconciled against the live mirror (T3.4).
+ * Spawns past the cap are rejected with a clear error.
  */
 export const MCP_SPAWN_CAP = 4
-
-/** Default idle TTL before an MCP-spawned board is reaped (T3.4). */
-export const MCP_IDLE_TTL_MS = 5 * 60 * 1000
-
-/**
- * BUG-007: how long a live terminal's PTY output must be SILENT before the idle-reaper
- * counts it as dormant. A live agent shell's coarse status pill stays 'running' for its
- * whole lifetime (no per-task running->idle transition), so the reaper measures dormancy
- * by output silence instead. Mirrors `summaryLoop`'s IDLE_AFTER_MS (the same "no activity
- * for this long reads as idle" threshold the recap/summary paths use). Once a board is
- * counted idle, the existing idleSince clock still requires a full MCP_IDLE_TTL_MS of
- * continuous dormancy before it is reaped.
- */
-export const MCP_IDLE_ACTIVITY_MS = 60_000
 
 /**
  * Grace after a spawn during which a tracked board is NOT reconciled away even if it
@@ -58,7 +44,7 @@ export type DispatchStatus =
   | 'configured'
   | 'applied'
 
-/** Tuning + clock seam for the lifecycle cap/reaper (all optional; injected by tests). */
+/** Tuning + clock seam for the lifecycle cap (all optional; injected by tests). */
 export interface OrchestratorOpts {
   now?: () => number
   /**
@@ -67,14 +53,7 @@ export interface OrchestratorOpts {
    * {@link MCP_SPAWN_CAP} when unset. Tests pass a plain number.
    */
   cap?: number | (() => number)
-  idleTtlMs?: number
   spawnGraceMs?: number
-  /**
-   * BUG-007: output-silence threshold (ms) above which a live terminal counts as dormant for the
-   * idle-reaper. Defaults to {@link MCP_IDLE_ACTIVITY_MS}; injected by tests to drive the path
-   * deterministically.
-   */
-  idleActivityMs?: number
   /** 🔒 Single-use-nonce authority for dispatch (T4.3); a fresh guard per orchestrator by default. */
   guard?: DispatchGuard
   /** Backstop timer seam for the handoff await-idle deadline (injected by tests to avoid real timers). */
@@ -83,7 +62,7 @@ export interface OrchestratorOpts {
   handoffTimeoutMs?: number
   /**
    * BUG-019: fired with a board's id once the lifecycle's `closeBoard` has torn it down (via the
-   * `close_board` tool OR an idle-reap sweep), so the host can revoke that board's `connected`-tier
+   * human-gated `close_board` tool), so the host can revoke that board's `connected`-tier
    * MCP token in the SAME step. Without this hook a token minted for a board stays valid in the
    * `TokenStore` after the board is gone — live until that id happens to be re-spawned (rotates) or
    * a full consent-revoke fires — a real bearer-token leak for a dead board. Optional; tests omit it.
@@ -92,7 +71,7 @@ export interface OrchestratorOpts {
 }
 
 /**
- * The adapter + the T3.4 idle-reap sweep + awaitSettled (extras beyond the package contract), PLUS
+ * The adapter + awaitSettled (extras beyond the package contract), PLUS
  * app-side NARROWING of two methods the package `Orchestrator` now declares as of ≥0.15.0 (W1-G):
  * `describeApp(): Promise<unknown>` (the package does not own `AppModel`) and a structurally-
  * equivalent `spawnGroup`. We `Omit` both from the package base and re-declare them with the app's
@@ -112,8 +91,6 @@ export type LifecycleOrchestrator = Omit<
   | 'removeCard'
   | 'visualizePlan'
 > & {
-  /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
-  reapIdle(): Promise<string[]>
   /**
    * Assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
    * NARROWS the package's `describeApp(): Promise<unknown>` to the concrete `AppModel` (the package
@@ -259,11 +236,11 @@ export interface BoardRegistry {
   listGroups?(): GroupMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
   /**
-   * BUG-007: ms since terminal board `id` last produced PTY output (its dormancy measure for the
-   * idle-reaper). MAIN injects `pty.ts`'s `getTerminalActivityStaleMs`; returns undefined for any id
-   * without a LIVE terminal session (non-terminal / closed / parked), in which case the reaper falls
-   * back to its derived status bucket. Read-only; control-plane only. Optional so a registry that
-   * does not wire it (older tests / non-terminal-only stubs) keeps the status-bucket behaviour.
+   * BUG-007: ms since terminal board `id` last produced PTY output (its output-silence dormancy
+   * measure). MAIN injects `pty.ts`'s `getTerminalActivityStaleMs`; returns undefined for any id
+   * without a LIVE terminal session (non-terminal / closed / parked). Read-only; control-plane
+   * only. Consumed by `awaitSettled` (the C2e output-silence settle). Optional so a registry that
+   * does not wire it (older tests / non-terminal-only stubs) keeps the poll-only behaviour.
    */
   boardActivityStaleMs?(id: string): number | undefined
   /**
