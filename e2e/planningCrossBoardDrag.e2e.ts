@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { seed } from './helpers'
+import { deselectInspector, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -62,6 +62,10 @@ async function dragNoteTo(
   to: { x: number; y: number },
   opts: { alt?: boolean } = {}
 ): Promise<void> {
+  // P5: seedBoard/element-drop leaves a board SELECTED → the left-docked Inspector popover
+  // reveals and can occlude A's top-left grip (real-OS input hit-tests it). Clear the selection
+  // so the popover hides before the press; mid-drag reveals can't steal a captured pointer.
+  await deselectInspector(page)
   const grip = page.locator(`[data-id="${fromBoard}"] .pl-note-grip`).first()
   const gb = await grip.boundingBox()
   if (!gb) throw new Error('source note grip not on screen')

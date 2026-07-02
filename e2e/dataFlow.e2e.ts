@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { evalIn, pollEval, seed, selectForInspector } from './helpers'
 
 /**
  * @preview Data-Flow board (JD-4) — drives the REAL board with a canned login→home capture seeded
@@ -31,18 +31,26 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await expect(node.locator('.df-e-lin').first()).toBeAttached()
     // focus-on-node default dims part of the surface (some node is not bright)
     expect(await node.locator('.df-gn.df-dim').count()).toBeGreaterThan(0)
-    // the default noise filter hid the non-API `document` record (API-only default exercised)
-    await expect(node.locator('.df-hidden')).toBeVisible()
-
     // visual dev-check artifact
     await node.screenshot({ path: 'test-results/jd4-dataflow-board.png' })
+
+    // P5: the filter/hidden roll-up + the actions moved into the Board Inspector — select to reveal.
+    // The default noise filter hid the non-API `document` record (API-only default exercised) →
+    // Inspector › Filters shows the "Hidden" meta.
+    await selectForInspector(page, df)
+    const hiddenShown = await pollEval(
+      page,
+      `(document.querySelector('[data-test="board-inspector"]')?.textContent || '').includes('Hidden')`,
+      5000
+    )
+    expect(hiddenShown, 'the API-only default surfaces the Hidden meta in the Inspector').toBe(true)
 
     // "→ Planning" materializes an editable Mermaid erDiagram element on a new Planning board
     const before = await evalIn<number>(
       page,
       `window.__canvasE2E.getBoards().filter(b => b.type === 'planning').length`
     )
-    await node.getByText('→ Planning').click()
+    await page.locator('[data-test="inspector-dataflow-planning"]').click()
     await expect
       .poll(async () =>
         evalIn<number>(
@@ -97,10 +105,23 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     )
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
-    // default API-only filter hides the non-API `document` record → the "hidden N" chip is shown
-    await expect(node.locator('.df-hidden')).toBeVisible({ timeout: 5000 })
-    // turn API-only off (first-party still on, all records are localhost) → nothing hidden → chip gone
+    await expect(node.locator('.df-gn-endpoint').first()).toBeVisible({ timeout: 5000 })
+    // P5: the "hidden N" roll-up lives in the Inspector's Filters section — select to reveal.
+    // Default API-only filter hides the non-API `document` record → the Hidden meta is shown.
+    await selectForInspector(page, df)
+    const hiddenShown = await pollEval(
+      page,
+      `(document.querySelector('[data-test="board-inspector"]')?.textContent || '').includes('Hidden')`,
+      5000
+    )
+    expect(hiddenShown, 'API-only default surfaces the Hidden meta').toBe(true)
+    // turn API-only off (first-party still on, all records are localhost) → nothing hidden → meta gone
     await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
-    await expect(node.locator('.df-hidden')).toHaveCount(0)
+    const hiddenGone = await pollEval(
+      page,
+      `!((document.querySelector('[data-test="board-inspector"]')?.textContent || '').includes('Hidden'))`,
+      5000
+    )
+    expect(hiddenGone, 'clearing the filter removes the Hidden meta').toBe(true)
   })
 })

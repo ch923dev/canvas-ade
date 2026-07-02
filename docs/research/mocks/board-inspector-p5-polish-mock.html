@@ -1,0 +1,525 @@
+<!doctype html>
+<!--
+  THROWAWAY pixel mock — Board Inspector **P5: polish + header consolidation**.
+  Design-artifact gate per CLAUDE.md › "Design artifact before code". NOT wired into src/ or build.
+
+  P5 scope (maintainer-confirmed 2026-07-02):
+    H  Header cleanup — strip the per-type `actions` clusters from the title bar (Terminal ·
+       Browser · Command · File); keep glyph + tag + title + status + connector + full view + ⋯.
+       Also: DataFlow's in-body .df-bar REMOVED; Browser URL bar → INPUT-ONLY (nav + action
+       buttons removed; URL input itself is a locked decision and stays).
+    1  Persist section collapse state (localStorage) — no visual change, not mocked.
+    2  Cross-type consistency sweep — naming matrix + control metrics + promoted primitives.
+    3  A11y polish (focus rings, radiogroup arrow-keys, progressbar role) — focus ring shown.
+    4  Reveal/position edge cases — verification pass, not mocked.
+    5  File-inspector empty state — placeholder proposal below.
+
+  DECISIONS surfaced for sign-off (annotated inline as D1..D7):
+    D1 File dirty cue after header strip: KEEP as a small dot next to the title (rec) vs drop.
+    D2 Terminal transient "interrupt — sent" chip: DROP (rec; inspector button state covers) vs re-home.
+    D3 DataFlow empty state loses its bind buttons → text hint "Bind via Inspector › Source" (rec).
+    D4 Section naming: LIGHT-TOUCH (rec — keep domain lead names, unify status/config treatment)
+       vs FULL-UNIFY (rename Browser "Viewport" → "View").
+    D5 File inspector on empty/loading/error boards: diagnostic placeholder (rec) vs stay empty.
+    D6 Sliders: visible value readout EVERYWHERE (rec — Browser volume gains the readout the
+       Planning opacity slider already has).
+    D7 Full view: Inspector today sits UNDER the full-view scrim (z 45 < 200) and header actions
+       are the only per-type controls there. Rec: RAISE the Inspector above the scrim in full
+       view (one control home everywhere) vs keep the actions cluster header-only in full view.
+
+  Tokens + inspector classes copied VERBATIM from the shipped P4b mock (index.css / DESIGN.md §2-4).
+  Calm/dense Linear-Raycast feel; one accent (#4f8cff), functional only; no gradients/glass/glow.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Board Inspector P5 — polish + header consolidation</title>
+    <style>
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --err: #f2545b;
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --r-pill: 999px;
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+        --fs-micro: 10px;
+        --fs-meta: 11px;
+        --fs-label: 12px;
+        --fs-body: 13px;
+        --tr-micro: 0.06em;
+        --titlebar-h: 34px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 18px 18px,
+          var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        padding: 26px 26px 40px;
+      }
+      h1.page { font-size: 14px; font-weight: 600; margin: 0 0 3px; letter-spacing: -0.01em; }
+      p.page-sub { font-size: var(--fs-meta); color: var(--text-3); margin: 0 0 18px; font-family: var(--mono); }
+      .frame-label { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); margin: 26px 0 10px;
+        border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+      .note { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); line-height: 1.7;
+        margin: 8px 0 0; max-width: 980px; }
+      .note b { color: var(--accent); font-weight: 400; }
+      .note .ok { color: var(--ok); }
+      .note .warn { color: var(--warn); }
+      .dtag { font-family: var(--mono); font-size: 8.5px; letter-spacing: .04em; text-transform: uppercase;
+        color: var(--warn); border: 1px solid var(--warn); border-radius: 3px; padding: 0 4px; margin-right: 6px; }
+      .rec { color: var(--ok); font-weight: 400; }
+
+      /* ── title-bar strips (before/after) ─────────────────────────────── */
+      .strip-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 1160px; margin-bottom: 14px; }
+      .strip-col { display: flex; flex-direction: column; gap: 6px; }
+      .scap { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); }
+      .scap b { color: var(--ok); font-weight: 400; }
+      .scap i { color: var(--err); font-style: normal; }
+      .tb {
+        height: var(--titlebar-h); display: flex; align-items: center; gap: 8px;
+        padding: 0 8px 0 10px; border: 1px solid var(--border-subtle); border-radius: var(--r-board);
+        background: var(--accent-wash); box-shadow: 0 0 0 1.5px var(--accent);
+      }
+      .tb.rest { background: var(--surface-raised); box-shadow: var(--shadow-board); }
+      .glyph { font-family: var(--mono); font-size: 13px; color: var(--text-2); flex: none; }
+      .tag { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        color: var(--text-3); flex: none; }
+      .b-title { font-size: var(--fs-label); font-weight: 500; color: var(--text); flex: 1; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .b-status { font-family: var(--mono); font-size: 11px; color: var(--text-3); white-space: nowrap; flex: none; }
+      .tb-ctl { width: 24px; height: 24px; display: grid; place-items: center; border-radius: var(--r-ctl);
+        color: var(--text-3); flex: none; font-size: 13px; }
+      .tb-ctl.gone { color: var(--err); background: rgba(242, 84, 91, 0.08); border: 1px dashed rgba(242, 84, 91, 0.4); }
+      .dirty-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--warn); flex: none; }
+      .chip { font-family: var(--mono); font-size: 10px; color: var(--warn); border: 1px solid var(--warn);
+        border-radius: var(--r-pill); padding: 1px 7px; flex: none; }
+      .chip.gone { color: var(--err); border-color: rgba(242, 84, 91, 0.4); border-style: dashed; }
+      .seg-mini { display: inline-flex; gap: 1px; padding: 2px; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); flex: none; }
+      .seg-mini span { height: 18px; padding: 0 6px; display: inline-flex; align-items: center; border-radius: 4px;
+        color: var(--text-3); font-size: 10px; font-weight: 500; }
+      .seg-mini span.on { background: var(--accent-wash); color: var(--accent); }
+      .seg-mini.gone { border-style: dashed; border-color: rgba(242, 84, 91, 0.4); }
+      .seg-mini.gone span { color: var(--err); }
+
+      /* ── URL bar / df-bar strips ─────────────────────────────────────── */
+      .cbar {
+        height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+        border: 1px solid var(--border-subtle); border-radius: var(--r-board); background: var(--surface-raised);
+      }
+      .url-input { flex: 1; height: 24px; border-radius: var(--r-ctl); border: 1px solid var(--border);
+        background: var(--inset); color: var(--text-2); font-family: var(--mono); font-size: 11px;
+        display: flex; align-items: center; padding: 0 8px; min-width: 0; }
+      .df-ctl { font-size: 11px; color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; flex: none; }
+      .df-ctl input { accent-color: var(--accent); }
+      .cbar.gone-bar { border-style: dashed; border-color: rgba(242, 84, 91, 0.4); opacity: 0.75; }
+
+      /* board card (for dataflow / fullview scenes) */
+      .board {
+        border-radius: var(--r-board); background: var(--surface);
+        border: 1px solid var(--border-subtle); box-shadow: var(--shadow-board);
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      .board.sel { box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-board); }
+      .board-tb { height: var(--titlebar-h); flex: none; display: flex; align-items: center; gap: 8px;
+        padding: 0 8px 0 10px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-raised); }
+      .board.sel .board-tb { background: var(--accent-wash); }
+      .board-body { flex: 1; min-height: 0; background: var(--inset); position: relative; }
+      .df-node { position: absolute; border: 1px solid var(--border); border-radius: var(--r-inner);
+        background: var(--surface-raised); color: var(--text-2); font-family: var(--mono); font-size: 10px;
+        padding: 5px 9px; }
+      .df-edge { position: absolute; height: 1.5px; background: var(--text-faint); transform-origin: left center; }
+      .empty-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+      .empty-msg .em1 { font-size: var(--fs-label); color: var(--text-2); margin-bottom: 4px; }
+      .empty-msg .em2 { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); }
+      .empty-msg .em2 b { color: var(--accent); font-weight: 400; }
+
+      /* ── inspector popover (verbatim shell) ──────────────────────────── */
+      .bi { width: 252px; background: var(--surface-overlay); border: 1px solid var(--border);
+        border-radius: var(--r-board); box-shadow: var(--shadow-pop); overflow: hidden;
+        display: flex; flex-direction: column; flex: none; }
+      .bi-head { padding: 10px 10px 9px; border-bottom: 1px solid var(--border-subtle); }
+      .bi-head-r1 { display: flex; align-items: center; gap: 7px; }
+      .bi-head-glyph { font-family: var(--mono); font-size: 13px; color: var(--text-3); flex: none; }
+      .bi-head-type { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); flex: 1; }
+      .bi-jump { width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--r-ctl);
+        color: var(--text-3); background: transparent; border: 1px solid transparent; }
+      .bi-head-title { font-size: var(--fs-label); font-weight: 500; color: var(--text); margin-top: 6px; }
+      .sec { border-top: 1px solid var(--border-subtle); padding: 7px 10px 9px; }
+      .sec:first-child { border-top: none; }
+      .sec-hd { display: flex; align-items: center; gap: 6px; padding: 2px 0 6px; }
+      .sec-lab { font-size: var(--fs-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+        font-weight: 500; color: var(--text-3); flex: 1; }
+      .chev { color: var(--text-3); font-size: 10px; }
+      .row { min-height: 28px; display: flex; align-items: center; gap: 8px; }
+      .row + .row { margin-top: 4px; }
+      .row-lab { font-size: var(--fs-label); color: var(--text-2); flex: none; width: 52px; }
+      .meta { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); min-height: 22px;
+        display: flex; align-items: center; gap: 8px; }
+      .meta b { color: var(--text-2); font-weight: 450; }
+      .act { width: 100%; height: 28px; border-radius: var(--r-ctl); border: 1px solid var(--border-subtle);
+        background: var(--surface-raised); color: var(--text); font-size: var(--fs-label);
+        display: flex; align-items: center; gap: 8px; padding: 0 9px; font-family: var(--ui); }
+      .act .ai { color: var(--text-3); width: 15px; text-align: center; flex: none; }
+      .seg { display: inline-flex; align-items: center; gap: 1px; padding: 2px; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); flex: 1; }
+      .seg button { flex: 1; height: 22px; padding: 0 6px; display: inline-flex; align-items: center;
+        justify-content: center; border: none; border-radius: 4px; background: transparent;
+        color: var(--text-3); font-size: 11px; font-weight: 500; font-family: var(--ui); }
+      .seg button.on { background: var(--accent-wash); color: var(--accent); }
+      .slider { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 4px; border-radius: 999px;
+        background: linear-gradient(to right, var(--accent) 0 var(--fill, 60%),
+          var(--surface-raised) var(--fill, 60%) 100%); outline: none; }
+      .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 999px;
+        background: var(--accent); border: 2px solid var(--void); }
+      .slider-val { font-family: var(--mono); font-size: 10px; color: var(--text-2); width: 34px;
+        text-align: right; flex: none; }
+      .status-chip { font-family: var(--mono); font-size: 10px; color: var(--text-2);
+        border: 1px solid var(--border); border-radius: var(--r-pill); padding: 1px 8px;
+        display: inline-flex; align-items: center; gap: 5px; }
+      .status-chip .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
+
+      /* focus-ring exemplar */
+      .focus-ring { box-shadow: 0 0 0 1.5px var(--accent) !important; }
+
+      /* naming matrix */
+      .matrix { border-collapse: collapse; font-family: var(--mono); font-size: var(--fs-meta); margin: 4px 0 0; }
+      .matrix th, .matrix td { border: 1px solid var(--border-subtle); padding: 5px 10px; text-align: left; }
+      .matrix th { color: var(--text-3); text-transform: uppercase; letter-spacing: var(--tr-micro);
+        font-weight: 500; font-size: var(--fs-micro); }
+      .matrix td { color: var(--text-2); }
+      .matrix td.dim { color: var(--text-faint); }
+      .matrix td .chg { color: var(--warn); }
+      .matrix td .keep { color: var(--ok); }
+
+      .cols { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+      .caption { margin-top: 30px; text-align: center; font-family: var(--mono); font-size: var(--fs-meta);
+        color: var(--text-faint); }
+    </style>
+  </head>
+  <body>
+    <h1 class="page">Board Inspector P5 — polish + header consolidation</h1>
+    <p class="page-sub">strip duplicated per-type header actions · DataFlow .df-bar removed · Browser URL bar input-only · consistency sweep · empty states · throwaway mock</p>
+
+    <!-- ═══════════ FRAME A: title-bar before/after, all four affected types ═══════════ -->
+    <div class="frame-label">A — Title-bar cleanup (selected state shown). Left = today, red-dashed = removed. Right = after: glyph + tag + title + status + connector ⧉ + full view ⤢ + ⋯ stay.</div>
+
+    <div class="strip-pair">
+      <div class="strip-col">
+        <div class="scap">Terminal — before <i>(6 controls + transient chip leave)</i></div>
+        <div class="tb">
+          <span class="glyph">›_</span><span class="tag">TERMINAL</span>
+          <span class="b-title">My agent</span>
+          <span class="chip gone">interrupt — sent</span>
+          <span class="tb-ctl gone">A−</span><span class="tb-ctl gone">A+</span>
+          <span class="tb-ctl gone">■</span><span class="tb-ctl gone">◍</span>
+          <span class="tb-ctl gone">⚙</span><span class="tb-ctl gone">↻</span><span class="tb-ctl gone">⟲</span>
+          <span class="b-status">● claude · 12:40</span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+      <div class="strip-col">
+        <div class="scap">Terminal — after <b>(calm; controls live in the Inspector)</b></div>
+        <div class="tb">
+          <span class="glyph">›_</span><span class="tag">TERMINAL</span>
+          <span class="b-title">My agent</span>
+          <span class="b-status">● claude · 12:40</span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+    </div>
+    <p class="note"><span class="dtag">D2</span>The transient "interrupt — sent" chip is <b>dropped</b> <span class="rec">(rec)</span> —
+      the Inspector's Session › Interrupt button already reflects the sent state; alternative: re-home the chip next to the status label.</p>
+
+    <div class="strip-pair" style="margin-top:16px;">
+      <div class="strip-col">
+        <div class="scap">Browser — before <i>(viewport control leaves)</i></div>
+        <div class="tb">
+          <span class="glyph">▣</span><span class="tag">BROWSER</span>
+          <span class="b-title">localhost:5173</span>
+          <span class="seg-mini gone"><span class="on">Mobile</span><span>Tablet</span><span>Desktop ▾</span></span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+      <div class="strip-col">
+        <div class="scap">Browser — after</div>
+        <div class="tb">
+          <span class="glyph">▣</span><span class="tag">BROWSER</span>
+          <span class="b-title">localhost:5173</span>
+          <span class="b-status">● live</span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip-pair" style="margin-top:16px;">
+      <div class="strip-col">
+        <div class="scap">Command — before <i>(expand/collapse · Kanban/Groups seg · recap flip leave)</i></div>
+        <div class="tb">
+          <span class="glyph">⌘</span><span class="tag">COMMAND</span>
+          <span class="b-title">Mission control</span>
+          <span class="seg-mini gone"><span class="on">Kanban</span><span>Groups</span></span>
+          <span class="tb-ctl gone">⟲</span><span class="tb-ctl gone">⤡</span>
+          <span class="b-status">3 running</span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+      <div class="strip-col">
+        <div class="scap">Command — after</div>
+        <div class="tb">
+          <span class="glyph">⌘</span><span class="tag">COMMAND</span>
+          <span class="b-title">Mission control</span>
+          <span class="b-status">3 running</span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip-pair" style="margin-top:16px;">
+      <div class="strip-col">
+        <div class="scap">File — before <i>(pin · mode seg · font± · save leave)</i></div>
+        <div class="tb">
+          <span class="glyph">≡</span><span class="tag">FILE</span>
+          <span class="b-title" style="font-style:italic">README.md</span>
+          <span class="seg-mini gone"><span class="on">Preview</span><span>Split</span><span>Source</span></span>
+          <span class="tb-ctl gone">A−</span><span class="tb-ctl gone">A+</span>
+          <span class="tb-ctl gone" style="width:auto;padding:0 6px;font-size:10px;">Save</span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+      <div class="strip-col">
+        <div class="scap">File — after <b>(dirty dot kept next to the title)</b></div>
+        <div class="tb">
+          <span class="glyph">≡</span><span class="tag">FILE</span>
+          <span class="b-title" style="flex:none;font-style:italic">README.md</span>
+          <span class="dirty-dot" title="Unsaved changes"></span>
+          <span style="flex:1"></span>
+          <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+        </div>
+      </div>
+    </div>
+    <p class="note"><span class="dtag">D1</span>The File board's unsaved-changes cue survives as a <b>6px warn dot after the title</b>
+      <span class="rec">(rec)</span> — at-a-glance dirty state without a control; Save itself lives in Inspector › File. Alternative: drop the cue entirely.</p>
+
+    <!-- ═══════════ FRAME B: Browser URL bar input-only ═══════════ -->
+    <div class="frame-label">B — Browser on-board URL bar → input-only (nav + screenshot/external/network/mute move to the Inspector; URL input = locked decision, stays)</div>
+    <div class="strip-pair">
+      <div class="strip-col">
+        <div class="scap">before <i>(7 buttons leave)</i></div>
+        <div class="cbar">
+          <span class="tb-ctl gone">←</span><span class="tb-ctl gone">→</span><span class="tb-ctl gone">↻</span>
+          <div class="url-input">http://localhost:5173/</div>
+          <span class="tb-ctl gone">🔊</span><span class="tb-ctl gone">📷</span><span class="tb-ctl gone">↗</span><span class="tb-ctl gone">◔</span>
+        </div>
+      </div>
+      <div class="strip-col">
+        <div class="scap">after <b>(input-only; Enter commits, as today)</b></div>
+        <div class="cbar">
+          <div class="url-input">http://localhost:5173/</div>
+        </div>
+      </div>
+    </div>
+    <p class="note">Back / Forward / Reload / Mute+Volume / Screenshot / Open-external / Network already exist 1:1 in
+      BrowserInspector › Navigation / Preview / Developer. The bar keeps its height (device-frame chrome) — just quieter.</p>
+
+    <!-- ═══════════ FRAME C: DataFlow bare board + empty state ═══════════ -->
+    <div class="frame-label">C — DataFlow: in-body .df-bar removed (all 8 controls already in DataFlowInspector). Empty state loses its bind buttons → hint points at the Inspector.</div>
+    <div class="cols">
+      <div style="flex:none; width: 380px;">
+        <div class="scap" style="margin-bottom:6px;">before — .df-bar above the diagram <i>(removed)</i></div>
+        <div class="board sel" style="height: 240px;">
+          <div class="board-tb">
+            <span class="glyph">⇄</span><span class="tag">DATA FLOW</span>
+            <span class="b-title">API map</span>
+            <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+          </div>
+          <div class="cbar gone-bar" style="border-radius:0; border-left:none; border-right:none; height:30px;">
+            <span class="seg-mini gone"><span class="on">Graph</span><span>Sequence</span></span>
+            <span class="df-ctl" style="color:var(--err)"><input type="checkbox" checked disabled />infer</span>
+            <span class="df-ctl" style="color:var(--err)"><input type="checkbox" disabled />API only</span>
+            <span class="df-ctl" style="color:var(--err)"><input type="checkbox" disabled />1st-party</span>
+            <span style="flex:1"></span>
+            <span class="tb-ctl gone" style="width:auto;padding:0 6px;font-size:10px;">Regenerate</span>
+            <span class="tb-ctl gone" style="width:auto;padding:0 6px;font-size:10px;">→ Planning</span>
+          </div>
+          <div class="board-body">
+            <div class="df-node" style="left:26px; top:30px;">GET /api/users</div>
+            <div class="df-node" style="left:200px; top:78px;">users.service</div>
+            <div class="df-edge" style="left:130px; top:44px; width:82px; transform:rotate(22deg);"></div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:none; width: 380px;">
+        <div class="scap" style="margin-bottom:6px;">after — pure diagram</div>
+        <div class="board sel" style="height: 240px;">
+          <div class="board-tb">
+            <span class="glyph">⇄</span><span class="tag">DATA FLOW</span>
+            <span class="b-title">API map</span>
+            <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+          </div>
+          <div class="board-body">
+            <div class="df-node" style="left:26px; top:44px;">GET /api/users</div>
+            <div class="df-node" style="left:200px; top:100px;">users.service</div>
+            <div class="df-edge" style="left:130px; top:58px; width:82px; transform:rotate(22deg);"></div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:none; width: 300px;">
+        <div class="scap" style="margin-bottom:6px;">after — unbound/empty state (D3)</div>
+        <div class="board sel" style="height: 240px;">
+          <div class="board-tb">
+            <span class="glyph">⇄</span><span class="tag">DATA FLOW</span>
+            <span class="b-title">Data flow</span>
+            <span class="tb-ctl">⧉</span><span class="tb-ctl">⤢</span><span class="tb-ctl">⋯</span>
+          </div>
+          <div class="board-body">
+            <div class="empty-msg">
+              <div>
+                <div class="em1">No source bound</div>
+                <div class="em2">Bind a Browser board via <b>Inspector › Source</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note"><span class="dtag">D3</span>The empty state's bind <i>buttons</i> go with the bar; the message stays and
+      gains a pointer to the Inspector's Source section <span class="rec">(rec)</span>. Alternative: keep the bind buttons in the empty state only.</p>
+
+    <!-- ═══════════ FRAME D: full view ═══════════ -->
+    <div class="frame-label">D — Full view: header actions were the ONLY per-type controls there (Inspector z 45 sits under the scrim z 200)</div>
+    <p class="note"><span class="dtag">D7</span><b>Rec: raise the Inspector above the full-view scrim</b> (z-index bump while a board is in
+      full view, same slot/left dock) so ONE control home works everywhere — canvas and full view. The popover overlays the modal's left
+      edge exactly as it overlays the canvas. Alternative: keep the per-type `actions` cluster rendered <i>only</i> in full view
+      (`isFullView && actions`) — zero layering work, but the header stays busy in exactly the mode with the most screen space.</p>
+
+    <!-- ═══════════ FRAME E: consistency sweep ═══════════ -->
+    <div class="frame-label">E — Consistency sweep: section naming (D4) + shared control metrics + promoted primitives (D6)</div>
+    <table class="matrix">
+      <tr><th>variant</th><th>today</th><th>light-touch (rec)</th><th>full-unify</th></tr>
+      <tr><td>Terminal</td><td class="dim">Appearance · Session · Configuration · Linking</td>
+        <td><span class="keep">unchanged</span></td><td><span class="keep">unchanged</span></td></tr>
+      <tr><td>Browser</td><td class="dim">Viewport · Navigation · Preview · Developer · Configuration</td>
+        <td><span class="keep">unchanged</span></td><td><span class="chg">View</span> · Navigation · Preview · Developer · Configuration</td></tr>
+      <tr><td>Command</td><td class="dim">View · Status · Worker pool · Orchestration</td>
+        <td><span class="keep">unchanged</span></td><td><span class="keep">unchanged</span></td></tr>
+      <tr><td>DataFlow</td><td class="dim">View · Filters · Actions · Source</td>
+        <td><span class="keep">unchanged</span></td><td>View · Filters · Actions · <span class="chg">Configuration</span></td></tr>
+      <tr><td>File</td><td class="dim">View · Appearance · File · Configuration</td>
+        <td><span class="keep">unchanged</span></td><td><span class="keep">unchanged</span></td></tr>
+      <tr><td>Planning</td><td class="dim">Element · Tools · Canvas</td>
+        <td><span class="keep">unchanged</span></td><td><span class="keep">unchanged</span></td></tr>
+    </table>
+    <p class="note"><span class="dtag">D4</span><b>Light-touch</b> <span class="rec">(rec)</span>: domain-precise lead names stay
+      (Viewport/View/Appearance each describe their content best); the sweep instead unifies <b>treatment</b> — one shared
+      <b>InspectorStatus</b> chip primitive (today hand-rolled 3× in Browser/Command/DataFlow), one <b>InspectorProgress</b>
+      (role="progressbar"), one <b>InspectorSubheader</b>, and ONE intra-cluster gap scale (contained clusters 2px · discrete
+      grids 4px · swatches 5px→4px · chips 6px→4px). Control heights stay in the 22/24/28 scale but get a comment contract.
+      <b>Full-unify</b> additionally renames Browser "Viewport"→"View" and DataFlow "Source"→"Configuration".</p>
+
+    <div class="cols" style="margin-top:14px;">
+      <div class="bi">
+        <div class="bi-head">
+          <div class="bi-head-r1">
+            <span class="bi-head-glyph">▣</span><span class="bi-head-type">Browser</span>
+            <button class="bi-jump">⤿</button>
+          </div>
+          <div class="bi-head-title">localhost:5173</div>
+        </div>
+        <section class="sec">
+          <div class="sec-hd"><span class="sec-lab">Preview</span><span class="chev">▾</span></div>
+          <div class="row"><span class="row-lab">Status</span>
+            <span class="status-chip"><span class="dot"></span>live</span></div>
+          <div class="row"><span class="row-lab">Volume</span>
+            <input type="range" class="slider" style="--fill:60%" />
+            <span class="slider-val">60%</span>
+          </div>
+        </section>
+        <section class="sec">
+          <div class="sec-hd focus-ring" style="border-radius:4px;"><span class="sec-lab">Developer</span><span class="chev">▸</span></div>
+        </section>
+      </div>
+      <div class="note" style="max-width: 560px;">
+        <span class="dtag">D6</span>All sliders gain the <b>visible value readout</b> the Planning opacity slider already has
+        (Browser volume shown ← gains "60%") <span class="rec">(rec)</span>.<br /><br />
+        A11y (no decision needed — shown for completeness): every inspector control gets the
+        <b>1.5px accent focus ring</b> (section headers, steppers, segmented, toggles, sliders — 6 gaps found;
+        collapsed "Developer" header shown focused ←); segmented/swatch/tool-grid radiogroups gain
+        <b>arrow-key nav + roving tabindex</b>; Command's progress bar gains <b>role="progressbar"</b>;
+        the shell title becomes a heading; Jump/Duplicate get <code>type="button"</code>.
+      </div>
+    </div>
+
+    <!-- ═══════════ FRAME F: File inspector empty state ═══════════ -->
+    <div class="frame-label">F — File inspector on an empty / loading / errored board (today: NO sections render — the body collapses)</div>
+    <div class="cols">
+      <div class="bi">
+        <div class="bi-head">
+          <div class="bi-head-r1">
+            <span class="bi-head-glyph">≡</span><span class="bi-head-type">File</span>
+            <button class="bi-jump">⤿</button>
+          </div>
+          <div class="bi-head-title">File</div>
+        </div>
+        <section class="sec">
+          <div class="sec-hd"><span class="sec-lab">Configuration</span><span class="chev">▾</span></div>
+          <div class="meta">Path<span style="flex:1"></span><b>—</b></div>
+          <div class="meta">Status<span style="flex:1"></span><b>no file selected</b></div>
+          <button class="act" style="margin-top:4px;"><span class="ai">▤</span>Choose file…</button>
+        </section>
+      </div>
+      <div class="bi">
+        <div class="bi-head">
+          <div class="bi-head-r1">
+            <span class="bi-head-glyph">≡</span><span class="bi-head-type">File</span>
+            <button class="bi-jump">⤿</button>
+          </div>
+          <div class="bi-head-title">config.yaml</div>
+        </div>
+        <section class="sec">
+          <div class="sec-hd"><span class="sec-lab">Configuration</span><span class="chev">▾</span></div>
+          <div class="meta">Path<span style="flex:1"></span><b>src/config.yaml</b></div>
+          <div class="meta">Status<span style="flex:1"></span><b style="color:var(--err)">read failed</b></div>
+          <button class="act" style="margin-top:4px;"><span class="ai">↻</span>Retry</button>
+        </section>
+      </div>
+      <div class="note" style="max-width: 460px;">
+        <span class="dtag">D5</span><b>Diagnostic placeholder</b> <span class="rec">(rec)</span>: empty/loading/error File boards
+        render a Configuration section with path + status meta and the one relevant action (Choose file… / Retry) — matches
+        DataFlow's explicit-empty-state pattern. Alternative: keep P2's "intentionally empty" behaviour.
+        (Note: "Choose file…" reuses the board's existing file-open path — no new capability.)
+      </div>
+    </div>
+
+    <p class="caption">throwaway mock · board-inspector-p5-polish-mock.html · tokens verbatim from index.css / DESIGN.md §2-4</p>
+  </body>
+</html>

@@ -12,7 +12,7 @@
 // at construction independent of PTY state, so we only wait for the mount.
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { evalIn, openInspectorSection, pollEval, seed } from './helpers'
 
 const liveScrollback = (id: string) =>
   `window.__canvasE2E.terminalScrollback(${JSON.stringify(id)})`
@@ -79,7 +79,9 @@ test.describe('@terminal configurable scrollback', () => {
     await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
 
-    await page.locator(`[data-test="config-${id}"]`).click()
+    // P5: the ⚙ cluster is gone — the dialog opens via Inspector › Configuration › Edit….
+    await openInspectorSection(page, 'Configuration')
+    await page.locator('[data-test="inspector-configure"]').click()
     const dialog = page.locator('[data-test="new-terminal-dialog"]')
     await expect(dialog).toBeVisible()
 

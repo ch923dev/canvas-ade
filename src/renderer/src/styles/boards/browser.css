@@ -18,20 +18,8 @@
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border-subtle);
 }
-.bb-navbtn {
-  width: 22px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-3); /* D0-2: interactive at rest — faint is disabled-only */
-  transition: color 0.1s;
-}
-.bb-navbtn:not(:disabled):hover {
-  color: var(--text-2);
-}
+/* P5: the URL bar is INPUT-ONLY — the nav/screenshot/external/network buttons (.bb-navbtn) and
+   the audio popover (.bb-vol*) moved into the Board Inspector; their styles are removed. */
 .bb-url-field {
   flex: 1;
   min-width: 0;

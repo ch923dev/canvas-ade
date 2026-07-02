@@ -14,10 +14,13 @@ import { Icon } from '../../Icon'
 import type { CommandView } from '../../../store/commandStore'
 import {
   InspectorAction,
+  InspectorChips,
   InspectorMeta,
+  InspectorProgress,
   InspectorRow,
   InspectorSection,
-  InspectorSegmented
+  InspectorSegmented,
+  InspectorStatus
 } from '../../inspector/primitives'
 
 export interface CommandInspectorProps {
@@ -60,7 +63,7 @@ export function CommandInspector({
 }: CommandInspectorProps): ReactElement {
   return (
     <>
-      <InspectorSection label="View">
+      <InspectorSection label="View" persistKey="command.view">
         {collapsed ? (
           <InspectorAction
             icon={<Icon name="maximize" size={14} />}
@@ -90,42 +93,32 @@ export function CommandInspector({
             >
               {flipped ? 'Back to board' : 'Flip to recap'}
             </InspectorAction>
-            <InspectorAction icon={<Icon name="minimize" size={14} />} onClick={onCollapse}>
+            <InspectorAction
+              icon={<Icon name="minimize" size={14} />}
+              onClick={onCollapse}
+              dataTest="inspector-command-collapse"
+            >
               Collapse to rail
             </InspectorAction>
           </>
         )}
       </InspectorSection>
 
-      <InspectorSection label="Status">
+      <InspectorSection label="Status" persistKey="command.status">
         <InspectorRow>
-          <div className="ca-inspector-chips">
-            <span className="ca-inspector-status" data-tone="ok">
-              <span className="ca-inspector-status-dot" aria-hidden />
-              {counts.running} running
-            </span>
-            <span className="ca-inspector-status" data-tone="warn">
-              <span className="ca-inspector-status-dot" aria-hidden />
-              {counts.reporting} reporting
-            </span>
-            <span className="ca-inspector-status" data-tone="err">
-              <span className="ca-inspector-status-dot" aria-hidden />
-              {counts.failed} failed
-            </span>
-          </div>
+          <InspectorChips>
+            <InspectorStatus tone="ok">{counts.running} running</InspectorStatus>
+            <InspectorStatus tone="warn">{counts.reporting} reporting</InspectorStatus>
+            <InspectorStatus tone="err">{counts.failed} failed</InspectorStatus>
+          </InspectorChips>
         </InspectorRow>
         <InspectorMeta label="Done" value={`${counts.done} / ${counts.total}`} />
         <InspectorRow>
-          <span className="ca-inspector-pbar">
-            <span
-              className="ca-inspector-pfill"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
-          </span>
+          <InspectorProgress value={progress} ariaLabel="Batch progress" />
         </InspectorRow>
       </InspectorSection>
 
-      <InspectorSection label="Worker pool" defaultOpen={false}>
+      <InspectorSection label="Worker pool" defaultOpen={false} persistKey="command.workerPool">
         <InspectorMeta label="Spawn cap" value={String(pool.cap)} />
         <InspectorMeta label="In use" value={`${pool.inUse} of ${pool.cap}`} />
         <InspectorMeta label="Idle" value={`${pool.idle} terminals`} />
@@ -133,7 +126,11 @@ export function CommandInspector({
         {pool.planning > 0 && <InspectorMeta label="Planning" value={String(pool.planning)} />}
       </InspectorSection>
 
-      <InspectorSection label="Orchestration" defaultOpen={false}>
+      <InspectorSection
+        label="Orchestration"
+        defaultOpen={false}
+        persistKey="command.orchestration"
+      >
         {orchestrationEnabled ? (
           <InspectorMeta label="Status" value="Enabled" />
         ) : (

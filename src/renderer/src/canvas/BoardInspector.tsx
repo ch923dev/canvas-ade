@@ -26,11 +26,13 @@
  * `pendingFocusId` intent a Canvas effect consumes; `duplicateBoard`) — it never writes selection,
  * never touches React Flow internals, and never reparents board content.
  */
-import { useCallback, useEffect, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import type { BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
 import { inspectorEligible, inspectorRevealed } from './boardInspectorReveal'
+import { readHiddenPref, writeHiddenPref } from './inspector/hiddenPref'
 import { useInspectorSlotStore } from './inspector/inspectorSlotStore'
+import { InspectorAction } from './inspector/primitives'
 import { TypeGlyph } from './TypeGlyph'
 
 const TYPE_TAG: Record<BoardType, string> = {
@@ -43,7 +45,10 @@ const TYPE_TAG: Record<BoardType, string> = {
 }
 
 export function BoardInspector(): ReactElement | null {
-  const hasProject = useCanvasStore((s) => s.project.dir !== null)
+  // Gate on the canvas being OPEN, not on a dir: the Inspector must exist wherever boards can be
+  // selected (P5 made it the one control home), and the e2e harness runs an open canvas with
+  // dir:null (e2eHooks reset). Production never reaches status 'open' without a dir.
+  const hasProject = useCanvasStore((s) => s.project.status === 'open')
   // The single selected board, or null for 0 / 2+ selection. Stable object identity → the panel
   // re-renders only when THIS board (title/type) changes, not on every unrelated board update.
   const board = useCanvasStore((s) => {
@@ -52,8 +57,16 @@ export function BoardInspector(): ReactElement | null {
   })
   const zoom = useCanvasStore((s) => s.viewport?.zoom ?? 1)
 
+  // P5-8: the user's sticky hide (lazy init so the e2e key-removal reset takes effect on the
+  // next mount). Hidden wins over eligibility; the left-edge tab is the retrieve affordance.
+  const [hidden, setHidden] = useState(() => readHiddenPref())
+  const setHiddenPersisted = useCallback((next: boolean) => {
+    writeHiddenPref(next)
+    setHidden(next)
+  }, [])
+
   const eligible = inspectorEligible(board ? 1 : 0, zoom)
-  const revealed = inspectorRevealed(eligible)
+  const revealed = inspectorRevealed(eligible, hidden)
 
   // Publish which board owns the content slot (the single eligible one) so that board can portal
   // its per-type inspector in. Tracks eligibility, NOT reveal — the content stays mounted while
@@ -94,6 +107,7 @@ export function BoardInspector(): ReactElement | null {
                 </span>
                 <span className="ca-inspector-type">{TYPE_TAG[board.type]}</span>
                 <button
+                  type="button"
                   className="ca-inspector-jump"
                   title="Jump to board"
                   aria-label="Jump to board"
@@ -110,25 +124,80 @@ export function BoardInspector(): ReactElement | null {
                     />
                   </svg>
                 </button>
+                {/* P5-8: hide the popover out of the way; the left-edge tab retrieves it. */}
+                <button
+                  type="button"
+                  className="ca-inspector-hide"
+                  title="Hide Inspector"
+                  aria-label="Hide Inspector"
+                  data-test="inspector-hide"
+                  onClick={() => setHiddenPersisted(true)}
+                >
+                  <svg width={14} height={14} viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M2.5 2.5v9M10.5 3.5 7 7l3.5 3.5M11.5 7H5.5"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
               </div>
-              <div className="ca-inspector-title">{board.title}</div>
+              {/* P5 sweep (a11y): the popover landmark gets a heading — the selected board's
+                  title. role/aria-level (not <h2>) so the CSS class keeps full styling control. */}
+              <div className="ca-inspector-title" role="heading" aria-level={2}>
+                {board.title}
+              </div>
             </div>
 
             {/* Per-type content slot — the selected board portals its own <XInspector> in here. */}
             <div className="ca-inspector-body" ref={setSlotRef} />
 
             <div className="ca-inspector-foot">
-              <button
-                className="ca-inspector-act"
-                data-test="inspector-duplicate"
+              {/* P5 sweep: through the shared primitive (type="button" + the act markup) instead
+                  of re-rolling its class by hand. */}
+              <InspectorAction
+                dataTest="inspector-duplicate"
                 onClick={() => useCanvasStore.getState().duplicateBoard(board.id)}
               >
                 Duplicate
-              </button>
+              </InspectorAction>
             </div>
           </>
         )}
       </aside>
+
+      {/* P5-8 (v2): the retrieve affordance — a compact HANDLE at the popover's own docked spot,
+          shown exactly when the popover WOULD reveal but the user hid it. NOT a left-edge tab:
+          the file tree owns a 36px left-edge proximity band (SidePanel REVEAL_EDGE), so anything
+          parked at left:0 both flashes the tree open and gets shifted by its reveal — a moving
+          target. The handle sits at the popover's x (approached from the canvas side, never
+          entering the band), never moves while aimed at, and reads as the popover's remnant. */}
+      {hidden && eligible && board && (
+        <button
+          type="button"
+          className="ca-inspector-handle"
+          data-test="inspector-reopen"
+          title="Show Inspector"
+          aria-expanded={false}
+          onClick={() => setHiddenPersisted(false)}
+        >
+          <span className="ca-inspector-glyph">
+            <TypeGlyph type={board.type} />
+          </span>
+          <span className="ca-inspector-handle-title">{board.title}</span>
+          <svg width={14} height={14} viewBox="0 0 14 14" fill="none" aria-hidden>
+            <path
+              d="M11.5 2.5v9M3.5 3.5 7 7l-3.5 3.5M2.5 7h6"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   )
 }

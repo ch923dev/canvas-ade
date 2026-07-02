@@ -24,7 +24,6 @@ import {
   useCommandStore,
   tasksInColumn,
   type CommandTask,
-  type CommandView,
   type TaskStatus
 } from '../../store/commandStore'
 import { deriveWorkerPool } from '../../store/workerPool'
@@ -183,23 +182,8 @@ export function CommandBoard({
     setCollapsed(false)
   }
 
-  // ── Titlebar actions (the BoardFrame `actions` slot, left of maximize/⋯) ──
-  // Phase D: a ⟲ recap toggle flips to the orchestrator recap face; the Kanban/Groups seg is hidden
-  // while flipped (it governs the front face only). Collapse stays available from either face.
-  const actions = collapsed ? (
-    <CtlBtn label="⤢ expand" title="Expand" onClick={expand} />
-  ) : (
-    <>
-      {!flip.flipped && <Seg view={view} onSelect={setView} />}
-      <CtlBtn
-        label="⟲ recap"
-        title={flip.flipped ? 'Back to kanban' : 'Flip to recap'}
-        active={flip.flipped}
-        onClick={flip.toggle}
-      />
-      <CtlBtn label="⤡ collapse" title="Collapse to rail" onClick={collapse} />
-    </>
-  )
+  // P5: the titlebar action cluster (expand / Kanban-Groups seg / recap flip / collapse) is gone —
+  // the Inspector's View section is the one control home (same handlers, portaled below).
 
   return (
     <>
@@ -234,7 +218,6 @@ export function CommandBoard({
         selected={selected}
         hovered={hovered}
         dimmed={dimmed}
-        actions={actions}
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
@@ -380,95 +363,6 @@ export function CommandBoard({
         )}
       </BoardFrame>
     </>
-  )
-}
-
-// ── Titlebar seg control ──────────────────────────────────────────────────────
-function Seg({
-  view,
-  onSelect
-}: {
-  view: CommandView
-  onSelect: (v: CommandView) => void
-}): ReactElement {
-  const tab = (v: CommandView, label: string): ReactElement => (
-    <button
-      className="nodrag"
-      aria-pressed={view === v}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation()
-        onSelect(v)
-      }}
-      style={{
-        padding: '3px 11px',
-        fontSize: 11,
-        border: 'none',
-        cursor: 'pointer',
-        color: view === v ? 'var(--text)' : 'var(--text-3)',
-        background: view === v ? 'var(--surface-overlay)' : 'transparent'
-      }}
-    >
-      {label}
-    </button>
-  )
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 'var(--r-ctl)',
-        overflow: 'hidden',
-        flex: 'none'
-      }}
-    >
-      {tab('kanban', 'Kanban')}
-      {tab('groups', 'Groups')}
-    </span>
-  )
-}
-
-// ── A small text control button (collapse / expand) ───────────────────────────
-function CtlBtn({
-  label,
-  title,
-  onClick,
-  active = false
-}: {
-  label: string
-  title: string
-  onClick: () => void
-  /** Accent (selected) styling — used for the ⟲ recap toggle while the board is flipped. */
-  active?: boolean
-}): ReactElement {
-  return (
-    <button
-      className="nodrag"
-      title={title}
-      aria-pressed={active}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation()
-        onClick()
-      }}
-      style={{
-        height: 22,
-        padding: '0 9px',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        borderRadius: 'var(--r-ctl)',
-        border: `1px solid ${active ? 'rgba(79,140,255,.4)' : 'var(--border-subtle)'}`,
-        color: active ? 'var(--accent-hover)' : 'var(--text-3)',
-        fontSize: 11,
-        background: active ? 'var(--accent-wash)' : 'transparent',
-        cursor: 'pointer',
-        flex: 'none',
-        whiteSpace: 'nowrap'
-      }}
-    >
-      {label}
-    </button>
   )
 }
 

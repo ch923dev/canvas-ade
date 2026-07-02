@@ -63,7 +63,6 @@ import { renderMarkdownToHtml } from './fileBoardMarkdown'
 import { useFileSave } from './fileBoardSave'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
 import { FILEREF_MIME } from '../fileTreeData'
-import { FileActions } from './file/FileActions'
 import { FileInspector } from './file/FileInspector'
 import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 
@@ -102,6 +101,9 @@ export function FileBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [kind, setKind] = useState<Kind>(path ? 'loading' : 'empty')
+  // P5 (D5): the Inspector's error-state Retry re-runs the loader effect for the SAME path by
+  // bumping this nonce (a dep of the load effect below) — no path mutation, no board patch.
+  const [loadNonce, setLoadNonce] = useState(0)
   const [text, setText] = useState('')
   const [savedText, setSavedText] = useState('')
   const [imgUrl, setImgUrl] = useState<string | null>(null)
@@ -258,7 +260,7 @@ export function FileBoard({
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [path, ext])
+  }, [path, ext, loadNonce])
 
   // -- Language resolution + highlighting (sync; no worker, no eval) -------------
   // SLICE-009: the highlight (Lezer parse) + markdown render are the per-keystroke hot paths. Key
@@ -440,26 +442,23 @@ export function FileBoard({
     updateBoard(board.id, { path: next })
   }, [pathDraft, board.id, updateBoard])
 
-  // Title-bar controls, extracted to FileActions to keep this host under the max-lines ratchet:
-  // Pin (peek), markdown mode seg, font steppers, dirty dot + Save, read-only tag. The Board
-  // Inspector (P2) surfaces these same controls (plus Find) as labelled rows via FileInspector.
-  const actions =
-    kind === 'text' || isPeek ? (
-      <FileActions
-        boardId={board.id}
-        isText={kind === 'text'}
-        isPeek={isPeek}
-        isMarkdown={isMarkdown}
-        mode={mode}
-        onMode={setMode}
-        fontSize={fontSize}
-        onAdjustFont={adjustFont}
-        readOnly={readOnly}
-        dirty={dirty}
-        saving={saving}
-        onSave={() => void doSave()}
-      />
-    ) : undefined
+  // P5: the title-bar cluster (pin / mode seg / font ± / Save) is gone — FileInspector is the one
+  // control home. Only the at-a-glance UNSAVED cue survives on the bar, as a quiet dot beside the
+  // title (D1); Save itself lives in Inspector › File.
+  const titleBadge = dirty ? (
+    <span
+      role="img"
+      aria-label="Unsaved changes"
+      title="Unsaved changes"
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: 999,
+        background: 'var(--warn)',
+        flex: 'none'
+      }}
+    />
+  ) : undefined
 
   // The text content's left/sole pane: the live editor on the focused board, else the crisp
   // snapshot. Built once so the plain (source) view and the split view's left half share it.
@@ -537,6 +536,9 @@ export function FileBoard({
             path={path ?? ''}
             typeLabel={ext ? ext.toUpperCase() : ''}
             sizeText={size ? formatBytes(size) : ''}
+            errorDetail={errMsg}
+            onBrowse={() => requestBrowse(board.id)}
+            onRetry={() => setLoadNonce((n) => n + 1)}
           />,
           inspectorSlot
         )}
@@ -549,7 +551,7 @@ export function FileBoard({
         hovered={hovered}
         dimmed={dimmed}
         contentBg="var(--surface)"
-        actions={actions}
+        titleBadge={titleBadge}
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}

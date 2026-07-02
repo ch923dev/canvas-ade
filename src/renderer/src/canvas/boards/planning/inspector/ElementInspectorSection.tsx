@@ -19,6 +19,7 @@ import {
   InspectorSection,
   InspectorSegmented,
   InspectorSlider,
+  InspectorSubheader,
   InspectorSwatches,
   InspectorToggle
 } from '../../../inspector/primitives'
@@ -140,7 +141,11 @@ export function ElementInspectorSection({ model }: { model: ElementInspectorMode
   )
 
   return (
-    <InspectorSection label={`Element · ${model.kindLabel}`} aside={countChip}>
+    <InspectorSection
+      label={`Element · ${model.kindLabel}`}
+      persistKey="planning.element"
+      aside={countChip}
+    >
       {/* Typography — homogeneous text only. No-op-gated: re-selecting the active token never emits
           (mirrors the on-board TextToolbar), so it can't push a phantom undo step. */}
       {typography && (
@@ -221,7 +226,7 @@ export function ElementInspectorSection({ model }: { model: ElementInspectorMode
 
       {/* Appearance (P4b) — a sub-block under the per-kind rows, above Arrange. Opacity for ALL kinds;
           Stroke colour + width only for an all-line selection (arrow / pen); Z-order (4) for all. */}
-      <div className="ca-inspector-subhd">Appearance</div>
+      <InspectorSubheader>Appearance</InspectorSubheader>
       <InspectorRow label="Opacity">
         <InspectorSlider
           value={appearance.opacity ?? OPACITY_MAX}
@@ -230,10 +235,10 @@ export function ElementInspectorSection({ model }: { model: ElementInspectorMode
           valueText={
             appearance.opacity == null ? 'Mixed' : `${Math.round(appearance.opacity * 100)}%`
           }
+          valueLabel={
+            appearance.opacity == null ? 'Mixed' : `${Math.round(appearance.opacity * 100)}%`
+          }
         />
-        <span className="ca-inspector-slider-val" aria-hidden>
-          {appearance.opacity == null ? 'Mixed' : `${Math.round(appearance.opacity * 100)}%`}
-        </span>
       </InspectorRow>
       {appearance.showStroke && (
         <>

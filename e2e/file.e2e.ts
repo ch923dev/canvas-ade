@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { evalIn, mainCall, seed, selectForInspector } from './helpers'
 
 /**
  * Minimal typed view of the browser DOM globals these tree/title probes drive via `page.evaluate`.
@@ -67,15 +67,19 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await expect(editor).toBeVisible({ timeout: 6000 })
       await expect(editor).toContainText('greet')
 
-      // 2) Font stepper: A+ in the title bar grows the editor font (read --cm-font off the host;
-      //    DOM globals aren't typed in the e2e tsconfig, so go through a string eval).
+      // 2) Font stepper: the Inspector's Appearance stepper grows the editor font (P5 — the
+      //    title-bar A-/A+ cluster is gone; read --cm-font off the host; DOM globals aren't typed
+      //    in the e2e tsconfig, so go through a string eval).
       const readFont = (): Promise<number> =>
         evalIn<number>(
           page,
           `parseFloat(getComputedStyle(document.querySelector('${node} [data-test="file-editor"]')).getPropertyValue('--cm-font'))`
         )
       const fontBefore = await readFont()
-      const incBtn = page.locator(`${node} button[aria-label="Increase font size"]`)
+      await selectForInspector(page, id)
+      const incBtn = page.locator(
+        '[data-test="board-inspector"] button[aria-label="Bigger font (Ctrl +)"]'
+      )
       await incBtn.click()
       await incBtn.click()
       const fontAfter = await readFont()
@@ -189,12 +193,14 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await expect(preview.locator('strong')).toHaveText('world')
 
       // Split: source editor (left, board is selected) AND rendered preview (right) side-by-side.
-      await page.getByRole('button', { name: 'Split', exact: true }).click()
+      // P5: the mode seg lives in the Inspector's View section — select the board to reveal it.
+      await selectForInspector(page, id)
+      await page.getByRole('radio', { name: 'Split', exact: true }).click()
       await expect(editor).toBeVisible({ timeout: 4000 })
       await expect(preview).toBeVisible()
 
       // Source: the editor fills the board; the rendered preview is gone.
-      await page.getByRole('button', { name: 'Source', exact: true }).click()
+      await page.getByRole('radio', { name: 'Source', exact: true }).click()
       await expect(editor).toBeVisible({ timeout: 4000 })
       await expect(preview).toHaveCount(0)
     } finally {
@@ -223,7 +229,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       const node = `.react-flow__node[data-id="${id}"]`
 
       // Enter Split: source editor (left, board selected) + rendered preview (right).
-      await page.getByRole('button', { name: 'Split', exact: true }).click()
+      // P5: the mode seg lives in the Inspector's View section — select the board to reveal it.
+      await selectForInspector(page, id)
+      await page.getByRole('radio', { name: 'Split', exact: true }).click()
       await expect(page.locator(`${node} [data-test="file-editor"] .cm-scroller`)).toBeVisible({
         timeout: 6000
       })
@@ -506,10 +514,16 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
           )
           return t ? g.getComputedStyle(t).fontStyle : null
         }, name)
+      // P5: Pin lives in the Inspector's File section — reveal it for the (peek) file board first.
+      const selectFileBoard = (): Promise<unknown> =>
+        evalIn(
+          page,
+          `(() => { const b = window.__canvasE2E.getBoards().find((x) => x.type === 'file'); if (b) { window.__canvasE2E.select(b.id); window.__canvasE2E.setZoom(1) } })()`
+        )
       const pinPresent = (): Promise<boolean> =>
         evalIn<boolean>(
           page,
-          `Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'Pin' && (b.title||'').startsWith('Pin this board'))`
+          `Array.from(document.querySelectorAll('[data-test="board-inspector"] button')).some((b) => (b.textContent||'').includes('Pin (keep on canvas)'))`
         )
 
       // Single-click → peek: the title is the FILENAME, rendered italic (VS Code's preview cue).
@@ -518,6 +532,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
         `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === 'note.ts'); if (r) r.click() })()`
       )
       await expect.poll(() => titleStyle('note.ts')).toBe('italic')
+      await selectFileBoard()
       expect(await pinPresent()).toBe(true)
 
       // Click the Pin button (DOM click bypasses any e2e modal scrim) → promoted: title goes upright,
@@ -525,7 +540,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       expect(
         await evalIn<boolean>(
           page,
-          `(() => { const b = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Pin' && (b.title||'').startsWith('Pin this board')); if (b) b.click(); return !!b })()`
+          `(() => { const b = Array.from(document.querySelectorAll('[data-test="board-inspector"] button')).find((b) => (b.textContent||'').includes('Pin (keep on canvas)')); if (b) b.click(); return !!b })()`
         )
       ).toBe(true)
       await expect.poll(() => titleStyle('note.ts')).toBe('normal')

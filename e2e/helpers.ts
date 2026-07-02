@@ -37,3 +37,28 @@ export function seed(page: Page, type: string, patch?: Record<string, unknown>):
   const patchArg = patch ? `, ${JSON.stringify(patch)}` : ''
   return evalIn<string>(page, `window.__canvasE2E.seedBoard(${JSON.stringify(type)}${patchArg})`)
 }
+
+/** P5: select a board + normalize zoom so the Board Inspector (the one control home since the
+ *  title-bar clusters were removed) reveals for it. The id flows through JSON.stringify into the
+ *  eval string (internal seeded id, same discipline as seed/evalIn call-sites). */
+export async function selectForInspector(page: Page, id: string): Promise<void> {
+  await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+  await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+}
+
+/** P5: expand a (possibly collapsed) Inspector section by its header label. Sections like
+ *  Configuration / Linking / Developer start collapsed (`defaultOpen={false}`), so a spec must
+ *  open them before clicking the controls inside. No-op when already expanded. */
+export async function openInspectorSection(page: Page, label: string): Promise<void> {
+  const hd = page
+    .locator('[data-test="board-inspector"] .ca-inspector-section-hd')
+    .filter({ hasText: label })
+  await expect(hd).toBeVisible()
+  if ((await hd.getAttribute('aria-expanded')) === 'false') await hd.click()
+}
+
+/** P5: clear the selection so the left-docked Inspector hides again — a fitView'd board can span
+ *  the whole window, and a still-revealed Inspector would occlude board-content clicks. */
+export async function deselectInspector(page: Page): Promise<void> {
+  await evalIn(page, `window.__canvasE2E.select(null)`)
+}

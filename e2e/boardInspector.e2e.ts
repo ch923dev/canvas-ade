@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { evalIn, mainCall, pollEval, seed, selectForInspector } from './helpers'
 
 /**
  * Board Inspector — end-to-end. Proves the per-type composition wiring through the REAL stack:
@@ -640,5 +640,115 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
+  })
+})
+
+test.describe('@chrome Board Inspector — full-view overlay (P5-D7)', () => {
+  test('full view raises the inspector above the scrim; exit restores the base layer', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'inspector-fv-',
+      'inspector-fv'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const id = await seed(page, 'planning')
+      await selectForInspector(page, id)
+
+      const revealed = await pollEval(
+        page,
+        `document.querySelector('[data-test="board-inspector"]')?.getAttribute('data-revealed') === 'true'`,
+        3000
+      )
+      expect(revealed, 'selecting the board reveals the inspector').toBe(true)
+
+      // Enter full view → the scrim (z 200) mounts; the wrap must jump to the menu layer (250) so
+      // the inspector — the ONE control home since P5 removed the title-bar clusters — stays
+      // reachable over the modal.
+      await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+      const raised = await pollEval(
+        page,
+        `!!document.querySelector('.fullview-scrim') && getComputedStyle(document.querySelector('.ca-inspector-wrap')).zIndex === '250'`,
+        3000
+      )
+      expect(raised, 'the inspector wrap rises above the full-view scrim').toBe(true)
+
+      // Still revealed + interactive over the modal: the Tools palette keeps firing its handler.
+      await evalIn(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-note"]').click()`
+      )
+      const toolPicked = await pollEval(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-note"]')?.getAttribute('aria-checked') === 'true'`,
+        3000
+      )
+      expect(toolPicked, 'an inspector control fires over the full-view scrim').toBe(true)
+
+      // Exit full view → the scrim unmounts and the wrap returns to the base chrome layer.
+      await evalIn(page, `window.__canvasE2E.setFullView(null)`)
+      const restored = await pollEval(
+        page,
+        `!document.querySelector('.fullview-scrim') && getComputedStyle(document.querySelector('.ca-inspector-wrap')).zIndex === '45'`,
+        4000
+      )
+      expect(restored, 'exiting full view restores the base z-index').toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})
+
+test.describe('@chrome Board Inspector — hide / retrieve (P5-8)', () => {
+  test('hide collapses the popover to its docked handle; the handle retrieves it; the pref is sticky', async ({
+    page
+  }) => {
+    const id = await seed(page, 'terminal')
+    await selectForInspector(page, id)
+    const inspector = page.locator('[data-test="board-inspector"]')
+    await expect(inspector).toHaveAttribute('data-revealed', 'true')
+
+    // Hide → the popover conceals (stays mounted, inert) and the docked HANDLE appears at the
+    // popover's own spot (v2 — NOT a left-edge tab: that sat inside the file tree's 36px
+    // proximity band and became a moving target when the tree's reveal shifted it).
+    await page.locator('[data-test="inspector-hide"]').click()
+    await expect(inspector).toHaveAttribute('data-revealed', 'false')
+    const handle = page.locator('[data-test="inspector-reopen"]')
+    await expect(handle, 'docked retrieve handle appears while hidden + selected').toBeVisible()
+    // It identifies the selected board (the popover's remnant, not anonymous chrome) and sits
+    // CLEAR of the SidePanel's REVEAL_EDGE band (x ≥ 12 keeps its body out at rest; the aim
+    // path from the canvas approaches from the right).
+    await expect(handle).toContainText('Terminal')
+    const hb = await handle.boundingBox()
+    expect(hb && hb.x >= 12, 'handle docks at the popover x, not the window edge').toBe(true)
+
+    // The hide is sticky (survives restarts via localStorage) and selection-independent:
+    // re-selecting another board keeps it hidden — hidden wins over reveal-on-select.
+    const pref = await evalIn<string | null>(
+      page,
+      `window.localStorage.getItem('ca.inspector.hidden')`
+    )
+    expect(pref, 'hide persists to the sticky pref').toBe('1')
+    const id2 = await seed(page, 'terminal')
+    await selectForInspector(page, id2)
+    await expect(inspector).toHaveAttribute('data-revealed', 'false')
+    await expect(handle).toBeVisible()
+
+    // Deselect → the handle hides too (it is a retrieve affordance, not permanent chrome).
+    await evalIn(page, `window.__canvasE2E.select(null)`)
+    await expect(handle).toHaveCount(0)
+
+    // Retrieve: re-select + click the handle → revealed again, pref cleared.
+    await selectForInspector(page, id2)
+    await page.locator('[data-test="inspector-reopen"]').click()
+    await expect(inspector).toHaveAttribute('data-revealed', 'true')
+    expect(
+      await evalIn<string | null>(page, `window.localStorage.getItem('ca.inspector.hidden')`),
+      'retrieving clears the sticky pref'
+    ).toBeNull()
   })
 })

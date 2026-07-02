@@ -24,6 +24,7 @@ import {
   InspectorSection,
   InspectorSegmented,
   InspectorSlider,
+  InspectorStatus,
   InspectorToggle
 } from '../../inspector/primitives'
 
@@ -113,7 +114,7 @@ export function BrowserInspector({
 
   return (
     <>
-      <InspectorSection label="Viewport">
+      <InspectorSection label="Viewport" persistKey="browser.viewport">
         <InspectorRow>
           <InspectorSegmented
             fill
@@ -136,7 +137,7 @@ export function BrowserInspector({
         <InspectorMeta label="Size" value={`${preset.w} × ${preset.h}`} />
       </InspectorSection>
 
-      <InspectorSection label="Navigation">
+      <InspectorSection label="Navigation" persistKey="browser.navigation">
         <div className="ca-inspector-nav">
           <button
             type="button"
@@ -170,12 +171,12 @@ export function BrowserInspector({
         </div>
       </InspectorSection>
 
-      <InspectorSection label="Preview">
+      <InspectorSection label="Preview" persistKey="browser.preview">
         <InspectorRow label="Status">
-          <span className="ca-inspector-status" data-tone={statusTone}>
-            <span className="ca-inspector-status-dot" aria-hidden />
+          {/* ConnTone's 'idle' is this board's flavor of the primitive's 'neutral'. */}
+          <InspectorStatus tone={statusTone === 'idle' ? 'neutral' : statusTone}>
             {statusWord}
-          </span>
+          </InspectorStatus>
         </InspectorRow>
         {audible && (
           <>
@@ -191,6 +192,7 @@ export function BrowserInspector({
                 onChange={onVolume}
                 ariaLabel="Preview volume"
                 valueText={`${volPct}%`}
+                valueLabel={`${volPct}%`}
               />
             </InspectorRow>
           </>
@@ -203,12 +205,16 @@ export function BrowserInspector({
         >
           Screenshot
         </InspectorAction>
-        <InspectorAction icon={<Icon name="external" size={14} />} onClick={onOpenExternal}>
+        <InspectorAction
+          icon={<Icon name="external" size={14} />}
+          onClick={onOpenExternal}
+          dataTest="inspector-open-external"
+        >
           Open in browser
         </InspectorAction>
       </InspectorSection>
 
-      <InspectorSection label="Developer" defaultOpen={false}>
+      <InspectorSection label="Developer" defaultOpen={false} persistKey="browser.developer">
         <InspectorRow label="Network inspector">
           <InspectorToggle checked={netOpen} onChange={onToggleNet} ariaLabel="Network inspector" />
         </InspectorRow>
@@ -224,7 +230,11 @@ export function BrowserInspector({
         )}
       </InspectorSection>
 
-      <InspectorSection label="Configuration" defaultOpen={false}>
+      <InspectorSection
+        label="Configuration"
+        defaultOpen={false}
+        persistKey="browser.configuration"
+      >
         <InspectorMeta label="URL" value={url} />
         <InspectorAction
           icon={<Icon name="pen" size={14} />}

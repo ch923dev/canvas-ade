@@ -15,7 +15,9 @@ export function inspectorEligible(selectedCount: number, zoom: number): boolean 
 /** v2 reveal-on-select: the compact left-docked popover is shown whenever there is a single
  *  eligible selection — selecting a board IS the trigger (mirrors a properties panel). There is no
  *  proximity/focus gate anymore. Dismissal is deselection (click empty canvas / select another
- *  board), which the canvas already does — so reveal simply tracks eligibility. */
-export function inspectorRevealed(eligible: boolean): boolean {
-  return eligible
+ *  board), which the canvas already does — so reveal simply tracks eligibility.
+ *  P5-8: unless the user HID it — the sticky hide (hiddenPref.ts) wins over eligibility; the
+ *  left-edge retrieve tab (shown exactly when this returns false because of `hidden`) undoes it. */
+export function inspectorRevealed(eligible: boolean, hidden = false): boolean {
+  return eligible && !hidden
 }

@@ -3,8 +3,9 @@
  * FileBoard owns all state/handlers and portals this into the shell's slot, so every control reuses the
  * EXACT same handler its title-bar / context-menu counterpart uses (no duplication, no lifted state).
  *
- * Additive: the title-bar actions (FileActions) stay as-is; this surfaces them as labelled rows PLUS
- * the otherwise right-click-only Find-in-file (the visibility win) and the path/type/size config.
+ * P5: the ONE control home — the title-bar cluster (FileActions) is gone; only the unsaved dot
+ * stays on the bar. Surfaces the mode seg / font stepper / Save / Pin as labelled rows PLUS the
+ * otherwise right-click-only Find-in-file (the visibility win) and the path/type/size config.
  * Sections mirror docs/research/mocks/board-inspector-popover-mock (File hero); View (markdown only) +
  * Appearance + File start expanded, Configuration starts COLLAPSED for text (open for other kinds where
  * it is the only content). The shell owns the head + Duplicate foot, so this renders sections only.
@@ -19,7 +20,8 @@ import {
   InspectorSegmented,
   InspectorStepper
 } from '../../inspector/primitives'
-import type { FileViewMode } from './FileActions'
+/** The markdown display mode (was FileActions' export until P5 removed the title-bar cluster). */
+export type FileViewMode = 'preview' | 'split' | 'source'
 
 export type FileKind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
 
@@ -43,6 +45,13 @@ export interface FileInspectorProps {
   path: string
   typeLabel: string
   sizeText: string
+  // P5 (D5) — the empty/loading/error diagnostic placeholder
+  /** The load error detail (errMsg), shown as the Status meta when kind === 'error'. */
+  errorDetail: string
+  /** Arm the file tree's browse-to-bind flow (the empty board's "Browse files" path). */
+  onBrowse: () => void
+  /** Re-run the loader for the same path after an error. */
+  onRetry: () => void
 }
 
 const MODE_OPTS: ReadonlyArray<{ value: FileViewMode; label: string }> = [
@@ -69,17 +78,24 @@ export function FileInspector({
   onPin,
   path,
   typeLabel,
-  sizeText
+  sizeText,
+  errorDetail,
+  onBrowse,
+  onRetry
 }: FileInspectorProps): ReactElement {
   const isText = kind === 'text'
   const showConfig = isText || kind === 'image' || kind === 'large' || kind === 'binary'
+  // P5 (D5): empty/loading/error boards previously rendered NO sections at all — an errored file
+  // showed no diagnostic anywhere. Give them a Configuration placeholder (path + status + the one
+  // relevant action), matching DataFlow's explicit-empty-state pattern.
+  const placeholder = kind === 'empty' || kind === 'loading' || kind === 'error'
 
   return (
     <>
       {isText && (
         <>
           {isMarkdown && (
-            <InspectorSection label="View">
+            <InspectorSection label="View" persistKey="file.view">
               <InspectorRow>
                 <InspectorSegmented
                   fill
@@ -92,7 +108,7 @@ export function FileInspector({
             </InspectorSection>
           )}
 
-          <InspectorSection label="Appearance">
+          <InspectorSection label="Appearance" persistKey="file.appearance">
             <InspectorRow label="Font size">
               <InspectorStepper
                 value={fontSize}
@@ -104,7 +120,7 @@ export function FileInspector({
             </InspectorRow>
           </InspectorSection>
 
-          <InspectorSection label="File">
+          <InspectorSection label="File" persistKey="file.file">
             {!readOnly && mode !== 'preview' && (
               <InspectorAction
                 icon={<Icon name="download" size={14} />}
@@ -138,7 +154,7 @@ export function FileInspector({
       )}
 
       {!isText && isPeek && (
-        <InspectorSection label="File">
+        <InspectorSection label="File" persistKey="file.file">
           <InspectorAction icon={<Icon name="magnet" size={14} />} onClick={onPin}>
             Pin (keep on canvas)
           </InspectorAction>
@@ -146,10 +162,48 @@ export function FileInspector({
       )}
 
       {showConfig && (
-        <InspectorSection label="Configuration" defaultOpen={!isText}>
+        <InspectorSection
+          label="Configuration"
+          defaultOpen={!isText}
+          persistKey="file.configuration"
+        >
           {path && <InspectorMeta label="Path" value={path} />}
           {typeLabel && <InspectorMeta label="Type" value={typeLabel} />}
           {sizeText && <InspectorMeta label="Size" value={sizeText} />}
+        </InspectorSection>
+      )}
+
+      {placeholder && (
+        <InspectorSection label="Configuration" persistKey="file.configuration">
+          <InspectorMeta label="Path" value={path || '—'} />
+          <InspectorMeta
+            label="Status"
+            value={
+              kind === 'empty'
+                ? 'no file selected'
+                : kind === 'loading'
+                  ? 'loading…'
+                  : errorDetail || 'read failed'
+            }
+          />
+          {kind === 'empty' && (
+            <InspectorAction
+              icon={<Icon name="search" size={14} />}
+              onClick={onBrowse}
+              dataTest="inspector-file-browse"
+            >
+              Choose file…
+            </InspectorAction>
+          )}
+          {kind === 'error' && (
+            <InspectorAction
+              icon={<Icon name="refresh" size={14} />}
+              onClick={onRetry}
+              dataTest="inspector-file-retry"
+            >
+              Retry
+            </InspectorAction>
+          )}
         </InspectorSection>
       )}
     </>
