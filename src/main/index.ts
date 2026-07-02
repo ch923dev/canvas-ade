@@ -412,7 +412,7 @@ app.whenReady().then(async () => {
   // Phase 5 · S1: frame-guarded "save terminal output to file" (native dialog + atomic write).
   registerTerminalHandlers(ipcMain, () => mainWindow)
   // SYNC platform info (Windows build number) for the terminal's xterm windowsPty hint (A-Win).
-  registerPlatformIpc(ipcMain)
+  registerPlatformIpc(ipcMain, () => mainWindow)
   // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The
   // chokidar watcher that emits file:treeEvent lands in S2; the channel is reserved here.
   registerFileIpc(ipcMain, () => mainWindow)
