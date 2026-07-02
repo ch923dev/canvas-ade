@@ -224,6 +224,7 @@ export function CommandBoard({
     >
       {configuringTask && (
         <WorkerConfigDialog
+          key={configuringTask.id}
           zoneName={configuringTask.zoneName ?? configuringTask.title}
           engineeredPrompt={configuringTask.prompt ?? configuringTask.title}
           initial={lastWorkerConfig}
