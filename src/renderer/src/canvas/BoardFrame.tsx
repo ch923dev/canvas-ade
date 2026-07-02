@@ -346,6 +346,13 @@ export function IconBtn({
           ? (e) => {
               e.preventDefault()
               clearTimer()
+              // BUG-030: on touch, a long-press can fire onLongPress AND then trigger the
+              // native contextmenu event for the same gesture. If the long-press already ran
+              // the action (heldRef), swallow this contextmenu so it doesn't fire a duplicate.
+              if (heldRef.current) {
+                heldRef.current = false
+                return
+              }
               onContextMenu()
             }
           : undefined
