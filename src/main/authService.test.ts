@@ -146,6 +146,18 @@ describe('createAuthService', () => {
     expect(tokenStore.hasTokens()).toBe(false)
   })
 
+  it('status() reports signed-out when the session outlives the token store (BUG-025)', async () => {
+    const { deps, opened, tokenStore } = makeHarness()
+    const svc = createAuthService(deps)
+    svc.signIn()
+    await svc.handleCallback(`expanse://auth/callback?code=CODE&state=${stateFromUrl(opened[0])}`)
+    expect(svc.status().isLoggedIn).toBe(true)
+    // Simulate the token store losing its tokens (cleared/undecryptable) while the session file
+    // survives — status() must not trust the session file alone.
+    tokenStore.clearTokens()
+    expect(svc.status()).toMatchObject({ isLoggedIn: false })
+  })
+
   it('signOut clears tokens + session + entitlement and pushes signed-out', async () => {
     const { deps, opened, statuses, tokenStore, getSession } = makeHarness()
     const svc = createAuthService(deps)
