@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { evalIn, mainCall, pollEval, seed, selectForInspector } from './helpers'
 
 /**
  * Board Inspector — end-to-end. Proves the per-type composition wiring through the REAL stack:
@@ -637,6 +637,66 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       // appears WITHOUT any manual grip click (the maintainer's create-flow bug: PR #277).
       const appeared = await pollEval(page, `!!document.querySelector('${opacitySel}')`, 3000)
       expect(appeared, 'creating a note auto-selects it → the Element section shows').toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})
+
+test.describe('@chrome Board Inspector — full-view overlay (P5-D7)', () => {
+  test('full view raises the inspector above the scrim; exit restores the base layer', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'inspector-fv-',
+      'inspector-fv'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const id = await seed(page, 'planning')
+      await selectForInspector(page, id)
+
+      const revealed = await pollEval(
+        page,
+        `document.querySelector('[data-test="board-inspector"]')?.getAttribute('data-revealed') === 'true'`,
+        3000
+      )
+      expect(revealed, 'selecting the board reveals the inspector').toBe(true)
+
+      // Enter full view → the scrim (z 200) mounts; the wrap must jump to the menu layer (250) so
+      // the inspector — the ONE control home since P5 removed the title-bar clusters — stays
+      // reachable over the modal.
+      await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+      const raised = await pollEval(
+        page,
+        `!!document.querySelector('.fullview-scrim') && getComputedStyle(document.querySelector('.ca-inspector-wrap')).zIndex === '250'`,
+        3000
+      )
+      expect(raised, 'the inspector wrap rises above the full-view scrim').toBe(true)
+
+      // Still revealed + interactive over the modal: the Tools palette keeps firing its handler.
+      await evalIn(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-note"]').click()`
+      )
+      const toolPicked = await pollEval(
+        page,
+        `document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-note"]')?.getAttribute('aria-checked') === 'true'`,
+        3000
+      )
+      expect(toolPicked, 'an inspector control fires over the full-view scrim').toBe(true)
+
+      // Exit full view → the scrim unmounts and the wrap returns to the base chrome layer.
+      await evalIn(page, `window.__canvasE2E.setFullView(null)`)
+      const restored = await pollEval(
+        page,
+        `!document.querySelector('.fullview-scrim') && getComputedStyle(document.querySelector('.ca-inspector-wrap')).zIndex === '45'`,
+        4000
+      )
+      expect(restored, 'exiting full view restores the base z-index').toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
