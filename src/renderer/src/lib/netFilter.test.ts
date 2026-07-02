@@ -35,6 +35,11 @@ describe('registrableDomain', () => {
   it('passes single-label hosts (localhost) through', () => {
     expect(registrableDomain('localhost')).toBe('localhost')
   })
+  it('returns IPv4-literal hosts unchanged instead of colliding on the last two octets (BUG-037)', () => {
+    expect(registrableDomain('172.17.0.2')).toBe('172.17.0.2')
+    expect(registrableDomain('192.168.0.2')).toBe('192.168.0.2')
+    expect(registrableDomain('172.17.0.2')).not.toBe(registrableDomain('192.168.0.2'))
+  })
 })
 
 describe('urlDomain', () => {
