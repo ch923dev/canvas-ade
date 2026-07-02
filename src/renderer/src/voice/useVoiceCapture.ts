@@ -43,6 +43,16 @@ function createCapture(port: MessagePort): ActiveCapture {
       /* already closed */
     })
     ctx = null
+    // End-of-stream sentinel — the LAST message on this port. The engine host defers its
+    // session:stopped frame count until it sees this (port messages are ordered within a
+    // port, unlike port-vs-parentPort delivery, which races — a stop could otherwise be
+    // counted before queued frames arrive, e.g. while a cold recognizer init blocks the
+    // host loop). Harmless when the host end is already closed (replacement/unmount).
+    try {
+      port.postMessage({ t: 'eos' })
+    } catch {
+      /* port already neutered */
+    }
     port.close()
     useVoiceStore.getState().captureStopped()
   }

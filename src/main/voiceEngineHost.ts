@@ -15,13 +15,20 @@
  *                     loader needed on Windows) and by voiceEngine.ts as the ready signal.
  *   IN  {t:'session:start', model: VoiceModelPaths|null} + ports[0]=session port
  *   IN  {t:'session:stop'} → posts {t:'stop'} on the session port (renderer releases the
- *                     mic), closes it, replies OUT {t:'session:stopped', frames}.
+ *                     mic), DRAINS the port (see eos below), then replies
+ *                     OUT {t:'session:stopped', frames}.
  *
  * Session port (peer = the renderer's `voice:port` DOM port):
  *   IN  {t:'frame', d:ArrayBuffer} — 120 ms of 16 kHz mono Int16 PCM (V1 capture shape).
  *                     Frames are COUNTED regardless of model state (the V1 stub semantics
  *                     the @voice e2e asserts); when a recognizer is live they also feed
  *                     the streaming decode loop.
+ *   IN  {t:'eos'}   — the renderer's LAST message (sent on capture dispose). The stop
+ *                     reply waits for this: port-vs-parentPort delivery order is NOT
+ *                     guaranteed, so without an in-band sentinel a session:stop can be
+ *                     processed before queued frames (seen when a cold recognizer init
+ *                     blocks the host loop) and under-count. Port messages ARE ordered
+ *                     within the port → eos proves every frame before it was counted.
  *   OUT {t:'partial', text} — greedy-search partial (only when text changed)
  *   OUT {t:'final', text}   — endpoint fired (rule1 2.4 s / rule2 1.2 s); stream reset.
  *   All session-port payloads are plain JSON — NEVER put a transferable in a cross-process
@@ -163,6 +170,92 @@ function getRecognizer(model: VoiceModelPaths | null): RecognizerLike | null {
   return rec
 }
 
+export interface SessionHandle {
+  frames(): number
+  /** Graceful stop: tell the renderer to release the mic, drain the port until its
+   *  {t:'eos'} (or the timeout — renderer gone), then report the final frame count. */
+  requestStop(onDone: (frames: number) => void, timeoutMs?: number): void
+  /** Immediate teardown (session replacement / host dispose) — no count report. */
+  endNow(): void
+}
+
+/**
+ * One live session over its port: counts/decodes frames, answers the drain protocol.
+ * Pure over the structural port/recognizer types → unit-testable without electron.
+ */
+export function attachSession(
+  port: SessionPortLike,
+  recognizer: RecognizerLike | null,
+  opts: { debug?: boolean; log?: (line: string) => void; now?: () => number } = {}
+): SessionHandle {
+  const log = opts.log ?? console.log
+  const now = opts.now ?? Date.now
+  const proc = createFrameProcessor(recognizer, (msg) => {
+    try {
+      port.postMessage(msg)
+    } catch {
+      /* renderer end gone — partials have nowhere to go */
+    }
+  })
+  let firstAt = 0
+  let done = false
+  let onEos: (() => void) | null = null
+  let drainTimer: ReturnType<typeof setTimeout> | null = null
+
+  const finish = (onDone: (frames: number) => void): void => {
+    if (done) return
+    done = true
+    if (drainTimer) clearTimeout(drainTimer)
+    onDone(proc.frames())
+    port.close()
+  }
+
+  port.on('message', (e) => {
+    const m = e.data as { t?: string; d?: unknown } | null
+    if (m?.t === 'eos') {
+      onEos?.()
+      return
+    }
+    if (!m || m.t !== 'frame' || !(m.d instanceof ArrayBuffer)) return
+    if (proc.frames() === 0) firstAt = now()
+    proc.push(m.d)
+    if (opts.debug && proc.frames() % 8 === 0) {
+      const elapsedS = (now() - firstAt) / 1000
+      const rate = elapsedS > 0 ? (proc.frames() - 1) / elapsedS : 0
+      log(
+        `[voice] host: ${proc.frames()} frames, ${rate.toFixed(1)}/s, ` +
+          `${m.d.byteLength} B each, model=${recognizer ? 'live' : 'none'}`
+      )
+    }
+  })
+  port.start()
+
+  return {
+    frames: () => proc.frames(),
+    requestStop(onDone, timeoutMs = 1000): void {
+      if (done) return
+      try {
+        port.postMessage({ t: 'stop' })
+      } catch {
+        /* renderer end gone — the timeout path reports whatever was counted */
+      }
+      onEos = () => finish(onDone)
+      drainTimer = setTimeout(() => finish(onDone), timeoutMs)
+    },
+    endNow(): void {
+      if (done) return
+      done = true
+      if (drainTimer) clearTimeout(drainTimer)
+      try {
+        port.postMessage({ t: 'stop' })
+      } catch {
+        /* renderer end gone */
+      }
+      port.close()
+    }
+  }
+}
+
 // ── utilityProcess main (skipped under vitest, which has no parentPort) ────────────────
 interface ParentPortLike {
   on(event: 'message', listener: (e: { data: unknown; ports: SessionPortLike[] }) => void): unknown
@@ -172,26 +265,12 @@ const parentPort = (process as unknown as { parentPort?: ParentPortLike }).paren
 
 if (parentPort) {
   const debug = !!process.env.CANVAS_VOICE_DEBUG
-  let session: { port: SessionPortLike; proc: FrameProcessor } | null = null
-
-  const endSession = (): number => {
-    if (!session) return 0
-    const frames = session.proc.frames()
-    try {
-      session.port.postMessage({ t: 'stop' })
-    } catch {
-      /* port already closed (renderer gone) */
-    }
-    session.port.close()
-    session = null
-    return frames
-  }
+  let session: SessionHandle | null = null
 
   parentPort.on('message', (e) => {
     const m = e.data as { t?: string; model?: VoiceModelPaths | null } | null
     if (m?.t === 'session:start' && e.ports[0]) {
-      endSession() // restart-idempotent: a second start replaces the live session
-      const port = e.ports[0]
+      session?.endNow() // restart-idempotent: a second start replaces the live session
       let recognizer: RecognizerLike | null = null
       try {
         recognizer = getRecognizer(m.model ?? null)
@@ -201,27 +280,15 @@ if (parentPort) {
         // into a surfaced error state.
         console.error('[voice-engine] recognizer init failed:', err)
       }
-      const proc = createFrameProcessor(recognizer, (msg) => port.postMessage(msg))
-      let firstAt = 0
-      port.on('message', (pe) => {
-        const pm = pe.data as { t?: string; d?: unknown } | null
-        if (!pm || pm.t !== 'frame' || !(pm.d instanceof ArrayBuffer)) return
-        if (proc.frames() === 0) firstAt = Date.now()
-        proc.push(pm.d)
-        if (debug && proc.frames() % 8 === 0) {
-          const elapsedS = (Date.now() - firstAt) / 1000
-          const rate = elapsedS > 0 ? (proc.frames() - 1) / elapsedS : 0
-          console.log(
-            `[voice] host: ${proc.frames()} frames, ${rate.toFixed(1)}/s, ` +
-              `${(pm.d as ArrayBuffer).byteLength} B each, model=${recognizer ? 'live' : 'none'}`
-          )
-        }
-      })
-      port.start()
-      session = { port, proc }
+      session = attachSession(e.ports[0], recognizer, { debug })
     } else if (m?.t === 'session:stop') {
-      const frames = endSession()
-      parentPort.postMessage({ t: 'session:stopped', frames })
+      const s = session
+      session = null
+      if (!s) {
+        parentPort.postMessage({ t: 'session:stopped', frames: 0 })
+        return
+      }
+      s.requestStop((frames) => parentPort.postMessage({ t: 'session:stopped', frames }))
     }
   })
 
