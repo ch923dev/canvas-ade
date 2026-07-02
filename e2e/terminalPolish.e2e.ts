@@ -1,14 +1,14 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { evalIn, seed, selectForInspector } from './helpers'
 
 /**
  * D2-B terminal polish (design-audit wave D2):
  *  - first-run launchCommand hint: shows on a bare-shell terminal, opens config,
  *    × dismisses app-wide forever (sticky localStorage — leading-reset + restored
  *    below, the e2e harness reuses a persistent userData dir);
- *  - restart menu on the shared Menu shell: Escape / outside-pointerdown / trigger
- *    re-click all auto-close (the audit's "no auto-close");
+ *  - restart controls (P5: Inspector Session actions — the title-bar menu is gone):
+ *    canResume splits Restart into explicit Resume / New actions;
  *  - A6 recap-flip focus transfer: focus follows the visible face both ways.
  *
  * The seed()-derived board id flows into page.evaluate as a STRUCTURED ARG, never
@@ -92,29 +92,23 @@ test.describe('@terminal terminal polish (D2-B)', () => {
     }
   })
 
-  test('restart menu auto-closes: Escape, outside pointerdown, trigger re-click', async ({
-    page
-  }) => {
+  test('restart controls: canResume splits into Resume/New Inspector actions', async ({ page }) => {
+    // P5 replaced the title-bar restart MENU (TerminalRestartMenu) with flat Inspector Session
+    // actions — the menu's auto-close semantics are gone with the component; what remains to pin
+    // is the canResume split, driven by the SAME handlers the menu items used.
     const id = await seed(page, 'terminal', { launchCommand: 'echo RESTART' })
+    await selectForInspector(page, id)
+    const inspector = page.locator('[data-test="board-inspector"]')
+
+    // No resumable agent session → a single Restart action.
+    await expect(inspector.locator('[data-test="inspector-restart"]')).toBeVisible()
+    await expect(inspector.getByRole('button', { name: 'Resume session' })).toHaveCount(0)
+
+    // A resumable session id → the explicit Resume / New pair replaces Restart.
     await patchBoard(page, id, { agentSessionId: 'sess-e2e-1' })
-    const trigger = page.locator(`${node(id)} button[title^="Restart"]`)
-    const menu = page.getByRole('menu', { name: 'Restart terminal' })
-
-    await trigger.click()
-    await expect(menu).toBeVisible()
-    await expect(menu.getByRole('menuitem')).toHaveText(['Resume session', 'New session'])
-    await page.keyboard.press('Escape')
-    await expect(menu).toHaveCount(0)
-
-    await trigger.click()
-    await expect(menu).toBeVisible()
-    await page.mouse.click(40, 300) // outside pointerdown (canvas pane)
-    await expect(menu).toHaveCount(0)
-
-    await trigger.click()
-    await expect(menu).toBeVisible()
-    await trigger.click() // BUG-045 class: the trigger's own click toggles closed
-    await expect(menu).toHaveCount(0)
+    await expect(inspector.getByRole('button', { name: 'Resume session' })).toBeVisible()
+    await expect(inspector.getByRole('button', { name: 'New session' })).toBeVisible()
+    await expect(inspector.locator('[data-test="inspector-restart"]')).toHaveCount(0)
   })
 
   test('A6: flipping transfers focus to the recap and back to xterm', async ({ page }) => {
@@ -122,7 +116,10 @@ test.describe('@terminal terminal polish (D2-B)', () => {
     // Let the spawn settle so xterm exists before we assert focus round-trips.
     await expect.poll(() => terminalEchoed(page, id, 'FLIPFOCUS'), { timeout: 10_000 }).toBe(true)
 
-    await page.locator(`[data-test="flip-${id}"]`).click()
+    // P5: flip via Inspector › Session › View recap (the title-bar flip button is gone). The
+    // focus-transfer effect keys off the flip STATE, so it fires the same for this trigger.
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-recap"]').click()
     await expect
       .poll(() => focusInRecap(page, id), {
         timeout: 4000,
@@ -139,7 +136,7 @@ test.describe('@terminal terminal polish (D2-B)', () => {
       .poll(() => flipSettled(page, id), { timeout: 4000, message: 'flip fold settled' })
       .toBe(true)
 
-    await page.locator(`[data-test="flip-${id}"]`).click()
+    await page.locator('[data-test="inspector-recap"]').click()
     await expect
       .poll(() => focusInXterm(page, id), {
         timeout: 4000,

@@ -44,7 +44,10 @@ const TYPE_TAG: Record<BoardType, string> = {
 }
 
 export function BoardInspector(): ReactElement | null {
-  const hasProject = useCanvasStore((s) => s.project.dir !== null)
+  // Gate on the canvas being OPEN, not on a dir: the Inspector must exist wherever boards can be
+  // selected (P5 made it the one control home), and the e2e harness runs an open canvas with
+  // dir:null (e2eHooks reset). Production never reaches status 'open' without a dir.
+  const hasProject = useCanvasStore((s) => s.project.status === 'open')
   // The single selected board, or null for 0 / 2+ selection. Stable object identity → the panel
   // re-renders only when THIS board (title/type) changes, not on every unrelated board update.
   const board = useCanvasStore((s) => {

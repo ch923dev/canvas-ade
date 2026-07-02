@@ -127,6 +127,7 @@ export function TerminalInspector({
           icon={<Icon name="back" size={14} />}
           active={recapShown}
           onClick={onToggleRecap}
+          dataTest="inspector-recap"
         >
           {recapShown ? 'Show terminal' : 'View recap'}
         </InspectorAction>
@@ -161,10 +162,19 @@ export function TerminalInspector({
       </InspectorSection>
 
       <InspectorSection label="Linking" defaultOpen={false} persistKey="terminal.linking">
-        <InspectorAction icon={<Icon name="globe" size={14} />} primary onClick={onPushPreview}>
+        <InspectorAction
+          icon={<Icon name="globe" size={14} />}
+          primary
+          onClick={onPushPreview}
+          dataTest="inspector-push-preview"
+        >
           Push to preview
         </InspectorAction>
-        <InspectorAction icon={<Icon name="connector" size={14} />} onClick={onChooseTarget}>
+        <InspectorAction
+          icon={<Icon name="connector" size={14} />}
+          onClick={onChooseTarget}
+          dataTest="inspector-choose-target"
+        >
           Choose target…
         </InspectorAction>
       </InspectorSection>

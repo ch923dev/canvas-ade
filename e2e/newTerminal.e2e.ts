@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn } from './helpers'
+import { evalIn, openInspectorSection } from './helpers'
 
 /**
  * New Terminal dialog — place-first flow. A user-placed terminal holds its spawn
@@ -103,7 +103,7 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     expect(board.agentKind).toBe('claude')
   })
 
-  test('edit mode: the ⚙ button opens the same dialog pre-filled; Apply patches the live board', async ({
+  test('edit mode: Inspector Edit… opens the same dialog pre-filled; Apply patches the live board', async ({
     page
   }) => {
     // A LIVE (already-spawned) terminal, not a held one — the edit path.
@@ -112,9 +112,11 @@ test.describe('New Terminal dialog (place-first flow)', () => {
       launchCommand: 'claude',
       title: 'My agent'
     })
-    // Select + fit so the board chrome is visible and on-screen, then open config via ⚙.
+    // Select so the Board Inspector reveals (P5: the one control home — the ⚙ cluster is gone),
+    // then open the edit dialog via Inspector › Configuration › Edit… (section starts collapsed).
     await selectAndFit(page, id)
-    await page.locator(`[data-test="config-${id}"]`).click()
+    await openInspectorSection(page, 'Configuration')
+    await page.locator('[data-test="inspector-configure"]').click()
 
     const dialog = page.locator('[data-test="new-terminal-dialog"]')
     await expect(dialog).toBeVisible()
@@ -138,7 +140,8 @@ test.describe('New Terminal dialog (place-first flow)', () => {
       title: 'My agent'
     })
     await selectAndFit(page, id)
-    await page.locator(`[data-test="config-${id}"]`).click()
+    await openInspectorSection(page, 'Configuration')
+    await page.locator('[data-test="inspector-configure"]').click()
 
     const dialog = page.locator('[data-test="new-terminal-dialog"]')
     await expect(dialog).toBeVisible()

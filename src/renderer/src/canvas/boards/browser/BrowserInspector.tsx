@@ -173,7 +173,10 @@ export function BrowserInspector({
 
       <InspectorSection label="Preview" persistKey="browser.preview">
         <InspectorRow label="Status">
-          <InspectorStatus tone={statusTone}>{statusWord}</InspectorStatus>
+          {/* ConnTone's 'idle' is this board's flavor of the primitive's 'neutral'. */}
+          <InspectorStatus tone={statusTone === 'idle' ? 'neutral' : statusTone}>
+            {statusWord}
+          </InspectorStatus>
         </InspectorRow>
         {audible && (
           <>
