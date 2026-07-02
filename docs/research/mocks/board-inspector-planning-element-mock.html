@@ -242,6 +242,40 @@
       .deferred { opacity: .4; }
       .deferred-tag { font-family: var(--mono); font-size: 8.5px; letter-spacing: .04em; text-transform: uppercase;
         color: var(--warn); border: 1px solid var(--warn); border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+      .now-tag { font-family: var(--mono); font-size: 8.5px; letter-spacing: .04em; text-transform: uppercase;
+        color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+
+      /* ── P4b APPEARANCE primitives — the deferred panel promoted to real (mirrors the shipped
+         InspectorSlider / InspectorSwatches / InspectorSegmented / InspectorIconButtons). ── */
+      /* an in-section sub-divider label ("Appearance"), between the per-kind rows and Arrange */
+      .subhd { font-size: var(--fs-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+        font-weight: 500; color: var(--text-3); margin: 9px 0 5px; padding-top: 8px;
+        border-top: 1px dashed var(--border-subtle); }
+      /* opacity slider — accent-filled track (mirrors .ca-inspector-slider) */
+      .slider { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 4px; border-radius: 999px;
+        background: linear-gradient(to right, var(--accent) 0 var(--fill, 80%),
+          var(--surface-raised) var(--fill, 80%) 100%); outline: none; }
+      .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 999px;
+        background: var(--accent); border: 2px solid var(--void); cursor: pointer; }
+      .slider-val { font-family: var(--mono); font-size: 10px; color: var(--text-2); width: 34px; text-align: right; flex: none; }
+      /* z-order 2-up (or 4-up) buttons — .iconbtns with word labels */
+      .iconbtns.wide button { font-size: 11px; font-weight: 500; gap: 4px; font-family: var(--ui); }
+      /* the −/+ stepper alternative for stroke width (mirrors InspectorStepper) */
+      .stepper { display: inline-flex; align-items: center; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); flex: 1; height: 26px; }
+      .stepper button { width: 30px; height: 100%; border: none; background: transparent; color: var(--text-2);
+        cursor: pointer; font-size: 15px; }
+      .stepper button:hover { color: var(--text); }
+      .stepper .sval { flex: 1; text-align: center; font-family: var(--mono); font-size: 11px; color: var(--text); }
+      /* kind→control matrix table (Decision 1) */
+      .matrix { border-collapse: collapse; font-family: var(--mono); font-size: var(--fs-meta); margin: 4px 0 0; }
+      .matrix th, .matrix td { border: 1px solid var(--border-subtle); padding: 5px 12px; text-align: center; }
+      .matrix th { color: var(--text-3); text-transform: uppercase; letter-spacing: var(--tr-micro);
+        font-weight: 500; font-size: var(--fs-micro); }
+      .matrix td.k { text-align: left; color: var(--text-2); }
+      .matrix .y { color: var(--ok); }
+      .matrix .n { color: var(--text-faint); }
+      .rec { color: var(--ok); font-weight: 400; }
 
       /* callout + annotation */
       .callout { position: absolute; font-family: var(--mono); font-size: var(--fs-meta); color: var(--accent);
@@ -266,14 +300,14 @@
     </style>
   </head>
   <body>
-    <h1 class="page">Board Inspector P4 — PlanningInspector (the element bridge)</h1>
-    <p class="page-sub">select an element on a Planning board → the inspector grows an ELEMENT section · re-homes the TextToolbar + ElementContextMenu controls · no new store · index.css · throwaway mock</p>
+    <h1 class="page">Board Inspector P4 + P4b — PlanningInspector element bridge & appearance props</h1>
+    <p class="page-sub">P4 (shipped) re-homes TextToolbar + ElementContextMenu into an ELEMENT section · P4b (this) promotes the deferred appearance panel to REAL controls: opacity · stroke · z-order · index.css · throwaway mock</p>
 
     <div class="legend">
       <span><i>green dot</i> = live status</span>
       <span><b>blue</b> = active / accent / selected</span>
-      <span><b class="warn" style="color:var(--warn)">amber</b> = deferred to P4b (schema-touching)</span>
-      <span>controls all already exist — P4 only re-homes them into the always-visible inspector</span>
+      <span><b class="warn" style="color:var(--warn)">amber</b> = P4-era "deferred" marker (now built in P4b below)</span>
+      <span>P4b jump to the <b>APPEARANCE</b> frames ↓ · P4 frames kept for context</span>
     </div>
 
     <p class="glyph-key">
@@ -585,6 +619,174 @@
       </div>
     </div>
 
-    <div class="caption">Board Inspector P4 · PlanningInspector element bridge · pixel mock (index.css tokens) · not wired into build · sign-off gate before code</div>
+    <!-- ═══════════════ P4b — APPEARANCE PROPS (the deferred panel, promoted to real) ═══════════════ -->
+    <div class="frame-label" style="border-top-color: var(--accent); color: var(--accent);">P4b <span class="now-tag">now</span> — a new APPEARANCE sub-block inside the ELEMENT section · opacity (all kinds) · stroke (line kinds) · z-order (all kinds)</div>
+    <div class="cols">
+      <!-- ARROW selected → full appearance block (line kind, so it has stroke) -->
+      <div class="scol" style="width: 252px;">
+        <span class="scap"><b class="rec">1 arrow</b> — line kind → opacity + stroke + order</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · arrow</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+              <!-- APPEARANCE sub-block — arrow has no per-kind row, so it leads; sits above Arrange -->
+              <div class="subhd">Appearance</div>
+              <div class="row"><span class="row-lab">Opacity</span>
+                <input class="slider" type="range" min="10" max="100" value="80" style="--fill:78%" />
+                <span class="slider-val">80%</span>
+              </div>
+              <div class="row"><span class="row-lab">Stroke</span>
+                <div class="swatches">
+                  <button class="on" style="background:var(--border-strong)" title="Default"></button>
+                  <button style="background:var(--text)" title="White"></button>
+                  <button style="background:var(--accent)" title="Accent"></button>
+                  <button style="background:var(--ok)" title="Green"></button>
+                  <button style="background:var(--warn)" title="Amber"></button>
+                </div>
+              </div>
+              <div class="row"><span class="row-lab">Width</span>
+                <div class="seg"><button>S</button><button class="on">M</button><button>L</button></div>
+              </div>
+              <div class="row"><span class="row-lab">Order</span>
+                <div class="iconbtns"><button title="To front">⤒</button><button title="Forward">↑</button><button title="Backward">↓</button><button title="To back">⤓</button></div>
+              </div>
+              <!-- Arrange (shared, from P4) -->
+              <div class="act-grid" style="margin-top:7px;">
+                <button class="act mini"><span class="ai">⌘</span>Lock</button>
+                <button class="act mini" disabled><span class="ai">⧉</span>Group</button>
+                <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+                <button class="act mini"><span class="ai">⇥</span>Send…</button>
+              </div>
+              <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete<span class="kbd">⌦</span></button>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Line kind → the full block: <b>Opacity</b> (slider) · <b>Stroke</b> colour + <b>Width</b> · <b>Order</b>. Pen (<span class="meta">stroke</span>) reads identically. Placement: under the per-kind row (arrow has none), above Arrange.</p>
+      </div>
+
+      <!-- NOTE selected → opacity + order only (no stroke) -->
+      <div class="scol" style="width: 252px;">
+        <span class="scap"><b>1 note</b> — opacity + order (no stroke row)</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · note</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Tint</span>
+                <div class="swatches">
+                  <button class="on" style="background:var(--note-yellow-fill);border-color:var(--note-yellow-edge)"></button>
+                  <button style="background:var(--note-blue-fill);border-color:var(--note-blue-edge)"></button>
+                  <button style="background:var(--note-green-fill);border-color:var(--note-green-edge)"></button>
+                  <button style="background:var(--surface-raised)"><span class="none">∅</span></button>
+                </div>
+              </div>
+              <div class="subhd">Appearance</div>
+              <div class="row"><span class="row-lab">Opacity</span>
+                <input class="slider" type="range" min="10" max="100" value="100" style="--fill:100%" />
+                <span class="slider-val">100%</span>
+              </div>
+              <div class="row"><span class="row-lab">Order</span>
+                <div class="iconbtns"><button title="To front">⤒</button><button title="Forward">↑</button><button title="Backward">↓</button><button title="To back">⤓</button></div>
+              </div>
+              <div class="act-grid" style="margin-top:7px;">
+                <button class="act mini"><span class="ai">⌘</span>Lock</button>
+                <button class="act mini" disabled><span class="ai">⧉</span>Group</button>
+                <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+                <button class="act mini"><span class="ai">⇥</span>Send…</button>
+              </div>
+              <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete</button>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Non-line kinds (note · text · checklist · image · diagram · fileref) → <b>no Stroke row</b>. Opacity + Order still apply (all kinds). The per-kind row (Tint here) stays above Appearance.</p>
+      </div>
+
+      <!-- MIXED selected → opacity + order only, shared -->
+      <div class="scol" style="width: 252px;">
+        <span class="scap">mixed (note+arrow) — shared appearance only</span>
+        <aside class="bi" style="position: relative;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Element · mixed</span><span class="sec-count muted">2</span><span class="chev">▾</span></div>
+              <div class="row"><span class="meta" style="flex:1;padding:2px 0;">▢ note · ↗ arrow — no shared type controls</span></div>
+              <div class="subhd">Appearance</div>
+              <div class="row"><span class="row-lab">Opacity</span>
+                <input class="slider" type="range" min="10" max="100" value="60" style="--fill:56%" />
+                <span class="slider-val">mixed</span>
+              </div>
+              <div class="row"><span class="row-lab">Order</span>
+                <div class="iconbtns"><button title="To front">⤒</button><button title="Forward">↑</button><button title="Backward">↓</button><button title="To back">⤓</button></div>
+              </div>
+              <div class="act-grid" style="margin-top:7px;">
+                <button class="act mini"><span class="ai">⌘</span>Lock</button>
+                <button class="act mini"><span class="ai">⧉</span>Group</button>
+                <button class="act mini"><span class="ai">⿻</span>Duplicate</button>
+                <button class="act mini"><span class="ai">⇥</span>Send…</button>
+              </div>
+              <button class="act danger" style="margin-top:4px;"><span class="ai">⌫</span>Delete</button>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Mixed → <b>Opacity</b> + <b>Order</b> only (both are all-kind, so they still apply to the whole set). No Stroke (not all line). Indeterminate opacity reads <b>mixed</b> until dragged, then sets the batch (one undo step).</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════ P4b DECISIONS (handoff §5) — surfaced for sign-off ═══════════════ -->
+    <div class="frame-label">P4b open decisions — please sign off (handoff §5) · <span class="rec">green = recommended</span></div>
+
+    <!-- D1 — kind→control matrix -->
+    <p class="note" style="margin-bottom:6px;"><b>Decision 1 — kind→control matrix.</b> Opacity + Z-order = ALL kinds. Stroke (colour+width) = LINE kinds only (arrow + pen). <span class="rec">Recommended</span>: keep stroke off notes (notes already carry Tint fill+edge — a competing stroke muddies it) and off text (text already has Color).</p>
+    <table class="matrix">
+      <tr><th>control</th><th>note</th><th>text</th><th>arrow</th><th>pen</th><th>checklist</th><th>image</th><th>diagram</th><th>fileref</th></tr>
+      <tr><td class="k">Opacity</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+      <tr><td class="k">Stroke (col+width)</td><td class="n">—</td><td class="n">—</td><td class="y">●</td><td class="y">●</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
+      <tr><td class="k">Z-order</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    </table>
+
+    <div class="cols" style="margin-top:18px;">
+      <!-- D2 — width: segmented vs stepper -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap"><b class="rec">Decision 2 — width: segmented</b> (token) · recommended</span>
+        <aside class="bi" style="position: relative;"><div class="bi-scroll"><section class="sec">
+          <div class="row"><span class="row-lab">Width</span><div class="seg"><button>S</button><button class="on">M</button><button>L</button></div></div>
+        </section></div></aside>
+        <p class="note"><span class="rec">Segmented S/M/L</span> (a 3-token scale, like font size) → token-clean, export-portable, parity with typography. <b>vs</b> a −/+ px stepper (finer, but a raw px number breaks the token model + the SVG export mirror):</p>
+        <aside class="bi" style="position: relative;"><div class="bi-scroll"><section class="sec">
+          <div class="row"><span class="row-lab">Width</span><div class="stepper"><button>−</button><span class="sval">2 px</span><button>+</button></div></div>
+        </section></div></aside>
+      </div>
+
+      <!-- D3 — z-order: CHOSEN = 4 buttons (front / forward / backward / back) -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap"><b class="rec">Decision 3 — z-order: 4 buttons</b> · chosen</span>
+        <aside class="bi" style="position: relative;"><div class="bi-scroll"><section class="sec">
+          <div class="row"><span class="row-lab">Order</span><div class="iconbtns"><button title="To front">⤒</button><button title="Forward">↑</button><button title="Backward">↓</button><button title="To back">⤓</button></div></div>
+        </section></div></aside>
+        <p class="note"><span class="rec">4 buttons</span> — to-front ⤒ · forward ↑ · backward ↓ · to-back ⤓ → full paint-order control (the maintainer's call, over the 2-button common-case-only alt). All four are pure <span class="meta">elements[]</span> reorders → <b>NO</b> schema change.</p>
+      </div>
+
+      <!-- D4 — opacity floor -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap"><b class="rec">Decision 4 — opacity min 0.1</b> · recommended</span>
+        <aside class="bi" style="position: relative;"><div class="bi-scroll"><section class="sec">
+          <div class="row"><span class="row-lab">Opacity</span><input class="slider" type="range" min="10" max="100" value="10" style="--fill:0%" /><span class="slider-val">10%</span></div>
+        </section></div></aside>
+        <p class="note"><span class="rec">Floor at 10%</span> (range 0.1–1.0, default 1.0) so an element can never become invisible-and-unfindable on the canvas (still deletable via the always-visible Delete, but never a ghost you can't click). <b>vs</b> a true 0–1 (0% = fully transparent → lost element). Range slider min set to 10.</p>
+      </div>
+
+      <!-- D5 — placement -->
+      <div class="scol" style="width: 250px;">
+        <span class="scap"><b class="rec">Decision 5 — sub-block</b> · recommended</span>
+        <aside class="bi" style="position: relative;"><div class="bi-scroll"><section class="sec">
+          <div class="sec-hd"><span class="sec-lab">Element · arrow</span><span class="sec-count">1</span><span class="chev">▾</span></div>
+          <div class="subhd">Appearance</div>
+          <div class="row"><span class="row-lab">Opacity</span><input class="slider" type="range" min="10" max="100" value="80" style="--fill:78%"/><span class="slider-val">80%</span></div>
+          <div class="row"><span class="row-lab">Width</span><div class="seg"><button>S</button><button class="on">M</button><button>L</button></div></div>
+          <div class="act-grid" style="margin-top:7px;"><button class="act mini"><span class="ai">⌘</span>Lock</button><button class="act mini"><span class="ai">⿻</span>Dup</button></div>
+        </section></div></aside>
+        <p class="note"><span class="rec">A sub-block</span> (dashed "Appearance" divider) inside the existing Element section, under the per-kind rows + above Arrange → one section to scan, no extra chrome. <b>vs</b> its own collapsible section (more headers, more collapse state to persist in P5). One section keeps the panel dense.</p>
+      </div>
+    </div>
+
+    <div class="caption">Board Inspector P4 + P4b · PlanningInspector element bridge & appearance props · pixel mock (index.css tokens) · not wired into build · sign-off gate before code</div>
   </body>
 </html>

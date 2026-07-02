@@ -121,13 +121,20 @@ describe('PlanningBoard interaction — erase + shortcut (migrated from e2e whit
     expect(els(id).length).toBe(1)
   })
 
-  it("'n' selects the note tool → a tap on empty space creates a note", () => {
+  it("'n' selects the note tool → a tap on empty space creates a note (auto-selected)", () => {
     const id = seedPlanning([note('n1', { x: 40, y: 40, text: 'A' })])
     render(<Harness id={id} />)
 
     press('n')
     tap(230, 210) // empty spot → note tool creates a fresh note
     expect(els(id).length).toBe(2)
+    // The freshly-created note is auto-selected (switches to the select tool + selects it), so the
+    // inspector's Element section shows for it immediately — EXACTLY one note carries the selection
+    // outline (the new one; the seeded n1 stays unselected).
+    const selected = Array.from(document.querySelectorAll('.pl-note')).filter((n) =>
+      (n as HTMLElement).style.outline.includes('var(--accent)')
+    )
+    expect(selected.length).toBe(1)
   })
 
   it('BUG-014: right-button press on the well with erase tool does NOT erase (primary-button guard)', () => {

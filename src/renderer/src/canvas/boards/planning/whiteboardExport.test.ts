@@ -56,6 +56,70 @@ describe('boardToSvg — vectors', () => {
   })
 })
 
+describe('boardToSvg — P4b appearance props (stroke / opacity mirror)', () => {
+  it('a default arrow is byte-identical to pre-P4b (border-strong stroke, 1.5 width, bare marker)', () => {
+    const { svg } = boardToSvg(board([{ id: 'a', kind: 'arrow', x: 0, y: 0, x2: 50, y2: 0 }]), {})
+    expect(svg).toContain(`stroke="${ARROW_COLOR}"`)
+    expect(svg).toContain('stroke-width="1.5"')
+    expect(svg).toContain('marker-end="url(#wb-export-arrow)"')
+    expect(svg).not.toContain('wb-export-arrow-') // no per-colour marker for a default board
+    expect(svg).not.toContain('<g opacity=') // no opacity wrapper when absent
+  })
+
+  it('a custom-coloured arrow emits its literal stroke, width token, and a matching per-colour marker', () => {
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 'a',
+          kind: 'arrow',
+          x: 0,
+          y: 0,
+          x2: 50,
+          y2: 0,
+          strokeColor: 'accent',
+          strokeWidth: 'l'
+        }
+      ]),
+      {}
+    )
+    expect(svg).toContain('stroke="#4f8cff"') // accent export literal
+    expect(svg).toContain('stroke-width="3"') // 'l' arrow width
+    expect(svg).toContain('marker-end="url(#wb-export-arrow-accent)"')
+    expect(svg).toContain('<marker id="wb-export-arrow-accent"')
+    expect(svg).toContain('fill="#4f8cff"') // the per-colour arrowhead matches the line
+  })
+
+  it('a pen stroke honours its token fill colour', () => {
+    const { svg } = boardToSvg(
+      board([
+        { id: 's', kind: 'stroke', x: 0, y: 0, points: [10, 10, 40, 40], strokeColor: 'green' }
+      ]),
+      {}
+    )
+    expect(svg).toContain('fill="#3ecf8e"') // green export literal on the fill path
+  })
+
+  it('an element with opacity < 1 is wrapped in an opacity group', () => {
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 'n',
+          kind: 'note',
+          x: 0,
+          y: 0,
+          w: 80,
+          h: 60,
+          text: 'hi',
+          tint: 'yellow',
+          opacity: 0.5
+        }
+      ]),
+      {}
+    )
+    expect(svg).toContain('<g opacity="0.5">')
+  })
+})
+
 describe('boardToSvg — cards', () => {
   it('renders a note as a tinted rounded rect with its text', () => {
     const { svg } = boardToSvg(

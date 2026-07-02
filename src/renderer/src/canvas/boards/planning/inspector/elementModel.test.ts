@@ -95,4 +95,46 @@ describe('summarizeSelection', () => {
     expect(s.count).toBe(1)
     expect(s.ids).toEqual(['n1'])
   })
+
+  // ── P4b appearance commons ────────────────────────────────────────────────────
+  it('opacity is the common value across a selection (all kinds); disagreement → null', () => {
+    const n1 = { ...makeNote('n1', { x: 0, y: 0 }, 0), opacity: 0.5 }
+    const n2 = { ...makeNote('n2', { x: 0, y: 0 }, 1), opacity: 0.5 }
+    expect(summarizeSelection([n1, n2], ids('n1', 'n2')).opacity).toBe(0.5)
+    const n3 = { ...makeNote('n3', { x: 0, y: 0 }, 2), opacity: 0.8 }
+    expect(summarizeSelection([n1, n3], ids('n1', 'n3')).opacity).toBeNull()
+    // absent opacity reads as the opaque default (1).
+    expect(summarizeSelection([makeNote('n4', { x: 0, y: 0 }, 0)], ids('n4')).opacity).toBe(1)
+  })
+
+  it('stroke commons only compute for an all-line selection (arrow/pen)', () => {
+    const a1 = {
+      ...makeArrow('a1', { x: 0, y: 0 }),
+      strokeColor: 'accent' as const,
+      strokeWidth: 'l' as const
+    }
+    const a2 = {
+      ...makeArrow('a2', { x: 0, y: 0 }),
+      strokeColor: 'accent' as const,
+      strokeWidth: 'l' as const
+    }
+    const allLine = summarizeSelection([a1, a2] as PlanningElement[], ids('a1', 'a2'))
+    expect(allLine.isAllLine).toBe(true)
+    expect(allLine.strokeColor).toBe('accent')
+    expect(allLine.strokeWidth).toBe('l')
+    // a note mixed in → stroke commons are null (not all line).
+    const withNote = summarizeSelection(
+      [a1, makeNote('n1', { x: 0, y: 0 }, 0)] as PlanningElement[],
+      ids('a1', 'n1')
+    )
+    expect(withNote.isAllLine).toBe(false)
+    expect(withNote.strokeColor).toBeNull()
+    expect(withNote.strokeWidth).toBeNull()
+  })
+
+  it('absent stroke tokens read as the legacy defaults (default colour / m width)', () => {
+    const s = summarizeSelection([makeArrow('a1', { x: 0, y: 0 })] as PlanningElement[], ids('a1'))
+    expect(s.strokeColor).toBe('default')
+    expect(s.strokeWidth).toBe('m')
+  })
 })

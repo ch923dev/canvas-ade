@@ -10,22 +10,33 @@
 import { memo, useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId, STROKE_OPTIONS } from './svgPaths'
+import { strokeColorCss, arrowWidthPx, penWidthPx } from './strokeStyle'
 import { draftPolyline } from '../../../lib/pen'
 import { isLocked, setArrowEndpoint, type ArrowEnd } from './elements'
 
+/** Legacy per-kind ink (pre-P4b) — the fallback an absent/`default` `strokeColor` resolves to. */
+const ARROW_DEFAULT_STROKE = 'var(--border-strong)'
+const PEN_DEFAULT_FILL = 'var(--text-2)'
+
 /**
- * Per-stroke outline cache keyed on the `points` array identity (#BUG-028). A
- * module-level WeakMap (NOT a React ref, so it is read/written outside the hook graph
- * and never during render) — unmoved strokes keep their `points` reference and hit the
- * cache, while a moved stroke's fresh array misses and recomputes; the stale array
- * GC's out of the map on its own (no manual pruning needed).
+ * Per-stroke outline cache keyed on the `points` array identity (#BUG-028), then on the pen `size`
+ * (P4b `strokeWidth` — a stroke's width can change without its points moving). A module-level WeakMap
+ * (NOT a React ref, so it is read/written outside the hook graph and never during render) — unmoved
+ * strokes keep their `points` reference and hit the cache, while a moved stroke's fresh array misses
+ * and recomputes; the stale array GC's out of the map on its own (no manual pruning needed). The
+ * inner size→path Map keeps the (rare) multi-width variants of the same points distinct.
  */
-const strokeOutlineCache = new WeakMap<number[], string>()
-function strokeOutline(points: number[]): string {
-  let path = strokeOutlineCache.get(points)
+const strokeOutlineCache = new WeakMap<number[], Map<number, string>>()
+function strokeOutline(points: number[], size: number): string {
+  let bySize = strokeOutlineCache.get(points)
+  if (!bySize) {
+    bySize = new Map()
+    strokeOutlineCache.set(points, bySize)
+  }
+  let path = bySize.get(size)
   if (path === undefined) {
-    path = strokeToPath(points)
-    strokeOutlineCache.set(points, path)
+    path = strokeToPath(points, size)
+    bySize.set(size, path)
   }
   return path
 }
@@ -113,7 +124,7 @@ export const WhiteboardSvg = memo(function WhiteboardSvg({
   // frame (#BUG-028). No useMemo here: a [strokes]-keyed memo could never skip (the array
   // identity changes whenever the parent re-derives it), so it only added overhead — the
   // WeakMap is the real cache and the .map is a cheap per-stroke lookup.
-  const strokePaths = strokes.map((s) => strokeOutline(s.points))
+  const strokePaths = strokes.map((s) => strokeOutline(s.points, penWidthPx(s.strokeWidth)))
   // In-progress DRAFT (SLICE-011): render a cheap O(N) centerline polyline, NOT the full
   // perfect-freehand outline. `strokeToPath`/getStroke is O(stroke length) per call, so
   // re-running it over the whole growing point list every pen-move frame is O(N^2) across
@@ -138,38 +149,39 @@ export const WhiteboardSvg = memo(function WhiteboardSvg({
       }}
     >
       <defs>
+        {/* One marker, `fill="context-stroke"` (Chromium/SVG2) so the arrowhead ALWAYS matches its
+            arrow's stroke — the selection accent AND the P4b custom stroke colour — with no per-colour
+            marker duplication. Byte-identical for the default/selected cases (stroke == old marker fill). */}
         <marker id={markerId} markerWidth={8} markerHeight={8} refX={6} refY={4} orient="auto">
-          <path d="M0 0 L7 4 L0 8 z" fill="var(--border-strong)" />
-        </marker>
-        <marker
-          id={`${markerId}-sel`}
-          markerWidth={8}
-          markerHeight={8}
-          refX={6}
-          refY={4}
-          orient="auto"
-        >
-          <path d="M0 0 L7 4 L0 8 z" fill="var(--accent)" />
+          <path d="M0 0 L7 4 L0 8 z" fill="context-stroke" />
         </marker>
       </defs>
 
-      {viewArrows.map((a) => (
-        <path
-          key={a.id}
-          d={arrowPath(a)}
-          stroke={selectedIds?.has(a.id) ? 'var(--accent)' : 'var(--border-strong)'}
-          strokeWidth={selectedIds?.has(a.id) ? 2.5 : 1.5}
-          fill="none"
-          markerEnd={selectedIds?.has(a.id) ? `url(#${markerId}-sel)` : `url(#${markerId})`}
-          style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
-          onPointerDown={(e) => {
-            if (e.button !== 0) return // right/middle: let contextmenu handle it
-            e.stopPropagation()
-            onSelect?.(a.id, e.shiftKey)
-            onDragStart?.(e, a.id)
-          }}
-        />
-      ))}
+      {viewArrows.map((a) => {
+        const sel = selectedIds?.has(a.id)
+        // Selection recolours the arrow accent (unchanged). Otherwise the P4b strokeColor, falling
+        // back to the legacy border-strong for an absent/`default` token (byte-identical). Selected
+        // keeps the legacy +1px emphasis over the element's own (custom-or-default) width.
+        const base = arrowWidthPx(a.strokeWidth)
+        return (
+          <path
+            key={a.id}
+            d={arrowPath(a)}
+            stroke={sel ? 'var(--accent)' : strokeColorCss(a.strokeColor, ARROW_DEFAULT_STROKE)}
+            strokeWidth={sel ? base + 1 : base}
+            fill="none"
+            opacity={a.opacity}
+            markerEnd={`url(#${markerId})`}
+            style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return // right/middle: let contextmenu handle it
+              e.stopPropagation()
+              onSelect?.(a.id, e.shiftKey)
+              onDragStart?.(e, a.id)
+            }}
+          />
+        )
+      })}
       {draftArrow && (
         <path
           d={arrowPath(draftArrow)}
@@ -185,7 +197,12 @@ export const WhiteboardSvg = memo(function WhiteboardSvg({
           <path
             key={strokes[i].id}
             d={d}
-            fill={selectedIds?.has(strokes[i].id) ? 'var(--accent)' : 'var(--text-2)'}
+            fill={
+              selectedIds?.has(strokes[i].id)
+                ? 'var(--accent)'
+                : strokeColorCss(strokes[i].strokeColor, PEN_DEFAULT_FILL)
+            }
+            opacity={strokes[i].opacity}
             style={{ pointerEvents: drawing ? 'none' : 'auto', cursor: 'grab' }}
             onPointerDown={(e) => {
               if (e.button !== 0) return // right/middle: let contextmenu handle it

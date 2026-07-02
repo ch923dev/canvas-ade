@@ -119,7 +119,9 @@ export const FreeText = memo(function FreeText({
         top: element.y,
         display: 'flex',
         outline: selected ? '1.5px solid var(--accent)' : 'none',
-        outlineOffset: 2
+        outlineOffset: 2,
+        // v17 (P4b) element opacity — absent ⇒ opaque, byte-identical to pre-P4b.
+        opacity: element.opacity
       }}
       // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
       // fall through to the well so it can START over the text (#6).

@@ -172,6 +172,8 @@ export const ChecklistCard = memo(function ChecklistCard({
         display: 'flex',
         flexDirection: 'column',
         gap: 9,
+        // v17 (P4b) element opacity — absent ⇒ opaque, byte-identical to pre-P4b.
+        opacity: element.opacity,
         cursor: interactive ? 'grab' : 'default'
       }}
       // The whole card body is the drag surface (mirrors the note's grip ring). In

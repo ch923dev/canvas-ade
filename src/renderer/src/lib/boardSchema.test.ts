@@ -16,6 +16,7 @@ import {
   type CanvasBackground,
   type Connector,
   type PlanningBoard,
+  type PlanningElement,
   type TerminalBoard,
   type DataFlowBoard,
   type CanvasDoc,
@@ -639,7 +640,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(16)
+    expect(SCHEMA_VERSION).toBe(17)
     expect(MIN_READER_VERSION).toBe(15)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
@@ -740,9 +741,80 @@ describe('migrate', () => {
       boards: [{ id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 300, h: 200 }]
     }
     const out = migrate(structuredClone(v15) as never) as CanvasDoc
-    expect(out.schemaVersion).toBe(16)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect(MIN_READER_VERSION).toBe(15) // writer-only bump — older (>=15) readers still open it
     expect(out.boards).toEqual(v15.boards)
+  })
+
+  // v17: optional Planning ELEMENT appearance props (opacity / strokeColor / strokeWidth on
+  // ElementCommon). ADDITIVE — a writer-only bump (floor STAYS 15). The migration is identity: the
+  // props only appear on newly-styled elements, so a v16 doc with a plain note/arrow rides through
+  // untouched and stays openable by a v15 app. (Re-sequences to 18 at the umbrella→main rebase.)
+  it('migrates a v16 doc (element appearance props bump) as an identity bump (floor stays 15)', () => {
+    const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
+    const arrow = { id: 'a', kind: 'arrow', x: 0, y: 0, x2: 5, y2: 5 }
+    const v16 = {
+      schemaVersion: 16,
+      minReaderVersion: 15,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [
+        {
+          id: 'p',
+          type: 'planning',
+          title: 'P',
+          x: 0,
+          y: 0,
+          w: 300,
+          h: 200,
+          elements: [note, arrow]
+        }
+      ]
+    }
+    const out = migrate(structuredClone(v16) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(MIN_READER_VERSION).toBe(15) // additive — older (>=15) readers still open it
+    expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note, arrow])
+  })
+
+  // v17 round-trip: opacity + stroke tokens survive toObject → wire → fromObject byte-for-byte, and
+  // an out-of-range/invalid value fails deep validation (assertPlanningElement).
+  it('round-trips element appearance props + rejects invalid appearance values', () => {
+    const styledArrow: PlanningElement = {
+      id: 'a',
+      kind: 'arrow',
+      x: 0,
+      y: 0,
+      x2: 40,
+      y2: 20,
+      opacity: 0.5,
+      strokeColor: 'accent',
+      strokeWidth: 'l'
+    }
+    const boards: Board[] = [
+      { id: 'p', type: 'planning', title: 'P', x: 0, y: 0, w: 300, h: 200, elements: [styledArrow] }
+    ]
+    const round = fromObject(structuredClone(toObject(boards, null))) as CanvasDoc
+    expect((round.boards[0] as PlanningBoard).elements[0]).toEqual(styledArrow)
+    // out-of-range opacity (below the 0.1 floor) is rejected by deep validation.
+    expect(() =>
+      fromObject({
+        schemaVersion: SCHEMA_VERSION,
+        boards: [
+          {
+            id: 'p',
+            type: 'planning',
+            title: 'P',
+            x: 0,
+            y: 0,
+            w: 300,
+            h: 200,
+            elements: [{ id: 'a', kind: 'arrow', x: 0, y: 0, x2: 1, y2: 1, opacity: 0.05 }]
+          }
+        ]
+      })
+    ).toThrow(/opacity/)
   })
 
   // v16 round-trip: a themed terminal survives toObject → wire → fromObject byte-for-byte.
@@ -917,14 +989,14 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 16', () => {
-    expect(SCHEMA_VERSION).toBe(16)
+  it('SCHEMA_VERSION is 17', () => {
+    expect(SCHEMA_VERSION).toBe(17)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 16,
+      schemaVersion: 17,
       minReaderVersion: 15,
       viewport: vp,
       boards: [],
@@ -1110,8 +1182,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 16', () => {
-    expect(SCHEMA_VERSION).toBe(16)
+  it('SCHEMA_VERSION is 17', () => {
+    expect(SCHEMA_VERSION).toBe(17)
   })
 
   it('round-trips a valid image element', () => {
@@ -1164,8 +1236,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 16', () => {
-    expect(SCHEMA_VERSION).toBe(16)
+  it('SCHEMA_VERSION is 17', () => {
+    expect(SCHEMA_VERSION).toBe(17)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {

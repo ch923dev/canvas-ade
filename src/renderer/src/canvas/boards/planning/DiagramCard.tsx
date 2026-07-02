@@ -337,6 +337,8 @@ export const DiagramCard = memo(function DiagramCard({
         background: 'var(--surface)',
         border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
         outline: selected ? '0.5px solid var(--accent)' : 'none',
+        // v17 (P4b) element opacity — absent ⇒ opaque, byte-identical to pre-P4b.
+        opacity: element.opacity,
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {
