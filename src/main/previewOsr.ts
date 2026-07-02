@@ -677,6 +677,13 @@ function disposeOsr(id: string): void {
 /** Close every offscreen view (window close / app shutdown). */
 export function disposeAllOsr(): void {
   for (const id of [...osr.keys()]) disposeOsr(id)
+  // BUG-042: disposeOsr(id) above only reaches ids that actually opened a window (osr.keys()). A
+  // board whose id got a buffered resize/paint request (pendingSize/pendingPaint) but never opened
+  // — e.g. a Browser board with no URL yet — is invisible to that loop, so its entry survived every
+  // prior sweep. Clear both maps outright here: this IS the deterministic "can't leak across a
+  // project switch or e2e spec" sweep, so every buffered request is stale by definition once it runs.
+  pendingSize.clear()
+  pendingPaint.clear()
   // Drop the host owner + close the readiness gate (previewOsrOwner.clearOwner).
   clearOwner()
 }
