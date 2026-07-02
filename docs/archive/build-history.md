@@ -1515,3 +1515,39 @@ opacity groups/stroke tokens; kanban deep validation extracted to `kanbanSchema.
 **Verified (pre-merge gate):** typecheck clean · lint 0 errors · **4126 unit+integration pass** /
 1 skipped · **full e2e matrix GREEN both legs** on the merged tree. Maintainer dev-check
 (title-stamped `PR#278 P5 polish`) + explicit merge OK given. Unblocks the Meridian redesign epic.
+
+## 2026-07-03 — Idle reaper removed; `close_board` human-gated (disappearing-boards fix) — #281
+
+**The bug (user-reported 2026-07-02):** agent-spawned boards "randomly disappeared" — planning
+boards with the plan on them, mock-browser previews, quiet terminals. Root cause: the T3.4 **idle
+reaper** (`mcpLifecycle.reapIdle`, swept every 60s) closed any MCP-spawned board idle past
+`MCP_IDLE_TTL_MS` (5 min). A browser board reads `'idle'` once its page loads and planning/kanban
+are permanently `'static'` (BUG-003 made static reap-eligible), so every agent-spawned content
+board was guaranteed deletion ~5–7 min after spawn — un-audited, un-toasted, sweep errors
+swallowed. Recovery was in-session Ctrl+Z only.
+
+**The rule (user decision):** a board is deleted ONLY by the user on the canvas, or by the agent
+through `close_board` behind the human gate. Shipped as:
+
+- **Reaper removed wholesale** — `reapIdle`, the sweep interval, the TTL constants +
+  `CANVAS_MCP_IDLE_TTL_MS`/`CANVAS_MCP_REAP_INTERVAL_MS` env plumbing (+`positiveMsEnv`),
+  `RunningMcp.reapIdle`, and the app-model TTL rules. The spawn-cap budget
+  (`tracked`/`reconcile`/`spawnGraceMs`) is untouched. `boardActivityStaleMs` +
+  `pty.getTerminalActivityStaleMs` KEPT — `awaitSettled`'s output-silence settle consumes them;
+  the handoff backstop keeps its 5-min value as its own `MCP_HANDOFF_TIMEOUT_MS`.
+- **`close_board` human-gated** — new `mcpCloseGate.ts` DI factory (the
+  kanbanGate/visualizeGate pattern) overrides the lifecycle's raw close: resolve title →
+  ConfirmModal by NAME → teardown → audit EVERY exit (`denied`/`closed`/`failed`) to
+  `mcp-audit.jsonl` (reaper-era closes wrote no audit line at all).
+- **Renderer visibility** — agent-initiated `removeBoard` raises the `Agent closed board "…"`
+  toast with an Undo action (one tracked undo step); user deletes don't route through the applier.
+- **E2E** — every `close_board` in the MCP specs drives the confirm modal (`closeBoardGated`);
+  a bare call now hangs to the 60s SDK timeout and leaves a stale open modal that poisons the
+  next modal-driven test. The close test covers deny-keeps-board / approve-removes / toast /
+  worker-denied.
+
+**Verified:** typecheck · lint 0-err · format · unit green (reap suites removed, 4 gate-branch
+tests added) · full e2e matrix — Win 242P (+ documented osrCrop flake rerun-green), Linux Docker
+242P clean · maintainer dev-check title-stamped `PR#281 reaper-close-gate` incl. the 7-min
+no-reap eyeball. Bot review: 0 critical / 0 warning. Spec
+(`docs/research/2026-07-02-board-lifecycle-close-gate/`) deleted in this PR per doc lifecycle.
