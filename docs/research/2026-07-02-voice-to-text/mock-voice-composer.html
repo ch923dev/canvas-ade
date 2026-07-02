@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Voice pill widget &mdash; design artifact v2 (token-faithful mock)</title>
+<style>
+  /* Tokens: verbatim mirror of src/renderer/src/styles/tokens.css (DESIGN.md &sect;2-4) */
+  @font-face {
+    font-family: 'Geist';
+    src: url('../../../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('../../../src/renderer/src/assets/fonts/GeistMono-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+    --void: #0a0a0b; --grid-dot: #202022;
+    --surface: #141416; --surface-raised: #1a1a1d; --surface-overlay: #1e1e22; --inset: #0e0e10;
+    --border-subtle: rgba(255,255,255,.06); --border: rgba(255,255,255,.1); --border-strong: rgba(255,255,255,.16);
+    --text: #ededee; --text-2: #9b9ba1; --text-3: #7b7b81; --text-faint: #46464b;
+    --accent: #4f8cff; --accent-hover: #6ea0ff; --accent-wash: rgba(79,140,255,.14);
+    --ok: #3ecf8e; --warn: #e8b339; --err: #f2545b;
+    --r-board: 8px; --r-inner: 6px; --r-ctl: 5px; --r-pill: 999px;
+    --shadow-board: 0 1px 2px rgba(0,0,0,.45), 0 10px 28px -12px rgba(0,0,0,.6);
+    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,.7);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 32px 48px;
+    background: var(--void);
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 22px 22px;
+    font-family: var(--ui); color: var(--text);
+  }
+  .page-title { font-size: 10px; line-height: 14px; font-weight: 500; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--text-3); margin: 0 0 4px; }
+  .page-sub { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin: 0 0 24px; }
+
+  /* ---- fake terminal board (context; UNCHANGED by the feature) ---- */
+  .scene { position: relative; width: 900px; height: 420px; margin-bottom: 8px; }
+  .board { position: absolute; top: 0; left: 0; width: 620px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--r-board); box-shadow: var(--shadow-board);
+    overflow: hidden; }
+  .board-hd { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+    border-bottom: 1px solid var(--border-subtle); }
+  .board-hd .title { font-size: 12px; font-weight: 500; color: var(--text); }
+  .board-hd .tag { font-size: 10px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--text-3); border: 1px solid var(--border-subtle); border-radius: var(--r-pill);
+    padding: 1px 7px; }
+  .board-hd .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ok); margin-left: auto; }
+  .term { background: var(--inset); padding: 10px 12px; font-family: var(--term-mono);
+    font-size: 12.5px; line-height: 19px; color: var(--text-2); min-height: 240px; }
+  .term .p { color: var(--accent); }
+  .term .dim { color: var(--text-3); }
+  .term .cursor { display: inline-block; width: 7px; height: 14px; background: var(--text-2);
+    vertical-align: -2px; }
+  .scene-note { position: absolute; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+
+  /* ============ the voice PILL (screen-fixed, draggable) ============ */
+  .pill { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 7px;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-pill); box-shadow: var(--shadow-pop); cursor: grab; }
+  .pill .logo { width: 20px; height: 20px; border-radius: 6px; display: block; }
+  .pill .grip { display: flex; flex-direction: column; gap: 2px; padding: 0 1px; }
+  .pill .grip i { display: block; width: 2px; height: 2px; border-radius: 1px; background: var(--text-faint); }
+  .bars { display: flex; align-items: center; gap: 2.5px; height: 20px; padding: 0 8px;
+    background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-pill); }
+  .bars i { display: block; width: 2.5px; border-radius: 1px; background: var(--text-faint); height: 4px; }
+  .bars.live i { background: var(--accent); }
+  .bars.live { border-color: rgba(79,140,255,.45); }
+  .pill.listening { border-color: rgba(79,140,255,.45); }
+  .pill .sdot { width: 7px; height: 7px; border-radius: 999px; }
+
+  /* ============ the flyout (opens above the pill when text exists) ============ */
+  .flyout { width: 400px; background: var(--surface-raised); border: 1px solid var(--border);
+    border-radius: var(--r-inner); box-shadow: var(--shadow-pop); overflow: hidden; }
+  .fly-hd { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px;
+    border-bottom: 1px solid var(--border-subtle); }
+  .fly-hd .to { font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: .06em; }
+  .fly-hd .target { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+  .fly-hd .target b { color: var(--text); font-weight: 500; }
+  .fly-hd .x { margin-left: auto; border: 0; background: transparent; color: var(--text-3);
+    font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; }
+  .fly-body { padding: 8px; }
+  .fly-text { background: var(--inset); border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl); padding: 7px 9px; font-family: var(--mono); font-size: 11.5px;
+    line-height: 17px; color: var(--text); min-height: 34px; }
+  .fly-text .partial { color: var(--text-3); font-style: italic; }
+  .fly-caret { border-left: 1px solid var(--accent); margin-left: 1px; }
+  .fly-actions { display: flex; align-items: center; gap: 6px; padding: 8px 0 0; }
+  .fly-hint { font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); margin-right: auto; }
+  .fly-hint b { color: var(--text-3); font-weight: 450; }
+  .btn { font-family: var(--ui); font-size: 11px; border-radius: var(--r-ctl); padding: 3px 9px;
+    cursor: pointer; white-space: nowrap; background: transparent;
+    border: 1px solid var(--border-subtle); color: var(--text-3); }
+  .btn.primary { color: var(--accent-hover); border-color: rgba(79,140,255,.45); background: var(--accent-wash); }
+  .fly-note { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 11.5px;
+    color: var(--text-2); }
+  .fly-note .sdot { flex: none; width: 8px; height: 8px; border-radius: 999px; }
+  .fly-note .grow { flex: 1; }
+  .fly-note .meta { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+  .vc-progress { height: 3px; border-radius: 2px; background: var(--surface-overlay);
+    overflow: hidden; margin-top: 5px; }
+  .vc-progress i { display: block; height: 100%; width: 42%; background: var(--accent); }
+
+  /* ---- states gallery ---- */
+  .gallery { margin-top: 20px; display: grid; grid-template-columns: 440px 440px; gap: 18px 22px; }
+  .state h3 { font-size: 10px; line-height: 14px; font-weight: 500; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--text-3); margin: 0 0 6px; }
+  .state h3 code { font-family: var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }
+  .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+</style>
+</head>
+<body>
+
+<p class="page-title">Voice pill widget &mdash; design artifact v2</p>
+<p class="page-sub">docs/research/2026-07-02-voice-to-text &middot; token-faithful mock &middot; screen-fixed draggable pill; terminal board UNCHANGED; flyout opens only when transcript exists</p>
+
+<!-- ============ in context: board untouched, pill floating, flyout open ============ -->
+<div class="scene">
+  <div class="board">
+    <div class="board-hd">
+      <span class="title">claude &mdash; pwsh</span>
+      <span class="tag">Terminal</span>
+      <span class="dot"></span>
+    </div>
+    <div class="term">
+      <div class="dim">&#10095; claude</div>
+      <div>&nbsp;</div>
+      <div><span class="p">&#9679;</span> Welcome back. 3 files changed since last session.</div>
+      <div class="dim">&nbsp;&nbsp;/help for commands &middot; Esc to interrupt</div>
+      <div>&nbsp;</div>
+      <div><span class="p">&#10095;</span> <span class="cursor"></span></div>
+    </div>
+  </div>
+
+  <div style="position:absolute; right: 0; bottom: 20px;" class="stack">
+    <div class="flyout">
+      <div class="fly-hd">
+        <span class="to">to</span>
+        <span class="target">&#8594; <b>claude &mdash; pwsh</b></span>
+        <button class="x">&#215;</button>
+      </div>
+      <div class="fly-body">
+        <div class="fly-text">refactor the preview liveness cap so evicted boards keep <span class="partial">their frozen frame and show the paused badge</span><span class="fly-caret"></span></div>
+        <div class="fly-actions">
+          <span class="fly-hint"><b>Enter</b> send &middot; <b>Shift+Enter</b> newline &middot; <b>Esc</b> stop</span>
+          <button class="btn">Insert</button>
+          <button class="btn primary">Send &#9166;</button>
+        </div>
+      </div>
+    </div>
+    <div class="pill listening" title="Drag to reposition &middot; click to stop">
+      <span class="grip"><i></i><i></i><i></i></span>
+      <img class="logo" src="../../../build/icon.png" alt="" />
+      <span class="bars live"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:9px"></i><i style="height:14px"></i><i style="height:5px"></i><i style="height:10px"></i></span>
+    </div>
+  </div>
+
+  <span class="scene-note" style="right: 210px; bottom: 0;">pill = screen-fixed overlay, draggable anywhere; position persisted</span>
+</div>
+
+<!-- ============ states gallery ============ -->
+<div class="gallery">
+
+  <div class="state">
+    <h3>1 &middot; <code>idle</code> &mdash; pill only, bars flat</h3>
+    <div class="pill" title="Click or Ctrl+Shift+M to dictate &middot; drag to move">
+      <span class="grip"><i></i><i></i><i></i></span>
+      <img class="logo" src="../../../build/icon.png" alt="" />
+      <span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+  </div>
+
+  <div class="state">
+    <h3>2 &middot; <code>listening</code> &mdash; bars live, no text yet (no flyout)</h3>
+    <div class="pill listening">
+      <span class="grip"><i></i><i></i><i></i></span>
+      <img class="logo" src="../../../build/icon.png" alt="" />
+      <span class="bars live"><i style="height:5px"></i><i style="height:11px"></i><i style="height:16px"></i><i style="height:8px"></i><i style="height:13px"></i><i style="height:6px"></i><i style="height:9px"></i></span>
+    </div>
+  </div>
+
+  <div class="state">
+    <h3>3 &middot; <code>reviewing</code> &mdash; mic stopped, flyout stays for edit</h3>
+    <div class="stack">
+      <div class="flyout">
+        <div class="fly-hd">
+          <span class="to">to</span>
+          <span class="target">&#8594; <b>claude &mdash; pwsh</b></span>
+          <button class="x">&#215;</button>
+        </div>
+        <div class="fly-body">
+          <div class="fly-text">add an e2e spec for the kanban lane drag reorder and make sure it covers the undo checkpoint case<span class="fly-caret"></span></div>
+          <div class="fly-actions">
+            <span class="fly-hint"><b>Enter</b> send &middot; mic resumes (appends)</span>
+            <button class="btn">Insert</button>
+            <button class="btn primary">Send &#9166;</button>
+          </div>
+        </div>
+      </div>
+      <div class="pill">
+        <span class="grip"><i></i><i></i><i></i></span>
+        <img class="logo" src="../../../build/icon.png" alt="" />
+        <span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="state">
+    <h3>4 &middot; <code>no-target</code> &mdash; no terminal selected / not running</h3>
+    <div class="stack">
+      <div class="flyout">
+        <div class="fly-note">
+          <span class="sdot" style="background:var(--warn)"></span>
+          <span class="grow">No running terminal selected
+            <span class="meta">&nbsp;click a terminal board to target it &mdash; draft is kept</span>
+          </span>
+        </div>
+      </div>
+      <div class="pill">
+        <span class="grip"><i></i><i></i><i></i></span>
+        <img class="logo" src="../../../build/icon.png" alt="" />
+        <span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="state">
+    <h3>5 &middot; <code>model-missing</code> &mdash; download CTA + progress</h3>
+    <div class="stack">
+      <div class="flyout">
+        <div class="fly-note">
+          <span class="sdot" style="background:var(--warn)"></span>
+          <span class="grow">Voice model not downloaded
+            <span class="meta">&nbsp;zipformer-en &middot; 55 MB</span>
+            <span class="vc-progress"><i></i></span>
+          </span>
+          <button class="btn primary">Download</button>
+        </div>
+      </div>
+      <div class="pill">
+        <span class="grip"><i></i><i></i><i></i></span>
+        <img class="logo" src="../../../build/icon.png" alt="" />
+        <span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="state">
+    <h3>6 &middot; <code>mic-denied</code> / <code>error</code></h3>
+    <div class="stack">
+      <div class="flyout">
+        <div class="fly-note">
+          <span class="sdot" style="background:var(--err)"></span>
+          <span class="grow">Microphone blocked by the OS
+            <span class="meta">&nbsp;allow Expanse in system privacy settings, then retry</span>
+          </span>
+          <button class="btn">Open settings</button>
+        </div>
+      </div>
+      <div class="pill" style="border-color: rgba(242,84,91,.4)">
+        <span class="grip"><i></i><i></i><i></i></span>
+        <img class="logo" src="../../../build/icon.png" alt="" />
+        <span class="sdot" style="background:var(--err)"></span>
+        <span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
