@@ -1,9 +1,10 @@
 # Voice-to-text (dictation) — research package
 
-> **Status:** READY TO BUILD — research, spec, design artifact (approved as-is 2026-07-02),
-> and implementation plan all FINAL. This package is **uncommitted research** on `main`;
-> when the build starts, move it onto the `feat/voice-to-text` worktree branch per the repo
-> doc-lifecycle convention. No code exists yet.
+> **Status:** BUILD IN PROGRESS on `feat/voice-to-text` (worktree
+> `.worktrees/voice-to-text`). V0 ✅ shipped `58dc71c` (mic permission posture + mac
+> entitlements; gate + Win e2e green, not pushed). **NEXT: V1 — see
+> [HANDOFF-V1.md](HANDOFF-V1.md).** V2–V5 pending per
+> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 
 Dictate prompts by voice instead of typing — primarily to drive the agentic CLIs in
 Terminal boards. Local-first STT (no API key, offline, private), review-first composer
@@ -18,6 +19,8 @@ Terminal boards. Local-first STT (no API key, offline, private), review-first co
    the design artifact (token-faithful states mock, per the design-before-code rule).
 4. **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — slices V0–V5, per-slice
    files/IPC/tests, collision map. Written after design-artifact sign-off.
+5. **[HANDOFF-V1.md](HANDOFF-V1.md)** — live handoff for the next slice (state snapshot,
+   seams with file:line pointers, sharp edges, exit criteria).
 
 ## Decisions locked at kickoff (user-confirmed 2026-07-02)
 
