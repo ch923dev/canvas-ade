@@ -645,6 +645,10 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await evalIn(page, APPROVE)
     expect(acked(await closeP)).toBe(true)
     await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(false) // gone
+    // Visibility: the agent-initiated removal raised the "Agent closed board …" toast (with
+    // its Undo action) — the silent reaper-era delete is the exact bug this replaces.
+    const TOAST = `(() => [...document.querySelectorAll('.toast-msg')].some((t) => /Agent closed board/.test(t.textContent || '')))()`
+    expect(await pollEval(page, TOAST, 6000)).toBe(true)
     // The worker is denied the tool regardless of whether the board still exists.
     const workerClose = await mcp.worker.call('close_board', { id })
     expect(deniedToolNotFound(workerClose, 'close_board')).toBe(true)
