@@ -67,6 +67,8 @@ export interface RecapFacts {
   generatedAt: number
 }
 
+/** Cap the title anchor (a glance anchor, not a transcript). */
+export const TITLE_MAX_CHARS = 200
 /** Cap the lastAsk anchor (a glance anchor, not a transcript). */
 export const LAST_ASK_MAX_CHARS = 200
 /** Cap the files/commands chip lists (recency-ordered; the face shows a handful). */
@@ -132,7 +134,7 @@ export function computeRecapFacts(
     }
     if (rec.type === 'ai-title') {
       const t = str(rec.aiTitle).trim()
-      if (t) title = t
+      if (t) title = t.slice(0, TITLE_MAX_CHARS)
       continue
     }
     if (rec.type === 'last-prompt') {
