@@ -8,6 +8,7 @@ import {
   applyOsrEdit,
   applyOsrIme
 } from './previewOsr'
+import { applyOsrBackground } from './previewOsrBackground'
 import { sanitizeOsrSize, applyOsrSize } from './previewOsrSizing'
 import { scaleOsrInputEvent } from './previewOsrInput'
 import { canEmitToOwner, registerOwnerLifecycle } from './previewOsrOwner'
@@ -194,6 +195,80 @@ describe('applyOsrPaint', () => {
     applyOsrPaint(win, state, true)
     expect(startPainting).not.toHaveBeenCalled()
     expect(stopPainting).not.toHaveBeenCalled()
+  })
+})
+
+// Background project sessions (Phase 1): the background/foreground transition. Structural
+// target like applyOsrPaint's, extended with the throttling + mute knobs the transition drives.
+function mkBgWin() {
+  const startPainting = vi.fn<() => void>()
+  const stopPainting = vi.fn<() => void>()
+  const invalidate = vi.fn<() => void>()
+  const setBackgroundThrottling = vi.fn<(on: boolean) => void>()
+  const setAudioMuted = vi.fn<(m: boolean) => void>()
+  const win = {
+    webContents: { startPainting, stopPainting, invalidate, setBackgroundThrottling, setAudioMuted }
+  }
+  return { win, startPainting, stopPainting, invalidate, setBackgroundThrottling, setAudioMuted }
+}
+
+describe('applyOsrBackground (background project sessions)', () => {
+  it('backgrounding freezes paint, throttles page timers, and mutes', () => {
+    const { win, stopPainting, setBackgroundThrottling, setAudioMuted } = mkBgWin()
+    const state = { painting: true, manualMuted: false, backgrounded: false }
+
+    expect(applyOsrBackground(win, state, true)).toBe(true)
+
+    expect(state.backgrounded).toBe(true)
+    expect(state.painting).toBe(false)
+    expect(stopPainting).toHaveBeenCalledTimes(1)
+    expect(setBackgroundThrottling).toHaveBeenCalledWith(true)
+    expect(setAudioMuted).toHaveBeenCalledWith(true) // !painting ⇒ effective mute
+  })
+
+  it('foregrounding un-throttles but does NOT resume paint (the liveness manager owns that)', () => {
+    const { win, startPainting, invalidate, setBackgroundThrottling, setAudioMuted } = mkBgWin()
+    const state = { painting: false, manualMuted: false, backgrounded: true }
+
+    expect(applyOsrBackground(win, state, false)).toBe(true)
+
+    expect(state.backgrounded).toBe(false)
+    expect(state.painting).toBe(false) // still frozen until preview:osrSetPaint(true)
+    expect(startPainting).not.toHaveBeenCalled()
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(setBackgroundThrottling).toHaveBeenCalledWith(false)
+    expect(setAudioMuted).toHaveBeenCalledWith(true) // still !painting ⇒ stays muted for now
+  })
+
+  it("preserves the user's manual mute across a background round-trip", () => {
+    const { win, setAudioMuted } = mkBgWin()
+    const state = { painting: true, manualMuted: true, backgrounded: false }
+    applyOsrBackground(win, state, true)
+    applyOsrBackground(win, state, false)
+    // manualMuted stays latched — every effective-mute application kept it true.
+    expect(state.manualMuted).toBe(true)
+    for (const call of setAudioMuted.mock.calls) expect(call[0]).toBe(true)
+  })
+
+  it('is idempotent — a redundant transition is a no-op', () => {
+    const { win, stopPainting, setBackgroundThrottling } = mkBgWin()
+    const state = { painting: false, backgrounded: true, manualMuted: false }
+    expect(applyOsrBackground(win, state, true)).toBe(false)
+    expect(stopPainting).not.toHaveBeenCalled()
+    expect(setBackgroundThrottling).not.toHaveBeenCalled()
+  })
+
+  it('swallows webContents throws (window torn down mid-transition)', () => {
+    const { win, setBackgroundThrottling, setAudioMuted } = mkBgWin()
+    setBackgroundThrottling.mockImplementation(() => {
+      throw new Error('destroyed')
+    })
+    setAudioMuted.mockImplementation(() => {
+      throw new Error('destroyed')
+    })
+    const state = { painting: true, manualMuted: false, backgrounded: false }
+    expect(() => applyOsrBackground(win, state, true)).not.toThrow()
+    expect(state.backgrounded).toBe(true)
   })
 })
 

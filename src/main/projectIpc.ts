@@ -169,7 +169,13 @@ export function registerProjectHandlers(
   // save/open/switch. index.ts wires this to recapWatcher.retain() so a deleted terminal — or the
   // boards of a project we switched away from — has its transcript watcher torn down instead of
   // leaking until quit. Default = no-op. Best-effort (never aborts the save/open).
-  onBoardsObserved: (liveBoardIds: Set<string>) => void = () => {}
+  onBoardsObserved: (liveBoardIds: Set<string>) => void = () => {},
+  // Background sessions (Phase 1): fired with the project dir on every successful open/reopen,
+  // BEFORE the renderer mounts boards. index.ts wires this to projectSessions.foregroundProject
+  // so a switch-back un-registers the dir + un-throttles its frozen previews (the OSR
+  // close-suppression must flip off before normal board close traffic resumes). Idempotent
+  // no-op for a never-backgrounded dir. Default = no-op. Best-effort (never aborts the open).
+  onProjectForeground: (dir: string) => void = () => {}
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
@@ -228,6 +234,12 @@ export function registerProjectHandlers(
   const remember = async (r: ProjectResult): Promise<void> => {
     if (r.ok) {
       setCurrentDir(r.dir)
+      // Background sessions: clear a backgrounded state for the now-active dir (switch-back).
+      try {
+        onProjectForeground(r.dir)
+      } catch (err) {
+        console.warn('[projectSessions] onProjectForeground failed (non-fatal)', err)
+      }
       // BUG-026: touchRecent writes to the userData dir. An EPERM/ENOSPC there must NOT
       // propagate out of the IPC handler — a recents-write failure is non-fatal. The project
       // opened successfully; the renderer must see ok:true even if the MRU list can't update.
@@ -409,6 +421,12 @@ export function registerProjectHandlers(
     const r = readProject(dir)
     if (r.ok) {
       setCurrentDir(r.dir)
+      // Background sessions: mirror the `remember` hook (project:current sets the dir inline).
+      try {
+        onProjectForeground(r.dir)
+      } catch (err) {
+        console.warn('[projectSessions] onProjectForeground failed (non-fatal)', err)
+      }
       // BUG-026: a write failure on the userData dir must not abort the open or corrupt the
       // renderer's view of the operation — a recents-write failure is non-fatal.
       try {

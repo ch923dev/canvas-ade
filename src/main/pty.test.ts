@@ -15,7 +15,10 @@ import {
   getTerminalActivityStaleMsCore,
   isValidResize,
   clampSpawnDim,
-  attachPortInput
+  attachPortInput,
+  parkProjectSessionsCore,
+  disposeProjectPtysCore,
+  countProjectSessionsCore
 } from './pty'
 import {
   canonicalizeShellPath,
@@ -701,6 +704,221 @@ describe('disposeAllPtysCore (T1)', () => {
   })
 })
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// ── Background project sessions (Phase 1): typed parks + project-scoped park/dispose/count ──
+describe('parkCore background kind (no-TTL park)', () => {
+  it('arms NO timer for a background park and records kind + owningDir', () => {
+    vi.useFakeTimers()
+    const reap = vi.fn()
+    const port = makePort()
+    const { proc } = makeProc(801)
+    const sessions = new Map<string, any>([
+      ['a', { proc, port, buf: createRing(1024), projectDir: 'C:\\proj\\A' }]
+    ])
+    const parked = new Map<string, any>()
+
+    parkCore('a', sessions, parked, reap, undefined, 'background')
+
+    expect(sessions.has('a')).toBe(false)
+    expect(port.closed).toBe(true)
+    const p = parked.get('a')
+    expect(p.kind).toBe('background')
+    expect(p.owningDir).toBe('C:\\proj\\A')
+    expect(p.timer).toBeUndefined()
+    // No TTL: nothing ever reaps it on a timer.
+    vi.advanceTimersByTime(10 * 60_000)
+    expect(reap).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('an undo park still arms the TTL and copies the owning dir', () => {
+    vi.useFakeTimers()
+    const reap = vi.fn()
+    const port = makePort()
+    const { proc } = makeProc(802)
+    const sessions = new Map<string, any>([
+      ['a', { proc, port, buf: createRing(1024), projectDir: 'C:\\proj\\A' }]
+    ])
+    const parked = new Map<string, any>()
+
+    parkCore('a', sessions, parked, reap, 1000)
+
+    expect(parked.get('a').kind).toBe('undo')
+    expect(parked.get('a').owningDir).toBe('C:\\proj\\A')
+    vi.advanceTimersByTime(1000)
+    expect(reap).toHaveBeenCalledWith('a')
+    vi.useRealTimers()
+  })
+})
+
+describe('adoptCore owner scoping (R1 — cloned projects share board UUIDs)', () => {
+  const mkParked = (pid: number, owningDir: string | null): any => ({
+    proc: makeProc(pid).proc,
+    buf: createRing(1024),
+    kind: 'background',
+    owningDir
+  })
+
+  it('refuses to adopt a parked session owned by a DIFFERENT project — entry stays parked', () => {
+    const parked = new Map<string, any>([['t', mkParked(810, 'C:\\proj\\A')]])
+    const res = adoptCore('t', new Map(), parked, { newChannel: vi.fn() } as any, vi.fn() as any, {
+      dir: 'C:\\proj\\CLONE'
+    })
+    expect(res).toEqual({ adopted: false })
+    expect(parked.has('t')).toBe(true) // left for its true owner's switch-back
+  })
+
+  it('adopts when the active dir matches the owning dir, and the tag survives onto the session', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const sessions = new Map<string, any>()
+    const parked = new Map<string, any>([['t', mkParked(811, 'C:\\proj\\A')]])
+    const res = adoptCore(
+      't',
+      sessions,
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:\\proj\\A' }
+    )
+    expect(res.adopted).toBe(true)
+    expect(sessions.get('t').projectDir).toBe('C:\\proj\\A')
+  })
+
+  it('treats a legacy entry (no owningDir) as owned by the null project', () => {
+    const parked = new Map<string, any>([
+      ['t', { proc: makeProc(812).proc, buf: createRing(1024) }]
+    ])
+    // Active project open → refuse the null-owned entry.
+    expect(
+      adoptCore('t', new Map(), parked, { newChannel: vi.fn() } as any, vi.fn() as any, {
+        dir: 'C:\\proj\\A'
+      })
+    ).toEqual({ adopted: false })
+    // No project open (dir null) → adoptable.
+    const port1 = makePort()
+    const port2 = makePort()
+    const res = adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: null }
+    )
+    expect(res.adopted).toBe(true)
+  })
+
+  it('adopts WITHOUT an owner check when no requireOwner is supplied (legacy call shape)', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const parked = new Map<string, any>([['t', mkParked(813, 'C:\\proj\\A')]])
+    const res = adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any
+    )
+    expect(res.adopted).toBe(true)
+  })
+})
+
+describe('parkProjectSessionsCore (background switch parks only the owning project)', () => {
+  it('parks every live session tagged with the dir — others stay live', () => {
+    const portA1 = makePort()
+    const portA2 = makePort()
+    const portB = makePort()
+    const sessions = new Map<string, any>([
+      ['a1', { proc: makeProc(820).proc, port: portA1, buf: createRing(1024), projectDir: 'A' }],
+      ['a2', { proc: makeProc(821).proc, port: portA2, buf: createRing(1024), projectDir: 'A' }],
+      ['b1', { proc: makeProc(822).proc, port: portB, buf: createRing(1024), projectDir: 'B' }]
+    ])
+    const parked = new Map<string, any>()
+
+    const n = parkProjectSessionsCore('A', sessions, parked)
+
+    expect(n).toBe(2)
+    expect(sessions.size).toBe(1)
+    expect(sessions.has('b1')).toBe(true)
+    expect(portB.closed).toBe(false)
+    expect(parked.get('a1').kind).toBe('background')
+    expect(parked.get('a1').timer).toBeUndefined()
+    expect(parked.get('a2').owningDir).toBe('A')
+    expect(portA1.closed).toBe(true)
+    expect(portA2.closed).toBe(true)
+  })
+
+  it('treats an untagged session as owned by the null project', () => {
+    const sessions = new Map<string, any>([
+      ['x', { proc: makeProc(823).proc, port: makePort(), buf: createRing(1024) }]
+    ])
+    const parked = new Map<string, any>()
+    expect(parkProjectSessionsCore('A', sessions, parked)).toBe(0)
+    expect(parkProjectSessionsCore(null, sessions, parked)).toBe(1)
+    expect(parked.get('x').owningDir).toBe(null)
+  })
+})
+
+describe('disposeProjectPtysCore (scoped close — never reaps other projects)', () => {
+  it('reaps only the dir-owned parked + live sessions and fires onReap per parked reap', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const onReap = vi.fn()
+    const liveA = makeProc(830).proc
+    const liveB = makeProc(831).proc
+    const parkA = makeProc(832).proc
+    const parkB = makeProc(833).proc
+    const sessions = new Map<string, any>([
+      ['la', { proc: liveA, port: makePort(), buf: createRing(1024), projectDir: 'A' }],
+      ['lb', { proc: liveB, port: makePort(), buf: createRing(1024), projectDir: 'B' }]
+    ])
+    const parked = new Map<string, any>([
+      ['pa', { proc: parkA, buf: createRing(1024), kind: 'background', owningDir: 'A' }],
+      ['pb', { proc: parkB, buf: createRing(1024), kind: 'background', owningDir: 'B' }]
+    ])
+
+    await disposeProjectPtysCore('A', sessions, parked, { killTree } as any, onReap)
+
+    expect(killTree).toHaveBeenCalledWith(liveA)
+    expect(killTree).toHaveBeenCalledWith(parkA)
+    expect(killTree).toHaveBeenCalledTimes(2)
+    expect(sessions.has('lb')).toBe(true) // B untouched
+    expect(parked.has('pb')).toBe(true)
+    expect(onReap).toHaveBeenCalledTimes(1)
+    expect(onReap).toHaveBeenCalledWith('pa')
+  })
+})
+
+describe('countProjectSessionsCore (dialog + badge counts)', () => {
+  it('counts running live sessions + background parks for the dir; excludes undo parks and other dirs', () => {
+    const sessions = new Map<string, any>([
+      ['l1', { state: 'running', projectDir: 'A' }],
+      ['l2', { state: 'exited', projectDir: 'A' }], // exited → not running
+      ['l3', { state: 'running', projectDir: 'B' }]
+    ])
+    const parked = new Map<string, any>([
+      ['p1', { kind: 'background', owningDir: 'A' }],
+      ['p2', { kind: 'undo', owningDir: 'A' }], // deleted board, not a running terminal
+      ['p3', { kind: 'background', owningDir: 'B' }]
+    ])
+    expect(countProjectSessionsCore('A', sessions, parked)).toEqual({ running: 2 })
+    expect(countProjectSessionsCore('B', sessions, parked)).toEqual({ running: 2 })
+    expect(countProjectSessionsCore('C', sessions, parked)).toEqual({ running: 0 })
+  })
+})
+
+describe('reapParkedCore with a timerless (background) park', () => {
+  it('reaps a background park that has no TTL timer without throwing', async () => {
+    const { proc } = makeProc(840)
+    const killTree = vi.fn(() => Promise.resolve())
+    const parked = new Map<string, any>([
+      ['p', { proc, buf: createRing(1024), kind: 'background', owningDir: 'A' }]
+    ])
+    await reapParkedCore('p', parked, { killTree } as any)
+    expect(parked.has('p')).toBe(false)
+    expect(killTree).toHaveBeenCalledWith(proc)
+  })
+})
+
 // ── T4.3 (🔒 dispatch write primitive): writeToPty writes into a LIVE terminal
 // session's proc. Keyed on the `sessions` map (only terminals have sessions), so a
 // non-terminal / absent / unknown id has no session → false (no write, never crashes).

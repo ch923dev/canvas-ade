@@ -15,6 +15,7 @@ import {
   type OutputRing
 } from './ptyOutput'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
+import { getCurrentDir } from './projectStore'
 
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
 // Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
@@ -145,11 +146,32 @@ interface SessionLike {
   lastActivityAt: number
   /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
   exitCode?: number
+  /**
+   * Background sessions: the project dir that OWNS this session, captured from
+   * projectStore.getCurrentDir() at spawn time — NOT from opts.cwd (a board's cwd override can
+   * point anywhere). `null` = spawned with no project open (e.g. the e2e boot). Board ids are
+   * UUIDs but they collide across git-cloned/copied projects, so every cross-session lookup
+   * (adopt, parked-buffer reads) must be scoped by this tag, never by bare id.
+   */
+  projectDir?: string | null
 }
+
+/**
+ * Why a session was parked. `'undo'` = board delete awaiting undo (#15) — reaped after
+ * PARK_TTL_MS. `'background'` = its project was switched away with "keep running" — NO TTL;
+ * reaped only by an explicit project close or app quit.
+ */
+export type ParkKind = 'undo' | 'background'
+
 interface ParkedLike {
   proc: pty.IPty
   buf: OutputRing
-  timer: ReturnType<typeof setTimeout>
+  /** TTL reaper — absent for a `'background'` park (no timer is ever armed). */
+  timer?: ReturnType<typeof setTimeout>
+  /** Park reason (see {@link ParkKind}). Absent (legacy shape) reads as 'undo'. */
+  kind?: ParkKind
+  /** Owning project dir, copied from the session's `projectDir` at park time. */
+  owningDir?: string | null
 }
 
 const sessions = new Map<string, SessionLike>()
@@ -235,7 +257,7 @@ export function reapParkedCore(
   const p = parkedMap.get(id)
   if (!p) return Promise.resolve()
   parkedMap.delete(id)
-  clearTimeout(p.timer)
+  if (p.timer) clearTimeout(p.timer) // a background park never armed one
   onReap?.(id)
   return deps.killTree(p.proc)
 }
@@ -244,13 +266,18 @@ export function reapParkedCore(
  * Core of `park` (#15): move the live session out of `sessions`, close its
  * renderer port, arm a TTL whose expiry reaps the tree, and store it in `parked`.
  * `reap` is the bound reaper invoked when the timer fires.
+ *
+ * Background sessions: `parkTtlMs === undefined` arms NO timer (the park lives until an
+ * explicit project close or quit) — used with `kind: 'background'` by parkProjectSessionsCore.
+ * The session's owning project travels into the parked entry so adopt/reads stay project-scoped.
  */
 export function parkCore(
   id: string,
   sessionsMap: Map<string, SessionLike>,
   parkedMap: Map<string, ParkedLike>,
   reap: (id: string) => void,
-  parkTtlMs: number
+  parkTtlMs?: number,
+  kind: ParkKind = 'undo'
 ): void {
   const s = sessionsMap.get(id)
   if (!s) return
@@ -260,9 +287,12 @@ export function parkCore(
   } catch {
     /* already closed */
   }
-  const timer = setTimeout(() => reap(id), parkTtlMs)
-  timer.unref?.()
-  parkedMap.set(id, { proc: s.proc, buf: s.buf, timer })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  if (parkTtlMs !== undefined) {
+    timer = setTimeout(() => reap(id), parkTtlMs)
+    timer.unref?.()
+  }
+  parkedMap.set(id, { proc: s.proc, buf: s.buf, timer, kind, owningDir: s.projectDir ?? null })
 }
 
 /**
@@ -276,11 +306,19 @@ export function adoptCore(
   sessionsMap: Map<string, SessionLike>,
   parkedMap: Map<string, ParkedLike>,
   deps: Pick<SessionDeps, 'newChannel' | 'killTree'>,
-  transferPort: (port2: MessagePortMain) => void
+  transferPort: (port2: MessagePortMain) => void,
+  requireOwner?: { dir: string | null }
 ): { adopted: boolean; pid?: number } {
   const p = parkedMap.get(id)
   if (!p) return { adopted: false }
-  clearTimeout(p.timer)
+  // Background sessions (R1): board UUIDs collide across git-cloned/copied projects. When the
+  // caller supplies the ACTIVE project dir, a parked entry owned by a DIFFERENT project must
+  // never be handed to this renderer — leave it parked untouched (its true owner adopts it on
+  // switch-back) and let the caller fall through to the snapshot-restore/spawn path.
+  if (requireOwner !== undefined && (p.owningDir ?? null) !== requireOwner.dir) {
+    return { adopted: false }
+  }
+  if (p.timer) clearTimeout(p.timer)
   parkedMap.delete(id)
 
   // BUG-024: mirror the Bug #13 spawn-path guard — if a LIVE session already holds
@@ -301,7 +339,8 @@ export function adoptCore(
     port: port1,
     buf: p.buf,
     state: 'running',
-    lastActivityAt: Date.now() // T-F1: adopt = fresh activity (scrollback is about to replay)
+    lastActivityAt: Date.now(), // T-F1: adopt = fresh activity (scrollback is about to replay)
+    projectDir: p.owningDir ?? null // the tag survives the park→adopt round-trip
   })
   transferPort(port2)
 
@@ -345,9 +384,26 @@ function park(id: string): void {
  * session is parked, returns `{ adopted: false }` and the caller spawns fresh.
  */
 function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number } {
-  return adoptCore(id, sessions, parked, sessionDeps, (port2) =>
-    win.webContents.postMessage('pty:port', { id }, [port2])
+  // Owner-scoped (R1): only a parked session owned by the ACTIVE project may reattach.
+  return adoptCore(
+    id,
+    sessions,
+    parked,
+    sessionDeps,
+    (port2) => win.webContents.postMessage('pty:port', { id }, [port2]),
+    { dir: getCurrentDir() }
   )
+}
+
+/**
+ * The parked entry for `id` ONLY when the ACTIVE project owns it (R1: board UUIDs collide
+ * across cloned projects — a background project's buffered output must never leak into a
+ * same-id board of another project via the parked fallbacks below).
+ */
+function parkedForActiveProject(id: string): ParkedLike | undefined {
+  const p = parked.get(id)
+  if (!p) return undefined
+  return (p.owningDir ?? null) === getCurrentDir() ? p : undefined
 }
 
 /**
@@ -362,8 +418,8 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
   ipcMain.handle('terminal:detectPorts', (e, id: string) => {
     if (isForeignSender(e, getWin)) return []
-    // Read whichever buffer holds this board's output — live session or parked.
-    const box = sessions.get(id)?.buf ?? parked.get(id)?.buf
+    // Read whichever buffer holds this board's output — live session or (owner-scoped) parked.
+    const box = sessions.get(id)?.buf ?? parkedForActiveProject(id)?.buf
     return parsePortsFromOutput(box ? readRing(box) : '')
   })
 
@@ -482,7 +538,16 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     attachPortInput(port1, proc)
 
-    sessions.set(opts.id, { proc, port: port1, buf, state: 'running', lastActivityAt: Date.now() })
+    sessions.set(opts.id, {
+      proc,
+      port: port1,
+      buf,
+      state: 'running',
+      lastActivityAt: Date.now(),
+      // Background sessions: tag the OWNING project (the one open at spawn), not opts.cwd —
+      // a board's cwd override can point anywhere. null = no project open (e2e boot).
+      projectDir: getCurrentDir()
+    })
     boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
 
@@ -700,6 +765,90 @@ export function disposeAllPtys(): Promise<void> {
   return disposeAllPtysCore(sessions, parked, sessionDeps)
 }
 
+/* ── Background project sessions (Phase 1 plumbing) ─────────────────────────────────────────────
+ * A project switch may PARK a project's live sessions (keep the procs running, ports closed,
+ * output buffering into each ring) instead of killing them, so a switch-back live-reattaches via
+ * the existing adopt-first terminal mount. These are the project-scoped siblings of park/
+ * disposeAllPtys; nothing calls the park path until the Phase-2 switch pipeline lands. */
+
+/**
+ * Core of `parkProjectSessions`: park every LIVE session owned by `dir` as a `'background'`
+ * park — NO TTL (reaped only by disposeProjectPtys or quit's disposeAllPtys). Returns how many
+ * sessions were parked. The no-op `reap` is never invoked (no timer is armed without a TTL).
+ */
+export function parkProjectSessionsCore(
+  dir: string | null,
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>
+): number {
+  let parkedCount = 0
+  for (const [id, s] of [...sessionsMap.entries()]) {
+    if ((s.projectDir ?? null) !== dir) continue
+    parkCore(id, sessionsMap, parkedMap, () => undefined, undefined, 'background')
+    parkedCount++
+  }
+  return parkedCount
+}
+
+/** Park the ACTIVE project's live sessions for a background switch (Phase-2 pipeline entry). */
+export function parkProjectSessions(dir: string | null): number {
+  return parkProjectSessionsCore(dir, sessions, parked)
+}
+
+/**
+ * Core of `disposeProjectPtys`: the project-scoped sibling of disposeAllPtysCore — reap the
+ * parked sessions and tear down the live ones owned by `dir`, leaving every other project's
+ * resident sessions untouched (closing project B must never kill backgrounded project A).
+ */
+export function disposeProjectPtysCore(
+  dir: string | null,
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'killTree'>,
+  onReap?: (id: string) => void
+): Promise<void> {
+  const parkedDone = [...parkedMap.entries()]
+    .filter(([, p]) => (p.owningDir ?? null) === dir)
+    .map(([id]) => reapParkedCore(id, parkedMap, deps, onReap))
+  const liveDone = [...sessionsMap.entries()]
+    .filter(([, s]) => (s.projectDir ?? null) === dir)
+    .map(([id]) => cleanupCore(id, sessionsMap, deps))
+  return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
+}
+
+/** Kill every session (live + parked) owned by `dir` — the "Close project" path. */
+export function disposeProjectPtys(dir: string | null): Promise<void> {
+  // FIND-009 discipline: parked reaps forget their gitDiff cwd per-id (cleanupCore already
+  // deletes the live ones) — no wholesale boardCwds.clear() here, other projects keep theirs.
+  return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, (id) => boardCwds.delete(id))
+}
+
+/**
+ * Core of `countProjectSessions`: how many of `dir`'s terminals are RUNNING — live sessions
+ * still in 'running' plus background-parked sessions (their procs run headless; an exited
+ * parked proc is dropped from the map by its onExit, so parked ≈ running). Undo-parked
+ * sessions are excluded: they are deleted boards, not running terminals of a project.
+ */
+export function countProjectSessionsCore(
+  dir: string | null,
+  sessionsMap: Map<string, Pick<SessionLike, 'state' | 'projectDir'>>,
+  parkedMap: Map<string, Pick<ParkedLike, 'kind' | 'owningDir'>>
+): { running: number } {
+  let running = 0
+  for (const s of sessionsMap.values()) {
+    if ((s.projectDir ?? null) === dir && s.state === 'running') running++
+  }
+  for (const p of parkedMap.values()) {
+    if ((p.owningDir ?? null) === dir && p.kind === 'background') running++
+  }
+  return { running }
+}
+
+/** Running-terminal count for `dir` (switch dialog + switcher badges). */
+export function countProjectSessions(dir: string | null): { running: number } {
+  return countProjectSessionsCore(dir, sessions, parked)
+}
+
 /**
  * Snapshot of live PTY sessions for the MCP board registry (read-only; control
  * plane only — never the PTY data stream). Parked (deleted-but-undoable) sessions
@@ -845,7 +994,9 @@ export async function drainPtyCore(
  * honestly report `droppedOlder` when the cap has discarded older output.
  */
 export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: number }): OutputPage {
-  const box = sessions.get(id)?.buf ?? parked.get(id)?.buf
+  // Parked fallback is owner-scoped (R1): an active-project agent must not read a background
+  // project's terminal output through a colliding board id.
+  const box = sessions.get(id)?.buf ?? parkedForActiveProject(id)?.buf
   const raw = box ? readRing(box) : ''
   const truncatedHead = raw.length >= RING_CAP_BYTES
   return pageOutput(stripAnsi(raw), {

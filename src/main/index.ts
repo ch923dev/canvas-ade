@@ -16,10 +16,20 @@ import {
   getTerminalActivityStaleMs,
   getTerminalCwd,
   setRecapEnvProvider,
-  setOrchestrationSyncProvider
+  setOrchestrationSyncProvider,
+  parkProjectSessions,
+  disposeProjectPtys,
+  countProjectSessions
 } from './pty'
 import { boardGitDiff } from './gitDiff'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
+import {
+  backgroundProjectOsr,
+  foregroundProjectOsr,
+  disposeProjectOsr,
+  countProjectOsr
+} from './previewOsrBackground'
+import { createProjectSessions } from './projectSessions'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
@@ -128,6 +138,19 @@ let fileWatcher: FileWatcher | null = null
 // PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
 // when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
 let resultSynth: ResultSynthesizer | null = null
+// Background project sessions (Phase 1): the backgrounded-project registry, wired over the real
+// pty/previewOsr project-scoped resource functions. App-run lifetime only — quit's disposeAll*
+// kills background resources too, so the registry is never persisted or drained at shutdown.
+const projectSessions = createProjectSessions({
+  parkPtys: parkProjectSessions,
+  disposePtys: disposeProjectPtys,
+  countPtys: countProjectSessions,
+  backgroundOsr: backgroundProjectOsr,
+  foregroundOsr: foregroundProjectOsr,
+  disposeOsr: disposeProjectOsr,
+  countOsr: countProjectOsr,
+  now: () => Date.now()
+})
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
@@ -713,7 +736,10 @@ app.whenReady().then(async () => {
           recapWatcher?.track(boardId, entry.transcriptPath)
         }
       }
-    }
+    },
+    // Background sessions (Phase 1): a successful open/reopen forgets any backgrounded state
+    // for the now-active dir (idempotent for a never-backgrounded one) — see projectSessions.
+    (dir) => projectSessions.foregroundProject(dir)
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
