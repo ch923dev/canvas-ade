@@ -50,12 +50,18 @@ export function terminalSnapshotPath(projectDir: string, boardId: string): strin
 /**
  * Persist the serialized ANSI buffer. Returns true on write; false on a rejected id / non-string /
  * oversized blob / fs error (ENOSPC, EPERM, read-only mount — all non-fatal for regenerable state).
+ *
+ * An oversized blob is SKIPPED (never truncated), but the previously-written sidecar (if any) is
+ * also deleted — otherwise a stale prior-session snapshot would silently survive on disk and get
+ * presented as this session's last output on next launch (readTerminalSnapshot has no staleness
+ * check). No sidecar is strictly more correct than a stale one.
  */
 export function writeTerminalSnapshot(projectDir: string, boardId: string, text: string): boolean {
   const file = terminalSnapshotPath(projectDir, boardId)
   if (!file || typeof text !== 'string') return false
   if (Buffer.byteLength(text, 'utf8') > MAX_SNAPSHOT_BYTES) {
     console.warn(`[terminalSnapshot] ${boardId} snapshot exceeds ${MAX_SNAPSHOT_BYTES}B — skipped`)
+    deleteTerminalSnapshot(projectDir, boardId)
     return false
   }
   try {
