@@ -65,3 +65,54 @@ describe('IconBtn — long-press timer cleanup on unmount (BUG-034)', () => {
     expect(onLongPress).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('IconBtn — long-press + contextmenu dedupe (BUG-030)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fires the action only once when a long-press is immediately followed by the native contextmenu event', () => {
+    const onAction = vi.fn()
+
+    const { getByTitle } = render(
+      <IconBtn
+        name="maximize"
+        title="test-btn"
+        onLongPress={onAction}
+        onContextMenu={onAction}
+        longPressMs={500}
+      />
+    )
+
+    const btn = getByTitle('test-btn')
+
+    // Touch long-press: pointer down arms the timer, which fires onLongPress at 500ms...
+    fireEvent.mouseDown(btn)
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+
+    // ...then the browser also dispatches the native contextmenu event for the same gesture.
+    fireEvent.contextMenu(btn)
+
+    expect(onAction).toHaveBeenCalledTimes(1)
+  })
+
+  it('still fires the action via plain right-click (no preceding long-press)', () => {
+    const onAction = vi.fn()
+
+    const { getByTitle } = render(
+      <IconBtn name="maximize" title="test-btn" onLongPress={onAction} onContextMenu={onAction} />
+    )
+
+    const btn = getByTitle('test-btn')
+
+    fireEvent.contextMenu(btn)
+
+    expect(onAction).toHaveBeenCalledTimes(1)
+  })
+})

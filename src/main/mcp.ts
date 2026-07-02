@@ -56,12 +56,17 @@ export function planningWriteEnabled(
  *   - `track` keeps ONE entry per board — a re-spawn ROTATES it (revoking the board's prior token
  *     before recording the new one), so the store holds one live connected token per board instead
  *     of one per spawn (bounds accretion).
+ *   - `revoke` (BUG-019) kills the ONE token bound to a single board — wired to the lifecycle's
+ *     `closeBoard` (close_board tool + idle-reap) so a board's token dies THE MOMENT the board does,
+ *     instead of staying live in the TokenStore until a re-spawn rotates it or a full consent-revoke
+ *     fires. A no-op for a board with no tracked token (never minted one, or already revoked).
  *   - `revokeAll` kills every live connected token at once (consent revoke), so a bearer still
  *     sitting in a CLI config on disk is dead immediately — not only after the next app restart.
  * Pure of the ESM-only package (takes a `revoke` thunk) so it stays unit-testable.
  */
 export function makeConnectedTokenTracker(revoke: (token: string) => void): {
   track(boardId: string, token: string): void
+  revoke(boardId: string): void
   revokeAll(): void
   clear(): void
 } {
@@ -71,6 +76,12 @@ export function makeConnectedTokenTracker(revoke: (token: string) => void): {
       const prior = byBoard.get(boardId)
       if (prior) revoke(prior)
       byBoard.set(boardId, token)
+    },
+    revoke(boardId) {
+      const token = byBoard.get(boardId)
+      if (!token) return
+      byBoard.delete(boardId)
+      revoke(token)
     },
     revokeAll() {
       for (const token of byBoard.values()) revoke(token)
@@ -160,7 +171,16 @@ export interface RunningMcp {
  * fn. A bind/load failure is non-fatal (the server is a convenience layer, not a
  * boot dependency) — log and return null, mirroring startLocalServer.
  */
-export async function startMcpServer(registry: BoardRegistry): Promise<RunningMcp | null> {
+export async function startMcpServer(
+  registry: BoardRegistry,
+  opts: {
+    /**
+     * Live getter for the runaway-swarm spawn cap (the Settings-backed config). Read fresh on each
+     * spawn check so a user's cap change applies without restarting MAIN. Omitted ⇒ MCP_SPAWN_CAP.
+     */
+    cap?: () => number
+  } = {}
+): Promise<RunningMcp | null> {
   try {
     const { createMcpHttpServer, TokenStore, mintBoardToken } = await import('@expanse-ade/mcp')
     const tokens = new TokenStore()
@@ -168,7 +188,17 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       boardId: 'app',
       tier: 'orchestrator'
     })
-    const orchestrator = buildOrchestrator(registry, { idleTtlMs: IDLE_TTL_MS })
+    // 🔒 Agent Orchestration v1: bound connected-token accretion + enable consent-revoke
+    // invalidation (FIND-015 — see makeConnectedTokenTracker). Built BEFORE the orchestrator so
+    // `connected.revoke` can be wired in as `onBoardClosed` below (BUG-019): a board's connected
+    // token now dies THE MOMENT the lifecycle closes it (close_board tool / idle-reap), not only
+    // on a re-spawn rotation or a full consent-revoke.
+    const connected = makeConnectedTokenTracker((token) => tokens.revoke(token))
+    const orchestrator = buildOrchestrator(registry, {
+      idleTtlMs: IDLE_TTL_MS,
+      cap: opts.cap,
+      onBoardClosed: (boardId) => connected.revoke(boardId)
+    })
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
     // drive orchestration cables it doesn't own. Matches the orchestratorToken's boardId.
@@ -185,10 +215,6 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
     // 🔒 Agent Orchestration v1: mint a `connected`-tier token bound to a Terminal board. NEVER
     // logged (PLAN §6). Registered as the seam's `mintTerminalToken` delegate so the P3 spawn-time
     // provisioner can mint a per-board token without importing the ESM-only package or the store.
-    //
-    // FIND-015: bound connected-token accretion + enable consent-revoke invalidation (see
-    // makeConnectedTokenTracker). Tracking ROTATES per board (re-spawn revokes the prior token).
-    const connected = makeConnectedTokenTracker((token) => tokens.revoke(token))
     const mintConnectedToken = (boardId: string): TerminalToken => {
       const token = mintBoardToken(tokens, { boardId, tier: 'connected' }).token
       connected.track(boardId, token)

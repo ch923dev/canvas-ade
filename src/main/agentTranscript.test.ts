@@ -192,15 +192,29 @@ describe('resolveLiveTranscriptPath', () => {
     return { dir, env: { CLAUDE_CONFIG_DIR: root } as NodeJS.ProcessEnv }
   }
 
-  it('resolves to the NEWEST .jsonl in the dir — self-heals a rotated/vanished recorded session', () => {
+  it('self-heals to the NEWEST .jsonl in the dir only when the recorded file is GONE (a true rotation)', () => {
     const { dir, env } = makeProject([
       { name: 'old.jsonl', mtime: 1000 },
       { name: 'live.jsonl', mtime: 5000 },
       { name: 'mid.jsonl', mtime: 3000 }
     ])
-    expect(resolveLiveTranscriptPath(join(dir, 'old.jsonl'), env)).toBe(join(dir, 'live.jsonl'))
     // the dunly-dunning case: recorded session file is gone, but its dir holds the live one
     expect(resolveLiveTranscriptPath(join(dir, 'gone.jsonl'), env)).toBe(join(dir, 'live.jsonl'))
+  })
+
+  // BUG-005: a still-existing recorded file must NEVER be swapped for a newer sibling — Claude
+  // lays out every session started in the same cwd into the SAME directory, so two boards
+  // sharing a cwd each have their own recorded .jsonl side-by-side. A merely-idle board (its own
+  // file still exists, just isn't the newest) must keep resolving to ITS OWN file, not get
+  // silently reattributed to whichever sibling board is actively writing.
+  it('keeps the recorded path when it still exists, even if a sibling .jsonl is newer', () => {
+    const { dir, env } = makeProject([
+      { name: 'boardA.jsonl', mtime: 1000 },
+      { name: 'boardB.jsonl', mtime: 5000 }
+    ])
+    expect(resolveLiveTranscriptPath(join(dir, 'boardA.jsonl'), env)).toBe(
+      join(dir, 'boardA.jsonl')
+    )
   })
 
   it('only considers .jsonl files (a newer non-transcript file is ignored)', () => {

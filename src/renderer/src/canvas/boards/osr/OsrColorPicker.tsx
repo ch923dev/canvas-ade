@@ -58,9 +58,11 @@ export function OsrColorPicker({
     const onUp = (): void => {
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
     }
     el.addEventListener('pointermove', onMove)
     el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
   }
 
   const hueColor = `hsl(${Math.round(hsv.h)}, 100%, 50%)`

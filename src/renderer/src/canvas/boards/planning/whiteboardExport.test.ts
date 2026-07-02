@@ -291,3 +291,93 @@ describe('boardToSvg — text typography (v7)', () => {
     expect(svg).not.toContain('font-family="Georgia, "')
   })
 })
+
+describe('boardToSvg — text wrapping (matches the on-board wrap; no overflow/clip)', () => {
+  const longText = Array(30).fill('word').join(' ')
+  // The first <text> element's full markup (notes/area-text are emitted as one <text> of <tspan>s).
+  const firstText = (svg: string): string => svg.match(/<text[^>]*>.*?<\/text>/s)?.[0] ?? ''
+  const tspans = (markup: string): number => (markup.match(/<tspan/g) ?? []).length
+
+  it('wraps a long note label to several lines and grows the card + the canvas to fit', () => {
+    const { svg, height } = boardToSvg(
+      board([
+        {
+          id: 'n',
+          kind: 'note',
+          x: 0,
+          y: 0,
+          w: 156,
+          h: 96,
+          tint: 'yellow',
+          text: longText,
+          rotation: 0
+        }
+      ]),
+      {}
+    )
+    expect(tspans(firstText(svg))).toBeGreaterThan(1) // wrapped, not one overflowing line
+    // The note rect (rx="6") grew past the nominal h:96 …
+    const rectH = parseFloat(svg.match(/height="([\d.]+)" rx="6"/)![1])
+    expect(rectH).toBeGreaterThan(96)
+    // … and the SVG canvas grew with it (nominal would be 96 + 2*PAD = 144).
+    expect(height).toBeGreaterThan(144)
+  })
+
+  it('wraps area-text (explicit width) to its box', () => {
+    const { svg } = boardToSvg(
+      board([{ id: 't', kind: 'text', x: 0, y: 0, text: longText, width: 90 }]),
+      {}
+    )
+    expect(tspans(firstText(svg))).toBeGreaterThan(1)
+  })
+
+  it('does NOT wrap auto-text (no width) — mirrors FreeText auto-sizing to content', () => {
+    const { svg } = boardToSvg(board([{ id: 't', kind: 'text', x: 0, y: 0, text: longText }]), {})
+    expect(tspans(firstText(svg))).toBe(1)
+  })
+
+  it('wraps a long checklist item label and grows the card height', () => {
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 'c',
+          kind: 'checklist',
+          x: 0,
+          y: 0,
+          w: 240,
+          h: 0,
+          title: 'T',
+          items: [{ id: 'i1', label: longText, done: false }]
+        }
+      ]),
+      {}
+    )
+    // The checklist background rect is the only rx="8" rect; it grew past the single-item nominal
+    // (nominalChecklistHeight(1) === 30 + 24 + 24 === 78) because the label wrapped to several rows.
+    const cardH = parseFloat(svg.match(/height="([\d.]+)" rx="8"/)![1])
+    expect(cardH).toBeGreaterThan(78)
+  })
+
+  it('uses the INJECTED measurer for wrap decisions (the DI seam the export backs with canvas)', () => {
+    // A measurer that reports every string as huge forces each word onto its own line.
+    const huge = (): number => 9999
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 'n',
+          kind: 'note',
+          x: 0,
+          y: 0,
+          w: 156,
+          h: 96,
+          tint: 'yellow',
+          text: 'a b c',
+          rotation: 0
+        }
+      ]),
+      {},
+      huge
+    )
+    expect(tspans(firstText(svg))).toBe(3)
+  })
+})

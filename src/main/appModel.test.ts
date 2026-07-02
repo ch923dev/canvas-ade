@@ -17,7 +17,9 @@ describe('buildAppModel (PR-3 app self-model)', () => {
       'browser',
       'planning',
       'command',
-      'file'
+      'file',
+      'kanban',
+      'dataflow'
     ])
     expect(m.tools).toHaveLength(APP_TOOLS.length)
   })

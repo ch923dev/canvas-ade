@@ -1229,3 +1229,262 @@ succeed against the packed `signal-exit@4`. Full e2e matrix GREEN both legs at t
 + 1 flaky; Linux Docker 223 clean); CI green (check · CodeQL · analyze · claude-review LGTM, zero inline).
 mac/linux packaged-launch remains a manual desktop check (`docs/testing/MANUAL-CHECKS.md`); the pin
 mechanism is identical there.
+
+## 2026-06-29 — gitEnv: strip `SSH_ASKPASS` in `repoScopedEnv` (simple-git spawn guard) — #265 (`e2577bc8`)
+
+Fixed a **real user-facing robustness bug** in the shared MAIN read-only git-env scrubber. Surfaced
+when the pre-push e2e gate false-failed from a **Git Bash** shell (it sets
+`SSH_ASKPASS=/mingw64/bin/git-askpass.exe`); the dev box normally runs the suite from PowerShell,
+where the var is unset, so it masqueraded as a flake.
+
+**Root cause:** `repoScopedEnv()` (behind every `simple-git` seam — `boardGitDiff`, `file:gitPermalink`)
+strips every `GIT_*` var so git's directory discovery falls back to the spawn path, which *also* clears
+the dangerous vars `simple-git`'s `blockUnsafeOperationsPlugin` refuses to spawn on (`GIT_ASKPASS`,
+`GIT_SSH`, …). But **`SSH_ASKPASS` is an OpenSSH var with no `GIT_` prefix**, so the sweep missed it and
+the guard still tripped (`GitPluginError: Use of "SSH_ASKPASS" is not permitted without enabling
+allowUnsafeAskPass`) → broken `gitDiff` / `gitPermalink` for any user whose shell exports it.
+
+**Fix (1-commit, `src/main/gitEnv.ts` + test):** after the `GIT_*` strip, explicitly
+`delete env.SSH_ASKPASS` + `env.SSH_ASKPASS_REQUIRE`. The guard is **kept** — trigger removed, NOT
+`allowUnsafeAskPass` enabled (that would weaken the model). A read-only LOCAL git read never needs an
+askpass helper. Both call sites already route through `repoScopedEnv()` (`gitDiff.ts`, `fileIpc.ts`) —
+no stray env site. The `env -u SSH_ASKPASS` gate workaround (memory `e2e-ssh-askpass-gitbash`) is now
+obsolete for these seams.
+
+**Verified:** unit (`gitEnv.test.ts`, 6/6 — new case asserts both vars cleared, non-GIT vars
+preserved). e2e **contrast** from Git Bash **with `SSH_ASKPASS` set** (the exact regression condition):
+un-fixed code → `gitDiff.e2e.ts:104 @terminal` FAILS; fixed code → 3/3 pass. Full e2e matrix GREEN both
+legs (Windows 222 + Linux Docker 223). CI green (check · CodeQL · analyze · claude-review, zero inline).
+The review-package handoff collapsed to `docs/reviews/2026-06-29-gitenv-ssh-askpass/SUMMARY.md` + index row.
+
+## 2026-06-30 — Configurable MCP orchestrator spawn cap (default 4) — #266 (`1dcf560d`)
+
+Made the orchestrator's runaway-swarm guard — the cap on concurrently-spawned worker boards — a
+**user setting** (Settings → Agent orchestration → "Max concurrent workers"), defaulting to 4. It was
+hard-coded at `MCP_SPAWN_CAP = 4` (MAIN) mirrored by `WORKER_SPAWN_CAP = 4` (renderer).
+
+**Design:** **app-level** config (`<userData>/orchestration-config.json`), not per-project — the MCP
+server is a process singleton, so the cap is app-wide (a machine-resource guard); no `canvas.json`
+schema bump. **Live-updatable:** `buildOrchestrator`/`createMcpLifecycle` now accept `number | (() =>
+number)`; `index.ts` passes a getter that reads the config FRESH per spawn check, so a Settings change
+applies with no restart (and `describeApp`'s reported `rules.spawnCap` reflects it). **Clamp `[1,16]`,
+default 4** (unbounded would defeat the guard). Lowering below the live count blocks NEW spawns and
+leaves running workers alone (the existing reject-on-cap behavior — never kills in-flight work).
+
+**Chain:** `orchestrationConfig.ts` (new MAIN: pure I/O + `clampSpawnCap` + frame-guarded
+`orchestration:getSpawnCap`/`setSpawnCap` IPC; `DEFAULT_SPAWN_CAP` lock-stepped to `MCP_SPAWN_CAP`) ·
+`mcpRegistry`/`mcpOrchestrator`/`mcpLifecycle`/`mcp`/`index` (number-or-getter cap) · renderer
+`workerPool` (cap arg + clamp) + `orchestrationConfigStore` (new reactive cache, hydrate-on-mount /
+update-after-write) + `CommandBoard` (PoolStrip + dispatch pump read it live) · `SettingsModal` (the field).
+
+**Verified:** typecheck · lint · format · 3802 unit/integration tests (incl. the new orchestrationConfig
+suite, a live-cap lifecycle test proving raise→spawn / lower→block / nothing-killed, workerPool + 3
+SettingsModal tests). Full e2e matrix GREEN both legs (Windows 222 + Linux Docker 223). CI green
+(check · CodeQL · analyze · claude-review, zero inline). Manual dev check confirmed the field, the live
+cap, and the PoolStrip update.
+
+## 2026-06-30 — Planning export text-wrap + checklist empty-until-resize fix — #267 (`fc20956b`)
+
+Two Planning-board bugs surfaced by a real export (notes/text overflowing every box in the exported
+PNG; checklists sometimes rendering empty).
+
+**1. Exported text didn't wrap.** `whiteboardExport.ts` emitted one SVG `<text>`/`<tspan>` per SOURCE
+line — SVG `<text>` has no auto-wrap — so notes, area-text, and checklist labels (all of which soft-wrap
+on-canvas) overflowed their boxes, overlapped neighbours, and ran off the frame; the SVG canvas also
+sized from `elementBBox` with no measurement (notes used the stale `h:96`, free text `TEXT_NOMINAL
+120×22`), clipping even correctly-placed text. **Fix:** pure `wrapText()` + `estimateLineWidth` in
+`textStyle.ts` (greedy word-wrap + hard-split for overlong tokens); `boardToSvg(board, assets, measure?)`
+takes an injected `MeasureText`, and each element now reports the box it ACTUALLY occupies, so the
+note/checklist boxes + the SVG canvas grow to fit; `exportBoard.ts` backs the measurer with a real
+`canvas.measureText` (export font stack → pixel-accurate), with the heuristic as the node-test fallback.
+Auto-text (no `width`) stays single-line, matching `FreeText`.
+
+**2. Checklist rendered empty until resized.** `ChecklistCard` auto-sizes its label textareas in a
+`useLayoutEffect`; `BoardNode` renders board content into a DETACHED portal host and re-attaches it in a
+PARENT layout effect that runs AFTER the card's child one — so a LOD zoom-out→in remount measured
+`scrollHeight===0` while detached → every label collapsed to `height:0px`, and nothing re-fired
+`[items,w]` until a resize. (`NoteCard` is unaffected — it auto-sizes in a passive `useEffect`, which
+runs after the re-attach.) **Fix:** `autoSizeRow` no longer collapses a row to `0px` on a zero-layout
+read, and the card's `ResizeObserver` re-sizes rows once it has layout (guarded for envs without
+`ResizeObserver`).
+
+No schema change; renderer-scoped (`planning/{whiteboardExport,textStyle,exportBoard,ChecklistCard}` +
+tests). **Verified:** typecheck · lint · format · 354/354 planning unit tests (incl. 11 new — wrapText/
+estimateLineWidth, note/area-text/checklist wrap+grow, the injected-measurer DI seam). Full e2e matrix
+GREEN both legs (Windows 223 — two unrelated @core/@preview env flakes rerun 15/15 — + Linux Docker 223).
+CI green (check · CodeQL · analyze · claude-review, zero inline). Manual dev check confirmed the live
+export wrap + the checklist LOD-remount.
+
+## 2026-07-01 — OSR revive sizing (MAX_LIVE) fix — #269 (`b0f74d97`)
+
+Found during an OSR-subsystem review and reproduced deterministically before fixing. When more than 4
+Browser boards exist (the `MAX_LIVE=4` existence cap is in play), an evicted board's offscreen window is
+DESTROYED (its frozen frame stays on the `<canvas>`) and `useOffscreenPreview` REOPENS a fresh one when
+the board climbs back into the cap. That reopened window is born at the OSR default (`OSR_WIDTH×OSR_HEIGHT`
+= 1280×800, S=1), but `useOffscreenSizing`'s effect deps excluded the board's `alive` flag, so no
+`preview:osrResize` was re-sent — the revived board reflowed its page at desktop width in its (e.g.
+mobile) device frame and lost its supersample (blurry) until the next zoom-settle. Real-world trigger: a
+pan-only (zoom-unchanged) revive, since a zoom change would re-drive sizing and mask it.
+
+**Fix:** `useOffscreenSizing` now reads `alive` from `osrLivenessStore` (mirroring its sibling
+`useOffscreenPreview`), skips sizing while evicted, and re-pushes the preset size on revive (`alive` added
+to the effect deps). A full-viewed board is always forced alive by the liveness manager, so full view is
+never skipped. ~4 runtime lines; renderer-scoped, no schema change.
+
+**Regression guard:** `e2e/osrReviveSizing.e2e.ts` (`@preview`) drives an evict→revive via the `alive`
+flag (what the liveness manager writes) and asserts the revived mobile board settles back to its 390
+preset `logicalW` — RED without the fix (1280), GREEN with it. Adds two e2e affordances: an
+`osrLogicalSize` MAIN probe (`getContentSize()/getZoomFactor()`) and a `setOsrAlive` renderer hook;
+`smoke/e2eHooks.ts` (the Playwright harness) joined the `max-lines` test-exemption. The board id is passed
+as a BOUND `page.evaluate` argument (not an eval-string), clearing two CodeQL `js/bad-code-sanitization`
+false-positive advisories at the source.
+
+**Verified:** typecheck · lint · format · full `@preview` e2e 37/37 (incl. all 5 fullview specs). Full
+e2e matrix GREEN both legs ×2 (223 passed + the documented dataFlow Linux-Docker flake retry-recovered /
+224 passed). CI green (check · CodeQL · analyze · claude-review 0/0 inline). Manual dev check confirmed
+the titled build launches clean.
+
+## 2026-07-01 — Terminal theme-aware chrome bg + full-view row-fill (input visible) — #270 (`7290be4c`)
+
+Two user-reported terminal bugs, root-caused to specific file:line before coding.
+
+**Bug 1 — chrome bg didn't track the theme.** A non-default xterm theme (Dracula/Solarized/…) repainted
+the terminal SURFACE, but the board chrome stayed hardcoded `var(--inset)`, leaving a mismatched near-black
+frame/padding/full-view-gutter around themed text. **Fix:** `TerminalBoard` resolves
+`themeBg = terminalThemeColors(board.themeId ?? bornThemeId).background` (the same palette xterm renders;
+born fallback mirrors Lane B's `useTerminalAppearance`) and feeds it to `contentBg` + `screenWrap` +
+`idleOverlay` (were all `var(--inset)`). Default theme resolves to `#0e0e10` == `--inset`, so default boards
+are pixel-identical — zero regression.
+
+**Bug 2 — Claude input not visible in full view (long session).** Pure A1
+(`docs/research/2026-06-23-terminal-scrollback-reflow`) froze cols AND rows and scaled the render FONT only,
+leaving a large same-bg letterbox gutter below the text and the live prompt parked mid-scrollback. **Fix:**
+new `useTerminalFullViewFill(termRef)` hook does the report-blessed **rows-only** `term.resize(cols, fillRows)`
+in full view — columns never change, so xterm `_reflow` early-returns (`_cols === newCols`) ⇒ NO lossy
+scrollback reflow / corruption (Pure A1's guarantee preserved). Rows grow (or shrink) to fill the modal
+height + `scrollToBottom()` so the prompt sits at the true bottom; EXIT restores the exact in-canvas rows
+deterministically (never a re-fit → no font-transition race the shipped-A1 note warned about). **Impl
+gotcha:** cell height is measured via `screenEl.offsetHeight` (transform-INVARIANT), NOT
+`getBoundingClientRect` — the full-view modal's ~320ms open-stretch transform scales the rect, so a rect-based
+read mid-stretch over-counts rows ~2.5× and the grid clips (found via e2e: vSlack −412, rows 88 vs correct
+~35). Poll until per-cell height settles before the one-shot resize.
+
+**Regression guard:** a full-view fill test in `e2e/terminalScrollback.e2e.ts` seeds a wide-short board
+(width binds) and asserts rows grow to fill, cols frozen, rows restore on exit, all 120 scrollback markers
+survive, and vertical slack is bounded to ~1 cell.
+
+**Verified:** typecheck · lint (0 errors) · format · build green. Full e2e matrix GREEN both legs (Windows
+native + Linux Docker) at the pre-push gate — 223 passed + the documented dataFlow Linux-Docker flake
+retry-recovered. CI green on the rebased head (check · CodeQL · analyze · claude-review, 0 fails). Manual
+dev check on a titled build confirmed the themed frame matches and the full-view prompt is visible at the
+bottom with no gutter; default theme unchanged.
+
+## 2026-07-01 — Terminal-serialize epic (Phase 5): save / lossless resize / persist-restore scrollback — #275 (`39df174b`)
+
+The final Phase 5 slice landing — the whole terminal-serialize epic, integrated onto `main` as ONE squash
+commit. Four slices, previously merged into `feat/terminal-serialize-umbrella`:
+
+- **S1 — save output to file** (#261, `ad99812c`): dump a terminal's full buffer to a chosen path via the OS
+  save dialog (cancel = silent no-op; no path-traversal surface — the dialog picks the real path).
+- **S2 — lossless drag-resize backstop** (#268, `5344d83e`): a re-entrancy-guarded backstop
+  (`terminalResizeBackstop.ts`) so every scrollback line survives a widen→narrow with no reflow trim/dup;
+  matching unit tests exercise the in-flight/coalesce/no-overlap invariants.
+- **S4 — jump-to-bottom badge** (#261): a badge hidden at the tail, shown when scrolled up, click snaps to
+  the bottom.
+- **S3 — persist scrollback across restart** (#273, `98348e9d`): the screen is serialized (via
+  `@xterm/addon-serialize`) to a **`.canvas/terminal/<id>.snapshot` sidecar**, flushed on quit / close /
+  board-switch through a serializer registry (`terminalSnapshotRegistry.ts` + `useAutosave`/
+  `disposeLiveResources` wiring). On reopen the terminal mounts **idle + read-only** with a "Session
+  restored — read-only" bar (M-1: no silent auto-spawn); **Start** re-arms a fresh PTY, **Resume**
+  (`claude --resume <id>`) reattaches the agent transcript when the board has an `agentSessionId`. Snapshot
+  delete-on-remove is gated on `running[id]` (undo-safe). The MAIN surface (`terminalIpc.ts`/
+  `terminalSnapshot.ts`) is frame-guarded, `isSafeId`-confined to `.canvas/`, atomic, and size-capped
+  (skip-not-truncate).
+
+**Design:** the snapshot is a **sidecar, not a schema field** → NO `schemaVersion`/`minReaderVersion` bump.
+Adds one dep (`@xterm/addon-serialize`, package.json + pnpm-lock.yaml). No MCP files touched.
+
+**Merge-integration (this squash's merge commit `b6841e70`):** brought `main` (`aeb3bc9c`) in; two content
+conflicts resolved keeping BOTH sides — (1) `TerminalBoard.tsx`: kept S3's single `<TerminalIdleAffordance>`
+AND threaded #270's `themeBg` into the fresh-idle overlay (new optional `background` prop) so a themed
+terminal no longer flashes `--inset` while idle; #270's chrome-bg + full-view row-fill intact; (2)
+`smoke/e2eHooks.ts`: resolved to S3's type-surface split (`e2eHooks.types.ts`) and ported #269's `setOsrAlive`
+TYPE into it (the METHOD auto-merged). Consolidated 6 duplicated inline resume/new respawn handlers into
+shared `resumeSession`/`restartFresh` callbacks to keep `TerminalBoard` under its 627 max-lines ratchet after
+the merge (pins move downward only).
+
+**Verified:** typecheck · lint (0 errors) · format · build green. **Full e2e matrix GREEN both legs** at the
+once-per-PR pre-merge gate — Windows 228 passed (the lone `osrCropSupersample` 27ms cross-spec env flake
+reran green in isolation) + Linux Docker 229 passed. New specs green: `terminalPersist` · `terminalSave` ·
+`terminalJumpBottom` · `terminalResizeBackstop`. Boot smoke `RENDERER_SMOKE {reactflow,xterm,webgl:true}` +
+`pty:true` (no black screen). CI green on the PR head (check · CodeQL · analyze · claude-review — **no
+critical/warning findings**). Known follow-up (accepted, out of epic scope): a board permanently deleted
+while idle/restored/exited leaves an orphaned `.canvas/terminal/*.snapshot` (harmless, git-ignored) with no
+GC path — a TTL sweep mirroring `pty.ts`'s parked-PTY reap is the fix.
+
+## 2026-07-01 — MCP canvas-awareness epic (P1–P5) → main · geometry/layout awareness · Kanban board type · card mutate+read · visualize gate · tidy_canvas (merge `d07a7af1`)
+
+The whole `feat/mcp-canvas-awareness-umbrella` epic, integrated onto `main` as one `--no-ff` merge (`d07a7af1`)
++ a bundled integration commit. Makes the MCP layer spatially aware, gives it the element update/delete +
+layout surface it lacked, and adds a dedicated Kanban board type. Sub-phases (previously merged into the
+umbrella; details in the phase memory):
+
+- **P1 canvas awareness** — board geometry (`x/y/w/h`) threaded into `canvas://boards` + `AppModelBoard`;
+  pure `layoutModel.ts` `buildLayoutDigest` (bbox/overlaps/row·column·grid·scattered) behind
+  `canvas://layout` + `Orchestrator.describeLayout`.
+- **P4 Kanban board type** — dedicated `kanban` board TYPE (full-board, Data-Flow template). **Breaking
+  schema v17 / reader-floor 17** (ordered `columns` + flat `cards` bound by `columnId`; shapes in leaf
+  `kanbanSchema.ts`). P4.2 = HTML5-native drag between columns + inline card/column authoring + soft WIP,
+  each edit one undoable `beginChange`+`updateBoard` step (`kanbanEdit.ts`, same-ref no-op guard).
+- **P3 card mutate + read** — flag-gated (`planningWrite`) `add_card`/`move_card`/`update_card`/`remove_card`
+  end-to-end (pkg tool → host gate: resolve→sanitize→human-confirm→`patchKanban`→audit → renderer
+  `kanbanMcpApply`); MAIN mints card ids. P3b READ half = `canvas://board/{id}/cards` per-board projection
+  (rides the board mirror, count-/field-capped on IPC ingress).
+- **P5 visualize gate** — `visualize_plan`: agent proposes a flat plan + suggested shape; the UPGRADED
+  human-confirm gate surfaces a layout CHOOSER (kanban/grid/checklist/columns) that RE-VALIDATES the pick
+  fail-safe to the suggestion, then creates a new board tidied into open space. `ConfirmRequest.choices` +
+  `ConfirmDecision.choice` reuse the whole fail-closed confirm machinery.
+- **P2 tidy_canvas** — orchestrator-tier, **un-gated** (content-less, reposition-only, one-undo reversible —
+  the `spawn_group` precedent) `tidy_canvas({ mode?: 'smart'|'by-type'|'grid' }) → { moved }`; drives the
+  existing `canvasStore.tidyBoards` packer. No schema/UI.
+
+**Package:** consumes **`@expanse-ade/mcp@0.18.0-rc.5`** (published to npm `next`; `latest` stays 0.17.0).
+Host `LifecycleOrchestrator` narrows+Omits the host-owned methods (`describeLayout`/`boardCards`/
+`tidyCanvas` + kanban/visualize) so it compiled vs both installed 0.17.0 AND the rc through the epic.
+
+**Integration commit (pin bump + drift catch-up):** app pin `^0.17.0`→`0.18.0-rc.5` + `pnpm install`
+(lockfile) + `appModel.ts APP_TOOLS` +`tidy_canvas`/`add_card`/`move_card`/`update_card`/`remove_card`/
+`visualize_plan` (the F25 drift guard now matches the installed rc.5 orchestrator tool set). `APP_BOARD_TYPES`
+intentionally NOT given `kanban` (dataflow likewise absent; F25 guards tools only). Rebase onto `b003fb0`
+(#275) was conflict-free; the only cap fallout was `src/preload/index.ts` tipping to 701 code-lines after the
+additive merge (#275 terminal channels + P5 confirm mirrors) — trimmed by inlining the `ConfirmChoices`
+mirror into the `ConfirmRequest.choices` field (structurally identical over the IPC boundary), no ratchet bump.
+
+**Verified:** typecheck 0 · lint 0 errors (37 pre-existing STYLE-02 warnings) · format clean · **3994 unit+
+integration pass** / 1 skipped (F25 drift green). **Full e2e matrix GREEN both legs** at the pre-merge gate —
+Windows 232 passed (lone `osrCropSupersample` @preview env flake reran green in isolation) + Linux Docker
+`exit 0` 232 passed (1 flaky `dataFlow` @preview retry-recovered — the known Linux-Docker flake).
+
+## 2026-07-02 — macOS window-close PTY-orphan fix (deep-review finding) — direct-to-main (`b2a2a9f`)
+
+First fix off the **2026-07-02 deep review** (57-agent map→review→adversarial-verify workflow; 0 Crit/High in
+shipped code, exposure was process/release-shaped + this one Med lifecycle bug). On **darwin**, closing the
+last window does NOT quit the app (`window-all-closed` is a no-op there), so the `before-quit` →
+`shutdown()` → `disposeAllPtys()` drain never fires and every live + parked agent PTY is orphaned — running,
+burning tokens, unreachable via adopt — until Cmd+Q.
+
+**Fix:** extract the `'closed'`-handler cleanup to a pure, unit-tested `performWindowCloseCleanup({platform,
+disposeOsr, disposeDiagramWorker, disposePtys})` in `src/main/quit.ts` (same testability rationale as
+`performGuardedQuit`/`makeCrashHandler`); `src/main/index.ts` `createWindow` wires it into the `'closed'`
+handler. Reaps PTYs **darwin-only** — Win/Linux keep the AWAITED `before-quit` drain untouched (disposing there
+too would clear the session maps first, turning the awaited `disposeAllPtys()` into a no-op and moving the real
+async `taskkill` reap OFF the awaited path → re-orphaning where it currently works). Terminal scrollback
+snapshots are captured renderer-side on `beforeunload` from the xterm buffer (independent of the live PTY), so
+the tree-kill here cannot lose them. So the change is a **no-op on win32/linux** (guarded out) — the darwin
+branch is not observable on the Win/Linux e2e legs; the +5 `quit.test.ts` cases pin the platform guard instead.
+
+**Verified:** typecheck (node+preload+web) 0 · lint 0 errors (37 pre-existing STYLE-02 warnings) · format clean
+· **3998 unit+integration pass** / 1 skipped (+5 new `quit.test.ts`). **Full e2e matrix GREEN both legs** —
+Windows 233 (`osrCropSupersample` @preview OSR-teardown env flake reran green in isolation) + Linux Docker
+`exit 0` 233 passed. Headless smoke green (RENDERER reactflow/xterm/webgl true, `pty:true`, no destroyed/throw)
+— confirms boot + the normal close/quit path is un-regressed. Direct-to-main (small, self-contained fix).

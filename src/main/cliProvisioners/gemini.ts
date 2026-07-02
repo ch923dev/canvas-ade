@@ -15,7 +15,9 @@ import {
   SERVER_NAME,
   bearer,
   dirExists,
+  existingServersMap,
   geminiHome,
+  isRecord,
   mcpUrl,
   readJsonConfig,
   tildeify,
@@ -34,7 +36,10 @@ function geminiEntry(port: number, token: string): Record<string, unknown> {
 function writeSync(_projectDir: string, tok: TerminalToken): string {
   const file = settingsPath()
   const cfg = readJsonConfig<McpServersConfig>(file) ?? {}
-  cfg.mcpServers = { ...cfg.mcpServers, [SERVER_NAME]: geminiEntry(tok.port, tok.token) }
+  cfg.mcpServers = {
+    ...existingServersMap(cfg, 'mcpServers'),
+    [SERVER_NAME]: geminiEntry(tok.port, tok.token)
+  }
   writeJsonConfig(file, cfg)
   return tildeify(file)
 }
@@ -42,7 +47,7 @@ function writeSync(_projectDir: string, tok: TerminalToken): string {
 function removeSync(_projectDir: string): void {
   const file = settingsPath()
   const cfg = readJsonConfig<McpServersConfig>(file)
-  if (cfg?.mcpServers && SERVER_NAME in cfg.mcpServers) {
+  if (isRecord(cfg?.mcpServers) && SERVER_NAME in cfg.mcpServers) {
     delete cfg.mcpServers[SERVER_NAME]
     writeJsonConfig(file, cfg)
   }

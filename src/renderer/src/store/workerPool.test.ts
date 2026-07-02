@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { deriveWorkerPool, WORKER_SPAWN_CAP } from './workerPool'
+import {
+  deriveWorkerPool,
+  clampWorkerSpawnCap,
+  WORKER_SPAWN_CAP,
+  WORKER_SPAWN_CAP_MIN,
+  WORKER_SPAWN_CAP_MAX
+} from './workerPool'
 import { createBoard, type Board, type TerminalBoard } from '../lib/boardSchema'
 
 function term(id: string, patch: Partial<TerminalBoard> = {}): Board {
@@ -49,5 +55,34 @@ describe('deriveWorkerPool', () => {
       planning: 0,
       cap: WORKER_SPAWN_CAP
     })
+  })
+
+  it('defaults cap to WORKER_SPAWN_CAP when omitted', () => {
+    expect(deriveWorkerPool([term('t1')], {}).cap).toBe(WORKER_SPAWN_CAP)
+  })
+
+  it('surfaces a configured cap when passed (does NOT affect the counts)', () => {
+    const pool = deriveWorkerPool([term('t1'), browser('b1')], {}, 8)
+    expect(pool.cap).toBe(8)
+    expect(pool.terminalsIdle).toBe(1)
+    expect(pool.browsers).toBe(1)
+  })
+})
+
+describe('clampWorkerSpawnCap', () => {
+  it('passes in-range integers through', () => {
+    expect(clampWorkerSpawnCap(WORKER_SPAWN_CAP_MIN)).toBe(WORKER_SPAWN_CAP_MIN)
+    expect(clampWorkerSpawnCap(8)).toBe(8)
+    expect(clampWorkerSpawnCap(WORKER_SPAWN_CAP_MAX)).toBe(WORKER_SPAWN_CAP_MAX)
+  })
+  it('clamps out-of-range and floors fractions', () => {
+    expect(clampWorkerSpawnCap(0)).toBe(WORKER_SPAWN_CAP_MIN)
+    expect(clampWorkerSpawnCap(999)).toBe(WORKER_SPAWN_CAP_MAX)
+    expect(clampWorkerSpawnCap(4.9)).toBe(4)
+  })
+  it('falls back to the default for a non-finite / non-number value', () => {
+    expect(clampWorkerSpawnCap(NaN)).toBe(WORKER_SPAWN_CAP)
+    expect(clampWorkerSpawnCap('8' as unknown)).toBe(WORKER_SPAWN_CAP)
+    expect(clampWorkerSpawnCap(undefined)).toBe(WORKER_SPAWN_CAP)
   })
 })

@@ -73,6 +73,7 @@ describe('buildCommands — visibility matrix', () => {
       'new-browser',
       'new-planning',
       'new-command',
+      'new-kanban',
       'open-command-board',
       'view-audit-log',
       'enable-orchestration',

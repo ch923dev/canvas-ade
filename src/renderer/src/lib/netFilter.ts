@@ -30,10 +30,19 @@ export function isApiResource(type: string): boolean {
 // the last THREE labels, not two. A small pragmatic set — full PSL would need a dependency.
 const SLD_RE = /^(?:co|com|org|net|gov|edu|ac|or|ne|gob)$/i
 
+// A dotted-quad IPv4 literal (e.g. `172.17.0.2`). The eTLD+1 heuristic below is designed for DNS
+// names and is meaningless — and collision-prone (BUG-037: distinct IPs reduce to the same last two
+// octets) — when applied to IP labels, so IPv4 hosts are short-circuited to the full, unchanged
+// address instead.
+const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
+
 /** The registrable domain (eTLD+1) of a host — heuristic, dependency-free. `app.onlysales.io` →
- *  `onlysales.io`; `foo.co.uk` → `foo.co.uk`; `localhost` → `localhost`. Lower-cased. */
+ *  `onlysales.io`; `foo.co.uk` → `foo.co.uk`; `localhost` → `localhost`. IPv4 literals (e.g.
+ *  `172.17.0.2`) are returned unchanged since the eTLD+1 heuristic doesn't apply to them. Lower-cased. */
 export function registrableDomain(host: string): string {
-  const labels = host.toLowerCase().split('.').filter(Boolean)
+  const lower = host.toLowerCase()
+  if (IPV4_RE.test(lower)) return lower
+  const labels = lower.split('.').filter(Boolean)
   if (labels.length <= 2) return labels.join('.')
   if (SLD_RE.test(labels[labels.length - 2])) return labels.slice(-3).join('.')
   return labels.slice(-2).join('.')

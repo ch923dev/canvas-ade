@@ -8,6 +8,8 @@ import {
   FAMILY_EXPORT,
   FONT_FAMILY_TOKENS,
   estimateTextWidth,
+  estimateLineWidth,
+  wrapText,
   tokenFromHeight
 } from './textStyle'
 import { EXPORT_COLORS } from './exportColors'
@@ -83,5 +85,43 @@ describe('estimateTextWidth (SVG center/right anchor, no DOM at export time)', (
   it('floors at the min textarea width (40, mirrors FreeText scrollWidth floor)', () => {
     expect(estimateTextWidth('', 13, 'sans')).toBe(40)
     expect(estimateTextWidth('x', 11, 'sans')).toBe(40)
+  })
+})
+
+describe('wrapText (export word-wrap)', () => {
+  // 1px-per-char measurer → maxWidth reads as "characters per line"; deterministic + DOM-free.
+  const chars = (t: string): number => t.length
+
+  it('greedily wraps on whitespace at the width boundary', () => {
+    expect(wrapText('aa bb cc dd', 5, 12, 'sans', chars)).toEqual(['aa bb', 'cc dd'])
+  })
+
+  it('keeps a line that exactly fills the width (boundary is inclusive)', () => {
+    expect(wrapText('abcde fghij', 5, 12, 'sans', chars)).toEqual(['abcde', 'fghij'])
+  })
+
+  it('preserves explicit newlines as hard breaks', () => {
+    expect(wrapText('alpha\nbeta', 100, 12, 'sans', chars)).toEqual(['alpha', 'beta'])
+  })
+
+  it('hard-splits a single token wider than the box so it never overflows', () => {
+    expect(wrapText('abcdefghij', 4, 12, 'sans', chars)).toEqual(['abcd', 'efgh', 'ij'])
+  })
+
+  it('an empty string yields one empty line (a one-row textarea)', () => {
+    expect(wrapText('', 100, 12, 'sans', chars)).toEqual([''])
+  })
+
+  it('defaults to the heuristic measurer when none is injected (stays pure)', () => {
+    // No `measure` arg → estimateLineWidth; a long line must split into >1 line at a small width.
+    expect(wrapText('one two three four five', 30, 12, 'sans').length).toBeGreaterThan(1)
+  })
+})
+
+describe('estimateLineWidth (raw single-line heuristic, no floor)', () => {
+  it('is proportional to length × size and unfloored (unlike estimateTextWidth)', () => {
+    expect(estimateLineWidth('', 13, 'sans')).toBe(0)
+    expect(estimateLineWidth('abcd', 13, 'sans')).toBeCloseTo(4 * 13 * 0.52)
+    expect(estimateLineWidth('ab', 13, 'sans')).toBeLessThan(estimateLineWidth('abcd', 13, 'sans'))
   })
 })

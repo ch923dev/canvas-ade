@@ -11,7 +11,13 @@ import type {
   TextElement,
   ArrowElement,
   StrokeElement,
-  ImageElement
+  ImageElement,
+  DiagramElement,
+  FileRefElement,
+  CommandBoard,
+  FileBoard,
+  DataFlowBoard,
+  KanbanBoard
 } from './boardSchema'
 
 // ── test builders (minimal valid boards) ─────────────────────────────────────
@@ -39,6 +45,28 @@ function planning(
 function doc(boards: CanvasDoc['boards']): CanvasDoc {
   return { schemaVersion: 2, viewport: null, boards, connectors: [] }
 }
+function command(p: { id: string }): CommandBoard {
+  return { type: 'command', x: 0, y: 0, w: 420, h: 340, title: 'Command', ...p }
+}
+function file(p: { id: string }): FileBoard {
+  return { type: 'file', x: 0, y: 0, w: 420, h: 340, title: 'File', ...p }
+}
+function dataflow(p: { id: string }): DataFlowBoard {
+  return { type: 'dataflow', x: 0, y: 0, w: 420, h: 340, title: 'Data Flow', ...p }
+}
+function kanban(p: { id: string }): KanbanBoard {
+  return {
+    type: 'kanban',
+    x: 0,
+    y: 0,
+    w: 420,
+    h: 340,
+    title: 'Kanban',
+    columns: [],
+    cards: [],
+    ...p
+  }
+}
 
 describe('buildDigest — header', () => {
   it('summarizes an empty canvas', () => {
@@ -60,6 +88,21 @@ describe('buildDigest — header', () => {
   it('uses singular "board" for a single board', () => {
     expect(buildDigest(doc([terminal({ id: 't1' })])).header).toBe(
       '1 board — 1 terminal, 0 browser, 0 planning'
+    )
+  })
+
+  it('breaks out file/dataflow/kanban board types alongside command (BUG-052)', () => {
+    const d = buildDigest(
+      doc([
+        terminal({ id: 't1' }),
+        command({ id: 'c1' }),
+        file({ id: 'f1' }),
+        dataflow({ id: 'df1' }),
+        kanban({ id: 'k1' })
+      ])
+    )
+    expect(d.header).toBe(
+      '5 boards — 1 terminal, 0 browser, 0 planning, 1 command, 1 file, 1 dataflow, 1 kanban'
     )
   })
 })
@@ -157,6 +200,21 @@ function strokeEl(id: string): StrokeElement {
 function imageEl(id: string): ImageElement {
   return { kind: 'image', id, x: 0, y: 0, w: 200, h: 150, assetId: 'assets/img.png' }
 }
+function diagramEl(id: string): DiagramElement {
+  return {
+    kind: 'diagram',
+    id,
+    x: 0,
+    y: 0,
+    w: 200,
+    h: 150,
+    source: 'graph TD; A-->B',
+    engine: 'mermaid'
+  }
+}
+function fileRefEl(id: string): FileRefElement {
+  return { kind: 'fileref', id, x: 0, y: 0, w: 200, h: 60, path: 'src/foo.ts', label: 'foo.ts' }
+}
 
 describe('buildDigest — planning', () => {
   it('reports checklist progress and note count', () => {
@@ -212,6 +270,23 @@ describe('buildDigest — planning', () => {
     expect(d.boards[0].lines).toContain('1 image')
   })
 
+  // BUG-036 regression: boards with only diagram/fileref elements must NOT report 'Empty board'
+  // (digestPlanning previously omitted these two kinds from the line/count set — sibling to BUG-060).
+  it('BUG-036: does not label a board with only diagram elements as Empty board', () => {
+    const d = buildDigest(
+      doc([planning({ id: 'p1', elements: [diagramEl('d1'), diagramEl('d2')] })])
+    )
+    const p = d.boards[0]
+    expect(p.lines).not.toContain('Empty board')
+    expect(p.lines).toContain('2 diagrams')
+  })
+
+  it('BUG-036: does not label a board with only fileref elements as Empty board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [fileRefEl('f1')] })]))
+    expect(d.boards[0].lines).not.toContain('Empty board')
+    expect(d.boards[0].lines).toContain('1 file reference')
+  })
+
   it('BUG-060: reports all element kinds together', () => {
     const d = buildDigest(
       doc([
@@ -223,7 +298,9 @@ describe('buildDigest — planning', () => {
             textEl('tx1'),
             arrowEl('ar1'),
             strokeEl('st1'),
-            imageEl('im1')
+            imageEl('im1'),
+            diagramEl('di1'),
+            fileRefEl('fr1')
           ]
         })
       ])
@@ -235,6 +312,8 @@ describe('buildDigest — planning', () => {
     expect(p.lines).toContain('1 arrow')
     expect(p.lines).toContain('1 drawing')
     expect(p.lines).toContain('1 image')
+    expect(p.lines).toContain('1 diagram')
+    expect(p.lines).toContain('1 file reference')
     expect(p.lines).not.toContain('Empty board')
   })
 })

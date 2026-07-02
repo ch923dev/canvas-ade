@@ -9,6 +9,7 @@
 import { mkdirSync, writeFileSync, readdirSync, rmSync, statSync } from 'fs'
 import { randomBytes } from 'node:crypto'
 import { join } from 'path'
+import { isSafeId } from './safeId'
 
 // Module-level seq is kept for uniqueness WITHIN a single session (monotonic ordering).
 // A random component is added per call to prevent collisions ACROSS restarts: board ids
@@ -17,11 +18,6 @@ let seq = 0
 const PREFIX = 'paste-'
 /** Default prune age: files older than this are removed when a new one is staged. */
 const DEFAULT_MAX_AGE_MS = 60 * 60 * 1000 // 1h
-
-/** Sanitize a board id into a filename-safe token (no separators / dots). */
-function safeId(boardId: string): string {
-  return boardId.replace(/[^a-zA-Z0-9_-]/g, '') || 'board'
-}
 
 /** The per-project staging directory (created lazily on first stage). */
 export function stagedDir(projectDir: string): string {
@@ -38,6 +34,9 @@ export function stageClipboardImage(
   png: Buffer,
   maxAgeMs = DEFAULT_MAX_AGE_MS
 ): string {
+  // Reject (rather than coalesce onto a shared fallback token) so two distinct-but-unsafe
+  // board ids can never collide onto the same filename prefix (BUG-039).
+  if (!isSafeId(boardId)) throw new Error(`terminalImageStaging: unsafe boardId "${boardId}"`)
   const dir = stagedDir(projectDir)
   mkdirSync(dir, { recursive: true })
   pruneOld(dir, maxAgeMs)
@@ -45,7 +44,7 @@ export function stageClipboardImage(
   // Append a short random hex suffix so filenames are collision-free across app restarts
   // (seq resets to 0 on every launch while board ids and staged files persist up to 1h).
   const rand = randomBytes(4).toString('hex')
-  const file = join(dir, `${PREFIX}${safeId(boardId)}-${seq}-${rand}.png`)
+  const file = join(dir, `${PREFIX}${boardId}-${seq}-${rand}.png`)
   writeFileSync(file, png)
   return file
 }
@@ -72,8 +71,12 @@ function pruneOld(dir: string, maxAgeMs: number): void {
 
 /** Remove every staged file for `boardId` (called when its terminal is torn down). */
 export function cleanupStaged(projectDir: string, boardId: string): void {
+  // No-op on an unsafe/empty-after-sanitize id rather than coalescing onto a shared
+  // 'board' fallback token, which would delete another board's still-live staged files
+  // (BUG-039). Best-effort — never throws.
+  if (!isSafeId(boardId)) return
   const dir = stagedDir(projectDir)
-  const token = `${PREFIX}${safeId(boardId)}-`
+  const token = `${PREFIX}${boardId}-`
   let names: string[] = []
   try {
     names = readdirSync(dir)

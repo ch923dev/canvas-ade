@@ -15,6 +15,8 @@ import {
   SERVER_NAME,
   claudeHome,
   dirExists,
+  existingServersMap,
+  isRecord,
   mcpEntry,
   readJsonConfig,
   removeFileQuiet,
@@ -34,20 +36,37 @@ function settingsLocalPath(projectDir: string): string {
 }
 
 function writeSync(projectDir: string, tok: TerminalToken): string {
-  // 1) .mcp.json — set ONLY our server entry, preserve any others the user has.
+  // 1) .mcp.json — set ONLY our server entry, preserve any others the user has. Capture the
+  //    pre-write state so a failure below can be rolled back cleanly (see BUG-020).
   const mcpFile = mcpJsonPath(projectDir)
-  const mcp = readJsonConfig<McpServersConfig>(mcpFile) ?? {}
-  mcp.mcpServers = { ...mcp.mcpServers, [SERVER_NAME]: mcpEntry(tok.port, tok.token) }
+  const originalMcp = readJsonConfig<McpServersConfig>(mcpFile)
+  const mcp: McpServersConfig = originalMcp ? { ...originalMcp } : {}
+  mcp.mcpServers = {
+    ...existingServersMap(mcp, 'mcpServers'),
+    [SERVER_NAME]: mcpEntry(tok.port, tok.token)
+  }
   writeJsonConfig(mcpFile, mcp)
 
   // 2) .claude/settings.local.json — ensure our server id is in enabledMcpjsonServers (deduped),
   //    preserving any existing entries (e.g. the recap SessionStart hook lives here too).
-  const setFile = settingsLocalPath(projectDir)
-  const settings = readJsonConfig<SettingsLocal>(setFile) ?? {}
-  const enabled = new Set(settings.enabledMcpjsonServers ?? [])
-  enabled.add(SERVER_NAME)
-  settings.enabledMcpjsonServers = [...enabled]
-  writeJsonConfig(setFile, settings)
+  //
+  //    BUG-020: if THIS write throws, .mcp.json (already on disk, holding a live bearer token) would
+  //    otherwise be left behind untracked — the caller reports the whole sync as an error and never
+  //    records the target dir for revoke, so nothing ever cleans it up. Roll .mcp.json back to
+  //    exactly its pre-write state (or delete it if it didn't exist before) before re-throwing, so a
+  //    partial failure never orphans a token-bearing file.
+  try {
+    const setFile = settingsLocalPath(projectDir)
+    const settings = readJsonConfig<SettingsLocal>(setFile) ?? {}
+    const enabled = new Set(settings.enabledMcpjsonServers ?? [])
+    enabled.add(SERVER_NAME)
+    settings.enabledMcpjsonServers = [...enabled]
+    writeJsonConfig(setFile, settings)
+  } catch (err) {
+    if (originalMcp) writeJsonConfig(mcpFile, originalMcp)
+    else removeFileQuiet(mcpFile)
+    throw err
+  }
 
   return '.mcp.json + .claude/settings.local.json'
 }
@@ -55,7 +74,7 @@ function writeSync(projectDir: string, tok: TerminalToken): string {
 function removeSync(projectDir: string): void {
   const mcpFile = mcpJsonPath(projectDir)
   const mcp = readJsonConfig<McpServersConfig>(mcpFile)
-  if (mcp?.mcpServers && SERVER_NAME in mcp.mcpServers) {
+  if (isRecord(mcp?.mcpServers) && SERVER_NAME in mcp.mcpServers) {
     delete mcp.mcpServers[SERVER_NAME]
     if (Object.keys(mcp.mcpServers).length === 0 && Object.keys(mcp).length === 1) {
       // The file held only our entry → remove it rather than leave an empty stub.

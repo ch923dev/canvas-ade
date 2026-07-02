@@ -25,7 +25,16 @@ import {
 import { NOTE_TINTS, TINT_CYCLE } from './tints'
 
 export interface ContextMenuDeps {
+  /** Snapshot at menu-open time — used ONLY to compute the menu's own display state
+   *  (labels/disabled/current-swatch). Never write back from this; actions read
+   *  `getElements()` at invoke time instead (BUG-008: closing over this snapshot in an
+   *  onSelect and writing it back on click clobbers any edit that landed while the menu
+   *  was open). */
   elements: PlanningElement[]
+  /** Live read of the current elements, taken at action-invoke time (not menu-open
+   *  time) — mirrors the store's live-read discipline (e.g. PlanningBoard's `deleteEl`/
+   *  `setTint`) so a concurrent edit can't be clobbered by a stale write-back. */
+  getElements: () => PlanningElement[]
   /** The group-expanded selection the menu was opened with. */
   sel: ReadonlySet<string>
   /** Well content box (board-local px) so align/distribute flush + clamp to the BOARD. THUNK: the
@@ -46,6 +55,7 @@ export interface ContextMenuDeps {
 export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
   const {
     elements,
+    getElements,
     sel,
     wb,
     measured,
@@ -70,7 +80,7 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
       id: edge,
       title: `Align ${edge}`,
       icon: `align-${edge === 'centerX' ? 'center-h' : edge === 'centerY' ? 'middle' : edge}`,
-      onSelect: () => run(alignElements(elements, sel, edge, wb(), measured()))
+      onSelect: () => run(alignElements(getElements(), sel, edge, wb(), measured()))
     })
   )
   // Tintable = unlocked notes in the (group-expanded) selection; the Tint row is
@@ -81,21 +91,21 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
       kind: 'action',
       id: 'lock',
       label: allLocked ? 'Unlock' : 'Lock',
-      onSelect: () => run(setLocked(elements, sel, !allLocked))
+      onSelect: () => run(setLocked(getElements(), sel, !allLocked))
     },
     {
       kind: 'action',
       id: 'group',
       label: 'Group',
       disabled: sel.size < 2 || isOneGroup,
-      onSelect: () => run(groupElements(elements, sel, newId()))
+      onSelect: () => run(groupElements(getElements(), sel, newId()))
     },
     {
       kind: 'action',
       id: 'ungroup',
       label: 'Ungroup',
       disabled: !anyGrouped,
-      onSelect: () => run(ungroupElements(elements, sel))
+      onSelect: () => run(ungroupElements(getElements(), sel))
     },
     {
       kind: 'action',
@@ -103,9 +113,10 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
       label: 'Duplicate',
       onSelect: () => {
         beginChange()
+        const live = getElements()
         const { elements: wc, newIds } = duplicateElements(
-          elements,
-          expandGroups(elements, sel),
+          live,
+          expandGroups(live, sel),
           12,
           12,
           newId
@@ -122,7 +133,7 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
       // valid destination, so this stays enabled even when no OTHER planning board exists (resolves
       // the spec §3.A wording — §10 Q2). The menu only builds with a non-empty `sel`, so no extra
       // guard. Capture the group-expanded selection so a whole group travels together.
-      onSelect: () => onOpenSendTo(expandGroups(elements, sel))
+      onSelect: () => onOpenSendTo(expandGroups(getElements(), sel))
     },
     {
       kind: 'swatchRow',
@@ -135,7 +146,7 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
         fill: NOTE_TINTS[t].fill,
         edge: NOTE_TINTS[t].edge,
         current: tintableNotes.length > 0 && tintableNotes.every((n) => n.tint === t),
-        onSelect: () => run(setNoteTint(elements, sel, t))
+        onSelect: () => run(setNoteTint(getElements(), sel, t))
       }))
     },
     {
@@ -155,13 +166,13 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
           id: 'h',
           title: 'Distribute horizontally',
           icon: 'distribute-h',
-          onSelect: () => run(distributeElements(elements, sel, 'h', wb(), measured()))
+          onSelect: () => run(distributeElements(getElements(), sel, 'h', wb(), measured()))
         },
         {
           id: 'v',
           title: 'Distribute vertically',
           icon: 'distribute-v',
-          onSelect: () => run(distributeElements(elements, sel, 'v', wb(), measured()))
+          onSelect: () => run(distributeElements(getElements(), sel, 'v', wb(), measured()))
         }
       ]
     },
@@ -172,16 +183,17 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
       danger: true,
       onSelect: () => {
         // Group then lock precedence (mirrors the keyboard Delete handler).
-        const expanded = expandGroups(elements, sel)
+        const live = getElements()
+        const expanded = expandGroups(live, sel)
         const removable = new Set(
           [...expanded].filter((rid) => {
-            const el = elements.find((x) => x.id === rid)
+            const el = live.find((x) => x.id === rid)
             return el !== undefined && !isLocked(el)
           })
         )
         if (removable.size > 0) {
           beginChange()
-          commit(elements.filter((el) => !removable.has(el.id)))
+          commit(live.filter((el) => !removable.has(el.id)))
         }
         clearSel()
       }

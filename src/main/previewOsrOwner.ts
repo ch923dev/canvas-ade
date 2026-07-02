@@ -31,6 +31,10 @@ let owner: BrowserWindow | null = null
 // — armOwner runs on every preview:osrOpen, but the host is one singleton window (wire it once).
 const ownerGate = { ready: true }
 let ownerWired: BrowserWindow | null = null
+// True from the instant a main-frame cross-document navigation STARTS on the wired host until its
+// commit/terminal outcome. Lets armOwner (BUG-013) tell "a board is opening" apart from "a host
+// reload is in flight" — the latter must NOT be clobbered back to ready=true by a concurrent open.
+let reloadInFlight = false
 
 /** Minimal host-window surface `canEmitToOwner` reads — so the send guard is unit-testable without
  *  a real Electron `BrowserWindow`. A `BrowserWindow` satisfies it structurally. */
@@ -94,19 +98,28 @@ export function registerOwnerLifecycle(
   onGone: () => void
 ): void {
   wc.on('did-start-navigation', (details) => {
-    if (isMainFramePageNav(details)) holder.ready = false
+    if (isMainFramePageNav(details)) {
+      holder.ready = false
+      reloadInFlight = true
+    }
   })
   wc.on('did-navigate', () => {
     holder.ready = true
+    reloadInFlight = false
   })
   wc.on('did-finish-load', () => {
     holder.ready = true
+    reloadInFlight = false
   })
   wc.on('did-fail-load', (_ev, _code, _desc, _url, isMainFrame) => {
-    if (isMainFrame) holder.ready = true
+    if (isMainFrame) {
+      holder.ready = true
+      reloadInFlight = false
+    }
   })
   wc.on('render-process-gone', () => {
     holder.ready = false
+    reloadInFlight = false
     onGone()
   })
 }
@@ -118,10 +131,20 @@ export function registerOwnerLifecycle(
  * guard) — re-wiring the same live webContents would stack duplicate listeners. An already-open board
  * that SURVIVED the reload is re-armed by the host's own did-navigate / did-finish-load, independent
  * of any re-open.
+ *
+ * BUG-013: the reset must NOT clobber a reload that is currently in flight on the already-wired host
+ * — `preview:osrOpen` (this function) and the host's navigation lifecycle both run on MAIN and can
+ * interleave, so a board opening mid-reload used to force `ready` back true and re-expose the
+ * disposed-frame window the gate exists to close. `reloadInFlight` (owned by registerOwnerLifecycle,
+ * true from did-start-navigation to its commit/terminal outcome) makes that race visible; only skip
+ * the reset while it is set. A brand-new owner window can never be mid-reload on ITS OWN prior wiring,
+ * so the guard only applies once the host is already wired.
  */
 export function armOwner(win: BrowserWindow): void {
   owner = win
-  ownerGate.ready = true
+  if (win !== ownerWired || !reloadInFlight) {
+    ownerGate.ready = true
+  }
   if (win !== ownerWired) {
     registerOwnerLifecycle(win.webContents, ownerGate, () => {
       owner = null

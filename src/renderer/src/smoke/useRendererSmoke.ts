@@ -1,11 +1,25 @@
 import { useEffect } from 'react'
 
 /**
+ * True only when MAIN loaded the page with the smoke query flag (set only under
+ * `CANVAS_SMOKE`, mirroring `isE2E` in `e2eRegistry.ts`).
+ */
+function isSmoke(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('smoke') === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Renderer-side dependency smoke, kept from the Phase 0 harness. On mount it
  * instantiates xterm + the WebGL addon offscreen and logs `RENDERER_SMOKE` so the
  * headless `CANVAS_SMOKE` run can assert the renderer toolchain is healthy. Runs
  * once; the offscreen terminal is disposed immediately. Load-bearing for the smoke
  * gate — do not remove without moving the probe.
+ *
+ * BUG-056: no-ops outside the smoke harness — this used to run on every real launch.
  *
  * §F code-split: xterm is imported DYNAMICALLY here so this always-mounted probe
  * doesn't pull @xterm into the renderer's entry chunk (which would defeat the lazy
@@ -13,6 +27,8 @@ import { useEffect } from 'react'
  */
 export function useRendererSmoke(): void {
   useEffect(() => {
+    if (!isSmoke()) return
+
     void (async () => {
       const r = { reactflow: true, xterm: false, webgl: false }
       const host = document.createElement('div')

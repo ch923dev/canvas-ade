@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { performGuardedQuit, makeCrashHandler } from './quit'
+import { performGuardedQuit, makeCrashHandler, performWindowCloseCleanup } from './quit'
 
 describe('performGuardedQuit (before-quit-flush-no-catch)', () => {
   it('flushes, then runs shutdown, then exits when the flush resolves', async () => {
@@ -37,17 +37,25 @@ describe('performGuardedQuit (before-quit-flush-no-catch)', () => {
     expect(onFlushError.mock.calls[0][0]).toBeInstanceOf(Error)
   })
 
-  it('still exits even if shutdown itself rejects', async () => {
+  it('still exits even if shutdown itself rejects, and does not leave the returned promise rejected (quit-reject-catch)', async () => {
     const exit = vi.fn()
+    const onShutdownError = vi.fn()
+
+    // No .catch() at the call site — the whole point of the fix is that the returned promise
+    // must resolve on its own, since index.ts invokes this fire-and-forget (`void performGuardedQuit(...)`)
+    // from a synchronous before-quit handler and can't await/catch it.
     await performGuardedQuit({
       flush: async () => {},
       shutdown: async () => {
         throw new Error('drain failed')
       },
-      exit
-    }).catch(() => {})
+      exit,
+      onShutdownError
+    })
 
     expect(exit).toHaveBeenCalledWith(0)
+    expect(onShutdownError).toHaveBeenCalledTimes(1)
+    expect(onShutdownError.mock.calls[0][0]).toBeInstanceOf(Error)
   })
 })
 
@@ -98,5 +106,47 @@ describe('makeCrashHandler (crash/signal cleanup #50)', () => {
     const exit = vi.fn()
     makeCrashHandler({ shutdown: async () => {}, exit })(0)
     expect(exit).toHaveBeenCalledWith(0)
+  })
+})
+
+describe('performWindowCloseCleanup (macOS PTY-orphan fix)', () => {
+  const makeDeps = (platform: NodeJS.Platform) => ({
+    platform,
+    disposeOsr: vi.fn<() => void>(),
+    disposeDiagramWorker: vi.fn<() => void>(),
+    disposePtys: vi.fn<() => Promise<void>>(async () => {})
+  })
+
+  it('ALWAYS disposes the OSR renderers and the diagram worker (every platform)', () => {
+    for (const platform of ['darwin', 'win32', 'linux'] as NodeJS.Platform[]) {
+      const deps = makeDeps(platform)
+      performWindowCloseCleanup(deps)
+      expect(deps.disposeOsr).toHaveBeenCalledTimes(1)
+      expect(deps.disposeDiagramWorker).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('reaps the PTY trees on darwin — where window-close never reaches before-quit', () => {
+    const deps = makeDeps('darwin')
+    performWindowCloseCleanup(deps)
+    // The whole point of the fix: macOS window-close orphans the agent PTYs unless we reap here.
+    expect(deps.disposePtys).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT reap PTYs on win32/linux — the awaited before-quit drain owns that (no double-dispose)', () => {
+    for (const platform of ['win32', 'linux'] as NodeJS.Platform[]) {
+      const deps = makeDeps(platform)
+      performWindowCloseCleanup(deps)
+      // Disposing here would clear the session maps first, making the awaited
+      // before-quit disposeAllPtys() a no-op and moving the real tree-kill off the
+      // awaited path — re-orphaning on the platforms that currently get it right.
+      expect(deps.disposePtys).not.toHaveBeenCalled()
+    }
+  })
+
+  it('does not throw when disposePtys returns void (fire-and-forget) rather than a promise', () => {
+    const deps = { ...makeDeps('darwin'), disposePtys: vi.fn<() => void>(() => undefined) }
+    expect(() => performWindowCloseCleanup(deps)).not.toThrow()
+    expect(deps.disposePtys).toHaveBeenCalledTimes(1)
   })
 })

@@ -98,8 +98,10 @@ describe('SendToBoardPanel', () => {
 
 // ── The context-menu entry that opens the picker (contextMenuEntries) ────────────
 function deps(over: Partial<ContextMenuDeps>): ContextMenuDeps {
+  const elements = over.elements ?? []
   return {
-    elements: [],
+    elements,
+    getElements: () => elements,
     sel: new Set(),
     wb: () => ({ w: 400, h: 300 }),
     measured: () => new Map(),
@@ -137,5 +139,25 @@ describe('contextMenuEntries — "Send to board…"', () => {
     entry.onSelect()
     expect(onOpenSendTo).toHaveBeenCalledTimes(1)
     expect([...onOpenSendTo.mock.calls[0][0]].sort()).toEqual(['a', 'b'])
+  })
+})
+
+// ── BUG-008: actions must write back onto LIVE elements, not the menu-open snapshot ──
+describe('contextMenuEntries — stale-elements guard (BUG-008)', () => {
+  it('delete commits against getElements(), not the `elements` closed over at build time', () => {
+    const a = makeNote('a', { x: 0, y: 0 }, 0)
+    const b = makeNote('b', { x: 40, y: 40 }, 1)
+    // The menu was built while only `a` existed; `b` landed (a concurrent edit) before
+    // the click. getElements() reflects that live state — the write-back must honor it.
+    const commit = vi.fn()
+    const entries = buildContextMenuEntries(
+      deps({ elements: [a], getElements: () => [a, b], sel: new Set(['a']), commit })
+    )
+    const entry = entries.find((e) => e.id === 'delete')
+    if (entry?.kind !== 'action') throw new Error('delete entry missing')
+    entry.onSelect()
+    expect(commit).toHaveBeenCalledTimes(1)
+    // `a` removed, but `b` — the concurrent edit — survives instead of being clobbered.
+    expect(commit.mock.calls[0][0].map((e: PlanningElement) => e.id)).toEqual(['b'])
   })
 })

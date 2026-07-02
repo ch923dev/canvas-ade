@@ -383,6 +383,18 @@ describe('W4 assets pipeline', () => {
     }
   })
 
+  it('writeAsset rejects bytes over the MAIN-side size ceiling (BUG-015)', async () => {
+    const dir = tmp()
+    try {
+      const oversized = new Uint8Array(256 * 1024 * 1024 + 1)
+      await expect(writeAsset(dir, oversized, 'png')).rejects.toThrow(/too large to write/)
+      // Rejected before any bytes are hashed/written.
+      expect(existsSync(cvAsset(dir, 'assets'))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('writeAsset accepts backdrop video exts (webm/mp4 — renderer accept-list parity)', async () => {
     const dir = tmp()
     try {

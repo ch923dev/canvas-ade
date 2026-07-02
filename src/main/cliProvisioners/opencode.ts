@@ -15,6 +15,8 @@ import {
   SERVER_NAME,
   bearer,
   dirExists,
+  existingServersMap,
+  isRecord,
   mcpUrl,
   opencodeHome,
   readJsonConfig,
@@ -48,7 +50,10 @@ function writeSync(projectDir: string, tok: TerminalToken): string {
   const file = configPath(projectDir)
   const cfg = readJsonConfig<OpencodeConfig>(file) ?? {}
   if (!cfg.$schema) cfg.$schema = OPENCODE_SCHEMA
-  cfg.mcp = { ...cfg.mcp, [SERVER_NAME]: opencodeEntry(tok.port, tok.token) }
+  cfg.mcp = {
+    ...existingServersMap(cfg, 'mcp'),
+    [SERVER_NAME]: opencodeEntry(tok.port, tok.token)
+  }
   writeJsonConfig(file, cfg)
   return 'opencode.json'
 }
@@ -56,7 +61,7 @@ function writeSync(projectDir: string, tok: TerminalToken): string {
 function removeSync(projectDir: string): void {
   const file = configPath(projectDir)
   const cfg = readJsonConfig<OpencodeConfig>(file)
-  if (!cfg?.mcp || !(SERVER_NAME in cfg.mcp)) return
+  if (!isRecord(cfg?.mcp) || !(SERVER_NAME in cfg.mcp)) return
   delete cfg.mcp[SERVER_NAME]
   const onlyOurs =
     Object.keys(cfg.mcp).length === 0 &&

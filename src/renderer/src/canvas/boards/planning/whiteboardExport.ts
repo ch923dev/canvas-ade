@@ -5,12 +5,14 @@
  * (exportBoard.ts) supplies the resolved `assets` map and rasterizes to PNG.
  *
  * Geometry reuses the live vector builders (arrowPath/strokeToPath) and elementBBox
- * so the export matches what's on the board. Auto-sized kinds (text/checklist) use
- * their nominal sizes (no live DOM measurement at export time) — close enough for a
- * one-shot deliverable.
+ * so the export matches what's on the board. Text-bearing kinds (note / area-text /
+ * checklist label) WRAP to their box width — `boardToSvg` takes a `measureText` the impure
+ * driver backs with a real `canvas.measureText` so the wrap (and the grown box + canvas size)
+ * matches the rasterized output; a pure heuristic is the node-test fallback. The note/checklist
+ * boxes and the SVG canvas grow to fit the wrapped content so nothing overflows or clips.
  */
 import type { PlanningBoard, PlanningElement } from '../../../lib/boardSchema'
-import { elementBBox, unionBBox, nominalChecklistHeight } from './elements'
+import { elementBBox, unionBBox, nominalChecklistHeight, type BBox } from './elements'
 import { EXPORT_COLORS, EXPORT_NOTE_TINTS } from './exportColors'
 import { arrowPath, strokeToPath } from './svgPaths'
 import {
@@ -20,8 +22,11 @@ import {
   ANCHOR,
   WEIGHT,
   TEXT_DEFAULTS,
+  MIN_TEXT_WIDTH_PX,
   lineHeightFor,
-  estimateTextWidth
+  estimateLineWidth,
+  wrapText,
+  type MeasureText
 } from './textStyle'
 import { strokeColorExport, arrowWidthPx, penWidthPx, type StrokeColorToken } from './strokeStyle'
 
@@ -83,9 +88,19 @@ function textBlock(
   return `<text x="${x}" y="${y}" font-family="${family}" font-size="${size}" font-weight="${weight}"${a} fill="${fill}">${tspans}</text>`
 }
 
-export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportResult {
+export function boardToSvg(
+  board: PlanningBoard,
+  assets: ExportAssets,
+  // Real (canvas-backed) measurer from the impure driver → pixel-accurate wrap; the heuristic is the
+  // pure node-test fallback. Width-bearing wrap (note/area-text/checklist) depends on this.
+  measure: MeasureText = estimateLineWidth
+): ExportResult {
   const els = board.elements
-  const boxes = els.map((e) => elementBBox(e))
+  // Render first, then union the bboxes each element REPORTS: a wrapped note/checklist grows past
+  // its schema h, and free text has no persisted w/h — so the SVG canvas must size to the rendered
+  // extent, not the nominal `elementBBox`, or tall/long text clips at the frame edge.
+  const rendered = els.map((el) => renderElement(el, assets, measure))
+  const boxes = rendered.map((r) => r.bbox)
   const union = boxes.length ? unionBBox(boxes) : { x: 0, y: 0, w: 240, h: 160 }
   const width = Math.max(1, Math.round(union.w + PAD * 2))
   const height = Math.max(1, Math.round(union.h + PAD * 2))
@@ -97,9 +112,9 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
   let embeddedCount = 0
   const body: string[] = []
   const usedArrowColors = new Set<StrokeColorToken>()
-  for (const el of els) {
-    const r = renderElement(el, assets)
-    // v17 (P4b) opacity — wrap the element markup in an opacity group when < 1 (absent ⇒ no wrapper,
+  els.forEach((el, i) => {
+    const r = rendered[i]
+    // v18 (P4b) opacity — wrap the element markup in an opacity group when < 1 (absent ⇒ no wrapper,
     // byte-identical). Nests fine with the note's own rotate <g> (SVG composes group opacity).
     const op = el.opacity
     body.push(op !== undefined && op < 1 ? `<g opacity="${op}">${r.markup}</g>` : r.markup)
@@ -110,7 +125,7 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
       imageCount++
       if (r.embedded) embeddedCount++
     }
-  }
+  })
 
   // One arrowhead marker per DISTINCT arrow stroke colour on the board so the exported SVG stays
   // portable (no reliance on SVG2 `context-stroke`, which not every standalone viewer honours). The
@@ -137,12 +152,26 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
   return { svg, width, height, imageCount, embeddedCount }
 }
 
-/** Render one element to SVG markup. `embedded` is true ONLY for an image whose
- *  bitmap data-URI was successfully inlined (drives ExportResult.embeddedCount). */
+// Note inner padding (NoteCard grip `9px 11px`) + textarea line-height (16) + first-line baseline.
+const NOTE_PAD_X = 11
+const NOTE_PAD_Y = 9
+const NOTE_FS = 12
+const NOTE_LH = 16
+// Checklist label column: text starts at x+37 (12 pad + 16 checkbox + 9 gap), 12 right pad. Rows
+// step by 24 (header→first row) and grow when a label wraps; label font 12 / line-height 16.
+const CL_LABEL_X = 37
+const CL_RIGHT_PAD = 12
+const CL_ROW_STEP = 24
+const CL_LABEL_FS = 12
+const CL_LABEL_LH = 16
+
+/** Render one element to SVG markup + the board-local box it actually occupies (drives the SVG
+ *  canvas size). `embedded` is true ONLY for an image whose bitmap data-URI was inlined. */
 function renderElement(
   el: PlanningElement,
-  assets: ExportAssets
-): { markup: string; embedded: boolean } {
+  assets: ExportAssets,
+  measure: MeasureText
+): { markup: string; embedded: boolean; bbox: BBox } {
   switch (el.kind) {
     case 'arrow': {
       // v17 (P4b): resolve the token stroke colour + width (absent/`default` ⇒ legacy border-strong /
@@ -158,29 +187,41 @@ function renderElement(
         markup:
           `<path d="${arrowPath(el)}" fill="none" stroke="${stroke}" ` +
           `stroke-width="${width}" marker-end="url(#${markerId})"/>`,
-        embedded: false
+        embedded: false,
+        bbox: elementBBox(el)
       }
     }
     case 'stroke': {
-      // v17 (P4b): the pen `size` = the token width (absent ⇒ 4, byte-identical); fill = token colour
+      // v18 (P4b): the pen `size` = the token width (absent ⇒ 4, byte-identical); fill = token colour
       // (absent/`default` ⇒ legacy text-2).
       const d = strokeToPath(el.points, penWidthPx(el.strokeWidth))
       const fill = strokeColorExport(el.strokeColor, STROKE_FILL)
-      return { markup: d ? `<path d="${d}" fill="${fill}"/>` : '', embedded: false }
+      return {
+        markup: d ? `<path d="${d}" fill="${fill}"/>` : '',
+        embedded: false,
+        bbox: elementBBox(el)
+      }
     }
     case 'note': {
       const t = EXPORT_NOTE_TINTS[el.tint]
       const rot = el.rotation ?? 0
+      // Wrap to the textarea content width (card width minus the grip's left+right padding), then
+      // grow the box to fit — matching NoteCard's soft-wrapping auto-height textarea.
+      const contentW = Math.max(1, el.w - NOTE_PAD_X * 2)
+      const lines = wrapText(el.text, contentW, NOTE_FS, 'sans', measure)
+      const boxH = Math.max(el.h, NOTE_PAD_Y * 2 + lines.length * NOTE_LH)
       const cx = el.x + el.w / 2
-      const cy = el.y + el.h / 2
+      const cy = el.y + boxH / 2
       return {
         markup:
           `<g transform="rotate(${rot} ${cx} ${cy})">` +
-          `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" rx="${R_INNER}" ` +
+          `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${boxH}" rx="${R_INNER}" ` +
           `fill="${t.fill}" stroke="${t.edge}" stroke-width="1"/>` +
-          textBlock(el.x + 11, el.y + 20, el.text, 12, EXPORT_COLORS.text) +
+          // textBlock's default lineHeight (size + 4 === 16) === NOTE_LH, so spacing is unchanged.
+          textBlock(el.x + NOTE_PAD_X, el.y + 20, lines.join('\n'), NOTE_FS, EXPORT_COLORS.text) +
           `</g>`,
-        embedded: false
+        embedded: false,
+        bbox: { x: el.x, y: el.y, w: el.w, h: boxH }
       }
     }
     case 'text': {
@@ -191,37 +232,38 @@ function renderElement(
       const align = el.align ?? TEXT_DEFAULTS.align
       const colorTok = el.color ?? TEXT_DEFAULTS.color
       const weight = el.bold ? WEIGHT.bold : WEIGHT.normal
-      // Anchor x for center/right from an estimated content width (no DOM at export time);
-      // left stays exact at el.x. Baseline el.y + px + 3 === el.y + 16 at px=13, keeping
-      // default left text byte-identical to pre-typography. Multi-line spacing = lineHeightFor(px),
-      // matching FreeText's CSS line-height (not the legacy size + 4).
-      const w = estimateTextWidth(el.text, px, fam)
-      const ax = align === 'center' ? el.x + w / 2 : align === 'right' ? el.x + w : el.x
+      const lh = lineHeightFor(px)
+      // Area text (explicit width) WRAPS to its box like FreeText's `white-space:pre-wrap`; auto
+      // text keeps its source lines (FreeText auto-sizes width to content → no wrap) — matching the
+      // live board. Box width = the fixed width, or the widest rendered line for auto text.
+      const lines =
+        el.width !== undefined ? wrapText(el.text, el.width, px, fam, measure) : el.text.split('\n')
+      const boxW = el.width ?? Math.max(MIN_TEXT_WIDTH_PX, ...lines.map((l) => measure(l, px, fam)))
+      // Anchor x for center/right from the box width; left stays exact at el.x. Baseline el.y + px +
+      // 3 === el.y + 16 at px=13, keeping default left text byte-identical to pre-typography.
+      const ax = align === 'center' ? el.x + boxW / 2 : align === 'right' ? el.x + boxW : el.x
       return {
         markup: textBlock(
           ax,
           el.y + px + 3,
-          el.text,
+          lines.join('\n'),
           px,
           COLOR_EXPORT[colorTok],
           weight,
           FAMILY_EXPORT[fam],
           ANCHOR[align],
-          lineHeightFor(px)
+          lh
         ),
-        embedded: false
+        embedded: false,
+        bbox: { x: el.x, y: el.y, w: boxW, h: Math.max(lh, lines.length * lh) }
       }
     }
     case 'checklist': {
       const total = el.items.length
       const done = el.items.filter((i) => i.done).length
       const pct = total === 0 ? 0 : Math.round((done / total) * 100)
-      const h = nominalChecklistHeight(total)
+      const labelW = Math.max(1, el.w - CL_LABEL_X - CL_RIGHT_PAD)
       const parts: string[] = []
-      parts.push(
-        `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${h}" rx="${R_BOARD}" ` +
-          `fill="${EXPORT_COLORS.surfaceRaised}" stroke="${EXPORT_COLORS.border}" stroke-width="1"/>`
-      )
       parts.push(textBlock(el.x + 12, el.y + 22, el.title, 12.5, EXPORT_COLORS.text, 600))
       parts.push(
         `<text x="${el.x + el.w - 12}" y="${el.y + 22}" text-anchor="end" font-family="${FONT}" ` +
@@ -236,8 +278,12 @@ function renderElement(
           `<rect x="${el.x + 12}" y="${barY}" width="${((el.w - 24) * pct) / 100}" height="3" rx="1.5" fill="${EXPORT_COLORS.accent}"/>`
         )
       }
-      el.items.forEach((it, idx) => {
-        const ry = el.y + 30 + 24 + idx * 24
+      // Rows advance by the wrapped line count (≥ one step) so a multi-line label never overlaps
+      // the next row — mirroring ChecklistCard's auto-growing label textareas.
+      let ry = el.y + 30 + CL_ROW_STEP // first row's first-line baseline
+      let bottom = barY + 3
+      el.items.forEach((it) => {
+        const labelLines = wrapText(it.label, labelW, CL_LABEL_FS, 'sans', measure)
         const boxStroke = it.done ? EXPORT_COLORS.accent : EXPORT_COLORS.borderStrong
         const boxFill = it.done ? EXPORT_COLORS.accent : 'none'
         parts.push(
@@ -250,11 +296,31 @@ function renderElement(
         }
         const labelFill = it.done ? EXPORT_COLORS.textFaint : EXPORT_COLORS.text2
         const deco = it.done ? ` text-decoration="line-through"` : ''
+        const tspans = labelLines
+          .map(
+            (ln, i) =>
+              `<tspan x="${el.x + CL_LABEL_X}" dy="${i === 0 ? 0 : CL_LABEL_LH}">${esc(ln)}</tspan>`
+          )
+          .join('')
         parts.push(
-          `<text x="${el.x + 37}" y="${ry}" font-family="${FONT}" font-size="12" fill="${labelFill}"${deco}>${esc(it.label)}</text>`
+          `<text x="${el.x + CL_LABEL_X}" y="${ry}" font-family="${FONT}" font-size="${CL_LABEL_FS}" fill="${labelFill}"${deco}>${tspans}</text>`
         )
+        const rowH = Math.max(CL_ROW_STEP, labelLines.length * CL_LABEL_LH)
+        bottom = ry - 12 + Math.max(16, labelLines.length * CL_LABEL_LH)
+        ry += rowH
       })
-      return { markup: parts.join(''), embedded: false }
+      // Card height: never shorter than the nominal box; grow to the last row's bottom + footer.
+      const cardH = Math.max(nominalChecklistHeight(total), bottom - el.y + 12)
+      // Background rect drawn first (under everything) now that the final height is known.
+      parts.unshift(
+        `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${cardH}" rx="${R_BOARD}" ` +
+          `fill="${EXPORT_COLORS.surfaceRaised}" stroke="${EXPORT_COLORS.border}" stroke-width="1"/>`
+      )
+      return {
+        markup: parts.join(''),
+        embedded: false,
+        bbox: { x: el.x, y: el.y, w: el.w, h: cardH }
+      }
     }
     case 'image': {
       const uri = assets[el.assetId]
@@ -263,14 +329,16 @@ function renderElement(
           markup:
             `<image x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" ` +
             `preserveAspectRatio="xMidYMid meet" href="${esc(uri)}"/>`,
-          embedded: true
+          embedded: true,
+          bbox: elementBBox(el)
         }
       }
       return {
         markup:
           `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" rx="${R_INNER}" ` +
           `fill="none" stroke="${EXPORT_COLORS.border}" stroke-width="1" stroke-dasharray="4 3"/>`,
-        embedded: false
+        embedded: false,
+        bbox: elementBBox(el)
       }
     }
     case 'diagram': {
@@ -282,17 +350,21 @@ function renderElement(
           markup:
             `<image x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" ` +
             `preserveAspectRatio="xMidYMid meet" href="${esc(uri)}"/>`,
-          embedded: true
+          embedded: true,
+          bbox: elementBBox(el)
         }
       }
       return {
         markup:
           `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" rx="${R_INNER}" ` +
           `fill="none" stroke="${EXPORT_COLORS.border}" stroke-width="1" stroke-dasharray="4 3"/>`,
-        embedded: false
+        embedded: false,
+        bbox: elementBBox(el)
       }
     }
     default:
-      return { markup: '', embedded: false }
+      // fileref + any future kind: no bespoke vector yet, but still claim its nominal box so the
+      // SVG canvas reserves space for it (preserves the pre-wrap union behaviour for these kinds).
+      return { markup: '', embedded: false, bbox: elementBBox(el) }
   }
 }

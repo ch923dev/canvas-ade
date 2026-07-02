@@ -19,6 +19,7 @@ import {
   type PlanningElement,
   type TerminalBoard,
   type DataFlowBoard,
+  type KanbanBoard,
   type CanvasDoc,
   type CanvasViewport
 } from './boardSchema'
@@ -93,6 +94,124 @@ describe('createBoard', () => {
     const b = createBoard('dataflow', { id: 'df2', x: 0, y: 0, sourceBoardId: 'b1' })
     expect(b).toMatchObject({ type: 'dataflow', sourceBoardId: 'b1' })
   })
+
+  it('creates a kanban board with the four default columns and no cards at 900x520', () => {
+    const b = createBoard('kanban', { id: 'k1', x: 5, y: 6 })
+    expect(b.type).toBe('kanban')
+    expect(b.title).toBe('Kanban')
+    expect(b).toMatchObject({ w: 900, h: 520 })
+    const k = b as KanbanBoard
+    expect(k.columns.map((c) => c.id)).toEqual(['backlog', 'in-progress', 'review', 'done'])
+    expect(k.cards).toEqual([])
+  })
+})
+
+describe('kanban board (v17)', () => {
+  it('round-trips columns + cards (tag / assignee / ref) through toObject/fromObject', () => {
+    const k: KanbanBoard = {
+      id: 'k2',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [
+        { id: 'a', title: 'A' },
+        { id: 'b', title: 'B', wip: 3 }
+      ],
+      cards: [
+        { id: 'c1', columnId: 'a', title: 'one', tag: 'feature', assignee: 'claude', ref: 'PR #1' },
+        { id: 'c2', columnId: 'b', title: 'two' }
+      ]
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('DROPS a card whose columnId matches no column (stale ref), keeping the board', () => {
+    const doc = {
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
+      viewport: null,
+      boards: [
+        {
+          id: 'k3',
+          type: 'kanban',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 520,
+          title: 'Plan',
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [
+            { id: 'ok', columnId: 'a', title: 'kept' },
+            { id: 'gone', columnId: 'ghost', title: 'dropped' }
+          ]
+        }
+      ]
+    }
+    const out = fromObject(doc as unknown as CanvasDoc).boards[0] as KanbanBoard
+    expect(out.cards.map((c) => c.id)).toEqual(['ok'])
+  })
+
+  it('rejects a card with a non-string columnId (deep validation)', () => {
+    const doc = {
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
+      viewport: null,
+      boards: [
+        {
+          id: 'k4',
+          type: 'kanban',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 520,
+          title: 'Plan',
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [{ id: 'bad', columnId: 5, title: 'x' }]
+        }
+      ]
+    }
+    expect(() => fromObject(doc as unknown as CanvasDoc)).toThrow(/columnId/)
+  })
+
+  it('rejects a column with a non-positive wip (0 / negative — a hand-edited doc), matching the setColumnWip write-path range', () => {
+    const withWip = (wip: number): unknown => ({
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
+      viewport: null,
+      boards: [
+        {
+          id: 'k6',
+          type: 'kanban',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 520,
+          title: 'Plan',
+          columns: [{ id: 'a', title: 'A', wip }],
+          cards: []
+        }
+      ]
+    })
+    expect(() => fromObject(withWip(0) as unknown as CanvasDoc)).toThrow(/wip/)
+    expect(() => fromObject(withWip(-1) as unknown as CanvasDoc)).toThrow(/wip/)
+  })
+
+  it('migrate bumps a v16 doc through v17 to current (identity — the type only appears on new boards)', () => {
+    const migrated = migrate({
+      schemaVersion: 16,
+      viewport: null,
+      boards: []
+    } as unknown as CanvasDoc)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+  })
+
+  it('stamps the breaking reader floor (minReaderVersion 17) on write', () => {
+    const doc = toObject([createBoard('kanban', { id: 'k5', x: 0, y: 0 })], null)
+    expect(doc.minReaderVersion).toBe(17)
+  })
 })
 
 describe('size constants', () => {
@@ -107,7 +226,8 @@ describe('size constants', () => {
       planning: { w: 516, h: 366 },
       command: { w: 760, h: 440 },
       file: { w: 520, h: 380 },
-      dataflow: { w: 760, h: 520 }
+      dataflow: { w: 760, h: 520 },
+      kanban: { w: 900, h: 520 }
     })
   })
 })
@@ -154,6 +274,30 @@ function sampleBoards(): Board[] {
       { id: 'img1', kind: 'image', x: 30, y: 30, w: 120, h: 90, assetId: 'assets/sample.png' }
     ]
   }
+  const kanban: KanbanBoard = {
+    id: 'k1',
+    type: 'kanban',
+    x: 1500,
+    y: 0,
+    w: 900,
+    h: 520,
+    title: 'Roadmap',
+    columns: [
+      { id: 'todo', title: 'To Do' },
+      { id: 'doing', title: 'Doing', wip: 2 }
+    ],
+    cards: [
+      {
+        id: 'ka',
+        columnId: 'todo',
+        title: 'Design schema',
+        tag: 'feature',
+        assignee: 'claude',
+        ref: 'PR #268'
+      },
+      { id: 'kb', columnId: 'doing', title: 'Render board' }
+    ]
+  }
   return [
     {
       id: 't1',
@@ -180,7 +324,8 @@ function sampleBoards(): Board[] {
       viewport: 'mobile',
       z: 2
     },
-    planning
+    planning,
+    kanban
   ]
 }
 
@@ -188,7 +333,7 @@ describe('toObject', () => {
   it('wraps boards with the current schemaVersion', () => {
     const doc = toObject(sampleBoards(), null)
     expect(doc.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(doc.boards).toHaveLength(3)
+    expect(doc.boards).toHaveLength(4)
   })
 
   // PERSIST-01: toObject no longer deep-clones — it ALIASES boards/connectors/groups/
@@ -640,8 +785,8 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(17)
-    expect(MIN_READER_VERSION).toBe(15)
+    expect(SCHEMA_VERSION).toBe(18)
+    expect(MIN_READER_VERSION).toBe(17)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
@@ -728,10 +873,11 @@ describe('migrate', () => {
     expect(out.boards).toEqual(v14.boards)
   })
 
-  // v16: optional TerminalBoard themeId + fontFamilyId (Lane B). ADDITIVE — a writer-only bump
-  // (floor STAYS 15). The migration is identity (the ids only appear on newly-themed boards), so a
-  // v15 doc with an existing un-themed terminal rides through untouched and stays openable by a v15 app.
-  it('migrates a v15 doc (terminal theming bump) to the current version as an identity bump (floor stays 15)', () => {
+  // v16 (terminal themeId + fontFamilyId, Lane B) was ADDITIVE; v17 (the `kanban` board type) is the
+  // next breaking bump. migrate() composes every step forward to the CURRENT version — each step here
+  // is an identity migration (the new fields/type only appear on new content), so a v15 doc with an
+  // existing un-themed terminal rides through untouched to the current version.
+  it('migrates a v15 doc forward to the current version, preserving the un-themed terminal (identity)', () => {
     const v15 = {
       schemaVersion: 15,
       minReaderVersion: 15,
@@ -742,15 +888,15 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v15) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(15) // writer-only bump — older (>=15) readers still open it
+    expect(MIN_READER_VERSION).toBe(17) // Kanban's breaking floor; v16/v18 stay writer-only
     expect(out.boards).toEqual(v15.boards)
   })
 
-  // v17: optional Planning ELEMENT appearance props (opacity / strokeColor / strokeWidth on
-  // ElementCommon). ADDITIVE — a writer-only bump (floor STAYS 15). The migration is identity: the
-  // props only appear on newly-styled elements, so a v16 doc with a plain note/arrow rides through
-  // untouched and stays openable by a v15 app. (Re-sequences to 18 at the umbrella→main rebase.)
-  it('migrates a v16 doc (element appearance props bump) as an identity bump (floor stays 15)', () => {
+  // v18: optional Planning ELEMENT appearance props (opacity / strokeColor / strokeWidth on
+  // ElementCommon). ADDITIVE — a writer-only bump (floor STAYS at Kanban's 17). The migration is
+  // identity: the props only appear on newly-styled elements, so a v16 doc with a plain note/arrow
+  // rides through untouched. (Re-sequenced from the umbrella's provisional 17 at the epic-end merge.)
+  it('migrates a v16 doc (element appearance props bump) as an identity bump (floor stays 17)', () => {
     const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
     const arrow = { id: 'a', kind: 'arrow', x: 0, y: 0, x2: 5, y2: 5 }
     const v16 = {
@@ -774,11 +920,11 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v16) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(15) // additive — older (>=15) readers still open it
+    expect(MIN_READER_VERSION).toBe(17) // additive v18 — the floor stays at Kanban's 17
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note, arrow])
   })
 
-  // v17 round-trip: opacity + stroke tokens survive toObject → wire → fromObject byte-for-byte, and
+  // v18 round-trip: opacity + stroke tokens survive toObject → wire → fromObject byte-for-byte, and
   // an out-of-range/invalid value fails deep validation (assertPlanningElement).
   it('round-trips element appearance props + rejects invalid appearance values', () => {
     const styledArrow: PlanningElement = {
@@ -989,15 +1135,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 17', () => {
-    expect(SCHEMA_VERSION).toBe(17)
+  it('SCHEMA_VERSION is 18', () => {
+    expect(SCHEMA_VERSION).toBe(18)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 17,
-      minReaderVersion: 15,
+      schemaVersion: 18,
+      minReaderVersion: 17,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -1182,8 +1328,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 17', () => {
-    expect(SCHEMA_VERSION).toBe(17)
+  it('SCHEMA_VERSION is 18', () => {
+    expect(SCHEMA_VERSION).toBe(18)
   })
 
   it('round-trips a valid image element', () => {
@@ -1236,8 +1382,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 17', () => {
-    expect(SCHEMA_VERSION).toBe(17)
+  it('SCHEMA_VERSION is 18', () => {
+    expect(SCHEMA_VERSION).toBe(18)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1878,13 +2024,13 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor (15)', () => {
+  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor (17)', () => {
     // v10 (agentKind/monitorActivity) was additive; the compat floor moved with the breaking v11
     // `diagram` element kind, the v12 `command` board type, the v13 `file` board + `fileref` element
-    // kinds, the v14 `dataflow` board type, and the v15 `qhd`/`uhd` viewport presets. toObject stamps
-    // the CURRENT floor (MIN_READER_VERSION = 15).
-    expect(toObject([], null).minReaderVersion).toBe(15)
-    expect(MIN_READER_VERSION).toBe(15)
+    // kinds, the v14 `dataflow` board type, the v15 `qhd`/`uhd` viewport presets, and the v17 `kanban`
+    // board type (v16 theming was additive). toObject stamps the CURRENT floor (MIN_READER_VERSION = 17).
+    expect(toObject([], null).minReaderVersion).toBe(17)
+    expect(MIN_READER_VERSION).toBe(17)
   })
 
   it('round-trips agentKind + monitorActivity', () => {

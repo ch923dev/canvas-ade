@@ -43,9 +43,10 @@ import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
 import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
-import { performGuardedQuit, makeCrashHandler } from './quit'
+import { performGuardedQuit, makeCrashHandler, performWindowCloseCleanup } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
+import { readOrchestrationConfig, registerSpawnCapHandlers } from './orchestrationConfig'
 import {
   listBoardMirror,
   listConnectors,
@@ -60,6 +61,7 @@ import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
+import { registerTerminalHandlers } from './terminalIpc'
 import { registerPlatformIpc } from './platformIpc'
 import { makeFlushChannel, makeFlushFinish } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
@@ -109,7 +111,12 @@ let mainWindow: BrowserWindow | null = null
 // Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
 // safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
 let authService: AuthService | null = null
-let pendingDeepLink: string | null = null
+let pendingDeepLinks: string[] = []
+// BUG-024: entitlementCache.isFresh() existed but no caller ever consulted it — the cache was
+// written once at sign-in and trusted indefinitely, so a Stripe-side cancel/lapse would never
+// reach the desktop. Re-check on startup (below), gated by this TTL so it costs at most one
+// license GET per hour of app runtime.
+const ENTITLEMENT_TTL_MS = 60 * 60 * 1000
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
@@ -164,9 +171,16 @@ function createWindow(): void {
   // automatically with their window — close them on window destruction so a macOS
   // close -> activate reopen recreates them fresh per persisted board (and no
   // renderer process leaks while no window exists).
+  // macOS PTY-orphan fix: on darwin, window-all-closed does NOT quit, so the before-quit
+  // PTY drain never fires and live/parked agent PTYs are orphaned — performWindowCloseCleanup
+  // reaps them here (darwin only; Win/Linux keep the awaited before-quit drain). See quit.ts.
   mainWindow.on('closed', () => {
-    disposeAllOsr() // close offscreen preview renderers
-    disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
+    performWindowCloseCleanup({
+      platform: process.platform,
+      disposeOsr: disposeAllOsr, // close offscreen preview renderers
+      disposeDiagramWorker, // close the hidden Mermaid render worker (S4)
+      disposePtys: disposeAllPtys // darwin-only PTY-tree reap (guarded inside)
+    })
     // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
     // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
     // would hit the .webContents getter — which THROWS on a destroyed window before any
@@ -242,13 +256,20 @@ function createWindow(): void {
 
   // The Playwright e2e boot (CANVAS_E2E) needs the renderer's seeding hook
   // (window.__canvasE2E) to populate the board mirror, so load with ?e2e=1.
+  // BUG-056: the renderer's dependency-smoke probe (useRendererSmoke) must only run
+  // under the CANVAS_SMOKE harness, so pass `?smoke=1` the same way — otherwise it
+  // has no signal and either always/never runs regardless of the env var.
   const seedHarness = !!process.env.CANVAS_E2E
+  const query: Record<string, string> = {}
+  if (seedHarness) query.e2e = '1'
+  if (SMOKE) query.smoke = '1'
+  const qs = Object.keys(query).length > 0 ? `?${new URLSearchParams(query).toString()}` : ''
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
-    mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
+    mainWindow.loadURL(`${base}${qs}`)
   } else {
     // Same path the nav guard pins to via appDocPath above (indexHtmlPath).
-    mainWindow.loadFile(indexHtmlPath, seedHarness ? { query: { e2e: '1' } } : undefined)
+    mainWindow.loadFile(indexHtmlPath, qs ? { query } : undefined)
   }
 }
 
@@ -283,7 +304,7 @@ function handleAuthDeepLink(url: string): void {
   if (authService) {
     void authService.handleCallback(url)
   } else {
-    pendingDeepLink = url
+    pendingDeepLinks.push(url)
   }
 }
 
@@ -400,8 +421,10 @@ app.whenReady().then(async () => {
   registerClipboardHandlers(ipcMain, () => mainWindow)
   // General external-open channel (scheme re-validated in MAIN) — Phase 4 terminal web-links.
   registerShellHandlers(ipcMain, () => mainWindow)
+  // Phase 5 · S1: frame-guarded "save terminal output to file" (native dialog + atomic write).
+  registerTerminalHandlers(ipcMain, () => mainWindow)
   // SYNC platform info (Windows build number) for the terminal's xterm windowsPty hint (A-Win).
-  registerPlatformIpc(ipcMain)
+  registerPlatformIpc(ipcMain, () => mainWindow)
   // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The
   // chokidar watcher that emits file:treeEvent lands in S2; the channel is reserved here.
   registerFileIpc(ipcMain, () => mainWindow)
@@ -417,49 +440,57 @@ app.whenReady().then(async () => {
   // `?? Promise.resolve()` short-circuit), leaving an invisible gap in the forensic trail.
   // Append-only JSONL under userData (NEVER the project folder — must outlive any project).
   registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: userData }))
-  mcp = await startMcpServer({
-    listBoards: listBoardMirror,
-    // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
-    listConnectors,
-    // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
-    listGroups,
-    listSessions: listPtySessions,
-    // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
-    // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
-    boardActivityStaleMs: getTerminalActivityStaleMs,
-    subscribeStatus: subscribeBoardStatus,
-    readOutput: readPtyOutput,
-    readResult: readBoardResult,
-    readMemory: readProjectMemory,
-    readSummary: readBoardSummary,
-    // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
-    sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
-    // Graceful PTY drain before an MCP close_board removes the board (T3.2).
-    drainPty: (id) => drainPty(id),
-    // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
-    // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
-    writeToPty: (id, text) => writeToPty(id, text),
-    // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
-    gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
-    // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
-    confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
-    // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
-    // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
-    audit: (e) =>
-      getAuditLog()
-        ?.append(e)
-        .then(() => {})
-        .catch((err: unknown) => {
-          // A failed audit write is a forensic gap — surface it in the log even if a future
-          // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
-          // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
-          console.error('[mcp-audit] append failed', err)
-          throw err
-        }) ?? Promise.resolve(),
-    // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
-    // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
-    recordResult: (id, result) => recordBoardResult(id, result)
-  })
+  mcp = await startMcpServer(
+    {
+      listBoards: listBoardMirror,
+      // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
+      listConnectors,
+      // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
+      listGroups,
+      listSessions: listPtySessions,
+      // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
+      // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
+      boardActivityStaleMs: getTerminalActivityStaleMs,
+      subscribeStatus: subscribeBoardStatus,
+      readOutput: readPtyOutput,
+      readResult: readBoardResult,
+      readMemory: readProjectMemory,
+      readSummary: readBoardSummary,
+      // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
+      sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
+      // Graceful PTY drain before an MCP close_board removes the board (T3.2).
+      drainPty: (id) => drainPty(id),
+      // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
+      // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
+      writeToPty: (id, text) => writeToPty(id, text),
+      // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
+      gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
+      // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
+      confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
+      // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
+      // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
+      audit: (e) =>
+        getAuditLog()
+          ?.append(e)
+          .then(() => {})
+          .catch((err: unknown) => {
+            // A failed audit write is a forensic gap — surface it in the log even if a future
+            // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
+            // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
+            console.error('[mcp-audit] append failed', err)
+            throw err
+          }) ?? Promise.resolve(),
+      // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
+      // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
+      recordResult: (id, result) => recordBoardResult(id, result)
+    },
+    {
+      // The runaway-swarm spawn cap is user-configurable (orchestration-config.json in userData).
+      // Pass a getter read FRESH per spawn check so a Settings change to the cap applies live —
+      // no MAIN restart, no orchestrator rebuild. Unset/absent config ⇒ MCP_SPAWN_CAP (4).
+      cap: () => readOrchestrationConfig(userData).spawnCap
+    }
+  )
   // Phase C / C1: the renderer → MAIN orchestrator drive (Command board). Frame-guarded
   // handle() channels (spawnGroup/dispatchPrompt/interrupt) + the per-board status push that
   // advances the kanban. `() => mcp` is null until the loopback server is up (or if it failed
@@ -507,11 +538,17 @@ app.whenReady().then(async () => {
     onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
   })
   registerAuthHandlers(ipcMain, () => mainWindow, authService)
-  if (pendingDeepLink) {
-    const url = pendingDeepLink
-    pendingDeepLink = null
-    void authService.handleCallback(url)
+  if (pendingDeepLinks.length > 0) {
+    const urls = pendingDeepLinks
+    pendingDeepLinks = []
+    for (const url of urls) {
+      void authService.handleCallback(url)
+    }
   }
+  // BUG-024: re-verify a stale cached entitlement against the backend on every cold start (no-op
+  // when signed out or still within the TTL) so a lapsed/canceled subscription doesn't stay
+  // trusted indefinitely just because the app happened to stay signed in.
+  void authService.syncEntitlementIfStale(ENTITLEMENT_TTL_MS)
   // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the
   // retired CANVAS_SMOKE=e2e), so gate on both — the old SMOKE-only guard was dead (F-A).
@@ -679,6 +716,10 @@ app.whenReady().then(async () => {
     }
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
+  // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
+  // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated
+  // llmDataDir; the orchestrator reads the same file via the `cap` getter passed to startMcpServer.
+  registerSpawnCapHandlers(ipcMain, () => mainWindow, userData)
   // Project Library (list/reveal/open files saved under <project>/.canvas/{downloads,assets}).
   registerProjectLibraryIpc(ipcMain, () => mainWindow)
 
@@ -967,12 +1008,15 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   // performGuardedQuit catches a flush rejection so shutdown() (the PTY-tree drain) always
   // runs — a wedged renderer must never orphan a deep agent child tree (before-quit-flush-no-catch).
+  // It also catches a shutdown() rejection (quit-reject-catch) so the fire-and-forget `void` call
+  // here can never surface as an unhandled rejection.
   void performGuardedQuit({
     flush: flushRenderer,
     shutdown,
     exit: (code) => app.exit(code),
     onFlushError: (err) =>
-      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err)
+      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err),
+    onShutdownError: (err) => console.error('[before-quit] shutdown failed; exiting anyway', err)
   })
 })
 

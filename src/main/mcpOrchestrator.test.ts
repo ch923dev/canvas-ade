@@ -156,6 +156,25 @@ describe('buildOrchestrator', () => {
     ])
   })
 
+  it('describeLayout projects board geometry + groups into the canvas://layout digest (P1b)', async () => {
+    const orch = buildOrchestrator({
+      ...reg([]),
+      // Two placed terminals side by side, one grouped; a planning board WITHOUT geometry is dropped.
+      listBoards: () => [
+        { id: 'a', type: 'terminal', title: 'A', status: 'idle', x: 0, y: 0, w: 100, h: 80 },
+        { id: 'b', type: 'terminal', title: 'B', status: 'idle', x: 140, y: 0, w: 100, h: 80 },
+        { id: 'noGeo', type: 'planning', title: 'P', status: 'static' }
+      ],
+      listGroups: () => [{ id: 'g1', name: 'Zone', boardIds: ['a'] }]
+    })
+    const digest = await orch.describeLayout()
+    expect(digest.count).toBe(2) // the geometry-less planning board is not placed
+    expect(digest.arrangement).toBe('row') // shared y-band, disjoint x → one row
+    expect(digest.bbox).toEqual({ x: 0, y: 0, w: 240, h: 80 })
+    expect(digest.boards.find((bd) => bd.id === 'a')?.groupId).toBe('g1')
+    expect('groupId' in (digest.boards.find((bd) => bd.id === 'b') ?? {})).toBe(false)
+  })
+
   it('falls back to a PTY/presence-derived bucket when the mirror carries no status', async () => {
     const orch = buildOrchestrator(
       reg(
@@ -196,6 +215,61 @@ describe('buildOrchestrator', () => {
   it('boardStatus throws for an unknown board', async () => {
     const orch = buildOrchestrator(reg([]))
     await expect(orch.boardStatus('nope')).rejects.toThrow(/not found/)
+  })
+
+  it('boardCards groups a kanban board lanes+cards from the mirror projection (P3b)', async () => {
+    const orch = buildOrchestrator({
+      ...reg([]),
+      listBoards: () => [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          status: 'static',
+          kanban: {
+            columns: [
+              { id: 'backlog', title: 'Backlog' },
+              { id: 'wip', title: 'In Progress', wip: 2 }
+            ],
+            cards: [
+              { id: 'c1', columnId: 'backlog', title: 'One', tag: 'feature' },
+              { id: 'c2', columnId: 'ghost', title: 'dangling' } // no such column → dropped
+            ]
+          }
+        }
+      ]
+    })
+    expect(await orch.boardCards('k1')).toEqual({
+      boardId: 'k1',
+      title: 'Sprint',
+      isKanban: true,
+      columns: [
+        {
+          id: 'backlog',
+          title: 'Backlog',
+          wip: null,
+          cards: [{ id: 'c1', title: 'One', tag: 'feature' }]
+        },
+        { id: 'wip', title: 'In Progress', wip: 2, cards: [] }
+      ]
+    })
+  })
+
+  it('boardCards returns the non-kanban shell for a non-kanban board (P3b)', async () => {
+    const orch = buildOrchestrator(
+      reg([{ id: 'p1', type: 'planning', title: 'Plan', status: 'static' }])
+    )
+    expect(await orch.boardCards('p1')).toEqual({
+      boardId: 'p1',
+      title: 'Plan',
+      isKanban: false,
+      columns: []
+    })
+  })
+
+  it('boardCards throws for an unknown board (P3b)', async () => {
+    const orch = buildOrchestrator(reg([]))
+    await expect(orch.boardCards('nope')).rejects.toThrow(/board not found: nope/)
   })
 
   it('boardOutput delegates the cursor to the registry and returns its page', async () => {
@@ -536,6 +610,27 @@ describe('buildOrchestrator', () => {
         type: 'configure_board',
         targetId: 'board-5',
         status: 'rejected'
+      })
+    })
+
+    // 🔒 BUG-017: an unbounded launchCommand must be clamped BEFORE it reaches the human-confirm
+    // modal (mirrors spawnGroup's 400-char clamp on the same field in mcpLifecycle.ts).
+    it('🔒 BUG-017: clamps an over-length launchCommand to 400 chars before confirm/apply/audit', async () => {
+      const { registry, seen, audits, confirms } = configReg({})
+      const orch = buildOrchestrator(registry)
+      const huge = 'echo ' + 'a'.repeat(1000)
+      const clamped = huge.slice(0, 400)
+      await orch.configureBoard('board-5', { launchCommand: huge })
+      expect(confirms[0]?.body).toContain(clamped)
+      expect(confirms[0]?.body).not.toContain(huge)
+      expect(seen).toEqual([
+        { type: 'configureBoard', id: 'board-5', patch: { launchCommand: clamped } }
+      ])
+      expect(audits[0]).toMatchObject({
+        type: 'configure_board',
+        targetId: 'board-5',
+        prompt: clamped,
+        status: 'configured'
       })
     })
 

@@ -54,6 +54,12 @@ export interface AppModelBoard {
   status: string
   agentKind?: string
   monitorActivity?: boolean
+  /** P1 canvas awareness: world-space geometry (top-left x/y + size w/h), so an orchestrator
+   *  reasoning over the self-model sees where each board sits + how big it is. Absent pre-P1. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /** A live board-to-board connector (directional: source -> target). */
@@ -110,6 +116,7 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     purpose: 'Spawn a feature-zone cluster (terminal + optional planning/browser + Named Group).',
     tier: 'orchestrator'
   },
+  { name: 'tidy_canvas', purpose: 'Reposition-pack all boards; un-gated.', tier: 'orchestrator' },
   {
     name: 'close_board',
     purpose: 'Remove a board (graceful PTY drain first).',
@@ -139,6 +146,32 @@ export const APP_TOOLS: readonly AppModelTool[] = [
   {
     name: 'add_planning_elements',
     purpose: 'Seed planning elements into a planning board (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'add_card',
+    purpose: 'Add a card to a Kanban board column (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'move_card',
+    purpose: 'Move a Kanban card to another column (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'update_card',
+    purpose: 'Update fields on a Kanban card (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'remove_card',
+    purpose: 'Remove a card from a Kanban board (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'visualize_plan',
+    purpose:
+      'Propose a plan visualization; the human picks the layout and a new board is created (gated).',
     tier: 'orchestrator'
   },
   { name: 'wait_for_idle', purpose: 'Block until a board settles idle.', tier: 'orchestrator' },
@@ -218,6 +251,31 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
     type: 'file',
     purpose:
       'A project file shown on the canvas (CodeMirror viewer/editor). Human-created context; an agent reads its path via canvas://boards. NOT agent-spawnable.',
+    tools: ['close_board'],
+    states: ['static'],
+    seedable: false,
+    autowire: null
+  },
+  {
+    // P4: a Kanban board is never directly spawn_board-able (SPAWNABLE excludes 'kanban') — the only
+    // way one lands on the canvas is the human picking the "kanban" layout in the visualize_plan
+    // chooser, which mints the board AND seeds its initial columns/cards in one gated call. Once it
+    // exists, the flag-gated card tools operate on it (mcpBoardCards.ts / mcpKanbanGate.ts).
+    type: 'kanban',
+    purpose:
+      'A Kanban board: cards organized into columns (renders as passive cards; nothing runs).',
+    tools: ['visualize_plan', 'add_card', 'move_card', 'update_card', 'remove_card', 'close_board'],
+    states: ['static'],
+    seedable: true, // visualize_plan seeds the initial columns/cards as part of creation
+    autowire: null
+  },
+  {
+    // JD-4: a network-request graph bound to a Browser board's `osrNetworkStore` capture. Like
+    // 'file', it is a human-created context surface (Browser devtools -> "Visualize network") — NOT
+    // agent-spawnable (no MCP tool creates a dataflow board) and not seedable; an agent may close it.
+    type: 'dataflow',
+    purpose:
+      "A network-request graph visualizing a bound Browser board's captured traffic. Human-created context; NOT agent-spawnable.",
     tools: ['close_board'],
     states: ['static'],
     seedable: false,

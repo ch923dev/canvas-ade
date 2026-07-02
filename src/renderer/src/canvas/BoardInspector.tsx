@@ -41,7 +41,8 @@ const TYPE_TAG: Record<BoardType, string> = {
   planning: 'PLANNING',
   command: 'COMMAND',
   file: 'FILE',
-  dataflow: 'DATA FLOW'
+  dataflow: 'DATA FLOW',
+  kanban: 'KANBAN'
 }
 
 export function BoardInspector(): ReactElement | null {

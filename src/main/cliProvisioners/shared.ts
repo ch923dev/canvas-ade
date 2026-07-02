@@ -154,6 +154,27 @@ export function tildeify(abs: string): string {
 
 // ── JSON read / merge / write (0o600) ──────────────────────────────────────
 
+/** True for a plain JSON object (not an array, not `null`) — guards untrusted parsed JSON shapes. */
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/**
+ * Read `container[key]` as a servers/entries map to merge into, tolerating a malformed existing
+ * value (BUG-023): a user's config could hold `mcpServers`/`mcp` as a string/array/number rather
+ * than an object (hand-edited or from another tool). Spreading that non-object directly (e.g.
+ * `{...'x'}` → `{0:'x'}`) would silently corrupt the merged map that then gets written back to
+ * disk. Any non-plain-object value is treated as absent (dropped, not preserved) so the merge
+ * always starts from a clean map.
+ */
+export function existingServersMap(
+  container: Record<string, unknown> | undefined,
+  key: string
+): Record<string, unknown> | undefined {
+  const v = container?.[key]
+  return isRecord(v) ? v : undefined
+}
+
 /**
  * Parse an existing JSON config, or `undefined` if absent. Throws on a present-but-corrupt file so
  * the caller can refuse to clobber it (we never overwrite a file we failed to parse — that would
@@ -270,13 +291,30 @@ export function removeCodexTable(content: string): string {
   return lines.join('\n')
 }
 
-/** Upsert our codex table: drop any prior copy of it, then append a fresh block at EOF. */
+/** Whichever EOL style dominates `text` (ties/no-newlines default to bare `\n`). */
+function dominantEol(text: string): '\r\n' | '\n' {
+  const crlf = (text.match(/\r\n/g) ?? []).length
+  const lfOnly = (text.match(/\n/g) ?? []).length - crlf
+  return crlf > lfOnly ? '\r\n' : '\n'
+}
+
+/**
+ * Upsert our codex table: drop any prior copy of it, then append a fresh block at EOF.
+ *
+ * Normalizes to LF while splicing (so the surgical line-matching in {@link removeCodexTable} is
+ * unaffected by the file's original EOL style), then re-applies whichever EOL style the existing
+ * file predominantly used — otherwise an appended LF-only block on a CRLF file leaves mixed line
+ * endings behind.
+ */
 export function upsertCodexTable(
   existing: string | undefined,
   port: number,
   token: string
 ): string {
-  const cleaned = removeCodexTable(existing ?? '').replace(/\s+$/, '')
+  const raw = existing ?? ''
+  const eol = dominantEol(raw)
+  const cleaned = removeCodexTable(raw.replace(/\r\n/g, '\n')).replace(/\s+$/, '')
   const block = codexBlock(port, token)
-  return cleaned === '' ? block + '\n' : cleaned + '\n\n' + block + '\n'
+  const result = cleaned === '' ? block + '\n' : cleaned + '\n\n' + block + '\n'
+  return eol === '\r\n' ? result.replace(/\n/g, '\r\n') : result
 }

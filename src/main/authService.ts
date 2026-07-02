@@ -23,7 +23,7 @@ import {
 } from './workosAuth'
 import type { AuthTokenStore } from './authTokenStore'
 import type { Plan, SessionInfo } from './authSession'
-import type { Entitlement } from './entitlementCache'
+import { isFresh, type Entitlement } from './entitlementCache'
 import type { AuthConfig } from './authConfig'
 
 /** What the renderer is allowed to know about auth — presence + email + plan only, NEVER a token. */
@@ -63,6 +63,12 @@ export interface AuthService {
   signOut(): Promise<{ ok: boolean }>
   /** Called by the MAIN deep-link handlers (open-url / second-instance) with the callback URL. */
   handleCallback(url: string): Promise<void>
+  /** Re-check the entitlement against the backend, but only when the cache is older than ttlMs —
+   * finally consumes the previously-orphaned entitlementCache.isFresh. Without this, the cache was
+   * written once at sign-in and trusted indefinitely: a Stripe-side cancel/lapse could never reach
+   * the desktop. No-op when signed out or still fresh. Safe to call on startup / focus / an
+   * interval — the TTL gate caps how often it actually hits the license endpoint. */
+  syncEntitlementIfStale(ttlMs: number): Promise<void>
 }
 
 const FIVE_MIN_MS = 5 * 60 * 1000
@@ -83,6 +89,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const encryptionAvailable = deps.encryptionAvailable()
     const s = deps.session.read()
     if (!s) return { isLoggedIn: false, encryptionAvailable }
+    // A session file can outlive its tokens (cleared/undecryptable token store, keyring change) —
+    // never report isLoggedIn:true without confirming the token store still holds usable tokens.
+    if (!deps.tokenStore.hasTokens()) return { isLoggedIn: false, encryptionAvailable }
     // INTENTIONAL: `s.expiresAt` (the ACCESS-token exp, ~1h) is NOT enforced here. Phase 1 has no
     // refresh-token renewal, so signing the user out when it passes would force a re-auth every hour.
     // Sign-in stays durable until an explicit signOut (local-first; plan is always 'free', so there is
@@ -193,5 +202,14 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     return { ok: true }
   }
 
-  return { status, signIn, signOut, handleCallback }
+  async function syncEntitlementIfStale(ttlMs: number): Promise<void> {
+    if (!deps.session.read()) return // signed out — nothing to re-check
+    if (isFresh(deps.entitlement.read(), ttlMs, now())) return
+    const tokens = deps.tokenStore.getTokens()
+    if (!tokens) return // no access token to authenticate the license check with — leave the cache
+    await refreshEntitlement(tokens.accessToken)
+    deps.onStatusChanged(status())
+  }
+
+  return { status, signIn, signOut, handleCallback, syncEntitlementIfStale }
 }

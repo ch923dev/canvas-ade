@@ -28,10 +28,8 @@ describe('terminalImageStaging', () => {
     expect(a).not.toEqual(b)
   })
 
-  it('sanitizes the board id in the filename', () => {
-    const p = stageClipboardImage(proj, '../../evil id', Buffer.from([0]))
-    expect(p.includes('..')).toBe(false)
-    expect(p.startsWith(stagedDir(proj))).toBe(true)
+  it('rejects an unsafe board id rather than sanitizing/coalescing it', () => {
+    expect(() => stageClipboardImage(proj, '../../evil id', Buffer.from([0]))).toThrow()
   })
 
   it('cleanupStaged removes only the given board files', () => {
@@ -44,6 +42,24 @@ describe('terminalImageStaging', () => {
 
   it('cleanupStaged is a no-op when the dir does not exist', () => {
     expect(() => cleanupStaged(join(proj, 'nope'), 'x')).not.toThrow()
+  })
+
+  it('cleanupStaged no-ops (never throws) on an unsafe board id', () => {
+    expect(() => cleanupStaged(proj, '???')).not.toThrow()
+  })
+
+  it('BUG-039: two distinct unsafe ids that would have sanitized to the same fallback never collide', () => {
+    // Both '???' and '!!!' strip to empty under the old ad hoc sanitizer and would have
+    // coalesced onto the shared 'board' token. The fix rejects them outright instead.
+    const png = Buffer.from([9])
+    expect(() => stageClipboardImage(proj, '???', png)).toThrow()
+    expect(() => stageClipboardImage(proj, '!!!', png)).toThrow()
+    // A real (safe) board id staged alongside must be unaffected by cleanupStaged on either
+    // unsafe id.
+    const kept = stageClipboardImage(proj, 'a1b2c3', png)
+    cleanupStaged(proj, '???')
+    cleanupStaged(proj, '!!!')
+    expect(existsSync(kept)).toBe(true)
   })
 
   it('BUG-026: staged filenames include a random component so same-board same-seq never collides', () => {

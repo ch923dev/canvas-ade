@@ -17,8 +17,8 @@
 // Docker leg, and the full matrix, are paid once per PR at the merge gate, and
 // per-push whenever a LINUX_SENSITIVE path changes; see .githooks/pre-push).
 //
-// The five tags mirror the e2e spec describe-title tags applied in this PR:
-//   @core  @terminal  @preview  @planning  @chrome
+// The tags mirror the e2e spec describe-title tags applied in this PR:
+//   @core  @terminal  @preview  @planning  @chrome  @mcp
 // `@core` is ALWAYS included in a scoped grep (boot / placement / recovery /
 // isolation specs guard behaviour any board change can perturb).
 
@@ -122,10 +122,15 @@ const AREAS = {
     'emptystate',
     'useboardkeyboardnav'
   ],
+  // MCP/orchestration surfaces (consent + sync + swarm-layer UI) — matched BEFORE the bare
+  // 'modal' keyword in `chrome` could otherwise be relied on to catch these; the two areas
+  // union together so a change confined to e.g. OrchestrationConsentModal.tsx still pulls in
+  // the @mcp-tagged consent-flow specs instead of silently landing in @chrome alone.
+  mcp: ['orchestration'],
   core: ['useboardplacement', 'lib/placement']
 }
 
-const TAG_ORDER = ['core', 'terminal', 'preview', 'planning', 'chrome']
+const TAG_ORDER = ['core', 'terminal', 'preview', 'planning', 'chrome', 'mcp']
 
 function normalise(p) {
   return String(p).trim().replace(/\\/g, '/')

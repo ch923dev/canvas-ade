@@ -13,6 +13,8 @@ import { DEFAULT_MODELS } from '../lib/llmModels'
 import { useCanvasStore } from '../store/canvasStore'
 import { useAccountStore } from '../store/accountStore'
 import { useOrchestrationStore } from '../store/orchestrationStore'
+import { useOrchestrationConfigStore } from '../store/orchestrationConfigStore'
+import { WORKER_SPAWN_CAP, WORKER_SPAWN_CAP_MIN, WORKER_SPAWN_CAP_MAX } from '../store/workerPool'
 
 const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter' },
@@ -51,6 +53,9 @@ export function SettingsModal({
   // loaded yet) + a small usage peek (today's calls / the effective cap) read from llm.status().
   const [maxCalls, setMaxCalls] = useState('')
   const [usage, setUsage] = useState<{ calls: number; cap: number } | null>(null)
+  // The app-wide MCP spawn cap (Agent orchestration). String-backed so the field can be cleared;
+  // hydrated from orchestrationConfigStore on open, persisted on Save.
+  const [maxWorkers, setMaxWorkers] = useState('')
 
   const projectDir = useCanvasStore((s) => s.project.dir)
   const [recapConsent, setRecapConsent] = useState<'enabled' | 'declined' | 'undecided'>(
@@ -103,6 +108,21 @@ export function SettingsModal({
         // BUG-031: IPC rejection (channel unavailable, teardown race) must not produce an
         // unhandledRejection. Fall to the safe default: assume no key is set for this session.
         if (!cancelled) setHasKey(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Hydrate the spawn-cap field from MAIN (orchestrationConfigStore caches it; load() is a no-op
+  // once hydrated, so this also covers re-opening Settings within a session).
+  useEffect(() => {
+    let cancelled = false
+    void useOrchestrationConfigStore
+      .getState()
+      .load()
+      .then(() => {
+        if (!cancelled) setMaxWorkers(String(useOrchestrationConfigStore.getState().spawnCap))
       })
     return () => {
       cancelled = true
@@ -213,6 +233,16 @@ export function SettingsModal({
               ? 'Key not saved: no system keyring available to encrypt it. Provider/model were saved.'
               : 'Key could not be saved.'
           )
+          return
+        }
+      }
+      // Persist the app-wide MCP spawn cap (Agent orchestration). Blank/non-numeric → leave the
+      // stored cap unchanged; the store clamps to [MIN,MAX] before the IPC re-validates it.
+      const parsedWorkers = parseInt(maxWorkers, 10)
+      if (Number.isInteger(parsedWorkers)) {
+        const capRes = await useOrchestrationConfigStore.getState().save(parsedWorkers)
+        if (!capRes.ok) {
+          setError('Could not save the worker cap — please try again.')
           return
         }
       }
@@ -441,6 +471,30 @@ export function SettingsModal({
           />
         </button>
       </div>
+
+      {/* App-wide MCP spawn cap (the runaway-swarm guard). NOT project-gated — the orchestrator is
+          a process singleton, so this limit applies across every project. Mirrors the "Max LLM
+          calls / day" field grammar; persisted on Save into orchestration-config.json (userData). */}
+      <label style={styles.field}>
+        <span style={styles.label}>Max concurrent workers</span>
+        <input
+          aria-label="Max concurrent workers"
+          type="number"
+          min={WORKER_SPAWN_CAP_MIN}
+          max={WORKER_SPAWN_CAP_MAX}
+          step={1}
+          inputMode="numeric"
+          value={maxWorkers}
+          placeholder={String(WORKER_SPAWN_CAP)}
+          onChange={(e) => setMaxWorkers(e.target.value)}
+          style={styles.input}
+          data-test="settings-spawn-cap"
+        />
+        <span style={styles.hint}>
+          Hard cap on agent boards the orchestrator spawns at once (runaway-swarm guard).{' '}
+          {WORKER_SPAWN_CAP_MIN}–{WORKER_SPAWN_CAP_MAX} · default {WORKER_SPAWN_CAP}.
+        </span>
+      </label>
 
       <div style={styles.row}>
         {/* STYLE-01: shared modal-button grammar (filled accent primary at AA contrast). */}

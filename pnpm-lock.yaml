@@ -24,8 +24,8 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(electron@42.3.3)
       '@expanse-ade/mcp':
-        specifier: ^0.17.0
-        version: 0.17.0
+        specifier: 0.18.0-rc.5
+        version: 0.18.0-rc.5
       '@uiw/codemirror-extensions-langs':
         specifier: ^4.25.10
         version: 4.25.10(@codemirror/autocomplete@6.20.3)(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.43.1)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/javascript@1.5.4)(@lezer/lr@1.4.10)
@@ -93,6 +93,9 @@ importers:
       '@xterm/addon-search':
         specifier: ^0.15.0
         version: 0.15.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-serialize':
+        specifier: 0.13.0
+        version: 0.13.0(@xterm/xterm@5.5.0)
       '@xterm/addon-unicode11':
         specifier: ^0.8.0
         version: 0.8.0(@xterm/xterm@5.5.0)
@@ -671,8 +674,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@expanse-ade/mcp@0.17.0':
-    resolution: {integrity: sha512-DPLwHuSMnH9ADChU5uiBrSHBmxN0qLGr4+J3i2I26H1oKi86wreIHlpgOC/Oho1D4+tQoyFmqTotBPF21voEYA==}
+  '@expanse-ade/mcp@0.18.0-rc.5':
+    resolution: {integrity: sha512-2rnJzQq37VKITppw2f/3lBsUv4iIbio68yVShOa6TZ2634iG0S1TTzK6aWay+8lmVnWhdVcII9KLCckZ1iZvlA==}
     engines: {node: '>=20'}
 
   '@gar/promisify@1.1.3':
@@ -1473,6 +1476,11 @@ packages:
 
   '@xterm/addon-search@0.15.0':
     resolution: {integrity: sha512-ZBZKLQ+EuKE83CqCmSSz5y1tx+aNOCUaA7dm6emgOX+8J9H1FWXZyrKfzjwzV+V14TV3xToz1goIeRhXBS5qjg==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-serialize@0.13.0':
+    resolution: {integrity: sha512-kGs8o6LWAmN1l2NpMp01/YkpxbmO4UrfWybeGu79Khw5K9+Krp7XhXbBTOTc3GJRRhd6EmILjpR8k5+odY39YQ==}
     peerDependencies:
       '@xterm/xterm': ^5.0.0
 
@@ -4547,7 +4555,7 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.2.0
 
-  '@expanse-ade/mcp@0.17.0':
+  '@expanse-ade/mcp@0.18.0-rc.5':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       express: 5.2.1
@@ -5395,6 +5403,10 @@ snapshots:
       '@xterm/xterm': 5.5.0
 
   '@xterm/addon-search@0.15.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-serialize@0.13.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
 

@@ -2,6 +2,8 @@ import { it, expect, vi, beforeEach, afterEach, describe } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { SettingsModal } from './SettingsModal'
 import { useCanvasStore } from '../store/canvasStore'
+import { useOrchestrationConfigStore } from '../store/orchestrationConfigStore'
+import { WORKER_SPAWN_CAP } from '../store/workerPool'
 
 // `globals: false` in vitest.config means RTL's auto-cleanup hook isn't registered,
 // so each render would leak its portaled <body> modal into the next test.
@@ -17,6 +19,11 @@ const llm = {
 const recap = {
   getConsent: vi.fn(),
   setConsent: vi.fn()
+}
+
+const orchestration = {
+  getSpawnCap: vi.fn(),
+  setSpawnCap: vi.fn()
 }
 
 beforeEach(() => {
@@ -35,9 +42,17 @@ beforeEach(() => {
   llm.setConfig.mockResolvedValue({ ok: true })
   recap.getConsent.mockResolvedValue('undecided')
   recap.setConsent.mockResolvedValue({ ok: true })
-  ;(window as unknown as { api: { llm: typeof llm; recap: typeof recap } }).api = { llm, recap }
-  // Reset the store to a no-project state between tests.
+  orchestration.getSpawnCap.mockResolvedValue(WORKER_SPAWN_CAP)
+  orchestration.setSpawnCap.mockResolvedValue({ ok: true })
+  ;(
+    window as unknown as {
+      api: { llm: typeof llm; recap: typeof recap; orchestration: typeof orchestration }
+    }
+  ).api = { llm, recap, orchestration }
+  // Reset the stores between tests (the orchestration-config cache is a module singleton, so its
+  // `loaded` flag would otherwise persist and skip the per-test getSpawnCap fetch).
   useCanvasStore.setState({ project: { dir: null, name: null, status: 'welcome' } })
+  useOrchestrationConfigStore.setState({ spawnCap: WORKER_SPAWN_CAP, loaded: false })
 })
 
 it('prefills provider + model from status on open', async () => {
@@ -136,6 +151,40 @@ describe('MCP-05: per-day call cap field + usage peek', () => {
     await waitFor(() =>
       expect(llm.setConfig).toHaveBeenCalledWith(expect.objectContaining({ maxCallsPerDay: 25 }))
     )
+  })
+})
+
+// ── Max concurrent workers (the configurable MCP spawn cap) ─────────────────────────────────────
+
+describe('Max concurrent workers (MCP spawn cap)', () => {
+  it('prefills the field from the configured cap', async () => {
+    orchestration.getSpawnCap.mockResolvedValue(8)
+    render(<SettingsModal onClose={() => {}} />)
+    const field = (await screen.findByLabelText(/max concurrent workers/i)) as HTMLInputElement
+    await waitFor(() => expect(field.value).toBe('8'))
+  })
+
+  it('Save persists an edited cap via setSpawnCap and closes', async () => {
+    const onClose = vi.fn()
+    render(<SettingsModal onClose={onClose} />)
+    const field = (await screen.findByLabelText(/max concurrent workers/i)) as HTMLInputElement
+    await waitFor(() => expect(field.value).toBe('4'))
+    fireEvent.change(field, { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() => expect(orchestration.setSpawnCap).toHaveBeenCalledWith(8))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('keeps the modal open and shows an error when the cap save fails', async () => {
+    const onClose = vi.fn()
+    orchestration.setSpawnCap.mockResolvedValue({ ok: false, reason: 'invalid' })
+    render(<SettingsModal onClose={onClose} />)
+    const field = (await screen.findByLabelText(/max concurrent workers/i)) as HTMLInputElement
+    await waitFor(() => expect(field.value).toBe('4'))
+    fireEvent.change(field, { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/worker cap/i))
+    expect(onClose).not.toHaveBeenCalled()
   })
 })
 

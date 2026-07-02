@@ -98,7 +98,8 @@ const TYPE_LABEL: Record<BoardType, string> = {
   planning: 'planning',
   command: 'command',
   file: 'file',
-  dataflow: 'data flow'
+  dataflow: 'data flow',
+  kanban: 'kanban'
 }
 
 export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): PaletteCommand[] {
@@ -109,7 +110,7 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       : undefined
 
   // ── Boards ──
-  for (const type of ['terminal', 'browser', 'planning', 'command'] as const) {
+  for (const type of ['terminal', 'browser', 'planning', 'command', 'kanban'] as const) {
     out.push({
       id: `new-${type}`,
       section: 'Boards',
@@ -479,8 +480,15 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   },
   { section: 'Planning', label: 'Element context menu', chips: ['Shift', 'F10'] },
   { section: 'Planning', label: 'Delete elements', chips: ['Del'] },
-  // GROUP-01/02: connectors + group tabs are keyboard-operable.
-  { section: 'Groups', label: 'Connect / disconnect the 2 selected boards', chips: ['Ctrl', 'K'] },
+  // GROUP-01/02: connectors + group tabs are keyboard-operable. The chip only opens the
+  // palette (resolveCanvasKeyAction's Ctrl/⌘+K always resolves to 'palette' — there is no
+  // direct connect/disconnect chord); the label must say so, matching the Orchestration
+  // section's "Open command palette for …" phrasing below, or it reads as a direct shortcut.
+  {
+    section: 'Groups',
+    label: 'Open command palette to connect / disconnect the 2 selected boards',
+    chips: ['Ctrl', 'K']
+  },
   { section: 'Groups', label: 'Delete the selected connector', chips: ['Del'] },
   { section: 'Groups', label: 'Group tab: focus the group', chips: ['Enter'] },
   { section: 'Groups', label: 'Group tab: select members', chips: ['click'] },

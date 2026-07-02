@@ -13,11 +13,30 @@
 import type { Board } from '../lib/boardSchema'
 
 /**
- * Display cap for concurrently-spawned worker boards. Mirrors `MCP_SPAWN_CAP` in MAIN
- * (`mcpLifecycle.ts`) — duplicated here because the renderer can't import MAIN. Display-only:
- * the authoritative cap-check lives in the orchestrator's `spawnGroup`/`spawnBoard` (PR-5b).
+ * DEFAULT display cap for concurrently-spawned worker boards, used until a configured value is
+ * hydrated. Mirrors `MCP_SPAWN_CAP` / `DEFAULT_SPAWN_CAP` in MAIN — duplicated here because the
+ * renderer can't import MAIN. The cap is now USER-CONFIGURABLE (Settings → Agent orchestration):
+ * the live value is hydrated from `window.api.orchestration.getSpawnCap()` into
+ * `orchestrationConfigStore` and passed into {@link deriveWorkerPool}. Display + pump pre-check only;
+ * the authoritative cap-check lives in the orchestrator's `spawnGroup`/`spawnBoard` (MAIN).
  */
 export const WORKER_SPAWN_CAP = 4
+/** Min/max the user may configure the spawn cap to. MIRRORS MIN_SPAWN_CAP/MAX_SPAWN_CAP in MAIN. */
+export const WORKER_SPAWN_CAP_MIN = 1
+export const WORKER_SPAWN_CAP_MAX = 16
+
+/**
+ * Clamp a user-entered cap to a valid integer in [MIN, MAX]; a non-finite/non-number value falls
+ * back to the default (mirrors MAIN's `clampSpawnCap` so the Settings field and the store agree with
+ * what MAIN will accept). The MAIN IPC re-validates regardless — this keeps the UI honest.
+ */
+export function clampWorkerSpawnCap(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return WORKER_SPAWN_CAP
+  const n = Math.floor(raw)
+  if (n < WORKER_SPAWN_CAP_MIN) return WORKER_SPAWN_CAP_MIN
+  if (n > WORKER_SPAWN_CAP_MAX) return WORKER_SPAWN_CAP_MAX
+  return n
+}
 
 export interface WorkerPool {
   /** Idle terminals available to receive a dispatch. */
@@ -28,7 +47,7 @@ export interface WorkerPool {
   browsers: number
   /** Planning boards (seedable with a subtask checklist in Phase C/PR-6). */
   planning: number
-  /** Display cap (WORKER_SPAWN_CAP). */
+  /** The effective spawn cap (configured value, or WORKER_SPAWN_CAP default). */
   cap: number
 }
 
@@ -36,10 +55,15 @@ export interface WorkerPool {
  * Derive the worker-pool readout from the board list + the terminal running map
  * (`terminalRuntimeStore.running`). Pure + unit-testable. A `command` board is the orchestrator
  * itself, never a worker, so it is excluded; a `monitorActivity:false` terminal is excluded too.
+ *
+ * `cap` is the effective spawn cap (the configured value from `orchestrationConfigStore`, or the
+ * default when a caller/test omits it) — surfaced on the pool readout so the PoolStrip display +
+ * the dispatch pump's pre-check both reflect the user's setting.
  */
 export function deriveWorkerPool(
   boards: ReadonlyArray<Board>,
-  running: Record<string, boolean>
+  running: Record<string, boolean>,
+  cap: number = WORKER_SPAWN_CAP
 ): WorkerPool {
   let terminalsIdle = 0
   let terminalsRunning = 0
@@ -63,5 +87,5 @@ export function deriveWorkerPool(
       // 'command' is the orchestrator face, not a worker — excluded.
     }
   }
-  return { terminalsIdle, terminalsRunning, browsers, planning, cap: WORKER_SPAWN_CAP }
+  return { terminalsIdle, terminalsRunning, browsers, planning, cap }
 }

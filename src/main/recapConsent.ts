@@ -14,6 +14,27 @@ import { isForeignSender } from './ipcGuard'
 
 export type RecapDecision = 'enabled' | 'declined'
 
+/**
+ * BUG-022: canonicalize a project-root path before it becomes a consent-store KEY.
+ * `getCurrentDir()` returns whatever `project:open`/`project:create` was given verbatim (a
+ * dialog/recents path string, no `path.resolve`/case-fold anywhere upstream) — so the SAME
+ * project directory reopened via a differently-spelled-but-equivalent path (a trailing
+ * separator, or a case difference on Windows/macOS-default's case-insensitive filesystem) would
+ * otherwise silently miss the stored decision and re-prompt the user. Mirrors the Windows-style
+ * case-fold already used for the create/open approved-root check (`isWindowsStylePath`/
+ * `pathSegments`, FIND-014, `projectIpc.ts`) — POSIX paths stay case-sensitive. Deliberately does
+ * NOT route through `path.normalize` (it flips `/` to `\` on win32, which would rewrite a
+ * POSIX-shaped path's separators and change the key's shape); just trims a trailing separator and
+ * case-folds Windows-style paths. Local to the consent-store KEY only; never touches `currentDir`
+ * itself or any other getCurrentDir() consumer.
+ */
+function canonicalizeProjectPath(p: string): string {
+  const trimmed = p.replace(/[/\\]+$/, '')
+  return /^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\')
+    ? trimmed.toLowerCase()
+    : trimmed
+}
+
 function fileFor(userDataDir: string): string {
   return join(userDataDir, 'recap-consent.json')
 }
@@ -35,7 +56,7 @@ function readAll(userDataDir: string): Record<string, RecapDecision> {
 
 /** Read the persisted consent decision for a project. Returns undefined when undecided. */
 export function readConsent(userDataDir: string, projectPath: string): RecapDecision | undefined {
-  return readAll(userDataDir)[projectPath]
+  return readAll(userDataDir)[canonicalizeProjectPath(projectPath)]
 }
 
 /** Persist a consent decision for a project. Atomic write (write-file-atomic). */
@@ -45,7 +66,7 @@ export function writeConsent(
   decision: RecapDecision
 ): void {
   const all = readAll(userDataDir)
-  all[projectPath] = decision
+  all[canonicalizeProjectPath(projectPath)] = decision
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify(all, null, 2), 'utf8')
 }
@@ -53,9 +74,10 @@ export function writeConsent(
 /** Remove a project's persisted consent decision (→ undecided). Atomic. Used to roll back a write
  * whose follow-on hook install/remove failed (FIND-012). No-op when the key is absent. */
 export function clearConsent(userDataDir: string, projectPath: string): void {
+  const key = canonicalizeProjectPath(projectPath)
   const all = readAll(userDataDir)
-  if (!(projectPath in all)) return
-  delete all[projectPath]
+  if (!(key in all)) return
+  delete all[key]
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify(all, null, 2), 'utf8')
 }

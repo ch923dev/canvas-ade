@@ -146,6 +146,18 @@ describe('createAuthService', () => {
     expect(tokenStore.hasTokens()).toBe(false)
   })
 
+  it('status() reports signed-out when the session outlives the token store (BUG-025)', async () => {
+    const { deps, opened, tokenStore } = makeHarness()
+    const svc = createAuthService(deps)
+    svc.signIn()
+    await svc.handleCallback(`expanse://auth/callback?code=CODE&state=${stateFromUrl(opened[0])}`)
+    expect(svc.status().isLoggedIn).toBe(true)
+    // Simulate the token store losing its tokens (cleared/undecryptable) while the session file
+    // survives — status() must not trust the session file alone.
+    tokenStore.clearTokens()
+    expect(svc.status()).toMatchObject({ isLoggedIn: false })
+  })
+
   it('signOut clears tokens + session + entitlement and pushes signed-out', async () => {
     const { deps, opened, statuses, tokenStore, getSession } = makeHarness()
     const svc = createAuthService(deps)
@@ -156,5 +168,65 @@ describe('createAuthService', () => {
     expect(tokenStore.hasTokens()).toBe(false)
     expect(getSession()).toBeNull()
     expect(statuses[statuses.length - 1]).toMatchObject({ isLoggedIn: false })
+  })
+
+  // BUG-024: entitlementCache.isFresh() was defined but never consulted by any caller, so a
+  // cached entitlement was trusted indefinitely once written at sign-in — a Stripe-side
+  // cancel/lapse would never reach the desktop.
+  describe('syncEntitlementIfStale', () => {
+    it('is a no-op when signed out', async () => {
+      const { deps, statuses } = makeHarness()
+      const svc = createAuthService(deps)
+      await svc.syncEntitlementIfStale(1000)
+      expect(statuses).toHaveLength(0)
+    })
+
+    it('is a no-op when the cached entitlement is still fresh', async () => {
+      let nowMs = 1000
+      const { deps, opened, statuses } = makeHarness({ now: () => nowMs })
+      const svc = createAuthService(deps)
+      svc.signIn()
+      await svc.handleCallback(`expanse://auth/callback?code=CODE&state=${stateFromUrl(opened[0])}`)
+      const pushesAfterSignIn = statuses.length
+      nowMs += 500 // well within a 1000ms TTL
+      await svc.syncEntitlementIfStale(1000)
+      expect(statuses).toHaveLength(pushesAfterSignIn) // no re-check → no extra status push
+    })
+
+    it('re-checks the license endpoint and updates the plan once the cache goes stale', async () => {
+      let nowMs = 1000
+      let planReturned: 'free' | 'pro' = 'free'
+      const fetchImpl: FetchLike = async (url) => {
+        if (url.includes('/authenticate')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              user: { id: 'user_1', email: 'a@b.com' },
+              access_token: 'at',
+              refresh_token: 'rt'
+            }),
+            text: async () => ''
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ active: planReturned === 'pro', plan: planReturned }),
+          text: async () => ''
+        }
+      }
+      const { deps, opened, statuses } = makeHarness({ now: () => nowMs, fetchImpl })
+      const svc = createAuthService(deps)
+      svc.signIn()
+      await svc.handleCallback(`expanse://auth/callback?code=CODE&state=${stateFromUrl(opened[0])}`)
+      expect(statuses[statuses.length - 1]).toMatchObject({ plan: 'free' })
+
+      // The subscription changed server-side after the initial check.
+      planReturned = 'pro'
+      nowMs += 2000 // past a 1000ms TTL
+      await svc.syncEntitlementIfStale(1000)
+      expect(statuses[statuses.length - 1]).toMatchObject({ plan: 'pro' })
+    })
   })
 })

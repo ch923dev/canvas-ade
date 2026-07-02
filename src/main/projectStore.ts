@@ -47,7 +47,7 @@ const legacyBak = (dir: string): string => join(dir, CANVAS_BAK)
 const legacyAssets = (dir: string): string => join(dir, ASSETS)
 
 /**
- * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (17). MAIN cannot import the
+ * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (18). MAIN cannot import the
  * renderer module in shipped code, so this constant is duplicated here. It is tested (see
  * projectStore.test.ts, which cross-imports the renderer constant and asserts equality)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
@@ -55,7 +55,7 @@ const legacyAssets = (dir: string): string => join(dir, ASSETS)
  * canonical version marker on fresh-project creation. (v17 = Planning element appearance
  * props, ADDITIVE; re-sequences to 18 at the umbrella→main rebase — see boardSchemaVersion.ts.)
  */
-export const SCHEMA_VERSION = 17
+export const SCHEMA_VERSION = 18
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
@@ -64,8 +64,11 @@ export const SCHEMA_VERSION = 17
  * element kind (v13, file-tree S1), to 14 with the breaking `dataflow` board type (v14, JD-4), and to
  * 15 with the breaking `qhd`/`uhd` viewport presets (v15) — pre-15 apps reject the unrecognized
  * viewport, so they get the clean "update the app" message instead of a `.bak`-fallback parse failure.
+ * The floor moved to 17 with the breaking `kanban` board type (v17, P4) — pre-17 apps have no
+ * `kanban` case in `assertBoard` and would `.bak`-fallback, so they get the clean update prompt.
+ * (v16 was additive and left the floor at 15.)
  */
-export const MIN_READER_VERSION = 15
+export const MIN_READER_VERSION = 17
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
@@ -331,6 +334,15 @@ const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
 export const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
 
 /**
+ * MAIN-side write ceiling (DoS backstop) — mirrors fileIpc.ts's `MAX_READ_BYTES`. The renderer
+ * already size-gates for UX (e.g. BackdropPicker's `IMAGE_CAP_BYTES` 30 MiB / `VIDEO_CAP_BYTES`
+ * 200 MiB), but not every caller does (usePlanningImageIO's paste/drop path has no client-side
+ * cap at all), and a renderer-side cap is advisory only regardless. 256 MiB sits safely above the
+ * largest renderer gate; a write over it is rejected before the bytes are hashed or touched.
+ */
+const MAX_WRITE_BYTES = 256 * 1024 * 1024
+
+/**
  * Content-address `bytes` (sha1) into `<dir>/.canvas/assets/<sha1>.<ext>` and return the stored
  * `assetId` — `assets/<sha1>.<ext>`, UNCHANGED by ADR 0009 (a logical id, not a physical path;
  * only the resolution base moved into `.canvas/`). Dedups: identical bytes → identical id; the
@@ -343,6 +355,11 @@ export async function writeAsset(
 ): Promise<{ assetId: string }> {
   const e = String(ext).toLowerCase()
   if (!ASSET_EXTS.has(e)) throw new Error(`writeAsset: unsupported ext ${ext}`)
+  if (bytes.byteLength > MAX_WRITE_BYTES) {
+    throw new Error(
+      `writeAsset: too large to write (${bytes.byteLength} bytes > ${MAX_WRITE_BYTES})`
+    )
+  }
   const sha1 = createHash('sha1').update(bytes).digest('hex')
   const assetId = `${ASSETS}/${sha1}.${e}`
   const abs = join(assetsDirOf(dir), `${sha1}.${e}`)

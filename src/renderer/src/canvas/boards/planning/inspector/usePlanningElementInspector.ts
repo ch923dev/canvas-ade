@@ -87,7 +87,11 @@ export interface ElementInspectorModel {
 }
 
 export interface PlanningElementInspectorArgs {
+  /** Menu-open/render-time snapshot — display state only (labels/disabled/current-swatch). */
   elements: PlanningElement[]
+  /** Live read at action-invoke time (BUG-008): actions write onto the CURRENT elements, never
+   *  the snapshot, so an edit landing while a menu/inspector is open can't be clobbered. */
+  getElements: () => PlanningElement[]
   selectedIds: ReadonlySet<string>
   /** Element controls only surface with the select tool (matches the toolbar / grip gate). */
   interactive: boolean
@@ -113,6 +117,7 @@ export interface PlanningElementInspector {
 
 export function usePlanningElementInspector({
   elements,
+  getElements,
   selectedIds,
   interactive,
   boardId,
@@ -133,6 +138,7 @@ export function usePlanningElementInspector({
     (sel: ReadonlySet<string>): MenuEntry[] =>
       buildContextMenuEntries({
         elements,
+        getElements,
         sel,
         wb,
         measured,
@@ -143,7 +149,18 @@ export function usePlanningElementInspector({
         newId,
         onOpenSendTo
       }),
-    [elements, wb, measured, beginChange, commit, clearSel, setSelectedIds, newId, onOpenSendTo]
+    [
+      elements,
+      getElements,
+      wb,
+      measured,
+      beginChange,
+      commit,
+      clearSel,
+      setSelectedIds,
+      newId,
+      onOpenSendTo
+    ]
   )
 
   // Batch typography — patch every still-live selected text in ONE undo step (live-read guard so a

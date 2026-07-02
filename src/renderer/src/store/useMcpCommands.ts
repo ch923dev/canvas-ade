@@ -1,6 +1,12 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
-import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
+import {
+  assertBoard,
+  assertPlanningElement,
+  type Board,
+  type BoardType,
+  type PlanningElement
+} from '../lib/boardSchema'
 import { freeSlot, overlapsAny, viewportCenterWorld } from '../lib/freeSlot'
 import { sanitizeBoardTitle } from '../../../shared/boardTitle'
 import {
@@ -9,6 +15,8 @@ import {
   neededBoardWidth,
   MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
+import { applyKanbanOps } from './kanbanMcpApply'
+import { buildVisualizedContent, isVisualization } from './visualizeMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /**
@@ -169,6 +177,39 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       }
       return { ok: true, type: 'patchPlanning' }
     }
+    case 'patchKanban': {
+      // 🔒 P3: mutate a kanban board's cards (add/move/update/remove). MAIN already resolved +
+      // kanban-checked the board, minted any new card id, and human-confirmed the ops; the renderer
+      // re-validates (board exists + is kanban, target column/card exists) as defense in depth,
+      // mirroring patchPlanning, then commits as ONE undoable edit.
+      if (typeof command.id !== 'string' || command.id.length === 0) {
+        return { ok: false, error: `invalid patchKanban id: ${JSON.stringify(command.id)}` }
+      }
+      if (!Array.isArray(command.ops) || command.ops.length === 0) {
+        return { ok: false, error: 'patchKanban ops must be a non-empty array' }
+      }
+      const store = useCanvasStore.getState()
+      const board = store.boards.find((b) => b.id === command.id)
+      if (!board) return { ok: false, error: `patchKanban: board not found: ${command.id}` }
+      if (board.type !== 'kanban') {
+        return { ok: false, error: `patchKanban: board ${command.id} is not a kanban board` }
+      }
+      let nextCards
+      try {
+        nextCards = applyKanbanOps(board, command.ops)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `patchKanban: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      // beginChange() FIRST (lazy checkpoint, like patchPlanning/configureBoard) so the agent's card
+      // mutation is ONE discrete undo step that chains with human edits; updateBoard filters to
+      // PATCHABLE_KEYS.kanban ('cards'). Geometry is untouched (cards flow inside the fixed lanes).
+      store.beginChange()
+      store.updateBoard(command.id, { cards: nextCards })
+      return { ok: true, type: 'patchKanban' }
+    }
     case 'spawnGroup': {
       // 🔒 PR-5b: create a feature-zone cluster (boards + Named Group + preview wiring) in one
       // undoable step. MAIN minted every id + clamped the name; the renderer re-validates the
@@ -213,6 +254,97 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
             )
       store.spawnGroup({ at, group, members })
       return { ok: true, type: 'spawnGroup' }
+    }
+    case 'tidyBoards': {
+      // 🔒 P2: reposition the WHOLE canvas via the existing deterministic packer. Reposition-only +
+      // content-less — MAIN sends no geometry; the renderer's OWN `tidyBoards` action computes the
+      // clean arrangement. Re-validate `mode` (defense in depth, mirroring spawnGroup): fall back to
+      // 'smart' for an absent/off-enum value rather than trusting the IPC-crossed string.
+      const raw = command.mode
+      const mode = raw === 'smart' || raw === 'by-type' || raw === 'grid' ? raw : 'smart'
+      // `tidyBoards` is ALREADY ONE undoable `trackedChange` step that no-ops when nothing moved — do
+      // NOT wrap it in beginChange() (that's for the additive content writes). Snapshot positions
+      // around the call so the ack can report how many boards actually moved (0 ⇒ already tidy).
+      const store = useCanvasStore.getState()
+      const before = new Map(store.boards.map((b) => [b.id, { x: b.x, y: b.y }]))
+      store.tidyBoards(mode)
+      let moved = 0
+      for (const b of useCanvasStore.getState().boards) {
+        const prev = before.get(b.id)
+        if (prev && (prev.x !== b.x || prev.y !== b.y)) moved++
+      }
+      return { ok: true, type: 'tidyBoards', moved }
+    }
+    case 'visualizePlan': {
+      // 🔒 P5: CREATE a new board from a sanitized plan in the shape the human PICKED in the confirm
+      // chooser. MAIN validated + sanitized + capped the items, minted the board id, and confirmed the
+      // choice; the renderer builds the fully-populated board, tidies it into open space, and commits
+      // it as ONE undoable edit — re-validating the envelope + the assembled board (defense in depth).
+      const { id, visualization, items, title } = command
+      if (typeof id !== 'string' || id.length === 0) {
+        return { ok: false, error: `invalid visualizePlan id: ${JSON.stringify(id)}` }
+      }
+      if (!isVisualization(visualization)) {
+        return {
+          ok: false,
+          error: `invalid visualizePlan visualization: ${JSON.stringify(visualization)}`
+        }
+      }
+      if (!Array.isArray(items) || items.length === 0) {
+        return { ok: false, error: 'visualizePlan items must be a non-empty array' }
+      }
+      const store = useCanvasStore.getState()
+      // Idempotent by id (mirrors addBoard/spawnGroup): a re-delivered command whose board already
+      // exists is a no-op + ack ok, so it can't push a duplicate board.
+      if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'visualizePlan' }
+      let content
+      try {
+        content = buildVisualizedContent(visualization, items)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `visualizePlan: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      // Land where the user is looking (like spawnGroup) → free-slot off any overlap so the plan tucks
+      // into open canvas space (the mock's "tidied into open space"). Fallback to SPAWN_ANCHOR pre-fit
+      // OR outside a DOM (the node-env unit tests, where `window` is absent).
+      const at =
+        typeof window === 'undefined'
+          ? SPAWN_ANCHOR
+          : viewportCenterWorld(
+              store.viewport,
+              { w: window.innerWidth, h: window.innerHeight },
+              SPAWN_ANCHOR
+            )
+      const pos = freeSlot(store.boards, at, content.size)
+      const base = {
+        id,
+        x: pos.x,
+        y: pos.y,
+        w: content.size.w,
+        h: content.size.h,
+        title: sanitizeBoardTitle(title) ?? content.defaultTitle
+      }
+      const board: Board =
+        content.kind === 'kanban'
+          ? { ...base, type: 'kanban', columns: content.columns ?? [], cards: content.cards ?? [] }
+          : { ...base, type: 'planning', elements: content.elements ?? [] }
+      // Re-validate the assembled board against the schema before it lands (defense in depth, like
+      // patchPlanning re-validates each element) — a bad build acks {ok:false} and nothing inserts.
+      try {
+        assertBoard(board)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `visualizePlan: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      store.addPreparedBoard(board)
+      // Select the created plan (non-undoable, so the create stays ONE undo step) — the new board is
+      // the active selection, matching the mock's "created board on the canvas".
+      store.setSelection([id])
+      return { ok: true, type: 'visualizePlan' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }

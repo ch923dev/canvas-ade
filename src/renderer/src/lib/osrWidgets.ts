@@ -128,14 +128,20 @@ export function monthLabel(year: number, month0: number): string {
   return `${MONTHS[((month0 % 12) + 12) % 12]} ${year}`
 }
 
-/** Parse a `YYYY-MM-DD` value → {year, month0, day}, or null if malformed. */
+/**
+ * Parse a `YYYY-MM-DD` value → {year, month0, day}, or null if malformed OR calendar-invalid
+ * (e.g. `2026-02-30`, `2026-04-31`) — validated against the actual days-in-month (UTC, so it
+ * never depends on the host timezone; leap years fall out of `Date` for free).
+ */
 export function parseIsoDate(value: string): { year: number; month0: number; day: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
   if (!m) return null
   const year = Number(m[1])
   const month0 = Number(m[2]) - 1
   const day = Number(m[3])
-  if (month0 < 0 || month0 > 11 || day < 1 || day > 31) return null
+  if (month0 < 0 || month0 > 11 || day < 1) return null
+  const daysInMonth = new Date(Date.UTC(year, month0 + 1, 0)).getUTCDate()
+  if (day > daysInMonth) return null
   return { year, month0, day }
 }
 

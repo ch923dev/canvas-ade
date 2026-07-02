@@ -266,7 +266,10 @@ export default tseslint.config(
   // See docs/contributing/file-size-doctrine.md.
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['**/*.test.{ts,tsx}', '**/*.integration.test.{ts,tsx}'],
+    // `smoke/e2eHooks.ts` is the Playwright `_electron` test harness (installed only under isE2E) —
+    // test infrastructure, exempt like `*.test.ts` per the "tests are exempt" rule above (its name
+    // just doesn't match the test glob). Additive probe surfaces (e.g. setOsrAlive) grow it healthily.
+    ignores: ['**/*.test.{ts,tsx}', '**/*.integration.test.{ts,tsx}', '**/smoke/e2eHooks.ts'],
     rules: { 'max-lines': ['error', { max: 700, skipBlankLines: true, skipComments: true }] }
   },
   {
@@ -282,6 +285,17 @@ export default tseslint.config(
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],
     rules: { 'max-lines': ['error', { max: 666, skipBlankLines: true, skipComments: true }] }
+  },
+  {
+    files: ['src/renderer/src/store/canvasStore.ts'],
+    // #BUG-006 + #BUG-007 both land here and both bind to the module-PRIVATE pendingCheckpoint
+    // machinery. BUG-006: the four untracked layout writers (growBoard*/reposition/setDiagramCache)
+    // must rewrite an armed gesture checkpoint or a later undo silently reverts them. BUG-007:
+    // pendingCheckpoint is scoped per-gesture (a `pendingCheckpoints` stack via rewritePendingBoards)
+    // so an interloping beginChange() can't swallow another gesture's checkpoint. Neither can be
+    // extracted to a sibling without exposing that private state. Pinned at the post-fix count;
+    // ratchet DOWNWARD when the store is next split. See docs/contributing/file-size-doctrine.md.
+    rules: { 'max-lines': ['error', { max: 720, skipBlankLines: true, skipComments: true }] }
   },
 
   // Disable all formatting rules that would conflict with Prettier. MUST be last.

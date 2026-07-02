@@ -6,6 +6,7 @@
 import { useEffect } from 'react'
 import { useCanvasStore, type CanvasState } from './canvasStore'
 import { useSaveStatusStore } from './saveStatusStore'
+import { flushAllTerminalSnapshots } from './terminalSnapshotRegistry'
 
 type ProjectStatus = 'welcome' | 'loading' | 'open' | 'error'
 
@@ -191,15 +192,33 @@ export function useAutosave(): void {
     })
 
     const onBlur = (): void => void saver.flush()
-    const onUnload = (): void => void saver.flush()
+    // S3: on window close AND the main-driven before-quit flush, persist every terminal's scrollback
+    // alongside the canvas. Folded into THESE awaited handlers (not a second `project:flush`
+    // subscriber) on purpose: main resolves the quit on the FIRST reply, so a separate subscriber's
+    // snapshot write could be cut off by `app.exit(0)`. Blur is deliberately canvas-only —
+    // serializing every terminal's full buffer on each focus loss is too heavy, and close/quit/switch
+    // (disposeLiveResources) already cover the durable moments.
+    //
+    // BUG-040: both moments below pass `sync: true` — `flushRenderer`'s before-quit round-trip
+    // no-ops once the window is already destroyed, so a window-close-driven quit relies on THIS
+    // beforeunload write actually landing before MAIN moves on; only a synchronous (blocking) MAIN
+    // write gives that guarantee. Every other caller (disposeLiveResources on project switch) keeps
+    // the default async writer so a large scrollback buffer never stalls MAIN during normal use.
+    const onUnload = (): void => {
+      void saver.flush()
+      void flushAllTerminalSnapshots({ sync: true })
+    }
     window.addEventListener('blur', onBlur)
     window.addEventListener('beforeunload', onUnload)
 
     // BUG-M2: main hard-exits with app.exit(0) on quit, which bypasses `beforeunload`,
     // so the flush above would never run and the last ~1s of edits is lost. Main posts
-    // `project:flush` right before exit and awaits our reply — flush (awaiting the save)
-    // so the on-disk canvas.json is current before the process dies.
-    const offFlush = window.api.project.onFlush(() => saver.flush())
+    // `project:flush` right before exit and awaits our reply — flush (awaiting the save +
+    // the terminal snapshots) so the on-disk canvas.json + sidecars are current before the
+    // process dies.
+    const offFlush = window.api.project.onFlush(() =>
+      Promise.all([saver.flush(), flushAllTerminalSnapshots({ sync: true })]).then(() => undefined)
+    )
 
     // PERSIST-B: publish this instance so a project switch can cancel its pending timer.
     setActiveAutosaver(saver)

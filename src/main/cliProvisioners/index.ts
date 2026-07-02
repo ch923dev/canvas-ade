@@ -82,14 +82,24 @@ const RUNNERS = new Set([
 /** A leading `KEY=value` env assignment (`env FOO=bar claude`, or the bare `FOO=bar claude`). */
 const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
 
+/** Quote-aware token matcher: a `"..."`/`'...'` run, or a run of non-whitespace. */
+const TOKEN_RE = /"[^"]*"|'[^']*'|\S+/g
+
 /**
  * Which CLI a launch command starts, or `null` (plain shell / unknown). Skips leading flags and
  * package runners, then matches the first real command token's basename against a known CLI id —
- * so `claude --resume`, `npx --yes gemini`, and `C:\bin\codex.exe` all resolve.
+ * so `claude --resume`, `npx --yes gemini`, `C:\bin\codex.exe`, and `"C:\Program
+ * Files\claude.exe" --flag` all resolve.
  */
 export function cliIdForLaunchCommand(cmd: string | undefined): CliId | null {
   if (!cmd) return null
-  for (const tok of cmd.trim().split(/\s+/)) {
+  for (const raw of cmd.trim().match(TOKEN_RE) ?? []) {
+    // Strip a single layer of surrounding quotes (`"C:\...\claude.exe"` -> `C:\...\claude.exe`).
+    const tok =
+      raw.length >= 2 &&
+      ((raw[0] === '"' && raw.endsWith('"')) || (raw[0] === "'" && raw.endsWith("'")))
+        ? raw.slice(1, -1)
+        : raw
     if (tok === '' || tok.startsWith('-')) continue
     // Skip leading `KEY=value` env assignments so `env FOO=bar claude` (and bare `FOO=bar claude`)
     // still resolve to the CLI rather than dead-ending on the assignment token.

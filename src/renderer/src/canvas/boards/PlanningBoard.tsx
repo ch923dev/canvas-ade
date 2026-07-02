@@ -72,6 +72,7 @@ import { usePlanningKeyboard } from './planning/usePlanningKeyboard'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
 import { usePlanningFileRefIO } from './planning/usePlanningFileRefIO'
+import { useLiveElements } from './planning/useLiveElements'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -143,6 +144,8 @@ export function PlanningBoard({
   // is defined before usePlanningPointer is called in the component body).
   const dragPosRef = useRef<{ ids: string[]; dx: number; dy: number; alt: boolean } | null>(null)
   const elements = board.elements
+  // Live-read the CURRENT elements at action-invoke time (BUG-008/BUG-023 class guard).
+  const getElements = useLiveElements(board.id)
 
   // Right-click element context menu (W3): raw screen coords + the entries built at
   // open time (so the ref-reading builder runs in the event handler, not render —
@@ -180,14 +183,12 @@ export function PlanningBoard({
   const commit = useCallback(
     (next: PlanningElement[] | ((current: PlanningElement[]) => PlanningElement[])) => {
       if (typeof next === 'function') {
-        const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
-        const cur = live?.type === 'planning' ? live.elements : []
-        updateBoard(board.id, { elements: next(cur) })
+        updateBoard(board.id, { elements: next(getElements()) })
       } else {
         updateBoard(board.id, { elements: next })
       }
     },
-    [board.id, updateBoard]
+    [board.id, updateBoard, getElements]
   )
 
   /** Map a pointer event to a board-local point using the well's screen origin. */
@@ -266,35 +267,32 @@ export function PlanningBoard({
       // Bail if the element vanished between the toolbar's render and this click (eraser,
       // blur-prune, concurrent delete) so beginChange() never pushes an empty checkpoint
       // for a patch that would no-op (#BUG M3 phantom-undo class).
-      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
-      const els = live?.type === 'planning' ? live.elements : []
+      const els = getElements()
       if (!els.some((e) => e.id === id)) return
       beginChange()
       commit((cur) => patchElement<TextElement>(cur, id, (t) => ({ ...t, ...partial })))
     },
-    [beginChange, commit, board.id]
+    [beginChange, commit, getElements]
   )
   // D3-A hover-swatch tint: exactly one undo step, live-read transform. Bail BEFORE
   // beginChange when the note vanished / is locked / already has the tint, so a no-op
   // click never arms a checkpoint (#BUG M3 phantom-undo class — onTextPatch pattern).
   const setTint = useCallback(
     (id: string, tint: NoteTint) => {
-      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
-      const els = live?.type === 'planning' ? live.elements : []
+      const els = getElements()
       const el = els.find((e) => e.id === id)
       if (!el || el.kind !== 'note' || isLocked(el) || el.tint === tint) return
       beginChange()
       commit((cur) => setNoteTint(cur, [id], tint))
     },
-    [beginChange, commit, board.id]
+    [beginChange, commit, getElements]
   )
   const deleteEl = useCallback(
     (id: string) => {
       // Live-read the lock guard + commit so the callback identity stays STABLE across
       // edits (so React.memo'd cards holding onDelete don't all re-render on a keystroke)
       // and a delete can't clobber a concurrent edit landing in the same window (BUG-023).
-      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
-      const els = live?.type === 'planning' ? live.elements : []
+      const els = getElements()
       const el = els.find((x) => x.id === id)
       // Bail when the element is locked OR already gone from live state (a concurrent
       // erase/menu delete racing a blur-prune): removeElement always returns a fresh
@@ -304,7 +302,7 @@ export function PlanningBoard({
       beginChange()
       commit((cur) => removeElement(cur, id))
     },
-    [beginChange, commit, board.id]
+    [beginChange, commit, getElements]
   )
 
   // Diagram (v11/S4): a tracked source edit sets the canonical source AND clears the derived
@@ -432,6 +430,7 @@ export function PlanningBoard({
   const measuredThunk = useCallback(() => measuredRef.current, [])
   const { buildMenuEntries, element: elementInspector } = usePlanningElementInspector({
     elements,
+    getElements,
     selectedIds,
     interactive,
     boardId: board.id,

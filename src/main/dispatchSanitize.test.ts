@@ -55,6 +55,23 @@ describe('sanitizeDispatchText (🔒 one dispatch = one command line, HIGH)', ()
     expect(sanitizeDispatchText(input)).toBe(input)
   })
 
+  it('strips Unicode bidi override/isolate + zero-width chars (BUG-001, Trojan Source class)', () => {
+    // U+200B-U+200F (zero-width/LRM/RLM), U+202A-U+202E (LRE/RLE/PDF/LRO/RLO), U+2066-U+2069
+    // (isolates) — without stripping these, the confirm-dialog rendering can visually diverge
+    // from the logical/PTY-executed byte sequence.
+    let withBidi = 'start'
+    for (let cp = 0x200b; cp <= 0x200f; cp++) withBidi += String.fromCodePoint(cp)
+    for (let cp = 0x202a; cp <= 0x202e; cp++) withBidi += String.fromCodePoint(cp)
+    for (let cp = 0x2066; cp <= 0x2069; cp++) withBidi += String.fromCodePoint(cp)
+    withBidi += 'end'
+    expect(sanitizeDispatchText(withBidi)).toBe('startend')
+  })
+
+  it('strips RLO specifically (BUG-001 spot-check — the classic Trojan Source char)', () => {
+    const rlo = String.fromCodePoint(0x202e) // RIGHT-TO-LEFT OVERRIDE
+    expect(sanitizeDispatchText('rm ' + rlo + 'cte.txt')).toBe('rm cte.txt')
+  })
+
   it('throws DispatchPayloadError (an Error subclass) so callers can audit + rethrow', () => {
     let caught: unknown
     try {

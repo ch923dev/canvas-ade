@@ -13,7 +13,12 @@ import { createDispatchGuard } from './dispatchGuard'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
+import { createKanbanMethods } from './mcpKanbanGate'
+import { createVisualizeMethod } from './mcpVisualizeGate'
 import { buildAppModel, type AppModel } from './appModel'
+import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
+import { createBoardCardsMethod } from './mcpBoardCards'
+import { createTidyMethod } from './mcpTidy'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -49,6 +54,12 @@ export type {
 type BoardSummaryWithFiles = BoardSummary & {
   path?: string
   fileRefs?: Array<{ path: string; label: string }>
+  /** P1 canvas awareness: world-space board geometry (top-left x/y + size w/h), forwarded verbatim
+   *  onto `canvas://boards` (same JSON.stringify ride-through as path/fileRefs). Absent pre-P1. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
 }
 
 /**
@@ -62,6 +73,16 @@ type BoardSummaryWithFiles = BoardSummary & {
 const WRITE_RESULT_MAX_SUMMARY = 100_000
 const WRITE_RESULT_MAX_REFS = 256
 const WRITE_RESULT_MAX_REF_LEN = 256
+
+/**
+ * 🔒 BUG-017: `configureBoard`'s `launchCommand` is the same exec-vector free-text field
+ * `spawnGroup` sanitizes (mcpLifecycle.ts), and that sibling path clamps it to 400 chars
+ * AFTER sanitizing — but this path only sanitized, with no length bound. An unbounded
+ * launchCommand would be shown verbatim in the human-confirm modal body (unusable dialog)
+ * and, once approved, persisted verbatim to canvas.json (unbounded on-disk growth). Mirror
+ * spawnGroup's cap so the two write paths for the same field enforce the same invariant.
+ */
+const CONFIGURE_LAUNCH_MAX_LEN = 400
 
 /**
  * 🔒 BUG-009-style belt-and-suspenders cap on the read-only gitDiff output (PR-2). This is a
@@ -103,7 +124,13 @@ export function buildOrchestrator(
   opts: OrchestratorOpts = {}
 ): LifecycleOrchestrator {
   const now = opts.now ?? Date.now
-  const cap = opts.cap ?? MCP_SPAWN_CAP
+  // The spawn cap may be a fixed number OR a getter (the live Settings-backed config). Normalize to
+  // a getter so the lifecycle's cap check + describeApp's reported rule always read the CURRENT
+  // value — a user raising/lowering the cap takes effect without rebuilding the orchestrator.
+  // Capture into a const first so the typeof-narrowing survives into the constant-getter closure.
+  const capOpt = opts.cap
+  const getCap: () => number =
+    typeof capOpt === 'function' ? capOpt : (): number => capOpt ?? MCP_SPAWN_CAP
   const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
   // BUG-007: output-silence dormancy threshold for the idle-reaper (see MCP_IDLE_ACTIVITY_MS).
@@ -168,6 +195,8 @@ export function buildOrchestrator(
     }
   }
 
+  type HandoffExit = 'idle' | 'closed' | 'timed_out'
+
   /**
    * Await the dispatched board leaving `running`, event-driven off the status stream (M5 — replaces
    * the old busy-poll). Resolves 'idle' when it settles, 'closed' when it leaves the canvas, or
@@ -177,42 +206,45 @@ export function buildOrchestrator(
    * BUG-002: ALSO settles 'idle' when a worker records its own result (write_result) for this board,
    * since a live agent shell never flips its derived status off 'running' — the recorded result is
    * the real task-done signal, so the handoff resolves instead of always riding the backstop.
+   * BUG-018: `sinceMs` (dispatch start) folds a LEVEL-triggered "already recorded" check into
+   * `check()` itself, so a write_result that landed/fired before the EDGE-triggered
+   * `onResultSettled` listener attached still settles — immediately here, or on the short poll
+   * below — instead of riding the full backstop. Gated on `sinceMs` so a STALE result left over
+   * from an earlier task can't falsely fast-path this dispatch.
    */
-  const awaitHandoffSettled = (boardId: string): Promise<'idle' | 'closed' | 'timed_out'> => {
-    const check = (): 'idle' | 'closed' | null => {
+  const awaitHandoffSettled = (boardId: string, sinceMs: number): Promise<HandoffExit> => {
+    const check = (): HandoffExit | null => {
       const live = registry.listBoards().find((b) => b.id === boardId)
       if (!live) return 'closed'
-      return deriveStatus(live, sessionLookup()) !== 'running' ? 'idle' : null
+      if (deriveStatus(live, sessionLookup()) !== 'running') return 'idle'
+      const r = registry.readResult(boardId)
+      return r.present && typeof r.at === 'string' && Date.parse(r.at) >= sinceMs ? 'idle' : null
     }
     const immediate = check()
     if (immediate) return Promise.resolve(immediate)
-    return new Promise<'idle' | 'closed' | 'timed_out'>((resolve) => {
+    return new Promise<HandoffExit>((resolve) => {
       let settled = false
-      let unsub = (): void => {}
-      let unsubResult = (): void => {}
-      let cancelBackstop = (): void => {}
-      const finish = (exit: 'idle' | 'closed' | 'timed_out'): void => {
+      const cleanups: Array<() => void> = []
+      const finish = (exit: HandoffExit): void => {
         if (settled) return
         settled = true
-        unsub()
-        unsubResult()
-        cancelBackstop()
+        cleanups.forEach((fn) => fn())
         resolve(exit)
       }
-      unsub = registry.subscribeStatus((change) => {
-        if (change.id !== boardId) return
+      const settleIfDone = (): void => {
         const c = check()
         if (c) finish(c)
-      })
+      }
+      cleanups.push(registry.subscribeStatus((change) => change.id === boardId && settleIfDone()))
       // BUG-002: a worker writing its OWN result (write_result) is the task-done marker even
       // while its shell stays derived-'running' (a live agent shell never flips off 'running').
-      // A result LANDING for this board during the wait settles the handoff as 'idle' — UNLESS
-      // the board has meanwhile left the canvas, in which case `check()` reports 'closed'.
-      // Fired by writeResult AFTER registry.recordResult lands (a fresh task-done signal, not a
-      // pre-existing fixture result — so it can't settle a handoff that never saw a new write).
-      unsubResult = onResultSettled(boardId, () => finish(check() ?? 'idle'))
+      cleanups.push(onResultSettled(boardId, () => finish(check() ?? 'idle')))
+      // BUG-018: short fallback poll — a lost write_result notification settles here instead of
+      // riding the full multi-minute backstop.
+      const poll = setInterval(settleIfDone, 2000)
+      cleanups.push(() => clearInterval(poll))
       // One-shot backstop (NOT a poll): a single deadline timer, cancelled on settle.
-      cancelBackstop = startBackstop(handoffTimeoutMs, () => finish('timed_out'))
+      cleanups.push(startBackstop(handoffTimeoutMs, () => finish('timed_out')))
     })
   }
 
@@ -223,6 +255,16 @@ export function buildOrchestrator(
   const writeAudit = (
     input: Omit<AuditInput, 'status'> & { status: DispatchStatus }
   ): Promise<void> => registry.audit(input)
+
+  // 🔒 P3 Kanban card writes (add/move/update/remove) — the resolve→kanban-check→confirm→patchKanban
+  // →audit gate + the four methods live in ./mcpKanbanGate (keeps this file under the max-lines gate);
+  // spread into the returned object below. No PTY / nonce — a card is passive content (ADR 0003).
+  const kanbanMethods = createKanbanMethods({
+    listBoards: () => registry.listBoards(),
+    confirm: (req) => registry.confirm(req),
+    sendCommand: (cmd) => registry.sendCommand(cmd),
+    audit: writeAudit
+  })
 
   /**
    * 🔒 The single, unskippable write gate shared by ALL four PTY-dispatch tools
@@ -390,7 +432,13 @@ export function buildOrchestrator(
       // out verbatim on the `canvas://boards` resource (JSON.stringify of this projection), giving
       // an agent the path of an open File board + the files pinned to a plan — never file content.
       ...(b.path !== undefined ? { path: b.path } : {}),
-      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {})
+      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {}),
+      // P1 canvas awareness: forward world-space geometry when present (mirror-validated finite),
+      // so an agent can reason spatially over `canvas://boards`. Absent ⇒ omitted (pre-P1 renderer).
+      ...(b.x !== undefined ? { x: b.x } : {}),
+      ...(b.y !== undefined ? { y: b.y } : {}),
+      ...(b.w !== undefined ? { w: b.w } : {}),
+      ...(b.h !== undefined ? { h: b.h } : {})
     }))
   }
 
@@ -400,12 +448,22 @@ export function buildOrchestrator(
   const lifecycle = createMcpLifecycle({
     registry,
     now,
-    cap,
+    cap: getCap,
     idleTtlMs,
     spawnGraceMs,
     idleActivityMs,
-    listBoards: listBoardSummaries
+    listBoards: listBoardSummaries,
+    onBoardClosed: opts.onBoardClosed
   })
+
+  // PR-5/P1b: the Named-Group mirror projected to the shape BOTH self-models consume (describeApp's
+  // `canvas.groups` + describeLayout's digest input). Defined once so the projection isn't duplicated.
+  const listGroupsProjection = (): Array<{ id: string; name: string; boardIds: string[] }> =>
+    (registry.listGroups?.() ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      boardIds: [...g.boardIds]
+    }))
 
   return {
     listBoards: listBoardSummaries,
@@ -415,6 +473,14 @@ export function buildOrchestrator(
       if (!board) throw new Error(`board not found: ${boardId}`)
       return deriveStatus(board, sessionLookup())
     },
+    // 🔒 P3b canvas://board/{id}/cards — the READ half of the card loop (one kanban board's lanes+cards,
+    // grouped from the live mirror). Built in ./mcpBoardCards + spread here to keep this file under the
+    // max-lines gate. Read-only (no PTY / nonce / confirm) — card TEXT the human already sees on-canvas.
+    ...createBoardCardsMethod(registry.listBoards),
+    // 🔒 P2 tidy_canvas — reposition the whole canvas via the renderer's deterministic packer. Built
+    // in ./mcpTidy + spread here to keep this file under the max-lines gate. UN-GATED + content-less
+    // (reposition-only, one host-undo reversible — the spawn_group precedent): no cap/mint/confirm/audit.
+    ...createTidyMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.
@@ -469,7 +535,7 @@ export function buildOrchestrator(
         // multi-command payload is never shown to the human to rubber-stamp.
         let safeLaunch: string
         try {
-          safeLaunch = sanitizeDispatchText(config.launchCommand)
+          safeLaunch = sanitizeDispatchText(config.launchCommand).slice(0, CONFIGURE_LAUNCH_MAX_LEN)
         } catch (err) {
           if (err instanceof DispatchPayloadError) {
             await writeAudit({
@@ -659,11 +725,23 @@ export function buildOrchestrator(
       // (6) Record the landed write — the FULL content in `prompt` for the forensic trail.
       await auditPlanning('applied', { prompt: body, detail: `${ops.length} elements` })
     },
+    // 🔒 P3 Kanban card writes (add/move/update/remove) — built in ./mcpKanbanGate (see kanbanMethods).
+    ...kanbanMethods,
+    // 🔒 P5 plan-visualize (visualize_plan) — the upgraded content-write gate (chooser + create),
+    // built in ./mcpVisualizeGate (keeps this file under the max-lines gate). NO PTY / nonce (a board
+    // is passive content, ADR 0003). Inlined into the spread to stay under the gate.
+    ...createVisualizeMethod({
+      confirm: (req) => registry.confirm(req),
+      sendCommand: (cmd) => registry.sendCommand(cmd),
+      audit: writeAudit
+    }),
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
       // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +
       // prove it is a terminal HERE; the shared write gate then runs the unskippable
       // sanitize→nonce→confirm→consume→write→audit pipeline (every non-write branch still
       // audits). See CLAUDE.md › Process model & security.
+
+      const dispatchStartedAt = now() // BUG-018: gates awaitHandoffSettled's fresh-result fallback.
 
       // (1) Resolve the target by its OPAQUE server id (never a label — a title is not an
       // id, so label-targeting can't match here). Not found → audit + throw, no nonce.
@@ -705,10 +783,8 @@ export function buildOrchestrator(
         confirmBody: (s) => `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${s}`
       })
 
-      // (4) Await idle — event-driven off the status stream (M5). No busy-poll: park on the
-      // first status change for this board (re-resolving the live derived status on wake),
-      // bounded by a one-shot backstop deadline.
-      const exit = await awaitHandoffSettled(boardId)
+      // (4) Await idle — event-driven off the status stream (M5), bounded by a one-shot backstop.
+      const exit = await awaitHandoffSettled(boardId, dispatchStartedAt)
       const result = registry.readResult(boardId)
 
       // (5) Record the dispatch outcome (target + full prompt + nonce + seq + outputs). The
@@ -994,13 +1070,13 @@ export function buildOrchestrator(
       // that doesn't wire listGroups reads [].)
       const summaries = await listBoardSummaries()
       return buildAppModel({
-        boards: summaries.map((b) => ({
-          id: b.id,
-          type: b.type,
-          title: b.title,
-          status: b.status ?? 'static',
-          ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
-          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
+        // Drop the file-context fields (path/fileRefs) the app-model doesn't carry + default status;
+        // everything else — agentKind/monitorActivity + P1 geometry (x/y/w/h) — rides through via
+        // `...rest`, so an orchestrator reasoning over `canvas://app-model` sees the same spatial data
+        // as `canvas://boards`. (`_`-prefixed drops are ignored by noUnusedLocals; keeps this <700.)
+        boards: summaries.map(({ path: _path, fileRefs: _fileRefs, status, ...rest }) => ({
+          ...rest,
+          status: status ?? 'static'
         })),
         connectors: registry.listConnectors().map((c) => ({
           id: c.id,
@@ -1008,18 +1084,26 @@ export function buildOrchestrator(
           targetId: c.targetId,
           kind: c.kind
         })),
-        groups: (registry.listGroups?.() ?? []).map((g) => ({
-          id: g.id,
-          name: g.name,
-          boardIds: [...g.boardIds]
-        })),
+        groups: listGroupsProjection(),
         rules: {
-          spawnCap: cap,
+          spawnCap: getCap(),
           everyWriteGated: true,
           idleTtlMs,
           idleActivityMs
         }
       })
+    },
+    async describeLayout(): Promise<LayoutDigest> {
+      // P1b: assemble the read-only SPATIAL digest served as `canvas://layout`. Read-only — projects
+      // the live board geometry (P1 canvas awareness) + the Named-Group mirror through
+      // buildLayoutDigest, which derives bbox / overlaps / row·column·grid·scattered arrangement.
+      // Same injected-mirror discipline as describeApp; a registry that doesn't wire listGroups reads
+      // [] (an ungrouped digest). Boards without geometry are dropped by the digest, not here.
+      const summaries = await listBoardSummaries()
+      return buildLayoutDigest(
+        summaries.map((b) => ({ id: b.id, type: b.type, x: b.x, y: b.y, w: b.w, h: b.h })),
+        listGroupsProjection()
+      )
     }
   }
 }
