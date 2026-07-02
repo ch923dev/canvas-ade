@@ -83,6 +83,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     const encryptionAvailable = deps.encryptionAvailable()
     const s = deps.session.read()
     if (!s) return { isLoggedIn: false, encryptionAvailable }
+    // A session file can outlive its tokens (cleared/undecryptable token store, keyring change) —
+    // never report isLoggedIn:true without confirming the token store still holds usable tokens.
+    if (!deps.tokenStore.hasTokens()) return { isLoggedIn: false, encryptionAvailable }
     // INTENTIONAL: `s.expiresAt` (the ACCESS-token exp, ~1h) is NOT enforced here. Phase 1 has no
     // refresh-token renewal, so signing the user out when it passes would force a re-auth every hour.
     // Sign-in stays durable until an explicit signOut (local-first; plan is always 'free', so there is
