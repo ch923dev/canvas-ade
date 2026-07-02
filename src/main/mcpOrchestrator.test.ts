@@ -613,6 +613,27 @@ describe('buildOrchestrator', () => {
       })
     })
 
+    // 🔒 BUG-017: an unbounded launchCommand must be clamped BEFORE it reaches the human-confirm
+    // modal (mirrors spawnGroup's 400-char clamp on the same field in mcpLifecycle.ts).
+    it('🔒 BUG-017: clamps an over-length launchCommand to 400 chars before confirm/apply/audit', async () => {
+      const { registry, seen, audits, confirms } = configReg({})
+      const orch = buildOrchestrator(registry)
+      const huge = 'echo ' + 'a'.repeat(1000)
+      const clamped = huge.slice(0, 400)
+      await orch.configureBoard('board-5', { launchCommand: huge })
+      expect(confirms[0]?.body).toContain(clamped)
+      expect(confirms[0]?.body).not.toContain(huge)
+      expect(seen).toEqual([
+        { type: 'configureBoard', id: 'board-5', patch: { launchCommand: clamped } }
+      ])
+      expect(audits[0]).toMatchObject({
+        type: 'configure_board',
+        targetId: 'board-5',
+        prompt: clamped,
+        status: 'configured'
+      })
+    })
+
     it('a shell/cwd-only patch (no launchCommand) passes WITHOUT a confirm and leaves a configured audit entry', async () => {
       const { registry, seen, audits, confirms } = configReg({})
       const orch = buildOrchestrator(registry)
