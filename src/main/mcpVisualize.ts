@@ -29,6 +29,12 @@ export const MAX_PLAN_ITEM_TAG = 40
 export const MAX_PLAN_ITEM_ASSIGNEE = 40
 export const MAX_PLAN_ITEM_NOTE = 2000
 export const MAX_PLAN_TITLE = 200
+/**
+ * Max total byte size (UTF-8) of the cleaned items, mirroring MAX_PLANNING_BYTES in
+ * mcpPlanning.ts — kept small enough that the FULL content stays human-reviewable in the
+ * confirm modal. Bounds canvas.json / undo-snapshot growth per call.
+ */
+export const MAX_PLAN_BYTES = 16 * 1024
 
 /** The layout shapes `visualize_plan` may render into. The chooser's option set; MAIN re-validates
  *  the human's pick against this so a forged `choice` can never produce an off-shape board. */
@@ -122,6 +128,10 @@ export function buildPlanItems(rawItems: unknown, rawTitle: unknown): CleanPlan 
   })
   const clean: CleanPlan = { items }
   if (rawTitle !== undefined) clean.title = sanitizeLabel(rawTitle, MAX_PLAN_TITLE, 'title')
+  const bytes = Buffer.byteLength(JSON.stringify(clean), 'utf8')
+  if (bytes > MAX_PLAN_BYTES) {
+    throw new VisualizeContentError(`content too large (${bytes} > ${MAX_PLAN_BYTES} bytes)`)
+  }
   return clean
 }
 
