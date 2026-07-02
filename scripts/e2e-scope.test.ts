@@ -104,6 +104,20 @@ describe('scopeForPaths', () => {
     ).toBe('@core|@terminal')
   })
 
+  it('tags Orchestration*/consent-flow modals with @mcp, not just @chrome (BUG-010)', () => {
+    // The bare 'modal' keyword in `chrome` still matches these (they end in "Modal"), but the
+    // scope MUST also include @mcp so the @mcp-tagged consent/sync e2e specs run.
+    expect(scopeForPaths(['src/renderer/src/canvas/OrchestrationConsentModal.tsx'])).toBe(
+      '@core|@chrome|@mcp'
+    )
+    expect(scopeForPaths(['src/renderer/src/canvas/OrchestrationSyncModal.tsx'])).toBe(
+      '@core|@chrome|@mcp'
+    )
+    expect(scopeForPaths(['src/renderer/src/canvas/OrchestrationModals.tsx'])).toBe(
+      '@core|@chrome|@mcp'
+    )
+  })
+
   it('normalises backslash paths', () => {
     expect(scopeForPaths(['src\\renderer\\src\\canvas\\boards\\TerminalBoard.tsx'])).toBe(
       '@core|@terminal'
