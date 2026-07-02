@@ -33,8 +33,13 @@ jobs:
       - run: pnpm build
 
   # Full per-OS / per-arch packaging matrix → published to the Release.
+  # Only a genuine 'Release published' event may publish (--publish always). A
+  # workflow_dispatch run still exercises `check` (validate/typecheck/test/build)
+  # but MUST NOT reach the signed-publish pipeline from an arbitrary ref — that
+  # would bypass the Release checkpoint (see docs/contributing/releasing.md).
   publish:
     needs: check
+    if: github.event_name == 'release'
     strategy:
       fail-fast: false
       matrix:
