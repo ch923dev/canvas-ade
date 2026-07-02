@@ -37,17 +37,25 @@ describe('performGuardedQuit (before-quit-flush-no-catch)', () => {
     expect(onFlushError.mock.calls[0][0]).toBeInstanceOf(Error)
   })
 
-  it('still exits even if shutdown itself rejects', async () => {
+  it('still exits even if shutdown itself rejects, and does not leave the returned promise rejected (quit-reject-catch)', async () => {
     const exit = vi.fn()
+    const onShutdownError = vi.fn()
+
+    // No .catch() at the call site — the whole point of the fix is that the returned promise
+    // must resolve on its own, since index.ts invokes this fire-and-forget (`void performGuardedQuit(...)`)
+    // from a synchronous before-quit handler and can't await/catch it.
     await performGuardedQuit({
       flush: async () => {},
       shutdown: async () => {
         throw new Error('drain failed')
       },
-      exit
-    }).catch(() => {})
+      exit,
+      onShutdownError
+    })
 
     expect(exit).toHaveBeenCalledWith(0)
+    expect(onShutdownError).toHaveBeenCalledTimes(1)
+    expect(onShutdownError.mock.calls[0][0]).toBeInstanceOf(Error)
   })
 })
 

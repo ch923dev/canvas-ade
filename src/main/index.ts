@@ -990,12 +990,15 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   // performGuardedQuit catches a flush rejection so shutdown() (the PTY-tree drain) always
   // runs — a wedged renderer must never orphan a deep agent child tree (before-quit-flush-no-catch).
+  // It also catches a shutdown() rejection (quit-reject-catch) so the fire-and-forget `void` call
+  // here can never surface as an unhandled rejection.
   void performGuardedQuit({
     flush: flushRenderer,
     shutdown,
     exit: (code) => app.exit(code),
     onFlushError: (err) =>
-      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err)
+      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err),
+    onShutdownError: (err) => console.error('[before-quit] shutdown failed; exiting anyway', err)
   })
 })
 
