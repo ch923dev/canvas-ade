@@ -205,6 +205,19 @@ describe('buildMemoryIndex — one line per board, ✓ when summarized', () => {
     // The title content should still appear (collapsed to a single line)
     expect(md).toContain('My Board')
   })
+
+  // BUG-028: a board `type` with embedded newlines is equally untrusted and must not break the
+  // Markdown list-item structure (the title-side fix landed in BUG-017; `type` was missed).
+  it('BUG-028: strips newlines from board type in the memory index', () => {
+    const doc = {
+      boards: [{ id: 'x1', type: 'terminal\n\n## Injected', title: 'My Board' }]
+    }
+    const md = buildMemoryIndex(doc, () => false)
+    // The list item must be a single line — no injected ## heading
+    expect(md).not.toMatch(/^## Injected/m)
+    // The type content should still appear (collapsed to a single line)
+    expect(md).toContain('terminal ## Injected')
+  })
 })
 
 describe('sanitizeTitle — BUG-017 collapse newlines in board titles', () => {
