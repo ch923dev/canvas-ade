@@ -44,10 +44,20 @@ type DigestDoc = Omit<CanvasDoc, 'viewport'>
 function buildHeader(boards: Board[]): string {
   const n = boards.length
   const by = (t: BoardType): number => boards.filter((b) => b.type === t).length
-  const cmd = by('command')
+  const extras: [BoardType, string][] = [
+    ['command', 'command'],
+    ['file', 'file'],
+    ['dataflow', 'dataflow'],
+    ['kanban', 'kanban']
+  ]
+  const extraText = extras
+    .map(([t, label]) => [by(t), label] as const)
+    .filter(([count]) => count > 0)
+    .map(([count, label]) => `, ${count} ${label}`)
+    .join('')
   return (
     `${n} board${n === 1 ? '' : 's'} — ${by('terminal')} terminal, ${by('browser')} browser, ${by('planning')} planning` +
-    (cmd ? `, ${cmd} command` : '')
+    extraText
   )
 }
 

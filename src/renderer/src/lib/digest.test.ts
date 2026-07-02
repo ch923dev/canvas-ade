@@ -11,7 +11,11 @@ import type {
   TextElement,
   ArrowElement,
   StrokeElement,
-  ImageElement
+  ImageElement,
+  CommandBoard,
+  FileBoard,
+  DataFlowBoard,
+  KanbanBoard
 } from './boardSchema'
 
 // ── test builders (minimal valid boards) ─────────────────────────────────────
@@ -39,6 +43,28 @@ function planning(
 function doc(boards: CanvasDoc['boards']): CanvasDoc {
   return { schemaVersion: 2, viewport: null, boards, connectors: [] }
 }
+function command(p: { id: string }): CommandBoard {
+  return { type: 'command', x: 0, y: 0, w: 420, h: 340, title: 'Command', ...p }
+}
+function file(p: { id: string }): FileBoard {
+  return { type: 'file', x: 0, y: 0, w: 420, h: 340, title: 'File', ...p }
+}
+function dataflow(p: { id: string }): DataFlowBoard {
+  return { type: 'dataflow', x: 0, y: 0, w: 420, h: 340, title: 'Data Flow', ...p }
+}
+function kanban(p: { id: string }): KanbanBoard {
+  return {
+    type: 'kanban',
+    x: 0,
+    y: 0,
+    w: 420,
+    h: 340,
+    title: 'Kanban',
+    columns: [],
+    cards: [],
+    ...p
+  }
+}
 
 describe('buildDigest — header', () => {
   it('summarizes an empty canvas', () => {
@@ -60,6 +86,21 @@ describe('buildDigest — header', () => {
   it('uses singular "board" for a single board', () => {
     expect(buildDigest(doc([terminal({ id: 't1' })])).header).toBe(
       '1 board — 1 terminal, 0 browser, 0 planning'
+    )
+  })
+
+  it('breaks out file/dataflow/kanban board types alongside command (BUG-052)', () => {
+    const d = buildDigest(
+      doc([
+        terminal({ id: 't1' }),
+        command({ id: 'c1' }),
+        file({ id: 'f1' }),
+        dataflow({ id: 'df1' }),
+        kanban({ id: 'k1' })
+      ])
+    )
+    expect(d.header).toBe(
+      '5 boards — 1 terminal, 0 browser, 0 planning, 1 command, 1 file, 1 dataflow, 1 kanban'
     )
   })
 })
