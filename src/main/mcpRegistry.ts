@@ -81,6 +81,14 @@ export interface OrchestratorOpts {
   sleep?: (ms: number) => Promise<void>
   /** Backstop deadline for the handoff await-idle (M5: the await is event-driven via subscribeStatus). */
   handoffTimeoutMs?: number
+  /**
+   * BUG-019: fired with a board's id once the lifecycle's `closeBoard` has torn it down (via the
+   * `close_board` tool OR an idle-reap sweep), so the host can revoke that board's `connected`-tier
+   * MCP token in the SAME step. Without this hook a token minted for a board stays valid in the
+   * `TokenStore` after the board is gone — live until that id happens to be re-spawned (rotates) or
+   * a full consent-revoke fires — a real bearer-token leak for a dead board. Optional; tests omit it.
+   */
+  onBoardClosed?: (boardId: string) => void
 }
 
 /**
