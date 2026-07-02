@@ -115,41 +115,59 @@ body:has(.fullview-scrim) .ca-inspector-wrap {
   margin-left: auto;
 }
 
-/* P5-8: the retrieve tab — a left-edge vertical tab shown while the Inspector is hidden but a
-   board is selected (the popover WOULD reveal). Mirror of the Context/Library right-edge tabs
-   (library.css .lib-reopen), flipped to the left edge. Opts back into pointer events (the wrap
-   is pointer-events:none); inherits the wrap's z (45, raised to 250 in full view by the D7 rule). */
-.ca-inspector-reopen {
+/* P5-8 (v2): the retrieve HANDLE — the popover's remnant at its own docked spot (left:12,
+   centred), shown while the Inspector is hidden but a board is selected. Deliberately NOT a
+   left-edge tab: the file tree owns a 36px proximity band at the window's left edge (SidePanel
+   REVEAL_EDGE), so an edge tab both flashed the tree open and got shifted by its reveal while
+   being aimed at. The handle is approached from the canvas side and never moves. Opts back into
+   pointer events (the wrap is pointer-events:none); inherits the wrap's z (45, raised to 250 in
+   full view by the D7 rule). */
+.ca-inspector-handle {
   position: absolute;
   top: 50%;
-  left: 0;
+  left: 12px;
   transform: translateY(-50%);
-  writing-mode: vertical-rl;
-  padding: var(--space-12) var(--space-4);
-  background: var(--surface-raised);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 32px;
+  max-width: 200px;
+  padding: 0 var(--space-8);
+  background: var(--surface-overlay);
   border: 1px solid var(--border);
-  border-left: none;
-  border-radius: 0 var(--r-inner) var(--r-inner) 0;
+  border-radius: var(--r-board);
+  box-shadow: var(--shadow-pop);
   color: var(--text-2);
   font-family: var(--ui);
   font-size: var(--fs-label);
   cursor: pointer;
   pointer-events: auto;
+  transition:
+    color 0.14s ease-out,
+    border-color 0.14s ease-out,
+    left 0.16s ease-out;
 }
-.ca-inspector-reopen:hover {
+.ca-inspector-handle:hover {
   color: var(--text);
 }
-.ca-inspector-reopen:focus-visible {
+.ca-inspector-handle:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1.5px var(--accent);
+  box-shadow:
+    var(--shadow-pop),
+    0 0 0 1.5px var(--accent);
 }
-/* While the file-tree SidePanel is revealed, attach the tab to ITS lane edge instead (12 + 240),
-   same adaptive `:has()` pattern as the popover's left shift. */
+.ca-inspector-handle-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* While the file-tree SidePanel is revealed, the handle clears its lane exactly like the popover
+   (the same adaptive `:has()` shift) — a deliberately opened tree never overlaps it. */
 .ca-sidepanel-wrap:has(.ca-sidepanel[data-revealed='true'])
   ~ .ca-inspector-wrap
-  .ca-inspector-reopen {
-  left: 252px;
-  border-left: 1px solid var(--border);
+  .ca-inspector-handle {
+  left: 264px;
 }
 .ca-inspector-title {
   margin-top: 6px;

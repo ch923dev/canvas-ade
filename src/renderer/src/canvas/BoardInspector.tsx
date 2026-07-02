@@ -168,18 +168,34 @@ export function BoardInspector(): ReactElement | null {
         )}
       </aside>
 
-      {/* P5-8: the retrieve affordance — a left-edge vertical tab (mirror of the Context/Library
-          right-edge tabs), shown exactly when the popover WOULD reveal but the user hid it. It
-          opts back into pointer events (the wrap is pointer-events:none). */}
-      {hidden && eligible && (
+      {/* P5-8 (v2): the retrieve affordance — a compact HANDLE at the popover's own docked spot,
+          shown exactly when the popover WOULD reveal but the user hid it. NOT a left-edge tab:
+          the file tree owns a 36px left-edge proximity band (SidePanel REVEAL_EDGE), so anything
+          parked at left:0 both flashes the tree open and gets shifted by its reveal — a moving
+          target. The handle sits at the popover's x (approached from the canvas side, never
+          entering the band), never moves while aimed at, and reads as the popover's remnant. */}
+      {hidden && eligible && board && (
         <button
           type="button"
-          className="ca-inspector-reopen"
+          className="ca-inspector-handle"
           data-test="inspector-reopen"
           title="Show Inspector"
+          aria-expanded={false}
           onClick={() => setHiddenPersisted(false)}
         >
-          Inspector
+          <span className="ca-inspector-glyph">
+            <TypeGlyph type={board.type} />
+          </span>
+          <span className="ca-inspector-handle-title">{board.title}</span>
+          <svg width={14} height={14} viewBox="0 0 14 14" fill="none" aria-hidden>
+            <path
+              d="M11.5 2.5v9M3.5 3.5 7 7l-3.5 3.5M2.5 7h6"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
       )}
     </div>

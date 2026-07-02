@@ -704,7 +704,7 @@ test.describe('@chrome Board Inspector — full-view overlay (P5-D7)', () => {
 })
 
 test.describe('@chrome Board Inspector — hide / retrieve (P5-8)', () => {
-  test('hide collapses the popover to a left-edge tab; the tab retrieves it; the pref is sticky', async ({
+  test('hide collapses the popover to its docked handle; the handle retrieves it; the pref is sticky', async ({
     page
   }) => {
     const id = await seed(page, 'terminal')
@@ -712,11 +712,19 @@ test.describe('@chrome Board Inspector — hide / retrieve (P5-8)', () => {
     const inspector = page.locator('[data-test="board-inspector"]')
     await expect(inspector).toHaveAttribute('data-revealed', 'true')
 
-    // Hide → the popover conceals (stays mounted, inert) and the retrieve tab appears.
+    // Hide → the popover conceals (stays mounted, inert) and the docked HANDLE appears at the
+    // popover's own spot (v2 — NOT a left-edge tab: that sat inside the file tree's 36px
+    // proximity band and became a moving target when the tree's reveal shifted it).
     await page.locator('[data-test="inspector-hide"]').click()
     await expect(inspector).toHaveAttribute('data-revealed', 'false')
-    const tab = page.locator('[data-test="inspector-reopen"]')
-    await expect(tab, 'left-edge retrieve tab appears while hidden + selected').toBeVisible()
+    const handle = page.locator('[data-test="inspector-reopen"]')
+    await expect(handle, 'docked retrieve handle appears while hidden + selected').toBeVisible()
+    // It identifies the selected board (the popover's remnant, not anonymous chrome) and sits
+    // CLEAR of the SidePanel's REVEAL_EDGE band (x ≥ 12 keeps its body out at rest; the aim
+    // path from the canvas approaches from the right).
+    await expect(handle).toContainText('Terminal')
+    const hb = await handle.boundingBox()
+    expect(hb && hb.x >= 12, 'handle docks at the popover x, not the window edge').toBe(true)
 
     // The hide is sticky (survives restarts via localStorage) and selection-independent:
     // re-selecting another board keeps it hidden — hidden wins over reveal-on-select.
@@ -728,13 +736,13 @@ test.describe('@chrome Board Inspector — hide / retrieve (P5-8)', () => {
     const id2 = await seed(page, 'terminal')
     await selectForInspector(page, id2)
     await expect(inspector).toHaveAttribute('data-revealed', 'false')
-    await expect(tab).toBeVisible()
+    await expect(handle).toBeVisible()
 
-    // Deselect → the tab hides too (it is a retrieve affordance, not permanent chrome).
+    // Deselect → the handle hides too (it is a retrieve affordance, not permanent chrome).
     await evalIn(page, `window.__canvasE2E.select(null)`)
-    await expect(tab).toHaveCount(0)
+    await expect(handle).toHaveCount(0)
 
-    // Retrieve: re-select + click the tab → revealed again, pref cleared.
+    // Retrieve: re-select + click the handle → revealed again, pref cleared.
     await selectForInspector(page, id2)
     await page.locator('[data-test="inspector-reopen"]').click()
     await expect(inspector).toHaveAttribute('data-revealed', 'true')
