@@ -1,19 +1,21 @@
 /**
  * Unit tests for orchestrationProvision.ts — the Sync modal's data-plane IPC. The connected-tier
  * minter (P0 seam) and the P3 provisioner surface are mocked so the handler logic is tested in
- * isolation: frame guard, no-project gate, CLI-id filtering, and the mint-throws fallback. No MCP
- * server is mounted and no real CLI configs are written.
+ * isolation: frame guard, no-project gate, consent gate, CLI-id filtering, and the mint-throws
+ * fallback. No MCP server is mounted and no real CLI configs are written.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
 
-const { mintTerminalToken, getProvisionStatus, runProvisionerSync } = vi.hoisted(() => ({
-  mintTerminalToken: vi.fn(),
-  getProvisionStatus: vi.fn(),
-  runProvisionerSync: vi.fn()
-}))
+const { mintTerminalToken, isOrchestrationEnabled, getProvisionStatus, runProvisionerSync } =
+  vi.hoisted(() => ({
+    mintTerminalToken: vi.fn(),
+    isOrchestrationEnabled: vi.fn(),
+    getProvisionStatus: vi.fn(),
+    runProvisionerSync: vi.fn()
+  }))
 
-vi.mock('./orchestration/seam', () => ({ mintTerminalToken }))
+vi.mock('./orchestration/seam', () => ({ mintTerminalToken, isOrchestrationEnabled }))
 vi.mock('./cliProvisioners', () => ({
   CLI_IDS: ['claude', 'codex', 'gemini', 'opencode'],
   getProvisionStatus,
@@ -32,6 +34,10 @@ function setup(projectDir: string | null = '/proj/test') {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Orchestration consent is granted by default so the pre-existing behavioral tests below (which
+  // predate the consent gate) keep exercising the mint/sync path; the dedicated "consent" describe
+  // block below flips this to false to assert the gate itself.
+  isOrchestrationEnabled.mockReturnValue(true)
   mintTerminalToken.mockReturnValue(TOKEN)
   getProvisionStatus.mockResolvedValue({
     endpoint: { host: '127.0.0.1', port: 4321, maskedToken: '••••••' },
@@ -129,6 +135,34 @@ describe('orchestration:syncProvisioners', () => {
       { id: 'claude', status: 'error', detail: expect.stringMatching(/not running/i) },
       { id: 'codex', status: 'error', detail: expect.stringMatching(/not running/i) }
     ])
+    expect(runProvisionerSync).not.toHaveBeenCalled()
+  })
+})
+
+// BUG-004: without orchestration consent, neither handler may mint or persist a live bearer
+// token — mirrors the spawn-time gate in `makeOrchestrationSyncProvider`
+// (cliProvisioners/index.ts).
+describe('BUG-004: consent gate (isOrchestrationEnabled)', () => {
+  beforeEach(() => {
+    isOrchestrationEnabled.mockReturnValue(false)
+  })
+
+  it('getProvisionStatus returns null and never mints when consent is not granted', async () => {
+    const cap = setup()
+    expect(await cap.invoke('orchestration:getProvisionStatus')).toBeNull()
+    expect(isOrchestrationEnabled).toHaveBeenCalledWith('/proj/test')
+    expect(mintTerminalToken).not.toHaveBeenCalled()
+    expect(getProvisionStatus).not.toHaveBeenCalled()
+  })
+
+  it('syncProvisioners errors every requested CLI and never mints/writes when consent is not granted', async () => {
+    const cap = setup()
+    const out = await cap.invoke('orchestration:syncProvisioners', ['claude', 'codex'])
+    expect(out).toEqual([
+      { id: 'claude', status: 'error', detail: expect.stringMatching(/not enabled/i) },
+      { id: 'codex', status: 'error', detail: expect.stringMatching(/not enabled/i) }
+    ])
+    expect(mintTerminalToken).not.toHaveBeenCalled()
     expect(runProvisionerSync).not.toHaveBeenCalled()
   })
 })
