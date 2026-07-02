@@ -110,6 +110,17 @@ describe('shared helpers', () => {
     expect(replaced).toContain('[mcp_servers.other]')
   })
 
+  it("upsertCodexTable matches the existing file's CRLF convention (no mixed line endings)", () => {
+    const existing = '[model]\r\nname = "gpt"\r\n'
+    const appended = upsertCodexTable(existing, 52141, 'T')
+    expect(appended).not.toMatch(/[^\r]\n/) // every \n is preceded by \r — no bare LF
+    expect(appended).toContain('[mcp_servers.canvas-ade]\r\n')
+
+    const replaced = upsertCodexTable(appended, 60000, 'T2')
+    expect(replaced).not.toMatch(/[^\r]\n/)
+    expect(replaced.match(/\[mcp_servers\.canvas-ade\]/g)).toHaveLength(1)
+  })
+
   it('removeCodexTable drops our table only, preserving neighbours; no-op when absent', () => {
     const content =
       '[mcp_servers.canvas-ade]\nurl = "u"\nhttp_headers = { Authorization = "b" }\n\n[other]\nk = 1\n'
