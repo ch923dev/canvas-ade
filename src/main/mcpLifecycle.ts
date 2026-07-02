@@ -21,6 +21,14 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  */
 const SPAWN_GROUP_MAX_NAME = 80
 
+/**
+ * BUG-003: `reapIdle`'s status-bucket fallback (used for any board without a live PTY/preview
+ * session, e.g. planning/kanban) must treat every bucket it doesn't recognize as idle-eligible,
+ * not the reverse — mirrors `BoardStatusBucket` (`boardStatus.ts`) minus 'idle'/'static': the only
+ * buckets that mean "still busy, don't reap" are liveness ('running') and the attention states.
+ */
+const NON_IDLE_STATUSES = new Set(['running', 'awaiting-review', 'blocked', 'failed'])
+
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -284,8 +292,14 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         if (staleMs !== undefined) {
           idle = staleMs >= idleActivityMs
         } else {
+          // BUG-003: invert to an explicit non-idle allowlist rather than an idle allowlist —
+          // a passive-content bucket like 'static' (planning/kanban boards, which never carry a
+          // live PTY/preview session and so never hit the staleMs branch above) must count as
+          // reapable, and a positive-match `=== 'idle'` check silently excluded it forever. Only
+          // the liveness/attention buckets ('running' + the attention states) are non-idle, so any
+          // future BoardStatusBucket addition defaults to idle-eligible instead of repeating the gap.
           const status = statuses.get(id)
-          idle = status === undefined || status === 'idle'
+          idle = status === undefined || !NON_IDLE_STATUSES.has(status)
         }
         if (!idle) {
           rec.idleSince = null
