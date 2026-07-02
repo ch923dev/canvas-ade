@@ -24,6 +24,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useRef,
   type PointerEvent as ReactPointerEvent,
   type ReactElement
@@ -72,6 +73,11 @@ export const FileRefCard = memo(function FileRefCard({
   const locked = element.locked ?? false
   // Timestamp of the last qualifying single click — a second one within DBLCLICK_MS opens the file.
   const lastClickRef = useRef(0)
+  // AbortController for the in-flight window pointerup/pointercancel listeners. Stored in a ref so
+  // the unmount-cleanup useEffect below can abort it if the element is deleted (keyboard, eraser,
+  // undo, concurrent mutation) while the pointer is still down (BUG-031, mirrors NoteCard/FreeText's
+  // BUG-037 fix).
+  const clickAbort = useRef<AbortController | null>(null)
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent): void => {
@@ -88,9 +94,12 @@ export const FileRefCard = memo(function FileRefCard({
       if (!e.shiftKey) {
         const sx = e.clientX
         const sy = e.clientY
+        const ac = new AbortController()
+        clickAbort.current = ac
+        const { signal } = ac
         const onEnd = (ev: PointerEvent): void => {
-          window.removeEventListener('pointerup', onEnd)
-          window.removeEventListener('pointercancel', onEnd)
+          ac.abort()
+          clickAbort.current = null
           if (ev.type !== 'pointerup' || Math.hypot(ev.clientX - sx, ev.clientY - sy) > CLICK_TOL) {
             return // a drag (move) or cancel — neither a click nor part of a double-click
           }
@@ -101,13 +110,24 @@ export const FileRefCard = memo(function FileRefCard({
             lastClickRef.current = ev.timeStamp
           }
         }
-        window.addEventListener('pointerup', onEnd)
-        window.addEventListener('pointercancel', onEnd)
+        window.addEventListener('pointerup', onEnd, { signal })
+        window.addEventListener('pointercancel', onEnd, { signal })
       }
       onDragStart(e, id)
     },
     [interactive, onSelect, onDragStart, onOpen, id, path]
   )
+
+  // Cleanup: if the component unmounts while the click/dblclick resolver is armed (e.g. the element
+  // was deleted via keyboard/eraser/undo while the pointer was still held), abort the
+  // AbortController so the stale window pointerup/pointercancel listeners don't survive to fire on a
+  // later, unrelated pointer release (BUG-031).
+  useEffect(() => {
+    return () => {
+      clickAbort.current?.abort()
+      clickAbort.current = null
+    }
+  }, [])
 
   // Live corner-resize gesture: start pointer (screen px) + start size + the board-local→screen
   // scale captured at pointerdown. `moved` arms the undo checkpoint lazily so a no-move tap on the
