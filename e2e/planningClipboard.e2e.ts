@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { seed } from './helpers'
+import { deselectInspector, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -76,6 +76,9 @@ const note = (
 
 /** Marquee across A's whole well → selects every note in it; also natively focuses A's well. */
 async function marqueeSelectAll(page: Page, boardId: string): Promise<void> {
+  // P5: seedBoard leaves the LAST seeded board selected → the left-docked Inspector popover
+  // reveals and occludes A's top-left corner, eating the marquee's mouse.down. Deselect first.
+  await deselectInspector(page)
   const box = await page.locator(`[data-id="${boardId}"] .pl-well`).boundingBox()
   if (!box) throw new Error(`planning well ${boardId} not on screen`)
   await page.mouse.move(box.x + 5, box.y + 5)
