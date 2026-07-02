@@ -52,9 +52,23 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type, title } = command.board
+      const { id, type, title, launchCommand, cwd } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
+      }
+      // launchCommand/cwd are terminal-only (the spawn_board prompt/cwd path). MAIN already
+      // gated + sanitized on the real path; re-validate the SHAPE here (defense in depth, like
+      // the isSpawnable re-check — MAIN is the trust boundary, so no re-sanitize, mirroring the
+      // spawnGroup applier) so a forged/malformed payload can't land either field off-type or
+      // as a non-string.
+      if (
+        (launchCommand !== undefined && typeof launchCommand !== 'string') ||
+        (cwd !== undefined && typeof cwd !== 'string')
+      ) {
+        return { ok: false, error: 'invalid addBoard launchCommand/cwd' }
+      }
+      if ((launchCommand !== undefined || cwd !== undefined) && type !== 'terminal') {
+        return { ok: false, error: 'addBoard: launchCommand/cwd are terminal-only' }
       }
       // Idempotent by id (mirrors removeBoard): a board with this id already exists →
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
@@ -67,6 +81,20 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // `undefined` (empty/whitespace-only/non-string) ⇒ the per-type default title.
       const cleanTitle = sanitizeBoardTitle(title)
       store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
+      // Land the spawn-time launchCommand/cwd IN the same synchronous applier tick, BEFORE React
+      // mounts the terminal — the mount-time spawn effect runs after this returns, so
+      // `useTerminalSpawn.launch()` sees them at first spawn (no race). `updateBoard` filters to
+      // PATCHABLE_KEYS.terminal (which carries both — the configure_board keys). Deliberately NO
+      // `beginChange`: the add's own tracked step is the only checkpoint, so ONE undo removes the
+      // whole configured board (the fields never split the history). Kept out of `canvasStore.
+      // addBoard` on purpose — MCP-only behavior stays in the MCP applier (file-size doctrine:
+      // canvasStore is pinned).
+      if (launchCommand !== undefined || cwd !== undefined) {
+        store.updateBoard(id, {
+          ...(launchCommand ? { launchCommand } : {}),
+          ...(cwd ? { cwd } : {})
+        })
+      }
       return { ok: true, type: 'addBoard' }
     }
     case 'removeBoard': {
