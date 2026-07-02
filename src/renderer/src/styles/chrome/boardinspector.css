@@ -690,6 +690,34 @@
   gap: 4px;
 }
 
+/* ── P5 (a11y): keyboard focus rings for every control that lacked one ─────────────────
+   jump/act/tool/swatch/iconbtns shipped the 1.5px accent ring; these six fell back to the
+   dim UA outline (the drift the controls.css convention exists to prevent). Same ring
+   everywhere; the full-bleed section header uses the INSET variant so the ring can't clip
+   against the popover's overflow:hidden edges. */
+.ca-inspector-section-hd:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  border-radius: var(--r-ctl);
+}
+.ca-inspector-step button:focus-visible,
+.ca-inspector-seg button:focus-visible,
+.ca-inspector-navbtn:focus-visible,
+.ca-inspector-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* Native range: ring the thumb, not the whole track. */
+.ca-inspector-slider:focus-visible {
+  outline: none;
+}
+.ca-inspector-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-inspector-toggle-knob {
     transition: none;

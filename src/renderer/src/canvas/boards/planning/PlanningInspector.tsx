@@ -16,6 +16,7 @@ import type { ReactElement } from 'react'
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
 import { InspectorRow, InspectorSection, InspectorToggle } from '../../inspector/primitives'
+import { inspectorRadioGroupKeyDown } from '../../inspector/radioGroup'
 import { ExportPopover } from './ExportPopover'
 import { ElementInspectorSection } from './inspector/ElementInspectorSection'
 import type { ElementInspectorModel } from './inspector/usePlanningElementInspector'
@@ -64,8 +65,14 @@ export function PlanningInspector({
       <InspectorSection label="Tools" persistKey="planning.tools">
         {/* The 8-tool palette as a 4×2 icon grid. Radiogroup semantics (one active tool); the
             bare-letter shortcut (from TOOL_META) sits in the corner + the tooltip, mirroring the
-            deleted on-board cluster. Active tool is accent-washed via [data-on]. */}
-        <div className="ca-inspector-toolgrid" role="radiogroup" aria-label="Whiteboard tool">
+            deleted on-board cluster. Active tool is accent-washed via [data-on]. Arrow keys move
+            + select with a roving tabindex (P5 a11y — the shared primitives' radio pattern). */}
+        <div
+          className="ca-inspector-toolgrid"
+          role="radiogroup"
+          aria-label="Whiteboard tool"
+          onKeyDown={(e) => inspectorRadioGroupKeyDown(e, (i) => onPickTool(TOOLS[i].tool))}
+        >
           {TOOLS.map(({ tool: t, icon }) => {
             const meta = TOOL_META[t]
             const on = tool === t
@@ -76,6 +83,7 @@ export function PlanningInspector({
                 role="radio"
                 aria-checked={on}
                 aria-label={meta.label}
+                tabIndex={on ? 0 : -1}
                 data-on={on || undefined}
                 data-test={`plan-tool-${t}`}
                 className="ca-inspector-tool"

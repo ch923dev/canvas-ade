@@ -10,6 +10,7 @@
  */
 import { useState, type ReactElement, type ReactNode } from 'react'
 import { readCollapsePref, writeCollapsePref } from './collapsePrefs'
+import { inspectorRadioGroupKeyDown } from './radioGroup'
 
 /** The shape every per-type inspector content receives. Per-type components widen this with their
  *  own handler props (supplied by the board when it portals its content into the shell slot). */
@@ -119,7 +120,10 @@ export function InspectorStepper({
       >
         −
       </button>
-      <span className="ca-inspector-step-val">{value}</span>
+      {/* P5 a11y: announce the new value on ± (the buttons keep focus, so nothing else speaks). */}
+      <span className="ca-inspector-step-val" aria-live="polite">
+        {value}
+      </span>
       <button
         type="button"
         aria-label={incLabel}
@@ -207,21 +211,28 @@ export function InspectorSegmented<T extends string>({
   options: ReadonlyArray<{ value: T; label: string; icon?: ReactNode }>
   onChange: (v: T) => void
   fill?: boolean
-  ariaLabel?: string
+  /** Required (P5 a11y): a radiogroup must have an accessible name. */
+  ariaLabel: string
 }): ReactElement {
+  // Roving tabindex (P5 a11y): the checked radio is the group's one tab stop; when the current
+  // value isn't among the options (e.g. a mixed multi-select), the first radio takes it so the
+  // group stays keyboard-reachable.
+  const hasCurrent = options.some((o) => o.value === value)
   return (
     <div
       className="ca-inspector-seg"
       data-fill={fill || undefined}
       role="radiogroup"
       aria-label={ariaLabel}
+      onKeyDown={(e) => inspectorRadioGroupKeyDown(e, (i) => onChange(options[i].value))}
     >
-      {options.map((o) => (
+      {options.map((o, i) => (
         <button
           key={o.value}
           type="button"
           role="radio"
           aria-checked={o.value === value}
+          tabIndex={o.value === value || (!hasCurrent && i === 0) ? 0 : -1}
           data-on={o.value === value || undefined}
           onClick={() => onChange(o.value)}
         >
@@ -380,11 +391,20 @@ export function InspectorSwatches({
   }>
   onPick: (id: string) => void
   disabled?: boolean
-  ariaLabel?: string
+  /** Required (P5 a11y): a radiogroup must have an accessible name. */
+  ariaLabel: string
 }): ReactElement {
+  // Roving tabindex (P5 a11y) — same pattern as InspectorSegmented; a no-current row (mixed
+  // selection) keeps its first swatch tabbable.
+  const hasCurrent = swatches.some((s) => s.current)
   return (
-    <div className="ca-inspector-swatches" role="radiogroup" aria-label={ariaLabel}>
-      {swatches.map((s) => (
+    <div
+      className="ca-inspector-swatches"
+      role="radiogroup"
+      aria-label={ariaLabel}
+      onKeyDown={(e) => inspectorRadioGroupKeyDown(e, (i) => onPick(swatches[i].id))}
+    >
+      {swatches.map((s, i) => (
         <button
           key={s.id}
           type="button"
@@ -393,6 +413,7 @@ export function InspectorSwatches({
           aria-label={s.current ? `${s.title} (current)` : s.title}
           title={s.current ? `${s.title} (current)` : s.title}
           className="ca-inspector-swatch"
+          tabIndex={s.current || (!hasCurrent && i === 0) ? 0 : -1}
           data-on={s.current || undefined}
           disabled={disabled}
           style={{ background: s.fill, borderColor: s.edge }}
