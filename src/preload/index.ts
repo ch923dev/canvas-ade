@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { authApi } from './authApi'
-import { terminalApi } from './terminalApi'
+import { forwardPtyPort, terminalApi } from './terminalApi'
 import { projectSessionsApi } from './projectSessionsApi'
 import { recapApi, type RecapRefreshOutcome } from './recapApi'
+import { forwardVoicePort, voiceApi } from './voice'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -950,20 +951,16 @@ const api = {
       ipcRenderer.on('mcp:status', listener)
       return () => ipcRenderer.removeListener('mcp:status', listener)
     }
-  }
+  },
+
+  // ── Voice dictation V1 (control plane; audio frames flow over a MessagePort) ──
+  voice: voiceApi
 }
 
-/**
- * The PTY data-plane MessagePort is transferred from main → preload over IPC.
- * MessagePorts can't cross the contextBridge directly, so we re-post them into
- * the main world with window.postMessage (the documented Electron pattern).
- * The renderer listens for { __ptyPort, id } and reads event.ports[0].
- */
-ipcRenderer.on('pty:port', (e, msg: { id: string }) => {
-  // Same-origin re-post (SEC-2): pin the target origin instead of '*' so this stays
-  // safe if an iframe is ever introduced. The MessagePorts ride in the transfer list.
-  window.postMessage({ __ptyPort: true, id: msg.id }, window.location.origin, e.ports)
-})
+// Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):
+// the per-board PTY port (terminalApi.forwardPtyPort) and the voice capture port (voice.ts).
+forwardPtyPort()
+forwardVoicePort()
 
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('api', api)

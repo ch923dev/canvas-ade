@@ -49,6 +49,7 @@ import {
   createNavGuard
 } from './windowSecurity'
 import { registerMicPermissionPosture } from './micPermission'
+import { applyFakeMediaSwitches, registerVoiceHandlers } from './voiceIpc'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
@@ -175,6 +176,10 @@ const projectSessions = createProjectSessions({
 })
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
+
+// Voice V1: fake mic device for the e2e harness (CANVAS_FAKE_MEDIA — env-gated in MAIN,
+// not Playwright launch args). Module scope: appendSwitch must run before app.ready.
+applyFakeMediaSwitches(process.env, app.commandLine)
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -474,6 +479,7 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  registerVoiceHandlers(ipcMain, () => mainWindow) // voice V1: session control + port broker
   registerClipboardHandlers(ipcMain, () => mainWindow)
   // General external-open channel (scheme re-validated in MAIN) — Phase 4 terminal web-links.
   registerShellHandlers(ipcMain, () => mainWindow)

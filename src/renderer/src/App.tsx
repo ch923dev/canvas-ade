@@ -16,6 +16,7 @@ import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
 import { useAccountStore, useAccountSync } from './store/accountStore'
 import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
+import { useVoiceCapture } from './voice/useVoiceCapture'
 import { isE2E } from './smoke/e2eRegistry'
 
 /**
@@ -31,6 +32,9 @@ function App(): React.ReactElement {
   useUpdateToasts()
   // Phase 1 accounts: hydrate the account store at boot + subscribe to MAIN's auth:statusChanged.
   useAccountSync()
+  // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
+  // voice:session:start is the start signal (see useVoiceCapture).
+  useVoiceCapture()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)

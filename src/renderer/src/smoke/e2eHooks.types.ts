@@ -355,6 +355,12 @@ export interface CanvasE2E {
    * Account section react exactly as in production. Sign-OUT is tested via the real IPC (no external
    * dependency); only the sign-IN side needs this mock.
    */
+  /**
+   * Voice V1 — the live capture pipeline state (`voiceStore`, ephemeral). The voice e2e
+   * asserts frames flow (framesSent grows, level rises under the fake-media tone) and that
+   * stop() lands (capturing false). All plain numbers/booleans — evaluate-bridge safe.
+   */
+  voiceState: () => { capturing: boolean; level: number; micSilent: boolean; framesSent: number }
   setAuthStatus: (status: {
     isLoggedIn: boolean
     email?: string

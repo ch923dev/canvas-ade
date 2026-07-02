@@ -233,7 +233,7 @@ Run the legs directly:
 #### E2E tags + path-scoped selection (MT-1)
 
 Every spec's `test.describe` (or, for the describe-less `modal`/`recap` specs, each top-level `test`)
-title is prefixed with exactly one **area tag**. The five area tags partition the renderer suite —
+title is prefixed with exactly one **area tag**. The six area tags partition the renderer suite —
 every test carries one, none overlap — so `playwright test --grep @area` selects a clean subset. The
 `@mcp` swarm spec sits OUTSIDE this partition: its source (`src/main/**`) always routes to `FULL`, so
 it never runs as a scoped subset — only in the full matrix (see its row):
@@ -246,6 +246,7 @@ it never runs as a scoped subset — only in the full matrix (see its row):
 | `@planning` | `whiteboard` · `textCreate` · `textToolbar` · `noteTint` · `planningKeyboard` | `boards/planning/**`, `boards/PlanningBoard`, vendored `perfect-freehand` |
 | `@chrome` | `menu*` · `modal` · `commandPalette` · `wayfinding` · `titleEdit` · `boardKeyboard` · `groups` · `backdrop` | `AppChrome`, `SettingsModal`, menu/modal/toast/group/palette/wayfinding/backdrop chrome |
 | `@mcp` | `mcp` | the swarm layer — `src/main/mcp*` + `@expanse-ade/mcp`. Always-FULL: the scope script routes `src/main/**` (and `e2e/**`) to `FULL`, so `@mcp` runs in the full matrix at the merge gate / on any MAIN change, never as a scoped renderer subset. |
+| `@voice` | `voice` | voice dictation — `src/renderer/src/voice/**` + `voiceStore` (V1: capture pipeline + `voice:port`; V3 adds the pill/flyout). The MAIN half (`src/main/voiceIpc.ts`) routes to FULL via `src/main/**`. Runs under the fixtures-wide `CANVAS_FAKE_MEDIA=1` fake mic (a deterministic generated tone) — no OS mic/permission dependency on any leg. |
 
 `scripts/e2e-scope.mjs` is the path → tag mapping (a pure, unit-tested function — `scripts/e2e-scope.test.ts`).
 **Safety contract — it fails OPEN to `FULL`** (run every spec) for any cross-cutting or cross-OS path
