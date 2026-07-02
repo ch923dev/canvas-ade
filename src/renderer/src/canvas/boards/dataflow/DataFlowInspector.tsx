@@ -18,6 +18,7 @@ import {
   InspectorRow,
   InspectorSection,
   InspectorSegmented,
+  InspectorStatus,
   InspectorToggle
 } from '../../inspector/primitives'
 
@@ -165,10 +166,9 @@ export function DataFlowInspector({
             </InspectorAction>
             {diffParts.length > 0 && (
               <InspectorRow>
-                <span className="ca-inspector-status" data-tone="ok" title="Since last run">
-                  <span className="ca-inspector-status-dot" aria-hidden />
+                <InspectorStatus tone="ok" title="Since last run">
                   {diffParts.join(' · ')}
-                </span>
+                </InspectorStatus>
               </InspectorRow>
             )}
           </InspectorSection>

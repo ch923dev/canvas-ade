@@ -511,11 +511,13 @@
    Command surfaces a roll-up of its kanban counts (reusing the status chip above, one per
    lifecycle bucket) + a slim done-ratio bar; File/Data-Flow reuse the existing primitives. */
 
-/* A wrapping cluster of status chips (Command's running / reporting / failed roll-up). */
+/* A wrapping cluster of status chips (Command's running / reporting / failed roll-up).
+   P5 sweep: discrete clusters share one 4px gap (chips/nav/toolgrid/actgrid/swatches);
+   contained pill groups (seg/iconbtns) keep their tighter 1-2px. */
 .ca-inspector-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 /* Slim progress bar (Command done ratio). Width is set inline (a fraction, not a colour). */
@@ -609,7 +611,7 @@
 .ca-inspector-swatches {
   display: flex;
   flex: 1;
-  gap: 5px;
+  gap: 4px; /* P5 sweep: the shared discrete-cluster gap */
 }
 .ca-inspector-swatch {
   width: 22px;

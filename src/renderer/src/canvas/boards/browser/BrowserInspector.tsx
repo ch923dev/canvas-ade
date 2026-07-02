@@ -24,6 +24,7 @@ import {
   InspectorSection,
   InspectorSegmented,
   InspectorSlider,
+  InspectorStatus,
   InspectorToggle
 } from '../../inspector/primitives'
 
@@ -172,10 +173,7 @@ export function BrowserInspector({
 
       <InspectorSection label="Preview" persistKey="browser.preview">
         <InspectorRow label="Status">
-          <span className="ca-inspector-status" data-tone={statusTone}>
-            <span className="ca-inspector-status-dot" aria-hidden />
-            {statusWord}
-          </span>
+          <InspectorStatus tone={statusTone}>{statusWord}</InspectorStatus>
         </InspectorRow>
         {audible && (
           <>
@@ -191,6 +189,7 @@ export function BrowserInspector({
                 onChange={onVolume}
                 ariaLabel="Preview volume"
                 valueText={`${volPct}%`}
+                valueLabel={`${volPct}%`}
               />
             </InspectorRow>
           </>

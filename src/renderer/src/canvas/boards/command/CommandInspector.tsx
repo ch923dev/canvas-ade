@@ -14,10 +14,13 @@ import { Icon } from '../../Icon'
 import type { CommandView } from '../../../store/commandStore'
 import {
   InspectorAction,
+  InspectorChips,
   InspectorMeta,
+  InspectorProgress,
   InspectorRow,
   InspectorSection,
-  InspectorSegmented
+  InspectorSegmented,
+  InspectorStatus
 } from '../../inspector/primitives'
 
 export interface CommandInspectorProps {
@@ -99,29 +102,15 @@ export function CommandInspector({
 
       <InspectorSection label="Status" persistKey="command.status">
         <InspectorRow>
-          <div className="ca-inspector-chips">
-            <span className="ca-inspector-status" data-tone="ok">
-              <span className="ca-inspector-status-dot" aria-hidden />
-              {counts.running} running
-            </span>
-            <span className="ca-inspector-status" data-tone="warn">
-              <span className="ca-inspector-status-dot" aria-hidden />
-              {counts.reporting} reporting
-            </span>
-            <span className="ca-inspector-status" data-tone="err">
-              <span className="ca-inspector-status-dot" aria-hidden />
-              {counts.failed} failed
-            </span>
-          </div>
+          <InspectorChips>
+            <InspectorStatus tone="ok">{counts.running} running</InspectorStatus>
+            <InspectorStatus tone="warn">{counts.reporting} reporting</InspectorStatus>
+            <InspectorStatus tone="err">{counts.failed} failed</InspectorStatus>
+          </InspectorChips>
         </InspectorRow>
         <InspectorMeta label="Done" value={`${counts.done} / ${counts.total}`} />
         <InspectorRow>
-          <span className="ca-inspector-pbar">
-            <span
-              className="ca-inspector-pfill"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
-          </span>
+          <InspectorProgress value={progress} ariaLabel="Batch progress" />
         </InspectorRow>
       </InspectorSection>
 

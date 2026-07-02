@@ -264,31 +264,99 @@ export function InspectorToggle({
 }
 
 /** A 0–1 range slider (e.g. volume). A native <input type=range> for full keyboard/a11y; styled via
- *  boardinspector.css. The value is a 0–1 fraction; the DOM range works in whole percent. */
+ *  boardinspector.css. The value is a 0–1 fraction; the DOM range works in whole percent.
+ *  `valueLabel` renders the visible readout next to the track (P5-D6: every slider shows its value
+ *  the same way — AT reads `valueText`/`aria-valuetext`, so the readout span stays aria-hidden). */
 export function InspectorSlider({
   value,
   onChange,
   ariaLabel,
-  valueText
+  valueText,
+  valueLabel
 }: {
   value: number
   onChange: (v: number) => void
   ariaLabel: string
   valueText?: string
+  valueLabel?: string
 }): ReactElement {
   return (
-    <input
-      type="range"
-      className="ca-inspector-slider"
-      min={0}
-      max={100}
-      step={1}
-      value={Math.round(value * 100)}
-      aria-label={ariaLabel}
-      aria-valuetext={valueText}
-      onChange={(e) => onChange(Number(e.target.value) / 100)}
-    />
+    <>
+      <input
+        type="range"
+        className="ca-inspector-slider"
+        min={0}
+        max={100}
+        step={1}
+        value={Math.round(value * 100)}
+        aria-label={ariaLabel}
+        aria-valuetext={valueText}
+        onChange={(e) => onChange(Number(e.target.value) / 100)}
+      />
+      {valueLabel != null && (
+        <span className="ca-inspector-slider-val" aria-hidden>
+          {valueLabel}
+        </span>
+      )}
+    </>
   )
+}
+
+/** A status chip: tinted dot + short mono label (e.g. "live", "3 running"). One shared shape for
+ *  what Browser/Command/DataFlow previously hand-rolled (P5 sweep). Text carries the state — the
+ *  dot is decorative — so it stays legible colour-blind and to AT. */
+export function InspectorStatus({
+  tone = 'neutral',
+  title,
+  children
+}: {
+  tone?: 'ok' | 'warn' | 'err' | 'neutral'
+  title?: string
+  children: ReactNode
+}): ReactElement {
+  return (
+    <span className="ca-inspector-status" data-tone={tone} title={title}>
+      <span className="ca-inspector-status-dot" aria-hidden />
+      {children}
+    </span>
+  )
+}
+
+/** A wrapping cluster of InspectorStatus chips (e.g. the Command board's running/reporting/failed
+ *  roll-up). */
+export function InspectorChips({ children }: { children: ReactNode }): ReactElement {
+  return <div className="ca-inspector-chips">{children}</div>
+}
+
+/** A thin determinate progress bar (0–1). Proper progressbar semantics — the visible bar was
+ *  invisible to AT as a bare span (P5 sweep). The inline width is the data-driven fraction, not a
+ *  token bypass. */
+export function InspectorProgress({
+  value,
+  ariaLabel
+}: {
+  value: number
+  ariaLabel: string
+}): ReactElement {
+  const pct = Math.round(value * 100)
+  return (
+    <span
+      className="ca-inspector-pbar"
+      role="progressbar"
+      aria-label={ariaLabel}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+    >
+      <span className="ca-inspector-pfill" style={{ width: `${pct}%` }} />
+    </span>
+  )
+}
+
+/** An in-section sub-divider label (uppercase micro, dashed top rule) — the "Appearance" block
+ *  inside the Element section. Promoted from ElementInspectorSection's one-off markup (P5 sweep). */
+export function InspectorSubheader({ children }: { children: ReactNode }): ReactElement {
+  return <div className="ca-inspector-subhd">{children}</div>
 }
 
 /** A swatch row (e.g. note tint or text colour) — the always-visible mirror of the context menu's

@@ -148,6 +148,9 @@ export function TerminalInspector({
         {shell && <InspectorMeta label="Shell" value={shell} />}
         {command && <InspectorMeta label="Command" value={command} />}
         {cwd && <InspectorMeta label="cwd" value={cwd} />}
+        {/* P5 sweep: a wholly-unconfigured board previously showed a lone Edit… button with no
+            context — say what it will run (the OS-default shell) so Edit has a referent. */}
+        {!shell && !command && !cwd && <InspectorMeta label="Command" value="Default shell" />}
         <InspectorAction
           icon={<Icon name="settings" size={14} />}
           onClick={onConfigure}

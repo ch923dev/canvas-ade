@@ -31,6 +31,7 @@ import type { BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
 import { inspectorEligible, inspectorRevealed } from './boardInspectorReveal'
 import { useInspectorSlotStore } from './inspector/inspectorSlotStore'
+import { InspectorAction } from './inspector/primitives'
 import { TypeGlyph } from './TypeGlyph'
 
 const TYPE_TAG: Record<BoardType, string> = {
@@ -94,6 +95,7 @@ export function BoardInspector(): ReactElement | null {
                 </span>
                 <span className="ca-inspector-type">{TYPE_TAG[board.type]}</span>
                 <button
+                  type="button"
                   className="ca-inspector-jump"
                   title="Jump to board"
                   aria-label="Jump to board"
@@ -111,20 +113,25 @@ export function BoardInspector(): ReactElement | null {
                   </svg>
                 </button>
               </div>
-              <div className="ca-inspector-title">{board.title}</div>
+              {/* P5 sweep (a11y): the popover landmark gets a heading — the selected board's
+                  title. role/aria-level (not <h2>) so the CSS class keeps full styling control. */}
+              <div className="ca-inspector-title" role="heading" aria-level={2}>
+                {board.title}
+              </div>
             </div>
 
             {/* Per-type content slot — the selected board portals its own <XInspector> in here. */}
             <div className="ca-inspector-body" ref={setSlotRef} />
 
             <div className="ca-inspector-foot">
-              <button
-                className="ca-inspector-act"
-                data-test="inspector-duplicate"
+              {/* P5 sweep: through the shared primitive (type="button" + the act markup) instead
+                  of re-rolling its class by hand. */}
+              <InspectorAction
+                dataTest="inspector-duplicate"
                 onClick={() => useCanvasStore.getState().duplicateBoard(board.id)}
               >
                 Duplicate
-              </button>
+              </InspectorAction>
             </div>
           </>
         )}
