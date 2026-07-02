@@ -1013,6 +1013,7 @@ function CanvasInner(): ReactElement {
         </div>
         {fullViewBoard && (
           <FullViewModal
+            key={fullViewBoard.id}
             closing={fullViewClosing}
             onClose={closeFullView}
             onEntered={handleFullViewEntered}
