@@ -176,6 +176,8 @@ export const ImageCard = memo(function ImageCard({
         overflow: 'hidden',
         outline: selected ? '1.5px solid var(--accent)' : 'none',
         outlineOffset: 2,
+        // v17 (P4b) element opacity — absent ⇒ opaque, byte-identical to pre-P4b.
+        opacity: image.opacity,
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {

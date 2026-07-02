@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { evalIn, seed, selectForInspector } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -63,7 +63,12 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     await page.waitForTimeout(300)
     const node = page.locator(`[data-id="${id}"]`)
     await expect(node.getByText('No tasks yet')).toBeVisible()
-    await node.getByRole('button', { name: 'Groups' }).click()
+    // P5: the Kanban/Groups seg lives in the Board Inspector's View section.
+    await selectForInspector(page, id)
+    await page
+      .locator('[data-test="board-inspector"]')
+      .getByRole('radio', { name: 'Groups' })
+      .click()
     await expect(node.getByText('No groups yet')).toBeVisible()
   })
 
@@ -75,12 +80,14 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     const expanded = (await boardById(page, id))!.h
     expect(expanded).toBeGreaterThan(300)
 
-    await node.getByRole('button', { name: /collapse/ }).click()
+    // P5: collapse/expand live in the Board Inspector's View section.
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-command-collapse"]').click()
     await expect.poll(async () => (await boardById(page, id))?.h).toBe(136)
     // The rail roll-up replaces the kanban (the done fraction is its tail).
     await expect(node.getByText(/\d+ \/ \d+ done/)).toBeVisible()
 
-    await node.getByRole('button', { name: /expand/ }).click()
+    await page.locator('[data-test="inspector-command-expand"]').click()
     await expect.poll(async () => (await boardById(page, id))?.h).toBe(expanded)
     await expect(node.getByText('No tasks yet')).toBeVisible()
   })
@@ -206,7 +213,8 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     // markers (the kanban front face has none of them): TIMELINE is non-empty, NOW is empty. The
     // summary itself renders on BOTH faces (the kanban Done card stays mounted behind the opaque
     // recap overlay — the terminal-flip discipline), so it legitimately resolves twice → `.first()`.
-    await node.getByRole('button', { name: /recap/ }).click()
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-command-recap"]').click()
     await expect(node.getByText('Timeline')).toBeVisible()
     await expect(node.getByText(/newest first/)).toBeVisible()
     await expect(node.getByText('No active tasks.')).toBeVisible()
@@ -215,7 +223,7 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     // Flip back (let the fold settle so the toggle's re-entrancy guard doesn't drop the click):
     // the recap face unmounts, so its unique "Timeline" marker is gone.
     await page.waitForTimeout(350)
-    await node.getByRole('button', { name: /recap/ }).click()
+    await page.locator('[data-test="inspector-command-recap"]').click()
     await expect(node.getByText('Timeline')).toHaveCount(0)
   })
 
@@ -249,7 +257,12 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
       ])
     )
 
-    await node.getByRole('button', { name: 'Groups' }).click()
+    // P5: the Kanban/Groups seg lives in the Board Inspector's View section.
+    await selectForInspector(page, id)
+    await page
+      .locator('[data-test="board-inspector"]')
+      .getByRole('radio', { name: 'Groups' })
+      .click()
     // One zone row per task (the queued one too), labelled by its zone name.
     await expect(node.getByText('Auth Feature')).toBeVisible()
     await expect(node.getByText('Dark Mode')).toBeVisible()

@@ -34,6 +34,7 @@ import { SettingsModal } from './SettingsModal'
 import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
 import { SidePanel } from './SidePanel'
+import { BoardInspector } from './BoardInspector'
 import { OrchestrationModals } from './OrchestrationModals'
 import { SignInView } from './SignInView'
 import { AccountPill } from './AccountPill'
@@ -86,6 +87,7 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
         onAccount={() => setShowSettings(true)}
       />
       <SidePanel />
+      <BoardInspector />
       <Dock />
       {showSettings && (
         <SettingsModal

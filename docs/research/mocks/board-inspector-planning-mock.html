@@ -1,0 +1,442 @@
+<!doctype html>
+<!--
+  THROWAWAY pixel mock — Board Inspector **P3: PlanningInspector**.
+  Design-artifact gate per CLAUDE.md › "Design artifact before code". NOT wired into src/ or build.
+
+  P3 is the FIRST inspector that MOVES an on-board control cluster off the board (vs P0.5/P1/P2 which
+  were purely additive). This mock surfaces the four open decisions for sign-off:
+    (1) MOVE the tool palette off the board vs keep it additive (on-board + inspector).
+    (2) palette layout in the popover — icon grid vs segmented vs labelled rows.
+    (3) bare-letter shortcuts stay always-on + picking a tool must NOT deselect the board.
+    (4) snap → InspectorToggle; export → InspectorAction opening the existing PNG/SVG popover.
+
+  Tokens + inspector classes copied VERBATIM from the shipped popover mock (tokens.css / DESIGN.md §2-4).
+  Calm/dense Linear-Raycast feel; one accent (#4f8cff), functional only; no gradients/glass/glow.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Board Inspector P3 — PlanningInspector (tool palette)</title>
+    <style>
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --err: #f2545b;
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --r-pill: 999px;
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+        --fs-micro: 10px;
+        --fs-meta: 11px;
+        --fs-label: 12px;
+        --fs-body: 13px;
+        --tr-micro: 0.06em;
+        --titlebar-h: 34px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 18px 18px,
+          var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        padding: 26px 26px 40px;
+      }
+      h1.page { font-size: 14px; font-weight: 600; margin: 0 0 3px; letter-spacing: -0.01em; }
+      p.page-sub { font-size: var(--fs-meta); color: var(--text-3); margin: 0 0 18px; font-family: var(--mono); }
+      .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 0 0 16px; font-size: var(--fs-meta);
+        color: var(--text-3); font-family: var(--mono); }
+      .legend span b { color: var(--accent); font-weight: 400; }
+      .legend span i { color: var(--ok); font-style: normal; }
+      .frame-label { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); margin: 22px 0 10px;
+        border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+
+      /* ── on-canvas scene ─────────────────────────────────────────────── */
+      .scene {
+        position: relative; height: 560px; border-radius: var(--r-board);
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 18px 18px,
+          var(--void);
+        border: 1px solid var(--border-subtle); overflow: hidden;
+      }
+      .board {
+        position: absolute; border-radius: var(--r-board); background: var(--surface);
+        border: 1px solid var(--border-subtle); box-shadow: var(--shadow-board);
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      .board.sel { box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-board); }
+      .board-tb {
+        height: var(--titlebar-h); flex: none; display: flex; align-items: center; gap: 8px;
+        padding: 0 6px 0 10px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-raised);
+      }
+      .board.sel .board-tb { background: var(--accent-wash); }
+      .glyph { font-family: var(--mono); font-size: 13px; color: var(--text-3); flex: none; }
+      .tag { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        color: var(--text-3); flex: none; }
+      .b-title { font-size: var(--fs-label); font-weight: 500; color: var(--text-2); flex: 1; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .board.sel .b-title { color: var(--text); }
+      .tb-ctl { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--r-ctl);
+        color: var(--text-3); flex: none; font-size: 13px; }
+      /* an on-board tool cluster (the thing P3 decides the fate of) rendered in the title-bar action slot */
+      .tb-tools { display: inline-flex; align-items: center; gap: 1px; padding: 2px; margin-right: 2px;
+        background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-inner); }
+      .tb-tools button { width: 22px; height: 22px; display: grid; place-items: center; border: none;
+        border-radius: 4px; background: transparent; color: var(--text-3); font-size: 12px; cursor: pointer; }
+      .tb-tools button.on { background: var(--accent-wash); color: var(--accent); }
+      .board-body { flex: 1; min-height: 0; padding: 0; background: var(--inset); position: relative; }
+      /* faux whiteboard content */
+      .wb-note { position: absolute; border-radius: 4px; background: #2a2a17; border: 1px solid #4a4a2a;
+        color: #d8d8b0; font-size: 10px; padding: 6px; font-family: var(--ui); }
+      .wb-note.blue { background: #16233a; border-color: #294061; color: #b8cdec; }
+      .wb-check { position: absolute; border-radius: 6px; background: var(--surface-raised);
+        border: 1px solid var(--border); padding: 7px 8px; width: 128px; }
+      .wb-check .t { font-size: 10px; color: var(--text); font-weight: 500; margin-bottom: 5px; }
+      .wb-check .i { font-size: 9.5px; color: var(--text-2); display: flex; align-items: center; gap: 5px; margin: 2px 0; }
+      .wb-check .i .bx { width: 9px; height: 9px; border-radius: 2px; border: 1px solid var(--border-strong); flex: none; }
+      .wb-check .i .bx.on { background: var(--accent); border-color: var(--accent); }
+      .wb-arrow { position: absolute; height: 1.5px; background: var(--text-3); transform-origin: left center; }
+      .wb-arrow::after { content: '▸'; position: absolute; right: -6px; top: -7px; color: var(--text-3); font-size: 11px; }
+
+      /* ── Board Inspector popover (shared shell — verbatim from the shipped mock) ── */
+      .bi {
+        width: 234px; background: var(--surface-overlay); border: 1px solid var(--border);
+        border-radius: var(--r-board); box-shadow: var(--shadow-pop); overflow: hidden;
+        display: flex; flex-direction: column;
+      }
+      .bi.dock-left {
+        position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+        max-height: calc(100% - 28px);
+      }
+      .tree-handle {
+        position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+        width: 5px; height: 56px; border-radius: 0 3px 3px 0; background: var(--border);
+      }
+      .bi-scroll { overflow-y: auto; display: flex; flex-direction: column; }
+
+      .bi-head { padding: 10px 10px 9px; border-bottom: 1px solid var(--border-subtle);
+        background: var(--surface-overlay); flex: none; }
+      .bi-head-r1 { display: flex; align-items: center; gap: 7px; }
+      .bi-head-glyph { font-family: var(--mono); font-size: 13px; color: var(--text-3); flex: none; }
+      .bi-head-type { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); flex: 1; }
+      .bi-jump { width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--r-ctl);
+        color: var(--text-3); border: 1px solid transparent; cursor: pointer; background: transparent; }
+      .bi-jump:hover { color: var(--text-2); background: rgba(255,255,255,.04); }
+      .bi-head-title { font-size: var(--fs-label); font-weight: 500; color: var(--text); margin-top: 6px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bi-head-status { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); margin-top: 2px;
+        display: flex; align-items: center; gap: 6px; }
+
+      .sec { border-top: 1px solid var(--border-subtle); padding: 7px 10px 9px; }
+      .sec:first-child { border-top: none; }
+      .sec-hd { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 0 6px; }
+      .sec-lab { font-size: var(--fs-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+        font-weight: 500; color: var(--text-3); flex: 1; }
+      .chev { color: var(--text-3); font-size: 10px; }
+      .row { min-height: 28px; display: flex; align-items: center; gap: 8px; }
+      .row + .row { margin-top: 4px; }
+      .row-lab { font-size: var(--fs-label); color: var(--text-2); flex: 1; }
+
+      .act { width: 100%; height: 28px; border-radius: var(--r-ctl); border: 1px solid var(--border-subtle);
+        background: var(--surface-raised); color: var(--text); font-size: var(--fs-label); cursor: pointer;
+        display: flex; align-items: center; gap: 8px; padding: 0 9px; font-family: var(--ui); text-align: left; }
+      .act:hover { border-color: var(--border); background: var(--surface); }
+      .act .ai { color: var(--text-3); width: 15px; text-align: center; flex: none; }
+      .act:hover .ai { color: var(--text-2); }
+      .act .kbd { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+        border: 1px solid var(--border-subtle); border-radius: 3px; padding: 0 4px; }
+
+      .meta { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); }
+      .meta b { color: var(--text-2); font-weight: 450; }
+
+      .bi-foot { border-top: 1px solid var(--border-subtle); padding: 8px 10px; display: grid; gap: 4px;
+        background: var(--surface-overlay); flex: none; }
+
+      /* toggle (verbatim) */
+      .tog { width: 34px; height: 20px; border-radius: 999px; background: var(--surface-raised);
+        border: 1px solid var(--border); position: relative; cursor: pointer; flex: none; }
+      .tog.on { background: var(--accent-wash); border-color: var(--accent); }
+      .tog .knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px;
+        background: var(--text-3); }
+      .tog.on .knob { left: 16px; background: var(--accent); }
+
+      /* segmented (verbatim, for the Decision-2 option B) */
+      .seg { display: inline-flex; align-items: center; gap: 1px; padding: 2px; background: var(--inset);
+        border: 1px solid var(--border-subtle); border-radius: var(--r-inner); flex-wrap: wrap; }
+      .seg button { height: 22px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px;
+        border: none; border-radius: 4px; background: transparent; color: var(--text-3); cursor: pointer;
+        font-size: 11px; font-weight: 500; font-family: var(--ui); }
+      .seg button.on { background: var(--accent-wash); color: var(--accent); }
+
+      /* ── PROPOSED NEW PRIMITIVE: .ca-inspector-toolgrid (Decision-2 option A, the recommendation) ──
+         4-col grid of square tool cells; active = accent-wash; shortcut letter in the corner. The ONLY
+         new CSS block P3 adds — everything else composes from the existing toolkit. */
+      .toolgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+      .toolgrid button { position: relative; aspect-ratio: 1 / 1; display: grid; place-items: center;
+        border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); background: var(--surface-raised);
+        color: var(--text-2); cursor: pointer; font-size: 15px; }
+      .toolgrid button:hover { color: var(--text); border-color: var(--border); }
+      .toolgrid button.on { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
+      .toolgrid button .k { position: absolute; bottom: 1px; right: 3px; font-family: var(--mono);
+        font-size: 8.5px; color: var(--text-faint); }
+      .toolgrid button.on .k { color: var(--accent); }
+
+      /* callout + annotation */
+      .callout { position: absolute; font-family: var(--mono); font-size: var(--fs-meta); color: var(--accent);
+        background: var(--accent-wash); border: 1px solid var(--accent); border-radius: var(--r-ctl);
+        padding: 4px 8px; }
+      .note { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); line-height: 1.7;
+        margin: 8px 0 0; }
+      .note b { color: var(--accent); font-weight: 400; }
+      .note .ok { color: var(--ok); }
+
+      .cols { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+      .scol { display: flex; flex-direction: column; gap: 8px; width: 250px; }
+      .scap { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--tr-micro);
+        text-transform: uppercase; color: var(--text-3); }
+      .scap b { color: var(--ok); font-weight: 400; }
+      .glyph-key { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-3); margin: 0 0 14px;
+        display: flex; gap: 14px; flex-wrap: wrap; }
+      .glyph-key span b { color: var(--text-2); font-weight: 400; }
+      .caption { margin-top: 26px; text-align: center; font-family: var(--mono); font-size: var(--fs-meta);
+        color: var(--text-faint); }
+    </style>
+  </head>
+  <body>
+    <h1 class="page">Board Inspector P3 — PlanningInspector (the tool palette)</h1>
+    <p class="page-sub">reveal on select · docked left · the 8-tool palette + snap + export, moved off the board into the popover · tokens.css · throwaway mock</p>
+
+    <div class="legend">
+      <span><i>green dot</i> = live status</span>
+      <span><b>blue</b> = active tool / accent</span>
+      <span>shortcut letters (S N X C D A P E) stay <b>always-on</b> regardless of the Inspector</span>
+    </div>
+
+    <p class="glyph-key">
+      <span>Palette glyphs (mock stand-ins for the real Icon set):</span>
+      <span><b>⌖</b> Select (S)</span><span><b>▢</b> Note (N)</span><span><b>T</b> Text (X)</span>
+      <span><b>☑</b> Checklist (C)</span><span><b>◈</b> Diagram (D)</span><span><b>↗</b> Arrow (A)</span>
+      <span><b>✎</b> Pen (P)</span><span><b>⌫</b> Eraser (E)</span>
+    </p>
+
+    <!-- ═══════════ HERO: Planning selected → PlanningInspector, palette MOVED off-board (recommended) ═══════════ -->
+    <div class="frame-label">Recommended — click a Planning board → the palette lives in the Inspector (icon grid). The board title-bar action slot is now empty (MOVE).</div>
+    <div class="scene">
+      <div class="tree-handle"></div>
+
+      <!-- selected Planning board (the trigger), centre-right. Title bar action slot is EMPTY (tools moved off). -->
+      <div class="board sel" style="left: 545px; top: 150px; width: 400px; height: 300px;">
+        <div class="board-tb">
+          <span class="glyph">◳</span><span class="tag">PLANNING</span>
+          <span class="b-title">Auth flow — sketch</span>
+          <!-- MOVE: no tool cluster here anymore; only the universal chrome remains -->
+          <span class="tb-ctl" title="Full view">⤢</span>
+          <span class="tb-ctl" title="More">⋯</span>
+        </div>
+        <div class="board-body">
+          <div class="wb-note" style="left: 22px; top: 24px; width: 92px; height: 54px;">login screen → POST /session</div>
+          <div class="wb-note blue" style="left: 250px; top: 30px; width: 96px; height: 50px;">JWT in httpOnly cookie</div>
+          <div class="wb-arrow" style="left: 116px; top: 52px; width: 128px;"></div>
+          <div class="wb-check" style="left: 60px; top: 150px;">
+            <div class="t">Ship checklist</div>
+            <div class="i"><span class="bx on"></span>PKCE in MAIN</div>
+            <div class="i"><span class="bx on"></span>scheme registered</div>
+            <div class="i"><span class="bx"></span>refresh rotation</div>
+          </div>
+          <div class="wb-note" style="left: 250px; top: 150px; width: 110px; height: 60px;">refresh: rotate + revoke on reuse</div>
+        </div>
+      </div>
+
+      <div class="callout" style="left: 508px; top: 190px;">clicked → inspector revealed ↙</div>
+
+      <!-- PlanningInspector: the palette + canvas controls in the shared shell -->
+      <aside class="bi dock-left" role="region" aria-label="Board inspector">
+        <div class="bi-scroll">
+          <div class="bi-head">
+            <div class="bi-head-r1">
+              <span class="bi-head-glyph">◳</span>
+              <span class="bi-head-type">Planning</span>
+              <button class="bi-jump" title="Jump to board" aria-label="Jump to board">⤿</button>
+            </div>
+            <div class="bi-head-title">Auth flow — sketch</div>
+            <div class="bi-head-status"><span style="color:var(--text-faint)">✎</span>Pen · snap on</div>
+          </div>
+
+          <!-- Tools (expanded) — the 8-tool palette as a 4×2 icon grid; active = accent wash + kbd corner -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Tools</span><span class="chev">▾</span></div>
+            <div class="toolgrid">
+              <button title="Select (S)" aria-label="Select">⌖<span class="k">S</span></button>
+              <button title="Sticky note (N)" aria-label="Sticky note">▢<span class="k">N</span></button>
+              <button title="Text (X)" aria-label="Text">T<span class="k">X</span></button>
+              <button title="Checklist (C)" aria-label="Checklist">☑<span class="k">C</span></button>
+              <button title="Diagram (D)" aria-label="Diagram">◈<span class="k">D</span></button>
+              <button title="Arrow (A)" aria-label="Arrow">↗<span class="k">A</span></button>
+              <button class="on" title="Pen (P)" aria-label="Pen">✎<span class="k">P</span></button>
+              <button title="Eraser (E)" aria-label="Eraser">⌫<span class="k">E</span></button>
+            </div>
+          </section>
+
+          <!-- Canvas (expanded) — snap toggle + export action (opens the existing PNG/SVG popover) -->
+          <section class="sec">
+            <div class="sec-hd"><span class="sec-lab">Canvas</span><span class="chev">▾</span></div>
+            <div class="row"><span class="row-lab">Snap to grid</span><div class="tog on"><div class="knob"></div></div></div>
+            <div class="row"><button class="act"><span class="ai">⤓</span>Export…<span class="kbd">PNG · SVG</span></button></div>
+          </section>
+
+          <div class="bi-foot">
+            <button class="act"><span class="ai">⧉</span>Duplicate</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <p class="note">
+      <b>Decision 3 (interaction, must sign off):</b> the bare-letter shortcuts <span class="ok">S N X C D A P E</span> stay the always-on fast path — the Inspector is a
+      redundant visual affordance, not the input path. Picking a tool in the grid calls the board's existing <b>setTool</b> and does <b>NOT</b> deselect the board, so
+      the Inspector stays revealed through a whole draw session (select-driven reveal + still-selected while drawing = no mid-draw hide).<br />
+      <b>Decision 4:</b> Snap → InspectorToggle · Export → one InspectorAction that opens the shipped ExportPopover (PNG/SVG). Kept as-is; no new export UI.
+    </p>
+
+    <!-- ═══════════ DECISION 1: MOVE vs ADDITIVE ═══════════ -->
+    <div class="frame-label">Decision 1 — MOVE the palette off-board (left, the signed-off direction) vs keep it ADDITIVE (right, lower-risk first cut)</div>
+    <div class="cols">
+      <div class="scol" style="width: 470px;">
+        <span class="scap"><b>MOVE</b> — on-board action slot empty; palette only in the Inspector (signed-off target)</span>
+        <div class="scene" style="height: 150px;">
+          <div class="board sel" style="left: 40px; top: 22px; width: 400px; height: 104px;">
+            <div class="board-tb">
+              <span class="glyph">◳</span><span class="tag">PLANNING</span>
+              <span class="b-title">Auth flow — sketch</span>
+              <span class="tb-ctl" title="Full view">⤢</span><span class="tb-ctl" title="More">⋯</span>
+            </div>
+            <div class="board-body" style="display:grid;place-items:center;">
+              <span class="meta">select a tool from the Inspector, or press its letter · nothing crowds the title bar</span>
+            </div>
+          </div>
+        </div>
+        <p class="note">Clean title bar; single source of tools. Bigger change — removes <b>PlanningToolbar</b> from the frame's action slot. Frees the lines that pay the 666 max-lines ratchet.</p>
+      </div>
+      <div class="scol" style="width: 470px;">
+        <span class="scap">ADDITIVE — palette on-board AND in the Inspector (fallback for cut #1, remove on-board later)</span>
+        <div class="scene" style="height: 150px;">
+          <div class="board sel" style="left: 40px; top: 22px; width: 400px; height: 104px;">
+            <div class="board-tb">
+              <span class="glyph">◳</span><span class="tag">PLANNING</span>
+              <span class="b-title" style="flex:0 1 auto;">Auth flow</span>
+              <span class="tb-tools">
+                <button>⌖</button><button>▢</button><button>T</button><button>☑</button>
+                <button>◈</button><button>↗</button><button class="on">✎</button><button>⌫</button>
+              </span>
+              <span class="tb-ctl" title="Full view">⤢</span><span class="tb-ctl" title="More">⋯</span>
+            </div>
+            <div class="board-body" style="display:grid;place-items:center;">
+              <span class="meta">tools in BOTH places — muscle-memory safety net</span>
+            </div>
+          </div>
+        </div>
+        <p class="note">Lowest regression risk; both palettes drive the same state. But needs a separate <b>PlanningBoard</b> extraction to offset the added portal lines, and duplicates the cluster until a follow-up removes it.</p>
+      </div>
+    </div>
+
+    <!-- ═══════════ DECISION 2: palette layout ═══════════ -->
+    <div class="frame-label">Decision 2 — palette layout in the popover. (A) icon grid · (B) segmented rows · (C) labelled action rows</div>
+    <div class="cols">
+      <!-- Option A: icon grid (recommended) -->
+      <div class="scol">
+        <span class="scap"><b>A · icon grid 4×2</b> (recommended)</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Tools</span><span class="chev">▾</span></div>
+              <div class="toolgrid">
+                <button class="on" title="Select">⌖<span class="k">S</span></button>
+                <button title="Note">▢<span class="k">N</span></button>
+                <button title="Text">T<span class="k">X</span></button>
+                <button title="Checklist">☑<span class="k">C</span></button>
+                <button title="Diagram">◈<span class="k">D</span></button>
+                <button title="Arrow">↗<span class="k">A</span></button>
+                <button title="Pen">✎<span class="k">P</span></button>
+                <button title="Eraser">⌫<span class="k">E</span></button>
+              </div>
+            </section>
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Canvas</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Snap to grid</span><div class="tog on"><div class="knob"></div></div></div>
+              <div class="row"><button class="act"><span class="ai">⤓</span>Export…</button></div>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Most compact; matches today's on-board cluster + muscle memory. One small new CSS block (<b>.ca-inspector-toolgrid</b>). Shortcut in the corner.</p>
+      </div>
+
+      <!-- Option B: segmented rows -->
+      <div class="scol">
+        <span class="scap">B · segmented pills (reuses InspectorSegmented)</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Tools</span><span class="chev">▾</span></div>
+              <div class="row"><div class="seg">
+                <button class="on">⌖ Select</button><button>▢ Note</button><button>T Text</button><button>☑ Check</button>
+              </div></div>
+              <div class="row"><div class="seg">
+                <button>◈ Diagram</button><button>↗ Arrow</button><button>✎ Pen</button><button>⌫ Erase</button>
+              </div></div>
+            </section>
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Canvas</span><span class="chev">▾</span></div>
+              <div class="row"><span class="row-lab">Snap to grid</span><div class="tog on"><div class="knob"></div></div></div>
+              <div class="row"><button class="act"><span class="ai">⤓</span>Export…</button></div>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Zero new CSS (reuses the P1 segmented control) + shows labels. But two wrapped rows are taller and the pills read as a filter, not a toolbar.</p>
+      </div>
+
+      <!-- Option C: labelled action rows -->
+      <div class="scol">
+        <span class="scap">C · labelled rows (reuses InspectorAction + kbd)</span>
+        <aside class="bi" style="position: relative; left: 0; top: 0; transform: none; max-height: none;">
+          <div class="bi-scroll">
+            <section class="sec">
+              <div class="sec-hd"><span class="sec-lab">Tools</span><span class="chev">▾</span></div>
+              <div class="row"><button class="act"><span class="ai">⌖</span>Select<span class="kbd">S</span></button></div>
+              <div class="row"><button class="act"><span class="ai">▢</span>Sticky note<span class="kbd">N</span></button></div>
+              <div class="row"><button class="act"><span class="ai">✎</span>Pen<span class="kbd">P</span></button></div>
+              <div class="row"><span class="meta" style="padding-left:2px;">… +5 more (Text · Checklist · Diagram · Arrow · Eraser)</span></div>
+            </section>
+          </div>
+        </aside>
+        <p class="note">Most legible / discoverable (full name + shortcut). But 8 stacked rows is very tall — dominates the popover, pushes Canvas + Duplicate below the fold. Zero new CSS.</p>
+      </div>
+    </div>
+
+    <div class="caption">Board Inspector P3 · PlanningInspector · palette moved off-board · pixel mock (tokens.css) · not wired into build · sign-off gate before code</div>
+  </body>
+</html>

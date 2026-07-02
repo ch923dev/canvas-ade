@@ -21,13 +21,21 @@ import {
   type TextAlignToken,
   type TextColorToken
 } from '../canvas/boards/planning/textStyle'
+import {
+  STROKE_COLOR_TOKENS,
+  STROKE_WIDTH_TOKENS,
+  OPACITY_MIN,
+  OPACITY_MAX,
+  type StrokeColorToken,
+  type StrokeWidthToken
+} from '../canvas/boards/planning/strokeStyle'
 import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/terminalFont'
 import { clampScrollback } from '../canvas/boards/terminal/terminalScrollback'
 import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 // v17 Kanban schema pieces live in a leaf module (keeps this file under the max-lines gate); the
 // back-reference to BoardCommon is type-only, so there is no runtime import cycle. Re-exported below
 // so every `import { KanbanBoard } from '.../boardSchema'` consumer is unchanged.
-import { DEFAULT_KANBAN_COLUMNS } from './kanbanSchema'
+import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard } from './kanbanSchema'
 export type { KanbanBoard, KanbanColumn, KanbanCard }
 
@@ -214,6 +222,13 @@ interface ElementCommon {
   locked?: boolean
   /** W3: lightweight grouping (move/delete-together). Absent ⇒ ungrouped. */
   groupId?: string
+  /** v17 (P4b): element opacity in [OPACITY_MIN, OPACITY_MAX]. Absent ⇒ 1 (fully opaque). All kinds. */
+  opacity?: number
+  /** v17 (P4b): stroke colour token — LINE kinds only (arrow / pen `stroke`). Absent ⇒ the kind's
+   *  legacy ink (`strokeColorCss`). Ignored by the fill/box kinds. */
+  strokeColor?: StrokeColorToken
+  /** v17 (P4b): stroke width token (s/m/l) — LINE kinds only. Absent ⇒ the kind's legacy width (`m`). */
+  strokeWidth?: StrokeWidthToken
 }
 
 export interface NoteElement extends ElementCommon {
@@ -683,7 +698,14 @@ const MIGRATIONS: Record<number, Migration> = {
   // v17: the `kanban` board type (P4). The type only appears on newly-authored kanban boards, so
   // existing docs have nothing to backfill — identity bump. BREAKING (floor → 17): a pre-17 reader's
   // assertBoard default branch throws on the unknown type (boardSchemaVersion.ts).
-  16: (doc) => ({ ...doc, schemaVersion: 17 })
+  16: (doc) => ({ ...doc, schemaVersion: 17 }),
+  // v18: optional Planning ELEMENT appearance props on ElementCommon — opacity (all kinds) + strokeColor
+  // /strokeWidth tokens (line kinds). All optional + defaulted-at-read → identity bump; ADDITIVE so
+  // MIN_READER_VERSION stays 17 (assertPlanningElement range/token-checks them without rejecting the
+  // element; unknown keys ride through the structuredClone round-trip). z-order is a pure elements[]
+  // reorder → no schema. (Re-sequenced from the umbrella's provisional 17 at the epic-end merge —
+  // main's Kanban claimed 17 first; boardSchemaVersion.ts.)
+  17: (doc) => ({ ...doc, schemaVersion: 18 })
 }
 
 /**
@@ -798,6 +820,27 @@ export function assertPlanningElement(el: unknown): void {
   }
   if (el.groupId !== undefined && typeof el.groupId !== 'string') {
     fail('planning element has a non-string groupId')
+  }
+  // v17 (P4b) appearance props — all OPTIONAL + common to every kind. Type/range-check without
+  // rejecting unknowns: opacity is a finite number in [OPACITY_MIN, OPACITY_MAX]; strokeColor /
+  // strokeWidth are closed token strings (the line kinds consume them; other kinds ignore them).
+  if (
+    el.opacity !== undefined &&
+    (!isFiniteNum(el.opacity) || el.opacity < OPACITY_MIN || el.opacity > OPACITY_MAX)
+  ) {
+    fail(`planning element has an out-of-range opacity ${String(el.opacity)}`)
+  }
+  if (
+    el.strokeColor !== undefined &&
+    !STROKE_COLOR_TOKENS.includes(el.strokeColor as StrokeColorToken)
+  ) {
+    fail(`planning element has an invalid strokeColor ${String(el.strokeColor)}`)
+  }
+  if (
+    el.strokeWidth !== undefined &&
+    !STROKE_WIDTH_TOKENS.includes(el.strokeWidth as StrokeWidthToken)
+  ) {
+    fail(`planning element has an invalid strokeWidth ${String(el.strokeWidth)}`)
   }
 
   switch (el.kind) {
@@ -977,35 +1020,12 @@ export function assertBoard(b: unknown): void {
         fail('dataflow board sourceBoardId is not a string')
       }
       return
-    case 'kanban': {
-      // v17: columns + cards are required arrays. A column needs id/title strings (+ optional positive
-      // wip — mirrors kanbanEdit.ts's setColumnWip, which only ever persists a finite `wip > 0` and
-      // clears it to `undefined` otherwise, so a non-positive value here can only be a hand-edited/
-      // adversarial doc); a card needs id/columnId/title strings (+ optional string chips). A card
-      // whose columnId matches no column is a stale ref DROPPED in fromObject (not failed here) — a
-      // shape check only, matching the previewSourceId/dataflow reconcile discipline.
-      if (!Array.isArray(b.columns)) fail('kanban board columns is not an array')
-      for (const c of b.columns as unknown[]) {
-        if (!isRecord(c)) fail('kanban column is not an object')
-        if (typeof c.id !== 'string') fail('kanban column has a non-string id')
-        if (typeof c.title !== 'string') fail('kanban column has a non-string title')
-        if (c.wip !== undefined && !isPositiveNum(c.wip)) {
-          fail('kanban column wip is not a positive number')
-        }
-      }
-      if (!Array.isArray(b.cards)) fail('kanban board cards is not an array')
-      for (const c of b.cards as unknown[]) {
-        if (!isRecord(c)) fail('kanban card is not an object')
-        if (typeof c.id !== 'string') fail('kanban card has a non-string id')
-        if (typeof c.columnId !== 'string') fail('kanban card has a non-string columnId')
-        if (typeof c.title !== 'string') fail('kanban card has a non-string title')
-        for (const k of ['tag', 'assignee', 'ref'] as const) {
-          if (c[k] !== undefined && typeof c[k] !== 'string')
-            fail(`kanban card ${k} is not a string`)
-        }
-      }
+    case 'kanban':
+      // v17 columns/cards deep validation lives with the kanban types (kanbanSchema.ts — the
+      // max-lines extraction at the board-inspector epic merge); guards are injected so the leaf
+      // module never imports back into this file.
+      assertKanbanContent(b, fail, isRecord, isPositiveNum)
       return
-    }
     default:
       fail(`board has an unknown type ${String(b.type)}`)
   }

@@ -9,6 +9,7 @@
 @import './styles/motion.css';
 @import './styles/chrome/dock.css';
 @import './styles/chrome/sidepanel.css';
+@import './styles/chrome/boardinspector.css';
 @import './styles/base.css';
 @import './styles/chrome/backdrop.css';
 @import './styles/boards/node.css';

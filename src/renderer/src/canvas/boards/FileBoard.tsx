@@ -35,6 +35,7 @@ import {
   type ReactElement
 } from 'react'
 import { useStore } from '@xyflow/react'
+import { createPortal } from 'react-dom'
 import CodeMirror, { type EditorView } from '@uiw/react-codemirror'
 import { openSearchPanel } from '@codemirror/search'
 import type { FileBoard as FileBoardData } from '../../lib/boardSchema'
@@ -62,6 +63,8 @@ import { renderMarkdownToHtml } from './fileBoardMarkdown'
 import { useFileSave } from './fileBoardSave'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
 import { FILEREF_MIME } from '../fileTreeData'
+import { FileInspector } from './file/FileInspector'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 
 type Kind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
 
@@ -80,6 +83,8 @@ export function FileBoard({
   const path = board.path
   const readOnly = !!board.readOnly
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  // Board Inspector slot (P2): non-null only while THIS board is the single eligible selection.
+  const inspectorSlot = useInspectorSlot(board.id)
   const selectBoard = useCanvasStore((s) => s.selectBoard)
   // This board is the single reusable "peek" (preview) board ⟺ its id is the store's peekBoardId:
   // render it ghosted (dashed) and offer an explicit Pin. Pinning (here, a double-click in the tree,
@@ -96,6 +101,9 @@ export function FileBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [kind, setKind] = useState<Kind>(path ? 'loading' : 'empty')
+  // P5 (D5): the Inspector's error-state Retry re-runs the loader effect for the SAME path by
+  // bumping this nonce (a dep of the load effect below) — no path mutation, no board patch.
+  const [loadNonce, setLoadNonce] = useState(0)
   const [text, setText] = useState('')
   const [savedText, setSavedText] = useState('')
   const [imgUrl, setImgUrl] = useState<string | null>(null)
@@ -252,7 +260,7 @@ export function FileBoard({
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [path, ext])
+  }, [path, ext, loadNonce])
 
   // -- Language resolution + highlighting (sync; no worker, no eval) -------------
   // SLICE-009: the highlight (Lezer parse) + markdown render are the per-keystroke hot paths. Key
@@ -434,157 +442,23 @@ export function FileBoard({
     updateBoard(board.id, { path: next })
   }, [pathDraft, board.id, updateBoard])
 
-  // Title-bar controls (text boards): font steppers (always) + dirty dot/Save (editable) or a
-  // read-only tag. `onMouseDown preventDefault` keeps the editor focused (no blur -> snapshot flip).
-  const stepBtnStyle: CSSProperties = {
-    fontFamily: 'var(--ui)',
-    fontWeight: 600,
-    lineHeight: 1,
-    color: 'var(--text-2)',
-    background: 'transparent',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--r-ctl)',
-    width: 22,
-    height: 20,
-    display: 'grid',
-    placeItems: 'center',
-    cursor: 'pointer',
-    flex: 'none'
-  }
-  // Peek → Pin: the explicit affordance + the visual "this is a preview" cue in the title bar
-  // (the canvas analog of VS Code's italic preview tab). Shown for ANY peek board (text or image).
-  const pinPill = isPeek ? (
-    <button
-      className="nodrag"
-      title="Pin this board (or double-click it in the tree / start editing)"
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={() => useCanvasStore.getState().pinBoard(board.id)}
+  // P5: the title-bar cluster (pin / mode seg / font ± / Save) is gone — FileInspector is the one
+  // control home. Only the at-a-glance UNSAVED cue survives on the bar, as a quiet dot beside the
+  // title (D1); Save itself lives in Inspector › File.
+  const titleBadge = dirty ? (
+    <span
+      role="img"
+      aria-label="Unsaved changes"
+      title="Unsaved changes"
       style={{
-        fontFamily: 'var(--ui)',
-        fontSize: 11,
-        fontWeight: 500,
-        color: 'var(--accent)',
-        background: 'var(--accent-wash)',
-        border: '1px dashed var(--accent)',
-        borderRadius: 'var(--r-ctl)',
-        padding: '2px 8px',
-        cursor: 'pointer',
+        width: 6,
+        height: 6,
+        borderRadius: 999,
+        background: 'var(--warn)',
         flex: 'none'
       }}
-    >
-      Pin
-    </button>
-  ) : null
-  const actions =
-    kind === 'text' ? (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 'none' }}>
-        {pinPill}
-        {isMarkdown && (
-          <span
-            style={{
-              display: 'inline-flex',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--r-ctl)',
-              overflow: 'hidden',
-              flex: 'none'
-            }}
-          >
-            {(['preview', 'split', 'source'] as const).map((m) => (
-              <button
-                key={m}
-                className="nodrag"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setMode(m)}
-                style={{
-                  fontFamily: 'var(--ui)',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  padding: '2px 8px',
-                  border: 'none',
-                  cursor: 'pointer',
-                  background: mode === m ? 'var(--accent-wash)' : 'transparent',
-                  color: mode === m ? 'var(--text)' : 'var(--text-3)'
-                }}
-              >
-                {m === 'preview' ? 'Preview' : m === 'split' ? 'Split' : 'Source'}
-              </button>
-            ))}
-          </span>
-        )}
-        <span
-          style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}
-          title={`Font size ${fontSize}px (Ctrl/Cmd +/-)`}
-        >
-          <button
-            className="nodrag"
-            aria-label="Decrease font size"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => adjustFont(-1)}
-            style={{ ...stepBtnStyle, fontSize: 11 }}
-          >
-            A-
-          </button>
-          <button
-            className="nodrag"
-            aria-label="Increase font size"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => adjustFont(1)}
-            style={{ ...stepBtnStyle, fontSize: 13 }}
-          >
-            A+
-          </button>
-        </span>
-        {!readOnly && mode !== 'preview' && dirty && (
-          <span
-            title="Unsaved changes"
-            aria-label="Unsaved changes"
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: 999,
-              background: 'var(--warn)',
-              flex: 'none'
-            }}
-          />
-        )}
-        {!readOnly && mode !== 'preview' && (
-          <button
-            className="nodrag"
-            title="Save (Cmd/Ctrl+S)"
-            disabled={!dirty || saving}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void doSave()}
-            style={{
-              fontFamily: 'var(--ui)',
-              fontSize: 11,
-              fontWeight: 500,
-              color: dirty ? 'var(--text)' : 'var(--text-faint)',
-              background: dirty ? 'var(--surface-overlay)' : 'transparent',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--r-ctl)',
-              padding: '2px 8px',
-              cursor: dirty && !saving ? 'pointer' : 'default'
-            }}
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        )}
-        {readOnly && (
-          <span
-            style={{
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              color: 'var(--text-3)',
-              flex: 'none'
-            }}
-          >
-            read-only
-          </span>
-        )}
-      </div>
-    ) : isPeek ? (
-      <div style={{ display: 'flex', alignItems: 'center', flex: 'none' }}>{pinPill}</div>
-    ) : undefined
+    />
+  ) : undefined
 
   // The text content's left/sole pane: the live editor on the focused board, else the crisp
   // snapshot. Built once so the plain (source) view and the split view's left half share it.
@@ -640,156 +514,185 @@ export function FileBoard({
   )
 
   return (
-    <BoardFrame
-      type="file"
-      boardId={board.id}
-      title={displayTitle}
-      titleItalic={isPeek}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      contentBg="var(--surface)"
-      actions={actions}
-      onFull={onFull}
-      onDuplicate={onDuplicate}
-      onDelete={onDelete}
-      onAddToGroup={onAddToGroup}
-      onRemoveFromGroup={onRemoveFromGroup}
-      onStartConnect={onStartConnect}
-    >
-      <div
-        style={{ position: 'absolute', inset: 0 }}
-        onContextMenu={onContextMenu}
-        onDragOverCapture={onBoardDragOver}
-        onDragLeaveCapture={onBoardDragLeave}
-        onDropCapture={onBoardDrop}
-      >
-        {kind === 'empty' && (
-          <EmptyState
-            pathDraft={pathDraft}
-            onDraftChange={setPathDraft}
-            onBind={bindPath}
+    <>
+      {inspectorSlot &&
+        createPortal(
+          <FileInspector
+            kind={kind}
+            isMarkdown={isMarkdown}
+            mode={mode}
+            onMode={setMode}
+            fontSize={fontSize}
+            onDecFont={() => adjustFont(-1)}
+            onIncFont={() => adjustFont(1)}
+            readOnly={readOnly}
+            dirty={dirty}
+            saving={saving}
+            onSave={() => void doSave()}
+            canFind={kind === 'text' && !readOnly}
+            onFind={openFind}
+            isPeek={isPeek}
+            onPin={() => useCanvasStore.getState().pinBoard(board.id)}
+            path={path ?? ''}
+            typeLabel={ext ? ext.toUpperCase() : ''}
+            sizeText={size ? formatBytes(size) : ''}
+            errorDetail={errMsg}
             onBrowse={() => requestBrowse(board.id)}
-            armed={armed}
-            onCancelBrowse={clearPendingBind}
-          />
+            onRetry={() => setLoadNonce((n) => n + 1)}
+          />,
+          inspectorSlot
         )}
-
-        {kind === 'loading' && (
-          <Centered>
-            <span style={{ fontFamily: 'var(--ui)', fontSize: 12, color: 'var(--text-3)' }}>
-              Loading {fileName}...
-            </span>
-          </Centered>
-        )}
-
-        {kind === 'text' &&
-          (isMarkdown && mode === 'preview' ? (
-            <MarkdownPreview html={markdownHtml} />
-          ) : isMarkdown && mode === 'split' ? (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
-              <div
-                ref={sourcePaneRef}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  position: 'relative',
-                  borderRight: '1px solid var(--border-subtle)'
-                }}
-              >
-                {textPane}
-              </div>
-              <div ref={previewPaneRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-                <MarkdownPreview html={markdownHtml} />
-              </div>
-            </div>
-          ) : (
-            textPane
-          ))}
-
-        {kind === 'image' && imgUrl && (
-          <div
-            className="nowheel nodrag"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              overflow: 'auto',
-              display: 'grid',
-              placeItems: 'center',
-              padding: 16,
-              background: 'var(--inset)'
-            }}
-          >
-            <img
-              src={imgUrl}
-              alt={fileName}
-              data-test="file-image"
-              draggable={false}
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+      <BoardFrame
+        type="file"
+        boardId={board.id}
+        title={displayTitle}
+        titleItalic={isPeek}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        contentBg="var(--surface)"
+        titleBadge={titleBadge}
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
+        onAddToGroup={onAddToGroup}
+        onRemoveFromGroup={onRemoveFromGroup}
+        onStartConnect={onStartConnect}
+      >
+        <div
+          style={{ position: 'absolute', inset: 0 }}
+          onContextMenu={onContextMenu}
+          onDragOverCapture={onBoardDragOver}
+          onDragLeaveCapture={onBoardDragLeave}
+          onDropCapture={onBoardDrop}
+        >
+          {kind === 'empty' && (
+            <EmptyState
+              pathDraft={pathDraft}
+              onDraftChange={setPathDraft}
+              onBind={bindPath}
+              onBrowse={() => requestBrowse(board.id)}
+              armed={armed}
+              onCancelBrowse={clearPendingBind}
             />
-          </div>
-        )}
+          )}
 
-        {kind === 'large' && (
-          <GuardCard
-            title={isImageExt ? 'Image too large to preview' : 'File too large to open here'}
-            fileName={fileName}
-            detail={`${formatBytes(size)} - open it in your editor.`}
-          />
-        )}
+          {kind === 'loading' && (
+            <Centered>
+              <span style={{ fontFamily: 'var(--ui)', fontSize: 12, color: 'var(--text-3)' }}>
+                Loading {fileName}...
+              </span>
+            </Centered>
+          )}
 
-        {kind === 'binary' && (
-          <GuardCard
-            title="Binary file"
-            fileName={fileName}
-            detail="This file isn't text - open it in your editor."
-          />
-        )}
+          {kind === 'text' &&
+            (isMarkdown && mode === 'preview' ? (
+              <MarkdownPreview html={markdownHtml} />
+            ) : isMarkdown && mode === 'split' ? (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+                <div
+                  ref={sourcePaneRef}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    position: 'relative',
+                    borderRight: '1px solid var(--border-subtle)'
+                  }}
+                >
+                  {textPane}
+                </div>
+                <div ref={previewPaneRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+                  <MarkdownPreview html={markdownHtml} />
+                </div>
+              </div>
+            ) : (
+              textPane
+            ))}
 
-        {kind === 'error' && (
-          <GuardCard title="Couldn't open this file" fileName={fileName} detail={errMsg} danger />
-        )}
-
-        {/* Drop affordance: a file-ref dragged from the tree is hovering this board → drop rebinds
-            it to that file. pointer-events:none so it never eats the drop it advertises. */}
-        {dragOver && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-              display: 'grid',
-              placeItems: 'center',
-              background: 'var(--accent-wash)',
-              border: '2px dashed var(--accent)',
-              borderRadius: 'var(--r-inner)',
-              zIndex: 2
-            }}
-          >
-            <span
+          {kind === 'image' && imgUrl && (
+            <div
+              className="nowheel nodrag"
               style={{
-                fontFamily: 'var(--ui)',
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--accent)'
+                position: 'absolute',
+                inset: 0,
+                overflow: 'auto',
+                display: 'grid',
+                placeItems: 'center',
+                padding: 16,
+                background: 'var(--inset)'
               }}
             >
-              Drop to open here
-            </span>
-          </div>
+              <img
+                src={imgUrl}
+                alt={fileName}
+                data-test="file-image"
+                draggable={false}
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            </div>
+          )}
+
+          {kind === 'large' && (
+            <GuardCard
+              title={isImageExt ? 'Image too large to preview' : 'File too large to open here'}
+              fileName={fileName}
+              detail={`${formatBytes(size)} - open it in your editor.`}
+            />
+          )}
+
+          {kind === 'binary' && (
+            <GuardCard
+              title="Binary file"
+              fileName={fileName}
+              detail="This file isn't text - open it in your editor."
+            />
+          )}
+
+          {kind === 'error' && (
+            <GuardCard title="Couldn't open this file" fileName={fileName} detail={errMsg} danger />
+          )}
+
+          {/* Drop affordance: a file-ref dragged from the tree is hovering this board → drop rebinds
+            it to that file. pointer-events:none so it never eats the drop it advertises. */}
+          {dragOver && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                display: 'grid',
+                placeItems: 'center',
+                background: 'var(--accent-wash)',
+                border: '2px dashed var(--accent)',
+                borderRadius: 'var(--r-inner)',
+                zIndex: 2
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: 'var(--ui)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'var(--accent)'
+                }}
+              >
+                Drop to open here
+              </span>
+            </div>
+          )}
+        </div>
+        {ctxMenu && path && (
+          <FileActionsMenu
+            at={ctxMenu}
+            path={path}
+            boardId={board.id}
+            canFind={kind === 'text' && !readOnly}
+            onFind={openFind}
+            onClose={() => setCtxMenu(null)}
+          />
         )}
-      </div>
-      {ctxMenu && path && (
-        <FileActionsMenu
-          at={ctxMenu}
-          path={path}
-          boardId={board.id}
-          canFind={kind === 'text' && !readOnly}
-          onFind={openFind}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
-    </BoardFrame>
+      </BoardFrame>
+    </>
   )
 }
 

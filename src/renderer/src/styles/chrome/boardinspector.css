@@ -1,0 +1,814 @@
+/* ── Board Inspector (v2 shell): a COMPACT POPOVER docked LEFT, reveal-on-select ────────────────
+   Screen-space chrome, rendered OUTSIDE the React Flow transform, so it is camera-independent
+   (never clips/shrinks with zoom like the on-board title-bar actions it will eventually replace).
+   z-index 45 keeps it below the 50 app-chrome islands (Dock / SidePanel / CameraCluster).
+
+   Layout (signed off 2026-06-29): docked LEFT, vertically CENTRED, sized to its CONTENT (caps at the
+   viewport height, then the body scrolls). It sits FLUSH-LEFT by default (left:12, like the
+   reference) and only shifts RIGHT to clear the file-tree SidePanel's 240px lane WHILE that panel is
+   open — so the two never overlap, but the inspector reclaims the edge the moment the tree hides
+   (the adaptive `:has()` rule below). Reveal is purely selection-driven (see BoardInspector.tsx) —
+   no proximity zone / edge handle. */
+.ca-inspector-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  /* Hidden popover lets canvas clicks through; the revealed popover opts back in (CSS). */
+  pointer-events: none;
+}
+.ca-inspector {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  /* translateY centres it; the hidden state adds a small left slide on top (see below). */
+  transform: translateY(-50%);
+  width: 252px;
+  /* Content-height: the column is only as tall as head + body + foot, capped at the viewport. */
+  max-height: calc(100% - 28px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-board);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  pointer-events: auto;
+  transition:
+    opacity 0.14s ease-out,
+    transform 0.14s ease-out,
+    left 0.16s ease-out;
+}
+.ca-inspector[data-revealed='false'] {
+  opacity: 0;
+  /* Slide in FROM the left when revealing (mirror of SidePanel's -12px), keeping vertical centring. */
+  transform: translate(-12px, -50%);
+  pointer-events: none;
+}
+
+/* Adaptive offset: while the file-tree SidePanel (the sibling rendered just before BoardInspector in
+   AppChrome) is REVEALED, slide the inspector right to clear its lane (left:12 + 240 + 12 gap = 264)
+   so the two coexist side-by-side. When the tree hides, the inspector returns flush-left. Pure CSS —
+   `:has()` reads the panel's data-revealed, `~` reaches the following inspector wrap. */
+.ca-sidepanel-wrap:has(.ca-sidepanel[data-revealed='true']) ~ .ca-inspector-wrap .ca-inspector {
+  left: 264px;
+}
+
+/* P5 (D7): while a board is in FULL VIEW, raise the Inspector above the modal scrim (z 200) — the
+   title-bar action clusters are gone, so the Inspector must stay reachable in exactly the mode with
+   the most screen space. 250 = the menu layer, which already works over the scrim (menu.css). Same
+   `:has()` pattern as the SidePanel shift; the scrim mounts only while full view is up. */
+body:has(.fullview-scrim) .ca-inspector-wrap {
+  z-index: 250;
+}
+
+/* Sticky identity header: type glyph + micro type tag + Jump-to-board, then the board title. */
+.ca-inspector-head {
+  flex: 0 0 auto;
+  padding: 10px 10px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ca-inspector-id {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ca-inspector-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+.ca-inspector-type {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ca-inspector-jump,
+.ca-inspector-hide {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.ca-inspector-jump:hover,
+.ca-inspector-hide:hover {
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ca-inspector-jump:focus-visible,
+.ca-inspector-hide:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+/* P5-8: the hide button hugs the head's right edge (the id row is flex). */
+.ca-inspector-hide {
+  margin-left: auto;
+}
+
+/* P5-8 (v2): the retrieve HANDLE — the popover's remnant at its own docked spot (left:12,
+   centred), shown while the Inspector is hidden but a board is selected. Deliberately NOT a
+   left-edge tab: the file tree owns a 36px proximity band at the window's left edge (SidePanel
+   REVEAL_EDGE), so an edge tab both flashed the tree open and got shifted by its reveal while
+   being aimed at. The handle is approached from the canvas side and never moves. Opts back into
+   pointer events (the wrap is pointer-events:none); inherits the wrap's z (45, raised to 250 in
+   full view by the D7 rule). */
+.ca-inspector-handle {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 32px;
+  max-width: 200px;
+  padding: 0 var(--space-8);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-board);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    color 0.14s ease-out,
+    border-color 0.14s ease-out,
+    left 0.16s ease-out;
+}
+.ca-inspector-handle:hover {
+  color: var(--text);
+}
+.ca-inspector-handle:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--shadow-pop),
+    0 0 0 1.5px var(--accent);
+}
+.ca-inspector-handle-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* While the file-tree SidePanel is revealed, the handle clears its lane exactly like the popover
+   (the same adaptive `:has()` shift) — a deliberately opened tree never overlaps it. */
+.ca-sidepanel-wrap:has(.ca-sidepanel[data-revealed='true'])
+  ~ .ca-inspector-wrap
+  .ca-inspector-handle {
+  left: 264px;
+}
+.ca-inspector-title {
+  margin-top: 6px;
+  font-size: var(--fs-label);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Footer — universal board action(s). flex:none so it keeps its height when the body scrolls; NOT
+   margin-top:auto (that would stretch the popover to full max-height even with short content — we
+   want content-height). Grows as later phases land. */
+.ca-inspector-foot {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ca-inspector-act {
+  height: 28px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  text-align: left;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-act:hover {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.ca-inspector-act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* Action extras: icon / flex label / shortcut chip, plus accent (primary), washed (active),
+   danger, and disabled variants. */
+.ca-inspector-act-ico {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+.ca-inspector-act:hover .ca-inspector-act-ico {
+  color: var(--text-2);
+}
+.ca-inspector-act-lab {
+  flex: 1;
+}
+.ca-inspector-act-kbd {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.ca-inspector-act[data-primary],
+.ca-inspector-act[data-active] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ca-inspector-act[data-active] {
+  background: var(--accent-wash);
+}
+.ca-inspector-act[data-primary]:hover {
+  background: var(--accent-wash);
+}
+.ca-inspector-act[data-primary] .ca-inspector-act-ico,
+.ca-inspector-act[data-active] .ca-inspector-act-ico {
+  color: var(--accent);
+}
+.ca-inspector-act[data-danger],
+.ca-inspector-act[data-danger] .ca-inspector-act-ico {
+  color: var(--err);
+}
+.ca-inspector-act:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  border-color: var(--border-subtle);
+}
+.ca-inspector-act:disabled .ca-inspector-act-ico {
+  color: var(--text-faint);
+}
+
+/* Content slot — the selected board portals its per-type inspector here. flex:0 1 auto so the
+   popover is content-height when short (doesn't grow to fill), but the body shrinks + scrolls when
+   the total exceeds the viewport cap (head/foot are flex:none, so only this scrolls). Collapses to
+   nothing for a board type that has no inspector yet (empty slot). */
+.ca-inspector-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* overflow-y:auto with the default overflow-x:visible COMPUTES overflow-x to auto (CSS spec) — a
+     few px of sub-pixel rounding then shows a spurious HORIZONTAL scrollbar. Clip x explicitly so the
+     popover only ever scrolls vertically (and only when content exceeds the viewport cap). */
+  overflow-x: hidden;
+}
+.ca-inspector-body:empty {
+  display: none;
+}
+
+/* ── Primitives toolkit (shared by every per-type inspector) ────────────────────── */
+.ca-inspector-section {
+  border-top: 1px solid var(--border-subtle);
+}
+.ca-inspector-section:first-child {
+  border-top: none;
+}
+.ca-inspector-section-hd {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.ca-inspector-section-lab {
+  flex: 1;
+  text-align: left;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-3);
+}
+.ca-inspector-section-hd:hover .ca-inspector-section-lab {
+  color: var(--text-2);
+}
+.ca-inspector-chev {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.12s ease-out;
+}
+.ca-inspector-chev[data-open='true'] {
+  transform: rotate(90deg);
+}
+.ca-inspector-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px 9px;
+}
+
+.ca-inspector-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ca-inspector-row-lab {
+  flex: 1;
+  font-size: var(--fs-label);
+  color: var(--text-2);
+}
+
+/* −/value/+ stepper */
+.ca-inspector-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ca-inspector-step button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-step button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.ca-inspector-step button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.ca-inspector-step-val {
+  min-width: 30px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: var(--text);
+}
+
+/* Read-only meta row (mono key/value), e.g. shell / command / cwd */
+.ca-inspector-meta {
+  min-height: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+.ca-inspector-meta-lab {
+  flex: none;
+  color: var(--text-3);
+}
+.ca-inspector-meta-val {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── P1 BrowserInspector primitives (Segmented / nav cluster / Toggle / Slider / status chip) ───── */
+
+/* Single-select segmented pill group (viewport class, desktop size, network dock). */
+.ca-inspector-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+}
+.ca-inspector-seg[data-fill] {
+  display: flex;
+  flex: 1;
+}
+.ca-inspector-seg button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ca-inspector-seg[data-fill] button {
+  flex: 1;
+}
+.ca-inspector-seg button:hover:not([data-on]) {
+  color: var(--text-2);
+}
+.ca-inspector-seg button[data-on] {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.ca-inspector-seg-ico {
+  display: inline-flex;
+}
+
+/* Back / Forward / Reload cluster. */
+.ca-inspector-nav {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.ca-inspector-navbtn {
+  flex: 1;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-navbtn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+}
+.ca-inspector-navbtn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* On/off switch (mute, network inspector). */
+.ca-inspector-toggle {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.ca-inspector-toggle[data-on] {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+}
+.ca-inspector-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  transition:
+    left 0.12s ease,
+    background 0.12s ease;
+}
+.ca-inspector-toggle[data-on] .ca-inspector-toggle-knob {
+  left: 16px;
+  background: var(--accent);
+}
+
+/* Volume slider (0–100). Native range, token-styled track + thumb. */
+.ca-inspector-vol-ico {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+.ca-inspector-slider {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface-raised);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.ca-inspector-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  cursor: pointer;
+}
+.ca-inspector-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  cursor: pointer;
+}
+
+/* P4b: an in-section sub-divider label ("Appearance") between the per-kind rows and Arrange. */
+.ca-inspector-subhd {
+  margin-top: 5px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-3);
+}
+/* P4b: the opacity slider's live value readout (mono, right-aligned). */
+.ca-inspector-slider-val {
+  flex: none;
+  width: 40px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+
+/* Connection status chip (Preview section). Tone → dot colour. */
+.ca-inspector-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.ca-inspector-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+}
+.ca-inspector-status[data-tone='ok'] .ca-inspector-status-dot {
+  background: var(--ok);
+}
+.ca-inspector-status[data-tone='warn'] .ca-inspector-status-dot {
+  background: var(--warn);
+}
+.ca-inspector-status[data-tone='err'] .ca-inspector-status-dot {
+  background: var(--err);
+}
+
+/* ── P2 (Command / Data-Flow / File) additions ─────────────────────────────────────
+   Command surfaces a roll-up of its kanban counts (reusing the status chip above, one per
+   lifecycle bucket) + a slim done-ratio bar; File/Data-Flow reuse the existing primitives. */
+
+/* A wrapping cluster of status chips (Command's running / reporting / failed roll-up).
+   P5 sweep: discrete clusters share one 4px gap (chips/nav/toolgrid/actgrid/swatches);
+   contained pill groups (seg/iconbtns) keep their tighter 1-2px. */
+.ca-inspector-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Slim progress bar (Command done ratio). Width is set inline (a fraction, not a colour). */
+.ca-inspector-pbar {
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+}
+.ca-inspector-pfill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* ── P3 PlanningInspector — the whiteboard tool palette as a compact icon grid ───────
+   The 8 tools in a 4-column grid; the active tool is accent-washed with its bare-letter
+   shortcut in the corner. Radiogroup semantics (one active tool). The ONLY P3-specific
+   block — snap reuses .ca-inspector-toggle, export reuses .ca-inspector-act. */
+.ca-inspector-toolgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.ca-inspector-tool {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-tool:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+.ca-inspector-tool[data-on] {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent);
+}
+.ca-inspector-tool:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-tool-k {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  color: var(--text-faint);
+}
+.ca-inspector-tool[data-on] .ca-inspector-tool-k {
+  color: var(--accent);
+}
+
+/* ── P4 PlanningInspector — the Element section (re-homed TextToolbar + ElementContextMenu) ──────
+   The inspector morphs by the selected element(s): a swatch row (tint / text colour), a compact
+   icon cluster (align / distribute), a 2-up action grid (lock / group / duplicate / send), and the
+   section's selection-count chip. Typography reuses the shipped .ca-inspector-seg / -toggle. */
+
+/* Selection-count chip in the Element section header (accent for a homogeneous kind; muted when the
+   selection mixes kinds — see [data-mixed]). */
+.ca-inspector-count {
+  flex: none;
+  height: 15px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-pill);
+}
+.ca-inspector-count[data-mixed] {
+  color: var(--text-3);
+  background: transparent;
+  border-color: var(--border);
+}
+
+/* Swatch row (tint / text colour). */
+.ca-inspector-swatches {
+  display: flex;
+  flex: 1;
+  gap: 4px; /* P5 sweep: the shared discrete-cluster gap */
+}
+.ca-inspector-swatch {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-inspector-swatch:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.ca-inspector-swatch[data-on] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+  border-color: var(--accent);
+}
+.ca-inspector-swatch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-swatch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ca-inspector-swatch-g {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-3);
+}
+
+/* Compact icon cluster (align edges / distribute axes). Disables as a unit. */
+.ca-inspector-iconbtns {
+  display: inline-flex;
+  flex: 1;
+  gap: 2px;
+  padding: 2px;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+}
+.ca-inspector-iconbtns button {
+  flex: 1;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.ca-inspector-iconbtns button:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+.ca-inspector-iconbtns button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-iconbtns[data-disabled] {
+  opacity: 0.45;
+}
+.ca-inspector-iconbtns[data-disabled] button {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* 2-up action grid so the shared arrange actions (lock / group / duplicate / send) read as a
+   cluster, not a tall stack. Each cell is a full-width .ca-inspector-act. */
+.ca-inspector-actgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+/* ── P5 (a11y): keyboard focus rings for every control that lacked one ─────────────────
+   jump/act/tool/swatch/iconbtns shipped the 1.5px accent ring; these six fell back to the
+   dim UA outline (the drift the controls.css convention exists to prevent). Same ring
+   everywhere; the full-bleed section header uses the INSET variant so the ring can't clip
+   against the popover's overflow:hidden edges. */
+.ca-inspector-section-hd:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  border-radius: var(--r-ctl);
+}
+.ca-inspector-step button:focus-visible,
+.ca-inspector-seg button:focus-visible,
+.ca-inspector-navbtn:focus-visible,
+.ca-inspector-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* Native range: ring the thumb, not the whole track. */
+.ca-inspector-slider:focus-visible {
+  outline: none;
+}
+.ca-inspector-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ca-inspector-slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ca-inspector-toggle-knob {
+    transition: none;
+  }
+}
+
+/* Reduced-motion: drop the slide/fade transitions on BOTH the Inspector AND the existing left
+   SidePanel (the back-port the redesign flagged — SidePanel shipped without this override).
+   Visibility still toggles, just without the 0.14s translate+fade. The hidden Inspector keeps its
+   translateY(-50%) centring (only the slide is dropped); the SidePanel resets to none as before. */
+@media (prefers-reduced-motion: reduce) {
+  .ca-inspector,
+  .ca-sidepanel,
+  .ca-sidepanel-handle {
+    transition: none;
+  }
+  .ca-inspector[data-revealed='false'] {
+    transform: translateY(-50%);
+  }
+  .ca-sidepanel[data-revealed='false'] {
+    transform: none;
+  }
+}

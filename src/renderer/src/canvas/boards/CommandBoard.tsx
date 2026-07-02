@@ -13,6 +13,7 @@
  * submit well, task card, and dispatch hook live in `./command/`.
  */
 import { useCallback, useEffect, useMemo, type CSSProperties, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { useReactFlow } from '@xyflow/react'
 import type { CommandBoard as CommandBoardData } from '../../lib/boardSchema'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
@@ -23,7 +24,6 @@ import {
   useCommandStore,
   tasksInColumn,
   type CommandTask,
-  type CommandView,
   type TaskStatus
 } from '../../store/commandStore'
 import { deriveWorkerPool } from '../../store/workerPool'
@@ -38,6 +38,8 @@ import { CommandRecapView } from './command/CommandRecapView'
 import { GroupsView } from './command/GroupsView'
 import { WorkerConfigDialog } from './command/WorkerConfigDialog'
 import { useCommandDispatch } from './command/useCommandDispatch'
+import { CommandInspector } from './command/CommandInspector'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 
 /**
  * Collapsed (rail) board height. The 34px titlebar + the rail's well/track/counts stack need ≈130px;
@@ -69,6 +71,8 @@ export function CommandBoard({
   onStartConnect
 }: BoardViewProps<CommandBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  // Board Inspector slot (P2): non-null only while THIS board is the single eligible selection.
+  const inspectorSlot = useInspectorSlot(board.id)
   // GROUP-07 pattern: subscribe to a PRIMITIVE fingerprint of only the worker-pool-relevant board
   // fields (id · type · terminal `monitorActivity` opt-out) instead of the whole `boards` array.
   // `updateBoard` mints a NEW boards reference every drag-position frame, so a raw `s.boards`
@@ -187,263 +191,188 @@ export function CommandBoard({
     setCollapsed(false)
   }
 
-  // ── Titlebar actions (the BoardFrame `actions` slot, left of maximize/⋯) ──
-  // Phase D: a ⟲ recap toggle flips to the orchestrator recap face; the Kanban/Groups seg is hidden
-  // while flipped (it governs the front face only). Collapse stays available from either face.
-  const actions = collapsed ? (
-    <CtlBtn label="⤢ expand" title="Expand" onClick={expand} />
-  ) : (
+  // P5: the titlebar action cluster (expand / Kanban-Groups seg / recap flip / collapse) is gone —
+  // the Inspector's View section is the one control home (same handlers, portaled below).
+
+  return (
     <>
-      {!flip.flipped && <Seg view={view} onSelect={setView} />}
-      <CtlBtn
-        label="⟲ recap"
-        title={flip.flipped ? 'Back to kanban' : 'Flip to recap'}
-        active={flip.flipped}
-        onClick={flip.toggle}
-      />
-      <CtlBtn label="⤡ collapse" title="Collapse to rail" onClick={collapse} />
-    </>
-  )
-
-  return (
-    <BoardFrame
-      type={board.type}
-      boardId={board.id}
-      title={board.title}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      actions={actions}
-      onFull={onFull}
-      onDuplicate={onDuplicate}
-      onDelete={onDelete}
-      onAddToGroup={onAddToGroup}
-      onRemoveFromGroup={onRemoveFromGroup}
-      onRemoveFromAllGroups={onRemoveFromAllGroups}
-      onStartConnect={onStartConnect}
-    >
-      {configuringTask && (
-        <WorkerConfigDialog
-          key={configuringTask.id}
-          zoneName={configuringTask.zoneName ?? configuringTask.title}
-          engineeredPrompt={configuringTask.prompt ?? configuringTask.title}
-          initial={lastWorkerConfig}
-          onDispatch={(r) => confirmConfig(configuringTask.id, r)}
-          onCancel={() => cancelConfig(configuringTask.id)}
-        />
-      )}
-      {collapsed ? (
-        <div style={railStyle}>
-          <SubmitWell onSubmit={dispatch} showComposition={false} />
-          <div style={railTrackStyle}>
-            <span
-              className="ca-t-fill"
-              style={{ ...fillStyle, width: `${Math.round(progress * 100)}%` }}
-            />
-          </div>
-          <div style={railCountsStyle}>
-            <Count
-              dot="var(--ok)"
-              label={`${counts.running} running`}
-              muted={counts.running === 0}
-            />
-            <Count
-              dot="var(--warn)"
-              label={`${counts.reporting} reporting`}
-              muted={counts.reporting === 0}
-            />
-            <Count dot="var(--err)" label={`${counts.failed} failed`} muted={counts.failed === 0} />
-            <span style={{ marginLeft: 'auto', color: 'var(--text-3)', font: 'inherit' }}>
-              {counts.done} / {counts.total} done
-            </span>
-          </div>
-        </div>
-      ) : (
-        // Phase D: the body is a flip STAGE (flat at rest). FRONT = kanban/groups (always mounted);
-        // BACK = the opaque CommandRecapView overlay, rendered only while flipped.
-        <div style={{ position: 'absolute', inset: 0, ...flip.perspectiveStyle }}>
-          <div style={flip.stageStyle}>
-            <div style={{ ...bodyStyle, pointerEvents: flip.flipped ? 'none' : 'auto' }}>
-              <SubmitWell onSubmit={dispatch} />
-              <PoolStrip pool={pool} />
-              {/* Phase E: the seg-body is keyed by `view` so a Kanban↔Groups switch remounts +
-                  plays a short crossfade (gated under prefers-reduced-motion). */}
-              <div
-                key={view}
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 11,
-                  ...(reducedMotion ? null : { animation: 'ca-lod-fade-in 120ms ease-out' })
-                }}
-              >
-                {view === 'kanban' ? (
-                  <>
-                    <div style={kanbanStyle}>
-                      {COLUMNS.map((col) => {
-                        const colTasks = tasksInColumn(tasks, col.key)
-                        return (
-                          <div key={col.key} style={colStyle(col.key === 'executing')}>
-                            <div style={colHeadStyle}>
-                              <span style={colNameStyle}>{col.label}</span>
-                              <span style={colCountStyle}>{colTasks.length}</span>
-                            </div>
-                            <div style={colBodyStyle}>
-                              {colTasks.length === 0 ? (
-                                <div style={slotStyle} />
-                              ) : (
-                                colTasks.map((t) => (
-                                  <TaskCard
-                                    key={t.id}
-                                    task={t}
-                                    configuring={configuringTaskId === t.id}
-                                    onRetry={retry}
-                                    onInterrupt={interrupt}
-                                    onReconfigure={reconfigure}
-                                    onJumpToZone={jumpToZone}
-                                  />
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    {tasks.length === 0 && (
-                      <>
-                        <div style={emptyHintStyle}>
-                          <div style={emptyBigStyle}>No tasks yet</div>
-                          <div style={emptySubStyle}>
-                            Describe a task above and Dispatch — it spawns a worker zone and runs.
-                          </div>
-                        </div>
-                        {/* W1-A (H6): when orchestration is off, dispatch won't actually run —
-                            spell out the prerequisite + a one-click path to the consent modal. */}
-                        {!orchestrationEnabled && (
-                          <div style={orchestrationGuardStyle}>
-                            <span style={orchestrationGuardTextStyle}>
-                              <span style={{ color: 'var(--warn)' }}>⚠</span> Orchestration is not
-                              enabled for this project. Dispatched tasks will not run until you
-                              enable it.
-                            </span>
-                            <button
-                              type="button"
-                              className="nodrag"
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                useOrchestrationStore.getState().setModal('enable')
-                              }}
-                              style={enableBtnStyle}
-                            >
-                              Enable orchestration
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <GroupsView onJumpToZone={jumpToZone} />
-                )}
-              </div>
+      {inspectorSlot &&
+        createPortal(
+          <CommandInspector
+            collapsed={collapsed}
+            onExpand={expand}
+            onCollapse={collapse}
+            view={view}
+            onView={setView}
+            flipped={flip.flipped}
+            onToggleRecap={flip.toggle}
+            counts={counts}
+            progress={progress}
+            pool={{
+              cap: pool.cap,
+              inUse: pool.terminalsRunning,
+              idle: pool.terminalsIdle,
+              browsers: pool.browsers,
+              planning: pool.planning
+            }}
+            orchestrationEnabled={orchestrationEnabled}
+            onEnableOrchestration={() => useOrchestrationStore.getState().setModal('enable')}
+          />,
+          inspectorSlot
+        )}
+      <BoardFrame
+        type={board.type}
+        boardId={board.id}
+        title={board.title}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
+        onAddToGroup={onAddToGroup}
+        onRemoveFromGroup={onRemoveFromGroup}
+        onRemoveFromAllGroups={onRemoveFromAllGroups}
+        onStartConnect={onStartConnect}
+      >
+        {configuringTask && (
+          <WorkerConfigDialog
+            key={configuringTask.id}
+            zoneName={configuringTask.zoneName ?? configuringTask.title}
+            engineeredPrompt={configuringTask.prompt ?? configuringTask.title}
+            initial={lastWorkerConfig}
+            onDispatch={(r) => confirmConfig(configuringTask.id, r)}
+            onCancel={() => cancelConfig(configuringTask.id)}
+          />
+        )}
+        {collapsed ? (
+          <div style={railStyle}>
+            <SubmitWell onSubmit={dispatch} showComposition={false} />
+            <div style={railTrackStyle}>
+              <span
+                className="ca-t-fill"
+                style={{ ...fillStyle, width: `${Math.round(progress * 100)}%` }}
+              />
             </div>
-            {flip.flipped && <CommandRecapView onJumpToZone={jumpToZone} onRetry={retry} />}
+            <div style={railCountsStyle}>
+              <Count
+                dot="var(--ok)"
+                label={`${counts.running} running`}
+                muted={counts.running === 0}
+              />
+              <Count
+                dot="var(--warn)"
+                label={`${counts.reporting} reporting`}
+                muted={counts.reporting === 0}
+              />
+              <Count
+                dot="var(--err)"
+                label={`${counts.failed} failed`}
+                muted={counts.failed === 0}
+              />
+              <span style={{ marginLeft: 'auto', color: 'var(--text-3)', font: 'inherit' }}>
+                {counts.done} / {counts.total} done
+              </span>
+            </div>
           </div>
-        </div>
-      )}
-    </BoardFrame>
-  )
-}
-
-// ── Titlebar seg control ──────────────────────────────────────────────────────
-function Seg({
-  view,
-  onSelect
-}: {
-  view: CommandView
-  onSelect: (v: CommandView) => void
-}): ReactElement {
-  const tab = (v: CommandView, label: string): ReactElement => (
-    <button
-      className="nodrag"
-      aria-pressed={view === v}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation()
-        onSelect(v)
-      }}
-      style={{
-        padding: '3px 11px',
-        fontSize: 11,
-        border: 'none',
-        cursor: 'pointer',
-        color: view === v ? 'var(--text)' : 'var(--text-3)',
-        background: view === v ? 'var(--surface-overlay)' : 'transparent'
-      }}
-    >
-      {label}
-    </button>
-  )
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 'var(--r-ctl)',
-        overflow: 'hidden',
-        flex: 'none'
-      }}
-    >
-      {tab('kanban', 'Kanban')}
-      {tab('groups', 'Groups')}
-    </span>
-  )
-}
-
-// ── A small text control button (collapse / expand) ───────────────────────────
-function CtlBtn({
-  label,
-  title,
-  onClick,
-  active = false
-}: {
-  label: string
-  title: string
-  onClick: () => void
-  /** Accent (selected) styling — used for the ⟲ recap toggle while the board is flipped. */
-  active?: boolean
-}): ReactElement {
-  return (
-    <button
-      className="nodrag"
-      title={title}
-      aria-pressed={active}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation()
-        onClick()
-      }}
-      style={{
-        height: 22,
-        padding: '0 9px',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        borderRadius: 'var(--r-ctl)',
-        border: `1px solid ${active ? 'rgba(79,140,255,.4)' : 'var(--border-subtle)'}`,
-        color: active ? 'var(--accent-hover)' : 'var(--text-3)',
-        fontSize: 11,
-        background: active ? 'var(--accent-wash)' : 'transparent',
-        cursor: 'pointer',
-        flex: 'none',
-        whiteSpace: 'nowrap'
-      }}
-    >
-      {label}
-    </button>
+        ) : (
+          // Phase D: the body is a flip STAGE (flat at rest). FRONT = kanban/groups (always mounted);
+          // BACK = the opaque CommandRecapView overlay, rendered only while flipped.
+          <div style={{ position: 'absolute', inset: 0, ...flip.perspectiveStyle }}>
+            <div style={flip.stageStyle}>
+              <div style={{ ...bodyStyle, pointerEvents: flip.flipped ? 'none' : 'auto' }}>
+                <SubmitWell onSubmit={dispatch} />
+                <PoolStrip pool={pool} />
+                {/* Phase E: the seg-body is keyed by `view` so a Kanban↔Groups switch remounts +
+                  plays a short crossfade (gated under prefers-reduced-motion). */}
+                <div
+                  key={view}
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 11,
+                    ...(reducedMotion ? null : { animation: 'ca-lod-fade-in 120ms ease-out' })
+                  }}
+                >
+                  {view === 'kanban' ? (
+                    <>
+                      <div style={kanbanStyle}>
+                        {COLUMNS.map((col) => {
+                          const colTasks = tasksInColumn(tasks, col.key)
+                          return (
+                            <div key={col.key} style={colStyle(col.key === 'executing')}>
+                              <div style={colHeadStyle}>
+                                <span style={colNameStyle}>{col.label}</span>
+                                <span style={colCountStyle}>{colTasks.length}</span>
+                              </div>
+                              <div style={colBodyStyle}>
+                                {colTasks.length === 0 ? (
+                                  <div style={slotStyle} />
+                                ) : (
+                                  colTasks.map((t) => (
+                                    <TaskCard
+                                      key={t.id}
+                                      task={t}
+                                      configuring={configuringTaskId === t.id}
+                                      onRetry={retry}
+                                      onInterrupt={interrupt}
+                                      onReconfigure={reconfigure}
+                                      onJumpToZone={jumpToZone}
+                                    />
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {tasks.length === 0 && (
+                        <>
+                          <div style={emptyHintStyle}>
+                            <div style={emptyBigStyle}>No tasks yet</div>
+                            <div style={emptySubStyle}>
+                              Describe a task above and Dispatch — it spawns a worker zone and runs.
+                            </div>
+                          </div>
+                          {/* W1-A (H6): when orchestration is off, dispatch won't actually run —
+                            spell out the prerequisite + a one-click path to the consent modal. */}
+                          {!orchestrationEnabled && (
+                            <div style={orchestrationGuardStyle}>
+                              <span style={orchestrationGuardTextStyle}>
+                                <span style={{ color: 'var(--warn)' }}>⚠</span> Orchestration is not
+                                enabled for this project. Dispatched tasks will not run until you
+                                enable it.
+                              </span>
+                              <button
+                                type="button"
+                                className="nodrag"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  useOrchestrationStore.getState().setModal('enable')
+                                }}
+                                style={enableBtnStyle}
+                              >
+                                Enable orchestration
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <GroupsView onJumpToZone={jumpToZone} />
+                  )}
+                </div>
+              </div>
+              {flip.flipped && <CommandRecapView onJumpToZone={jumpToZone} onRetry={retry} />}
+            </div>
+          </div>
+        )}
+      </BoardFrame>
+    </>
   )
 }
 

@@ -372,18 +372,25 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         // survives deletions (#27).
         const note = makeNote(newId(), p, nextNoteIndex(elements))
         commit([...elements, note])
+        // Select the fresh element so the inspector's Element section (typography/tint/appearance)
+        // shows immediately — "create → its settings appear", matching the area-text path + Figma.
+        setSelectedIds(new Set([note.id]))
         setTool('select')
         return
       }
       if (tool === 'check') {
         beginChange()
-        commit([...elements, makeChecklist(newId(), newId(), p)])
+        const cl = makeChecklist(newId(), newId(), p)
+        commit([...elements, cl])
+        setSelectedIds(new Set([cl.id]))
         setTool('select')
         return
       }
       if (tool === 'diagram') {
         beginChange()
-        commit([...elements, makeDiagram(newId(), p)])
+        const dg = makeDiagram(newId(), p)
+        commit([...elements, dg])
+        setSelectedIds(new Set([dg.id]))
         setTool('select')
         return
       }
@@ -687,6 +694,8 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         if (a && (Math.abs(a.x2 - a.x) > 4 || Math.abs(a.y2 - a.y) > 4)) {
           beginChange()
           commit([...elements, a])
+          // Select the committed arrow so its Appearance controls (stroke/opacity/z-order) show.
+          setSelectedIds(new Set([a.id]))
         }
         setTool('select')
       } else if (d.mode === 'arrowEnd') {
@@ -704,7 +713,9 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         setDraftStroke(null)
         if (pts.length >= 4) {
           beginChange()
-          commit([...elements, makeStroke(newId(), pts)])
+          const st = makeStroke(newId(), pts)
+          commit([...elements, st])
+          setSelectedIds(new Set([st.id]))
         }
         setTool('select')
       } else if (d.mode === 'erase') {
@@ -762,7 +773,9 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
           // (board-local grab) rather than the draft box so accuracy is preserved even
           // if the board has been panned between down and up.
           beginChange()
-          commit([...elements, makeText(newId(), { x: d.startX, y: d.startY })])
+          const t = makeText(newId(), { x: d.startX, y: d.startY })
+          commit([...elements, t])
+          setSelectedIds(new Set([t.id]))
         }
         setTool('select')
       }

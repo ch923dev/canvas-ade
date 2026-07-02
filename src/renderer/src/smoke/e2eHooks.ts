@@ -34,6 +34,7 @@ import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
+import { clearStickyLocalPrefs } from './e2eStickyPrefs'
 import { useCommandStore, commandStoreDefaults } from '../store/commandStore'
 import { useLibraryStore } from '../store/libraryStore'
 import { useAccountStore } from '../store/accountStore'
@@ -489,14 +490,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       useSettledZoomStore.getState().setSettledZoom(1)
       // D4-C: the minimap island is STICKY (localStorage, persistent userData) — a spec
       // that toggled it on would leave a bottom-right island + chrome-exclusion zone for
-      // every later spec AND for the next run (the self-ratchet class). Hide + clear the
-      // sticky key so each test starts from the shipped first-run default (hidden).
+      // every later spec AND for the next run (the self-ratchet class). Hide it here; the
+      // sticky keys themselves (minimap + file-font + P5 inspector-collapse) are swept by
+      // clearStickyLocalPrefs below.
       useWayfindingStore.getState().setMinimapVisible(false)
-      try {
-        window.localStorage.removeItem(MINIMAP_VISIBLE_KEY)
-      } catch {
-        // storage unavailable — nothing sticky to clear
-      }
       // The Command board's queue/view/collapse is a GLOBAL ephemeral store (one orchestrator
       // face) — a spec that switched the seg to 'groups' or collapsed the board would leak that
       // into the next spec (the cross-spec global-state class). Reset to the shipped defaults.
@@ -516,17 +513,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // class). A non-empty element clipboard wins over an OS image paste (E7), which would then
       // silently break whiteboard's image-paste spec. Clear it so each test starts empty.
       clearClipboard()
-      // S3: the File-board viewer font is sticky too (localStorage, persistent userData); the
-      // A-/A+ steppers ratchet it across runs (same self-ratchet class as the minimap above), so
-      // file.e2e's A+ assertion eventually fails once the base hits FILE_FONT_MAX. Clear it so
-      // each test starts from DEFAULT_FILE_FONT. Literal, not imported: fileBoardSyntax statically
-      // pulls in CodeMirror and e2eHooks is in the eager main bundle — importing the key would
-      // drag the lazy ~2.5MB CM6 chunk into startup.
-      try {
-        window.localStorage.removeItem('canvas-ade:file-font')
-      } catch {
-        // storage unavailable — nothing sticky to clear
-      }
+      // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
+      // collapse state) — extracted to e2eStickyPrefs.ts (max-lines), key literals kept
+      // there for the same eager-bundle reason documented in that module.
+      clearStickyLocalPrefs(MINIMAP_VISIBLE_KEY)
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

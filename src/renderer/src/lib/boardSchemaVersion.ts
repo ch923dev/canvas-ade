@@ -62,8 +62,18 @@
  *   pre-17 `assertBoard` default branch throws on the unknown type, so the compat floor moves to 17
  *   too (see MIN_READER_VERSION below). The migration is identity (the type only appears on
  *   newly-authored kanban boards).
+ * - v18 = optional Planning ELEMENT appearance props on `ElementCommon` — `opacity` (0.1–1, all
+ *   kinds), `strokeColor` + `strokeWidth` tokens (line kinds: arrow / pen). All optional +
+ *   defaulted-at-read (absent ⇒ opaque / the kind's legacy ink + width), so this is ADDITIVE (Board
+ *   Inspector P4b): writer-only bump, floor STAYS 17. An older reader ignores the unknown optional
+ *   keys and they survive the `fromObject` structuredClone round-trip; `assertPlanningElement`
+ *   range/token-checks them without rejecting the element. z-order is a pure `elements[]` reorder
+ *   (paint order == array order) → NO schema change. (History: the board-inspector umbrella claimed
+ *   this as `17` while main independently shipped the breaking Kanban v17 — re-sequenced to 18 at
+ *   the epic-end umbrella→main merge exactly as the claim's re-number hazard note prescribed;
+ *   ADR 0007 worktree-skew version-collision class.)
  */
-export const SCHEMA_VERSION = 17
+export const SCHEMA_VERSION = 18
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -95,6 +105,7 @@ export const SCHEMA_VERSION = 17
  * future additive viewport docs. Floor moves to 17 with the v17 `kanban` board type (P4): an app
  * older than 17 has no `kanban` case in `assertBoard`, so it would HARD-FAIL on a doc containing one
  * — pre-17 apps get the clean "update the app to open it" message instead of a `.bak`-fallback. (v16
- * was additive and left the floor at 15; v17 is the next breaking bump, moving BOTH to 17.)
+ * was additive and left the floor at 15; v17 is the next breaking bump, moving BOTH to 17. Floor
+ * STAYS 17 through v18 — the Planning element appearance props are ADDITIVE.)
  */
 export const MIN_READER_VERSION = 17

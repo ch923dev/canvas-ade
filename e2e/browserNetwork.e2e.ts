@@ -1,12 +1,32 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import {
+  deselectInspector,
+  evalIn,
+  mainCall,
+  openInspectorSection,
+  pollEval,
+  seed,
+  selectForInspector
+} from './helpers'
 
 const runtimeStatus = (id: string, status: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
 
+/** P5: the URL-bar toggle is gone — open the panel via Inspector › Developer › the Network
+ *  inspector switch, then DESELECT so the left-docked Inspector can't occlude clicks on the
+ *  panel itself (the board is fitView'd across the whole window). The panel's own chrome
+ *  (Close X, dock toggle, tabs) is unchanged. */
+async function openNet(page: Page, id: string): Promise<void> {
+  await selectForInspector(page, id)
+  await openInspectorSection(page, 'Developer')
+  await page.getByRole('switch', { name: 'Network inspector' }).click()
+  await deselectInspector(page)
+}
+
 /**
  * @preview — the DevTools Network inspector end-to-end (real OSR instance):
- * open the per-board inspector from its URL-bar toggle, confirm MAIN's always-on capture replays a
+ * open the per-board panel from its Inspector switch, confirm MAIN's always-on capture replays a
  * request row (the page's own document load), select it for the details pane, and confirm closing
  * the panel tears it down. Drives the REAL DOM (the user path), not a store shim.
  */
@@ -26,7 +46,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(page.locator('.bb-net')).toHaveCount(0)
 
     // Open it from the URL-bar toggle (real click; the button stops propagation so RF won't pan).
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect(page.locator('.bb-net'), 'panel opens on toggle').toBeVisible()
 
     // MAIN captured the document load always-on; subscribe replays it → at least one row.
@@ -56,7 +76,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
 
     const filterInput = page.getByRole('textbox', { name: 'Filter requests' })
@@ -105,7 +125,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     const firstRow = page.locator('.bb-net-row').first()
     await expect(firstRow).toBeVisible({ timeout: 8000 })
 
@@ -142,7 +162,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
 
     const all = page.getByRole('button', { name: 'All', exact: true })
@@ -176,7 +196,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     // Default dock = bottom.
     await expect(page.locator('.bb-net.bb-net-bottom')).toBeVisible()
     // Switch to right.
@@ -195,7 +215,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
 
     // Seed 1000 synthetic records (replay REPLACES the few real document-load rows). MAIN's ring
@@ -241,7 +261,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
     await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
     await expect(page.locator('.bb-net-meta')).toContainText(/1\d{3} requests/)
@@ -257,7 +277,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
 
     // Reopen. Re-subscribe replays MAIN's few real rows (async), so poll-reseed 1000 to win that
     // race and recreate the many-rows condition the stale scrollTop would mis-window.
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect
       .poll(
         async () => {
@@ -283,7 +303,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     const panel = page.locator('.bb-net.bb-net-bottom')
     await expect(panel).toBeVisible()
     const handle = page.locator('.bb-net-resize-bottom')
@@ -317,7 +337,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     // Select the JSON fetch row (urlName → "json").
     const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
     await expect(row).toBeVisible({ timeout: 8000 })
@@ -363,7 +383,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
     await expect(row).toBeVisible({ timeout: 8000 })
     await row.click()
@@ -402,7 +422,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
     await expect(row).toBeVisible({ timeout: 8000 })
     await row.click()
@@ -437,7 +457,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
 
-    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
 
     // Switch to the Data Flow tab → the body-free inventory renders immediately.

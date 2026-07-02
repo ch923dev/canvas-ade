@@ -6,16 +6,18 @@
  * Per CLAUDE.md we spawn the SHELL, not the agent; if `board.launchCommand` is
  * set it is written as the first PTY line (in `pty.ts`) so the agent inherits
  * PATH/profile/auth. The board is a plain terminal: a calm identity pill (status
- * dot + shell/agent name) plus two title-bar actions — Configure (shell /
- * launch command / cwd / editable label) and Restart. Clicking the body focuses
- * xterm directly so keystrokes always land. Owns this file only; shared surface frozen.
+ * dot + shell/agent name); every per-type control (Configure / Restart / font /
+ * interrupt / recap / preview) lives in the Board Inspector (P5 — the title bar
+ * carries no action cluster). Clicking the body focuses xterm directly so
+ * keystrokes always land. Owns this file only; shared surface frozen.
  *
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
-import { BoardFrame, IconBtn } from '../BoardFrame'
+import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
@@ -42,7 +44,6 @@ import { NewTerminalDialog } from './terminal/NewTerminalDialog'
 import { presetById } from './terminal/agentPresets'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
-import { TerminalRestartMenu } from './terminal/TerminalRestartMenu'
 import { usePaletteRestart } from './terminal/usePaletteRestart'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
@@ -64,14 +65,10 @@ import { TerminalEndCTA } from './terminal/TerminalEndCTA'
 import { TerminalIdleAffordance } from './terminal/TerminalIdleAffordance'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 import { TerminalFindBar } from './terminal/TerminalFindBar'
+import { TerminalInspector } from './terminal/TerminalInspector'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 import { TerminalJumpButton } from './terminal/TerminalJumpButton'
-import {
-  shell,
-  shellHidden,
-  screenWrap,
-  screen,
-  interruptChip
-} from './terminal/terminalBoardStyles'
+import { shell, shellHidden, screenWrap, screen } from './terminal/terminalBoardStyles'
 
 export function TerminalBoard({
   board,
@@ -170,7 +167,8 @@ export function TerminalBoard({
     restart,
     counterScale,
     findOpen,
-    findApi
+    findApi,
+    openFind
   } = useTerminalSpawn({
     board,
     projectDir,
@@ -193,14 +191,18 @@ export function TerminalBoard({
   // so it never reintroduces the preserve-3d pointer-hit-test bug). `flipped` aliases it.
   const flip = useTerminalFlip()
   const flipped = flip.flipped
-  // T-resume: the Restart control offers Resume-vs-New only when we know a session to resume.
-  const [restartMenu, setRestartMenu] = useState(false)
-  const restartBtnRef = useRef<HTMLSpanElement>(null)
+  // T-resume: the Inspector's Session controls offer Resume-vs-New only when we know a session
+  // to resume (P5: the title-bar restart button + its anchored popover menu are gone).
   const canResume = !!board.agentSessionId
+  // P0.5 Board Inspector: non-null only when THIS terminal is the single eligible selection (the
+  // shell publishes its content slot then). We portal our per-type inspector into it below — reusing
+  // the very same handlers every other affordance uses, so there is no duplicated wiring or state.
+  const inspectorSlot = useInspectorSlot(board.id)
   // Shared respawn routines (D2-B) used by every re-run affordance — the idle restored bar,
-  // the end-state CTA, the recap face, and the Restart menu. Resume reattaches the agent's
-  // conversation (`claude --resume <id>` via the sanitising resumeCommand); New/Restart starts
-  // fresh (clears the override). Both consume launchOverrideRef then hit the shared respawn.
+  // the end-state CTA, the recap face, and the Inspector's Session actions (P5: the title-bar
+  // restart menu is gone). Resume reattaches the agent's conversation (`claude --resume <id>` via
+  // the sanitising resumeCommand); New/Restart starts fresh (clears the override). Both consume
+  // launchOverrideRef then hit the shared respawn.
   const resumeSession = useCallback((): void => {
     launchOverrideRef.current = resumeCommand(board.agentSessionId)
     restart()
@@ -464,78 +466,9 @@ export function TerminalBoard({
   // NOT live sticky) so the buttons track the size this board actually renders at, not another
   // board's sticky drift. PINNED-space deliberately — the [MIN, MAX] bounds are pinned-space, so
   // the ± buttons disable at the same pin regardless of zoom (the render font is pin × cs).
+  // (P5: the title-bar action cluster is gone — the Inspector is the one control home; this feeds
+  // the Inspector stepper + the right-click menu.)
   const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
-  const actions = (
-    <>
-      {/* TERM-06: transient "interrupt sent" chip (sits by the pill, before the buttons). */}
-      {interruptSent && (
-        <span className="nodrag" style={interruptChip} data-test="interrupt-sent">
-          ⏹ interrupt sent
-        </span>
-      )}
-      {(selected || hovered) && (
-        <>
-          <IconBtn
-            name="minus"
-            title="Smaller font (Ctrl -)"
-            onClick={() => nudgeFont(-1)}
-            disabled={effectiveFont <= MIN_TERMINAL_FONT}
-          />
-          <IconBtn
-            name="plus"
-            title="Bigger font (Ctrl +)"
-            onClick={() => nudgeFont(1)}
-            disabled={effectiveFont >= MAX_TERMINAL_FONT}
-          />
-        </>
-      )}
-      {running && (
-        <IconBtn
-          name="stop"
-          title="Interrupt (Ctrl-C)"
-          active={interruptSent}
-          onClick={interrupt}
-        />
-      )}
-      <IconBtn
-        name="globe"
-        title="Click: preview in linked browser · Hold / right-click: choose browser(s)"
-        onClick={() => void onPreview('tap')}
-        onLongPress={() => void onPreview('hold')}
-        onContextMenu={() => void onPreview('hold')}
-      />
-      {/* Configure opens the unified New Terminal dialog in edit mode (a modal). The data-test
-          span gives the e2e a click handle (IconBtn forwards no ref/data-test). */}
-      <span data-test={`config-${board.id}`} style={{ display: 'inline-flex' }}>
-        <IconBtn
-          name="settings"
-          title="Configure terminal"
-          active={configOpen}
-          onClick={() => setConfigOpen(true)}
-        />
-      </span>
-      {/* The restart span anchors the resume/new menu (IconBtn forwards no ref): it's the
-          menu's outside-close exclusion, so the trigger click toggles. */}
-      <span ref={restartBtnRef} style={{ display: 'inline-flex' }}>
-        <IconBtn
-          name="restart"
-          title={canResume ? 'Restart (resume or new session)' : 'Restart'}
-          active={restartMenu}
-          onClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
-        />
-      </span>
-      {/* T15: flip to the recap back-face. IconBtn has no data-test prop, so the e2e/test
-          hook (`flip-<id>`) rides a wrapping span. */}
-      <span data-test={`flip-${board.id}`} style={{ display: 'inline-flex' }}>
-        <IconBtn
-          name="back"
-          title={flipped ? 'Show terminal' : 'Show recap'}
-          active={flipped}
-          onClick={flip.toggle}
-        />
-      </span>
-    </>
-  )
 
   // Right-click context menu over the well. Reuses the planning menu component. When the
   // running TUI has mouse reporting on (term.modes.mouseTrackingMode !== 'none'), plain
@@ -576,6 +509,37 @@ export function TerminalBoard({
   // running agent still pulses `--ok` while zoomed out.
   return (
     <>
+      {/* P0.5 Board Inspector content — portaled into the shell's slot only while this terminal is the
+          single eligible selection. Same handlers as the title-bar actions (kept), zero duplication. */}
+      {inspectorSlot &&
+        createPortal(
+          <TerminalInspector
+            running={running}
+            interruptSent={interruptSent}
+            onInterrupt={interrupt}
+            font={effectiveFont}
+            defaultFont={DEFAULT_TERMINAL_FONT}
+            onDecFont={() => nudgeFont(-1)}
+            onIncFont={() => nudgeFont(1)}
+            decFontDisabled={effectiveFont <= MIN_TERMINAL_FONT}
+            incFontDisabled={effectiveFont >= MAX_TERMINAL_FONT}
+            onResetFont={resetFont}
+            canResume={canResume}
+            onRestart={restart}
+            onResume={resumeSession}
+            onNew={restartFresh}
+            recapShown={flipped}
+            onToggleRecap={flip.toggle}
+            onFind={openFind}
+            shell={board.shell}
+            command={board.launchCommand}
+            cwd={board.cwd}
+            onConfigure={() => setConfigOpen(true)}
+            onPushPreview={() => void onPreview('tap')}
+            onChooseTarget={() => void onPreview('hold')}
+          />,
+          inspectorSlot
+        )}
       <BoardFrame
         type="terminal"
         boardId={board.id}
@@ -586,7 +550,6 @@ export function TerminalBoard({
         running={running}
         spawning={state === 'spawning'}
         status={displayStatus}
-        actions={actions}
         contentBg={themeBg}
         onFull={onFull}
         onDuplicate={onDuplicate}
@@ -791,20 +754,6 @@ export function TerminalBoard({
                   }}
                 />
               </div>
-            )}
-            {/* T-resume restart menu, on the shared Menu shell since D2-B (Escape/outside/
-                resize auto-close, menuitem keyboard nav — the audit's "no auto-close").
-                Body-portaled, so it stays reachable from the recap back-face too (you often
-                resume FROM the recap). Resume → respawn with `claude --resume <sessionId>`
-                (resumeCommand sanitises the canvas.json-sourced id to one inert token before
-                it nears the PTY); New → fresh launch. */}
-            {restartMenu && (
-              <TerminalRestartMenu
-                anchor={restartBtnRef}
-                onResume={resumeSession}
-                onNew={restartFresh}
-                onClose={() => setRestartMenu(false)}
-              />
             )}
           </div>
         </div>

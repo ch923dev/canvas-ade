@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { evalIn, mainCall, seed, selectForInspector } from './helpers'
 
 /**
  * Recap redesign S1: the flip-to-recap proofs against the two-zone face.
@@ -46,7 +46,9 @@ test('@terminal flip shows the two-zone recap for a terminal board', async ({
       true
     )
 
-    await page.locator(`[data-test="flip-${id}"]`).click()
+    // P5: the title-bar flip button is gone — flip via Inspector › Session › View recap.
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-recap"]').click()
     await expect(page.locator('[data-test="recap-now"]')).toContainText('Reviewing auth')
     await expect(page.locator('[data-test="recap-next"]')).toContainText('refresh-token rotation')
     await expect(page.locator('[data-test="recap-beat"]')).toContainText('14:32')
@@ -160,7 +162,9 @@ test('@terminal facts render from the transcript with no LLM key', async ({
       )
       .toBeGreaterThan(0)
 
-    await page.locator(`[data-test="flip-${id}"]`).click()
+    // P5: flip via the Inspector (the title-bar flip button is gone).
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-recap"]').click()
     await expect(page.locator('[data-test="recap-status"]')).toContainText('waiting on you')
     await expect(page.locator('[data-test="recap-title"]')).toContainText('Tidy the docs')
     await expect(page.locator('[data-test="recap-facts-only"]')).toContainText('No narrative yet')

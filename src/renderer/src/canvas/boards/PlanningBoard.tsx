@@ -1,9 +1,10 @@
 /**
  * Planning board content (Phase 2.3 — DESIGN.md §7.3). The whiteboard layer:
  * sticky notes, free text, SVG-bezier arrows, freehand pen (vendored
- * perfect-freehand), and the Checklist element. A mini tool cluster
- * (`select · note · check · arrow · pen`) shows in the BoardFrame action slot
- * ONLY while the board is selected; otherwise the board is just its content.
+ * perfect-freehand), and the Checklist element. The tool palette (`select · note ·
+ * text · check · diagram · arrow · pen · erase`) + snap + export live in the Board
+ * Inspector (`PlanningInspector`, P3 — moved off the on-board action slot); the
+ * bare-letter shortcuts stay the always-on fast path regardless.
  *
  * Coordinate model: every element is stored in BOARD-LOCAL space (zoom-1 px from
  * the content well's top-left) on `board.elements`. Pointer interactions map the
@@ -19,15 +20,14 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
   type ReactElement
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useStoreApi } from '@xyflow/react'
 import type {
-  ArrowElement,
   ChecklistElement,
   DiagramElement,
   FileRefElement,
@@ -35,7 +35,6 @@ import type {
   NoteTint,
   PlanningElement,
   PlanningBoard as PlanningBoardData,
-  StrokeElement,
   TextElement
 } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
@@ -51,10 +50,12 @@ import { ImageCard } from './planning/ImageCard'
 import { DiagramCard } from './planning/DiagramCard'
 import { FileRefCard } from './planning/FileRefCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
+import { PlanningInspector } from './planning/PlanningInspector'
+import { usePlanningViewElements } from './planning/usePlanningViewElements'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 import { type PlanTool } from './planning/tools'
 import {
   patchElement,
-  translateMany,
   removeElement,
   toggleItem,
   addItem,
@@ -63,7 +64,7 @@ import {
   isLocked,
   setNoteTint
 } from './planning/elements'
-import { buildContextMenuEntries } from './planning/contextMenuEntries'
+import { usePlanningElementInspector } from './planning/inspector/usePlanningElementInspector'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { CrossBoardDragGhost } from './planning/CrossBoardDragGhost'
 import { useSendToBoard } from './planning/useSendToBoard'
@@ -72,7 +73,6 @@ import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
 import { usePlanningFileRefIO } from './planning/usePlanningFileRefIO'
 import { useLiveElements } from './planning/useLiveElements'
-import { PlanningToolbar } from './planning/PlanningToolbar'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -412,35 +412,37 @@ export function PlanningBoard({
     [board.id, board.h, dragPosRef]
   )
 
-  // Build the right-click menu entries off an explicit selection set (the
-  // post-select-then-act set; React state is async, so the handler can't read it back
-  // — it passes the set in). The construction lives in planning/contextMenuEntries.ts
-  // (verbatim extraction, D3-A); this wrapper threads the store callbacks + the well's
-  // content box in. Called from the event handler (NOT render), so `measuredRef`
-  // access is allowed (react-hooks/refs). `getElements` (BUG-008) lets its actions write
-  // back onto the LIVE elements instead of this `elements` menu-open snapshot.
-  const buildMenuEntries = useCallback(
-    (sel: ReadonlySet<string>): MenuEntry[] =>
-      buildContextMenuEntries({
-        elements,
-        getElements,
-        sel,
-        // Align/distribute reference the well's content box (board-local px) so edges
-        // flush to the BOARD and results clamp inside it.
-        wb: {
-          w: wellRef.current?.offsetWidth || board.w,
-          h: wellRef.current?.offsetHeight || board.h
-        },
-        measured: measuredRef.current,
-        beginChange,
-        commit,
-        clearSel,
-        setSelectedIds,
-        newId,
-        onOpenSendTo
-      }),
-    [elements, getElements, beginChange, commit, clearSel, board.w, board.h, onOpenSendTo]
+  // The element-action model (P4). ONE hook owns both consumers so the right-click menu and the
+  // always-visible Board Inspector can't drift: `buildMenuEntries` is the SAME builder the pointer /
+  // keyboard hooks consume for the context menu (moved here off PlanningBoard to hold the max-lines
+  // ratchet), and `element` is the inspector's Element-section model (null unless an element is
+  // selected in select mode). See planning/inspector/usePlanningElementInspector.
+  // Align/distribute reference the well's content box + measured DOM sizes; both are read from refs
+  // at CLICK time via these thunks (never during render), so the inspector can build the same entries
+  // in render without tripping the react-hooks refs rule (see usePlanningElementInspector).
+  const wbThunk = useCallback(
+    () => ({
+      w: wellRef.current?.offsetWidth || board.w,
+      h: wellRef.current?.offsetHeight || board.h
+    }),
+    [board.w, board.h]
   )
+  const measuredThunk = useCallback(() => measuredRef.current, [])
+  const { buildMenuEntries, element: elementInspector } = usePlanningElementInspector({
+    elements,
+    getElements,
+    selectedIds,
+    interactive,
+    boardId: board.id,
+    wb: wbThunk,
+    measured: measuredThunk,
+    beginChange,
+    commit,
+    clearSel,
+    setSelectedIds,
+    newId,
+    onOpenSendTo
+  })
 
   // ── Well keyboard handlers (D3-C extraction) ─────────────────────────────────
   // Delete/Backspace, arrow-key nudge, Ctrl+G/Ctrl+Shift+G group/ungroup,
@@ -546,61 +548,20 @@ export function PlanningBoard({
     [selectOnPress]
   )
 
-  // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
-  const actions = selected ? (
-    <PlanningToolbar
-      board={board}
-      tool={tool}
-      snapEnabled={snapEnabled}
-      onPickTool={(t) => {
-        setTool(t)
-        clearSel()
-      }}
-      onToggleSnap={() => setSnapEnabled((v) => !v)}
-    />
-  ) : undefined
+  // The vector-layer view derivation (PLAN-07) lives in its own hook so this file stays under
+  // the max-lines ratchet. viewElements/arrows/strokes stay referentially stable across
+  // re-renders that don't touch the store elements or the transient drag/erase state.
+  const { viewElements, arrows, strokes } = usePlanningViewElements({
+    elements,
+    dragPos,
+    pendingErase
+  })
 
-  // The render-time element list, memoized on its only real inputs (the store elements +
-  // the transient drag/erase state). Memoizing it (PLAN-07) keeps a STABLE reference across
-  // re-renders that don't touch those inputs — an editingTextId / snap / hover change — so
-  // the downstream arrows/strokes memos (and the React.memo'd WhiteboardSvg) can actually
-  // skip. When idle it returns the store's own `elements` array by reference (no per-render
-  // allocation), preserving the prior behavior the memo'd cards already relied on.
-  const viewElements = useMemo<PlanningElement[]>(() => {
-    // While a move is in flight, render the dragged element shifted by its transient delta
-    // (the store still holds the pre-drag position until pointer-up — #9). Any kind is
-    // movable (cards + arrows + strokes), so the SVG vectors derive from this too (#28, #37).
-    const movedView = dragPos ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy) : null
-    // During a normal move the originals shift; during an ALT drag the originals stay put and
-    // translated GHOST copies (temporary `__ghost__` ids, NEVER committed) preview the
-    // duplicate. The captured pointer means onSelect/onDragStart never fire on a ghost, and
-    // its id is dropped the instant the alt-drag ends.
-    const ghostCopies =
-      dragPos && dragPos.alt && movedView
-        ? movedView
-            .filter((e) => dragPos.ids.includes(e.id))
-            .map((e) => ({ ...e, id: `__ghost__${e.id}` }) as PlanningElement)
-        : []
-    const baseView =
-      dragPos && !dragPos.alt && movedView
-        ? movedView
-        : pendingErase && pendingErase.size > 0
-          ? elements.filter((el) => !pendingErase.has(el.id))
-          : elements
-    return ghostCopies.length > 0 ? [...baseView, ...ghostCopies] : baseView
-  }, [elements, dragPos, pendingErase])
-
-  // PLAN-07: keep the vector-layer arrays referentially stable across re-renders that
-  // don't change the well content (keyed on the memoized viewElements) so the React.memo'd
-  // WhiteboardSvg can skip a note keystroke / snap toggle / editing-state re-render.
-  const arrows = useMemo(
-    () => viewElements.filter((e): e is ArrowElement => e.kind === 'arrow'),
-    [viewElements]
-  )
-  const strokes = useMemo(
-    () => viewElements.filter((e): e is StrokeElement => e.kind === 'stroke'),
-    [viewElements]
-  )
+  // P3 Board Inspector — the tool palette + snap + export, portaled into the shell's slot only
+  // while this planning board is the single eligible selection (MOVE off the board; the on-board
+  // PlanningToolbar is deleted). Same setTool/snap handlers as before; picking a tool clears the
+  // element selection but never deselects the board, so the Inspector stays revealed while drawing.
+  const inspectorSlot = useInspectorSlot(board.id)
 
   // The well captures the pen/arrow/place gestures; the draw tools also force a
   // crosshair cursor so the active mode is legible.
@@ -626,256 +587,275 @@ export function PlanningBoard({
   const toolbarTextEl = selectedTextEl ?? editingTextEl
 
   return (
-    <BoardFrame
-      type="planning"
-      boardId={board.id}
-      title={board.title}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      status={null}
-      contentBg="var(--surface)"
-      actions={actions}
-      onFull={onFull}
-      onDuplicate={onDuplicate}
-      onDelete={onDelete}
-      onAddToGroup={onAddToGroup}
-      onRemoveFromGroup={onRemoveFromGroup}
-      onRemoveFromAllGroups={onRemoveFromAllGroups}
-      onStartConnect={onStartConnect}
-    >
-      <div
-        ref={wellRef}
-        className="pl-well"
-        // Cross-board drag hit-test target (Phase 4 §3.C): a DISTINCT attribute from the
-        // DiagramCard's `data-board-id` so `closest('[data-planning-well]')` resolves to the
-        // WELL (its rect) and never a diagram card. Only Planning wells carry it → dropping
-        // over a terminal/browser board finds no target.
-        data-planning-well={board.id}
-        tabIndex={0}
-        onPointerDown={onWellPointerDown}
-        onPointerMove={onWellPointerMove}
-        onPointerUp={onWellPointerUp}
-        onPointerCancel={onWellPointerCancel}
-        onDoubleClick={onWellDoubleClick}
-        onContextMenu={onWellContextMenu}
-        onDrop={onWellDrop}
-        onDragOver={onWellDragOver}
-        onKeyDown={onWellKeyDown}
-        onKeyUp={onWellKeyUp}
-        onBlur={onWellBlur}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          overflow: 'hidden',
-          cursor:
-            tool === 'erase'
-              ? 'cell'
-              : drawing
-                ? 'crosshair'
-                : tool === 'note' || tool === 'check' || tool === 'diagram'
-                  ? 'copy'
-                  : 'default',
-          // 12px dot grid — finer than the canvas lattice, to read as a sketch
-          // surface (DESIGN.md §7.3).
-          backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
-          backgroundSize: '12px 12px',
-          backgroundPosition: '6px 6px',
-          // Tool gestures own this layer; React Flow node-drag stays on the title.
-          touchAction: 'none'
-        }}
+    <>
+      {/* P3 PlanningInspector — portaled into the shell's slot only while this planning board is
+          the single eligible selection. Same handlers as the deleted on-board toolbar; picking a
+          tool clears the element selection but never the board's, so the Inspector stays open. */}
+      {inspectorSlot &&
+        createPortal(
+          <PlanningInspector
+            board={board}
+            tool={tool}
+            snapEnabled={snapEnabled}
+            element={elementInspector}
+            onPickTool={(t) => {
+              setTool(t)
+              clearSel()
+            }}
+            onToggleSnap={() => setSnapEnabled((v) => !v)}
+          />,
+          inspectorSlot
+        )}
+      <BoardFrame
+        type="planning"
+        boardId={board.id}
+        title={board.title}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        status={null}
+        contentBg="var(--surface)"
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
+        onAddToGroup={onAddToGroup}
+        onRemoveFromGroup={onRemoveFromGroup}
+        onRemoveFromAllGroups={onRemoveFromAllGroups}
+        onStartConnect={onStartConnect}
       >
-        {/* Vector layer (under the cards so cards stay clickable). */}
-        <WhiteboardSvg
-          boardId={board.id}
-          arrows={arrows}
-          strokes={strokes}
-          draftArrow={draftArrow}
-          draftStroke={draftStroke}
-          selectedIds={selectedIds}
-          marquee={marqueeRect}
-          guides={snapGuides}
-          // Disable committed-vector hit-testing for ANY non-select tool (not just
-          // pen/arrow) so a note/check placement over committed ink falls through
-          // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
-          drawing={tool !== 'select'}
-          onSelect={onSelectVector}
-          onDragStart={onDragStartStable}
-          endpointDrag={endpointDrag}
-          onEndpointDragStart={startEndpointDrag}
-        />
+        <div
+          ref={wellRef}
+          className="pl-well"
+          // Cross-board drag hit-test target (Phase 4 §3.C): a DISTINCT attribute from the
+          // DiagramCard's `data-board-id` so `closest('[data-planning-well]')` resolves to the
+          // WELL (its rect) and never a diagram card. Only Planning wells carry it → dropping
+          // over a terminal/browser board finds no target.
+          data-planning-well={board.id}
+          tabIndex={0}
+          onPointerDown={onWellPointerDown}
+          onPointerMove={onWellPointerMove}
+          onPointerUp={onWellPointerUp}
+          onPointerCancel={onWellPointerCancel}
+          onDoubleClick={onWellDoubleClick}
+          onContextMenu={onWellContextMenu}
+          onDrop={onWellDrop}
+          onDragOver={onWellDragOver}
+          onKeyDown={onWellKeyDown}
+          onKeyUp={onWellKeyUp}
+          onBlur={onWellBlur}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            overflow: 'hidden',
+            cursor:
+              tool === 'erase'
+                ? 'cell'
+                : drawing
+                  ? 'crosshair'
+                  : tool === 'note' || tool === 'check' || tool === 'diagram'
+                    ? 'copy'
+                    : 'default',
+            // 12px dot grid — finer than the canvas lattice, to read as a sketch
+            // surface (DESIGN.md §7.3).
+            backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
+            backgroundSize: '12px 12px',
+            backgroundPosition: '6px 6px',
+            // Tool gestures own this layer; React Flow node-drag stays on the title.
+            touchAction: 'none'
+          }}
+        >
+          {/* Vector layer (under the cards so cards stay clickable). */}
+          <WhiteboardSvg
+            boardId={board.id}
+            arrows={arrows}
+            strokes={strokes}
+            draftArrow={draftArrow}
+            draftStroke={draftStroke}
+            selectedIds={selectedIds}
+            marquee={marqueeRect}
+            guides={snapGuides}
+            // Disable committed-vector hit-testing for ANY non-select tool (not just
+            // pen/arrow) so a note/check placement over committed ink falls through
+            // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
+            drawing={tool !== 'select'}
+            onSelect={onSelectVector}
+            onDragStart={onDragStartStable}
+            endpointDrag={endpointDrag}
+            onEndpointDragStart={startEndpointDrag}
+          />
 
-        {/* DOM elements: notes, free text, checklists. */}
-        {viewElements.map((el) => {
-          if (el.kind === 'note') {
-            return (
-              <NoteCard
-                key={el.id}
-                note={el}
-                interactive={interactive}
-                onDragStart={onDragStartStable}
-                onChangeText={setNoteText}
-                onDelete={deleteEl}
-                onEditStart={beginChange}
-                selected={selectedIds.has(el.id)}
-                onSelect={selectOnPress}
-                onMeasure={reportMeasure}
-                onSetTint={setTint}
-                onResize={resizeNote}
-              />
-            )
-          }
-          if (el.kind === 'text') {
-            return (
-              <FreeText
-                key={el.id}
-                element={el}
-                interactive={interactive}
-                onDragStart={onDragStartStable}
-                onChangeText={setTextText}
-                onDelete={deleteEl}
-                onEditStart={beginChange}
-                selected={selectedIds.has(el.id)}
-                onSelect={selectOnPress}
-                onMeasure={reportMeasure}
-                onEditingChange={onTextEditingChange}
-              />
-            )
-          }
-          if (el.kind === 'checklist') {
-            return (
-              <ChecklistCard
-                key={el.id}
-                element={el}
-                interactive={interactive}
-                onDragStart={onDragStartStable}
-                onToggle={toggle}
-                onChangeTitle={setTitle}
-                onChangeItem={setItem}
-                onAddItem={appendItem}
-                onRemoveItem={dropItem}
-                onEditStart={beginChange}
-                onMeasureBottom={growForChecklist}
-                selected={selectedIds.has(el.id)}
-                onSelect={selectOnPress}
-                onMeasure={reportMeasure}
-                onResize={resizeChecklist}
-              />
-            )
-          }
-          if (el.kind === 'image') {
-            return (
-              <ImageCard
-                key={el.id}
-                image={el}
-                interactive={interactive}
-                onDragStart={onDragStartStable}
-                selected={selectedIds.has(el.id)}
-                onSelect={selectOnPress}
-              />
-            )
-          }
-          if (el.kind === 'diagram') {
-            return (
-              <DiagramCard
-                key={el.id}
-                element={el}
-                boardId={board.id}
-                interactive={interactive}
-                onDragStart={onDragStartStable}
-                selected={selectedIds.has(el.id)}
-                onSelect={selectOnPress}
-                onChangeSource={setDiagramSource}
-                onEditStart={beginChange}
-                onCache={onDiagramCache}
-                onResize={resizeDiagram}
-              />
-            )
-          }
-          if (el.kind === 'fileref') {
-            return (
-              <FileRefCard
-                key={el.id}
-                element={el}
-                interactive={interactive}
-                onDragStart={onDragStartStable}
-                selected={selectedIds.has(el.id)}
-                onSelect={selectOnPress}
-                onOpen={openFileBoard}
-                onEditStart={beginChange}
-                onResize={resizeFileRef}
-              />
-            )
-          }
-          return null
-        })}
+          {/* DOM elements: notes, free text, checklists. */}
+          {viewElements.map((el) => {
+            if (el.kind === 'note') {
+              return (
+                <NoteCard
+                  key={el.id}
+                  note={el}
+                  interactive={interactive}
+                  onDragStart={onDragStartStable}
+                  onChangeText={setNoteText}
+                  onDelete={deleteEl}
+                  onEditStart={beginChange}
+                  selected={selectedIds.has(el.id)}
+                  onSelect={selectOnPress}
+                  onMeasure={reportMeasure}
+                  onSetTint={setTint}
+                  onResize={resizeNote}
+                />
+              )
+            }
+            if (el.kind === 'text') {
+              return (
+                <FreeText
+                  key={el.id}
+                  element={el}
+                  interactive={interactive}
+                  onDragStart={onDragStartStable}
+                  onChangeText={setTextText}
+                  onDelete={deleteEl}
+                  onEditStart={beginChange}
+                  selected={selectedIds.has(el.id)}
+                  onSelect={selectOnPress}
+                  onMeasure={reportMeasure}
+                  onEditingChange={onTextEditingChange}
+                />
+              )
+            }
+            if (el.kind === 'checklist') {
+              return (
+                <ChecklistCard
+                  key={el.id}
+                  element={el}
+                  interactive={interactive}
+                  onDragStart={onDragStartStable}
+                  onToggle={toggle}
+                  onChangeTitle={setTitle}
+                  onChangeItem={setItem}
+                  onAddItem={appendItem}
+                  onRemoveItem={dropItem}
+                  onEditStart={beginChange}
+                  onMeasureBottom={growForChecklist}
+                  selected={selectedIds.has(el.id)}
+                  onSelect={selectOnPress}
+                  onMeasure={reportMeasure}
+                  onResize={resizeChecklist}
+                />
+              )
+            }
+            if (el.kind === 'image') {
+              return (
+                <ImageCard
+                  key={el.id}
+                  image={el}
+                  interactive={interactive}
+                  onDragStart={onDragStartStable}
+                  selected={selectedIds.has(el.id)}
+                  onSelect={selectOnPress}
+                />
+              )
+            }
+            if (el.kind === 'diagram') {
+              return (
+                <DiagramCard
+                  key={el.id}
+                  element={el}
+                  boardId={board.id}
+                  interactive={interactive}
+                  onDragStart={onDragStartStable}
+                  selected={selectedIds.has(el.id)}
+                  onSelect={selectOnPress}
+                  onChangeSource={setDiagramSource}
+                  onEditStart={beginChange}
+                  onCache={onDiagramCache}
+                  onResize={resizeDiagram}
+                />
+              )
+            }
+            if (el.kind === 'fileref') {
+              return (
+                <FileRefCard
+                  key={el.id}
+                  element={el}
+                  interactive={interactive}
+                  onDragStart={onDragStartStable}
+                  selected={selectedIds.has(el.id)}
+                  onSelect={selectOnPress}
+                  onOpen={openFileBoard}
+                  onEditStart={beginChange}
+                  onResize={resizeFileRef}
+                />
+              )
+            }
+            return null
+          })}
 
-        {/* Typography toolbar — sibling to the cards, board-local coords (see toolbarTextEl).
+          {/* Typography toolbar — sibling to the cards, board-local coords (see toolbarTextEl).
             Shows when a text element is selected (grip) OR being edited (focused textarea). */}
-        {toolbarTextEl && (
-          <TextToolbar
-            element={toolbarTextEl}
-            boardW={board.w}
-            onPatch={(partial) => onTextPatch(toolbarTextEl.id, partial)}
+          {toolbarTextEl && (
+            <TextToolbar
+              element={toolbarTextEl}
+              boardW={board.w}
+              onPatch={(partial) => onTextPatch(toolbarTextEl.id, partial)}
+            />
+          )}
+
+          {/* Draft text-box preview: dashed rectangle + live size letter while dragging the text tool. */}
+          {draftTextBox && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: draftTextBox.x,
+                top: draftTextBox.y,
+                width: Math.max(1, draftTextBox.w),
+                height: Math.max(1, draftTextBox.h),
+                border: '1.5px dashed var(--accent)',
+                borderRadius: 'var(--r-inner)',
+                background: 'color-mix(in srgb, var(--accent) 6%, transparent)',
+                display: 'grid',
+                placeItems: 'center',
+                pointerEvents: 'none',
+                color: 'color-mix(in srgb, var(--accent) 85%, transparent)',
+                // Decorative serif glyph (reads as a "ghost" size indicator, per the wireframe);
+                // explicit so it doesn't inherit the surrounding UI sans by accident.
+                fontFamily: 'Georgia, "Times New Roman", serif',
+                fontWeight: 700,
+                lineHeight: 1,
+                fontSize: SIZE_PX[tokenFromHeight(draftTextBox.h)]
+              }}
+            >
+              A
+            </div>
+          )}
+
+          {elements.length === 0 && (
+            <div
+              className="t-meta"
+              style={{
+                position: 'absolute',
+                left: 14,
+                top: 12,
+                color: 'var(--text-3)', // D0-2: a readable hint — faint is disabled-only
+                pointerEvents: 'none'
+              }}
+            >
+              {selected
+                ? 'pick a tool from the Inspector (or press its letter) · note · text · check · diagram · arrow · pen · erase'
+                : 'empty plan'}
+            </div>
+          )}
+        </div>
+        {contextMenu && (
+          <ElementContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            entries={contextMenu.entries}
+            onClose={() => setContextMenu(null)}
           />
         )}
-
-        {/* Draft text-box preview: dashed rectangle + live size letter while dragging the text tool. */}
-        {draftTextBox && (
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              left: draftTextBox.x,
-              top: draftTextBox.y,
-              width: Math.max(1, draftTextBox.w),
-              height: Math.max(1, draftTextBox.h),
-              border: '1.5px dashed var(--accent)',
-              borderRadius: 'var(--r-inner)',
-              background: 'color-mix(in srgb, var(--accent) 6%, transparent)',
-              display: 'grid',
-              placeItems: 'center',
-              pointerEvents: 'none',
-              color: 'color-mix(in srgb, var(--accent) 85%, transparent)',
-              // Decorative serif glyph (reads as a "ghost" size indicator, per the wireframe);
-              // explicit so it doesn't inherit the surrounding UI sans by accident.
-              fontFamily: 'Georgia, "Times New Roman", serif',
-              fontWeight: 700,
-              lineHeight: 1,
-              fontSize: SIZE_PX[tokenFromHeight(draftTextBox.h)]
-            }}
-          >
-            A
-          </div>
-        )}
-
-        {elements.length === 0 && (
-          <div
-            className="t-meta"
-            style={{
-              position: 'absolute',
-              left: 14,
-              top: 12,
-              color: 'var(--text-3)', // D0-2: a readable hint — faint is disabled-only
-              pointerEvents: 'none'
-            }}
-          >
-            {selected
-              ? 'pick a tool above · note · text · check · diagram · arrow · pen · erase'
-              : 'empty plan'}
-          </div>
-        )}
-      </div>
-      {contextMenu && (
-        <ElementContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          entries={contextMenu.entries}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
-      {sendToPanel}
-      {crossBoardDrag && <CrossBoardDragGhost drag={crossBoardDrag} />}
-    </BoardFrame>
+        {sendToPanel}
+        {crossBoardDrag && <CrossBoardDragGhost drag={crossBoardDrag} />}
+      </BoardFrame>
+    </>
   )
 }
