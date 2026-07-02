@@ -1,35 +1,30 @@
 /**
- * Voice V1 — voiceIpc unit tests: the engine-stub seam (frame counting + cadence logging +
- * dispose protocol), the fake-media switch mapping, and the registered start/stop handlers
- * (frame guard, port transfer, restart-idempotence) against mocked electron primitives.
+ * Voice V2 — voiceIpc unit tests: session handlers against an injected fake engine +
+ * model ops (frame guard, port transfer to the engine host, model status in the start
+ * result), the models IPC surface (list/status/download/delete, progress throttling,
+ * single-flight), and the fake-media switch mapping. Electron primitives mocked.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IpcMain, IpcMainInvokeEvent, BrowserWindow } from 'electron'
+import type { VoiceEngineHandle } from './voiceEngine'
+import type { DownloadProgress } from './voiceModels'
 
-// Hoisted so the electron mock factory (hoisted by vitest) can reach them.
 const h = vi.hoisted(() => {
   class FakePort {
-    listeners: Array<(e: { data: unknown }) => void> = []
     started = false
     closed = false
     posted: unknown[] = []
-    throwOnPost = false
-    on(event: string, listener: (e: { data: unknown }) => void): this {
-      if (event === 'message') this.listeners.push(listener)
+    on(): this {
       return this
     }
     start(): void {
       this.started = true
     }
     postMessage(msg: unknown): void {
-      if (this.throwOnPost) throw new Error('port closed')
       this.posted.push(msg)
     }
     close(): void {
       this.closed = true
-    }
-    emit(data: unknown): void {
-      for (const l of this.listeners) l({ data })
     }
   }
   const channels: Array<{ port1: FakePort; port2: FakePort }> = []
@@ -38,6 +33,7 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
+  app: { getPath: () => 'C:/unused-userdata' },
   MessageChannelMain: class {
     port1 = new h.FakePort()
     port2 = new h.FakePort()
@@ -45,75 +41,17 @@ vi.mock('electron', () => ({
       h.channels.push(this)
     }
   },
-  systemPreferences: { getMediaAccessStatus: h.getMediaAccessStatus }
+  systemPreferences: { getMediaAccessStatus: h.getMediaAccessStatus },
+  utilityProcess: { fork: vi.fn() }
 }))
 
 import {
   applyFakeMediaSwitches,
-  attachEngineStub,
   disposeVoiceSession,
-  registerVoiceHandlers
+  registerVoiceHandlers,
+  type VoiceIpcDeps
 } from './voiceIpc'
-
-const frameMsg = (bytes = 3840): { t: string; d: ArrayBuffer } => ({
-  t: 'frame',
-  d: new ArrayBuffer(bytes)
-})
-
-describe('attachEngineStub', () => {
-  it('starts the port and counts only well-formed frame messages', () => {
-    const port = new h.FakePort()
-    const stub = attachEngineStub(port)
-    expect(port.started).toBe(true)
-    port.emit(frameMsg())
-    port.emit(frameMsg())
-    // Malformed / foreign shapes are ignored, never counted and never throw.
-    port.emit(null)
-    port.emit('junk')
-    port.emit({ t: 'frame', d: 'not-a-buffer' })
-    port.emit({ t: 'level', d: new ArrayBuffer(4) })
-    expect(stub.frames()).toBe(2)
-  })
-
-  it('logs cadence every 8th frame under debug, with a rate from the injected clock', () => {
-    const port = new h.FakePort()
-    const log = vi.fn()
-    let nowMs = 0
-    attachEngineStub(port, { debug: true, log, now: () => nowMs })
-    // One frame per 120 ms → after 8 frames, 7 intervals × 120 ms = 840 ms → 7/0.84 ≈ 8.3/s.
-    for (let i = 0; i < 8; i++) {
-      nowMs = (i + 1) * 120
-      port.emit(frameMsg())
-    }
-    expect(log).toHaveBeenCalledTimes(1)
-    expect(log.mock.calls[0][0]).toBe('[voice] stub: 8 frames, 8.3/s, 3840 B each')
-    for (let i = 8; i < 16; i++) {
-      nowMs = (i + 1) * 120
-      port.emit(frameMsg())
-    }
-    expect(log).toHaveBeenCalledTimes(2)
-  })
-
-  it('never logs without the debug flag', () => {
-    const port = new h.FakePort()
-    const log = vi.fn()
-    attachEngineStub(port, { log })
-    for (let i = 0; i < 32; i++) port.emit(frameMsg())
-    expect(log).not.toHaveBeenCalled()
-  })
-
-  it('dispose posts {t:stop} then closes; a dead-port throw is swallowed', () => {
-    const port = new h.FakePort()
-    const stub = attachEngineStub(port)
-    stub.dispose()
-    expect(port.posted).toEqual([{ t: 'stop' }])
-    expect(port.closed).toBe(true)
-    const dead = new h.FakePort()
-    dead.throwOnPost = true
-    expect(() => attachEngineStub(dead).dispose()).not.toThrow()
-    expect(dead.closed).toBe(true)
-  })
-})
+import { DEFAULT_VOICE_MODEL_ID, VOICE_MODEL_CATALOG } from './voiceModels'
 
 describe('applyFakeMediaSwitches', () => {
   it('is a no-op without CANVAS_FAKE_MEDIA', () => {
@@ -139,81 +77,240 @@ describe('applyFakeMediaSwitches', () => {
   })
 })
 
+type Handler = (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+
+interface Harness {
+  handlers: Record<string, Handler>
+  postMessage: ReturnType<typeof vi.fn>
+  send: ReturnType<typeof vi.fn>
+  ownEvent: IpcMainInvokeEvent
+  engine: {
+    startSession: ReturnType<typeof vi.fn>
+    stopSession: ReturnType<typeof vi.fn>
+    dispose: ReturnType<typeof vi.fn>
+  }
+  ops: NonNullable<VoiceIpcDeps['modelOps']> & {
+    status: ReturnType<typeof vi.fn>
+    download: ReturnType<typeof vi.fn>
+    remove: ReturnType<typeof vi.fn>
+  }
+}
+
+function makeHarness(overrides: { win?: null } = {}): Harness {
+  const handlers: Record<string, Handler> = {}
+  const postMessage = vi.fn()
+  const send = vi.fn()
+  const mainFrame = {}
+  const win =
+    overrides.win === null
+      ? null
+      : ({
+          isDestroyed: () => false,
+          webContents: { isDestroyed: () => false, mainFrame, postMessage, send }
+        } as unknown as BrowserWindow)
+  const ownEvent = { senderFrame: mainFrame } as IpcMainInvokeEvent
+  const engine = {
+    startSession: vi.fn(),
+    stopSession: vi.fn(async () => ({ frames: 0 })),
+    dispose: vi.fn()
+  }
+  const ops = {
+    status: vi.fn(async () => 'absent' as const),
+    paths: vi.fn(() => ({ encoder: 'E', decoder: 'D', joiner: 'J', tokens: 'T' })),
+    download: vi.fn(async () => {}),
+    remove: vi.fn(async () => {}),
+    sweep: vi.fn(async () => {})
+  }
+  const ipcMain = {
+    handle: (ch: string, fn: Handler) => {
+      handlers[ch] = fn
+    }
+  } as unknown as IpcMain
+  registerVoiceHandlers(ipcMain, () => win, {
+    engine: engine as unknown as VoiceEngineHandle,
+    getUserData: () => 'C:/test-userdata',
+    modelOps: ops
+  })
+  return { handlers, postMessage, send, ownEvent, engine, ops }
+}
+
+beforeEach(() => {
+  h.channels.length = 0
+  h.getMediaAccessStatus.mockReset().mockReturnValue('granted')
+})
+
+afterEach(() => disposeVoiceSession())
+
 describe('voice:session:start / stop handlers', () => {
-  type Handler = (e: IpcMainInvokeEvent) => unknown
-  let handlers: Record<string, Handler>
-  let postMessage: ReturnType<typeof vi.fn>
-  let win: BrowserWindow
-  let ownEvent: IpcMainInvokeEvent
-
-  beforeEach(() => {
-    h.channels.length = 0
-    h.getMediaAccessStatus.mockReset().mockReturnValue('granted')
-    handlers = {}
-    postMessage = vi.fn()
-    const mainFrame = {}
-    win = {
-      isDestroyed: () => false,
-      webContents: { isDestroyed: () => false, mainFrame, postMessage }
-    } as unknown as BrowserWindow
-    ownEvent = { senderFrame: mainFrame } as IpcMainInvokeEvent
-    const ipcMain = {
-      handle: (ch: string, fn: Handler) => {
-        handlers[ch] = fn
-      }
-    } as unknown as IpcMain
-    registerVoiceHandlers(ipcMain, () => win)
-  })
-
-  afterEach(() => disposeVoiceSession()) // module-level session state must not leak across tests
-
-  it('denies a foreign frame on both channels', () => {
+  it('denies a foreign frame on both channels', async () => {
+    const t = makeHarness()
     const foreign = { senderFrame: {} } as IpcMainInvokeEvent
-    expect(handlers['voice:session:start'](foreign)).toEqual({ ok: false, micStatus: 'unknown' })
-    expect(handlers['voice:session:stop'](foreign)).toEqual({ ok: false, frames: 0 })
-    expect(postMessage).not.toHaveBeenCalled()
+    await expect(t.handlers['voice:session:start'](foreign)).resolves.toEqual({
+      ok: false,
+      micStatus: 'unknown',
+      modelStatus: 'absent'
+    })
+    await expect(t.handlers['voice:session:stop'](foreign)).resolves.toEqual({
+      ok: false,
+      frames: 0
+    })
+    expect(t.postMessage).not.toHaveBeenCalled()
+    expect(t.engine.startSession).not.toHaveBeenCalled()
   })
 
-  it('start brokers a channel: stub on port1, port2 transferred on voice:port', () => {
-    const res = handlers['voice:session:start'](ownEvent)
-    expect(res).toEqual({ ok: true, micStatus: 'granted' })
+  it('start brokers a channel: engine gets port1 + null model when absent, port2 → renderer', async () => {
+    const t = makeHarness()
+    await expect(t.handlers['voice:session:start'](t.ownEvent)).resolves.toEqual({
+      ok: true,
+      micStatus: 'granted',
+      modelStatus: 'absent'
+    })
     expect(h.channels).toHaveLength(1)
-    expect(h.channels[0].port1.started).toBe(true) // engine stub attached
-    expect(postMessage).toHaveBeenCalledWith('voice:port', {}, [h.channels[0].port2])
+    expect(t.engine.startSession).toHaveBeenCalledWith(h.channels[0].port1, null)
+    expect(t.postMessage).toHaveBeenCalledWith('voice:port', {}, [h.channels[0].port2])
+    expect(t.ops.status).toHaveBeenCalledWith('C:/test-userdata', DEFAULT_VOICE_MODEL_ID)
   })
 
-  it('stop reports the frames the stub received and tears the session down', () => {
-    handlers['voice:session:start'](ownEvent)
-    const port1 = h.channels[0].port1
-    for (let i = 0; i < 5; i++) port1.emit(frameMsg())
-    expect(handlers['voice:session:stop'](ownEvent)).toEqual({ ok: true, frames: 5 })
-    expect(port1.posted).toEqual([{ t: 'stop' }]) // renderer told to release the mic
-    expect(port1.closed).toBe(true)
-    // Idempotent: a second stop finds no session.
-    expect(handlers['voice:session:stop'](ownEvent)).toEqual({ ok: true, frames: 0 })
+  it('start hands the engine the model paths when the default model is ready', async () => {
+    const t = makeHarness()
+    t.ops.status.mockResolvedValue('ready')
+    await expect(t.handlers['voice:session:start'](t.ownEvent)).resolves.toMatchObject({
+      modelStatus: 'ready'
+    })
+    expect(t.engine.startSession).toHaveBeenCalledWith(h.channels[0].port1, {
+      encoder: 'E',
+      decoder: 'D',
+      joiner: 'J',
+      tokens: 'T'
+    })
   })
 
-  it('a second start replaces the live session (old engine end stopped + closed)', () => {
-    handlers['voice:session:start'](ownEvent)
-    handlers['voice:session:start'](ownEvent)
-    expect(h.channels).toHaveLength(2)
-    expect(h.channels[0].port1.posted).toEqual([{ t: 'stop' }])
-    expect(h.channels[0].port1.closed).toBe(true)
-    expect(h.channels[1].port1.closed).toBe(false)
+  it('stop resolves the engine frame count', async () => {
+    const t = makeHarness()
+    t.engine.stopSession.mockResolvedValue({ frames: 17 })
+    await expect(t.handlers['voice:session:stop'](t.ownEvent)).resolves.toEqual({
+      ok: true,
+      frames: 17
+    })
   })
 
-  it('reports micStatus unknown where getMediaAccessStatus is absent/throws (Linux)', () => {
+  it('reports micStatus unknown where getMediaAccessStatus is absent/throws (Linux)', async () => {
+    const t = makeHarness()
     h.getMediaAccessStatus.mockImplementation(() => {
       throw new Error('unsupported')
     })
-    expect(handlers['voice:session:start'](ownEvent)).toEqual({ ok: true, micStatus: 'unknown' })
+    await expect(t.handlers['voice:session:start'](t.ownEvent)).resolves.toMatchObject({
+      ok: true,
+      micStatus: 'unknown'
+    })
   })
 
-  it('start fails closed when the window is gone', () => {
-    win = null as unknown as BrowserWindow
-    // No senderFrame → synthetic/internal call (allowed by the guard) — the null window is
-    // what must stop it.
+  it('start fails closed when the window is gone', async () => {
+    const t = makeHarness({ win: null })
     const synthetic = { senderFrame: null } as unknown as IpcMainInvokeEvent
-    expect(handlers['voice:session:start'](synthetic)).toEqual({ ok: false, micStatus: 'unknown' })
+    await expect(t.handlers['voice:session:start'](synthetic)).resolves.toEqual({
+      ok: false,
+      micStatus: 'unknown',
+      modelStatus: 'absent'
+    })
+    expect(t.engine.startSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('voice:models handlers', () => {
+  it('list maps the catalog with per-model status and the default flag', async () => {
+    const t = makeHarness()
+    t.ops.status.mockImplementation(async (_u: string, id: string) =>
+      id === DEFAULT_VOICE_MODEL_ID ? 'ready' : 'absent'
+    )
+    const list = (await t.handlers['voice:models:list'](t.ownEvent)) as Array<{
+      id: string
+      isDefault: boolean
+      status: string
+    }>
+    expect(list).toHaveLength(VOICE_MODEL_CATALOG.length)
+    const def = list.find((m) => m.isDefault)!
+    expect(def.id).toBe(DEFAULT_VOICE_MODEL_ID)
+    expect(def.status).toBe('ready')
+    expect(list.filter((m) => m.isDefault)).toHaveLength(1)
+  })
+
+  it('status guards foreign frames and non-string ids', async () => {
+    const t = makeHarness()
+    const foreign = { senderFrame: {} } as IpcMainInvokeEvent
+    await expect(t.handlers['voice:models:status'](foreign, 'x')).resolves.toBe('absent')
+    await expect(t.handlers['voice:models:status'](t.ownEvent, 42)).resolves.toBe('absent')
+    t.ops.status.mockResolvedValue('ready')
+    await expect(
+      t.handlers['voice:models:status'](t.ownEvent, 'kroko-en-2025-08-06')
+    ).resolves.toBe('ready')
+  })
+
+  it('download streams throttled progress (≥512 KB or completion) and resolves ok', async () => {
+    const t = makeHarness()
+    t.ops.download.mockImplementation(
+      async (_u: string, id: string, deps: { onProgress?: (p: DownloadProgress) => void }) => {
+        const total = 2_000_000
+        for (const received of [100_000, 300_000, 700_000, 1_400_000, total]) {
+          deps.onProgress?.({
+            id,
+            receivedBytes: received,
+            totalBytes: total,
+            fileIndex: 1,
+            fileCount: 1
+          })
+        }
+      }
+    )
+    await expect(t.handlers['voice:models:download'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: true
+    })
+    // 100k (skipped: <512k), 300k (skipped), 700k (sent), 1.4M (sent), 2M (completion — sent).
+    const sent = t.send.mock.calls.map((c) => (c[1] as DownloadProgress).receivedBytes)
+    expect(sent).toEqual([700_000, 1_400_000, 2_000_000])
+  })
+
+  it('download single-flights: a concurrent second download is refused', async () => {
+    const t = makeHarness()
+    let release!: () => void
+    t.ops.download.mockImplementation(() => new Promise<void>((r) => (release = () => r())))
+    const first = t.handlers['voice:models:download'](t.ownEvent, 'm1') as Promise<unknown>
+    await expect(t.handlers['voice:models:download'](t.ownEvent, 'm2')).resolves.toEqual({
+      ok: false,
+      error: 'download already in progress'
+    })
+    release()
+    await expect(first).resolves.toEqual({ ok: true })
+    // Slot freed after completion.
+    t.ops.download.mockResolvedValue(undefined)
+    await expect(t.handlers['voice:models:download'](t.ownEvent, 'm3')).resolves.toEqual({
+      ok: true
+    })
+  })
+
+  it('download surfaces failures as {ok:false, error}', async () => {
+    const t = makeHarness()
+    t.ops.download.mockRejectedValue(new Error('voice model integrity failure: enc.onnx'))
+    await expect(t.handlers['voice:models:download'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: false,
+      error: 'voice model integrity failure: enc.onnx'
+    })
+  })
+
+  it('delete refuses while that model is downloading, then works', async () => {
+    const t = makeHarness()
+    let release!: () => void
+    t.ops.download.mockImplementation(() => new Promise<void>((r) => (release = () => r())))
+    const dl = t.handlers['voice:models:download'](t.ownEvent, 'm1') as Promise<unknown>
+    await expect(t.handlers['voice:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: false,
+      error: 'download in progress'
+    })
+    release()
+    await dl
+    await expect(t.handlers['voice:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: true
+    })
+    expect(t.ops.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1')
   })
 })

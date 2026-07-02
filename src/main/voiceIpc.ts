@@ -1,21 +1,32 @@
 /**
- * Voice V1 — control plane + port broker (docs/research/2026-07-02-voice-to-text, SPEC §4).
+ * Voice V2 — control plane + port broker (docs/research/2026-07-02-voice-to-text, SPEC §4).
  *
- * Control plane = IPC (`voice:session:start|stop`, frame-guarded); data plane = a
+ * Control plane = IPC (`voice:session:*`, `voice:models:*`, frame-guarded); data plane = a
  * `MessageChannelMain` per session, cloned from the `pty:port` pattern: one end goes to
  * the renderer (`webContents.postMessage('voice:port', …)` → preload re-post as
- * `__voicePort`), the other end is the ENGINE seam. In V1 that seam is a logger stub
- * (counts frames; logs cadence under CANVAS_VOICE_DEBUG) — the V2 utilityProcess
- * sherpa-onnx host replaces `attachEngineStub` behind the same port shape. MAIN never
- * touches audio payload bytes (it reads byteLength only); one session at a time.
+ * `__voicePort`), the other end is transferred into the sherpa-onnx **utilityProcess
+ * engine host** (voiceEngine.ts / voiceEngineHost.ts — replaced the V1 logger stub behind
+ * the same port shape). MAIN never touches audio payload bytes; one session at a time.
  *
  * The fake-media switches (Playwright e2e — env-gated in MAIN, NOT launch args:
  * playwright#16621) also live here; index.ts applies them at module scope because
  * `app.commandLine.appendSwitch` must run before app.ready.
  */
-import { MessageChannelMain, systemPreferences } from 'electron'
+import { app, MessageChannelMain, systemPreferences } from 'electron'
 import type { BrowserWindow, IpcMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import { createVoiceEngine, type VoiceEngineHandle } from './voiceEngine'
+import {
+  DEFAULT_VOICE_MODEL_ID,
+  VOICE_MODEL_CATALOG,
+  deleteModel,
+  downloadModel,
+  modelPaths,
+  modelStatus,
+  sweepStaging,
+  type DownloadProgress,
+  type VoiceModelStatus
+} from './voiceModels'
 
 export interface VoiceStartResult {
   ok: boolean
@@ -24,64 +35,26 @@ export interface VoiceStartResult {
    *  silent-zeros watchdog's companion signal (electron#42714): a denied OS grant streams
    *  live zeros with no error, so the renderer can't detect it alone. */
   micStatus: string
+  /** Default model's install state — 'absent' drives the flyout's model-missing CTA (V3);
+   *  capture still runs (the host counts frames, no recognizer). */
+  modelStatus: VoiceModelStatus
 }
 
 export interface VoiceStopResult {
   ok: boolean
-  /** Frames the engine end received this session — proves renderer → MAIN flow. */
+  /** Frames the engine host received this session — proves renderer → host flow. */
   frames: number
 }
 
-/** Structural view of MessagePortMain so the stub is unit-testable without electron. */
-export interface EnginePortLike {
-  on(event: 'message', listener: (e: { data: unknown }) => void): unknown
-  start(): void
-  postMessage(msg: unknown): void
-  close(): void
-}
-
-export interface EngineStub {
-  frames(): number
-  /** Tell the renderer to release the mic ({t:'stop'}), then close this end. */
-  dispose(): void
-}
-
-/**
- * V1 engine seam: count incoming frames; under `debug`, log cadence once a second-ish
- * (every 8th frame) so the dev check can watch ~8 frames/s without an IPC-storm of lines.
- * `now` is injectable for deterministic cadence math in tests.
- */
-export function attachEngineStub(
-  port: EnginePortLike,
-  opts: { debug?: boolean; log?: (line: string) => void; now?: () => number } = {}
-): EngineStub {
-  const log = opts.log ?? console.log
-  const now = opts.now ?? Date.now
-  let frames = 0
-  let firstAt = 0
-  port.on('message', (e) => {
-    const m = e.data as { t?: string; d?: unknown } | null
-    if (!m || m.t !== 'frame' || !(m.d instanceof ArrayBuffer)) return
-    frames++
-    if (frames === 1) firstAt = now()
-    if (opts.debug && frames % 8 === 0) {
-      const elapsedS = (now() - firstAt) / 1000
-      const rate = elapsedS > 0 ? (frames - 1) / elapsedS : 0
-      log(`[voice] stub: ${frames} frames, ${rate.toFixed(1)}/s, ${m.d.byteLength} B each`)
-    }
-  })
-  port.start()
-  return {
-    frames: () => frames,
-    dispose() {
-      try {
-        port.postMessage({ t: 'stop' })
-      } catch {
-        /* port already closed (renderer gone) */
-      }
-      port.close()
-    }
-  }
+export interface VoiceModelListEntry {
+  id: string
+  label: string
+  language: string
+  license: string
+  licenseNote?: string
+  totalBytes: number
+  isDefault: boolean
+  status: VoiceModelStatus
 }
 
 /** Structural view of `app.commandLine` (unit-testable switch mapping). */
@@ -116,36 +89,135 @@ function micAccessStatus(): string {
   }
 }
 
-// The single live session's MAIN-side end. V1 is one global session (no per-board id —
-// dictation targets a board at INJECTION time in V3, not at capture time).
-let active: EngineStub | null = null
-
-function disposeActive(): void {
-  active?.dispose()
-  active = null
+/** Injectable seams so the handlers unit-test without electron / the network. */
+export interface VoiceIpcDeps {
+  engine?: VoiceEngineHandle
+  getUserData?: () => string
+  modelOps?: {
+    status: typeof modelStatus
+    paths: typeof modelPaths
+    download: typeof downloadModel
+    remove: typeof deleteModel
+    sweep: typeof sweepStaging
+  }
 }
 
-export function registerVoiceHandlers(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
-  ipcMain.handle('voice:session:start', (e): VoiceStartResult => {
-    if (isForeignSender(e, getWin)) return { ok: false, micStatus: 'unknown' }
+// The single live engine handle. V1's per-session stub became a persistent host process
+// (its recognizer cache makes mic re-toggles cheap); sessions inside it replace each other.
+let engineSingleton: VoiceEngineHandle | null = null
+
+function defaultEngine(): VoiceEngineHandle {
+  if (!engineSingleton) engineSingleton = createVoiceEngine()
+  return engineSingleton
+}
+
+export function registerVoiceHandlers(
+  ipcMain: IpcMain,
+  getWin: () => BrowserWindow | null,
+  deps: VoiceIpcDeps = {}
+): void {
+  const getUserData = deps.getUserData ?? ((): string => app.getPath('userData'))
+  const ops = deps.modelOps ?? {
+    status: modelStatus,
+    paths: modelPaths,
+    download: downloadModel,
+    remove: deleteModel,
+    sweep: sweepStaging
+  }
+  const engine = (): VoiceEngineHandle => deps.engine ?? defaultEngine()
+
+  // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
+  void ops.sweep(getUserData()).catch(() => {})
+
+  ipcMain.handle('voice:session:start', async (e): Promise<VoiceStartResult> => {
+    if (isForeignSender(e, getWin)) {
+      return { ok: false, micStatus: 'unknown', modelStatus: 'absent' }
+    }
     const win = getWin()
-    if (!win) return { ok: false, micStatus: 'unknown' }
-    disposeActive() // restart-idempotent: a second start replaces the live session
+    if (!win) return { ok: false, micStatus: 'unknown', modelStatus: 'absent' }
+    const userData = getUserData()
+    // V4 makes the model user-selectable via voiceConfig; V2 pins the default.
+    const status = await ops.status(userData, DEFAULT_VOICE_MODEL_ID)
+    const paths = status === 'ready' ? ops.paths(userData, DEFAULT_VOICE_MODEL_ID) : null
     const { port1, port2 } = new MessageChannelMain()
-    active = attachEngineStub(port1, { debug: !!process.env.CANVAS_VOICE_DEBUG })
+    // Restart-idempotent: the host replaces any live session (the old renderer port gets
+    // {t:'stop'}, so a stale capture releases the mic).
+    engine().startSession(port1, paths)
     win.webContents.postMessage('voice:port', {}, [port2])
-    return { ok: true, micStatus: micAccessStatus() }
+    return { ok: true, micStatus: micAccessStatus(), modelStatus: status }
   })
 
-  ipcMain.handle('voice:session:stop', (e): VoiceStopResult => {
+  ipcMain.handle('voice:session:stop', async (e): Promise<VoiceStopResult> => {
     if (isForeignSender(e, getWin)) return { ok: false, frames: 0 }
-    const frames = active?.frames() ?? 0
-    disposeActive()
+    const { frames } = await engine().stopSession()
     return { ok: true, frames }
   })
+
+  ipcMain.handle('voice:models:list', async (e): Promise<VoiceModelListEntry[]> => {
+    if (isForeignSender(e, getWin)) return []
+    const userData = getUserData()
+    return Promise.all(
+      VOICE_MODEL_CATALOG.map(async (m) => ({
+        id: m.id,
+        label: m.label,
+        language: m.language,
+        license: m.license,
+        licenseNote: m.licenseNote,
+        totalBytes: m.totalBytes,
+        isDefault: m.id === DEFAULT_VOICE_MODEL_ID,
+        status: await ops.status(userData, m.id)
+      }))
+    )
+  })
+
+  ipcMain.handle('voice:models:status', async (e, id: unknown): Promise<VoiceModelStatus> => {
+    if (isForeignSender(e, getWin) || typeof id !== 'string') return 'absent'
+    return ops.status(getUserData(), id)
+  })
+
+  // One download at a time (the manifest files stream sequentially anyway); progress is
+  // throttled to ~every 512 KB so a 70 MB model doesn't emit a thousand IPC events.
+  const downloading = new Set<string>()
+  ipcMain.handle(
+    'voice:models:download',
+    async (e, id: unknown): Promise<{ ok: boolean; error?: string }> => {
+      if (isForeignSender(e, getWin) || typeof id !== 'string') return { ok: false }
+      if (downloading.size > 0) return { ok: false, error: 'download already in progress' }
+      downloading.add(id)
+      let lastSent = 0
+      const onProgress = (p: DownloadProgress): void => {
+        if (p.receivedBytes - lastSent < 512 * 1024 && p.receivedBytes !== p.totalBytes) return
+        lastSent = p.receivedBytes
+        getWin()?.webContents.send('voice:models:progress', p)
+      }
+      try {
+        await ops.download(getUserData(), id, { onProgress })
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      } finally {
+        downloading.delete(id)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'voice:models:delete',
+    async (e, id: unknown): Promise<{ ok: boolean; error?: string }> => {
+      if (isForeignSender(e, getWin) || typeof id !== 'string') return { ok: false }
+      if (downloading.has(id)) return { ok: false, error: 'download in progress' }
+      try {
+        await ops.remove(getUserData(), id)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 }
 
-/** Tear down the live session (window close / app quit paths; safe when none). */
+/** Tear down the engine host + any live session (window close / app quit; safe when none). */
 export function disposeVoiceSession(): void {
-  disposeActive()
+  engineSingleton?.dispose()
+  engineSingleton = null
 }

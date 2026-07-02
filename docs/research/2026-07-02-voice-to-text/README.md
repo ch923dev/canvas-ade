@@ -2,13 +2,19 @@
 
 > **Status:** BUILD IN PROGRESS on `feat/voice-to-text` (worktree
 > `.worktrees/voice-to-text`). V0 ✅ shipped `58dc71c` (mic permission posture + mac
-> entitlements). V1 ✅ shipped (capture pipeline + `voice:port` + logger-stub engine end;
-> gate + Win e2e green, ~8.3 frames/s verified end-to-end; branch not pushed). **NEXT: V2
-> — engine host + models (SPIKE FIRST), see
-> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** V2–V5 pending. One V1 gotcha for
-> V2's port work: Electron cross-process MessagePorts NULL `e.data` when a non-port
-> transferable rides the transfer list — COPY frames across the boundary (see
-> `useVoiceCapture.ts`).
+> entitlements). V1 ✅ shipped `7f14168c` (capture pipeline + `voice:port`; pushed, full
+> matrix green). V2 ✅ shipped (spike `2c756c8` + engine): **sherpa-onnx utilityProcess
+> host live** — spike passed dev AND packaged (win-x64, no custom loader needed), pinned
+> per-file HF model manifest (Kroko default + Apache int8 alt; per-file beats the
+> release `.tar.bz2` — Node has no bzip2), download/verify/delete IPC, streaming
+> recognizer loop (partial/final over the session port), WAV-fixture integration test
+> green against the real model. **NEXT: V3 — pill widget + flyout + injection, see
+> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** V4–V5 pending after that. Gotchas
+> for later slices: Electron cross-process MessagePorts NULL `e.data` when a non-port
+> transferable rides the transfer list — COPY frames across the boundary
+> (`useVoiceCapture.ts`); a RUNNING installed Expanse watching the repo locks fresh
+> `.asar` files forever → pack via a pruned `-c.electronDist` copy (see
+> IMPLEMENTATION-PLAN › V2 spike note).
 
 Dictate prompts by voice instead of typing — primarily to drive the agentic CLIs in
 Terminal boards. Local-first STT (no API key, offline, private), review-first composer

@@ -31,7 +31,7 @@ import {
   createNavGuard
 } from './windowSecurity'
 import { registerMicPermissionPosture } from './micPermission'
-import { applyFakeMediaSwitches, registerVoiceHandlers } from './voiceIpc'
+import { applyFakeMediaSwitches, disposeVoiceSession, registerVoiceHandlers } from './voiceIpc'
 import { runEngineSpike } from './voiceEngine'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
@@ -966,6 +966,7 @@ function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
   disposeAllOsr() // close offscreen preview renderers
   disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
+  disposeVoiceSession() // kill the sherpa-onnx utilityProcess engine host (voice V2)
   const mcpClosed = mcp?.close() ?? Promise.resolve()
   mcp = null
   localServer?.close()

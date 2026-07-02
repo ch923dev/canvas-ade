@@ -1,20 +1,54 @@
 /**
- * Voice V1 — the preload surface for dictation (docs/research/2026-07-02-voice-to-text).
+ * Voice V1/V2 — the preload surface for dictation (docs/research/2026-07-02-voice-to-text).
  * Split out of index.ts for the max-lines ratchet; index.ts mounts `voiceApi` under
  * `window.api.voice` and calls `forwardVoicePort()` once at load.
  */
 import { ipcRenderer } from 'electron'
 
+export interface VoiceModelListEntry {
+  id: string
+  label: string
+  language: string
+  license: string
+  licenseNote?: string
+  totalBytes: number
+  isDefault: boolean
+  status: 'ready' | 'absent'
+}
+
+export interface VoiceDownloadProgress {
+  id: string
+  receivedBytes: number
+  totalBytes: number
+  fileIndex: number
+  fileCount: number
+}
+
 /**
  * Control plane (frames flow over a MessagePort, not IPC). start() makes MAIN broker a
  * session port — it arrives via forwardVoicePort below as `__voicePort`, and the port IS
- * the renderer's start signal. stop() makes MAIN's engine end post {t:'stop'} back over
+ * the renderer's start signal. stop() makes the engine host post {t:'stop'} back over
  * the port (so the capture releases the mic) and returns the session's frame count.
+ * models.* is the V2 catalog surface (download/delete/status; Settings UI lands in V4).
  */
 export const voiceApi = {
-  start: (): Promise<{ ok: boolean; micStatus: string }> =>
+  start: (): Promise<{ ok: boolean; micStatus: string; modelStatus: 'ready' | 'absent' }> =>
     ipcRenderer.invoke('voice:session:start'),
-  stop: (): Promise<{ ok: boolean; frames: number }> => ipcRenderer.invoke('voice:session:stop')
+  stop: (): Promise<{ ok: boolean; frames: number }> => ipcRenderer.invoke('voice:session:stop'),
+  models: {
+    list: (): Promise<VoiceModelListEntry[]> => ipcRenderer.invoke('voice:models:list'),
+    status: (id: string): Promise<'ready' | 'absent'> =>
+      ipcRenderer.invoke('voice:models:status', id),
+    download: (id: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('voice:models:download', id),
+    delete: (id: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('voice:models:delete', id),
+    onDownloadProgress: (cb: (p: VoiceDownloadProgress) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: VoiceDownloadProgress): void => cb(p)
+      ipcRenderer.on('voice:models:progress', listener)
+      return () => ipcRenderer.removeListener('voice:models:progress', listener)
+    }
+  }
 }
 
 /**
