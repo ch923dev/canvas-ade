@@ -1488,3 +1488,30 @@ branch is not observable on the Win/Linux e2e legs; the +5 `quit.test.ts` cases 
 Windows 233 (`osrCropSupersample` @preview OSR-teardown env flake reran green in isolation) + Linux Docker
 `exit 0` 233 passed. Headless smoke green (RENDERER reactflow/xterm/webgl true, `pty:true`, no destroyed/throw)
 — confirms boot + the normal close/quit path is un-regressed. Direct-to-main (small, self-contained fix).
+
+## 2026-07-02 — Board Inspector epic lands on main (umbrella promotion, schema v18)
+
+The **Board Inspector redesign epic** (P0 → P5, built on `feat/board-inspector-umbrella` across
+PRs #262/#264/#276/#277/#278) promotes to `main`. One floating, screen-space, left-docked
+**Inspector popover** (reveal-on-select, z 45 / 250 over the full-view scrim) is now the ONE
+control home for every board type — the per-type title-bar clusters, DataFlow `.df-bar`, and
+Browser URL-bar buttons are deleted (URL bar = input-only; headers keep connector ⧉ / full-view ⤢
+/ ⋯ only). P5 additionally shipped: sticky per-section collapse (`ca.inspector.collapse.*`),
+promoted primitives (InspectorStatus/Chips/Progress/Subheader + slider readouts), a11y (focus
+rings, roving-tabindex radiogroups, aria-live steppers), the File empty/loading/error placeholder,
+and the **hide/retrieve system** (⇤ collapses the popover to a docked HANDLE at its own spot —
+deliberately NOT a left-edge tab, which sat inside the file tree's 36px REVEAL_EDGE band and
+became a moving target; sticky `ca.inspector.hidden`).
+
+**Epic-end sync merge (`5b6fd5c`)** brought main's 147 commits in (bug-hunt #279, terminal-serialize
+#275, terminal theming #270, Kanban): 9 conflicts resolved preserving both sides — the planned
+**schema re-number** landed exactly as the v17 claim's hazard note prescribed (main's breaking
+Kanban v17 stands; P4b's additive appearance props re-sequence to **v18**, floor 17 inherited,
+migration slot 17→18, MAIN mirror lock-step); Planning synthesis = BUG-008 `getElements()` live
+reads + P4's render-safe `wb()`/`measured()` thunks; whiteboardExport = bbox/text-wrap pipeline +
+opacity groups/stroke tokens; kanban deep validation extracted to `kanbanSchema.ts`
+(`assertKanbanContent`) to hold the max-lines gate.
+
+**Verified (pre-merge gate):** typecheck clean · lint 0 errors · **4126 unit+integration pass** /
+1 skipped · **full e2e matrix GREEN both legs** on the merged tree. Maintainer dev-check
+(title-stamped `PR#278 P5 polish`) + explicit merge OK given. Unblocks the Meridian redesign epic.
