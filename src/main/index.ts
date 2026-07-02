@@ -30,6 +30,7 @@ import {
   computeAppOrigin,
   createNavGuard
 } from './windowSecurity'
+import { registerMicPermissionPosture } from './micPermission'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
@@ -215,6 +216,11 @@ function createWindow(): void {
   const indexHtmlPath = join(__dirname, '../renderer/index.html')
   const appOrigin = computeAppOrigin(process.env['ELECTRON_RENDERER_URL'])
   const appDocPath = usePackagedFile ? pathToFileURL(indexHtmlPath).pathname : undefined
+  // Voice V0: pin the DEFAULT session's permission posture (mic-only media + clipboard
+  // write for the app page; everything else denied). Without a handler Electron
+  // auto-grants every request and leaks enumerateDevices() labels pre-grant. The
+  // preview/diagram sessions keep their own deny-alls (separate partitions).
+  registerMicPermissionPosture(mainWindow.webContents.session, appOrigin)
   const guardNav = createNavGuard({
     appOrigin,
     appDocPath,
