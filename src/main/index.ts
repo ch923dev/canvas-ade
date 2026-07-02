@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync, existsSync } from 'fs'
+import { writeFileSync, mkdtempSync, existsSync, readFileSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -143,6 +143,10 @@ let resultSynth: ResultSynthesizer | null = null
 // Background project sessions (Phase 1): the backgrounded-project registry, wired over the real
 // pty/previewOsr project-scoped resource functions. App-run lifetime only — quit's disposeAll*
 // kills background resources too, so the registry is never persisted or drained at shutdown.
+// Phase 4: the persisted forever-keep list (the dialog's opt-in checkbox) — app/machine
+// preference in userData, NEVER the project folder. Read lazily by the registry (first policy
+// access is post-ready); a missing/corrupt file reads as [].
+const foreverKeepFile = (): string => join(app.getPath('userData'), 'background-keep.json')
 const projectSessions = createProjectSessions({
   reapUndoParks,
   parkPtys: parkProjectSessions,
@@ -152,7 +156,12 @@ const projectSessions = createProjectSessions({
   foregroundOsr: foregroundProjectOsr,
   disposeOsr: disposeProjectOsr,
   countOsr: countProjectOsr,
-  now: () => Date.now()
+  now: () => Date.now(),
+  loadForeverKeeps: () => {
+    const parsed: unknown = JSON.parse(readFileSync(foreverKeepFile(), 'utf8'))
+    return Array.isArray(parsed) ? parsed.filter((d): d is string => typeof d === 'string') : []
+  },
+  saveForeverKeeps: (dirs) => writeFileSync(foreverKeepFile(), JSON.stringify(dirs), 'utf8')
 })
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
@@ -744,14 +753,14 @@ app.whenReady().then(async () => {
     // for the now-active dir (idempotent for a never-backgrounded one) — see projectSessions.
     (dir) => projectSessions.foregroundProject(dir)
   )
-  // Background project sessions (Phase 2): the switch-pipeline control plane. The
-  // EXPANSE_BG_SESSIONS env flag gates only the renderer's DEFAULT switch behavior (dark ship).
+  // Background project sessions: the switch-pipeline control plane (Phase 2) + the Phase-4
+  // keep-policy plane (ask-on-switch info · set/forget keep · ∞ badges). Flag-free since
+  // Phase 4 — keep-running is the shipped behavior, mediated by the dialog.
   registerProjectSessionsHandlers(ipcMain, () => mainWindow, {
     sessions: projectSessions,
     getCurrentDir,
     disposeProjectPtys,
-    disposeProjectOsr,
-    enabled: () => process.env.EXPANSE_BG_SESSIONS === '1'
+    disposeProjectOsr
   })
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in

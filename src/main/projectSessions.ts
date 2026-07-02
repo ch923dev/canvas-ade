@@ -43,6 +43,13 @@ export interface ProjectSessionDeps {
   countOsr(dir: string): number
   /** Clock (injectable for tests). */
   now(): number
+  /**
+   * Phase 4: the persisted forever-keep dirs (the dialog's opt-in checkbox). Lives in
+   * userData — app/machine preference, NEVER the project folder (canvas.json is git-shared).
+   * Injectable so tests need no fs; index.ts wires a JSON file. Load errors → [].
+   */
+  loadForeverKeeps(): string[]
+  saveForeverKeeps(dirs: string[]): void
 }
 
 export interface ProjectSessions {
@@ -55,16 +62,61 @@ export interface ProjectSessions {
    */
   foregroundProject(dir: string): void
   /** Kill everything a BACKGROUNDED `dir` owns. False when `dir` is not registered — the
-   *  IPC layer must never dispose an arbitrary renderer-supplied path. */
+   *  IPC layer must never dispose an arbitrary renderer-supplied path. Also forgets the
+   *  dir's keep policy (Phase 4: closing IS the single policy-reset gesture). */
   closeBackgroundProject(dir: string): Promise<boolean>
   isBackgroundProject(dir: string): boolean
   listBackgroundProjects(): BackgroundProjectInfo[]
   /** Registry size (resource-cap checks live at the Phase-4 dialog). */
   backgroundCount(): number
+  /** Live resource counts for `dir` (the ask-on-switch dialog body). */
+  liveCounts(dir: string): { terminals: number; previews: number }
+  /**
+   * Phase 4 switch policy. 'ask' (default) → the renderer shows the ask-on-switch dialog;
+   * 'keep' → silent background. 'keep' is set by the dialog's Keep pick: session-scoped by
+   * default (dies with the app run, like the sessions), plus optionally PERSISTED (the
+   * forever checkbox → userData via the injected store). Reset paths: forgetKeepPolicy (the
+   * ∞ badge), closeBackgroundProject / the active-close (closing the project).
+   */
+  getSwitchPolicy(dir: string): 'ask' | 'keep'
+  setKeepPolicy(dir: string, forever: boolean): void
+  /** Clear `dir`'s session AND forever keep. Returns whether anything was cleared. */
+  forgetKeepPolicy(dir: string): boolean
+  /** Dirs with the PERSISTED forever flag (the ∞ badge on switcher rows / dock cards). */
+  keepForeverDirs(): string[]
 }
 
 export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions {
   const registry = new Map<string, { name: string; backgroundedAt: number }>()
+  // Phase 4 keep policies. Session keeps die with the run (never persisted); forever keeps
+  // hydrate from + write through the injected userData store. A dir is 'keep' if EITHER holds.
+  // Hydration is LAZY (first policy access) — the factory runs at module scope, before the
+  // injected store's backing path (app.getPath) is necessarily ready.
+  const sessionKeeps = new Set<string>()
+  let foreverKeeps: Set<string> | null = null
+  const forever = (): Set<string> => {
+    if (!foreverKeeps) {
+      try {
+        foreverKeeps = new Set(deps.loadForeverKeeps())
+      } catch {
+        foreverKeeps = new Set()
+      }
+    }
+    return foreverKeeps
+  }
+  const persistForever = (): void => {
+    try {
+      deps.saveForeverKeeps([...forever()])
+    } catch {
+      /* best-effort — a failed write degrades to session-scoped behavior */
+    }
+  }
+  const forgetPolicy = (dir: string): boolean => {
+    const hadSession = sessionKeeps.delete(dir)
+    const hadForever = forever().delete(dir)
+    if (hadForever) persistForever()
+    return hadSession || hadForever
+  }
 
   return {
     async backgroundProject(dir) {
@@ -85,6 +137,7 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
     async closeBackgroundProject(dir) {
       if (!registry.has(dir)) return false
       registry.delete(dir)
+      forgetPolicy(dir) // closing IS the policy reset — the next open+switch asks again
       deps.disposeOsr(dir)
       await deps.disposePtys(dir)
       return true
@@ -106,6 +159,30 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
 
     backgroundCount() {
       return registry.size
+    },
+
+    liveCounts(dir) {
+      return { terminals: deps.countPtys(dir).running, previews: deps.countOsr(dir) }
+    },
+
+    getSwitchPolicy(dir) {
+      return sessionKeeps.has(dir) || forever().has(dir) ? 'keep' : 'ask'
+    },
+
+    setKeepPolicy(dir, keepForever) {
+      sessionKeeps.add(dir)
+      if (keepForever && !forever().has(dir)) {
+        forever().add(dir)
+        persistForever()
+      }
+    },
+
+    forgetKeepPolicy(dir) {
+      return forgetPolicy(dir)
+    },
+
+    keepForeverDirs() {
+      return [...forever()]
     }
   }
 }

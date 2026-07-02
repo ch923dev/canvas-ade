@@ -3,6 +3,7 @@ import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
+import AskOnSwitchModal from './canvas/AskOnSwitchModal'
 import { ToastIsland } from './canvas/Toast'
 import { useUpdateToasts } from './canvas/useUpdateToasts'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
@@ -94,6 +95,9 @@ function App(): React.ReactElement {
       {status === 'open' ? <Canvas /> : <WelcomeScreen />}
       {status === 'open' && <AuditLogViewer />}
       <ConfirmModal />
+      {/* Phase 4 (bg sessions): app-level like ConfirmModal — the ask-on-switch decision is
+          awaited mid-switch-pipeline and must not depend on any project-scoped surface. */}
+      <AskOnSwitchModal />
       {/* D1-A: app-level so toasts survive a project switch and show on the welcome
           screen too (a failed final flush aborts the switch — its toast must outlive
           whatever surface raised it). */}

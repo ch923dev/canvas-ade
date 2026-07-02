@@ -305,6 +305,14 @@ export interface CanvasE2E {
     dir: string,
     keep: boolean
   ) => Promise<{ outcome: string; status: string; dir: string | null; boardCount: number }>
+  /**
+   * Phase 4: the DEFAULT switch pipeline (no explicit keep) — the per-project policy decides,
+   * and the ask-on-switch dialog appears when the outgoing project has live resources. The
+   * promise settles only after any dialog is answered, so specs drive the real modal.
+   */
+  switchProjectAsk: (
+    dir: string
+  ) => Promise<{ outcome: string; status: string; dir: string | null; boardCount: number }>
   /** Reveal the auto-hide docked file-tree panel (mirrors the user moving onto the left-edge zone).
    *  Since SLICE-013 the FileTree is lazy and only MOUNTS once the panel has been revealed, so a tree
    *  probe must reveal first — a real user never interacts with the still-hidden (unmounted) tree. */

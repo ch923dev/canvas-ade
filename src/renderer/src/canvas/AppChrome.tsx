@@ -4,19 +4,9 @@
  * All sit on `--surface-raised` with the popover shadow. Camera controls drive
  * React Flow via `useReactFlow`; the dock adds store boards centered in view.
  */
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactElement
-} from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { useReactFlow, useStore } from '@xyflow/react'
-import { useCanvasStore, type RecentProject } from '../store/canvasStore'
-import { useSaveStatusStore } from '../store/saveStatusStore'
-import { showToast, dismissToast } from '../store/toastStore'
-import { performProjectSwitch } from '../store/projectSwitch'
+import { useCanvasStore } from '../store/canvasStore'
 import type { BoardType } from '../lib/boardSchema'
 import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import { FIT_FRAME, RESET_FRAME } from '../lib/canvasView'
@@ -26,12 +16,17 @@ import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
 import { BackdropPicker } from './BackdropPicker'
+import { ProjectSwitcher } from './ProjectSwitcher'
 import { RecapConsentModal } from './RecapConsentModal'
 import { SidePanel } from './SidePanel'
 import { BoardInspector } from './BoardInspector'
 import { OrchestrationModals } from './OrchestrationModals'
 import { SignInView } from './SignInView'
 import { AccountPill } from './AccountPill'
+
+// The switcher moved to its own file under the max-lines ratchet (Phase 4's live rows tipped
+// this one over 700). Re-exported so existing import sites (integration tests) keep working.
+export { ProjectSwitcher } from './ProjectSwitcher'
 
 export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
@@ -102,209 +97,6 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
           trigger + per-project hydration (self-guarded against firing with no project open). */}
       <OrchestrationModals />
     </>
-  )
-}
-
-// ── Top-left: project switcher ──────────────────────────────────────────────
-// Dropdown: shows the current project name; lets the user open a recent project,
-// open a folder, or create one. On switch: flush-save → mark loading (suppress
-// autosave) → dispose live native views/PTYs → load the new project.
-export function ProjectSwitcher(): ReactElement {
-  const name = useCanvasStore((s) => s.project.name)
-  const count = useCanvasStore((s) => s.boards.length)
-  const toObject = useCanvasStore((s) => s.toObject)
-  const [open, setOpen] = useState(false)
-  const [recents, setRecents] = useState<RecentProject[]>([])
-  // D0-7: a project switch in flight (flush → dispose → load). The pill dims + spins so
-  // the multi-step teardown never reads as a hang; once status flips to 'loading' this
-  // component unmounts and WelcomeScreen carries the loading presentation.
-  const [switching, setSwitching] = useState(false)
-  // D0-8→D1-A: the last failed save (set by the autosave hook's onError and the
-  // flush-failure path below; cleared by the next successful save), surfaced as a
-  // STICKY error toast with a Retry action — the toast bridge effect below.
-  const saveFailure = useSaveStatusStore((s) => s.failure)
-  const setSaveFailure = useSaveStatusStore((s) => s.setSaveFailure)
-  // PERSIST-03: a successful flush/retry marks 'saved' (clearing the failure too), so the
-  // ambient indicator reflects disk health rather than merely the absence of an error.
-  const markSaved = useSaveStatusStore((s) => s.markSaved)
-  // Anchor for the shared <Menu> shell — the pill button itself, so the dropdown hangs
-  // under it (left-aligned) and re-clicking the pill toggles closed (the shell excludes
-  // the anchor from outside-close; BUG-045 class).
-  const triggerRef = useRef<HTMLButtonElement>(null)
-
-  const toggle = async (): Promise<void> => {
-    if (!open) setRecents(await window.api.project.recents())
-    setOpen((v) => !v)
-  }
-
-  const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
-    setOpen(false)
-    // D0-7: dim + spin the pill for the whole pipeline. The finally also covers the
-    // post-unmount path (status flips to 'loading' mid-await): React 18 treats setState
-    // on an unmounted component as a no-op.
-    setSwitching(true)
-    try {
-      // The pipeline itself (lock → autosave cancel → pinned flush-save → live-resource
-      // handover → load) lives in store/projectSwitch.ts, shared with the e2e harness.
-      // Lock/flush failures surface through the save-status store it writes.
-      await performProjectSwitch(load)
-    } finally {
-      setSwitching(false)
-    }
-  }
-
-  // D0-8: manual retry (the toast's Retry action). A success clears the failure (the
-  // bridge effect then dismisses the toast); a `false` return (the IPC write failed
-  // without throwing) refreshes the message so the click visibly registered —
-  // otherwise the action looks dead; a rejection logs + refreshes likewise.
-  const retrySave = useCallback(async (): Promise<void> => {
-    try {
-      // BUG-009 parity: pin the write to the current project dir so a racing switch
-      // can't land this doc in the wrong canvas.json.
-      const ok = await window.api.project.save(
-        toObject(),
-        useCanvasStore.getState().project.dir ?? undefined
-      )
-      if (ok) markSaved()
-      else setSaveFailure('Save failed again — check disk space and permissions')
-    } catch (err) {
-      // Fixed user-facing string (same rationale as useAutosave::onError) — raw OS
-      // rejections are opaque + read aloud by the alert region; console keeps detail.
-      // eslint-disable-next-line no-console
-      console.error('project save retry failed', err)
-      setSaveFailure('Save failed again — check disk space and permissions')
-    }
-  }, [toObject, markSaved, setSaveFailure])
-
-  // D1-A: bridge the save-failure state into the app toast channel (replaces the D0-8
-  // chip). STICKY — a failed save is a data-loss condition the user must act on, so it
-  // never auto-expires; keyed so a repeat failure replaces in place and the next
-  // successful save (or a successful Retry) dismisses it by id.
-  useEffect(() => {
-    if (saveFailure) {
-      showToast({
-        id: 'save-failure',
-        message: saveFailure,
-        kind: 'error',
-        sticky: true,
-        action: { label: 'Retry', run: () => void retrySave() }
-      })
-    } else {
-      dismissToast('save-failure')
-    }
-  }, [saveFailure, retrySave])
-
-  const openRecent = (dir: string): Promise<void> => switchTo(() => window.api.project.open(dir))
-  const openFolder = async (): Promise<void> => {
-    const dir = await window.api.dialog.openFolder()
-    if (dir) await switchTo(() => window.api.project.open(dir))
-    else setOpen(false)
-  }
-  const createNew = async (): Promise<void> => {
-    const dir = await window.api.dialog.openFolder()
-    if (!dir) {
-      setOpen(false)
-      return
-    }
-    const pname =
-      dir
-        .replace(/[/\\]+$/, '')
-        .split(/[/\\]/)
-        .pop() || dir
-    await switchTo(() => window.api.project.create(dir, pname, {}))
-  }
-
-  return (
-    <div style={styles.tl} className="project-switcher">
-      <button
-        ref={triggerRef}
-        className="project-switcher-trigger"
-        // D0-7: dim + disable the pill while a switch pipeline runs (flush → dispose → load)
-        // so the multi-step teardown never reads as a hang.
-        style={switching ? { ...styles.proj, opacity: 0.6, cursor: 'default' } : styles.proj}
-        disabled={switching}
-        onClick={() => void toggle()}
-        title="Switch project"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>
-          <Icon name="diamond" size={15} />
-        </span>
-        <span className="t-label" style={{ color: 'var(--text)' }}>
-          {switching ? 'Loading…' : (name ?? 'canvas-ade')}
-        </span>
-        <span
-          className={switching ? 'ca-spin' : undefined}
-          style={{ color: 'var(--text-3)', display: 'inline-flex' }}
-        >
-          <Icon name={switching ? 'refresh' : 'chevron'} size={13} />
-        </span>
-      </button>
-      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
-        · {count} {count === 1 ? 'board' : 'boards'}
-      </span>
-      {/* PERSIST-03: ambient save-status confirmation. The D0-8 chip is gone — save
-          FAILURES still surface as the sticky Retry toast (bridge effect above); this is
-          the quiet positive 'Saving…'/'Saved' signal. */}
-      <SaveStatus />
-      {/* Shared Menu shell (D1-C): body portal + viewport clamp (D0-4's maxHeight scroll
-          cap for a long recents list), Escape/outside/resize close, menuitem roving
-          tabindex + arrow keys, ADR 0002 preview-detach while open. reclampKey re-clamps
-          when the async recents list lands. */}
-      {open && (
-        <Menu
-          anchor={triggerRef}
-          align="left"
-          gap={6}
-          label="Switch project"
-          className="project-switcher-menu"
-          reclampKey={recents.length}
-          onClose={() => setOpen(false)}
-        >
-          {recents.map((r) => (
-            <button
-              key={r.path}
-              role="menuitem"
-              onClick={() => void openRecent(r.path)}
-              title={r.path}
-            >
-              {r.name}
-            </button>
-          ))}
-          <div className="project-switcher-divider" />
-          <button role="menuitem" onClick={() => void openFolder()}>
-            Open folder…
-          </button>
-          <button role="menuitem" onClick={() => void createNew()}>
-            Create project…
-          </button>
-        </Menu>
-      )}
-    </div>
-  )
-}
-
-// PERSIST-03: ambient save-status indicator — a quiet --text-3 confirmation next to the
-// board count. 'idle' reads as "Saved" (a freshly-opened project is already on disk);
-// 'saving'/'saved' give positive feedback; 'error' tints --err while the sticky Retry
-// toast carries the action. role=status (polite) so AT announces the saving→saved swap.
-// Own subscription so a state change re-renders only this span, not all of ProjectSwitcher.
-function SaveStatus(): ReactElement {
-  const state = useSaveStatusStore((s) => s.state)
-  const label = state === 'saving' ? 'Saving…' : state === 'error' ? 'Save failed' : 'Saved'
-  return (
-    <span
-      role="status"
-      aria-live="polite"
-      style={{
-        fontFamily: 'var(--mono)',
-        fontSize: 11,
-        color: state === 'error' ? 'var(--err)' : 'var(--text-3)'
-      }}
-    >
-      · {label}
-    </span>
   )
 }
 

@@ -550,6 +550,19 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         boardCount: useCanvasStore.getState().boards.length
       }
     },
+    async switchProjectAsk(dir) {
+      // Phase 4: the DEFAULT pipeline — no explicit keep, so the per-project policy decides
+      // and the ask-on-switch dialog shows when the outgoing project has live resources.
+      // The returned promise settles only after the dialog is answered (the spec clicks it).
+      const outcome = await performProjectSwitch(() => window.api.project.open(dir))
+      const p = useCanvasStore.getState().project
+      return {
+        outcome,
+        status: p.status,
+        dir: p.dir,
+        boardCount: useCanvasStore.getState().boards.length
+      }
+    },
     revealSidePanel() {
       useFileTreeUiStore.getState().reveal()
     },

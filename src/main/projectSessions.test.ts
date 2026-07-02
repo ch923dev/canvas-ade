@@ -9,6 +9,8 @@ import { createProjectSessions, type ProjectSessionDeps } from './projectSession
 function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
   deps: ProjectSessionDeps
   calls: Record<string, string[]>
+  /** The fake persisted forever-keep store (Phase 4) — saveForeverKeeps writes land here. */
+  persisted: { dirs: string[] }
 } {
   const calls: Record<string, string[]> = {
     reapUndoParks: [],
@@ -18,6 +20,7 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
     foregroundOsr: [],
     disposeOsr: []
   }
+  const persisted: { dirs: string[] } = { dirs: [] }
   const deps: ProjectSessionDeps = {
     reapUndoParks: async (dir) => {
       calls.reapUndoParks.push(dir)
@@ -43,9 +46,13 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
     },
     countOsr: () => 1,
     now: () => 1_000,
+    loadForeverKeeps: () => persisted.dirs,
+    saveForeverKeeps: (dirs) => {
+      persisted.dirs = dirs
+    },
     ...overrides
   }
-  return { deps, calls }
+  return { deps, calls, persisted }
 }
 
 describe('createProjectSessions (Phase 1 registry)', () => {
@@ -146,5 +153,77 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     await ps.backgroundProject('C:\\work\\alpha')
     await expect(ps.closeBackgroundProject('C:\\work\\alpha')).rejects.toThrow('taskkill hung')
     expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(false)
+  })
+})
+
+// Phase 4: the per-project keep policy — the state machine behind the ask-on-switch dialog.
+// ask (default) → Keep = session 'keep' → Keep+forever = persisted → forget/close = back to ask.
+describe('switch keep policy (Phase 4)', () => {
+  const A = 'C:\\work\\alpha'
+
+  it("defaults to 'ask' and flips to 'keep' on setKeepPolicy (session-scoped: nothing persisted)", () => {
+    const { deps, persisted } = makeDeps()
+    const ps = createProjectSessions(deps)
+    expect(ps.getSwitchPolicy(A)).toBe('ask')
+
+    ps.setKeepPolicy(A, false)
+    expect(ps.getSwitchPolicy(A)).toBe('keep')
+    expect(persisted.dirs).toEqual([]) // app-run scope only — never written to disk
+    expect(ps.keepForeverDirs()).toEqual([])
+  })
+
+  it('forever=true persists through the injected store and hydrates a fresh registry', () => {
+    const { deps, persisted } = makeDeps()
+    const ps = createProjectSessions(deps)
+    ps.setKeepPolicy(A, true)
+    expect(persisted.dirs).toEqual([A])
+    expect(ps.keepForeverDirs()).toEqual([A])
+
+    // A "new app run": a fresh registry over the SAME persisted store still keeps silently.
+    const ps2 = createProjectSessions(makeDeps({ loadForeverKeeps: () => persisted.dirs }).deps)
+    expect(ps2.getSwitchPolicy(A)).toBe('keep')
+  })
+
+  it('forgetKeepPolicy (the ∞ badge) clears session AND forever, back to ask', () => {
+    const { deps, persisted } = makeDeps()
+    const ps = createProjectSessions(deps)
+    ps.setKeepPolicy(A, true)
+
+    expect(ps.forgetKeepPolicy(A)).toBe(true)
+    expect(ps.getSwitchPolicy(A)).toBe('ask')
+    expect(persisted.dirs).toEqual([])
+    expect(ps.forgetKeepPolicy(A)).toBe(false) // idempotent — nothing left to clear
+  })
+
+  it('closeBackgroundProject resets the policy too (closing IS the reset gesture)', async () => {
+    const { deps, persisted } = makeDeps()
+    const ps = createProjectSessions(deps)
+    ps.setKeepPolicy(A, true)
+    await ps.backgroundProject(A)
+
+    await ps.closeBackgroundProject(A)
+    expect(ps.getSwitchPolicy(A)).toBe('ask')
+    expect(persisted.dirs).toEqual([])
+  })
+
+  it('a corrupt/throwing forever store degrades to session-only, never throws', () => {
+    const { deps } = makeDeps({
+      loadForeverKeeps: () => {
+        throw new Error('corrupt json')
+      },
+      saveForeverKeeps: () => {
+        throw new Error('disk full')
+      }
+    })
+    const ps = createProjectSessions(deps)
+    expect(ps.getSwitchPolicy(A)).toBe('ask')
+    expect(() => ps.setKeepPolicy(A, true)).not.toThrow()
+    expect(ps.getSwitchPolicy(A)).toBe('keep') // session keep still works
+  })
+
+  it('liveCounts reports the dialog body counts off the injected counters', () => {
+    const { deps } = makeDeps()
+    const ps = createProjectSessions(deps)
+    expect(ps.liveCounts(A)).toEqual({ terminals: 2, previews: 1 })
   })
 })

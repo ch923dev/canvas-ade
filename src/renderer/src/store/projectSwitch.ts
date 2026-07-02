@@ -1,40 +1,71 @@
 /**
- * The project-switch pipeline (Background Project Sessions, Phase 2) — extracted from
- * ProjectSwitcher so the SAME flush → handover → load sequence is drivable by the component
- * (which wraps it in its spinner UI) and by the e2e harness (`switchProjectFromDisk`), instead
- * of living inside a component closure.
+ * The project-switch pipeline (Background Project Sessions, Phase 2; dialog-mediated since
+ * Phase 4) — extracted from ProjectSwitcher so the SAME flush → handover → load sequence is
+ * drivable by the component (which wraps it in its spinner UI) and by the e2e harness
+ * (`switchProjectFromDisk`), instead of living inside a component closure.
  *
- * Pipeline (order is load-bearing): acquire the cross-surface switch lock → cancel the pending
- * autosave → final flush-save pinned to the outgoing dir (abort on failure — SAVE-1 silent-loss
- * class) → hand over live resources (BACKGROUND keeps PTYs running + previews frozen; DISPOSE is
- * the legacy kill-all) → `setProjectLoading()` unmount → load + apply the new project.
- * Backgrounding must happen BEFORE the unmount: park is what turns each board unmount's
- * `pty:kill` / `preview:osrClose` into a no-op.
+ * Pipeline (order is load-bearing): acquire the cross-surface switch lock → DECIDE the
+ * handover (per-project keep policy; 'ask' → the ask-on-switch dialog; Cancel aborts with no
+ * side effects) → cancel the pending autosave → final flush-save pinned to the outgoing dir
+ * (abort on failure — SAVE-1 silent-loss class) → hand over live resources (BACKGROUND keeps
+ * PTYs running + previews frozen; STOP is the scoped active-close — NEVER the dispose-all,
+ * which would reap other residents' background sessions) → `setProjectLoading()` unmount →
+ * load + apply the new project. Backgrounding must happen BEFORE the unmount: park is what
+ * turns each board unmount's `pty:kill` / `preview:osrClose` into a no-op.
  */
 import { useCanvasStore, acquireProjectSwitchLock, releaseProjectSwitchLock } from './canvasStore'
 import { cancelActiveAutosave } from './useAutosave'
 import { useSaveStatusStore } from './saveStatusStore'
-import { backgroundLiveResources, disposeLiveResources } from './disposeLiveResources'
+import {
+  backgroundLiveResources,
+  closeActiveLiveResources,
+  disposeLiveResources
+} from './disposeLiveResources'
+import { requestAskOnSwitch } from './askOnSwitchStore'
 
-// The EXPANSE_BG_SESSIONS dev flag (Phase 2 ships dark), fetched once per renderer lifetime.
-// Lazy-resolved so a partial window.api mock (integration tests stub only what they use) or a
-// torn-down bridge resolves to `false` (the legacy dispose path) instead of throwing.
-let bgFlag: Promise<boolean> | null = null
-export function isBgSessionsEnabled(): Promise<boolean> {
-  bgFlag ??= Promise.resolve()
-    .then(() => window.api.project.bgSessionsEnabled())
-    .then((v) => v === true)
+export type SwitchOutcome = 'switched' | 'locked' | 'save-failed' | 'cancelled'
+
+/**
+ * Decide whether the outgoing project keeps running (Phase 4). Explicit `keepBackground`
+ * (the e2e harness) wins. Otherwise: nothing running → plain stop (nothing to keep);
+ * remembered 'keep' policy → silent keep; 'ask' → the dialog (Keep also records the policy —
+ * with the forever flag when ticked — so the NEXT switch away is silent). A torn-down bridge /
+ * partial test mock resolves to the safe legacy stop.
+ */
+async function decideKeep(
+  outgoingDir: string,
+  explicit: boolean | undefined,
+  incomingName: string | null
+): Promise<boolean | 'cancelled'> {
+  if (explicit !== undefined) return explicit
+  const info = await Promise.resolve()
+    .then(() => window.api.project.askOnSwitchInfo())
+    .catch(() => null)
+  if (!info || info.dir !== outgoingDir) return false
+  if (info.terminals + info.previews === 0) return false
+  if (info.policy === 'keep') return true
+  const choice = await requestAskOnSwitch({
+    outgoingName: useCanvasStore.getState().project.name ?? 'this project',
+    incomingName,
+    terminals: info.terminals,
+    previews: info.previews
+  })
+  if (choice.action === 'cancel') return 'cancelled'
+  if (choice.action === 'stop') return false
+  await Promise.resolve()
+    .then(() => window.api.project.setKeepPolicy(choice.forever))
     .catch(() => false)
-  return bgFlag
+  return true
 }
-
-export type SwitchOutcome = 'switched' | 'locked' | 'save-failed'
 
 export async function performProjectSwitch(
   load: () => Promise<unknown>,
   opts?: {
-    /** Keep the outgoing project running in the background. Default = the dev flag. */
+    /** Keep the outgoing project running in the background. Default = the Phase-4 policy flow
+     *  (remembered keep → silent; otherwise the ask-on-switch dialog when anything is live). */
     keepBackground?: boolean
+    /** Incoming project's display name for the dialog title (best-effort). */
+    incomingName?: string
   }
 ): Promise<SwitchOutcome> {
   // BUG-009: one switch pipeline at a time, ACROSS surfaces (shared with WelcomeScreen's
@@ -44,6 +75,14 @@ export async function performProjectSwitch(
   if (!acquireProjectSwitchLock()) return 'locked'
   try {
     const outgoingDir = useCanvasStore.getState().project.dir
+    // Phase 4: decide the handover BEFORE any side effect (lock → dialog → save, per the
+    // approved design) — a Cancel must leave the outgoing project exactly as it was.
+    const keepDecision =
+      outgoingDir !== null
+        ? await decideKeep(outgoingDir, opts?.keepBackground, opts?.incomingName ?? null)
+        : false
+    if (keepDecision === 'cancelled') return 'cancelled'
+    const keep = keepDecision === true
     // PERSIST-B: kill any pending debounced autosave armed editing the outgoing project.
     // The explicit flush below is the authoritative final write; a leftover timer would
     // otherwise fire after load flips status back to 'open' (currentDir now the NEW dir)
@@ -72,15 +111,21 @@ export async function performProjectSwitch(
     // (it would flash on the next project until its first autosave).
     useSaveStatusStore.getState().markSaved()
     // 2. Hand over live resources, then suppress autosave + unmount.
-    const keep = opts?.keepBackground ?? ((await isBgSessionsEnabled()) && outgoingDir !== null)
     if (keep && outgoingDir !== null) {
       // BEFORE the unmount (see module doc) — MAIN parks PTYs + freezes previews while the
       // boards are still mounted, so their unmount cleanups no-op instead of killing.
       await backgroundLiveResources(outgoingDir)
       useCanvasStore.getState().setProjectLoading()
-    } else {
+    } else if (outgoingDir !== null) {
+      // STOP: the SCOPED close — kills only what the outgoing project owns. The legacy
+      // dispose-all here would also reap every other resident's background sessions.
       useCanvasStore.getState().setProjectLoading()
-      await disposeLiveResources(outgoingDir ?? undefined)
+      await closeActiveLiveResources(outgoingDir)
+    } else {
+      // No project open (welcome-screen open) — nothing project-scoped to close; the legacy
+      // sweep clears any stray pre-project resources (e2e boot state).
+      useCanvasStore.getState().setProjectLoading()
+      await disposeLiveResources(undefined)
     }
     // 3. Load the new project. applyOpenResult is async (it may retry canvas.json.bak on a
     //    deep-validation failure) — await so the switch completes (or settles error) here.
