@@ -19,7 +19,8 @@ import {
   setOrchestrationSyncProvider,
   parkProjectSessions,
   disposeProjectPtys,
-  countProjectSessions
+  countProjectSessions,
+  reapUndoParks
 } from './pty'
 import { boardGitDiff } from './gitDiff'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
@@ -30,6 +31,7 @@ import {
   countProjectOsr
 } from './previewOsrBackground'
 import { createProjectSessions } from './projectSessions'
+import { registerProjectSessionsHandlers } from './projectSessionsIpc'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
@@ -142,6 +144,7 @@ let resultSynth: ResultSynthesizer | null = null
 // pty/previewOsr project-scoped resource functions. App-run lifetime only — quit's disposeAll*
 // kills background resources too, so the registry is never persisted or drained at shutdown.
 const projectSessions = createProjectSessions({
+  reapUndoParks,
   parkPtys: parkProjectSessions,
   disposePtys: disposeProjectPtys,
   countPtys: countProjectSessions,
@@ -741,6 +744,15 @@ app.whenReady().then(async () => {
     // for the now-active dir (idempotent for a never-backgrounded one) — see projectSessions.
     (dir) => projectSessions.foregroundProject(dir)
   )
+  // Background project sessions (Phase 2): the switch-pipeline control plane. The
+  // EXPANSE_BG_SESSIONS env flag gates only the renderer's DEFAULT switch behavior (dark ship).
+  registerProjectSessionsHandlers(ipcMain, () => mainWindow, {
+    sessions: projectSessions,
+    getCurrentDir,
+    disposeProjectPtys,
+    disposeProjectOsr,
+    enabled: () => process.env.EXPANSE_BG_SESSIONS === '1'
+  })
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
   // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated

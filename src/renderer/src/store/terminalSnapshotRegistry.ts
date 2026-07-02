@@ -34,7 +34,12 @@ export function unregisterTerminalSnapshotter(id: string): void {
  * after this resolves. Every other caller (window blur, project switch) must stay async so a large
  * scrollback buffer can't stall the whole app.
  */
-export async function flushAllTerminalSnapshots(opts?: { sync?: boolean }): Promise<void> {
+export async function flushAllTerminalSnapshots(opts?: {
+  sync?: boolean
+  /** R2 dir-pin: the project these buffers BELONG to — MAIN rejects the write if a racing
+   *  switch has already moved `currentDir` on (background sessions make that race real). */
+  expectedDir?: string
+}): Promise<void> {
   const sync = opts?.sync ?? false
   const entries = [...registry.entries()]
   await Promise.all(
@@ -46,7 +51,7 @@ export async function flushAllTerminalSnapshots(opts?: { sync?: boolean }): Prom
         text = null
       }
       if (!text || !text.trim()) return
-      await window.api.terminal.writeSnapshot(id, text, sync).catch(() => false)
+      await window.api.terminal.writeSnapshot(id, text, sync, opts?.expectedDir).catch(() => false)
     })
   )
 }

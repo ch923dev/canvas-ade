@@ -11,6 +11,7 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
   calls: Record<string, string[]>
 } {
   const calls: Record<string, string[]> = {
+    reapUndoParks: [],
     parkPtys: [],
     disposePtys: [],
     backgroundOsr: [],
@@ -18,6 +19,9 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
     disposeOsr: []
   }
   const deps: ProjectSessionDeps = {
+    reapUndoParks: async (dir) => {
+      calls.reapUndoParks.push(dir)
+    },
     parkPtys: (dir) => {
       calls.parkPtys.push(dir)
       return 2
@@ -45,23 +49,40 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
 }
 
 describe('createProjectSessions (Phase 1 registry)', () => {
-  it('backgroundProject parks + freezes and registers the dir', () => {
+  it('backgroundProject reaps undo-parks first, parks + freezes, and registers the dir', async () => {
     const { deps, calls } = makeDeps()
     const ps = createProjectSessions(deps)
 
-    const res = ps.backgroundProject('C:\\work\\alpha')
+    const res = await ps.backgroundProject('C:\\work\\alpha')
 
     expect(res).toEqual({ terminals: 2, previews: 1 })
+    // R5: deleted boards' undo-parks die BEFORE the background park (their undo rail dies
+    // with the switch's store replace).
+    expect(calls.reapUndoParks).toEqual(['C:\\work\\alpha'])
     expect(calls.parkPtys).toEqual(['C:\\work\\alpha'])
     expect(calls.backgroundOsr).toEqual(['C:\\work\\alpha'])
     expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(true)
     expect(ps.backgroundCount()).toBe(1)
   })
 
-  it('listBackgroundProjects reports live counts + name + backgroundedAt', () => {
+  it('a reapUndoParks failure never blocks the background handover', async () => {
+    const { deps, calls } = makeDeps({
+      reapUndoParks: async () => {
+        throw new Error('reap raced an exit')
+      }
+    })
+    const ps = createProjectSessions(deps)
+    await expect(ps.backgroundProject('C:\\work\\alpha')).resolves.toEqual({
+      terminals: 2,
+      previews: 1
+    })
+    expect(calls.parkPtys).toEqual(['C:\\work\\alpha'])
+  })
+
+  it('listBackgroundProjects reports live counts + name + backgroundedAt', async () => {
     const { deps } = makeDeps({ now: () => 42 })
     const ps = createProjectSessions(deps)
-    ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:\\work\\alpha')
 
     expect(ps.listBackgroundProjects()).toEqual([
       {
@@ -74,10 +95,10 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     ])
   })
 
-  it('foregroundProject un-registers and un-throttles — idempotent for a never-backgrounded dir', () => {
+  it('foregroundProject un-registers and un-throttles — idempotent for a never-backgrounded dir', async () => {
     const { deps, calls } = makeDeps()
     const ps = createProjectSessions(deps)
-    ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:\\work\\alpha')
 
     ps.foregroundProject('C:\\work\\alpha')
     expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(false)
@@ -91,7 +112,7 @@ describe('createProjectSessions (Phase 1 registry)', () => {
   it('closeBackgroundProject disposes ONLY a registered dir (never an arbitrary path)', async () => {
     const { deps, calls } = makeDeps()
     const ps = createProjectSessions(deps)
-    ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:\\work\\alpha')
 
     // Unregistered path (e.g. straight from a compromised renderer) → refused, nothing disposed.
     await expect(ps.closeBackgroundProject('C:\\Windows')).resolves.toBe(false)
@@ -105,12 +126,12 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     expect(ps.backgroundCount()).toBe(0)
   })
 
-  it('re-backgrounding the same dir refreshes its stamp instead of duplicating', () => {
+  it('re-backgrounding the same dir refreshes its stamp instead of duplicating', async () => {
     let t = 0
     const { deps } = makeDeps({ now: () => ++t })
     const ps = createProjectSessions(deps)
-    ps.backgroundProject('C:\\work\\alpha')
-    ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:\\work\\alpha')
     expect(ps.backgroundCount()).toBe(1)
     expect(ps.listBackgroundProjects()[0].backgroundedAt).toBe(2)
   })
@@ -122,7 +143,7 @@ describe('createProjectSessions (Phase 1 registry)', () => {
       })
     })
     const ps = createProjectSessions(deps)
-    ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:\\work\\alpha')
     await expect(ps.closeBackgroundProject('C:\\work\\alpha')).rejects.toThrow('taskkill hung')
     expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(false)
   })

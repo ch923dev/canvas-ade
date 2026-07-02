@@ -916,6 +916,10 @@ export function registerPreviewOsrHandlers(
       pendingOwner.set(args.id, getCurrentDir()) // background sessions: attributable sweep
       return true
     }
+    // Background sessions: a settle firing in the teardown gap between project:background and
+    // the board unmount must not relayout a frozen window (and an id-colliding board of another
+    // project must never resize it). foregroundProjectOsr clears the flag before boards remount.
+    if (e.backgrounded) return true
     if (applyOsrSize(e.osrWin, e, size)) scheduleResizeSettle(args.id)
     return true
   })
@@ -933,6 +937,10 @@ export function registerPreviewOsrHandlers(
       pendingOwner.set(args.id, getCurrentDir()) // background sessions: attributable sweep
       return true
     }
+    // Background sessions: the liveness manager's last settle can race the switch teardown —
+    // a `true` here would un-freeze a window we just backgrounded (paint + audio resume with
+    // no board attached). Frozen-while-backgrounded is owned by MAIN; drop the request.
+    if (e.backgrounded) return true
     applyOsrPaint(e.osrWin, e, on)
     // 4A — a frozen off-screen board is auto-muted; on resume the user's manual choice is restored.
     applyEffectiveMute(e)

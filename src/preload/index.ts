@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { authApi } from './authApi'
 import { terminalApi } from './terminalApi'
+import { projectSessionsApi } from './projectSessionsApi'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -300,15 +301,12 @@ export interface LibraryListing {
   assets: LibraryItem[]
 }
 
-// ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
-export interface RecentProject {
-  path: string
-  name: string
-  lastOpenedAt: number
-}
-export type ProjectResult =
-  | { ok: true; dir: string; name: string; doc: unknown }
-  | { ok: false; error: string }
+// ── Phase 3 persistence — project I/O types (factored to projectTypes.ts under the ratchet;
+// re-exported so renderer import sites are unchanged). Background project sessions (Phase 2):
+// BackgroundProjectInfo + the project.* methods live in projectSessionsApi.ts.
+export type { RecentProject, ProjectResult } from './projectTypes'
+export type { BackgroundProjectInfo } from './projectSessionsApi'
+import type { RecentProject, ProjectResult } from './projectTypes'
 
 // ── File-tree epic (S1) — root-confined fs surface (mirrors main `fileIpc.ts`) ──
 /** One directory entry from `file.listDir` (symlinks are skipped MAIN-side). */
@@ -710,6 +708,8 @@ const api = {
       ipcRenderer.invoke('project:removeRecent', path),
     clearRecents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:clearRecents'),
     current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current'),
+    // Background project sessions (Phase 2) — factored to projectSessionsApi.ts (ratchet).
+    ...projectSessionsApi,
     /**
      * Register a handler that main invokes (`project:flush`) right before it hard-exits
      * on quit (BUG-M2). The hard `app.exit(0)` bypasses the renderer `beforeunload`, so

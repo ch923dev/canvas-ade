@@ -24,6 +24,9 @@ export interface BackgroundProjectInfo {
 }
 
 export interface ProjectSessionDeps {
+  /** pty.reapUndoParks — reap `dir`'s undo-parked (deleted-board) sessions BEFORE the park:
+   *  the switch's store replace wipes the undo rail, so they can never be adopted again (R5). */
+  reapUndoParks(dir: string): Promise<void>
   /** pty.parkProjectSessions — park `dir`'s live sessions (no TTL). Returns count parked. */
   parkPtys(dir: string): number
   /** pty.disposeProjectPtys — kill `dir`'s sessions, live + parked. */
@@ -44,7 +47,7 @@ export interface ProjectSessionDeps {
 
 export interface ProjectSessions {
   /** Park + freeze everything `dir` owns and register it as backgrounded. */
-  backgroundProject(dir: string): { terminals: number; previews: number }
+  backgroundProject(dir: string): Promise<{ terminals: number; previews: number }>
   /**
    * Un-register `dir` and un-throttle its previews. Called on EVERY project open (idempotent
    * no-op for a never-backgrounded dir) so a switch-back clears the backgrounded flag before
@@ -64,7 +67,10 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
   const registry = new Map<string, { name: string; backgroundedAt: number }>()
 
   return {
-    backgroundProject(dir) {
+    async backgroundProject(dir) {
+      // R5 preamble: deleted boards' undo-parks die NOW (their undo rail dies with the switch's
+      // store replace) — never awaited-after: a reap racing the park could misclassify entries.
+      await deps.reapUndoParks(dir).catch(() => undefined)
       const terminals = deps.parkPtys(dir)
       const previews = deps.backgroundOsr(dir)
       registry.set(dir, { name: basename(dir), backgroundedAt: deps.now() })

@@ -294,6 +294,17 @@ export interface CanvasE2E {
   openProjectFromDisk: (
     dir: string
   ) => Promise<{ status: string; error: string | null; boardCount: number }>
+  /**
+   * Background sessions (Phase 2): drive the REAL project-switch pipeline
+   * (store/projectSwitch.performProjectSwitch — lock → autosave cancel → pinned flush-save →
+   * background/dispose handover → load) against a disk dir. `keep` forces the keep-running
+   * branch explicitly so the spec doesn't depend on the EXPANSE_BG_SESSIONS env flag.
+   * Returns the pipeline outcome + the settled project so the spec can assert the landing.
+   */
+  switchProjectFromDisk: (
+    dir: string,
+    keep: boolean
+  ) => Promise<{ outcome: string; status: string; dir: string | null; boardCount: number }>
   /** Reveal the auto-hide docked file-tree panel (mirrors the user moving onto the left-edge zone).
    *  Since SLICE-013 the FileTree is lazy and only MOUNTS once the panel has been revealed, so a tree
    *  probe must reveal first — a real user never interacts with the still-hidden (unmounted) tree. */

@@ -26,7 +26,13 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { captureOsrPng, debugCrashOsr, debugReplayOsrReadyInvalidations } from './previewOsrCapture'
 import { getOsrWindow } from './previewOsr'
-import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
+import {
+  debugSeedOutput,
+  debugSessionCounts,
+  debugTerminalPid,
+  debugWriteTerminal,
+  disposeAllPtys
+} from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
 import { readBoardResult, recordBoardResult } from './boardResults'
@@ -117,6 +123,8 @@ export interface E2EMain {
   pidsAlive(pids: number[]): number[]
   /** Tear down EVERY pty session (live + parked) — the real MAIN kill path. */
   disposeAllPtys(): Promise<void>
+  /** Background sessions: live/parked session totals (the rapid-switch zero-orphan probe). */
+  ptySessionCounts(): { live: number; parked: number }
   /** Put plain text on the system clipboard (paste-text sliver). */
   putTextOnClipboard(text: string): void
   /** Read the system clipboard text (assert a copy landed). */
@@ -416,6 +424,9 @@ export function installE2EMain(
     },
     disposeAllPtys() {
       return disposeAllPtys()
+    },
+    ptySessionCounts() {
+      return debugSessionCounts()
     },
     applicationMenuIsNull() {
       return Menu.getApplicationMenu() === null

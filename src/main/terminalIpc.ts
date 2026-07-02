@@ -73,10 +73,22 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
   // after this resolves and a synchronous write is the only way to guarantee the bytes land first.
   ipc.handle(
     'terminal:writeSnapshot',
-    (e, boardId: string, text: string, sync?: boolean): boolean | Promise<boolean> => {
+    (
+      e,
+      boardId: string,
+      text: string,
+      sync?: boolean,
+      expectedDir?: string
+    ): boolean | Promise<boolean> => {
       if (guard(e)) return false
       const dir = getCurrentDir()
       if (!dir) return false
+      // Background sessions (R2, BUG-009-style): the renderer pins the write to the project it
+      // BELIEVES it is flushing. Today the pre-switch flush is safe only by ordering accident
+      // (flush runs before currentDir flips); with resident background projects, any late flush
+      // landing after a switch would write board A's scrollback into project B's
+      // `.canvas/terminal/` under a colliding id. Reject on mismatch; absent = legacy caller.
+      if (expectedDir !== undefined && expectedDir !== dir) return false
       const safeText = typeof text === 'string' ? text : ''
       return sync
         ? writeTerminalSnapshot(dir, String(boardId), safeText)
@@ -91,10 +103,13 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
     return readTerminalSnapshot(dir, String(boardId))
   })
 
-  ipc.handle('terminal:deleteSnapshot', (e, boardId: string): boolean => {
+  ipc.handle('terminal:deleteSnapshot', (e, boardId: string, expectedDir?: string): boolean => {
     if (guard(e)) return false
     const dir = getCurrentDir()
     if (!dir) return false
+    // R2 dir-pin, mirroring writeSnapshot: a delete raced across a switch must not remove a
+    // colliding board's sidecar in the newly-active project.
+    if (expectedDir !== undefined && expectedDir !== dir) return false
     deleteTerminalSnapshot(dir, String(boardId))
     return true
   })

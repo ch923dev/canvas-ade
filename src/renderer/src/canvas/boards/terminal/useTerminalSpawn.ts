@@ -908,7 +908,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       launch()
     }
     void window.api.adoptTerminal(board.id).then((res) => {
-      if (disposed) return
+      if (disposed) {
+        // Background sessions (R4): this adopt raced the unmount — a rapid switch-back-and-
+        // away can land it AFTER the boards started tearing down. The session is now LIVE with
+        // its fresh port pointing at a dead consumer, and the unmount's killTerminal already
+        // no-op'd (it ran while the session was still parked). Undo the adopt by re-parking:
+        // MAIN types the park automatically (cross-project ⇒ background/no-TTL; same project ⇒
+        // undo/TTL), so a backgrounded project's shell survives and a same-project orphan reaps.
+        if (res.adopted) void window.api.parkTerminal(board.id).catch(() => {})
+        return
+      }
       const decision = nextStateAfterAdopt(res.adopted, isIdleOnMount(board.id))
       if (decision === 'running') {
         setState('running')

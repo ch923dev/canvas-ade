@@ -906,6 +906,64 @@ describe('countProjectSessionsCore (dialog + badge counts)', () => {
   })
 })
 
+describe('reapUndoParksCore (R5 — undo rail dies with the switch)', () => {
+  it('reaps only the dir-owned UNDO parks; background parks and other dirs survive', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const onReap = vi.fn()
+    const undoA = makeProc(850).proc
+    const bgA = makeProc(851).proc
+    const undoB = makeProc(852).proc
+    const parked = new Map<string, any>([
+      [
+        'ua',
+        {
+          proc: undoA,
+          buf: createRing(1024),
+          kind: 'undo',
+          owningDir: 'A',
+          timer: setTimeout(() => {}, 100000)
+        }
+      ],
+      ['ba', { proc: bgA, buf: createRing(1024), kind: 'background', owningDir: 'A' }],
+      [
+        'ub',
+        {
+          proc: undoB,
+          buf: createRing(1024),
+          kind: 'undo',
+          owningDir: 'B',
+          timer: setTimeout(() => {}, 100000)
+        }
+      ]
+    ])
+
+    const { reapUndoParksCore } = await import('./pty')
+    await reapUndoParksCore('A', parked, { killTree } as any, onReap)
+
+    expect(killTree).toHaveBeenCalledTimes(1)
+    expect(killTree).toHaveBeenCalledWith(undoA)
+    expect(parked.has('ba')).toBe(true)
+    expect(parked.has('ub')).toBe(true)
+    expect(onReap).toHaveBeenCalledWith('ua')
+    clearTimeout(parked.get('ub').timer)
+  })
+
+  it('treats a legacy entry (no kind) as an undo park', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const legacy = makeProc(853).proc
+    const parked = new Map<string, any>([
+      [
+        'x',
+        { proc: legacy, buf: createRing(1024), owningDir: 'A', timer: setTimeout(() => {}, 100000) }
+      ]
+    ])
+    const { reapUndoParksCore } = await import('./pty')
+    await reapUndoParksCore('A', parked, { killTree } as any)
+    expect(killTree).toHaveBeenCalledWith(legacy)
+    expect(parked.size).toBe(0)
+  })
+})
+
 describe('reapParkedCore with a timerless (background) park', () => {
   it('reaps a background park that has no TTL timer without throwing', async () => {
     const { proc } = makeProc(840)

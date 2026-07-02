@@ -5,7 +5,8 @@ import {
   flushAllTerminalSnapshots
 } from './terminalSnapshotRegistry'
 
-const writeSnapshot = vi.fn<(id: string, text: string, sync?: boolean) => Promise<boolean>>()
+const writeSnapshot =
+  vi.fn<(id: string, text: string, sync?: boolean, expectedDir?: string) => Promise<boolean>>()
 
 beforeEach(() => {
   writeSnapshot.mockReset().mockResolvedValue(true)
@@ -20,14 +21,14 @@ describe('terminalSnapshotRegistry', () => {
     registerTerminalSnapshotter('b', () => 'BBB')
     await flushAllTerminalSnapshots()
     expect(writeSnapshot).toHaveBeenCalledTimes(2)
-    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', false)
-    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB', false)
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', false, undefined)
+    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB', false, undefined)
   })
 
   it('BUG-040: forwards sync:true for the before-quit flush (guaranteed-land write)', async () => {
     registerTerminalSnapshotter('a', () => 'AAA')
     await flushAllTerminalSnapshots({ sync: true })
-    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', true)
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', true, undefined)
   })
 
   it('skips empty / whitespace-only buffers (no blank sidecar for an untouched idle board)', async () => {
@@ -36,7 +37,7 @@ describe('terminalSnapshotRegistry', () => {
     registerTerminalSnapshotter('b', () => '   \n\t')
     await flushAllTerminalSnapshots()
     expect(writeSnapshot).toHaveBeenCalledTimes(1)
-    expect(writeSnapshot).toHaveBeenCalledWith('a', 'real', false)
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'real', false, undefined)
   })
 
   it('skips a null serializer result', async () => {
@@ -59,12 +60,18 @@ describe('terminalSnapshotRegistry', () => {
     registerTerminalSnapshotter('b', () => 'BBB')
     await expect(flushAllTerminalSnapshots()).resolves.toBeUndefined()
     expect(writeSnapshot).toHaveBeenCalledTimes(1)
-    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB', false)
+    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB', false, undefined)
   })
 
   it('swallows a rejected writeSnapshot (a wedged IPC never rejects the flush)', async () => {
     writeSnapshot.mockRejectedValue(new Error('ipc down'))
     registerTerminalSnapshotter('a', () => 'AAA')
     await expect(flushAllTerminalSnapshots()).resolves.toBeUndefined()
+  })
+
+  it('R2 dir-pin: forwards expectedDir so MAIN can reject a flush that raced a switch', async () => {
+    registerTerminalSnapshotter('a', () => 'AAA')
+    await flushAllTerminalSnapshots({ expectedDir: '/proj/alpha' })
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', false, '/proj/alpha')
   })
 })

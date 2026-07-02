@@ -30,6 +30,7 @@ import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import { e2eTerminals, e2eTerminalInput, e2eTerminalLink, e2eTerminalHeld } from './e2eRegistry'
 import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
+import { performProjectSwitch } from '../store/projectSwitch'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
@@ -534,6 +535,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       return {
         status: p.status,
         error: p.error ?? null,
+        boardCount: useCanvasStore.getState().boards.length
+      }
+    },
+    async switchProjectFromDisk(dir, keep) {
+      const outcome = await performProjectSwitch(() => window.api.project.open(dir), {
+        keepBackground: keep
+      })
+      const p = useCanvasStore.getState().project
+      return {
+        outcome,
+        status: p.status,
+        dir: p.dir,
         boardCount: useCanvasStore.getState().boards.length
       }
     },

@@ -101,7 +101,7 @@ describe('S3 — remove() deletes the scrollback sidecar only for a LIVE termina
     const { result } = renderHook(() => useBoardActions(makeDeps()))
     result.current.remove(id)
     await Promise.resolve()
-    expect(deleteSnapshot).toHaveBeenCalledWith(id)
+    expect(deleteSnapshot).toHaveBeenCalledWith(id, undefined)
   })
 
   it('KEEPS the snapshot for a restored-but-never-started (idle) terminal — undo must restore it', async () => {

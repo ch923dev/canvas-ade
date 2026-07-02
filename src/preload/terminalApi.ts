@@ -18,13 +18,20 @@ export const terminalApi = {
    * Write the serialized ANSI buffer to the board's sidecar. False on no-project / bad id / fs error.
    * `sync` (default false → async, non-blocking MAIN) should only be `true` for the before-quit flush,
    * where the process may exit right after and the write must land before that happens.
+   * `expectedDir` (R2 dir-pin, BUG-009-style) rejects a flush that raced across a project switch —
+   * with resident background projects a late write must never land in the newly-active project.
    */
-  writeSnapshot: (boardId: string, text: string, sync?: boolean): Promise<boolean> =>
-    ipcRenderer.invoke('terminal:writeSnapshot', boardId, text, sync),
+  writeSnapshot: (
+    boardId: string,
+    text: string,
+    sync?: boolean,
+    expectedDir?: string
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:writeSnapshot', boardId, text, sync, expectedDir),
   /** Read the board's persisted snapshot back (ANSI), or null when absent. */
   readSnapshot: (boardId: string): Promise<string | null> =>
     ipcRenderer.invoke('terminal:readSnapshot', boardId),
-  /** Delete the board's sidecar (on board removal). Resolves true even when none existed. */
-  deleteSnapshot: (boardId: string): Promise<boolean> =>
-    ipcRenderer.invoke('terminal:deleteSnapshot', boardId)
+  /** Delete the board's sidecar (on board removal). `expectedDir` pins like writeSnapshot. */
+  deleteSnapshot: (boardId: string, expectedDir?: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:deleteSnapshot', boardId, expectedDir)
 }

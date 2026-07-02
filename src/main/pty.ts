@@ -180,6 +180,52 @@ const sessions = new Map<string, SessionLike>()
 const parked = new Map<string, ParkedLike>()
 
 /**
+ * Background sessions (R6): what a background-parked proc left behind when it exited on its
+ * own — the ring tail + exit code, keyed `(owningDir, boardId)`. Without this the parked-exit
+ * path silently destroys the evidence (often the error that killed the agent), and a
+ * switch-back shows a stale snapshot with no explanation. Consume-on-read (Phase-5 UX);
+ * bounded; cleared per-project on close and wholesale on quit. Undo-parked exits keep
+ * today's silent-drop (a deleted board's process, not a running terminal).
+ */
+export interface ExitResidue {
+  output: string
+  exitCode: number
+  exitedAt: number
+}
+const exitResidue = new Map<string, ExitResidue>()
+const EXIT_RESIDUE_CAP = 32
+
+/** Compound residue key — bare board ids collide across cloned projects (R1). NUL join
+ *  mirrors the summaryLoop precedent. */
+function residueKey(dir: string | null, id: string): string {
+  return `${dir ?? ''}\u0000${id}`
+}
+
+function recordExitResidue(dir: string | null, id: string, r: ExitResidue): void {
+  if (exitResidue.size >= EXIT_RESIDUE_CAP) {
+    // Drop the oldest entry (Map preserves insertion order) — bounded, self-draining.
+    const oldest = exitResidue.keys().next().value
+    if (oldest !== undefined) exitResidue.delete(oldest)
+  }
+  exitResidue.set(residueKey(dir, id), r)
+}
+
+/** Consume (read + delete) the ACTIVE project's exit residue for a board, if any. */
+export function takeExitResidue(id: string): ExitResidue | undefined {
+  const key = residueKey(getCurrentDir(), id)
+  const r = exitResidue.get(key)
+  if (r) exitResidue.delete(key)
+  return r
+}
+
+function clearExitResidueForProject(dir: string | null): void {
+  const prefix = `${dir ?? ''}\u0000`
+  for (const key of [...exitResidue.keys()]) {
+    if (key.startsWith(prefix)) exitResidue.delete(key)
+  }
+}
+
+/**
  * PR-2: resolved spawn cwd per board id, for the read-only gitDiff (getTerminalCwd → gitDiff.ts).
  * Keyed by board id (NOT session lifecycle) so it survives the park/adopt MOVE untouched — the
  * ParkedLike shape carries no cwd, and threading it through the pure park/adopt cores is
@@ -371,9 +417,24 @@ function reapParked(id: string): Promise<void> {
  * `sessions` (so the board-unmount's `pty:kill` no-ops), close the renderer port
  * (the proc keeps running and the onData listener keeps recording into `buf`), and
  * start a TTL after which the process tree is reaped if no undo adopts it.
+ *
+ * Background sessions (R4): the kind is chosen by OWNERSHIP — a session whose owning
+ * project is no longer the active one can only be a background session (the raced-adopt
+ * re-park path), so it parks with NO TTL; a same-project park keeps the classic
+ * delete-undo semantics (TTL reap).
  */
 function park(id: string): void {
-  parkCore(id, sessions, parked, (pid) => void reapParked(pid), sessionDeps.parkTtlMs)
+  const s = sessions.get(id)
+  if (!s) return
+  const crossProject = (s.projectDir ?? null) !== getCurrentDir()
+  parkCore(
+    id,
+    sessions,
+    parked,
+    (pid) => void reapParked(pid),
+    crossProject ? undefined : sessionDeps.parkTtlMs,
+    crossProject ? 'background' : 'undo'
+  )
 }
 
 /**
@@ -526,11 +587,21 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // Reference our OWN proc so a late exit from this (old) process cannot tear
       // down a freshly respawned session that now occupies the same id.
       cleanup(opts.id, proc)
-      // If this proc was parked (deleted, awaiting undo) and exited on its own, drop it.
+      // If this proc was parked and exited on its own, drop it. Fork by park kind (R6): a
+      // BACKGROUND park's last words (ring tail + exit code) become consumable residue so the
+      // switch-back can say "exited in background (code N)" instead of showing a stale snapshot;
+      // an UNDO park (deleted board) keeps today's silent drop.
       const p = parked.get(opts.id)
       if (p && p.proc === proc) {
-        clearTimeout(p.timer)
+        if (p.timer) clearTimeout(p.timer)
         parked.delete(opts.id)
+        if (p.kind === 'background') {
+          recordExitResidue(p.owningDir ?? null, opts.id, {
+            output: readRing(p.buf),
+            exitCode,
+            exitedAt: Date.now()
+          })
+        }
         // FIND-009: this parked exit bypasses cleanupCore too, so drop the gitDiff cwd here as well.
         boardCwds.delete(opts.id)
       }
@@ -762,6 +833,7 @@ function killTree(proc: pty.IPty): Promise<void> {
  */
 export function disposeAllPtys(): Promise<void> {
   boardCwds.clear() // PR-2: drop all gitDiff cwd entries on project switch
+  exitResidue.clear() // quit/e2e-reset: nothing will ever consume them
   return disposeAllPtysCore(sessions, parked, sessionDeps)
 }
 
@@ -796,6 +868,29 @@ export function parkProjectSessions(dir: string | null): number {
 }
 
 /**
+ * Core of `reapUndoParks` (R5): immediately reap `dir`'s UNDO-parked sessions. Runs at the
+ * top of a background switch — the store replace wipes the undo rail (`past: []`), so a
+ * deleted board's parked proc can never be adopted again after the switch; without this it
+ * would be re-typed into limbo (background parks have no TTL) and leak until project close.
+ */
+export function reapUndoParksCore(
+  dir: string | null,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'killTree'>,
+  onReap?: (id: string) => void
+): Promise<void> {
+  const done = [...parkedMap.entries()]
+    .filter(([, p]) => (p.kind ?? 'undo') === 'undo' && (p.owningDir ?? null) === dir)
+    .map(([id]) => reapParkedCore(id, parkedMap, deps, onReap))
+  return Promise.all(done).then(() => undefined)
+}
+
+/** Reap `dir`'s undo-parked sessions (background-switch preamble — see the core's doc). */
+export function reapUndoParks(dir: string | null): Promise<void> {
+  return reapUndoParksCore(dir, parked, sessionDeps, (id) => boardCwds.delete(id))
+}
+
+/**
  * Core of `disposeProjectPtys`: the project-scoped sibling of disposeAllPtysCore — reap the
  * parked sessions and tear down the live ones owned by `dir`, leaving every other project's
  * resident sessions untouched (closing project B must never kill backgrounded project A).
@@ -818,6 +913,7 @@ export function disposeProjectPtysCore(
 
 /** Kill every session (live + parked) owned by `dir` — the "Close project" path. */
 export function disposeProjectPtys(dir: string | null): Promise<void> {
+  clearExitResidueForProject(dir) // a closed project's residue is unreachable — drop it
   // FIND-009 discipline: parked reaps forget their gitDiff cwd per-id (cleanupCore already
   // deletes the live ones) — no wholesale boardCwds.clear() here, other projects keep theirs.
   return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, (id) => boardCwds.delete(id))
@@ -1027,6 +1123,15 @@ export function debugSeedOutput(id: string, text: string): boolean {
  */
 export function debugTerminalPid(id: string): number | null {
   return sessions.get(id)?.proc.pid ?? parked.get(id)?.proc.pid ?? null
+}
+
+/**
+ * E2E ONLY — the total live/parked session counts, so the rapid-switch stress spec can
+ * assert zero orphans after a settle (an adopt raced by a park must never leave a proc
+ * outside both maps or duplicated in either). Read-only.
+ */
+export function debugSessionCounts(): { live: number; parked: number } {
+  return { live: sessions.size, parked: parked.size }
 }
 
 /**
