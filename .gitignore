@@ -5,6 +5,9 @@ node_modules/
 out/
 dist/
 release/
+# electron-builder alternate outputs + pruned electronDist copies (see eslint ignore rationale).
+release-*/
+spike-*/
 
 # logs / os
 *.log

@@ -21,6 +21,11 @@ asarUnpack:
   - '**/*.node'
   - 'node_modules/node-pty/**'
   - '**/hooks/recordSession.js'
+  # Voice V2: unpack the sherpa-onnx dirs WHOLE — the platform package keeps its
+  # onnxruntime/sherpa shared libs BESIDE the .node (the loader resolves them from the
+  # loaded module's own directory; packing them into asar breaks that beside-ness).
+  - 'node_modules/sherpa-onnx-node/**'
+  - 'node_modules/sherpa-onnx-*/**'
 
 npmRebuild: true
 
