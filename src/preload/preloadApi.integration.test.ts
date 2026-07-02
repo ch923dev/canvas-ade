@@ -1,15 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { CanvasApi } from './index'
 
-// Capture the exposed api + spy on ipcRenderer.invoke. vi.hoisted so the holder
+// Capture the exposed api + spy on ipcRenderer.invoke/on. vi.hoisted so the holder
 // exists when the hoisted vi.mock factory runs.
-const h = vi.hoisted(() => ({ invoke: vi.fn(), api: undefined as unknown }))
+// The mock's ipcRenderer mirrors a real EventEmitter (on/removeListener/listenerCount) so
+// BUG-029's `listenerCount('mcp:confirm') > 0` single-subscriber gate can be exercised.
+const h = vi.hoisted(() => {
+  const listeners = new Map<string, Set<unknown>>()
+  return {
+    invoke: vi.fn(),
+    on: vi.fn((ch: string, fn: unknown) => {
+      if (!listeners.has(ch)) listeners.set(ch, new Set())
+      listeners.get(ch)!.add(fn)
+    }),
+    removeListener: vi.fn((ch: string, fn: unknown) => listeners.get(ch)?.delete(fn)),
+    listenerCount: (ch: string): number => listeners.get(ch)?.size ?? 0,
+    listeners,
+    api: undefined as unknown
+  }
+})
 
 // Mock electron so importing the preload has no Electron dependency:
 //  - contextBridge.exposeInMainWorld captures the api object
 //  - ipcRenderer.invoke is the spy we assert against
-//  - ipcRenderer.on / removeListener are no-ops (preload registers a pty:port
-//    listener at import; it must not throw)
+//  - ipcRenderer.on is spied (BUG-029: asserts it wires at most once for onConfirm);
+//    removeListener is a no-op (preload registers a pty:port listener at import; it
+//    must not throw)
 vi.mock('electron', () => ({
   contextBridge: {
     exposeInMainWorld: (_key: string, value: unknown) => {
@@ -18,8 +34,9 @@ vi.mock('electron', () => ({
   },
   ipcRenderer: {
     invoke: h.invoke,
-    on: vi.fn(),
-    removeListener: vi.fn(),
+    on: h.on,
+    removeListener: h.removeListener,
+    listenerCount: h.listenerCount,
     // The preload reads osWinBuild once at module load via a synchronous platform:winBuild
     // round-trip — but ONLY on win32 (A-Win, #230). Without this stub every test in this file
     // throws "sendSync is not a function" on a Windows dev box (Linux CI never hits the branch).
@@ -31,6 +48,9 @@ let api: CanvasApi
 
 beforeEach(async () => {
   h.invoke.mockClear()
+  h.on.mockClear()
+  h.removeListener.mockClear()
+  h.listeners.clear()
   // Force the `if (process.contextIsolated)` branch (the else branch references
   // `window`, undefined under the node test environment).
   ;(process as { contextIsolated?: boolean }).contextIsolated = true
@@ -165,5 +185,45 @@ describe('preload api shape', () => {
   it('exposes the listener methods (registered via ipcRenderer.on, not invoke)', () => {
     expect(typeof api.onPreviewEvent).toBe('function')
     expect(typeof api.project.onFlush).toBe('function')
+  })
+})
+
+// 🔒 BUG-029: mcp.onConfirm allowed unlimited concurrent subscribers — any second in-frame
+// script could register its own listener and race the real ConfirmModal to auto-approve
+// every human-confirm request. At most one subscriber may ever be wired. `h.on` also
+// captures OTHER channels the preload wires at import time (e.g. 'pty:port'), so every
+// assertion here filters to the 'mcp:confirm' channel specifically.
+describe('preload api → mcp.onConfirm single-subscriber gate (BUG-029)', () => {
+  const confirmCalls = (): unknown[][] => h.on.mock.calls.filter((c) => c[0] === 'mcp:confirm')
+
+  it('wires the underlying IPC listener only once, even across multiple onConfirm calls', () => {
+    api.mcp.onConfirm(() => {})
+    expect(confirmCalls()).toHaveLength(1)
+
+    // A second registration while the first is still active must NOT add another listener.
+    api.mcp.onConfirm(() => {})
+    expect(confirmCalls()).toHaveLength(1)
+  })
+
+  it('only the FIRST handler ever receives a pushed confirm request; a second never fires', () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    api.mcp.onConfirm(first)
+    api.mcp.onConfirm(second) // no-op: an active subscriber already holds the channel
+
+    const listener = confirmCalls()[0][1] as (e: unknown, msg: unknown) => void
+    listener({}, { request: { title: 't', body: 'b' }, replyChannel: 'ch' })
+
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).not.toHaveBeenCalled()
+  })
+
+  it('a fresh subscriber can take over after the active one unsubscribes', () => {
+    const unsubscribe = api.mcp.onConfirm(() => {})
+    unsubscribe()
+    const replacement = vi.fn()
+    api.mcp.onConfirm(replacement)
+    // The replacement wired its own listener (a second real 'mcp:confirm' ipcRenderer.on call).
+    expect(confirmCalls()).toHaveLength(2)
   })
 })
