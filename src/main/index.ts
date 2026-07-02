@@ -251,13 +251,20 @@ function createWindow(): void {
 
   // The Playwright e2e boot (CANVAS_E2E) needs the renderer's seeding hook
   // (window.__canvasE2E) to populate the board mirror, so load with ?e2e=1.
+  // BUG-056: the renderer's dependency-smoke probe (useRendererSmoke) must only run
+  // under the CANVAS_SMOKE harness, so pass `?smoke=1` the same way — otherwise it
+  // has no signal and either always/never runs regardless of the env var.
   const seedHarness = !!process.env.CANVAS_E2E
+  const query: Record<string, string> = {}
+  if (seedHarness) query.e2e = '1'
+  if (SMOKE) query.smoke = '1'
+  const qs = Object.keys(query).length > 0 ? `?${new URLSearchParams(query).toString()}` : ''
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
-    mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
+    mainWindow.loadURL(`${base}${qs}`)
   } else {
     // Same path the nav guard pins to via appDocPath above (indexHtmlPath).
-    mainWindow.loadFile(indexHtmlPath, seedHarness ? { query: { e2e: '1' } } : undefined)
+    mainWindow.loadFile(indexHtmlPath, qs ? { query } : undefined)
   }
 }
 
