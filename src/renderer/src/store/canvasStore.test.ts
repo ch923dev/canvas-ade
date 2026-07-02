@@ -739,6 +739,54 @@ describe('tracked actions keep a following move granularly undoable (no present-
   })
 })
 
+// BUG-007: `pendingCheckpoint` used to be a single module-level slot shared by human
+// gestures and MCP-command writes (`useMcpCommands.ts` calls the SAME `beginChange()`).
+// An interloping beginChange()+mutate landing between a human gesture's `beginChange()`
+// (mousedown) and its first real edit (the next mousemove) could overwrite or consume
+// the human gesture's armed checkpoint, silently merging two unrelated edits into one
+// undo step. `pendingCheckpoints` is now a LIFO stack: an atomic (same-tick) begin+mutate
+// pair always operates on its own top-of-stack entry, never reaching past it.
+describe('pendingCheckpoint stack scoping (BUG-007)', () => {
+  it('an interloping beginChange()+mutate does not swallow an already-armed gesture checkpoint', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    const pastAfterAdd = get().past.length
+    // Human gesture starts (e.g. mousedown) — arms a checkpoint, no mutation yet.
+    get().beginChange()
+    // An MCP-command write interleaves before the human's first real edit lands — its own
+    // beginChange()+updateBoard() pair, synchronously back-to-back (mirrors configureBoard
+    // in useMcpCommands.ts).
+    get().beginChange()
+    get().updateBoard(id, { title: 'agent-set' })
+    expect(get().past.length).toBe(pastAfterAdd + 1) // the MCP write recorded its own step
+    // The human gesture's first real edit now commits — it must record ITS OWN checkpoint
+    // (the human's pre-gesture snapshot), not silently merge into the MCP write's step.
+    get().updateBoard(id, { x: 300 })
+    expect(get().past.length).toBe(pastAfterAdd + 2)
+    // Undo once: only the human's move reverts; the agent's title write survives.
+    get().undo()
+    expect(get().boards[0].x).toBe(0)
+    expect(get().boards[0].title).toBe('agent-set')
+    // Undo again: the agent's write reverts too, granularly.
+    get().undo()
+    expect(get().boards[0].title).not.toBe('agent-set')
+  })
+
+  it('an interloping write still self-heals redo/rails via rewritePendingBoards while a gesture is armed', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange() // human gesture armed, not yet committed
+    // A background machine write (patchBoardUntracked) rewrites the still-armed checkpoint
+    // so undoing the eventual gesture doesn't revert the machine-written value.
+    patchBoardUntracked(id, { title: 'auto-connected' })
+    get().updateBoard(id, { x: 300 }) // human gesture's first real edit
+    get().undo()
+    // The checkpoint the undo restored was rewritten to carry the machine write too.
+    expect(get().boards[0].title).toBe('auto-connected')
+    expect(get().boards[0].x).toBe(0)
+  })
+})
+
 describe('canvasStore — viewport', () => {
   beforeEach(() => {
     useCanvasStore.setState({ boards: [], viewport: null, selectedId: null, past: [], future: [] })
