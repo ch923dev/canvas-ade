@@ -363,4 +363,35 @@ describe('registerOsrDownloads', () => {
     // is now a different project — the exact bug a live `getDownloadsDir()` prefix check would miss.
     expect(isRevealableOsrDownload(started.savePath)).toBe(true)
   })
+
+  it('caps the reveal allowlist (FIFO eviction) so it cannot grow unbounded', () => {
+    const emit = vi.fn()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const session = mkSession() as any
+    registerOsrDownloads(session, {
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
+      exists: () => false,
+      allow: () => true,
+      emit
+    })
+    // Mirrors the MAX_OSR_DOWNLOAD_PATHS cap in previewOsrWidgets.ts — one over it should evict the
+    // very first entry rather than growing the Set forever.
+    const cap = 200
+    const complete = (name: string): string => {
+      const item = mkItem(name)
+      session.fire(item)
+      const started = emit.mock.calls
+        .map((c) => c[0])
+        .reverse()
+        .find((i) => i.state === 'start' && i.name === name)
+      item.emitDone('completed')
+      return started.savePath as string
+    }
+    const firstPath = complete('first.bin')
+    let lastPath = firstPath
+    for (let i = 0; i < cap; i++) lastPath = complete(`file-${i}.bin`)
+    expect(isRevealableOsrDownload(firstPath)).toBe(false)
+    expect(isRevealableOsrDownload(lastPath)).toBe(true)
+  })
 })

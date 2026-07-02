@@ -421,8 +421,21 @@ export interface OsrDownloadDeps {
  *  AND — unlike one — stays valid after a project switch: the save-time `.canvas/downloads/` need not
  *  equal the current one, so a prefix check against the live `getDownloadsDir()` would silently fail
  *  to reveal a file downloaded under a previously-open project. Bounded by the per-board download
- *  throttle (`deps.allow`); session-scoped, never persisted. */
+ *  throttle (`deps.allow`); session-scoped, never persisted. Also capped at
+ *  {@link MAX_OSR_DOWNLOAD_PATHS} entries (FIFO eviction) so it can't grow unbounded for the app's
+ *  lifetime — the reveal action is only ever needed for a download's own still-open toast. */
+const MAX_OSR_DOWNLOAD_PATHS = 200
 const osrDownloadPaths = new Set<string>()
+
+/** Add `path` to the allowlist, evicting the oldest entry first if at capacity (Set preserves
+ *  insertion order, so the first key is the oldest). */
+function addOsrDownloadPath(path: string): void {
+  if (osrDownloadPaths.size >= MAX_OSR_DOWNLOAD_PATHS) {
+    const oldest = osrDownloadPaths.values().next().value
+    if (oldest !== undefined) osrDownloadPaths.delete(oldest)
+  }
+  osrDownloadPaths.add(path)
+}
 
 /**
  * Policy for a board's downloads: save into the open project's `.canvas/downloads/` (ADR 0009; OS
@@ -457,7 +470,7 @@ export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): (
     })
     item.once('done', (_e, state) => {
       if (state === 'completed') {
-        osrDownloadPaths.add(resolve(savePath)) // allowlist the exact path for the toast's reveal
+        addOsrDownloadPath(resolve(savePath)) // allowlist the exact path for the toast's reveal (bounded)
         deps.emit({ state: 'done', name, savePath })
       } else deps.emit({ state: 'fail', name, savePath })
     })
