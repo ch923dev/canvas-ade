@@ -10,6 +10,7 @@
 import type { BrowserWindow, IpcMain } from 'electron'
 import { release } from 'os'
 import { isForeignSender } from './ipcGuard'
+import { computeE2ESurfaceEnabled } from './windowSecurity'
 
 /** Parse the Windows build from an `os.release()` string ("10.0.22631" → 22631). Null if unparseable. */
 export function winBuildFromRelease(rel: string): number | null {
@@ -29,5 +30,16 @@ export function registerPlatformIpc(ipcMain: IpcMain, getWin: () => BrowserWindo
       return
     }
     e.returnValue = process.platform === 'win32' ? winBuildFromRelease(release()) : null
+  })
+
+  // BUG-057: same SYNC-at-load pattern, MAIN-owned — the renderer's e2e test-surface gate
+  // (`isE2E` in e2eRegistry.ts) reads this instead of the client-mutable `?e2e=1` URL query.
+  // Frame-guarded like every other handler (BUG-045): a foreign sender is told the surface is off.
+  ipcMain.on('platform:e2eEnabled', (e) => {
+    if (isForeignSender(e, getWin)) {
+      e.returnValue = false
+      return
+    }
+    e.returnValue = computeE2ESurfaceEnabled()
   })
 }
