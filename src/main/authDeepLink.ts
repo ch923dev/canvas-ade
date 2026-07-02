@@ -14,7 +14,15 @@ export interface AuthDeepLink {
   path: string
 }
 
-/** Validate the custom scheme and extract host/path. Returns null for a non-expanse / malformed URL. */
+/** The only host/path this app treats as an auth callback (expanse://auth/callback). */
+const AUTH_CALLBACK_HOST = 'auth'
+const AUTH_CALLBACK_PATH = '/callback'
+
+/**
+ * Validate the custom scheme AND the host/path route. Returns null for a non-expanse / malformed
+ * URL, or for an expanse:// URL that doesn't match the auth-callback route — fail closed, since the
+ * caller forwards the result straight into the auth-callback handler.
+ */
 export function parseAuthDeepLink(url: string): AuthDeepLink | null {
   let parsed: URL
   try {
@@ -23,6 +31,7 @@ export function parseAuthDeepLink(url: string): AuthDeepLink | null {
     return null
   }
   if (parsed.protocol !== 'expanse:') return null
+  if (parsed.host !== AUTH_CALLBACK_HOST || parsed.pathname !== AUTH_CALLBACK_PATH) return null
   return { host: parsed.host, path: parsed.pathname }
 }
 
