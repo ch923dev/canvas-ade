@@ -437,7 +437,8 @@ export function buildOrchestrator(
     idleTtlMs,
     spawnGraceMs,
     idleActivityMs,
-    listBoards: listBoardSummaries
+    listBoards: listBoardSummaries,
+    onBoardClosed: opts.onBoardClosed
   })
 
   // PR-5/P1b: the Named-Group mirror projected to the shape BOTH self-models consume (describeApp's

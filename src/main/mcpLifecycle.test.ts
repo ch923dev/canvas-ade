@@ -180,6 +180,50 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     await expect(life.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
   })
 
+  it("🔒 BUG-019: closeBoard fires onBoardClosed so the host can revoke the board's MCP token", async () => {
+    const clock = 0
+    const { registry } = liveReg()
+    const boardsRef: Array<{ id: string; type: string; title: string; status?: string }> =
+      registry.listBoards()
+    const closed: string[] = []
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boardsRef),
+      onBoardClosed: (boardId) => closed.push(boardId)
+    })
+    const { id } = await life.spawnBoard({ type: 'terminal' })
+    await life.closeBoard(id)
+    expect(closed).toEqual([id])
+  })
+
+  it('🔒 BUG-019: onBoardClosed still fires when removeBoard fails (board is dead either way)', async () => {
+    const clock = 0
+    let failId: string | null = null
+    const { registry } = liveReg({ removeFailId: () => failId })
+    const boardsRef: Array<{ id: string; type: string; title: string; status?: string }> =
+      registry.listBoards()
+    const closed: string[] = []
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boardsRef),
+      onBoardClosed: (boardId) => closed.push(boardId)
+    })
+    const { id } = await life.spawnBoard({ type: 'terminal' })
+    failId = id
+    await expect(life.closeBoard(id)).rejects.toThrow(/no-window/)
+    expect(closed).toEqual([id]) // the token still gets revoked despite the failed ack
+  })
+
   it('reapIdle closes a board idle past the TTL, leaves a running one, no-ops within the TTL', async () => {
     let clock = 0
     const drained: string[] = []

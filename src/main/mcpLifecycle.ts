@@ -40,6 +40,12 @@ export interface McpLifecycleDeps {
   idleActivityMs: number
   /** The orchestrator's read-only listBoards — reapIdle reads derived per-board statuses through it. */
   listBoards: () => Promise<BoardSummary[]>
+  /**
+   * BUG-019: notified with a board's id right after `closeBoard` tears it down (close_board tool OR
+   * an idle-reap sweep), so the host can revoke that board's `connected`-tier MCP token in the same
+   * step instead of leaving it live in the TokenStore. Optional; tests omit it.
+   */
+  onBoardClosed?: (boardId: BoardId) => void
 }
 
 /** The members a {@link McpLifecycle.spawnGroup} cluster may carry (terminal is always present). */
@@ -88,7 +94,16 @@ export interface McpLifecycle {
 }
 
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
-  const { registry, now, cap: capInput, idleTtlMs, spawnGraceMs, idleActivityMs, listBoards } = deps
+  const {
+    registry,
+    now,
+    cap: capInput,
+    idleTtlMs,
+    spawnGraceMs,
+    idleActivityMs,
+    listBoards,
+    onBoardClosed
+  } = deps
   // Normalize the cap to a getter so it can be read fresh per spawn attempt (live config). Each
   // spawn reads it ONCE into a local `cap` so the check and the error message agree even if the
   // configured value changes mid-flight.
@@ -252,6 +267,11 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
     } finally {
       tracked.delete(boardId)
+      // BUG-019: revoke the board's connected-tier MCP token (if any) in the SAME step it's torn
+      // down. The board is dead either way at this point (PTY already drained/killed above), so
+      // this fires unconditionally — including when the removeBoard ack failed — mirroring the
+      // cap-slot release just above.
+      onBoardClosed?.(boardId)
     }
   }
 

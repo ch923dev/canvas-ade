@@ -52,4 +52,32 @@ describe('makeConnectedTokenTracker (FIND-015 connected-token lifecycle)', () =>
     t.revokeAll()
     expect(revoked).toEqual([]) // nothing left to revoke after clear
   })
+
+  it("🔒 BUG-019: revoke(boardId) kills just that board's live token (board-close wiring)", () => {
+    const revoked: string[] = []
+    const t = makeConnectedTokenTracker((tok) => revoked.push(tok))
+    t.track('b1', 'tok-A')
+    t.track('b2', 'tok-B')
+    t.revoke('b1')
+    expect(revoked).toEqual(['tok-A']) // only b1's token dies; b2 is untouched
+    // b2's token is still live and revocable.
+    t.revokeAll()
+    expect(revoked.sort()).toEqual(['tok-A', 'tok-B'])
+  })
+
+  it('🔒 BUG-019: revoke() on a board with no tracked token is a harmless no-op', () => {
+    const revoked: string[] = []
+    const t = makeConnectedTokenTracker((tok) => revoked.push(tok))
+    t.revoke('never-tracked')
+    expect(revoked).toEqual([])
+  })
+
+  it('🔒 BUG-019: revoke() is idempotent — a second call for the same board no-ops', () => {
+    const revoked: string[] = []
+    const t = makeConnectedTokenTracker((tok) => revoked.push(tok))
+    t.track('b1', 'tok-A')
+    t.revoke('b1')
+    t.revoke('b1')
+    expect(revoked).toEqual(['tok-A'])
+  })
 })
