@@ -48,6 +48,15 @@ function TerminalJumpButtonImpl({
         return
       }
       const sync = (): void => {
+        // Guard against a stale/disposed term: a full reconfigure (shell/cwd/launchCommand)
+        // tears this term down and swaps termRef.current to a fresh one WITHOUT `ready`
+        // toggling (both the old and new state are non-idle), so this effect never re-runs
+        // to re-attach — the closed-over `term` can still fire (xterm may emit a final
+        // onScroll/onWriteParsed mid-teardown) after it's been disposed. Reading
+        // `.buffer.active` on a disposed Terminal throws ("should not be used again" per
+        // xterm's own dispose() contract). Mirrors the `termRef.current !== term` staleness
+        // check used throughout useTerminalSpawn.ts's own async guards.
+        if (termRef.current !== term) return
         const { viewportY, baseY } = term.buffer.active
         if (isScrolledUp(viewportY, baseY)) {
           setScrolledUp(true)
