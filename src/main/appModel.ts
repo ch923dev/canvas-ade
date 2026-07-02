@@ -255,6 +255,31 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
     states: ['static'],
     seedable: false,
     autowire: null
+  },
+  {
+    // P4: a Kanban board is never directly spawn_board-able (SPAWNABLE excludes 'kanban') — the only
+    // way one lands on the canvas is the human picking the "kanban" layout in the visualize_plan
+    // chooser, which mints the board AND seeds its initial columns/cards in one gated call. Once it
+    // exists, the flag-gated card tools operate on it (mcpBoardCards.ts / mcpKanbanGate.ts).
+    type: 'kanban',
+    purpose:
+      'A Kanban board: cards organized into columns (renders as passive cards; nothing runs).',
+    tools: ['visualize_plan', 'add_card', 'move_card', 'update_card', 'remove_card', 'close_board'],
+    states: ['static'],
+    seedable: true, // visualize_plan seeds the initial columns/cards as part of creation
+    autowire: null
+  },
+  {
+    // JD-4: a network-request graph bound to a Browser board's `osrNetworkStore` capture. Like
+    // 'file', it is a human-created context surface (Browser devtools -> "Visualize network") — NOT
+    // agent-spawnable (no MCP tool creates a dataflow board) and not seedable; an agent may close it.
+    type: 'dataflow',
+    purpose:
+      "A network-request graph visualizing a bound Browser board's captured traffic. Human-created context; NOT agent-spawnable.",
+    tools: ['close_board'],
+    states: ['static'],
+    seedable: false,
+    autowire: null
   }
 ]
 
