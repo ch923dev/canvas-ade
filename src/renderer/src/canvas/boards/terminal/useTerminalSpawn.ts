@@ -765,12 +765,23 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const stopKeys = (e: KeyboardEvent): void => e.stopPropagation()
     el.addEventListener('keydown', stopKeys)
 
+    // S3 restore: set true just before enqueueing the disk-restored snapshot so the coalescer's
+    // NEXT flush (immediate if live, deferred to reveal if hidden — same hold gate as live PTY
+    // data) scrolls the view to the restored bottom once the write actually lands.
+    let scrollAfterRestore = false
     // Lane A write coalescer (xterm #880): batch PTY chunks into one rAF flush, and HOLD them
     // while this board is hidden (liveRef false — off-screen / below-LOD), flushing losslessly on
     // reveal. The PTY + xterm buffer stay alive; only the render is gated. The hold is bounded to
     // ~scrollback (read live via the thunk) so a hidden firehose can't grow unbounded.
     const coalescer = createTerminalWriteCoalescer({
-      write: (chunk) => term.write(chunk),
+      write: (chunk) => {
+        if (!scrollAfterRestore) {
+          term.write(chunk)
+          return
+        }
+        scrollAfterRestore = false
+        term.write(chunk, () => term.scrollToBottom())
+      },
       // Hold while hidden (Lane A) OR while a resize-backstop snapshot is in flight (S2), so PTY
       // bytes queue instead of interleaving into the reset buffer; they flush in order on resume.
       isLive: () => liveRef.current && !resizeBackstopRef.current,
@@ -878,9 +889,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       clearIdleOnMount(board.id)
       startedRef.current = true // going live — suppress any still-in-flight snapshot restore
       // S3: a restored terminal shows its prior (read-only) scrollback; Start spawns a FRESH PTY, so
-      // clear that snapshot first — the live output replaces it rather than appending after it.
+      // clear that snapshot first — the live output replaces it rather than appending after it. Also
+      // drop any restore bytes the coalescer is still HOLDING (board was hidden when restore ran) so
+      // they can't flush into the now-live session after reset.
       if (restoredSnapshot) {
         term.reset()
+        coalescer.clear()
+        scrollAfterRestore = false
         restoredSnapshot = false
         setRestored(false)
       }
@@ -904,7 +919,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           // before this async read settles — writing then would splice the stale buffer into the
           // now-live session. disposed/termRef cover a remount; startedRef covers same-term-went-live.
           if (disposed || termRef.current !== term || startedRef.current || !snap) return
-          term.write(snap, () => term.scrollToBottom())
+          // Route through the Lane A coalescer (not a direct term.write): a hidden/below-LOD board
+          // must defer this write until it goes live, exactly like the live-PTY path, so a restore
+          // on an off-screen terminal doesn't pay the render cost the liveness gate exists to avoid.
+          scrollAfterRestore = true
+          coalescer.enqueue(snap)
           restoredSnapshot = true
           setRestored(true)
         })
