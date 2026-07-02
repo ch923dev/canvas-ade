@@ -16,6 +16,7 @@ import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
 import {
   writeTerminalSnapshot,
+  writeTerminalSnapshotAsync,
   readTerminalSnapshot,
   deleteTerminalSnapshot
 } from './terminalSnapshot'
@@ -65,12 +66,23 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
   // getCurrentDir() (never a renderer-supplied path) and no-op when no project is open — the write
   // target is confined to `.canvas/` by construction, so no path escapes the sandbox. Read-only
   // w.r.t. the shell (serialize reads the renderer buffer): the PTY-write invariants are untouched.
-  ipc.handle('terminal:writeSnapshot', (e, boardId: string, text: string): boolean => {
-    if (guard(e)) return false
-    const dir = getCurrentDir()
-    if (!dir) return false
-    return writeTerminalSnapshot(dir, String(boardId), typeof text === 'string' ? text : '')
-  })
+  //
+  // `sync` defaults false (async write) so a large scrollback buffer never blocks MAIN's single
+  // thread during ordinary teardown (project switch, window blur). The renderer passes `sync: true`
+  // only for the main-driven `project:flush` before-quit round-trip, where the process may exit right
+  // after this resolves and a synchronous write is the only way to guarantee the bytes land first.
+  ipc.handle(
+    'terminal:writeSnapshot',
+    (e, boardId: string, text: string, sync?: boolean): boolean | Promise<boolean> => {
+      if (guard(e)) return false
+      const dir = getCurrentDir()
+      if (!dir) return false
+      const safeText = typeof text === 'string' ? text : ''
+      return sync
+        ? writeTerminalSnapshot(dir, String(boardId), safeText)
+        : writeTerminalSnapshotAsync(dir, String(boardId), safeText)
+    }
+  )
 
   ipc.handle('terminal:readSnapshot', (e, boardId: string): string | null => {
     if (guard(e)) return null

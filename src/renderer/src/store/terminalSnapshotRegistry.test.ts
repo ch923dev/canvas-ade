@@ -5,7 +5,7 @@ import {
   flushAllTerminalSnapshots
 } from './terminalSnapshotRegistry'
 
-const writeSnapshot = vi.fn<(id: string, text: string) => Promise<boolean>>()
+const writeSnapshot = vi.fn<(id: string, text: string, sync?: boolean) => Promise<boolean>>()
 
 beforeEach(() => {
   writeSnapshot.mockReset().mockResolvedValue(true)
@@ -15,13 +15,19 @@ beforeEach(() => {
 })
 
 describe('terminalSnapshotRegistry', () => {
-  it('flushes every registered terminal to its sidecar', async () => {
+  it('flushes every registered terminal to its sidecar (default: async / non-blocking write)', async () => {
     registerTerminalSnapshotter('a', () => 'AAA')
     registerTerminalSnapshotter('b', () => 'BBB')
     await flushAllTerminalSnapshots()
     expect(writeSnapshot).toHaveBeenCalledTimes(2)
-    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA')
-    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB')
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', false)
+    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB', false)
+  })
+
+  it('BUG-040: forwards sync:true for the before-quit flush (guaranteed-land write)', async () => {
+    registerTerminalSnapshotter('a', () => 'AAA')
+    await flushAllTerminalSnapshots({ sync: true })
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'AAA', true)
   })
 
   it('skips empty / whitespace-only buffers (no blank sidecar for an untouched idle board)', async () => {
@@ -30,7 +36,7 @@ describe('terminalSnapshotRegistry', () => {
     registerTerminalSnapshotter('b', () => '   \n\t')
     await flushAllTerminalSnapshots()
     expect(writeSnapshot).toHaveBeenCalledTimes(1)
-    expect(writeSnapshot).toHaveBeenCalledWith('a', 'real')
+    expect(writeSnapshot).toHaveBeenCalledWith('a', 'real', false)
   })
 
   it('skips a null serializer result', async () => {
@@ -53,7 +59,7 @@ describe('terminalSnapshotRegistry', () => {
     registerTerminalSnapshotter('b', () => 'BBB')
     await expect(flushAllTerminalSnapshots()).resolves.toBeUndefined()
     expect(writeSnapshot).toHaveBeenCalledTimes(1)
-    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB')
+    expect(writeSnapshot).toHaveBeenCalledWith('b', 'BBB', false)
   })
 
   it('swallows a rejected writeSnapshot (a wedged IPC never rejects the flush)', async () => {

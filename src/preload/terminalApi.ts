@@ -14,9 +14,13 @@ export const terminalApi = {
   }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
     ipcRenderer.invoke('terminal:saveOutput', args),
   // ── S3: persist/restore the live buffer across restart (per-board .canvas/terminal/ sidecar) ──
-  /** Write the serialized ANSI buffer to the board's sidecar. False on no-project / bad id / fs error. */
-  writeSnapshot: (boardId: string, text: string): Promise<boolean> =>
-    ipcRenderer.invoke('terminal:writeSnapshot', boardId, text),
+  /**
+   * Write the serialized ANSI buffer to the board's sidecar. False on no-project / bad id / fs error.
+   * `sync` (default false → async, non-blocking MAIN) should only be `true` for the before-quit flush,
+   * where the process may exit right after and the write must land before that happens.
+   */
+  writeSnapshot: (boardId: string, text: string, sync?: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:writeSnapshot', boardId, text, sync),
   /** Read the board's persisted snapshot back (ANSI), or null when absent. */
   readSnapshot: (boardId: string): Promise<string | null> =>
     ipcRenderer.invoke('terminal:readSnapshot', boardId),

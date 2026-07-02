@@ -7,6 +7,7 @@ import {
   terminalSnapshotDir,
   terminalSnapshotPath,
   writeTerminalSnapshot,
+  writeTerminalSnapshotAsync,
   readTerminalSnapshot,
   deleteTerminalSnapshot,
   MAX_SNAPSHOT_BYTES
@@ -102,5 +103,31 @@ describe('terminalSnapshot guards', () => {
 
     expect(readTerminalSnapshot(proj, 'b')).toBeNull()
     expect(existsSync(terminalSnapshotPath(proj, 'b')!)).toBe(false)
+  })
+})
+
+// BUG-040: the async writer is what every non-quit caller now uses so a large snapshot can't block
+// MAIN's event loop — same on-disk contract as the sync writer, just non-blocking.
+describe('writeTerminalSnapshotAsync (BUG-040 — non-blocking write path)', () => {
+  it('writes then reads back the exact ANSI text', async () => {
+    const ansi = '\x1b[32m$ pnpm build\x1b[0m\r\n✓ done\r\n'
+    await expect(writeTerminalSnapshotAsync(proj, 'b', ansi)).resolves.toBe(true)
+    expect(readTerminalSnapshot(proj, 'b')).toBe(ansi)
+  })
+
+  it('creates the terminal/ dir lazily on first write', async () => {
+    expect(existsSync(terminalSnapshotDir(proj))).toBe(false)
+    await writeTerminalSnapshotAsync(proj, 'b', 'x')
+    expect(existsSync(terminalSnapshotDir(proj))).toBe(true)
+  })
+
+  it('refuses a bad id without throwing', async () => {
+    await expect(writeTerminalSnapshotAsync(proj, '../evil', 'x')).resolves.toBe(false)
+  })
+
+  it('skips an oversized blob rather than corrupting it', async () => {
+    const huge = 'x'.repeat(MAX_SNAPSHOT_BYTES + 1)
+    await expect(writeTerminalSnapshotAsync(proj, 'b', huge)).resolves.toBe(false)
+    expect(readTerminalSnapshot(proj, 'b')).toBeNull()
   })
 })
