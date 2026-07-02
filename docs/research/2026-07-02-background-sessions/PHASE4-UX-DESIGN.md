@@ -101,6 +101,50 @@ Clicking a row's ✕ when that project has running resources opens a plain two-b
 - The ACTIVE project's close path (`closeActiveLiveResources`) is NOT a switcher row — it rides the
   existing window-close/quit flow and is out of scope for this menu.
 
+## 4 · Edge-hover project strip (Task-View style) — added on user request 2026-07-02
+
+Windows-Task-View-like overview: hover a screen edge → a strip slides up with one card per
+project — the active project, every backgrounded resident, and a few recents — each showing a
+**partial view of its canvas** (thumbnail) plus the §2 live-dot/badge grammar.
+
+```
+   ┌──────────────────────────── app window ────────────────────────────┐
+   │                          (canvas as usual)                         │
+   │                                                                    │
+   │ ┌─────────────────────────────────────────────────────────────┐   │
+   │ │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐    │   │
+   │ │  │● my-app  2t·1p│  │● api-server 1t✕│  │  other-project│    │   │
+   │ │  │  ACTIVE       │  │               │  │               │    │   │
+   │ │  │ ┌─┐┌─┐        │  │ ┌──┐ ┌─┐      │  │  no snapshot  │    │   │
+   │ │  │ └─┘└─┘ ┌──┐   │  │ └──┘ └─┘      │  │     yet       │    │   │
+   │ │  │        └──┘   │  │               │  │               │    │   │
+   │ │  └───────────────┘  └───────────────┘  └───────────────┘    │   │
+   │ └─────────────────────────────────────────────────────────────┘   │
+   └═══════════════════════ hover hot zone (edge) ═══════════════════════┘
+```
+
+- **Trigger**: pointer parked on the screen edge (~2px hot zone, ~150ms intent delay — a drive-by
+  never opens it). Leave / Esc / card-click closes. **Open for sign-off: top vs bottom edge** —
+  bottom is the board dock's home (dock sits bottom-center; strip + dock would fight), top is free
+  and matches the switcher pill's corner. Recommendation: **top**.
+- **Card** = header (live dot `--ok` when sessions alive · name · `2 term · 1 prev` badge ·
+  hover-✕ on backgrounded cards → §3 confirm) + canvas thumbnail. Active card wears the 1.5px
+  accent ring + `ACTIVE` micro tag; clicking it just closes the strip.
+- **Click** = switch, through the exact §1 pipeline (ask-on-switch dialog when the outgoing
+  project has live resources). The strip is a second *presentation* of the same actions — zero new
+  switch semantics.
+- **Thumbnail = static snapshot, never a live render.** Captured MAIN-side via
+  `webContents.capturePage(canvasRect)` (downscaled ~2×) at two moments: the outgoing project at
+  **switch-away** (inside `performProjectSwitch`, before unmount) and the active project on
+  **strip-open**. Cached under `userData/project-thumbs/<dirHash>.png` (app cache, NOT the project
+  folder — ADR 0009 stays clean), served to the renderer as a data URL over IPC. A recent with no
+  snapshot this run shows a dot-grid placeholder ("no snapshot yet"). Rendering N background
+  canvases live is explicitly out of scope (one React Flow instance per app, by design).
+- Solid surfaces only (`--surface` bar, `--surface-raised` cards) — no blur/glassmorphism (locked
+  contract).
+- Suggested build order: Phase 4a = §1–3 (dialog · menu rows · close), Phase 4b = the strip
+  (needs the snapshot capture plumbing).
+
 ## Out of scope (locked)
 
 - No "remember my choice" on the dialog (revisit only if the dialog proves naggy — it shows only
