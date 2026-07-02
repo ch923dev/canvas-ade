@@ -111,7 +111,7 @@ let mainWindow: BrowserWindow | null = null
 // Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
 // safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
 let authService: AuthService | null = null
-let pendingDeepLink: string | null = null
+let pendingDeepLinks: string[] = []
 // BUG-024: entitlementCache.isFresh() existed but no caller ever consulted it — the cache was
 // written once at sign-in and trusted indefinitely, so a Stripe-side cancel/lapse would never
 // reach the desktop. Re-check on startup (below), gated by this TTL so it costs at most one
@@ -304,7 +304,7 @@ function handleAuthDeepLink(url: string): void {
   if (authService) {
     void authService.handleCallback(url)
   } else {
-    pendingDeepLink = url
+    pendingDeepLinks.push(url)
   }
 }
 
@@ -538,10 +538,12 @@ app.whenReady().then(async () => {
     onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
   })
   registerAuthHandlers(ipcMain, () => mainWindow, authService)
-  if (pendingDeepLink) {
-    const url = pendingDeepLink
-    pendingDeepLink = null
-    void authService.handleCallback(url)
+  if (pendingDeepLinks.length > 0) {
+    const urls = pendingDeepLinks
+    pendingDeepLinks = []
+    for (const url of urls) {
+      void authService.handleCallback(url)
+    }
   }
   // BUG-024: re-verify a stale cached entitlement against the backend on every cold start (no-op
   // when signed out or still within the TTL) so a lapsed/canceled subscription doesn't stay
