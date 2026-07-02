@@ -897,7 +897,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, h }
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      rewritePendingBoards((b) => (b.id === id && b.h < h ? { ...b, h } : b))
+      return { boards }
     }),
 
   growBoardWidth: (id, w) =>
@@ -910,7 +912,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, w }
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      rewritePendingBoards((b) => (b.id === id && b.w < w ? { ...b, w } : b))
+      return { boards }
     }),
 
   repositionBoardUntracked: (id, x, y) =>
@@ -924,7 +928,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, x, y }
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      rewritePendingBoards((b) => (b.id === id && (b.x !== x || b.y !== y) ? { ...b, x, y } : b))
+      return { boards }
     }),
 
   setDiagramCache: (boardId, elId, svgCache) =>
@@ -942,7 +948,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         })
         return changed ? { ...b, elements } : b
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      rewritePendingBoards((b) => {
+        if (b.id !== boardId || b.type !== 'planning') return b
+        let elChanged = false
+        const elements = b.elements.map((el) => {
+          if (el.id !== elId || el.kind !== 'diagram' || el.svgCache === svgCache) return el
+          elChanged = true
+          return { ...el, svgCache }
+        })
+        return elChanged ? { ...b, elements } : b
+      })
+      return { boards }
     }),
 
   setViewport: (vp) =>
@@ -1193,6 +1210,18 @@ function noticeIfNewerDoc(d: CanvasDoc): void {
  * use this for persistent fields that cannot self-heal; use patchBoardMeta's mapRail
  * pattern instead.
  */
+/**
+ * Rewrite an armed gesture checkpoint's copy of the boards with the same per-board mutation
+ * an untracked write just applied (mirrors patchBoardUntracked, #BUG-006). Without it, a
+ * checkpoint armed before the write snapshots the pre-write board, so undoing the gesture
+ * that commits next silently reverts the untracked write. No-op when nothing is armed.
+ */
+function rewritePendingBoards(map: (b: Board) => Board): void {
+  if (pendingCheckpoint) {
+    pendingCheckpoint = { ...pendingCheckpoint, boards: pendingCheckpoint.boards.map(map) }
+  }
+}
+
 export function patchBoardUntracked(id: string, patch: Partial<Board>): void {
   useCanvasStore.setState((s) => {
     const boards = applyBoardPatch(s.boards, id, patch)

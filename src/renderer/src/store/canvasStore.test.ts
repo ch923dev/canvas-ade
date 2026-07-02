@@ -1989,6 +1989,78 @@ describe('patchBoardUntracked (BUG-057)', () => {
   })
 })
 
+describe('growBoardHeight/growBoardWidth/repositionBoardUntracked/setDiagramCache rewrite an armed pendingCheckpoint (BUG-006)', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+  })
+
+  it('growBoardHeight on board B survives an undo of a gesture that started before it landed', () => {
+    const a = get().addBoard('terminal', { x: 0, y: 0 })
+    const b = get().addBoard('planning', { x: 400, y: 0 })
+    // Gesture starts on A (e.g. a drag) — arms pendingCheckpoint at the CURRENT boards.
+    get().beginChange()
+    // In the gap before A's first commit, B's checklist auto-grows (ResizeObserver).
+    get().growBoardHeight(b, 900)
+    expect(get().boards.find((x) => x.id === b)!.h).toBe(900)
+    // A's gesture now commits — takePendingPast pushes the armed checkpoint onto `past`.
+    get().updateBoard(a, { x: 200 })
+    get().undo() // undoes A's move
+    expect(get().boards.find((x) => x.id === a)!.x).toBe(0)
+    // B's untracked height bump must NOT be reverted by A's undo.
+    expect(get().boards.find((x) => x.id === b)!.h).toBe(900)
+  })
+
+  it('growBoardWidth on board B survives an undo of a gesture that started before it landed', () => {
+    const a = get().addBoard('terminal', { x: 0, y: 0 })
+    const b = get().addBoard('planning', { x: 400, y: 0 })
+    get().beginChange()
+    get().growBoardWidth(b, 900)
+    get().updateBoard(a, { x: 200 })
+    get().undo()
+    expect(get().boards.find((x) => x.id === b)!.w).toBe(900)
+  })
+
+  it('repositionBoardUntracked on board B survives an undo of a gesture that started before it landed', () => {
+    const a = get().addBoard('terminal', { x: 0, y: 0 })
+    const b = get().addBoard('planning', { x: 400, y: 0 })
+    get().beginChange()
+    get().repositionBoardUntracked(b, 777, 888)
+    get().updateBoard(a, { x: 200 })
+    get().undo()
+    const boardB = get().boards.find((x) => x.id === b)!
+    expect(boardB.x).toBe(777)
+    expect(boardB.y).toBe(888)
+  })
+
+  it('setDiagramCache on board B survives an undo of a gesture that started before it landed', () => {
+    const a = get().addBoard('terminal', { x: 0, y: 0 })
+    const b = get().addBoard('planning', { x: 400, y: 0 })
+    const elId = 'diag-1'
+    const diagramEl = {
+      id: elId,
+      kind: 'diagram',
+      x: 0,
+      y: 0,
+      w: 10,
+      h: 10,
+      source: '',
+      engine: 'mermaid'
+    } as PlanningElement
+    useCanvasStore.setState((s) => ({
+      boards: s.boards.map((board) =>
+        board.id === b && board.type === 'planning' ? { ...board, elements: [diagramEl] } : board
+      )
+    }))
+    get().beginChange()
+    get().setDiagramCache(b, elId, '<svg>cached</svg>')
+    get().updateBoard(a, { x: 200 })
+    get().undo()
+    const boardB = get().boards.find((x) => x.id === b) as PlanningBoard
+    const el = boardB.elements[0] as PlanningElement & { svgCache?: string }
+    expect(el.svgCache).toBe('<svg>cached</svg>')
+  })
+})
+
 describe('patchBoardMeta (BUG-064)', () => {
   beforeEach(() => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
