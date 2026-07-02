@@ -175,6 +175,29 @@ describe('kanban board (v17)', () => {
     expect(() => fromObject(doc as unknown as CanvasDoc)).toThrow(/columnId/)
   })
 
+  it('rejects a column with a non-positive wip (0 / negative — a hand-edited doc), matching the setColumnWip write-path range', () => {
+    const withWip = (wip: number): unknown => ({
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
+      viewport: null,
+      boards: [
+        {
+          id: 'k6',
+          type: 'kanban',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 520,
+          title: 'Plan',
+          columns: [{ id: 'a', title: 'A', wip }],
+          cards: []
+        }
+      ]
+    })
+    expect(() => fromObject(withWip(0) as unknown as CanvasDoc)).toThrow(/wip/)
+    expect(() => fromObject(withWip(-1) as unknown as CanvasDoc)).toThrow(/wip/)
+  })
+
   it('migrate bumps a v16 doc to v17 (identity — the type only appears on new boards)', () => {
     const migrated = migrate({
       schemaVersion: 16,
