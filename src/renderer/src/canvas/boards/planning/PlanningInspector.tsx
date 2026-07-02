@@ -61,7 +61,7 @@ export function PlanningInspector({
           controls lead. Absent (no placeholder) when nothing is selected — baseline P3 panel. */}
       {element && <ElementInspectorSection model={element} />}
 
-      <InspectorSection label="Tools">
+      <InspectorSection label="Tools" persistKey="planning.tools">
         {/* The 8-tool palette as a 4×2 icon grid. Radiogroup semantics (one active tool); the
             bare-letter shortcut (from TOOL_META) sits in the corner + the tooltip, mirroring the
             deleted on-board cluster. Active tool is accent-washed via [data-on]. */}
@@ -92,7 +92,7 @@ export function PlanningInspector({
         </div>
       </InspectorSection>
 
-      <InspectorSection label="Canvas">
+      <InspectorSection label="Canvas" persistKey="planning.canvas">
         <InspectorRow label="Snap to grid">
           <InspectorToggle
             checked={snapEnabled}

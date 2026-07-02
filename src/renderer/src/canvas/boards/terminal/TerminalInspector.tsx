@@ -75,7 +75,7 @@ export function TerminalInspector({
 }: TerminalInspectorProps): ReactElement {
   return (
     <>
-      <InspectorSection label="Appearance">
+      <InspectorSection label="Appearance" persistKey="terminal.appearance">
         <InspectorRow label="Font size">
           <InspectorStepper
             value={font}
@@ -92,7 +92,7 @@ export function TerminalInspector({
         >{`Reset to default (${defaultFont})`}</InspectorAction>
       </InspectorSection>
 
-      <InspectorSection label="Session">
+      <InspectorSection label="Session" persistKey="terminal.session">
         {running && (
           <InspectorAction
             icon={<Icon name="stop" size={14} />}
@@ -140,7 +140,11 @@ export function TerminalInspector({
         </InspectorAction>
       </InspectorSection>
 
-      <InspectorSection label="Configuration" defaultOpen={false}>
+      <InspectorSection
+        label="Configuration"
+        defaultOpen={false}
+        persistKey="terminal.configuration"
+      >
         {shell && <InspectorMeta label="Shell" value={shell} />}
         {command && <InspectorMeta label="Command" value={command} />}
         {cwd && <InspectorMeta label="cwd" value={cwd} />}
@@ -153,7 +157,7 @@ export function TerminalInspector({
         </InspectorAction>
       </InspectorSection>
 
-      <InspectorSection label="Linking" defaultOpen={false}>
+      <InspectorSection label="Linking" defaultOpen={false} persistKey="terminal.linking">
         <InspectorAction icon={<Icon name="globe" size={14} />} primary onClick={onPushPreview}>
           Push to preview
         </InspectorAction>

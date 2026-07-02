@@ -79,7 +79,7 @@ export function FileInspector({
       {isText && (
         <>
           {isMarkdown && (
-            <InspectorSection label="View">
+            <InspectorSection label="View" persistKey="file.view">
               <InspectorRow>
                 <InspectorSegmented
                   fill
@@ -92,7 +92,7 @@ export function FileInspector({
             </InspectorSection>
           )}
 
-          <InspectorSection label="Appearance">
+          <InspectorSection label="Appearance" persistKey="file.appearance">
             <InspectorRow label="Font size">
               <InspectorStepper
                 value={fontSize}
@@ -104,7 +104,7 @@ export function FileInspector({
             </InspectorRow>
           </InspectorSection>
 
-          <InspectorSection label="File">
+          <InspectorSection label="File" persistKey="file.file">
             {!readOnly && mode !== 'preview' && (
               <InspectorAction
                 icon={<Icon name="download" size={14} />}
@@ -138,7 +138,7 @@ export function FileInspector({
       )}
 
       {!isText && isPeek && (
-        <InspectorSection label="File">
+        <InspectorSection label="File" persistKey="file.file">
           <InspectorAction icon={<Icon name="magnet" size={14} />} onClick={onPin}>
             Pin (keep on canvas)
           </InspectorAction>
@@ -146,7 +146,11 @@ export function FileInspector({
       )}
 
       {showConfig && (
-        <InspectorSection label="Configuration" defaultOpen={!isText}>
+        <InspectorSection
+          label="Configuration"
+          defaultOpen={!isText}
+          persistKey="file.configuration"
+        >
           {path && <InspectorMeta label="Path" value={path} />}
           {typeLabel && <InspectorMeta label="Type" value={typeLabel} />}
           {sizeText && <InspectorMeta label="Size" value={sizeText} />}

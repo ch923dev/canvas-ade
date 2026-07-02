@@ -60,7 +60,7 @@ export function CommandInspector({
 }: CommandInspectorProps): ReactElement {
   return (
     <>
-      <InspectorSection label="View">
+      <InspectorSection label="View" persistKey="command.view">
         {collapsed ? (
           <InspectorAction
             icon={<Icon name="maximize" size={14} />}
@@ -97,7 +97,7 @@ export function CommandInspector({
         )}
       </InspectorSection>
 
-      <InspectorSection label="Status">
+      <InspectorSection label="Status" persistKey="command.status">
         <InspectorRow>
           <div className="ca-inspector-chips">
             <span className="ca-inspector-status" data-tone="ok">
@@ -125,7 +125,7 @@ export function CommandInspector({
         </InspectorRow>
       </InspectorSection>
 
-      <InspectorSection label="Worker pool" defaultOpen={false}>
+      <InspectorSection label="Worker pool" defaultOpen={false} persistKey="command.workerPool">
         <InspectorMeta label="Spawn cap" value={String(pool.cap)} />
         <InspectorMeta label="In use" value={`${pool.inUse} of ${pool.cap}`} />
         <InspectorMeta label="Idle" value={`${pool.idle} terminals`} />
@@ -133,7 +133,11 @@ export function CommandInspector({
         {pool.planning > 0 && <InspectorMeta label="Planning" value={String(pool.planning)} />}
       </InspectorSection>
 
-      <InspectorSection label="Orchestration" defaultOpen={false}>
+      <InspectorSection
+        label="Orchestration"
+        defaultOpen={false}
+        persistKey="command.orchestration"
+      >
         {orchestrationEnabled ? (
           <InspectorMeta label="Status" value="Enabled" />
         ) : (

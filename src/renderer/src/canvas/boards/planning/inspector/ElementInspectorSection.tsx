@@ -140,7 +140,11 @@ export function ElementInspectorSection({ model }: { model: ElementInspectorMode
   )
 
   return (
-    <InspectorSection label={`Element · ${model.kindLabel}`} aside={countChip}>
+    <InspectorSection
+      label={`Element · ${model.kindLabel}`}
+      persistKey="planning.element"
+      aside={countChip}
+    >
       {/* Typography — homogeneous text only. No-op-gated: re-selecting the active token never emits
           (mirrors the on-board TextToolbar), so it can't push a phantom undo step. */}
       {typography && (

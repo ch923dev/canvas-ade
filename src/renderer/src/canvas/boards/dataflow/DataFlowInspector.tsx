@@ -82,7 +82,7 @@ export function DataFlowInspector({
   // Unbound: the only meaningful control is picking a Browser board to map.
   if (!sourceId) {
     return (
-      <InspectorSection label="Source">
+      <InspectorSection label="Source" persistKey="dataflow.source">
         {browsers.length === 0 ? (
           <InspectorMeta label="Source" value="No Browser boards yet" />
         ) : (
@@ -108,7 +108,7 @@ export function DataFlowInspector({
     <>
       {hasRecords ? (
         <>
-          <InspectorSection label="View">
+          <InspectorSection label="View" persistKey="dataflow.view">
             <InspectorRow>
               <InspectorSegmented
                 fill
@@ -120,7 +120,7 @@ export function DataFlowInspector({
             </InspectorRow>
           </InspectorSection>
 
-          <InspectorSection label="Filters">
+          <InspectorSection label="Filters" persistKey="dataflow.filters">
             <InspectorRow label="Infer shapes">
               <InspectorToggle
                 checked={inferShapes}
@@ -147,7 +147,7 @@ export function DataFlowInspector({
             {hiddenCount > 0 && <InspectorMeta label="Hidden" value={String(hiddenCount)} />}
           </InspectorSection>
 
-          <InspectorSection label="Actions">
+          <InspectorSection label="Actions" persistKey="dataflow.actions">
             <InspectorAction
               icon={<Icon name="refresh" size={14} />}
               onClick={onRegenerate}
@@ -174,7 +174,7 @@ export function DataFlowInspector({
           </InspectorSection>
         </>
       ) : (
-        <InspectorSection label="Captures">
+        <InspectorSection label="Captures" persistKey="dataflow.captures">
           <InspectorMeta label="Captures" value="None yet" />
           <InspectorAction icon={<Icon name="refresh" size={14} />} onClick={onRegenerate}>
             Regenerate
@@ -182,7 +182,7 @@ export function DataFlowInspector({
         </InspectorSection>
       )}
 
-      <InspectorSection label="Source" defaultOpen={false}>
+      <InspectorSection label="Source" defaultOpen={false} persistKey="dataflow.source">
         <InspectorMeta label="Source" value={sourceTitle ?? '—'} />
         <InspectorMeta label="Surface" value={`${routeCount} routes · ${lineageCount} lineage`} />
         {browsers

@@ -9,6 +9,7 @@
  * structure + behaviour only — no inline colour literals (STYLE-02).
  */
 import { useState, type ReactElement, type ReactNode } from 'react'
+import { readCollapsePref, writeCollapsePref } from './collapsePrefs'
 
 /** The shape every per-type inspector content receives. Per-type components widen this with their
  *  own handler props (supplied by the board when it portals its content into the shell slot). */
@@ -16,28 +17,43 @@ export interface InspectorContentProps {
   boardId: string
 }
 
-/** A collapsible labelled section (uppercase micro label + chevron). Open by default; collapse state
- *  is local for now (localStorage-persisted in a later polish phase). `aside` renders a trailing node
- *  (e.g. the Element section's selection-count chip) between the label and the chevron. */
+/** A collapsible labelled section (uppercase micro label + chevron). Open by default; a
+ *  `persistKey` makes the user's toggle sticky (localStorage `ca.inspector.collapse.<key>`,
+ *  app-level — see collapsePrefs.ts; P5). `aside` renders a trailing node (e.g. the Element
+ *  section's selection-count chip) between the label and the chevron. */
 export function InspectorSection({
   label,
   defaultOpen = true,
+  persistKey,
   aside,
   children
 }: {
   label: string
   defaultOpen?: boolean
+  /** Stable id (e.g. `terminal.appearance`) — when set, the open/closed choice persists. */
+  persistKey?: string
   aside?: ReactNode
   children: ReactNode
 }): ReactElement {
-  const [open, setOpen] = useState(defaultOpen)
+  // Lazy initializer: the persisted choice wins over defaultOpen; read once per mount so
+  // the e2e harness's key-removal reset takes effect on the next mount, not mid-session.
+  const [open, setOpen] = useState(
+    () => (persistKey ? readCollapsePref(persistKey) : null) ?? defaultOpen
+  )
+  const toggle = (): void => {
+    // Persist OUTSIDE the setState updater (updaters must stay pure — StrictMode
+    // double-invokes them; the guarded write is idempotent but shouldn't run twice).
+    const next = !open
+    if (persistKey) writeCollapsePref(persistKey, next)
+    setOpen(next)
+  }
   return (
     <section className="ca-inspector-section">
       <button
         type="button"
         className="ca-inspector-section-hd"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
       >
         <span className="ca-inspector-section-lab">{label}</span>
         {aside}
