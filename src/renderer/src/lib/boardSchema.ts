@@ -978,17 +978,19 @@ export function assertBoard(b: unknown): void {
       }
       return
     case 'kanban': {
-      // v17: columns + cards are required arrays. A column needs id/title strings (+ optional finite
-      // wip); a card needs id/columnId/title strings (+ optional string chips). A card whose columnId
-      // matches no column is a stale ref DROPPED in fromObject (not failed here) — a shape check only,
-      // matching the previewSourceId/dataflow reconcile discipline.
+      // v17: columns + cards are required arrays. A column needs id/title strings (+ optional positive
+      // wip — mirrors kanbanEdit.ts's setColumnWip, which only ever persists a finite `wip > 0` and
+      // clears it to `undefined` otherwise, so a non-positive value here can only be a hand-edited/
+      // adversarial doc); a card needs id/columnId/title strings (+ optional string chips). A card
+      // whose columnId matches no column is a stale ref DROPPED in fromObject (not failed here) — a
+      // shape check only, matching the previewSourceId/dataflow reconcile discipline.
       if (!Array.isArray(b.columns)) fail('kanban board columns is not an array')
       for (const c of b.columns as unknown[]) {
         if (!isRecord(c)) fail('kanban column is not an object')
         if (typeof c.id !== 'string') fail('kanban column has a non-string id')
         if (typeof c.title !== 'string') fail('kanban column has a non-string title')
-        if (c.wip !== undefined && !isFiniteNum(c.wip)) {
-          fail('kanban column wip is not a finite number')
+        if (c.wip !== undefined && !isPositiveNum(c.wip)) {
+          fail('kanban column wip is not a positive number')
         }
       }
       if (!Array.isArray(b.cards)) fail('kanban board cards is not an array')
