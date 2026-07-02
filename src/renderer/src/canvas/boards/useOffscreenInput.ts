@@ -4,6 +4,7 @@ import { VIEWPORT_PRESETS } from '../../lib/browserLayout'
 import type { BrowserViewport } from '../../lib/boardSchema'
 import { classifyKeydown } from '../../lib/osrKeyInput'
 import { mapOsrWheel } from '../../lib/osrWheel'
+import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 
 /**
  * OS-3 Phase 3 — input forwarding for the offscreen (OSR) Browser preview.
@@ -378,7 +379,16 @@ export function useOffscreenInput(
   proxyRef: RefObject<HTMLTextAreaElement | null>,
   viewport: BrowserViewport
 ): void {
+  // Liveness (OS-3 2B): an evicted/below-LOD board is paint-gated and its offscreen renderer is
+  // closed in MAIN — the canvas just shows the last frozen frame. Forwarding pointer/keyboard
+  // input to a dead (or about-to-be-recycled) offscreen window is a no-op at best and a
+  // misdirected-input bug at worst once the slot is reassigned. Mirror the screenshot button's
+  // liveness gate (BrowserBoard's `disabled={... || !osrAlive}`) here: detach listeners while
+  // paused, reattach when the board climbs back into the MAX_LIVE cap.
+  const alive = useOsrLivenessStore((s) => s.alive[boardId] ?? true)
+
   useEffect(() => {
+    if (!alive) return
     // M4: forward coordinates in the ACTIVE preset's logical space (the width the page lays
     // out at in MAIN). A preset switch re-attaches with the new size — infrequent (a control
     // click), so the listener churn is negligible.
@@ -404,5 +414,5 @@ export function useOffscreenInput(
       if (raf) cancelAnimationFrame(raf)
       if (detach) detach()
     }
-  }, [boardId, canvasRef, proxyRef, viewport])
+  }, [boardId, canvasRef, proxyRef, viewport, alive])
 }
