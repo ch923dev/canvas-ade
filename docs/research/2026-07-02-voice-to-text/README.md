@@ -29,8 +29,9 @@ Terminal boards. Local-first STT (no API key, offline, private), review-first co
    the design artifact (token-faithful states mock, per the design-before-code rule).
 4. **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — slices V0–V5, per-slice
    files/IPC/tests, collision map. Written after design-artifact sign-off.
-5. **[HANDOFF-V1.md](HANDOFF-V1.md)** — live handoff for the next slice (state snapshot,
-   seams with file:line pointers, sharp edges, exit criteria).
+5. **[HANDOFF-V3.md](HANDOFF-V3.md)** — live handoff for the next slice (state snapshot,
+   seams with file:line pointers, sharp edges, exit criteria). `HANDOFF-V1.md` is the
+   superseded V1 edition (kept until the epic-merge doc collapse).
 
 ## Decisions locked at kickoff (user-confirmed 2026-07-02)
 
