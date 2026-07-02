@@ -19,7 +19,7 @@
  */
 import type { IpcMain, IpcMainInvokeEvent, BrowserWindow } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import { mintTerminalToken } from './orchestration/seam'
+import { isOrchestrationEnabled, mintTerminalToken } from './orchestration/seam'
 import {
   getProvisionStatus,
   runProvisionerSync,
@@ -51,7 +51,7 @@ export function registerOrchestrationProvisionHandlers(
   ipcMain.handle('orchestration:getProvisionStatus', async (e): Promise<ProvisionStatus | null> => {
     if (guard(e)) return null
     const projectDir = getCurrentDir()
-    if (!projectDir) return null
+    if (!projectDir || !isOrchestrationEnabled(projectDir)) return null
     let port: number
     try {
       // Mint only to read the LIVE loopback port; the token itself is discarded (the status
@@ -74,6 +74,17 @@ export function registerOrchestrationProvisionHandlers(
         ? ids.filter((x): x is CliId => (CLI_IDS as readonly string[]).includes(x as string))
         : []
       if (wanted.length === 0) return []
+      // Mirror the spawn-time hook's gate (cliProvisioners/index.ts's
+      // `makeOrchestrationSyncProvider`) at the IPC trust boundary: never mint/persist a live
+      // bearer token for a project that hasn't granted orchestration consent, regardless of what
+      // renderer-side UI sequencing (palette visibility / modal ordering) currently guarantees.
+      if (!isOrchestrationEnabled(projectDir)) {
+        return wanted.map((id) => ({
+          id,
+          status: 'error' as const,
+          detail: 'Agent orchestration is not enabled for this project.'
+        }))
+      }
       let token
       try {
         token = mintTerminalToken(SYNC_PSEUDO_BOARD)
