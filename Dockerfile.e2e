@@ -31,4 +31,8 @@ ENV CI=1
 # Build then run under Xvfb with the `line` reporter — it streams line-by-line and
 # needs no TTY, so `docker run` works non-interactively (a pnpm/CI pipe) without the
 # `list` reporter's tty cursor-control that otherwise blocks on a non-TTY stdout.
-CMD ["sh", "-c", "pnpm exec electron-vite build && xvfb-run -a pnpm exec playwright test --reporter=line"]
+# CANVAS_E2E=1 on the BUILD step (not just the later Playwright launch) so the
+# __ENABLE_E2E_MAIN__ compile-time gate (BUG-027, electron.vite.config.ts) bakes the
+# __canvasE2EMain test registry into this build — a plain `electron-vite build` with no
+# CANVAS_E2E set (the real packaging path) leaves it dead-code-eliminated out.
+CMD ["sh", "-c", "CANVAS_E2E=1 pnpm exec electron-vite build && xvfb-run -a pnpm exec playwright test --reporter=line"]

@@ -1,10 +1,14 @@
 /**
- * Env-gated MAIN test registry for the Playwright _electron harness (T4). Installed
- * ONLY when CANVAS_E2E is set; exposes the preview/pty internals the renderer hook
- * cannot see, plus the project/clipboard/input helpers the whiteboard slivers need.
- * Playwright reaches these via electronApp.evaluate(() => globalThis.__canvasE2EMain.*).
+ * MAIN test registry for the Playwright _electron harness (T4). Installed ONLY when the
+ * compile-time __ENABLE_E2E_MAIN__ gate is baked true (dev/e2e builds — see the `define`
+ * in electron.vite.config.ts) AND the CANVAS_E2E runtime env var is set (BUG-027: the
+ * compile gate keeps a real packaged build from shipping this surface at all, so setting
+ * CANVAS_E2E at launch can't unlock it there). Exposes the preview/pty internals the
+ * renderer hook cannot see, plus the project/clipboard/input helpers the whiteboard
+ * slivers need. Playwright reaches these via
+ * electronApp.evaluate(() => globalThis.__canvasE2EMain.*).
  *
- * This is a registry + an env flag — NOT a security change. sandbox / contextIsolation /
+ * This is a registry + a two-layer flag — NOT a security change. sandbox / contextIsolation /
  * nodeIntegration are untouched; nothing here is reachable in a normal run.
  */
 import { app, clipboard, ipcMain, Menu, nativeImage, type BrowserWindow } from 'electron'
@@ -289,14 +293,27 @@ declare global {
   var __canvasE2EMain: E2EMain | undefined
 }
 
-/** Install the registry. No-op unless CANVAS_E2E is set. Call once after the window exists. */
+// BUG-027: build-time gate (electron.vite.config.ts `define`), mirroring the
+// __ENABLE_AUTO_UPDATE__ pattern in src/main/index.ts. Default false for a plain
+// packaged/production build, so terser/esbuild dead-code-eliminates the whole registry
+// below out of the shipped bundle — the CANVAS_E2E runtime check alone was not enough,
+// since nothing stopped a packaged app from having that env var set at launch. True for
+// dev + e2e builds (see the define comment). Kept alongside, not instead of, the runtime
+// check for defense in depth.
+declare const __ENABLE_E2E_MAIN__: boolean
+
+/**
+ * Install the registry. No-op unless BOTH the compile-time __ENABLE_E2E_MAIN__ gate is on
+ * (dev/e2e builds only) AND the CANVAS_E2E runtime env var is set. Call once after the
+ * window exists.
+ */
 export function installE2EMain(
   win: BrowserWindow,
   localUrl: string,
   mcp: RunningMcp | null,
   getResultSynth: () => ResultSynthesizer | null
 ): void {
-  if (!process.env.CANVAS_E2E) return
+  if (!__ENABLE_E2E_MAIN__ || !process.env.CANVAS_E2E) return
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
     writeTerminal: debugWriteTerminal,

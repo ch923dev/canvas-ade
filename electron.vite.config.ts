@@ -84,7 +84,19 @@ export default defineConfig({
     // So unsigned local/staging builds NEVER auto-update: the security invariant
     // (no unsigned auto-update over a feed) is enforced by the compiler, not by convention.
     define: {
-      __ENABLE_AUTO_UPDATE__: JSON.stringify(process.env.ENABLE_AUTO_UPDATE === '1')
+      __ENABLE_AUTO_UPDATE__: JSON.stringify(process.env.ENABLE_AUTO_UPDATE === '1'),
+      // BUG-027: compile-time gate for the __canvasE2EMain test-surface registry
+      // (src/main/e2eMain.ts), mirroring the __ENABLE_AUTO_UPDATE__ gate above so this
+      // equally powerful debug surface (pty write, clipboard, gitDiff, spawnGroupNow,
+      // disposeAllPtys, mcpMintConnectedToken, ...) also dead-code-eliminates out of a
+      // real packaged build instead of relying on the CANVAS_E2E runtime env var alone.
+      // True for `electron-vite dev` (NODE_ENV=development) and for any build where the
+      // e2e harness has set CANVAS_E2E=1 (pretest:e2e / pretest:e2e:smoke / Dockerfile.e2e);
+      // false — and therefore stripped — for a plain `electron-vite build` used by the
+      // local packaging scripts and the staging/production CI publish steps.
+      __ENABLE_E2E_MAIN__: JSON.stringify(
+        process.env.NODE_ENV !== 'production' || process.env.CANVAS_E2E === '1'
+      )
     },
     build: {
       rollupOptions: {
