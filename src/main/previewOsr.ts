@@ -108,6 +108,10 @@ export interface OsrEntry {
   // its cleanup fires `preview:osrClose` — that close is SUPPRESSED for a backgrounded entry
   // (the window must survive the switch); disposeProjectOsr/disposeAllOsr still destroy it.
   backgrounded: boolean
+  // Epoch ms of the last foreground→background transition (previewOsrBackground stamps it so
+  // applyOsrBackground stays clock-free; cleared on foreground). Feeds pickOsrEvictions'
+  // longest-backgrounded-first ordering under the GLOBAL_OSR_MAX existence budget.
+  backgroundedAt?: number
 }
 
 // Browser-preview lifecycle events are the SHARED `PreviewEvent` union (previewShared) — emitted on
@@ -155,6 +159,42 @@ function scheduleResizeSettle(id: string): void {
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). Exported for the
  *  self-test probes (previewOsrProbe.ts — split out under the max-lines ratchet). */
 export const OSR_FRAME_RATE = 30
+
+/** Background sessions (Phase 3): the EXISTENCE budget across ALL projects — at most this many
+ *  offscreen windows may exist at once (foreground + backgrounded residents). Checked in ensureOsr
+ *  before every new-window construction; over budget, the longest-backgrounded entries are evicted
+ *  (pickOsrEvictions) — never a foreground one (the renderer's OSR_MAX_LIVE=4 already bounds
+ *  those, and background residents must not starve foreground creation). */
+export const GLOBAL_OSR_MAX = 8
+
+/** The slice of `OsrEntry` the eviction picker reads (pure — unit-testable without Electron). */
+interface OsrEvictionCandidate {
+  backgrounded: boolean
+  backgroundedAt?: number
+}
+
+/**
+ * Pick which OSR entries to evict so ONE new window fits under the `max` existence budget.
+ * Only BACKGROUNDED entries are candidates — a foreground board's window is never destroyed to
+ * make room; when everything over budget is foreground the budget deliberately overshoots.
+ * Victims are the longest-backgrounded first (a missing `backgroundedAt` sorts as maximally
+ * stale — defensive; the background transition always stamps it). Returns [] while under budget.
+ * Evicted boards fall back to the existing freeze+revive path: the renderer keeps the frozen
+ * last frame, and the in-memory `preview-osr-${id}` partition keeps cookies for the re-open.
+ */
+export function pickOsrEvictions(
+  entries: Iterable<[string, OsrEvictionCandidate]>,
+  max: number
+): string[] {
+  const all = [...entries]
+  const need = all.length - max + 1
+  if (need <= 0) return []
+  return all
+    .filter(([, e]) => e.backgrounded)
+    .sort(([, a], [, b]) => (a.backgroundedAt ?? 0) - (b.backgroundedAt ?? 0))
+    .slice(0, need)
+    .map(([id]) => id)
+}
 
 /** The frame-guarded IPC args for `preview:osrResize` (an `OsrSizeRequest` + the board id). */
 export interface OsrResizeArgs extends OsrSizeRequest {
@@ -375,6 +415,42 @@ function emitEvent(payload: PreviewEvent): void {
   emitToOwner('preview:event', payload)
 }
 
+/** The webContents slice the switch-back re-emit reads (pure — unit-testable without Electron). */
+interface OsrRemountSource {
+  getURL(): string
+  navigationHistory: { canGoBack(): boolean; canGoForward(): boolean }
+}
+
+/**
+ * Background sessions (Phase 3): synthesize the CURRENT lifecycle state for a board whose OSR
+ * window SURVIVED a project switch. On switch-back the board remounts with a fresh previewStore
+ * entry ('connecting'), but the kept window fires no new lifecycle events — so without this the
+ * board sits at "Connecting…" with a stale URL bar forever. Emit did-navigate (live URL +
+ * history state) and — only when the page is genuinely ready and not failed — did-finish-load,
+ * so the store converges WITHOUT reloading the page (in-page form/SPA state surviving the switch
+ * is the whole feature; a reload here would defeat it). When !ready || failed only the navigate
+ * goes out — stay honest: the real lifecycle (or the user's Reload) resolves the rest.
+ */
+export function emitOsrRemountState(
+  id: string,
+  e: { ready: boolean; failed: boolean },
+  wc: OsrRemountSource,
+  emit: (ev: PreviewEvent) => void
+): void {
+  try {
+    emit({
+      id,
+      type: 'did-navigate',
+      url: wc.getURL(),
+      canGoBack: wc.navigationHistory.canGoBack(),
+      canGoForward: wc.navigationHistory.canGoForward()
+    })
+    if (e.ready && !e.failed) emit({ id, type: 'did-finish-load', url: wc.getURL() })
+  } catch {
+    /* window died mid-remount — the crash/lifecycle events resolve the board state instead */
+  }
+}
+
 /* ── OS-3 Phase 4 emit helpers (native widgets & dialogs) ───────────────────────────────────────
  * Ferry a MAIN-detected page event to the renderer (its osrWidgetStore + OsrWidgetLayer draw the
  * dialog modal / popup overlay; downloads → showToast). One generic sender; audible diff-skips. */
@@ -430,6 +506,9 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   armOwner(win)
   const existing = osr.get(id)
   if (existing) return existing
+  // Background sessions (Phase 3): enforce the GLOBAL_OSR_MAX existence budget BEFORE minting a
+  // new window — evict the longest-backgrounded residents (never a foreground entry) to make room.
+  for (const victim of pickOsrEvictions(osr.entries(), GLOBAL_OSR_MAX)) disposeOsr(victim)
   // Hidden offscreen BrowserWindow (never shown, off the taskbar). Its width/height set
   // the render surface — the proven OSR host (spec §8b).
   const osrWin = new BrowserWindow({
@@ -509,10 +588,13 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   // Downloads (4D): saved into the project's `.canvas/downloads/` (ADR 0009; OS Downloads when no
   // project is open — no parented save-dialog freeze), resolved per-download + toast, token-bucket
   // throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
+  // Backgrounded (Phase 3): denied outright — getDownloadsDir() resolves the ACTIVE project's dir
+  // at save time, so a backgrounded page's download would land in the WRONG project's
+  // `.canvas/downloads/` (R2). Short-circuit BEFORE the bucket so the denial burns no token.
   const allowDownload = createOpenExternalLimiter()
   e.teardownDownloads = registerOsrDownloads(sess, {
     exists: existsSync,
-    allow: allowDownload,
+    allow: () => !e.backgrounded && allowDownload(),
     emit: (info) => emitWidget('preview:osrDownload', { id, ...info })
   })
   // Audio (4A): surface a mute toggle while the page plays media. media-started/paused fire
@@ -764,6 +846,17 @@ export function registerPreviewOsrHandlers(
     if (isForeignSender(ev, getWin)) throw new Error('preview:osrOpen — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('preview:osrOpen — no window')
+    // Background sessions (Phase 3): an entry that already exists here is a switch-back remount —
+    // the window survived the switch (its unmount close was suppressed, R3). The kept page must
+    // NEVER reload (in-page state surviving is the feature; args.url may even be staler than the
+    // live page). Re-arm the emit owner, then re-emit the CURRENT state so the board's fresh
+    // previewStore entry converges off 'connecting' without a load.
+    const existing = osr.get(args.id)
+    if (existing) {
+      armOwner(win)
+      emitOsrRemountState(args.id, existing, existing.osrWin.webContents, emitEvent)
+      return true
+    }
     ensureOsr(args.id, win, args.url)
     return true
   })

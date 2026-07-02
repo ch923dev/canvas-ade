@@ -87,6 +87,14 @@ export interface E2EMain {
   osrLogicalSize(
     id: string
   ): { physW: number; physH: number; zoom: number; logicalW: number; logicalH: number } | null
+  /**
+   * Background sessions (Phase 3): run JS inside a board's OFFSCREEN page and return the result
+   * (`executeJavaScript` on the OSR webContents; null when no window is open / the eval threw).
+   * The no-reload keep-alive probe plants a window-global before a project switch and reads it
+   * back after — same value ⇒ same JS context ⇒ the kept page never reloaded. E2E ONLY, gated by
+   * __ENABLE_E2E_MAIN__ + CANVAS_E2E like the rest of this registry (mirrors osrPainting).
+   */
+  osrEval(id: string, code: string): Promise<unknown>
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -343,6 +351,15 @@ export function installE2EMain(
     },
     osrReplayReadyInvalidations(id) {
       return debugReplayOsrReadyInvalidations(id)
+    },
+    async osrEval(id, code) {
+      const wc = getOsrWindow(id)?.webContents
+      if (!wc || wc.isDestroyed()) return null
+      try {
+        return await wc.executeJavaScript(code)
+      } catch {
+        return null
+      }
     },
     osrLogicalSize(id) {
       const osrWin = getOsrWindow(id)

@@ -85,7 +85,12 @@ export function backgroundProjectOsr(dir: string | null): number {
   sweepPendingForProject(dir) // buffered requests for a backgrounded project are stale
   let n = 0
   for (const [, e] of entriesOwnedBy(dir)) {
-    if (applyOsrBackground(e.osrWin, e, true)) n++
+    if (applyOsrBackground(e.osrWin, e, true)) {
+      // Stamp the true transition HERE so applyOsrBackground stays clock-free/pure — the
+      // timestamp orders pickOsrEvictions' longest-backgrounded-first victim picking (Phase 3).
+      e.backgroundedAt = Date.now()
+      n++
+    }
   }
   return n
 }
@@ -96,6 +101,7 @@ export function foregroundProjectOsr(dir: string | null): number {
   let n = 0
   for (const [, e] of entriesOwnedBy(dir)) {
     if (applyOsrBackground(e.osrWin, e, false)) n++
+    e.backgroundedAt = undefined // a foreground entry is never an eviction candidate
   }
   return n
 }

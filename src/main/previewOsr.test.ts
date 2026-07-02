@@ -6,7 +6,9 @@ import {
   clampOsrDirty,
   osrPaintRect,
   applyOsrEdit,
-  applyOsrIme
+  applyOsrIme,
+  emitOsrRemountState,
+  pickOsrEvictions
 } from './previewOsr'
 import { applyOsrBackground } from './previewOsrBackground'
 import { sanitizeOsrSize, applyOsrSize } from './previewOsrSizing'
@@ -269,6 +271,140 @@ describe('applyOsrBackground (background project sessions)', () => {
     const state = { painting: true, manualMuted: false, backgrounded: false }
     expect(() => applyOsrBackground(win, state, true)).not.toThrow()
     expect(state.backgrounded).toBe(true)
+  })
+})
+
+// Background project sessions (Phase 3): the GLOBAL_OSR_MAX victim picker. Pure — the e2e proves
+// the live keep-alive path; these pin the eviction POLICY (backgrounded-only, oldest-first,
+// exactly-enough, foreground never starved) without staging 8 real offscreen windows.
+describe('pickOsrEvictions (GLOBAL_OSR_MAX existence budget)', () => {
+  const bg = (at?: number): { backgrounded: boolean; backgroundedAt?: number } => ({
+    backgrounded: true,
+    backgroundedAt: at
+  })
+  const fg = (): { backgrounded: boolean } => ({ backgrounded: false })
+
+  it('returns [] while the new window still fits under the budget', () => {
+    expect(pickOsrEvictions([], 8)).toEqual([])
+    expect(
+      pickOsrEvictions(
+        [
+          ['a', bg(1)],
+          ['b', fg()]
+        ],
+        8
+      )
+    ).toEqual([])
+    // Exactly one slot free: 7 entries + the new one = 8 = max → still no eviction.
+    const seven: Array<[string, { backgrounded: boolean; backgroundedAt?: number }]> = Array.from(
+      { length: 7 },
+      (_, i) => [`b${i}`, bg(i)]
+    )
+    expect(pickOsrEvictions(seven, 8)).toEqual([])
+  })
+
+  it('evicts the LONGEST-backgrounded entries first, exactly enough to fit the new window', () => {
+    const entries: Array<[string, { backgrounded: boolean; backgroundedAt?: number }]> = [
+      ['fresh', bg(400)],
+      ['old', bg(100)],
+      ['f1', fg()],
+      ['mid', bg(250)],
+      ['f2', fg()],
+      ['f3', fg()],
+      ['f4', fg()],
+      ['f5', fg()]
+    ]
+    // size 8, max 8 → need exactly 1: the oldest backgrounded entry, nothing more.
+    expect(pickOsrEvictions(entries, 8)).toEqual(['old'])
+    // A tighter budget needs 3 → all three backgrounded, oldest first, still no foreground.
+    expect(pickOsrEvictions(entries, 6)).toEqual(['old', 'mid', 'fresh'])
+  })
+
+  it('NEVER evicts a foreground entry, even when that leaves the budget overshot', () => {
+    const entries: Array<[string, { backgrounded: boolean; backgroundedAt?: number }]> = [
+      ...Array.from(
+        { length: 8 },
+        (_, i) => [`f${i}`, fg()] as [string, { backgrounded: boolean }]
+      ),
+      ['onlyBg', bg(50)]
+    ]
+    // size 9, max 8 → need 2, but only one candidate: evict it and deliberately overshoot.
+    expect(pickOsrEvictions(entries, 8)).toEqual(['onlyBg'])
+    expect(
+      pickOsrEvictions(
+        Array.from({ length: 9 }, (_, i) => [`f${i}`, fg()]),
+        8
+      )
+    ).toEqual([])
+  })
+
+  it('treats a missing backgroundedAt as maximally stale (evicted first)', () => {
+    const entries: Array<[string, { backgrounded: boolean; backgroundedAt?: number }]> = [
+      ['stamped', bg(10)],
+      ['unstamped', bg(undefined)],
+      ...Array.from({ length: 6 }, (_, i) => [`f${i}`, fg()] as [string, { backgrounded: boolean }])
+    ]
+    expect(pickOsrEvictions(entries, 8)).toEqual(['unstamped'])
+  })
+})
+
+// Background project sessions (Phase 3): the switch-back synthetic re-emit. Without it a
+// remounted board whose OSR window SURVIVED the switch sits on "Connecting…" with a stale URL
+// bar forever (the kept window fires no new lifecycle events). These pin the convergence
+// contract: navigate always, finish-load only for a genuinely ready+non-failed page, no throw
+// when the window died mid-remount — and, critically, NO reload call anywhere in the path.
+describe('emitOsrRemountState (switch-back re-emit)', () => {
+  function mkWc(url = 'http://localhost:5173/deep/route') {
+    return {
+      getURL: () => url,
+      navigationHistory: { canGoBack: () => true, canGoForward: () => false }
+    }
+  }
+
+  it('emits did-navigate (live URL + history) AND did-finish-load for a ready page', () => {
+    const emit = vi.fn()
+    emitOsrRemountState('b1', { ready: true, failed: false }, mkWc(), emit)
+    expect(emit).toHaveBeenCalledTimes(2)
+    expect(emit).toHaveBeenNthCalledWith(1, {
+      id: 'b1',
+      type: 'did-navigate',
+      url: 'http://localhost:5173/deep/route',
+      canGoBack: true,
+      canGoForward: false
+    })
+    expect(emit).toHaveBeenNthCalledWith(2, {
+      id: 'b1',
+      type: 'did-finish-load',
+      url: 'http://localhost:5173/deep/route'
+    })
+  })
+
+  it('emits ONLY did-navigate when the page never became ready (stay honest)', () => {
+    const emit = vi.fn()
+    emitOsrRemountState('b2', { ready: false, failed: false }, mkWc(), emit)
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit.mock.calls[0][0]).toMatchObject({ id: 'b2', type: 'did-navigate' })
+  })
+
+  it('emits ONLY did-navigate for a failed page (the real lifecycle / Reload resolves it)', () => {
+    const emit = vi.fn()
+    emitOsrRemountState('b3', { ready: true, failed: true }, mkWc(), emit)
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit.mock.calls[0][0]).toMatchObject({ id: 'b3', type: 'did-navigate' })
+  })
+
+  it('swallows a webContents that throws (window died mid-remount)', () => {
+    const emit = vi.fn()
+    const dead = {
+      getURL: (): string => {
+        throw new Error('destroyed')
+      },
+      navigationHistory: { canGoBack: () => false, canGoForward: () => false }
+    }
+    expect(() =>
+      emitOsrRemountState('b4', { ready: true, failed: false }, dead, emit)
+    ).not.toThrow()
+    expect(emit).not.toHaveBeenCalled()
   })
 })
 
