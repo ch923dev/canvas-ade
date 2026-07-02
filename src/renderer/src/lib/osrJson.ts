@@ -305,12 +305,14 @@ function scanJson(src: string): JsonModel {
           p.i++ // consume ':'
         }
         const ok = scanValue(depth + 1, childKey, childDup)
-        count++
         if (!ok) {
+          // scanValue's early-return paths (depth cap / row cap / EOF) push zero rows for this
+          // child, so it must NOT be counted toward childCount (would overstate the visible range).
           finishOpen(meta.truncated)
           openRow.childCount = count
           return false
         }
+        count++
         skipWs()
         if (src[p.i] === ',') {
           p.i++
