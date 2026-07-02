@@ -48,6 +48,14 @@ buttons) — same 420px card, same `--accent-wash` selected tile.
 - Body line is assembled from live counts ("2 terminals running", "1 live preview" — singular/plural,
   omit a zero part).
 - The tile sub-captions are the one place we explain consequence — body stays one sentence.
+- **Remembered per project (user request 2026-07-02):** picking **Keep** sets a session-scoped
+  `switchPolicy: 'keep'` on that project's `projectSessions` registry entry (dir-keyed; default
+  `'ask'`). Every later switch away from that project skips the dialog and silently backgrounds —
+  constant A⇄B switching never holds on a modal. **Stop everything is one-shot and never
+  remembered** (destructive; asks each time it's chosen as the outgoing behavior). Policy resets
+  when the user CLOSES the project (§3 ✕ → `project:closeBackground`, or the active-close path);
+  quit clears everything (in-app-run lifetime, never persisted to disk). A micro caption in the
+  dialog footer states it: "Keep is remembered until you close this project".
 
 ## 2 · ProjectSwitcher — live rows
 
