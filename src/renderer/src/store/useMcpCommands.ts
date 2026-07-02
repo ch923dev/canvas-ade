@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
+import { showToast } from './toastStore'
 import {
   assertBoard,
   assertPlanningElement,
@@ -74,7 +75,18 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       }
       // Idempotent: removeBoard no-ops on an unknown id (a board the user already
       // closed), so a double close still acks ok.
-      useCanvasStore.getState().removeBoard(command.id)
+      const store = useCanvasStore.getState()
+      const closing = store.boards.find((b) => b.id === command.id)
+      store.removeBoard(command.id)
+      // Visibility (2026-07-02, part of the reaper removal): an AGENT-initiated close must be
+      // seen, not silent — user-initiated deletes never route through this applier. The removal
+      // is one tracked undo step, so the toast's Undo restores board + cables + memberships.
+      if (closing) {
+        showToast({
+          message: `Agent closed board "${closing.title}"`,
+          action: { label: 'Undo', run: () => useCanvasStore.getState().undo() }
+        })
+      }
       return { ok: true, type: 'removeBoard' }
     }
     case 'configureBoard': {

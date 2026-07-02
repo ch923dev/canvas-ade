@@ -22,8 +22,8 @@ import type { Page } from '@playwright/test'
  * registered — a missing one is a real regression (asserted, never skipped). Two
  * blocks the standard smoke run itself skipped/duplicated are intentionally NOT ported
  * — they are proven at the unit tier, where they belong (PR-4 keep-set discipline):
- *   - idle-reap (the smoke's `MCP_REAP_SKIP` is skip-by-default; the orchestrator sweep
- *     is unit-covered with a fake clock in `mcpOrchestrator.test.ts`),
+ *   - the close_board human-gate branch matrix (denied/failed/unknown-id — unit-covered in
+ *     `mcpOrchestrator.test.ts`; the idle reaper itself was REMOVED 2026-07-02),
  *   - the single-use-nonce replay invariant (a pure in-process unit, covered verbatim
  *     in `dispatchGuard.test.ts`).
  * See docs/testing/TESTING.md › MCP keep-set.
@@ -173,8 +173,22 @@ function boardTitle(page: Page, id: string): Promise<string | undefined> {
 /** Drive the trusted confirm modal like a human (the dispatch tools block on this gate). */
 const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
 const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
+const DENY = `(() => { const b = document.querySelector('[data-testid="confirm-deny"]'); if (b) b.click(); return !!b })()`
 
 type McpPair = { info: McpInfo; orch: McpClient; worker: McpClient }
+
+/**
+ * close_board pays the human gate (2026-07-02 — the reaper's replacement): fire the call,
+ * approve the confirm modal like a user, await the ack. EVERY close in this spec must go
+ * through this — a bare `call('close_board')` hangs on the modal until the 60s SDK timeout
+ * and leaves a STALE OPEN MODAL that poisons the next modal-driven test.
+ */
+async function closeBoardGated(page: Page, mcp: McpPair, id: string): Promise<void> {
+  const p = mcp.orch.call('close_board', { id })
+  expect(await pollEval(page, MODAL, 8000)).toBe(true)
+  await evalIn(page, APPROVE)
+  await p
+}
 
 // Per-test fixture: connect one orchestrator + one worker client over loopback and
 // auto-dispose. A missing server is a FAILURE (the smoke returned exit 1 for it), not a
@@ -491,7 +505,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // The worker is DENIED server-side (the specific tool-not-found isError).
     const workerSpawn = await mcp.worker.call('spawn_board', { type: 'terminal' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_board')).toBe(true)
-    await mcp.orch.call('close_board', { id: spawnedId }) // restore the baseline
+    await closeBoardGated(page, mcp, spawnedId) // restore the baseline
   })
 
   test('spawn_board carries an agent title onto the new board (2b)', async ({ page, mcp }) => {
@@ -505,7 +519,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(id).not.toBe('')
     await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
     await expect.poll(() => boardTitle(page, id), { timeout: 6000 }).toBe('Auth refactor plan')
-    await mcp.orch.call('close_board', { id }) // restore the baseline
+    await closeBoardGated(page, mcp, id) // restore the baseline
   })
 
   // ── W1-G: app-model resource (C1) · spawn_group tool (C2) · write_result caps (C3) ───────────
@@ -569,8 +583,8 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const workerSpawn = await mcp.worker.call('spawn_group', { name: 'nope' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_group')).toBe(true)
     // Restore the baseline (close both members; the now-empty group is cleared by the next reset()).
-    await mcp.orch.call('close_board', { id: ids.terminalId as string })
-    await mcp.orch.call('close_board', { id: ids.planningId as string })
+    await closeBoardGated(page, mcp, ids.terminalId as string)
+    await closeBoardGated(page, mcp, ids.planningId as string)
   })
 
   test('C3 / BUG-009: write_result rejects an oversized summary at the wire (Zod cap), accepts a normal one', async ({
@@ -605,26 +619,46 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await expect.poll(() => boardLaunchCommand(page, id), { timeout: 6000 }).toBe('echo MCP_CFG')
     const workerCfg = await mcp.worker.call('configure_board', { id, launchCommand: 'x' })
     expect(deniedToolNotFound(workerCfg, 'configure_board')).toBe(true)
-    await mcp.orch.call('close_board', { id })
+    await closeBoardGated(page, mcp, id)
   })
 
-  test('close_board removes a board from the canvas; a worker is denied', async ({ page, mcp }) => {
+  test('close_board removes a board ONLY through the human gate; deny keeps it; a worker is denied', async ({
+    page,
+    mcp
+  }) => {
+    test.slow() // two real confirm-modal round-trips
     const spawn = await mcp.orch.call('spawn_board', { type: 'terminal' })
     const id = okText(spawn)
     expect(id).not.toBe('')
     await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
     expect(mcp.worker.tools).not.toContain('close_board')
-    const close = await mcp.orch.call('close_board', { id })
-    expect(acked(close)).toBe(true)
+    // DENY path first (2026-07-02 gate — the reaper's replacement): the call blocks on the
+    // human gate; click Deny → the board STAYS on the canvas and the call resolves as an error.
+    const denyP = mcp.orch.call('close_board', { id })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, DENY)
+    expect(rejected(await denyP)).toBe(true)
+    expect(await boardOnCanvas(page, id)).toBe(true) // still there — deny is fail-closed
+    // APPROVE path: the same close, approved → the board is gone.
+    const closeP = mcp.orch.call('close_board', { id })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await closeP)).toBe(true)
     await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(false) // gone
+    // Visibility: the agent-initiated removal raised the "Agent closed board …" toast (with
+    // its Undo action) — the silent reaper-era delete is the exact bug this replaces.
+    const TOAST = `(() => [...document.querySelectorAll('.toast-msg')].some((t) => /Agent closed board/.test(t.textContent || '')))()`
+    expect(await pollEval(page, TOAST, 6000)).toBe(true)
     // The worker is denied the tool regardless of whether the board still exists.
     const workerClose = await mcp.worker.call('close_board', { id })
     expect(deniedToolNotFound(workerClose, 'close_board')).toBe(true)
   })
 
   test('SECURITY: the orchestrator spawn cap rejects beyond the limit (nothing auto-spawns unbounded)', async ({
+    page,
     mcp
   }) => {
+    test.slow() // each gated cleanup close pays a real confirm-modal round-trip
     const capIds: string[] = []
     let capRejected = false
     for (let i = 0; i < 8; i++) {
@@ -637,7 +671,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       } else break // unexpected — fall through to the assertion
     }
     // Restore the baseline BEFORE asserting, so a failed assert still leaves a clean canvas.
-    for (const id of capIds) await mcp.orch.call('close_board', { id })
+    for (const id of capIds) await closeBoardGated(page, mcp, id)
     expect(capRejected, `cap should reject beyond the limit; spawned ${capIds.length}`).toBe(true)
     expect(capIds.length).toBeGreaterThanOrEqual(1)
   })
@@ -689,8 +723,8 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
         { timeout: 10000 }
       )
       .toBe(true)
-    await mcp.orch.call('close_board', { id: tId })
-    if (bId) await mcp.orch.call('close_board', { id: bId })
+    await closeBoardGated(page, mcp, tId)
+    if (bId) await closeBoardGated(page, mcp, bId)
   })
 
   test('SECURITY: assign_prompt fire-and-forget writes to a terminal through the gate; worker + non-terminal denied', async ({
@@ -728,8 +762,8 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
         { timeout: 10000 }
       )
       .toBe(true)
-    await mcp.orch.call('close_board', { id: taId })
-    if (baId) await mcp.orch.call('close_board', { id: baId })
+    await closeBoardGated(page, mcp, taId)
+    if (baId) await closeBoardGated(page, mcp, baId)
   })
 
   test('SECURITY: interrupt sends Ctrl-C to a terminal through the gate, with an audit entry; worker + non-terminal denied', async ({
@@ -765,8 +799,8 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
         { timeout: 4000 }
       )
       .toBe(true)
-    await mcp.orch.call('close_board', { id: tiId })
-    if (biId) await mcp.orch.call('close_board', { id: biId })
+    await closeBoardGated(page, mcp, tiId)
+    if (biId) await closeBoardGated(page, mcp, biId)
   })
 
   test('SECURITY: relay_prompt A->B is authorized by an orchestration cable; the reverse direction is rejected; worker denied', async ({
@@ -833,8 +867,8 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
         { timeout: 10000 }
       )
       .toBe(true)
-    await mcp.orch.call('close_board', { id: raId })
-    await mcp.orch.call('close_board', { id: rbId })
+    await closeBoardGated(page, mcp, raId)
+    await closeBoardGated(page, mcp, rbId)
   })
 
   // ── Agent Orchestration v1 (P0 authority + P4 connector-aware routing) ──────────────────────
@@ -948,8 +982,8 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     } finally {
       await connected.close().catch(() => {})
     }
-    await mcp.orch.call('close_board', { id: aId })
-    await mcp.orch.call('close_board', { id: bId })
+    await closeBoardGated(page, mcp, aId)
+    await closeBoardGated(page, mcp, bId)
   })
 })
 

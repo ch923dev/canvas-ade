@@ -1,4 +1,4 @@
-import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
+import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
@@ -8,24 +8,6 @@ import {
   __setTerminalTokenMinter,
   type TerminalToken
 } from './orchestration/seam'
-
-/**
- * Parse a positive-millisecond env override, falling back to `fallback` when the value
- * is absent or not a FINITE POSITIVE number (BUG-023). The old `Number(env) || fallback`
- * idiom only caught falsy values (0 / NaN / ''): a NEGATIVE override like `-1` is truthy
- * and passed straight through, which made the idle-reap predicate `t - idleSince >= -1`
- * always true → every MCP-spawned board got reaped on its first idle sweep. Reject any
- * value <= 0 (and NaN) so a misconfigured/negative env can never disable or invert the
- * TTL; a legitimate small POSITIVE value still drives the live smoke's fast reap.
- */
-export function positiveMsEnv(raw: string | undefined, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-/** Idle-reap TTL + sweep interval (T3.4). Env-overridable so the live smoke can drive a fast reap. */
-const IDLE_TTL_MS = positiveMsEnv(process.env.CANVAS_MCP_IDLE_TTL_MS, MCP_IDLE_TTL_MS)
-const REAP_INTERVAL_MS = positiveMsEnv(process.env.CANVAS_MCP_REAP_INTERVAL_MS, 60_000)
 
 /**
  * 🔒 S2 planning content-write path gate (ADR 0003): the `add_planning_elements` tool + the
@@ -57,7 +39,7 @@ export function planningWriteEnabled(
  *     before recording the new one), so the store holds one live connected token per board instead
  *     of one per spawn (bounds accretion).
  *   - `revoke` (BUG-019) kills the ONE token bound to a single board — wired to the lifecycle's
- *     `closeBoard` (close_board tool + idle-reap) so a board's token dies THE MOMENT the board does,
+ *     `closeBoard` (the human-gated close_board tool) so a board's token dies THE MOMENT the board does,
  *     instead of staying live in the TokenStore until a re-spawn rotates it or a full consent-revoke
  *     fires. A no-op for a board with no tracked token (never minted one, or already revoked).
  *   - `revokeAll` kills every live connected token at once (consent revoke), so a bearer still
@@ -107,8 +89,6 @@ export interface RunningMcp {
    * log the token (PLAN §6).
    */
   mintConnectedToken(boardId: string): TerminalToken
-  /** Run an idle-reap sweep now; returns the reaped board ids (T3.4 — drives the live smoke). */
-  reapIdle(): Promise<string[]>
   /**
    * PR-2: the read-only working-tree diff for a board, through the SAME orchestrator path the
    * agent-facing `git_diff` MCP tool uses (terminal-type check + 100 KB clamp). The pinned
@@ -191,11 +171,10 @@ export async function startMcpServer(
     // 🔒 Agent Orchestration v1: bound connected-token accretion + enable consent-revoke
     // invalidation (FIND-015 — see makeConnectedTokenTracker). Built BEFORE the orchestrator so
     // `connected.revoke` can be wired in as `onBoardClosed` below (BUG-019): a board's connected
-    // token now dies THE MOMENT the lifecycle closes it (close_board tool / idle-reap), not only
-    // on a re-spawn rotation or a full consent-revoke.
+    // token now dies THE MOMENT the lifecycle closes it (the human-gated close_board tool), not
+    // only on a re-spawn rotation or a full consent-revoke.
     const connected = makeConnectedTokenTracker((token) => tokens.revoke(token))
     const orchestrator = buildOrchestrator(registry, {
-      idleTtlMs: IDLE_TTL_MS,
       cap: opts.cap,
       onBoardClosed: (boardId) => connected.revoke(boardId)
     })
@@ -221,20 +200,14 @@ export async function startMcpServer(
       return { token, tier: 'connected', port: server.port }
     }
     __setTerminalTokenMinter(mintConnectedToken)
-    // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
-    // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
-    // timer never keeps the process alive at shutdown.
-    const reapTimer = setInterval(() => {
-      void orchestrator.reapIdle().catch(() => {})
-    }, REAP_INTERVAL_MS)
-    reapTimer.unref?.()
+    // NOTE (2026-07-02): the T3.4 idle-reap sweep that ran here on an interval was REMOVED —
+    // boards are deleted ONLY by the user or via the human-gated close_board tool.
     return {
       port: server.port,
       tokens,
       orchestratorToken,
       mintWorkerToken: (boardId) => mintBoardToken(tokens, { boardId, tier: 'worker' }).token,
       mintConnectedToken,
-      reapIdle: () => orchestrator.reapIdle(),
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       describeApp: () => orchestrator.describeApp(),
       spawnGroup: (input) => orchestrator.spawnGroup(input),
@@ -246,7 +219,6 @@ export async function startMcpServer(
       close: () => {
         // Clear the seam minter so a post-close `mintTerminalToken` fails loud (no bogus token).
         __setTerminalTokenMinter(null)
-        clearInterval(reapTimer)
         connected.clear()
         return server.close()
       }

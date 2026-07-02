@@ -753,11 +753,10 @@ export function getTerminalActivityStaleMsCore(
 
 /**
  * MAIN-internal activity-staleness predicate (BUG-007): ms since terminal board `id` last produced
- * PTY output. Drives the MCP idle-reaper's dormancy measure — a live agent shell's coarse status pill
- * stays 'running' for its whole lifetime, so the reaper can't use that bucket to detect a quiescent
+ * PTY output. Drives `awaitSettled`'s output-silence settle (C2e) — a live agent shell's coarse
+ * status pill stays 'running' for its whole lifetime, so that bucket can't detect a quiescent
  * board; output silence is the real dormancy signal. Returns undefined for any id without a LIVE
- * session (non-terminal / closed / parked) — the reaper then falls back to its status-bucket check.
- * Read-only; never exposed to the renderer.
+ * session (non-terminal / closed / parked). Read-only; never exposed to the renderer.
  */
 export function getTerminalActivityStaleMs(id: string): number | undefined {
   return getTerminalActivityStaleMsCore(id, sessions, Date.now())

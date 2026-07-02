@@ -448,8 +448,8 @@ app.whenReady().then(async () => {
       // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
       listGroups,
       listSessions: listPtySessions,
-      // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
-      // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
+      // BUG-007: ms-since-last-PTY-output per board — the output-silence dormancy signal
+      // awaitSettled (C2e) polls, since a live agent shell's status never flips off 'running'.
       boardActivityStaleMs: getTerminalActivityStaleMs,
       subscribeStatus: subscribeBoardStatus,
       readOutput: readPtyOutput,
