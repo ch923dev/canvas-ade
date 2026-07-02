@@ -111,7 +111,7 @@ let mainWindow: BrowserWindow | null = null
 // Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
 // safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
 let authService: AuthService | null = null
-let pendingDeepLink: string | null = null
+let pendingDeepLinks: string[] = []
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
@@ -292,7 +292,7 @@ function handleAuthDeepLink(url: string): void {
   if (authService) {
     void authService.handleCallback(url)
   } else {
-    pendingDeepLink = url
+    pendingDeepLinks.push(url)
   }
 }
 
@@ -526,10 +526,12 @@ app.whenReady().then(async () => {
     onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
   })
   registerAuthHandlers(ipcMain, () => mainWindow, authService)
-  if (pendingDeepLink) {
-    const url = pendingDeepLink
-    pendingDeepLink = null
-    void authService.handleCallback(url)
+  if (pendingDeepLinks.length > 0) {
+    const urls = pendingDeepLinks
+    pendingDeepLinks = []
+    for (const url of urls) {
+      void authService.handleCallback(url)
+    }
   }
   // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the
