@@ -149,6 +149,26 @@ describe('claudeProvisioner', () => {
     expect(settings.enabledMcpjsonServers).toEqual(['other', 'canvas-ade'])
   })
 
+  it('rolls back .mcp.json when the second write (settings.local.json) fails, leaving no orphaned bearer-token file (BUG-020)', () => {
+    const dir = freshProject()
+    const originalMcpJson = { mcpServers: { mine: { type: 'http' } } }
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify(originalMcpJson))
+    // Force the second write to fail: a FILE sits where the `.claude` directory must be created.
+    writeFileSync(join(dir, '.claude'), 'not a directory')
+
+    expect(() => claudeProvisioner.writeSync(dir, TOK)).toThrow()
+
+    // .mcp.json is restored to exactly its pre-write state — no orphaned canvas-ade token entry.
+    expect(readJson(join(dir, '.mcp.json'))).toEqual(originalMcpJson)
+  })
+
+  it('deletes .mcp.json (rather than leaving a newly-created orphan) when it did not exist before a failed second write', () => {
+    const dir = freshProject()
+    writeFileSync(join(dir, '.claude'), 'not a directory') // forces the second write to fail
+    expect(() => claudeProvisioner.writeSync(dir, TOK)).toThrow()
+    expect(existsSync(join(dir, '.mcp.json'))).toBe(false)
+  })
+
   it('unsync removes only our entries and deletes a file it solely owned', () => {
     const dir = freshProject()
     claudeProvisioner.writeSync(dir, TOK) // creates files holding only our entry
