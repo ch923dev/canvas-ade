@@ -15,6 +15,8 @@ import {
   SERVER_NAME,
   claudeHome,
   dirExists,
+  existingServersMap,
+  isRecord,
   mcpEntry,
   readJsonConfig,
   removeFileQuiet,
@@ -39,7 +41,10 @@ function writeSync(projectDir: string, tok: TerminalToken): string {
   const mcpFile = mcpJsonPath(projectDir)
   const originalMcp = readJsonConfig<McpServersConfig>(mcpFile)
   const mcp: McpServersConfig = originalMcp ? { ...originalMcp } : {}
-  mcp.mcpServers = { ...mcp.mcpServers, [SERVER_NAME]: mcpEntry(tok.port, tok.token) }
+  mcp.mcpServers = {
+    ...existingServersMap(mcp, 'mcpServers'),
+    [SERVER_NAME]: mcpEntry(tok.port, tok.token)
+  }
   writeJsonConfig(mcpFile, mcp)
 
   // 2) .claude/settings.local.json — ensure our server id is in enabledMcpjsonServers (deduped),
@@ -69,7 +74,7 @@ function writeSync(projectDir: string, tok: TerminalToken): string {
 function removeSync(projectDir: string): void {
   const mcpFile = mcpJsonPath(projectDir)
   const mcp = readJsonConfig<McpServersConfig>(mcpFile)
-  if (mcp?.mcpServers && SERVER_NAME in mcp.mcpServers) {
+  if (isRecord(mcp?.mcpServers) && SERVER_NAME in mcp.mcpServers) {
     delete mcp.mcpServers[SERVER_NAME]
     if (Object.keys(mcp.mcpServers).length === 0 && Object.keys(mcp).length === 1) {
       // The file held only our entry → remove it rather than leave an empty stub.

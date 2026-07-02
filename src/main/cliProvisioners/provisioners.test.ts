@@ -37,6 +37,8 @@ import { codexProvisioner } from './codex'
 import { geminiProvisioner } from './gemini'
 import { opencodeProvisioner } from './opencode'
 import {
+  existingServersMap,
+  isRecord,
   maskToken,
   readJsonConfig,
   removeCodexTable,
@@ -84,6 +86,19 @@ describe('shared helpers', () => {
     const bad = join(dir, 'bad.json')
     writeFileSync(bad, '{not json')
     expect(() => readJsonConfig(bad)).toThrow(/not valid JSON/)
+  })
+
+  it('isRecord/existingServersMap treat a malformed mcpServers/mcp field as absent (BUG-023)', () => {
+    expect(isRecord({})).toBe(true)
+    expect(isRecord([])).toBe(false)
+    expect(isRecord('oops')).toBe(false)
+    expect(isRecord(null)).toBe(false)
+    expect(isRecord(undefined)).toBe(false)
+
+    expect(existingServersMap({ mcpServers: { a: 1 } }, 'mcpServers')).toEqual({ a: 1 })
+    expect(existingServersMap({ mcpServers: 'not-an-object' }, 'mcpServers')).toBeUndefined()
+    expect(existingServersMap({ mcpServers: ['a', 'b'] }, 'mcpServers')).toBeUndefined()
+    expect(existingServersMap(undefined, 'mcpServers')).toBeUndefined()
   })
 
   it('tomlBasicString escapes backslash and quote', () => {
@@ -178,6 +193,20 @@ describe('claudeProvisioner', () => {
     writeFileSync(join(dir, '.claude'), 'not a directory') // forces the second write to fail
     expect(() => claudeProvisioner.writeSync(dir, TOK)).toThrow()
     expect(existsSync(join(dir, '.mcp.json'))).toBe(false)
+  })
+
+  it('writeSync replaces a malformed mcpServers field instead of corrupting the merge (BUG-023)', () => {
+    const dir = freshProject()
+    // Hand-edited / foreign-tool-written config: mcpServers is a STRING, not an object.
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: 'not-an-object' }))
+
+    claudeProvisioner.writeSync(dir, TOK)
+
+    const mcp = readJson(join(dir, '.mcp.json'))
+    // The malformed value is discarded, not spread into numeric-key junk (`{0:'n',1:'o',...}`).
+    expect(mcp.mcpServers).toEqual({
+      'canvas-ade': { type: 'http', url: EXPECTED_URL, headers: { Authorization: EXPECTED_BEARER } }
+    })
   })
 
   it('unsync removes only our entries and deletes a file it solely owned', () => {
