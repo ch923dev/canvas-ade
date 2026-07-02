@@ -37,3 +37,11 @@ export function seed(page: Page, type: string, patch?: Record<string, unknown>):
   const patchArg = patch ? `, ${JSON.stringify(patch)}` : ''
   return evalIn<string>(page, `window.__canvasE2E.seedBoard(${JSON.stringify(type)}${patchArg})`)
 }
+
+/** P5: select a board + normalize zoom so the Board Inspector (the one control home since the
+ *  title-bar clusters were removed) reveals for it. The id flows through JSON.stringify into the
+ *  eval string (internal seeded id, same discipline as seed/evalIn call-sites). */
+export async function selectForInspector(page: Page, id: string): Promise<void> {
+  await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+  await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+}

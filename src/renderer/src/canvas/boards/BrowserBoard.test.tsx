@@ -7,6 +7,7 @@ import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
 import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import { useToastStore } from '../../store/toastStore'
+import { useInspectorSlotStore } from '../inspector/inspectorSlotStore'
 import type { BrowserBoard as BrowserBoardData } from '../../lib/boardSchema'
 
 // OS-3 Phase 5: OSR is the default engine, so BrowserBoard now mounts the offscreen-preview hooks.
@@ -281,6 +282,23 @@ describe('BrowserBoard — auto-push URL accent flash (D2-C)', () => {
 })
 
 describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel since D1-A)', () => {
+  // P5: Screenshot / Open-in-browser live ONLY in the Board Inspector now — publish a slot host
+  // for this board so BrowserBoard portals its BrowserInspector in (what the shell does when the
+  // board is the single eligible selection), then drive the inspector buttons by data-test.
+  let slotHost: HTMLDivElement | null = null
+  function openInspector(id: string): void {
+    slotHost = document.createElement('div')
+    document.body.appendChild(slotHost)
+    useInspectorSlotStore.getState().setActiveBoardId(id)
+    useInspectorSlotStore.getState().setSlotEl(slotHost)
+  }
+  afterEach(() => {
+    useInspectorSlotStore.getState().setActiveBoardId(null)
+    useInspectorSlotStore.getState().setSlotEl(null)
+    slotHost?.remove()
+    slotHost = null
+  })
+
   // The board no longer renders its own note — feedback goes to the app toast store.
   async function shoot(id: string): Promise<{ message: string; kind: string }> {
     // OSR is the default engine: the camera button enables on status 'connected' + alive (osrAlive
@@ -288,7 +306,7 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
     act(() => {
       usePreviewStore.getState().patch(id, { status: 'connected' })
     })
-    const btn = document.querySelector<HTMLButtonElement>('button[title="Screenshot"]')
+    const btn = document.querySelector<HTMLButtonElement>('[data-test="inspector-screenshot"]')
     if (!btn) throw new Error('screenshot button not found')
     await act(async () => {
       fireEvent.click(btn)
@@ -301,6 +319,7 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
   it('reports failure when the clipboard write failed and nothing was saved', async () => {
     const id = seedBrowser()
     screenshotPreview.mockResolvedValue({ ok: true, assetId: null, clipboardOk: false })
+    openInspector(id)
     render(<Harness id={id} />)
     const t = await shoot(id)
     expect(t.message).toContain('Screenshot failed')
@@ -315,6 +334,7 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
       assetId: 'assets/abc.png',
       clipboardOk: false
     })
+    openInspector(id)
     render(<Harness id={id} />)
     const t = await shoot(id)
     expect(t.message).toContain('saved to assets/')
@@ -325,6 +345,7 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
   it('still reports the clipboard success toast when the copy landed', async () => {
     const id = seedBrowser()
     screenshotPreview.mockResolvedValue({ ok: true, assetId: null, clipboardOk: true })
+    openInspector(id)
     render(<Harness id={id} />)
     const t = await shoot(id)
     expect(t.message).toContain('Screenshot copied to clipboard')
@@ -336,8 +357,9 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
     ;(window.api as unknown as { openExternalPreview: unknown }).openExternalPreview = vi.fn(
       async () => false
     )
+    openInspector(id)
     render(<Harness id={id} />)
-    const btn = document.querySelector<HTMLButtonElement>('button[title="Open in browser"]')
+    const btn = document.querySelector<HTMLButtonElement>('[data-test="inspector-open-external"]')
     if (!btn) throw new Error('open-external button not found')
     // Rapid double-click on a broken URL must REPLACE the keyed toast, not stack two.
     await act(async () => {

@@ -559,8 +559,10 @@ export interface BoardFrameProps {
   /** D2-B: PTY warming up — shows the top sliver in its slow variant before `running`. */
   spawning?: boolean
   status?: BoardStatus | null
-  /** Per-type action controls shown left of maximize/⋯ in the title bar. */
-  actions?: ReactNode
+  /** A quiet status adjunct rendered right after the title (e.g. the File board's unsaved dot).
+   *  NOT a control slot — the per-type action clusters were removed in P5; the Board Inspector
+   *  is the one home for per-type controls. */
+  titleBadge?: ReactNode
   /** Content-well background; `--inset` for Terminal, `--surface` otherwise. */
   contentBg?: string
   /** Provided only when the board is focusable → renders the maximize button. */
@@ -593,7 +595,7 @@ export function BoardFrame({
   running = false,
   spawning = false,
   status,
-  actions,
+  titleBadge,
   contentBg = 'var(--surface)',
   onFull,
   onDuplicate,
@@ -784,6 +786,7 @@ export function BoardFrame({
           </span>
           {/* D2-A: inline-editable title (double-click / F2) — see BoardTitle. */}
           <BoardTitle boardId={boardId} title={title} selected={selected} italic={titleItalic} />
+          {titleBadge}
           {/* D0-6 (A5): persistent polite live region so status TRANSITIONS are announced
               (the visible label is hover-only, so it can't serve as the live region). The
               text strips the per-frame spinner glyph and maps the per-second elapsed timer
@@ -804,11 +807,6 @@ export function BoardFrame({
             >
               {status.label}
             </span>
-          )}
-          {actions && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
-              {actions}
-            </div>
           )}
         </div>
         {/* Universal controls, pinned at the far right — always visible & clickable. */}

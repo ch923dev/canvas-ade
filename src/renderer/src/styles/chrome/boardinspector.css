@@ -53,6 +53,14 @@
   left: 264px;
 }
 
+/* P5 (D7): while a board is in FULL VIEW, raise the Inspector above the modal scrim (z 200) — the
+   title-bar action clusters are gone, so the Inspector must stay reachable in exactly the mode with
+   the most screen space. 250 = the menu layer, which already works over the scrim (menu.css). Same
+   `:has()` pattern as the SidePanel shift; the scrim mounts only while full view is up. */
+body:has(.fullview-scrim) .ca-inspector-wrap {
+  z-index: 250;
+}
+
 /* Sticky identity header: type glyph + micro type tag + Jump-to-board, then the board title. */
 .ca-inspector-head {
   flex: 0 0 auto;

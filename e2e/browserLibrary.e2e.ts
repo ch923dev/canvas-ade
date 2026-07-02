@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { evalIn, mainCall, pollEval, seed, selectForInspector } from './helpers'
 
 const DL_NAME = 'canvas-e2e-download.txt'
 const runtimeStatus = (id: string, status: string) =>
@@ -144,10 +144,12 @@ test.describe('@preview Project Library (downloads → .canvas/downloads)', () =
       )
       expect(before, 'no assets before the screenshot').toBe(0)
 
-      // Take a screenshot via the URL-bar camera (saves a PNG into .canvas/assets/). It must
-      // auto-refresh the OPEN panel via requestRefresh — no manual ⟳. Programmatic click fires the
-      // React onClick through the recap-consent scrim (which only blocks REAL pointer events).
-      await evalIn(page, `document.querySelector('[title="Screenshot"]').click()`)
+      // Take a screenshot via the Inspector's Preview › Screenshot (P5 — the URL-bar camera is
+      // gone; saves a PNG into .canvas/assets/). It must auto-refresh the OPEN panel via
+      // requestRefresh — no manual ⟳. Programmatic click fires the React onClick through the
+      // recap-consent scrim (which only blocks REAL pointer events).
+      await selectForInspector(page, id)
+      await evalIn(page, `document.querySelector('[data-test="inspector-screenshot"]').click()`)
       const shown = await pollEval(
         page,
         `document.querySelectorAll('[data-test="library-row"]').length > 0`,

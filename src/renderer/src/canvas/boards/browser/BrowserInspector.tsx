@@ -202,7 +202,11 @@ export function BrowserInspector({
         >
           Screenshot
         </InspectorAction>
-        <InspectorAction icon={<Icon name="external" size={14} />} onClick={onOpenExternal}>
+        <InspectorAction
+          icon={<Icon name="external" size={14} />}
+          onClick={onOpenExternal}
+          dataTest="inspector-open-external"
+        >
           Open in browser
         </InspectorAction>
       </InspectorSection>

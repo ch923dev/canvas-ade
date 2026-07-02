@@ -3,8 +3,9 @@
  * FileBoard owns all state/handlers and portals this into the shell's slot, so every control reuses the
  * EXACT same handler its title-bar / context-menu counterpart uses (no duplication, no lifted state).
  *
- * Additive: the title-bar actions (FileActions) stay as-is; this surfaces them as labelled rows PLUS
- * the otherwise right-click-only Find-in-file (the visibility win) and the path/type/size config.
+ * P5: the ONE control home — the title-bar cluster (FileActions) is gone; only the unsaved dot
+ * stays on the bar. Surfaces the mode seg / font stepper / Save / Pin as labelled rows PLUS the
+ * otherwise right-click-only Find-in-file (the visibility win) and the path/type/size config.
  * Sections mirror docs/research/mocks/board-inspector-popover-mock (File hero); View (markdown only) +
  * Appearance + File start expanded, Configuration starts COLLAPSED for text (open for other kinds where
  * it is the only content). The shell owns the head + Duplicate foot, so this renders sections only.
@@ -19,7 +20,8 @@ import {
   InspectorSegmented,
   InspectorStepper
 } from '../../inspector/primitives'
-import type { FileViewMode } from './FileActions'
+/** The markdown display mode (was FileActions' export until P5 removed the title-bar cluster). */
+export type FileViewMode = 'preview' | 'split' | 'source'
 
 export type FileKind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
 

@@ -7,8 +7,8 @@
  * preview composites correctly under other boards and chrome (the occlusion fix). This
  * component draws the HTML chrome around it:
  *   - the rounded device frame (border + inset shadow + mobile notch),
- *   - the URL/route bar (back/forward/reload + editable URL + connected dot + WxH),
- *   - the viewport segmented control (Mobile/Tablet/Desktop) in the title-bar slot,
+ *   - the INPUT-ONLY URL/route bar (editable URL + connected dot + WxH; P5 moved nav /
+ *     screenshot / external / network / audio into the Board Inspector),
  *   - a hidden composition-proxy <textarea> (keyboard/IME/clipboard target) + the
  *     native-widget overlay layer (JS dialogs / <select> popups the bitmap can't composite).
  * The device-frame geometry mirrors `lib/browserLayout` so the HTML frame matches the page's
@@ -26,9 +26,7 @@ import { createPortal } from 'react-dom'
 import type { BrowserBoard as BrowserBoardData, BrowserViewport } from '../../lib/boardSchema'
 import { VIEWPORT_PRESETS, deviceFrameRect, TITLEBAR_H, URLBAR_H } from '../../lib/browserLayout'
 import { BoardFrame } from '../BoardFrame'
-import { Icon } from '../Icon'
 import { useInspectorSlot } from '../inspector/inspectorSlotStore'
-import { ViewportControl } from './browser/BrowserViewportControl'
 import { BrowserInspector, type ConnTone } from './browser/BrowserInspector'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
@@ -42,7 +40,6 @@ import { useOffscreenInput } from './useOffscreenInput'
 import { useOffscreenSizing } from './useOffscreenSizing'
 import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
 import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
-import { OsrVolumeControl } from './osr/OsrVolumeControl'
 import { useOsrWidgetStore } from '../../store/osrWidgetStore'
 import { useLibraryStore } from '../../store/libraryStore'
 import { useOsrNetwork } from './osr/useOsrNetwork'
@@ -93,14 +90,13 @@ export function BrowserBoard({
   // audible flip · download) → osrWidgetStore + toasts. Drives the mute toggle + the overlay layer.
   useOsrWidgetEvents(board.id)
   // DevTools Network inspector (per board). The hook subscribes MAIN capture ONLY while the panel is
-  // open; the URL-bar toggle flips `open`. Ephemeral (no schema). FIND-011 cleanup lives in the hook.
+  // open; the Inspector's Developer toggle flips `open`. Ephemeral (no schema). FIND-011 cleanup
+  // lives in the hook.
   useOsrNetwork(board.id)
   const netOpen = useOsrNetworkStore((s) => s.byBoard[board.id]?.open ?? false)
   const netDock = useOsrNetworkStore((s) => s.byBoard[board.id]?.dock ?? 'bottom')
-  const toggleNet = (): void => useOsrNetworkStore.getState().setOpen(board.id, !netOpen)
-  // 4A — the URL-bar audio control shows only while the page is playing media. Mute + volume are
-  // the user's manual choices (MAIN also auto-mutes off-screen); both ephemeral (no schema). The
-  // control itself (speaker icon + click-open mute/slider popover) lives in OsrVolumeControl.
+  // 4A — the audio rows (Inspector › Preview) surface only while the page is playing media. Mute +
+  // volume are the user's manual choices (MAIN also auto-mutes off-screen); both ephemeral (no schema).
   const osrAudibleNow = useOsrWidgetStore((s) => s.audible[board.id] ?? false)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
@@ -276,10 +272,10 @@ export function BrowserBoard({
     void window.api.reloadOsrPreview(board.id)
   }
 
-  // ── Board Inspector (P1) ──────────────────────────────────────────────────────────────────────
-  // The portaled BrowserInspector is presentation-only; the reads/handlers it needs are the SAME
-  // paths the URL-bar controls use (OsrVolumeControl mute/volume, NavBtns, ViewportControl) — no
-  // duplicated state. The slot is non-null only while this board is the single eligible selection.
+  // ── Board Inspector (P1; P5 made it the ONLY control home) ───────────────────────────────────
+  // The portaled BrowserInspector is presentation-only; it drives the same IPC/store paths the
+  // URL-bar buttons used before P5 removed them. The slot is non-null only while this board is the
+  // single eligible selection.
   const inspectorSlot = useInspectorSlot(board.id)
   const muted = useOsrWidgetStore((s) => s.muted[board.id] ?? false)
   const volume = useOsrWidgetStore((s) => s.volume[board.id] ?? 1)
@@ -358,7 +354,6 @@ export function BrowserBoard({
         dimmed={dimmed}
         status={status}
         contentBg="var(--surface)"
-        actions={<ViewportControl value={board.viewport} onChange={setViewport} />}
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
@@ -367,51 +362,11 @@ export function BrowserBoard({
         onRemoveFromAllGroups={onRemoveFromAllGroups}
         onStartConnect={onStartConnect}
       >
-        {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
+        {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. P5: INPUT-ONLY —
+            nav (back/forward/reload), mute+volume, screenshot, open-external and the network toggle
+            all live in the Board Inspector now (Navigation / Preview / Developer); the editable URL
+            field itself is a locked decision and stays on-board. */}
         <div className="bb-urlbar" style={{ height: URLBAR_H }}>
-          {/* D0-2: interactive cluster at rest — faint is disabled-only */}
-          <div style={{ display: 'flex', gap: 2, color: 'var(--text-3)' }}>
-            <NavBtn
-              name="back"
-              title="Back"
-              disabled={!runtime.canGoBack}
-              onClick={() => void window.api.goBackOsrPreview(board.id)}
-            />
-            <NavBtn
-              name="forward"
-              title="Forward"
-              disabled={!runtime.canGoForward}
-              onClick={() => void window.api.goForwardOsrPreview(board.id)}
-            />
-            <NavBtn
-              name="refresh"
-              title="Reload"
-              onClick={() => void window.api.reloadOsrPreview(board.id)}
-            />
-            {/* 4A — audio control (mute + volume), shown only while the preview is playing media. */}
-            {osrAudibleNow && <OsrVolumeControl boardId={board.id} />}
-            <NavBtn
-              name="camera"
-              title="Screenshot"
-              // The screenshot IPC captures the offscreen window's last painted frame. Enable once
-              // the board can be captured: connected AND not evicted (over the MAX_LIVE cap).
-              disabled={runtime.status !== 'connected' || !osrAlive}
-              onClick={takeScreenshot}
-            />
-            <NavBtn name="external" title="Open in browser" onClick={openExternal} />
-            {/* DevTools Network inspector toggle — accent when the panel is open. */}
-            <button
-              title="Network inspector"
-              aria-label="Network inspector"
-              aria-pressed={netOpen}
-              onClick={toggleNet}
-              onMouseDown={(e) => e.stopPropagation()}
-              className={'bb-navbtn' + (netOpen ? ' bb-navbtn-on' : '')}
-              style={{ cursor: 'pointer' }}
-            >
-              <Icon name="activity" size={14} />
-            </button>
-          </div>
           <div
             className={
               'bb-url-field' +
@@ -602,33 +557,6 @@ export function BrowserBoard({
         </div>
       </BoardFrame>
     </>
-  )
-}
-
-/** A 24x24 URL-bar nav button (back/forward/reload/camera/external). The Phase-4 audio control is
- *  its own component (OsrVolumeControl). */
-function NavBtn({
-  name,
-  title,
-  disabled = false,
-  onClick
-}: {
-  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external'
-  title: string
-  disabled?: boolean
-  onClick: () => void
-}): ReactElement {
-  return (
-    <button
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-      onMouseDown={(e) => e.stopPropagation()}
-      className="bb-navbtn"
-      style={{ opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer' }}
-    >
-      <Icon name={name} size={name === 'refresh' ? 13 : 14} />
-    </button>
   )
 }
 

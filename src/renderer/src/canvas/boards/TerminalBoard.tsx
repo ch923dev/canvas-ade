@@ -6,9 +6,10 @@
  * Per CLAUDE.md we spawn the SHELL, not the agent; if `board.launchCommand` is
  * set it is written as the first PTY line (in `pty.ts`) so the agent inherits
  * PATH/profile/auth. The board is a plain terminal: a calm identity pill (status
- * dot + shell/agent name) plus two title-bar actions — Configure (shell /
- * launch command / cwd / editable label) and Restart. Clicking the body focuses
- * xterm directly so keystrokes always land. Owns this file only; shared surface frozen.
+ * dot + shell/agent name); every per-type control (Configure / Restart / font /
+ * interrupt / recap / preview) lives in the Board Inspector (P5 — the title bar
+ * carries no action cluster). Clicking the body focuses xterm directly so
+ * keystrokes always land. Owns this file only; shared surface frozen.
  *
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
@@ -43,7 +44,6 @@ import { NewTerminalDialog } from './terminal/NewTerminalDialog'
 import { presetById } from './terminal/agentPresets'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
-import { TerminalRestartMenu } from './terminal/TerminalRestartMenu'
 import { usePaletteRestart } from './terminal/usePaletteRestart'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
@@ -62,7 +62,6 @@ import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 import { TerminalFindBar } from './terminal/TerminalFindBar'
-import { TerminalActions } from './terminal/TerminalActions'
 import { TerminalInspector } from './terminal/TerminalInspector'
 import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 import {
@@ -184,9 +183,8 @@ export function TerminalBoard({
   // so it never reintroduces the preserve-3d pointer-hit-test bug). `flipped` aliases it.
   const flip = useTerminalFlip()
   const flipped = flip.flipped
-  // T-resume: the Restart control offers Resume-vs-New only when we know a session to resume.
-  const [restartMenu, setRestartMenu] = useState(false)
-  const restartBtnRef = useRef<HTMLSpanElement>(null)
+  // T-resume: the Inspector's Session controls offer Resume-vs-New only when we know a session
+  // to resume (P5: the title-bar restart button + its anchored popover menu are gone).
   const canResume = !!board.agentSessionId
   // P0.5 Board Inspector: non-null only when THIS terminal is the single eligible selection (the
   // shell publishes its content slot then). We portal our per-type inspector into it below — reusing
@@ -442,28 +440,9 @@ export function TerminalBoard({
   // NOT live sticky) so the buttons track the size this board actually renders at, not another
   // board's sticky drift. PINNED-space deliberately — the [MIN, MAX] bounds are pinned-space, so
   // the ± buttons disable at the same pin regardless of zoom (the render font is pin × cs).
+  // (P5: the title-bar action cluster is gone — the Inspector is the one control home; this feeds
+  // the Inspector stepper + the right-click menu.)
   const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
-  const actions = (
-    <TerminalActions
-      boardId={board.id}
-      selected={selected}
-      hovered={hovered}
-      running={running}
-      interruptSent={interruptSent}
-      onInterrupt={interrupt}
-      effectiveFont={effectiveFont}
-      onNudgeFont={nudgeFont}
-      onPreview={(g) => void onPreview(g)}
-      configOpen={configOpen}
-      onConfigure={() => setConfigOpen(true)}
-      restartBtnRef={restartBtnRef}
-      canResume={canResume}
-      restartMenuOpen={restartMenu}
-      onRestartClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
-      flipped={flipped}
-      onToggleFlip={flip.toggle}
-    />
-  )
 
   // Right-click context menu over the well. Reuses the planning menu component. When the
   // running TUI has mouse reporting on (term.modes.mouseTrackingMode !== 'none'), plain
@@ -551,7 +530,6 @@ export function TerminalBoard({
         running={running}
         spawning={state === 'spawning'}
         status={displayStatus}
-        actions={actions}
         contentBg="var(--inset)"
         onFull={onFull}
         onDuplicate={onDuplicate}
@@ -756,26 +734,6 @@ export function TerminalBoard({
                   }}
                 />
               </div>
-            )}
-            {/* T-resume restart menu, on the shared Menu shell since D2-B (Escape/outside/
-                resize auto-close, menuitem keyboard nav — the audit's "no auto-close").
-                Body-portaled, so it stays reachable from the recap back-face too (you often
-                resume FROM the recap). Resume → respawn with `claude --resume <sessionId>`
-                (resumeCommand sanitises the canvas.json-sourced id to one inert token before
-                it nears the PTY); New → fresh launch. */}
-            {restartMenu && (
-              <TerminalRestartMenu
-                anchor={restartBtnRef}
-                onResume={() => {
-                  launchOverrideRef.current = resumeCommand(board.agentSessionId)
-                  restart()
-                }}
-                onNew={() => {
-                  launchOverrideRef.current = undefined
-                  restart()
-                }}
-                onClose={() => setRestartMenu(false)}
-              />
             )}
           </div>
         </div>

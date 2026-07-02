@@ -237,6 +237,9 @@ export function DataFlowBoard({
   // write path lands (the "→ Planning" in-app ER export is the export shipping in this slice).
 
   // ── body states ───────────────────────────────────────────────────────────────────────────────
+  // P5: the in-body .df-bar toolbar + the empty-state bind/regenerate buttons are gone — every
+  // control (Graph/Sequence, the three filters, Regenerate, → Planning, Source bind) lives in the
+  // DataFlowInspector. The empty states keep their message and point at the Inspector (D3).
   let body: ReactElement
   if (!sourceId) {
     body = (
@@ -249,16 +252,8 @@ export function DataFlowBoard({
         {browsers.length === 0 ? (
           <div className="df-empty-note">No Browser boards on the canvas yet.</div>
         ) : (
-          <div className="df-bind-row">
-            {browsers.map((b) => (
-              <button
-                key={b.id}
-                className="df-bind-btn"
-                onClick={() => updateBoard(board.id, { sourceBoardId: b.id } as Partial<Board>)}
-              >
-                {b.title}
-              </button>
-            ))}
+          <div className="df-empty-note">
+            Bind one via <b>Inspector › Source</b> (select this board).
           </div>
         )}
       </div>
@@ -269,93 +264,13 @@ export function DataFlowBoard({
         <div className="df-empty-h">No captures yet</div>
         <div className="df-empty-d">
           Interact with the bound Browser board to capture its requests, then they map here
-          automatically.
+          automatically. Regenerate lives in <b>Inspector › Captures</b>.
         </div>
-        <button className="df-btn" onClick={regenerate}>
-          ⟳ Regenerate
-        </button>
       </div>
     )
   } else {
     body = (
       <>
-        <div className="df-bar">
-          <div className="df-tabs" role="tablist">
-            <button
-              className={'df-tab' + (tab === 'graph' ? ' df-on' : '')}
-              role="tab"
-              aria-selected={tab === 'graph'}
-              onClick={() => setTab(board.id, 'graph')}
-            >
-              ⟲ Graph
-            </button>
-            <button
-              className={'df-tab' + (tab === 'sequence' ? ' df-on' : '')}
-              role="tab"
-              aria-selected={tab === 'sequence'}
-              onClick={() => setTab(board.id, 'sequence')}
-            >
-              ⇉ Sequence
-            </button>
-          </div>
-          <button
-            className={'df-optin' + (inferShapes ? ' df-on' : '')}
-            role="checkbox"
-            aria-checked={inferShapes}
-            onClick={toggleInfer}
-            title="Infer data shapes (reads response bodies, in the main process, capped)"
-          >
-            <span className="df-box">{inferShapes && '✓'}</span> Infer shapes
-          </button>
-          <button
-            className={'df-optin' + (apiOnly ? ' df-on' : '')}
-            role="checkbox"
-            aria-checked={apiOnly}
-            onClick={() => setApiOnly(board.id, !apiOnly)}
-            title="Show only data calls (fetch/xhr/websocket) — hide scripts, styles, images, fonts, documents"
-          >
-            <span className="df-box">{apiOnly && '✓'}</span> API only
-          </button>
-          <button
-            className={'df-optin' + (firstParty ? ' df-on' : '')}
-            role="checkbox"
-            aria-checked={firstParty}
-            disabled={!sourceDomain}
-            onClick={() => setFirstParty(board.id, !firstParty)}
-            title={
-              sourceDomain
-                ? `Show only ${sourceDomain} — hide third-party origins (analytics, CDNs, widgets)`
-                : 'First-party filter needs the bound board URL'
-            }
-          >
-            <span className="df-box">{firstParty && '✓'}</span> First-party
-          </button>
-          {hiddenCount > 0 && (
-            <span className="df-hidden" title="Records hidden by the active filters">
-              hidden {hiddenCount}
-            </span>
-          )}
-          {(diff.added.size > 0 || diff.changed.size > 0) && (
-            <span className="df-diffchip">
-              {diff.added.size > 0 && <>+{diff.added.size} new</>}
-              {diff.added.size > 0 && diff.changed.size > 0 && ' · '}
-              {diff.changed.size > 0 && <>{diff.changed.size} changed</>}
-              <span className="df-dim-txt"> · since last run</span>
-            </span>
-          )}
-          <span className="df-spacer" />
-          <button
-            className="df-btn"
-            onClick={regenerate}
-            title="Re-run inference over fresh captures"
-          >
-            ⟳ Regenerate
-          </button>
-          <button className="df-btn df-primary" onClick={exportPlanning}>
-            → Planning
-          </button>
-        </div>
-
         {flat && (
           <div className="df-banner" role="status">
             <b>Flat API</b> — no relationships between endpoints found across {totalCalls} calls.

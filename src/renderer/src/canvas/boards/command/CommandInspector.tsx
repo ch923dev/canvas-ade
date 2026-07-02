@@ -93,7 +93,11 @@ export function CommandInspector({
             >
               {flipped ? 'Back to board' : 'Flip to recap'}
             </InspectorAction>
-            <InspectorAction icon={<Icon name="minimize" size={14} />} onClick={onCollapse}>
+            <InspectorAction
+              icon={<Icon name="minimize" size={14} />}
+              onClick={onCollapse}
+              dataTest="inspector-command-collapse"
+            >
               Collapse to rail
             </InspectorAction>
           </>

@@ -1,51 +1,8 @@
 /* ── DevTools Network inspector (per board) ────────────────────────────────────────────────────
    A DOM panel over .bb-stage (clips/rounds with the board — the occlusion fix). Two docks (bottom
    drawer ⇄ right) switched in-header; same internals. Matches the signed-off mock. */
-.bb-navbtn-on {
-  background: var(--accent-wash);
-  color: var(--accent);
-}
-/* 4A audio control — speaker button + click-open popover (mute toggle + 0–100% volume slider).
-   The popover anchors under the button and drops over the canvas (the .bb-urlbar stacking context
-   sits above .bb-frame; tokens only). */
-.bb-vol {
-  position: relative;
-  display: inline-flex;
-}
-.bb-vol-popover {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 4px;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: var(--shadow-pop);
-}
-.bb-vol-slider {
-  width: 92px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.bb-vol-pct {
-  min-width: 30px;
-  text-align: right;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-3);
-}
-/* The range slider onto the app's 1.5px accent focus ring (Chromium's default outline otherwise
-   clashes with the single blue accent). Matches the .bb-navbtn:focus-visible convention. */
-.bb-vol-slider:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 1.5px var(--accent);
-}
+/* P5: the URL-bar network toggle (.bb-navbtn-on) + the 4A audio popover (.bb-vol*) moved into the
+   Board Inspector (Developer / Preview sections); their styles are removed. */
 /* B3: the panel is a flex SIBLING of the browser region inside .bb-stage — it SPLITS the stage
    (browser resizes to fit) instead of overlaying. .bb-stage becomes flex (row for right dock,
    column for bottom) only while the panel is mounted. */
@@ -1778,123 +1735,11 @@
   background: var(--surface);
   overflow: hidden;
 }
-.df-bar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface);
-}
-.df-tabs {
-  display: flex;
-  gap: 2px;
-}
-.df-tab {
-  height: 22px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-ctl);
-  background: transparent;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  cursor: pointer;
-}
-.df-tab.df-on {
-  color: var(--text);
-  background: var(--surface-overlay);
-  box-shadow: inset 0 -1.5px 0 var(--accent);
-}
-.df-optin {
-  height: 22px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-ctl);
-  background: var(--inset);
-  color: var(--text-2);
-  font-size: 11px;
-  cursor: pointer;
-}
-.df-optin.df-on {
-  color: var(--text);
-  border-color: var(--border);
-}
-.df-optin:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.df-hidden {
-  display: flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-pill);
-  background: var(--inset);
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text-3);
-}
-.df-box {
-  width: 13px;
-  height: 13px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 3px;
-  font-size: 9px;
-  color: var(--accent);
-}
-.df-optin.df-on .df-box {
-  border-color: var(--accent);
-}
-.df-diffchip {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-pill);
-  background: var(--surface-overlay);
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text-2);
-}
-.df-dim-txt {
-  color: var(--text-3);
-}
+/* P5: the in-body .df-bar toolbar (tabs / opt-in filters / hidden+diff chips / Regenerate /
+   → Planning) and the empty-state bind buttons moved into the DataFlowInspector; their styles
+   (.df-bar/-tabs/-tab/-optin/-hidden/-box/-diffchip/-dim-txt/-btn/-bind-*) are removed. */
 .df-spacer {
   margin-left: auto;
-}
-.df-btn {
-  height: 22px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 9px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-ctl);
-  background: var(--surface-raised);
-  color: var(--text-2);
-  font-size: 11px;
-  cursor: pointer;
-}
-.df-btn:hover {
-  color: var(--text);
-  border-color: var(--border);
-}
-.df-btn.df-primary {
-  color: var(--text);
-  border-color: var(--border);
 }
 .df-banner {
   flex: 0 0 auto;
@@ -2179,23 +2024,10 @@
   font-size: 11px;
   color: var(--text-faint);
 }
-.df-bind-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  margin-top: 4px;
-}
-.df-bind-btn {
-  height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  background: var(--surface-raised);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-.df-bind-btn:hover {
-  border-color: var(--accent);
+/* P5 (D3): the empty states point at the Inspector ("Inspector › Source" / "Inspector ›
+   Captures") — the reference reads a step brighter than its surrounding hint text. */
+.df-empty-note b,
+.df-empty-d b {
+  color: var(--text-2);
+  font-weight: 450;
 }

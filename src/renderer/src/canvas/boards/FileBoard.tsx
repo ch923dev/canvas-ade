@@ -63,7 +63,6 @@ import { renderMarkdownToHtml } from './fileBoardMarkdown'
 import { useFileSave } from './fileBoardSave'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
 import { FILEREF_MIME } from '../fileTreeData'
-import { FileActions } from './file/FileActions'
 import { FileInspector } from './file/FileInspector'
 import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 
@@ -440,26 +439,23 @@ export function FileBoard({
     updateBoard(board.id, { path: next })
   }, [pathDraft, board.id, updateBoard])
 
-  // Title-bar controls, extracted to FileActions to keep this host under the max-lines ratchet:
-  // Pin (peek), markdown mode seg, font steppers, dirty dot + Save, read-only tag. The Board
-  // Inspector (P2) surfaces these same controls (plus Find) as labelled rows via FileInspector.
-  const actions =
-    kind === 'text' || isPeek ? (
-      <FileActions
-        boardId={board.id}
-        isText={kind === 'text'}
-        isPeek={isPeek}
-        isMarkdown={isMarkdown}
-        mode={mode}
-        onMode={setMode}
-        fontSize={fontSize}
-        onAdjustFont={adjustFont}
-        readOnly={readOnly}
-        dirty={dirty}
-        saving={saving}
-        onSave={() => void doSave()}
-      />
-    ) : undefined
+  // P5: the title-bar cluster (pin / mode seg / font ± / Save) is gone — FileInspector is the one
+  // control home. Only the at-a-glance UNSAVED cue survives on the bar, as a quiet dot beside the
+  // title (D1); Save itself lives in Inspector › File.
+  const titleBadge = dirty ? (
+    <span
+      role="img"
+      aria-label="Unsaved changes"
+      title="Unsaved changes"
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: 999,
+        background: 'var(--warn)',
+        flex: 'none'
+      }}
+    />
+  ) : undefined
 
   // The text content's left/sole pane: the live editor on the focused board, else the crisp
   // snapshot. Built once so the plain (source) view and the split view's left half share it.
@@ -549,7 +545,7 @@ export function FileBoard({
         hovered={hovered}
         dimmed={dimmed}
         contentBg="var(--surface)"
-        actions={actions}
+        titleBadge={titleBadge}
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
