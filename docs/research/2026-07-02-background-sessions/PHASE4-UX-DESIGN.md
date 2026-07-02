@@ -101,48 +101,54 @@ Clicking a row's ✕ when that project has running resources opens a plain two-b
 - The ACTIVE project's close path (`closeActiveLiveResources`) is NOT a switcher row — it rides the
   existing window-close/quit flow and is out of scope for this menu.
 
-## 4 · Edge-hover project strip (Task-View style) — added on user request 2026-07-02
+## 4 · Bottom project dock (edge-hover, Task-View style) — user request 2026-07-02, refined same day
 
-Windows-Task-View-like overview: hover a screen edge → a strip slides up with one card per
-project — the active project, every backgrounded resident, and a few recents — each showing a
-**partial view of its canvas** (thumbnail) plus the §2 live-dot/badge grammar.
+Windows-Task-View-like overview: hover the **bottom edge** → a floating, centered **project
+dock** slides up (same grammar as the board dock) with one card per **SESSION project** — the
+active project plus every project opened/created THIS app run (the backgrounded residents). Each
+card shows a **partial view of its canvas** (thumbnail) plus the §2 live-dot/badge grammar. A
+final **+** tile opens/creates another project.
 
 ```
    ┌──────────────────────────── app window ────────────────────────────┐
    │                          (canvas as usual)                         │
    │                                                                    │
-   │ ┌─────────────────────────────────────────────────────────────┐   │
-   │ │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐    │   │
-   │ │  │● my-app  2t·1p│  │● api-server 1t✕│  │  other-project│    │   │
-   │ │  │  ACTIVE       │  │               │  │               │    │   │
-   │ │  │ ┌─┐┌─┐        │  │ ┌──┐ ┌─┐      │  │  no snapshot  │    │   │
-   │ │  │ └─┘└─┘ ┌──┐   │  │ └──┘ └─┘      │  │     yet       │    │   │
-   │ │  │        └──┘   │  │               │  │               │    │   │
-   │ │  └───────────────┘  └───────────────┘  └───────────────┘    │   │
-   │ └─────────────────────────────────────────────────────────────┘   │
-   └═══════════════════════ hover hot zone (edge) ═══════════════════════┘
+   │          ┌──────────────────────────────────────────────┐          │
+   │          │ ┌──────────────┐ ┌──────────────┐  ┌────┐    │          │
+   │          │ │● my-app 2t·1p│ │● api-server 1t✕│  │    │   │          │
+   │          │ │  ACTIVE      │ │              │  │  + │    │          │
+   │          │ │ ┌─┐┌─┐  ┌──┐ │ │ ┌──┐ ┌─┐     │  │    │    │          │
+   │          │ │ └─┘└─┘  └──┘ │ │ └──┘ └─┘     │  └────┘    │          │
+   │          │ └──────────────┘ └──────────────┘            │          │
+   │          └──────────────────────────────────────────────┘          │
+   └═══════════════════ bottom-edge hover hot zone ═══════════════════════┘
 ```
 
-- **Trigger**: pointer parked on the screen edge (~2px hot zone, ~150ms intent delay — a drive-by
-  never opens it). Leave / Esc / card-click closes. **Open for sign-off: top vs bottom edge** —
-  bottom is the board dock's home (dock sits bottom-center; strip + dock would fight), top is free
-  and matches the switcher pill's corner. Recommendation: **top**.
+- **Membership: session projects only** (registry `projectSessions` + the active dir). Cold
+  recents NEVER appear here — they stay in the §2 switcher menu. So every card is real: it has
+  live counts and a real snapshot.
+- **Trigger**: pointer parked on the bottom edge (~2px hot zone, ~150ms intent delay — a drive-by
+  never opens it). Leave / Esc / card-click closes. Coexists with the board dock: the project
+  dock reveals ABOVE it (board dock stays put; hot zone is the window edge itself, below the
+  dock's hover area).
 - **Card** = header (live dot `--ok` when sessions alive · name · `2 term · 1 prev` badge ·
   hover-✕ on backgrounded cards → §3 confirm) + canvas thumbnail. Active card wears the 1.5px
-  accent ring + `ACTIVE` micro tag; clicking it just closes the strip.
+  accent ring + `ACTIVE` micro tag; clicking it just closes the dock.
+- **+ tile** (dashed border, trailing): small menu with the switcher's `Open folder…` /
+  `Create project…` actions — the dock can grow the session set without a trip to the top-left.
 - **Click** = switch, through the exact §1 pipeline (ask-on-switch dialog when the outgoing
-  project has live resources). The strip is a second *presentation* of the same actions — zero new
+  project has live resources). The dock is a second *presentation* of the same actions — zero new
   switch semantics.
 - **Thumbnail = static snapshot, never a live render.** Captured MAIN-side via
   `webContents.capturePage(canvasRect)` (downscaled ~2×) at two moments: the outgoing project at
   **switch-away** (inside `performProjectSwitch`, before unmount) and the active project on
-  **strip-open**. Cached under `userData/project-thumbs/<dirHash>.png` (app cache, NOT the project
-  folder — ADR 0009 stays clean), served to the renderer as a data URL over IPC. A recent with no
-  snapshot this run shows a dot-grid placeholder ("no snapshot yet"). Rendering N background
-  canvases live is explicitly out of scope (one React Flow instance per app, by design).
-- Solid surfaces only (`--surface` bar, `--surface-raised` cards) — no blur/glassmorphism (locked
-  contract).
-- Suggested build order: Phase 4a = §1–3 (dialog · menu rows · close), Phase 4b = the strip
+  **dock-open**. Cached under `userData/project-thumbs/<dirHash>.png` (app cache, NOT the project
+  folder — ADR 0009 stays clean), served to the renderer as a data URL over IPC. Capture-failure
+  fallback: dot-grid placeholder. Rendering N background canvases live is explicitly out of scope
+  (one React Flow instance per app, by design).
+- Solid surfaces only (`--surface` panel, `--surface-raised` cards) — no blur/glassmorphism
+  (locked contract).
+- Suggested build order: Phase 4a = §1–3 (dialog · menu rows · close), Phase 4b = the dock
   (needs the snapshot capture plumbing).
 
 ## Out of scope (locked)
