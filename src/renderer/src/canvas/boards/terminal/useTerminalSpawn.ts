@@ -305,6 +305,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
   // let the spawn effect's ResizeObserver consume this flag on the first good fit.
   const pendingRespawnRef = useRef(false)
+  // BUG-033: re-entrancy guard for respawn(). termRef.current!==term alone only catches a
+  // full remount (a NEW term object) — it does NOT catch a second respawn() firing on the
+  // SAME term before the first's spawnTerminal IPC resolves (e.g. two Restart clicks, or a
+  // deferred pendingRespawnRef fire racing an explicit Restart). Without this, a slow OLDER
+  // spawn's rejection/`spawn-failed` can land AFTER a newer respawn already succeeded and is
+  // running, clobbering the live session with a false "spawn failed" banner. Bumped at the
+  // start of every respawn(); a result is applied only if it is still the latest generation.
+  const respawnGenerationRef = useRef(0)
   // T-resume: a one-shot launchCommand override for the NEXT respawn (the Restart menu's
   // "Resume session" sets `claude --resume <id>`); respawn consumes + clears it so only that
   // spawn uses it and a later restart falls back to board.launchCommand.
@@ -552,6 +560,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   const respawn = useCallback(() => {
     const term = termRef.current
     if (!term) return
+    // BUG-033: claim this call's generation. Any earlier in-flight respawn() on this same
+    // term is now stale — its eventual .then()/.catch() must not touch state/term below.
+    const generation = ++respawnGenerationRef.current
     // Consume a one-shot launch override (e.g. `claude --resume <id>`) for THIS spawn only.
     const override = launchOverrideRef.current
     launchOverrideRef.current = undefined
@@ -573,14 +584,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         rows: term.rows
       })
       .then((res) => {
-        if (termRef.current !== term) return
+        if (termRef.current !== term || respawnGenerationRef.current !== generation) return
         if (res.state === 'spawn-failed') {
           setState('spawn-failed')
           term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
         }
       })
       .catch((err: Error) => {
-        if (termRef.current !== term) return
+        if (termRef.current !== term || respawnGenerationRef.current !== generation) return
         setState('spawn-failed')
         term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
       })
