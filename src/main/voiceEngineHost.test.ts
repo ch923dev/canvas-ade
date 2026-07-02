@@ -4,12 +4,14 @@
  * shape. The module's utilityProcess main block is guarded on `process.parentPort`, so
  * importing it under vitest is side-effect free.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  attachSession,
   buildRecognizerConfig,
   createFrameProcessor,
   int16ToFloat32,
   type RecognizerLike,
+  type SessionPortLike,
   type StreamLike
 } from './voiceEngineHost'
 
@@ -111,6 +113,116 @@ describe('createFrameProcessor', () => {
     createFrameProcessor(rec, post).push(frameOf([0]))
     expect(post).not.toHaveBeenCalled()
     expect(calls).toContain('reset')
+  })
+})
+
+class FakePort implements SessionPortLike {
+  listeners: Array<(e: { data: unknown }) => void> = []
+  posted: unknown[] = []
+  started = false
+  closed = false
+  throwOnPost = false
+  on(event: 'message', listener: (e: { data: unknown }) => void): this {
+    if (event === 'message') this.listeners.push(listener)
+    return this
+  }
+  start(): void {
+    this.started = true
+  }
+  postMessage(msg: unknown): void {
+    if (this.throwOnPost) throw new Error('port closed')
+    this.posted.push(msg)
+  }
+  close(): void {
+    this.closed = true
+  }
+  emit(data: unknown): void {
+    for (const l of this.listeners) l({ data })
+  }
+}
+
+const frameMsg = (bytes = 3840): { t: string; d: ArrayBuffer } => ({
+  t: 'frame',
+  d: new ArrayBuffer(bytes)
+})
+
+describe('attachSession (drain protocol)', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('starts the port, counts well-formed frames only, ignores junk', () => {
+    const port = new FakePort()
+    const s = attachSession(port, null)
+    expect(port.started).toBe(true)
+    port.emit(frameMsg())
+    port.emit(frameMsg())
+    port.emit(null)
+    port.emit('junk')
+    port.emit({ t: 'frame', d: 'not-a-buffer' })
+    expect(s.frames()).toBe(2)
+  })
+
+  it('requestStop posts {t:stop} and reports ONLY after eos — frames queued behind the stop are still counted (the under-count race)', () => {
+    const port = new FakePort()
+    const s = attachSession(port, null)
+    port.emit(frameMsg())
+    const onDone = vi.fn()
+    s.requestStop(onDone)
+    expect(port.posted).toEqual([{ t: 'stop' }])
+    // Frames that were already in flight land AFTER the stop request…
+    port.emit(frameMsg())
+    port.emit(frameMsg())
+    expect(onDone).not.toHaveBeenCalled() // …and the report waits for the sentinel.
+    port.emit({ t: 'eos' })
+    expect(onDone).toHaveBeenCalledWith(3)
+    expect(port.closed).toBe(true)
+  })
+
+  it('requestStop falls back to the timeout when no eos ever arrives (renderer gone)', () => {
+    vi.useFakeTimers()
+    const port = new FakePort()
+    const s = attachSession(port, null)
+    port.emit(frameMsg())
+    const onDone = vi.fn()
+    s.requestStop(onDone, 1000)
+    vi.advanceTimersByTime(1001)
+    expect(onDone).toHaveBeenCalledWith(1)
+    expect(port.closed).toBe(true)
+    // A late eos after the timeout must not double-report.
+    port.emit({ t: 'eos' })
+    expect(onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('endNow tears down without a report; a dead-port throw is swallowed', () => {
+    const port = new FakePort()
+    const s = attachSession(port, null)
+    s.endNow()
+    expect(port.posted).toEqual([{ t: 'stop' }])
+    expect(port.closed).toBe(true)
+    const dead = new FakePort()
+    dead.throwOnPost = true
+    expect(() => attachSession(dead, null).endNow()).not.toThrow()
+    expect(dead.closed).toBe(true)
+  })
+
+  it('logs cadence every 8th frame under debug with the injected clock', () => {
+    const port = new FakePort()
+    const log = vi.fn()
+    let nowMs = 0
+    attachSession(port, null, { debug: true, log, now: () => nowMs })
+    for (let i = 0; i < 8; i++) {
+      nowMs = (i + 1) * 120
+      port.emit(frameMsg())
+    }
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls[0][0]).toBe('[voice] host: 8 frames, 8.3/s, 3840 B each, model=none')
+  })
+
+  it('forwards recognizer partials to the port alongside frame counting', () => {
+    const { rec } = fakeRecognizer([{ text: 'hi' }])
+    const port = new FakePort()
+    attachSession(port, rec)
+    port.emit(frameMsg())
+    expect(port.posted).toEqual([{ t: 'partial', text: 'hi' }])
   })
 })
 

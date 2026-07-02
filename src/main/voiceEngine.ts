@@ -79,7 +79,9 @@ export function createVoiceEngine(
     startSession(port, model): void {
       ensureChild().postMessage({ t: 'session:start', model }, [port])
     },
-    stopSession(timeoutMs = 3000): Promise<{ frames: number }> {
+    // Default generous: a COLD recognizer init (~70 MB ONNX load) can block the host loop
+    // for seconds before session:stop is even processed, then the eos drain adds ≤1 s.
+    stopSession(timeoutMs = 10000): Promise<{ frames: number }> {
       if (!child) return Promise.resolve({ frames: 0 })
       const c = child
       // A second stop while one is pending settles the first with 0 (single session).
