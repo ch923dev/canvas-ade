@@ -913,9 +913,17 @@ const api = {
     // 🔒 Human-confirm gate (T4.2): MAIN posts a confirm request; the renderer shows a
     // modal and replies the human's decision on MAIN's unique reply channel. Returns an
     // unsubscribe fn. MAIN owns the decision (it blocks the tool on this reply).
+    //
+    // 🔒 BUG-029: at most ONE subscriber may ever be wired to the underlying 'mcp:confirm'
+    // IPC event. A second call while a listener is already registered is a no-op (returns a
+    // no-op unsubscribe) — otherwise a second in-frame listener would fire on every request
+    // alongside the legitimate ConfirmModal and could win the race to reply first, auto-
+    // approving a dangerous action before a human ever sees the modal. (isForeignSender only
+    // guards the sender FRAME, not which in-frame subscriber replied.)
     onConfirm: (
       handler: (request: ConfirmRequest, reply: (decision: ConfirmDecisionMsg) => void) => void
     ): (() => void) => {
+      if (ipcRenderer.listenerCount('mcp:confirm') > 0) return () => {}
       const listener = (
         _e: IpcRendererEvent,
         msg: { request: ConfirmRequest; replyChannel: string }
