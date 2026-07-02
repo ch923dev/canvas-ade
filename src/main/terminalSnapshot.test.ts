@@ -92,4 +92,15 @@ describe('terminalSnapshot guards', () => {
     expect(writeTerminalSnapshot(proj, 'b', atCap)).toBe(true)
     expect(readFileSync(terminalSnapshotPath(proj, 'b')!, 'utf8').length).toBe(MAX_SNAPSHOT_BYTES)
   })
+
+  it('an oversized skip invalidates a prior successful snapshot instead of leaving it stale', () => {
+    expect(writeTerminalSnapshot(proj, 'b', 'session N-1 output')).toBe(true)
+    expect(readTerminalSnapshot(proj, 'b')).toBe('session N-1 output')
+
+    const huge = 'x'.repeat(MAX_SNAPSHOT_BYTES + 1)
+    expect(writeTerminalSnapshot(proj, 'b', huge)).toBe(false)
+
+    expect(readTerminalSnapshot(proj, 'b')).toBeNull()
+    expect(existsSync(terminalSnapshotPath(proj, 'b')!)).toBe(false)
+  })
 })
