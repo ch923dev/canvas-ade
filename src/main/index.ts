@@ -112,6 +112,11 @@ let mainWindow: BrowserWindow | null = null
 // safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
 let authService: AuthService | null = null
 let pendingDeepLink: string | null = null
+// BUG-024: entitlementCache.isFresh() existed but no caller ever consulted it — the cache was
+// written once at sign-in and trusted indefinitely, so a Stripe-side cancel/lapse would never
+// reach the desktop. Re-check on startup (below), gated by this TTL so it costs at most one
+// license GET per hour of app runtime.
+const ENTITLEMENT_TTL_MS = 60 * 60 * 1000
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
@@ -531,6 +536,10 @@ app.whenReady().then(async () => {
     pendingDeepLink = null
     void authService.handleCallback(url)
   }
+  // BUG-024: re-verify a stale cached entitlement against the backend on every cold start (no-op
+  // when signed out or still within the TTL) so a lapsed/canceled subscription doesn't stay
+  // trusted indefinitely just because the app happened to stay signed in.
+  void authService.syncEntitlementIfStale(ENTITLEMENT_TTL_MS)
   // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the
   // retired CANVAS_SMOKE=e2e), so gate on both — the old SMOKE-only guard was dead (F-A).
