@@ -64,10 +64,14 @@ buttons) — same 420px card, same `--accent-wash` selected tile.
   Keep + Switch ⇒ the policy is ALSO persisted to disk in **userData** (keyed by project dir —
   app config per ADR 0009, NEVER the project folder: `canvas.json` is git-shared, this is a
   machine preference). On later runs that project's switches are silent from the start. Keep-only:
-  selecting the Stop tile dims + disables (and unticks) the checkbox. **Reset stays one gesture:**
-  the §3 ✕ close clears BOTH the session policy and the persisted forever flag — no hidden
-  un-revokable skip-state, and the dialog naturally returns the next time that project runs
-  something.
+  selecting the Stop tile dims + disables (and unticks) the checkbox. The §3 ✕ close clears BOTH
+  the session policy and the persisted forever flag.
+- **∞ forget badge (user request 2026-07-02 — undo the checkbox without killing work):** a
+  project with the forever flag wears a small `∞` badge (accent on `--accent-wash`) on its §2
+  switcher row and §4 dock card. Click = **forget**: clears the forever flag AND the session Keep
+  → the very next switch away asks again. Sessions untouched — revoking a *preference* must never
+  require destroying *work* (the ✕ close alone was a bad trade: kill terminals to change a
+  setting). Tooltip: "Always kept in background — click to ask again".
 
 ## 2 · ProjectSwitcher — live rows
 
