@@ -28,3 +28,17 @@ export const terminalApi = {
   deleteSnapshot: (boardId: string): Promise<boolean> =>
     ipcRenderer.invoke('terminal:deleteSnapshot', boardId)
 }
+
+/**
+ * The PTY data-plane MessagePort is transferred from main → preload over IPC.
+ * MessagePorts can't cross the contextBridge directly, so we re-post them into
+ * the main world with window.postMessage (the documented Electron pattern).
+ * The renderer listens for { __ptyPort, id } and reads event.ports[0].
+ * Same-origin re-post (SEC-2): pin the target origin instead of '*' so this stays
+ * safe if an iframe is ever introduced. The MessagePorts ride in the transfer list.
+ */
+export function forwardPtyPort(): void {
+  ipcRenderer.on('pty:port', (e, msg: { id: string }) => {
+    window.postMessage({ __ptyPort: true, id: msg.id }, window.location.origin, e.ports)
+  })
+}

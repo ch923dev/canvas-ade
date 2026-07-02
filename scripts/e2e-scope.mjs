@@ -18,7 +18,7 @@
 // per-push whenever a LINUX_SENSITIVE path changes; see .githooks/pre-push).
 //
 // The tags mirror the e2e spec describe-title tags applied in this PR:
-//   @core  @terminal  @preview  @planning  @chrome  @mcp
+//   @core  @terminal  @preview  @planning  @chrome  @mcp  @voice
 // `@core` is ALWAYS included in a scoped grep (boot / placement / recovery /
 // isolation specs guard behaviour any board change can perturb).
 
@@ -127,10 +127,14 @@ const AREAS = {
   // union together so a change confined to e.g. OrchestrationConsentModal.tsx still pulls in
   // the @mcp-tagged consent-flow specs instead of silently landing in @chrome alone.
   mcp: ['orchestration'],
+  // Voice dictation (V1+): the renderer capture pipeline + its ephemeral store (and, from
+  // V3, the pill/flyout UI — 'voice' catches VoicePill/VoiceFlyout paths too). The MAIN
+  // half (voiceIpc) is already FULL via src/main/.
+  voice: ['voice'],
   core: ['useboardplacement', 'lib/placement']
 }
 
-const TAG_ORDER = ['core', 'terminal', 'preview', 'planning', 'chrome', 'mcp']
+const TAG_ORDER = ['core', 'terminal', 'preview', 'planning', 'chrome', 'mcp', 'voice']
 
 function normalise(p) {
   return String(p).trim().replace(/\\/g, '/')

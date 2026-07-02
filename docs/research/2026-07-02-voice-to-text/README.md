@@ -2,9 +2,13 @@
 
 > **Status:** BUILD IN PROGRESS on `feat/voice-to-text` (worktree
 > `.worktrees/voice-to-text`). V0 ✅ shipped `58dc71c` (mic permission posture + mac
-> entitlements; gate + Win e2e green, not pushed). **NEXT: V1 — see
-> [HANDOFF-V1.md](HANDOFF-V1.md).** V2–V5 pending per
-> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
+> entitlements). V1 ✅ shipped (capture pipeline + `voice:port` + logger-stub engine end;
+> gate + Win e2e green, ~8.3 frames/s verified end-to-end; branch not pushed). **NEXT: V2
+> — engine host + models (SPIKE FIRST), see
+> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** V2–V5 pending. One V1 gotcha for
+> V2's port work: Electron cross-process MessagePorts NULL `e.data` when a non-port
+> transferable rides the transfer list — COPY frames across the boundary (see
+> `useVoiceCapture.ts`).
 
 Dictate prompts by voice instead of typing — primarily to drive the agentic CLIs in
 Terminal boards. Local-first STT (no API key, offline, private), review-first composer

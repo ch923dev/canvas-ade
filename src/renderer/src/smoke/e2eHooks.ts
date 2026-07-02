@@ -36,6 +36,7 @@ import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
 import { clearStickyLocalPrefs } from './e2eStickyPrefs'
 import { useCommandStore, commandStoreDefaults } from '../store/commandStore'
+import { useVoiceStore } from '../store/voiceStore'
 import { useLibraryStore } from '../store/libraryStore'
 import { useAccountStore } from '../store/accountStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
@@ -513,6 +514,17 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // class). A non-empty element clipboard wins over an OS image paste (E7), which would then
       // silently break whiteboard's image-paste spec. Clear it so each test starts empty.
       clearClipboard()
+      // Voice V1: a spec that started mic capture must not leak a live session (mic held,
+      // frames still pumping) or its level/frames counters into the next spec. stop() is
+      // idempotent in MAIN; the store is ephemeral session-state so a direct reset is safe.
+      void window.api.voice?.stop()
+      useVoiceStore.setState({
+        capturing: false,
+        level: 0,
+        micSilent: false,
+        framesSent: 0,
+        activeBoardId: null
+      })
       // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
       // collapse state) — extracted to e2eStickyPrefs.ts (max-lines), key literals kept
       // there for the same eager-bundle reason documented in that module.
@@ -526,6 +538,15 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     serializeDoc() {
       return JSON.stringify(useCanvasStore.getState().toObject())
+    },
+    voiceState() {
+      const s = useVoiceStore.getState()
+      return {
+        capturing: s.capturing,
+        level: s.level,
+        micSilent: s.micSilent,
+        framesSent: s.framesSent
+      }
     },
     async openProjectFromDisk(dir) {
       const r = await window.api.project.open(dir)

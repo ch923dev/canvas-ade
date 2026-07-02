@@ -118,6 +118,14 @@ describe('scopeForPaths', () => {
     )
   })
 
+  it('scopes a renderer voice change to @core|@voice (V1: capture pipeline + store)', () => {
+    expect(scopeForPaths(['src/renderer/src/voice/useVoiceCapture.ts'])).toBe('@core|@voice')
+    expect(scopeForPaths(['src/renderer/src/voice/captureMath.ts'])).toBe('@core|@voice')
+    expect(scopeForPaths(['src/renderer/src/store/voiceStore.ts'])).toBe('@core|@voice')
+    // The MAIN half (voiceIpc.ts) stays FULL via the src/main/ cross-cutting rule.
+    expect(scopeForPaths(['src/main/voiceIpc.ts'])).toBe('FULL')
+  })
+
   it('normalises backslash paths', () => {
     expect(scopeForPaths(['src\\renderer\\src\\canvas\\boards\\TerminalBoard.tsx'])).toBe(
       '@core|@terminal'

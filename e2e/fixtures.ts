@@ -46,7 +46,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
       const app = await _electron.launch({
         args: launchArgs,
-        env: { ...process.env, CANVAS_E2E: '1' },
+        // CANVAS_FAKE_MEDIA: MAIN translates this into Chromium's fake capture-device
+        // switch (voiceIpc.applyFakeMediaSwitches — env-gated in MAIN, not a launch arg:
+        // playwright#16621). Only getUserMedia consumers see it (the @voice spec); it
+        // replaces any real mic with a deterministic generated tone on every leg.
+        env: { ...process.env, CANVAS_E2E: '1', CANVAS_FAKE_MEDIA: '1' },
         // Opt-in full-session video (one .webm per spec). Off by default so green runs
         // stay fast; turn on for a repro session with `E2E_VIDEO=1`.
         ...(process.env.E2E_VIDEO ? { recordVideo: { dir: 'test-results/videos' } } : {})
