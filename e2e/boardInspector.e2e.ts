@@ -576,15 +576,25 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
       await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
       await evalIn(page, `window.__canvasE2E.setZoom(1)`)
-      const wellSel = `.react-flow__node[data-id=${JSON.stringify(id)}] .pl-well`
-      await pollEval(page, `!!document.querySelector('${wellSel}')`, 5000)
+      // Wait for the well to mount. The board id flows as a DATA arg to page.evaluate/waitForFunction
+      // (interpolated into the CSS selector INSIDE the browser callback), never into a host-side eval'd
+      // code string — the #82/#114 CodeQL js/bad-code-sanitization pattern.
+      await page.waitForFunction(
+        (bid) =>
+          !!(globalThis as any).document.querySelector(
+            `.react-flow__node[data-id="${bid}"] .pl-well`
+          ),
+        id,
+        { timeout: 5000 }
+      )
       // Decline the fresh-project recap modal so it can't occlude the well tap.
       await page
         .locator('[data-test="recap-decline"]')
         .click({ timeout: 5000 })
         .catch(() => {})
 
-      // Baseline: nothing selected → no Element section (Appearance opacity slider absent).
+      // Baseline: nothing selected → no Element section (Appearance opacity slider absent). The
+      // selector is a compile-time constant (no id) so evalIn is safe here.
       const opacitySel = `[data-test="board-inspector"] [aria-label="Element opacity"]`
       expect(
         await evalIn<boolean>(page, `!!document.querySelector('${opacitySel}')`),
@@ -592,13 +602,21 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       ).toBe(false)
 
       // Arm the Note tool (real key routed to the focused well) + tap an empty spot to CREATE a note.
-      await evalIn(page, `document.querySelector('${wellSel}').focus()`)
-      await page.keyboard.press('n')
-      const well = await evalIn<{ x: number; y: number }>(
-        page,
-        `(() => { const w = document.querySelector('${wellSel}'); const r = w.getBoundingClientRect();
-                  return { x: Math.round(r.left + 90), y: Math.round(r.top + 90) }; })()`
+      await page.evaluate(
+        (bid) =>
+          (globalThis as any).document
+            .querySelector(`.react-flow__node[data-id="${bid}"] .pl-well`)
+            ?.focus(),
+        id
       )
+      await page.keyboard.press('n')
+      const well = await page.evaluate((bid) => {
+        const w = (globalThis as any).document.querySelector(
+          `.react-flow__node[data-id="${bid}"] .pl-well`
+        )
+        const r = w.getBoundingClientRect()
+        return { x: Math.round(r.left + 90), y: Math.round(r.top + 90) }
+      }, id)
       // A note is created on pointerDOWN (onWellPointerDown); send a full tap for a clean gesture.
       await mainCall(electronApp, 'sendInput', {
         type: 'mouseDown',
