@@ -101,6 +101,9 @@ export function FileBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [kind, setKind] = useState<Kind>(path ? 'loading' : 'empty')
+  // P5 (D5): the Inspector's error-state Retry re-runs the loader effect for the SAME path by
+  // bumping this nonce (a dep of the load effect below) — no path mutation, no board patch.
+  const [loadNonce, setLoadNonce] = useState(0)
   const [text, setText] = useState('')
   const [savedText, setSavedText] = useState('')
   const [imgUrl, setImgUrl] = useState<string | null>(null)
@@ -257,7 +260,7 @@ export function FileBoard({
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [path, ext])
+  }, [path, ext, loadNonce])
 
   // -- Language resolution + highlighting (sync; no worker, no eval) -------------
   // SLICE-009: the highlight (Lezer parse) + markdown render are the per-keystroke hot paths. Key
@@ -533,6 +536,9 @@ export function FileBoard({
             path={path ?? ''}
             typeLabel={ext ? ext.toUpperCase() : ''}
             sizeText={size ? formatBytes(size) : ''}
+            errorDetail={errMsg}
+            onBrowse={() => requestBrowse(board.id)}
+            onRetry={() => setLoadNonce((n) => n + 1)}
           />,
           inspectorSlot
         )}

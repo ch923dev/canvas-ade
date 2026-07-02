@@ -45,6 +45,13 @@ export interface FileInspectorProps {
   path: string
   typeLabel: string
   sizeText: string
+  // P5 (D5) — the empty/loading/error diagnostic placeholder
+  /** The load error detail (errMsg), shown as the Status meta when kind === 'error'. */
+  errorDetail: string
+  /** Arm the file tree's browse-to-bind flow (the empty board's "Browse files" path). */
+  onBrowse: () => void
+  /** Re-run the loader for the same path after an error. */
+  onRetry: () => void
 }
 
 const MODE_OPTS: ReadonlyArray<{ value: FileViewMode; label: string }> = [
@@ -71,10 +78,17 @@ export function FileInspector({
   onPin,
   path,
   typeLabel,
-  sizeText
+  sizeText,
+  errorDetail,
+  onBrowse,
+  onRetry
 }: FileInspectorProps): ReactElement {
   const isText = kind === 'text'
   const showConfig = isText || kind === 'image' || kind === 'large' || kind === 'binary'
+  // P5 (D5): empty/loading/error boards previously rendered NO sections at all — an errored file
+  // showed no diagnostic anywhere. Give them a Configuration placeholder (path + status + the one
+  // relevant action), matching DataFlow's explicit-empty-state pattern.
+  const placeholder = kind === 'empty' || kind === 'loading' || kind === 'error'
 
   return (
     <>
@@ -156,6 +170,40 @@ export function FileInspector({
           {path && <InspectorMeta label="Path" value={path} />}
           {typeLabel && <InspectorMeta label="Type" value={typeLabel} />}
           {sizeText && <InspectorMeta label="Size" value={sizeText} />}
+        </InspectorSection>
+      )}
+
+      {placeholder && (
+        <InspectorSection label="Configuration" persistKey="file.configuration">
+          <InspectorMeta label="Path" value={path || '—'} />
+          <InspectorMeta
+            label="Status"
+            value={
+              kind === 'empty'
+                ? 'no file selected'
+                : kind === 'loading'
+                  ? 'loading…'
+                  : errorDetail || 'read failed'
+            }
+          />
+          {kind === 'empty' && (
+            <InspectorAction
+              icon={<Icon name="search" size={14} />}
+              onClick={onBrowse}
+              dataTest="inspector-file-browse"
+            >
+              Choose file…
+            </InspectorAction>
+          )}
+          {kind === 'error' && (
+            <InspectorAction
+              icon={<Icon name="refresh" size={14} />}
+              onClick={onRetry}
+              dataTest="inspector-file-retry"
+            >
+              Retry
+            </InspectorAction>
+          )}
         </InspectorSection>
       )}
     </>
