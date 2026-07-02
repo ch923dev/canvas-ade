@@ -551,3 +551,123 @@ describe('createMcpLifecycle.spawnBoard — title (2b)', () => {
     expect('title' in sent[0]).toBe(false)
   })
 })
+
+describe('createMcpLifecycle.spawnBoard — prompt/cwd (spawn-time launchCommand)', () => {
+  type AddBoardSpec = {
+    id: string
+    type: string
+    title?: string
+    launchCommand?: string
+    cwd?: string
+  }
+
+  /** Records every addBoard `board` spec so a test can assert the exact envelope forwarded. */
+  function recordingReg(): { registry: BoardRegistry; sent: AddBoardSpec[] } {
+    const sent: AddBoardSpec[] = []
+    const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
+    const registry: BoardRegistry = {
+      listBoards: () => boards,
+      listSessions: () => [],
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => {
+        if (cmd.type === 'addBoard') {
+          sent.push({ ...cmd.board })
+          boards.push({
+            id: cmd.board.id,
+            type: cmd.board.type,
+            title: cmd.board.title ?? 'default',
+            status: 'running'
+          })
+        }
+        return { ok: true, type: cmd.type }
+      },
+      drainPty: async () => {},
+      ...DISPATCH_DEFAULTS
+    }
+    return { registry, sent }
+  }
+  const makeLife = (registry: BoardRegistry, cap = 8): ReturnType<typeof createMcpLifecycle> =>
+    createMcpLifecycle({
+      registry,
+      now: () => 0,
+      cap,
+      spawnGraceMs: 5000
+    })
+
+  it('forwards a sanitized prompt as the terminal launchCommand + the trimmed cwd', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({
+      type: 'terminal',
+      prompt: '  claude --dangerously-skip-permissions  ',
+      cwd: '  C:/repos/app  '
+    })
+    expect(sent[0].launchCommand).toBe('claude --dangerously-skip-permissions')
+    expect(sent[0].cwd).toBe('C:/repos/app')
+  })
+
+  it('strips control chars from the prompt (same sanitizer as spawnGroup — one rule)', async () => {
+    const { registry, sent } = recordingReg()
+    // 'echo <ESC>hi<DEL><CSI>' — C0/DEL/C1 must be stripped on the spawn-time PTY write path.
+    const dirty = 'echo ' + String.fromCodePoint(0x1b) + 'hi' + String.fromCodePoint(0x7f, 0x9b)
+    await makeLife(registry).spawnBoard({ type: 'terminal', prompt: dirty })
+    expect(sent[0].launchCommand).toBe('echo hi')
+  })
+
+  it('clamps an over-long prompt to 400', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'terminal', prompt: 'x'.repeat(1000) })
+    expect(sent[0].launchCommand).toBe('x'.repeat(400))
+  })
+
+  it('rejects a multiline prompt (embedded LF) — no command sent, no cap slot burned', async () => {
+    const { registry, sent } = recordingReg()
+    const life = makeLife(registry, 1)
+    await expect(life.spawnBoard({ type: 'terminal', prompt: 'echo a\necho b' })).rejects.toThrow()
+    expect(sent).toHaveLength(0)
+    // The single cap slot must still be free: a clean spawn fits.
+    await expect(life.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
+  })
+
+  it('rejects a prompt on a non-terminal board BEFORE any side effect', async () => {
+    const { registry, sent } = recordingReg()
+    await expect(
+      makeLife(registry).spawnBoard({ type: 'planning', prompt: 'echo hi' })
+    ).rejects.toThrow(/terminal/i)
+    expect(sent).toHaveLength(0)
+  })
+
+  it('rejects a cwd on a non-terminal board BEFORE any side effect', async () => {
+    const { registry, sent } = recordingReg()
+    await expect(makeLife(registry).spawnBoard({ type: 'browser', cwd: 'C:/x' })).rejects.toThrow(
+      /terminal/i
+    )
+    expect(sent).toHaveLength(0)
+  })
+
+  it('omits launchCommand when the prompt sanitizes to empty (bare shell, not an empty write)', async () => {
+    const { registry, sent } = recordingReg()
+    // Control-chars-only prompt → sanitizes to '' → the key must be absent, not ''.
+    await makeLife(registry).spawnBoard({
+      type: 'terminal',
+      prompt: String.fromCodePoint(0x07, 0x7f)
+    })
+    expect('launchCommand' in sent[0]).toBe(false)
+  })
+
+  it('treats a whitespace-only prompt/cwd as absent (no reject on a non-terminal type)', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'planning', prompt: '   ', cwd: ' ' })
+    expect('launchCommand' in sent[0]).toBe(false)
+    expect('cwd' in sent[0]).toBe(false)
+  })
+
+  it('omits both keys when neither is supplied (back-compat envelope)', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'terminal' })
+    expect('launchCommand' in sent[0]).toBe(false)
+    expect('cwd' in sent[0]).toBe(false)
+  })
+})
