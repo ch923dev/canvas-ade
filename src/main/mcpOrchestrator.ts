@@ -75,6 +75,16 @@ const WRITE_RESULT_MAX_REFS = 256
 const WRITE_RESULT_MAX_REF_LEN = 256
 
 /**
+ * 🔒 BUG-017: `configureBoard`'s `launchCommand` is the same exec-vector free-text field
+ * `spawnGroup` sanitizes (mcpLifecycle.ts), and that sibling path clamps it to 400 chars
+ * AFTER sanitizing — but this path only sanitized, with no length bound. An unbounded
+ * launchCommand would be shown verbatim in the human-confirm modal body (unusable dialog)
+ * and, once approved, persisted verbatim to canvas.json (unbounded on-disk growth). Mirror
+ * spawnGroup's cap so the two write paths for the same field enforce the same invariant.
+ */
+const CONFIGURE_LAUNCH_MAX_LEN = 400
+
+/**
  * 🔒 BUG-009-style belt-and-suspenders cap on the read-only gitDiff output (PR-2). This is a
  * DOWNSTREAM-PAYLOAD bound — it caps what the chip / view-diff / agent actually RECEIVES, mirroring
  * WRITE_RESULT_MAX_SUMMARY. The caller gets a bounded, possibly-truncated diff. It is NOT a MAIN
@@ -519,7 +529,7 @@ export function buildOrchestrator(
         // multi-command payload is never shown to the human to rubber-stamp.
         let safeLaunch: string
         try {
-          safeLaunch = sanitizeDispatchText(config.launchCommand)
+          safeLaunch = sanitizeDispatchText(config.launchCommand).slice(0, CONFIGURE_LAUNCH_MAX_LEN)
         } catch (err) {
           if (err instanceof DispatchPayloadError) {
             await writeAudit({
