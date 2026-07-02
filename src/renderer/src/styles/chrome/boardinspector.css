@@ -85,7 +85,8 @@ body:has(.fullview-scrim) .ca-inspector-wrap {
   text-transform: uppercase;
   color: var(--text-3);
 }
-.ca-inspector-jump {
+.ca-inspector-jump,
+.ca-inspector-hide {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -98,13 +99,57 @@ body:has(.fullview-scrim) .ca-inspector-wrap {
   color: var(--text-3);
   cursor: pointer;
 }
-.ca-inspector-jump:hover {
+.ca-inspector-jump:hover,
+.ca-inspector-hide:hover {
   color: var(--text-2);
   background: rgba(255, 255, 255, 0.04);
 }
-.ca-inspector-jump:focus-visible {
+.ca-inspector-jump:focus-visible,
+.ca-inspector-hide:focus-visible {
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+/* P5-8: the hide button hugs the head's right edge (the id row is flex). */
+.ca-inspector-hide {
+  margin-left: auto;
+}
+
+/* P5-8: the retrieve tab — a left-edge vertical tab shown while the Inspector is hidden but a
+   board is selected (the popover WOULD reveal). Mirror of the Context/Library right-edge tabs
+   (library.css .lib-reopen), flipped to the left edge. Opts back into pointer events (the wrap
+   is pointer-events:none); inherits the wrap's z (45, raised to 250 in full view by the D7 rule). */
+.ca-inspector-reopen {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  padding: var(--space-12) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 var(--r-inner) var(--r-inner) 0;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.ca-inspector-reopen:hover {
+  color: var(--text);
+}
+.ca-inspector-reopen:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* While the file-tree SidePanel is revealed, attach the tab to ITS lane edge instead (12 + 240),
+   same adaptive `:has()` pattern as the popover's left shift. */
+.ca-sidepanel-wrap:has(.ca-sidepanel[data-revealed='true'])
+  ~ .ca-inspector-wrap
+  .ca-inspector-reopen {
+  left: 252px;
+  border-left: 1px solid var(--border);
 }
 .ca-inspector-title {
   margin-top: 6px;

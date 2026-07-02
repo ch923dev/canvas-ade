@@ -702,3 +702,45 @@ test.describe('@chrome Board Inspector — full-view overlay (P5-D7)', () => {
     }
   })
 })
+
+test.describe('@chrome Board Inspector — hide / retrieve (P5-8)', () => {
+  test('hide collapses the popover to a left-edge tab; the tab retrieves it; the pref is sticky', async ({
+    page
+  }) => {
+    const id = await seed(page, 'terminal')
+    await selectForInspector(page, id)
+    const inspector = page.locator('[data-test="board-inspector"]')
+    await expect(inspector).toHaveAttribute('data-revealed', 'true')
+
+    // Hide → the popover conceals (stays mounted, inert) and the retrieve tab appears.
+    await page.locator('[data-test="inspector-hide"]').click()
+    await expect(inspector).toHaveAttribute('data-revealed', 'false')
+    const tab = page.locator('[data-test="inspector-reopen"]')
+    await expect(tab, 'left-edge retrieve tab appears while hidden + selected').toBeVisible()
+
+    // The hide is sticky (survives restarts via localStorage) and selection-independent:
+    // re-selecting another board keeps it hidden — hidden wins over reveal-on-select.
+    const pref = await evalIn<string | null>(
+      page,
+      `window.localStorage.getItem('ca.inspector.hidden')`
+    )
+    expect(pref, 'hide persists to the sticky pref').toBe('1')
+    const id2 = await seed(page, 'terminal')
+    await selectForInspector(page, id2)
+    await expect(inspector).toHaveAttribute('data-revealed', 'false')
+    await expect(tab).toBeVisible()
+
+    // Deselect → the tab hides too (it is a retrieve affordance, not permanent chrome).
+    await evalIn(page, `window.__canvasE2E.select(null)`)
+    await expect(tab).toHaveCount(0)
+
+    // Retrieve: re-select + click the tab → revealed again, pref cleared.
+    await selectForInspector(page, id2)
+    await page.locator('[data-test="inspector-reopen"]').click()
+    await expect(inspector).toHaveAttribute('data-revealed', 'true')
+    expect(
+      await evalIn<string | null>(page, `window.localStorage.getItem('ca.inspector.hidden')`),
+      'retrieving clears the sticky pref'
+    ).toBeNull()
+  })
+})

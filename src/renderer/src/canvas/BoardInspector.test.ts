@@ -26,4 +26,10 @@ describe('inspectorRevealed — v2 reveal-on-select: shown whenever a single boa
   it('stays hidden when there is no eligible single selection', () => {
     expect(inspectorRevealed(false)).toBe(false)
   })
+
+  it('P5-8: the sticky user hide wins over eligibility; retrieving restores reveal', () => {
+    expect(inspectorRevealed(true, true)).toBe(false)
+    expect(inspectorRevealed(false, true)).toBe(false)
+    expect(inspectorRevealed(true, false)).toBe(true)
+  })
 })

@@ -20,6 +20,14 @@ export function clearStickyLocalPrefs(minimapVisibleKey: string): void {
   } catch {
     // storage unavailable — nothing sticky to clear
   }
+  // P5-8: the sticky Inspector hide — a spec that hid the popover would strand every later
+  // spec's inspector-driven controls (the whole P5 control surface). Key literal for the same
+  // eager-bundle reason as above.
+  try {
+    window.localStorage.removeItem('ca.inspector.hidden')
+  } catch {
+    // storage unavailable — nothing sticky to clear
+  }
   // P5: inspector section collapse state (one key per section) — a spec that collapsed a
   // section would hide a later spec's inspector control. Sweep the whole prefix.
   try {
