@@ -477,9 +477,19 @@ export type { AuthStatus } from './authApi'
 const osWinBuild: number | null =
   process.platform === 'win32' ? (ipcRenderer.sendSync('platform:winBuild') as number | null) : null
 
+// BUG-057: MAIN-owned decision, read SYNC once at preload load (same pattern as osWinBuild
+// above) — whether the renderer's in-process e2e test-surface (`window.__canvasE2E`, the
+// terminal registries in e2eRegistry.ts) should be enabled. contextBridge deep-freezes the
+// exposed `api` object, so a renderer-context script can read this but can never overwrite it
+// or otherwise self-enable the surface (the prior gate was the client-mutable `?e2e=1` URL
+// query alone).
+const e2eEnabled: boolean = ipcRenderer.sendSync('platform:e2eEnabled') as boolean
+
 const api = {
   /** Windows OS build number, or null off Windows (A-Win xterm windowsPty hint). */
   osWinBuild,
+  /** MAIN-owned: true only when the Playwright harness set CANVAS_E2E (see BUG-057). */
+  e2eEnabled,
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),

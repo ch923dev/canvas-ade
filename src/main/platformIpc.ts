@@ -9,6 +9,7 @@
  */
 import type { IpcMain } from 'electron'
 import { release } from 'os'
+import { computeE2ESurfaceEnabled } from './windowSecurity'
 
 /** Parse the Windows build from an `os.release()` string ("10.0.22631" → 22631). Null if unparseable. */
 export function winBuildFromRelease(rel: string): number | null {
@@ -24,5 +25,11 @@ export function registerPlatformIpc(ipcMain: IpcMain): void {
   // is negligible and avoids an async race for the very first terminal mount.
   ipcMain.on('platform:winBuild', (e) => {
     e.returnValue = process.platform === 'win32' ? winBuildFromRelease(release()) : null
+  })
+
+  // BUG-057: same SYNC-at-load pattern, MAIN-owned — the renderer's e2e test-surface gate
+  // (`isE2E` in e2eRegistry.ts) reads this instead of the client-mutable `?e2e=1` URL query.
+  ipcMain.on('platform:e2eEnabled', (e) => {
+    e.returnValue = computeE2ESurfaceEnabled()
   })
 }

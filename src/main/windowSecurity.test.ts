@@ -5,8 +5,22 @@ import {
   computeAppOrigin,
   normalizeDocPath,
   navDecision,
-  createNavGuard
+  createNavGuard,
+  computeE2ESurfaceEnabled
 } from './windowSecurity'
+
+// BUG-057: the renderer e2e test-surface gate must be a MAIN-owned decision (CANVAS_E2E on
+// MAIN's own env), never derivable from anything the renderer controls.
+describe('computeE2ESurfaceEnabled (BUG-057)', () => {
+  it('is true only when CANVAS_E2E is set on the given env', () => {
+    expect(computeE2ESurfaceEnabled({ CANVAS_E2E: '1' } as NodeJS.ProcessEnv)).toBe(true)
+  })
+
+  it('is false when CANVAS_E2E is unset/empty', () => {
+    expect(computeE2ESurfaceEnabled({} as NodeJS.ProcessEnv)).toBe(false)
+    expect(computeE2ESurfaceEnabled({ CANVAS_E2E: '' } as NodeJS.ProcessEnv)).toBe(false)
+  })
+})
 
 // Checklist #3/#4: the main window must run with contextIsolation + sandbox ON and
 // nodeIntegration + webviewTag OFF. These are the load-bearing isolation flags.

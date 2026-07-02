@@ -1,18 +1,19 @@
 /**
- * In-process E2E test surface. Everything here is INERT unless the page
- * was loaded with `?e2e=1` (set only by MAIN under `CANVAS_E2E`). This is a
- * registry + a flag — NOT a security change: `sandbox`/`contextIsolation`/
+ * In-process E2E test surface. Everything here is INERT unless MAIN set `CANVAS_E2E` (BUG-057).
+ * This is a registry + a flag — NOT a security change: `sandbox`/`contextIsolation`/
  * `nodeIntegration` are untouched, and nothing here is reachable in normal runs.
  */
 import type { Terminal } from '@xterm/xterm'
 
-/** True only when MAIN loaded the page with the e2e query flag. */
+/**
+ * True only when MAIN set `CANVAS_E2E` — read from the preload-exposed, contextBridge-frozen
+ * `window.api.e2eEnabled` (BUG-057). NOT the `?e2e=1` URL query: `window.location.search` is
+ * renderer-mutable (e.g. `history.pushState`/`replaceState`), so a query-only gate would let any
+ * renderer-context script self-enable a surface that exposes terminal I/O, project I/O, and
+ * board mutation. `window.api` is frozen by contextBridge, so this can't be spoofed either.
+ */
 export function isE2E(): boolean {
-  try {
-    return new URLSearchParams(window.location.search).get('e2e') === '1'
-  } catch {
-    return false
-  }
+  return window.api?.e2eEnabled === true
 }
 
 /**
