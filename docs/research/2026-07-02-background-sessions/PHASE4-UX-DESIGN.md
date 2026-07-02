@@ -53,9 +53,12 @@ buttons) — same 420px card, same `--accent-wash` selected tile.
   `'ask'`). Every later switch away from that project skips the dialog and silently backgrounds —
   constant A⇄B switching never holds on a modal. **Stop everything is one-shot and never
   remembered** (destructive; asks each time it's chosen as the outgoing behavior). Policy resets
-  when the user CLOSES the project (§3 ✕ → `project:closeBackground`, or the active-close path);
-  quit clears everything (in-app-run lifetime, never persisted to disk). A micro caption in the
-  dialog footer states it: "Keep is remembered until you close this project".
+  when the user CLOSES the project (§3 ✕ → `project:closeBackground`, or the active-close path).
+  **APP-RUN SCOPE ONLY (user-confirmed 2026-07-02):** the memory lives exclusively in the Expanse
+  app session — quit the app and reopen, and the FIRST switch away from any running project asks
+  again. Never written to disk / userData; the registry entry (and its policy) dies with the run,
+  same as the sessions themselves. A micro caption in the dialog footer states it: "Keep is
+  remembered until you close this project".
 
 ## 2 · ProjectSwitcher — live rows
 
