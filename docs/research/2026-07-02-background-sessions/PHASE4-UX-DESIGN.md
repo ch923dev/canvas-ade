@@ -54,11 +54,20 @@ buttons) — same 420px card, same `--accent-wash` selected tile.
   constant A⇄B switching never holds on a modal. **Stop everything is one-shot and never
   remembered** (destructive; asks each time it's chosen as the outgoing behavior). Policy resets
   when the user CLOSES the project (§3 ✕ → `project:closeBackground`, or the active-close path).
-  **APP-RUN SCOPE ONLY (user-confirmed 2026-07-02):** the memory lives exclusively in the Expanse
-  app session — quit the app and reopen, and the FIRST switch away from any running project asks
-  again. Never written to disk / userData; the registry entry (and its policy) dies with the run,
-  same as the sessions themselves. A micro caption in the dialog footer states it: "Keep is
-  remembered until you close this project".
+  **DEFAULT SCOPE = APP RUN ONLY (user-confirmed 2026-07-02):** the bare Keep memory lives
+  exclusively in the Expanse app session — quit and reopen, and the FIRST switch away from any
+  running project asks again. The registry entry (and its policy) dies with the run, same as the
+  sessions themselves. Footer micro caption: "Remembered this app session; check above for
+  forever".
+- **Forever checkbox (opt-in add-on, user request 2026-07-02):** a checkbox under the tiles —
+  *"Always keep this project in the background — remember even after Expanse restarts"*. Ticked +
+  Keep + Switch ⇒ the policy is ALSO persisted to disk in **userData** (keyed by project dir —
+  app config per ADR 0009, NEVER the project folder: `canvas.json` is git-shared, this is a
+  machine preference). On later runs that project's switches are silent from the start. Keep-only:
+  selecting the Stop tile dims + disables (and unticks) the checkbox. **Reset stays one gesture:**
+  the §3 ✕ close clears BOTH the session policy and the persisted forever flag — no hidden
+  un-revokable skip-state, and the dialog naturally returns the next time that project runs
+  something.
 
 ## 2 · ProjectSwitcher — live rows
 
