@@ -11,7 +11,9 @@ import type {
   TextElement,
   ArrowElement,
   StrokeElement,
-  ImageElement
+  ImageElement,
+  DiagramElement,
+  FileRefElement
 } from './boardSchema'
 
 // ── test builders (minimal valid boards) ─────────────────────────────────────
@@ -157,6 +159,21 @@ function strokeEl(id: string): StrokeElement {
 function imageEl(id: string): ImageElement {
   return { kind: 'image', id, x: 0, y: 0, w: 200, h: 150, assetId: 'assets/img.png' }
 }
+function diagramEl(id: string): DiagramElement {
+  return {
+    kind: 'diagram',
+    id,
+    x: 0,
+    y: 0,
+    w: 200,
+    h: 150,
+    source: 'graph TD; A-->B',
+    engine: 'mermaid'
+  }
+}
+function fileRefEl(id: string): FileRefElement {
+  return { kind: 'fileref', id, x: 0, y: 0, w: 200, h: 60, path: 'src/foo.ts', label: 'foo.ts' }
+}
 
 describe('buildDigest — planning', () => {
   it('reports checklist progress and note count', () => {
@@ -212,6 +229,23 @@ describe('buildDigest — planning', () => {
     expect(d.boards[0].lines).toContain('1 image')
   })
 
+  // BUG-036 regression: boards with only diagram/fileref elements must NOT report 'Empty board'
+  // (digestPlanning previously omitted these two kinds from the line/count set — sibling to BUG-060).
+  it('BUG-036: does not label a board with only diagram elements as Empty board', () => {
+    const d = buildDigest(
+      doc([planning({ id: 'p1', elements: [diagramEl('d1'), diagramEl('d2')] })])
+    )
+    const p = d.boards[0]
+    expect(p.lines).not.toContain('Empty board')
+    expect(p.lines).toContain('2 diagrams')
+  })
+
+  it('BUG-036: does not label a board with only fileref elements as Empty board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [fileRefEl('f1')] })]))
+    expect(d.boards[0].lines).not.toContain('Empty board')
+    expect(d.boards[0].lines).toContain('1 file reference')
+  })
+
   it('BUG-060: reports all element kinds together', () => {
     const d = buildDigest(
       doc([
@@ -223,7 +257,9 @@ describe('buildDigest — planning', () => {
             textEl('tx1'),
             arrowEl('ar1'),
             strokeEl('st1'),
-            imageEl('im1')
+            imageEl('im1'),
+            diagramEl('di1'),
+            fileRefEl('fr1')
           ]
         })
       ])
@@ -235,6 +271,8 @@ describe('buildDigest — planning', () => {
     expect(p.lines).toContain('1 arrow')
     expect(p.lines).toContain('1 drawing')
     expect(p.lines).toContain('1 image')
+    expect(p.lines).toContain('1 diagram')
+    expect(p.lines).toContain('1 file reference')
     expect(p.lines).not.toContain('Empty board')
   })
 })
