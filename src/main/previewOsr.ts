@@ -640,11 +640,15 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   }
   // 2A — if a paint-state raced ahead of this open (the liveness manager reconciles on mount),
   // drain it onto the desired flag BEFORE load so onReady honors it (a board that should open
-  // already-frozen never paints a frame). startPainting itself is the gate's job, not here.
+  // already-frozen never paints a frame). Route it through the same real-effect path the live
+  // IPC handler uses (applyOsrPaint + applyEffectiveMute) — a buffered `false` must actually call
+  // the native `wc.stopPainting()` (and mute), not just flip the JS bookkeeping flag, or a freshly
+  // created OSR window (which paints by default) keeps streaming frames/audio forever (BUG-002).
   const pendPaint = pendingPaint.get(id)
   if (pendPaint !== undefined) {
     pendingPaint.delete(id)
-    e.painting = pendPaint
+    applyOsrPaint(osrWin, e, pendPaint)
+    applyEffectiveMute(e)
   }
   applyOsrInitialLoad(
     id,
