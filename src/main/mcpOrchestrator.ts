@@ -195,6 +195,8 @@ export function buildOrchestrator(
     }
   }
 
+  type HandoffExit = 'idle' | 'closed' | 'timed_out'
+
   /**
    * Await the dispatched board leaving `running`, event-driven off the status stream (M5 — replaces
    * the old busy-poll). Resolves 'idle' when it settles, 'closed' when it leaves the canvas, or
@@ -204,42 +206,45 @@ export function buildOrchestrator(
    * BUG-002: ALSO settles 'idle' when a worker records its own result (write_result) for this board,
    * since a live agent shell never flips its derived status off 'running' — the recorded result is
    * the real task-done signal, so the handoff resolves instead of always riding the backstop.
+   * BUG-018: `sinceMs` (dispatch start) folds a LEVEL-triggered "already recorded" check into
+   * `check()` itself, so a write_result that landed/fired before the EDGE-triggered
+   * `onResultSettled` listener attached still settles — immediately here, or on the short poll
+   * below — instead of riding the full backstop. Gated on `sinceMs` so a STALE result left over
+   * from an earlier task can't falsely fast-path this dispatch.
    */
-  const awaitHandoffSettled = (boardId: string): Promise<'idle' | 'closed' | 'timed_out'> => {
-    const check = (): 'idle' | 'closed' | null => {
+  const awaitHandoffSettled = (boardId: string, sinceMs: number): Promise<HandoffExit> => {
+    const check = (): HandoffExit | null => {
       const live = registry.listBoards().find((b) => b.id === boardId)
       if (!live) return 'closed'
-      return deriveStatus(live, sessionLookup()) !== 'running' ? 'idle' : null
+      if (deriveStatus(live, sessionLookup()) !== 'running') return 'idle'
+      const r = registry.readResult(boardId)
+      return r.present && typeof r.at === 'string' && Date.parse(r.at) >= sinceMs ? 'idle' : null
     }
     const immediate = check()
     if (immediate) return Promise.resolve(immediate)
-    return new Promise<'idle' | 'closed' | 'timed_out'>((resolve) => {
+    return new Promise<HandoffExit>((resolve) => {
       let settled = false
-      let unsub = (): void => {}
-      let unsubResult = (): void => {}
-      let cancelBackstop = (): void => {}
-      const finish = (exit: 'idle' | 'closed' | 'timed_out'): void => {
+      const cleanups: Array<() => void> = []
+      const finish = (exit: HandoffExit): void => {
         if (settled) return
         settled = true
-        unsub()
-        unsubResult()
-        cancelBackstop()
+        cleanups.forEach((fn) => fn())
         resolve(exit)
       }
-      unsub = registry.subscribeStatus((change) => {
-        if (change.id !== boardId) return
+      const settleIfDone = (): void => {
         const c = check()
         if (c) finish(c)
-      })
+      }
+      cleanups.push(registry.subscribeStatus((change) => change.id === boardId && settleIfDone()))
       // BUG-002: a worker writing its OWN result (write_result) is the task-done marker even
       // while its shell stays derived-'running' (a live agent shell never flips off 'running').
-      // A result LANDING for this board during the wait settles the handoff as 'idle' — UNLESS
-      // the board has meanwhile left the canvas, in which case `check()` reports 'closed'.
-      // Fired by writeResult AFTER registry.recordResult lands (a fresh task-done signal, not a
-      // pre-existing fixture result — so it can't settle a handoff that never saw a new write).
-      unsubResult = onResultSettled(boardId, () => finish(check() ?? 'idle'))
+      cleanups.push(onResultSettled(boardId, () => finish(check() ?? 'idle')))
+      // BUG-018: short fallback poll — a lost write_result notification settles here instead of
+      // riding the full multi-minute backstop.
+      const poll = setInterval(settleIfDone, 2000)
+      cleanups.push(() => clearInterval(poll))
       // One-shot backstop (NOT a poll): a single deadline timer, cancelled on settle.
-      cancelBackstop = startBackstop(handoffTimeoutMs, () => finish('timed_out'))
+      cleanups.push(startBackstop(handoffTimeoutMs, () => finish('timed_out')))
     })
   }
 
@@ -736,6 +741,8 @@ export function buildOrchestrator(
       // sanitize→nonce→confirm→consume→write→audit pipeline (every non-write branch still
       // audits). See CLAUDE.md › Process model & security.
 
+      const dispatchStartedAt = now() // BUG-018: gates awaitHandoffSettled's fresh-result fallback.
+
       // (1) Resolve the target by its OPAQUE server id (never a label — a title is not an
       // id, so label-targeting can't match here). Not found → audit + throw, no nonce.
       const board = registry.listBoards().find((b) => b.id === boardId)
@@ -776,10 +783,8 @@ export function buildOrchestrator(
         confirmBody: (s) => `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${s}`
       })
 
-      // (4) Await idle — event-driven off the status stream (M5). No busy-poll: park on the
-      // first status change for this board (re-resolving the live derived status on wake),
-      // bounded by a one-shot backstop deadline.
-      const exit = await awaitHandoffSettled(boardId)
+      // (4) Await idle — event-driven off the status stream (M5), bounded by a one-shot backstop.
+      const exit = await awaitHandoffSettled(boardId, dispatchStartedAt)
       const result = registry.readResult(boardId)
 
       // (5) Record the dispatch outcome (target + full prompt + nonce + seq + outputs). The
