@@ -288,13 +288,14 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/store/canvasStore.ts'],
-    // #BUG-006 pushed this file just over the 700 cap: the four untracked layout writers
-    // (growBoard*/reposition/setDiagramCache) must now rewrite an armed gesture checkpoint or a
-    // later undo silently reverts them. The rewrite logic is bound to the module-PRIVATE
-    // `pendingCheckpoint` state (shared by every history op here), so it cannot be extracted to a
-    // sibling file without exposing that state. Pinned at the post-fix count; ratchet DOWNWARD
-    // when the store is next split. See docs/contributing/file-size-doctrine.md.
-    rules: { 'max-lines': ['error', { max: 718, skipBlankLines: true, skipComments: true }] }
+    // #BUG-006 + #BUG-007 both land here and both bind to the module-PRIVATE pendingCheckpoint
+    // machinery. BUG-006: the four untracked layout writers (growBoard*/reposition/setDiagramCache)
+    // must rewrite an armed gesture checkpoint or a later undo silently reverts them. BUG-007:
+    // pendingCheckpoint is scoped per-gesture (a `pendingCheckpoints` stack via rewritePendingBoards)
+    // so an interloping beginChange() can't swallow another gesture's checkpoint. Neither can be
+    // extracted to a sibling without exposing that private state. Pinned at the post-fix count;
+    // ratchet DOWNWARD when the store is next split. See docs/contributing/file-size-doctrine.md.
+    rules: { 'max-lines': ['error', { max: 720, skipBlankLines: true, skipComments: true }] }
   },
 
   // Disable all formatting rules that would conflict with Prettier. MUST be last.

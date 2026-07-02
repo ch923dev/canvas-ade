@@ -940,7 +940,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return { ...b, h }
       })
       if (!changed) return s
-      rewritePendingBoards((b) => (b.id === id && b.h < h ? { ...b, h } : b))
+      // #BUG-006: mirror this untracked grow into every armed checkpoint, else a later undo
+      // that consumes a checkpoint captured before it silently reverts the height bump.
+      rewritePendingBoards((bs) => bs.map((b) => (b.id === id && b.h < h ? { ...b, h } : b)))
       return { boards }
     }),
 
@@ -955,7 +957,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return { ...b, w }
       })
       if (!changed) return s
-      rewritePendingBoards((b) => (b.id === id && b.w < w ? { ...b, w } : b))
+      rewritePendingBoards((bs) => bs.map((b) => (b.id === id && b.w < w ? { ...b, w } : b))) // #BUG-006
       return { boards }
     }),
 
@@ -971,7 +973,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return { ...b, x, y }
       })
       if (!changed) return s
-      rewritePendingBoards((b) => (b.id === id && (b.x !== x || b.y !== y) ? { ...b, x, y } : b))
+      rewritePendingBoards((bs) =>
+        bs.map((b) => (b.id === id && (b.x !== x || b.y !== y) ? { ...b, x, y } : b))
+      ) // #BUG-006
       return { boards }
     }),
 
@@ -991,16 +995,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return changed ? { ...b, elements } : b
       })
       if (!changed) return s
-      rewritePendingBoards((b) => {
-        if (b.id !== boardId || b.type !== 'planning') return b
-        let elChanged = false
-        const elements = b.elements.map((el) => {
-          if (el.id !== elId || el.kind !== 'diagram' || el.svgCache === svgCache) return el
-          elChanged = true
-          return { ...el, svgCache }
+      // #BUG-006: mirror the untracked diagram-cache write into every armed checkpoint.
+      rewritePendingBoards((bs) =>
+        bs.map((b) => {
+          if (b.id !== boardId || b.type !== 'planning') return b
+          const elements = b.elements.map((el) =>
+            el.id === elId && el.kind === 'diagram' && el.svgCache !== svgCache
+              ? { ...el, svgCache }
+              : el
+          )
+          return { ...b, elements }
         })
-        return elChanged ? { ...b, elements } : b
-      })
+      )
       return { boards }
     }),
 
@@ -1252,18 +1258,6 @@ function noticeIfNewerDoc(d: CanvasDoc): void {
  * use this for persistent fields that cannot self-heal; use patchBoardMeta's mapRail
  * pattern instead.
  */
-/**
- * Rewrite an armed gesture checkpoint's copy of the boards with the same per-board mutation
- * an untracked write just applied (mirrors patchBoardUntracked, #BUG-006). Without it, a
- * checkpoint armed before the write snapshots the pre-write board, so undoing the gesture
- * that commits next silently reverts the untracked write. No-op when nothing is armed.
- */
-function rewritePendingBoards(map: (b: Board) => Board): void {
-  if (pendingCheckpoint) {
-    pendingCheckpoint = { ...pendingCheckpoint, boards: pendingCheckpoint.boards.map(map) }
-  }
-}
-
 export function patchBoardUntracked(id: string, patch: Partial<Board>): void {
   useCanvasStore.setState((s) => {
     const boards = applyBoardPatch(s.boards, id, patch)
