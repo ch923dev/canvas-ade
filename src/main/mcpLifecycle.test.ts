@@ -42,7 +42,11 @@ function liveReg(opts: { drained?: string[]; removeFailId?: () => string | null 
         // Mirror the whole cluster, exactly as the renderer republishes a spawned zone.
         const { terminal, planning, browser } = cmd.members
         boards.push({ id: terminal.id, type: 'terminal', title: 'T', status: 'running' })
-        if (planning) boards.push({ id: planning.id, type: 'planning', title: 'T', status: 'idle' })
+        // BUG-003: a planning member's real status bucket is 'static' (boardStatus.ts's
+        // boardStatusBucket, never 'idle') — mock the real value so reapIdle tests actually
+        // exercise the bucket the renderer emits, not a value that happens to already pass.
+        if (planning)
+          boards.push({ id: planning.id, type: 'planning', title: 'T', status: 'static' })
         if (browser) boards.push({ id: browser.id, type: 'browser', title: 'T', status: 'idle' })
       }
       if (cmd.type === 'removeBoard') {
@@ -180,6 +184,50 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     await expect(life.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
   })
 
+  it("🔒 BUG-019: closeBoard fires onBoardClosed so the host can revoke the board's MCP token", async () => {
+    const clock = 0
+    const { registry } = liveReg()
+    const boardsRef: Array<{ id: string; type: string; title: string; status?: string }> =
+      registry.listBoards()
+    const closed: string[] = []
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boardsRef),
+      onBoardClosed: (boardId) => closed.push(boardId)
+    })
+    const { id } = await life.spawnBoard({ type: 'terminal' })
+    await life.closeBoard(id)
+    expect(closed).toEqual([id])
+  })
+
+  it('🔒 BUG-019: onBoardClosed still fires when removeBoard fails (board is dead either way)', async () => {
+    const clock = 0
+    let failId: string | null = null
+    const { registry } = liveReg({ removeFailId: () => failId })
+    const boardsRef: Array<{ id: string; type: string; title: string; status?: string }> =
+      registry.listBoards()
+    const closed: string[] = []
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boardsRef),
+      onBoardClosed: (boardId) => closed.push(boardId)
+    })
+    const { id } = await life.spawnBoard({ type: 'terminal' })
+    failId = id
+    await expect(life.closeBoard(id)).rejects.toThrow(/no-window/)
+    expect(closed).toEqual([id]) // the token still gets revoked despite the failed ack
+  })
+
   it('reapIdle closes a board idle past the TTL, leaves a running one, no-ops within the TTL', async () => {
     let clock = 0
     const drained: string[] = []
@@ -276,6 +324,34 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     clock = 3000
     expect(await life.reapIdle()).toEqual([id]) // now dormant past the TTL since the re-arm
     expect(boards.some((b) => b.id === id)).toBe(false)
+  })
+
+  it("🔒 BUG-003: reaps a planning board spawned via spawnGroup — 'static' status is idle-eligible", async () => {
+    // A planning (or any non-terminal/browser) board never has a live PTY/preview session, so
+    // registry.boardActivityStaleMs?.(id) is undefined for it and reapIdle falls back to the
+    // derived status bucket, which is permanently 'static' (never 'idle'). The OLD reaper's
+    // positive `status === 'idle'` check never matched 'static', so the board's cap-budget slot
+    // was never freed no matter how long it sat dormant. Assert it IS reaped past idleTtlMs.
+    let clock = 0
+    const drained: string[] = []
+    const { registry, boards } = liveReg({ drained })
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boards)
+    })
+    const { planningId } = await life.spawnGroup({ name: 'zone', planning: true })
+    expect(await life.reapIdle()).toEqual([]) // sweep 1 arms idleSince for the planning board
+    clock = 500
+    expect(await life.reapIdle()).toEqual([]) // still within the TTL
+    clock = 1500 // dormant for >= idleTtlMs 1000
+    expect(await life.reapIdle()).toEqual([planningId])
+    expect(drained).toContain(planningId)
+    expect(boards.some((b) => b.id === planningId)).toBe(false) // freed from the mirror + tracked cap
   })
 
   it('🔒 APP-N3: rejects an off-type spawn at the adapter — no command sent (reject precedes side effects)', async () => {

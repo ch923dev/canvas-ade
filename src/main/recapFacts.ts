@@ -67,14 +67,16 @@ export interface RecapFacts {
   generatedAt: number
 }
 
+/** Cap the title anchor (a glance anchor, not a transcript). */
+export const TITLE_MAX_CHARS = 200
 /** Cap the lastAsk anchor (a glance anchor, not a transcript). */
 export const LAST_ASK_MAX_CHARS = 200
 /** Cap the files/commands chip lists (recency-ordered; the face shows a handful). */
 export const FACT_LIST_MAX = 12
 /** How far back in an assistant turn's tail a `?` still reads as an open question. */
 const QUESTION_TAIL_CHARS = 200
-/** Fallback command-label length when a Bash tool_use carries no `description`. */
-const COMMAND_LABEL_MAX = 60
+/** Max length for a Bash command label (from `description`, or the raw command as fallback). */
+export const COMMAND_LABEL_MAX = 60
 
 const FILE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 
@@ -132,7 +134,7 @@ export function computeRecapFacts(
     }
     if (rec.type === 'ai-title') {
       const t = str(rec.aiTitle).trim()
-      if (t) title = t
+      if (t) title = t.slice(0, TITLE_MAX_CHARS)
       continue
     }
     if (rec.type === 'last-prompt') {
@@ -184,7 +186,8 @@ export function computeRecapFacts(
           }
         } else if (name === 'Bash') {
           const label = (
-            str(input.description) || str(input.command).slice(0, COMMAND_LABEL_MAX)
+            str(input.description).slice(0, COMMAND_LABEL_MAX) ||
+            str(input.command).slice(0, COMMAND_LABEL_MAX)
           ).trim()
           if (label) {
             const cur = commands.get(label)

@@ -84,6 +84,14 @@ describe('parseIsoDate', () => {
     expect(parseIsoDate('2026-13-01')).toBeNull()
     expect(parseIsoDate('2026-06-40')).toBeNull()
   })
+  it('rejects calendar-invalid dates (day exceeds days-in-month)', () => {
+    expect(parseIsoDate('2026-02-30')).toBeNull() // Feb has 28 days in 2026
+    expect(parseIsoDate('2026-04-31')).toBeNull() // April has 30 days
+    expect(parseIsoDate('2025-02-29')).toBeNull() // 2025 is not a leap year
+  })
+  it('accepts a leap-year Feb 29', () => {
+    expect(parseIsoDate('2024-02-29')).toEqual({ year: 2024, month0: 1, day: 29 })
+  })
 })
 
 describe('hsv ↔ hex', () => {

@@ -40,6 +40,20 @@ export function buildMainWindowWebPreferences(preloadPath: string): {
 }
 
 /**
+ * Whether the in-process renderer E2E test-surface (`window.__canvasE2E`, the terminal
+ * registries in `e2eRegistry.ts`) should be enabled — a MAIN-owned decision (BUG-057). Renderer
+ * code must gate on this (via the preload-exposed, contextBridge-frozen value), NOT on the
+ * `?e2e=1` URL query alone: `window.location.search` is renderer-mutable (e.g. a script calling
+ * `history.pushState`/`replaceState`), so a query-only gate lets any renderer-context script
+ * self-enable a surface that exposes terminal I/O, project I/O, and board mutation. This pure
+ * function is read ONCE, synchronously, by preload (`platformIpc.ts`'s `platform:e2eEnabled`
+ * channel) and exposed as a frozen field — untouchable from the main-world renderer.
+ */
+export function computeE2ESurfaceEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!env.CANVAS_E2E
+}
+
+/**
  * The main window's new-window policy (#14): ALWAYS deny in-app window
  * creation; hand an allowlisted-scheme URL (http/https/mailto) to the OS browser,
  * drop everything else. Pure — the caller performs shell.openExternal.

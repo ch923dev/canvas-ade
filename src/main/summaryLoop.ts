@@ -438,8 +438,11 @@ export function buildMemoryIndex(doc: unknown, hasSummary: (id: string) => boole
     if (!id) continue
     const mark = hasSummary(id) ? ' ✓' : ''
     lines.push(
-      // BUG-017: sanitize the title to prevent newlines from breaking the list-item structure
-      `- ${sanitizeTitle(str(b.title)) || '(untitled)'} (${str(b.type) || 'unknown'}) — board-${id}.md${mark}`
+      // BUG-017: sanitize the title to prevent newlines from breaking the list-item structure.
+      // BUG-028: `type` is equally untrusted (defensively read as `unknown` off the doc) and was
+      // interpolated raw — sanitize it the same way so it can't inject a Markdown heading/newline
+      // into agent-readable MEMORY.md.
+      `- ${sanitizeTitle(str(b.title)) || '(untitled)'} (${sanitizeTitle(str(b.type)) || 'unknown'}) — board-${id}.md${mark}`
     )
   }
   return lines.join('\n') + '\n'

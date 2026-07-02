@@ -73,6 +73,10 @@ describe('cliIdForLaunchCommand', () => {
     expect(cliIdForLaunchCommand('env ANTHROPIC_API_KEY=xxx claude')).toBe('claude')
     expect(cliIdForLaunchCommand('FOO=bar claude --resume')).toBe('claude')
   })
+  it('resolves a quoted first token (spaced path) instead of dead-ending', () => {
+    expect(cliIdForLaunchCommand('"C:\\Program Files\\claude.exe" --flag')).toBe('claude')
+    expect(cliIdForLaunchCommand("'/opt/my apps/codex' --resume")).toBe('codex')
+  })
   it('returns null for a plain shell / unknown command / empty', () => {
     expect(cliIdForLaunchCommand(undefined)).toBeNull()
     expect(cliIdForLaunchCommand('')).toBeNull()

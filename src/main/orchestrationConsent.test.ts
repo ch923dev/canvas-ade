@@ -54,6 +54,25 @@ describe('orchestrationConsent store', () => {
     expect(readDecision(dir, '/proj/bad')).toBeUndefined()
   })
 
+  // BUG-022: the SAME Windows project directory reopened via a differently-cased or
+  // trailing-slashed path string must resolve to the SAME stored decision — getCurrentDir()
+  // never normalizes what project:open/create was given, so the consent-store key must.
+  it('BUG-022: a Windows-style path is looked up case-insensitively (case-insensitive filesystem)', () => {
+    writeDecision(dir, 'C:\\Users\\x\\Proj', 'enabled')
+    expect(readDecision(dir, 'c:\\users\\x\\proj')).toBe('enabled')
+    expect(readDecision(dir, 'C:\\USERS\\X\\PROJ')).toBe('enabled')
+  })
+
+  it('BUG-022: a trailing separator does not create a distinct key', () => {
+    writeDecision(dir, 'C:\\Users\\x\\Proj', 'declined')
+    expect(readDecision(dir, 'C:\\Users\\x\\Proj\\')).toBe('declined')
+  })
+
+  it('BUG-022: POSIX-style paths stay case-SENSITIVE (no over-approving on a real POSIX fs)', () => {
+    writeDecision(dir, '/Users/x/Proj', 'enabled')
+    expect(readDecision(dir, '/users/x/proj')).toBeUndefined()
+  })
+
   it('stores orchestration consent in its OWN file, separate from recap consent', () => {
     writeDecision(dir, '/proj/a', 'enabled')
     expect(existsSync(join(dir, 'orchestration-consent.json'))).toBe(true)

@@ -16,6 +16,7 @@
  * atomic (`write-file-atomic`) and best-effort — a snapshot is regenerable session state, never fatal.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { mkdir as mkdirAsync } from 'fs/promises'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 import { isSafeId } from './safeId'
@@ -48,19 +49,68 @@ export function terminalSnapshotPath(projectDir: string, boardId: string): strin
 }
 
 /**
- * Persist the serialized ANSI buffer. Returns true on write; false on a rejected id / non-string /
- * oversized blob / fs error (ENOSPC, EPERM, read-only mount — all non-fatal for regenerable state).
+ * Shared pre-write validation: resolves the sidecar path or explains why the write is skipped
+ * (used by both the sync and async writers below).
+ *
+ * An oversized blob is SKIPPED (never truncated), but the previously-written sidecar (if any) is
+ * also deleted (BUG-012) — otherwise a stale prior-session snapshot would silently survive on disk
+ * and get presented as this session's last output on next launch (readTerminalSnapshot has no
+ * staleness check). No sidecar is strictly more correct than a stale one. A rejected id / non-string
+ * returns null without a delete (no resolvable path to act on).
  */
-export function writeTerminalSnapshot(projectDir: string, boardId: string, text: string): boolean {
+function resolveWriteTarget(
+  projectDir: string,
+  boardId: string,
+  text: string
+): { file: string } | null {
   const file = terminalSnapshotPath(projectDir, boardId)
-  if (!file || typeof text !== 'string') return false
+  if (!file || typeof text !== 'string') return null
   if (Buffer.byteLength(text, 'utf8') > MAX_SNAPSHOT_BYTES) {
     console.warn(`[terminalSnapshot] ${boardId} snapshot exceeds ${MAX_SNAPSHOT_BYTES}B — skipped`)
-    return false
+    deleteTerminalSnapshot(projectDir, boardId)
+    return null
   }
+  return { file }
+}
+
+/**
+ * Persist the serialized ANSI buffer SYNCHRONOUSLY — blocks MAIN's single thread for up to
+ * `MAX_SNAPSHOT_BYTES`. Reserved for the before-quit / crash-sink flush, where the process may exit
+ * immediately after and a pending async write's promise would otherwise race the exit. Every other
+ * caller (debounced/teardown writes during normal operation) MUST use `writeTerminalSnapshotAsync`
+ * instead so a large scrollback buffer never stalls the event loop. Returns true on write; false on a
+ * rejected id / non-string / oversized blob / fs error (ENOSPC, EPERM, read-only mount — all
+ * non-fatal for regenerable state).
+ */
+export function writeTerminalSnapshot(projectDir: string, boardId: string, text: string): boolean {
+  const target = resolveWriteTarget(projectDir, boardId, text)
+  if (!target) return false
   try {
     mkdirSync(terminalSnapshotDir(projectDir), { recursive: true })
-    writeFileAtomic.sync(file, text, 'utf8')
+    writeFileAtomic.sync(target.file, text, 'utf8')
+    return true
+  } catch (err) {
+    console.warn('[terminalSnapshot] write failed (non-fatal)', err)
+    return false
+  }
+}
+
+/**
+ * Async counterpart of `writeTerminalSnapshot` — same validation/atomicity, but the directory create
+ * and file write never block MAIN's event loop. This is the path every non-quit caller (project
+ * switch, board teardown, window blur) should use; a 64 MB scrollback snapshot must not freeze the
+ * whole app while it lands on disk.
+ */
+export async function writeTerminalSnapshotAsync(
+  projectDir: string,
+  boardId: string,
+  text: string
+): Promise<boolean> {
+  const target = resolveWriteTarget(projectDir, boardId, text)
+  if (!target) return false
+  try {
+    await mkdirAsync(terminalSnapshotDir(projectDir), { recursive: true })
+    await writeFileAtomic(target.file, text, 'utf8')
     return true
   } catch (err) {
     console.warn('[terminalSnapshot] write failed (non-fatal)', err)

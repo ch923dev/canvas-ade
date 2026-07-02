@@ -347,20 +347,49 @@ const newId = (): string => crypto.randomUUID()
  * snapshot just POPPED off a rail — so the first real edit after an undo SKIPPED its
  * checkpoint, the following mutation cleared `future`, and the undone-to state became
  * unreachable from BOTH rails (#BUG-004: addBoard → move → undo → move → undo left an
- * empty canvas). Invalidated (nulled) by trackedChange, undo/redo, and every load path —
- * once the present moves on, the captured snapshot is stale.
+ * empty canvas). Invalidated (cleared) by trackedChange, undo/redo, and every load path —
+ * once the present moves on, every captured snapshot is stale.
+ *
+ * A STACK, not a single slot (#BUG-007): a human gesture arms an entry (mousedown) and
+ * only consumes it on a LATER event-loop tick (the first mousemove). An MCP-command write
+ * (`useMcpCommands.ts`) also drives `beginChange()` + a mutation, but always synchronously
+ * back-to-back with no yield in between — so its push+consume is atomically balanced and
+ * always operates on the top of the stack, never reaching past it to steal an
+ * already-armed-but-not-yet-committed gesture's entry underneath. A single shared slot let
+ * an interloping MCP beginChange() overwrite (or its mutate consume) the human gesture's
+ * checkpoint before the gesture's own first edit could claim it — silently merging two
+ * unrelated edits into one undo step.
  */
-let pendingCheckpoint: CanvasSnapshot | null = null
+let pendingCheckpoints: CanvasSnapshot[] = []
 
 /**
- * Consume the pending gesture checkpoint: returns `past` with it appended (the lazy
- * record), or `past` unchanged when no gesture is pending. Call ONLY on a real mutation
- * — a no-op patch must leave the pending snapshot armed for the gesture's first real edit.
+ * Consume the MOST RECENTLY armed gesture checkpoint (LIFO — see `pendingCheckpoints`):
+ * returns `past` with it appended (the lazy record), or `past` unchanged when none is
+ * pending. Call ONLY on a real mutation — a no-op patch must leave the stack untouched so
+ * the gesture's first real edit can still claim its entry.
  */
 function takePendingPast(s: CanvasState): CanvasSnapshot[] {
-  const snap = pendingCheckpoint
-  pendingCheckpoint = null
+  const snap = pendingCheckpoints.pop()
   return snap ? recordPast(s.past, snap) : s.past
+}
+
+/**
+ * Rewrite `boards` inside EVERY still-armed checkpoint on the stack via `apply`. Called
+ * after ANY write commits — history-neutral background writers (`patchBoardUntracked`/
+ * `patchBoardMeta`) AND tracked writes that consume their own checkpoint (`updateBoard`/
+ * `resizeBoard`, #BUG-007) — so a checkpoint armed BEFORE this write but not yet consumed
+ * (a still-in-progress gesture, or another interloping caller further down the stack)
+ * stays in sync. Without this, undoing back to that checkpoint would silently revert this
+ * write too — either because a background write is invisible to undo/redo entirely, or
+ * because the checkpoint eventually consumed by ITS OWN gesture was captured stale, before
+ * this write landed. `apply` returns the SAME array ref (or null) to signal no change,
+ * matching `applyBoardPatch`.
+ */
+function rewritePendingBoards(apply: (boards: Board[]) => Board[] | null): void {
+  pendingCheckpoints = pendingCheckpoints.map((snap) => {
+    const nb = apply(snap.boards)
+    return nb && nb !== snap.boards ? { ...snap, boards: nb } : snap
+  })
 }
 
 /**
@@ -373,7 +402,7 @@ function takePendingPast(s: CanvasState): CanvasSnapshot[] {
  * `opts.reflectPresent` is RETAINED for call-site compatibility (the connector/group slices
  * pass it) but is now INERT: it existed to sync the eager model's `lastRecorded` skip token
  * so a no-op gesture after tidy/tile wouldn't push a phantom snapshot. Under the lazy
- * checkpoint model (#BUG-004, see `pendingCheckpoint`) beginChange never pushes, so there is
+ * checkpoint model (#BUG-004, see `pendingCheckpoints`) beginChange never pushes, so there is
  * no phantom to suppress — and a real move right after tidy now gets its own granular
  * checkpoint instead of coalescing into the tidy step.
  *
@@ -405,7 +434,7 @@ function trackedChange(
     return s
   // A tracked op moves the present on — any un-consumed gesture checkpoint is now stale
   // (pushing it later would duplicate the snapshot this op records below).
-  pendingCheckpoint = null
+  pendingCheckpoints = []
   const base: Partial<CanvasState> = {
     // Push the PRE-change present (boards + connectors + groups) as one checkpoint.
     past: recordPast(s.past, { boards: s.boards, connectors: s.connectors, groups: s.groups }),
@@ -425,7 +454,7 @@ function trackedChange(
  * removed only when the user explicitly Starts it (`clearIdleOnMount`), so a later
  * in-session respawn (config change / restart) of an already-started terminal spawns
  * normally (the bug the one-shot predecessor caused). CLAUDE.md LOCKED rule: "restored
- * terminals are idle". Module-scoped (mirrors `pendingCheckpoint`); never persisted.
+ * terminals are idle". Module-scoped (mirrors `pendingCheckpoints`); never persisted.
  */
 const idleOnMountIds = new Set<string>()
 
@@ -491,7 +520,7 @@ function markRestoredIdle(boards: Board[]): void {
  * checkpoint (a loaded project's history starts empty), flags restored terminals
  * idle-on-mount, and resets boards/connectors/groups/viewport/selection/history. Pass
  * `project` to also mark the project open (the applyOpenResult paths); omit it for a raw
- * loadObject. The `pendingCheckpoint = null` + `markRestoredIdle` side effects live HERE
+ * loadObject. The `pendingCheckpoints = []` + `markRestoredIdle` side effects live HERE
  * so no load path (loadObject / open / .bak recovery) can forget either (#BUG M3 hygiene
  * + M-1 idle rule).
  */
@@ -500,7 +529,7 @@ function applyLoadedDoc(
   d: ReturnType<typeof fromObject>,
   project?: ProjectState
 ): void {
-  pendingCheckpoint = null
+  pendingCheckpoints = []
   markRestoredIdle(d.boards)
   set({
     boards: d.boards,
@@ -817,6 +846,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // (lazy record, #BUG-004). A live edit also invalidates any armed redo branch
       // (else redo could clobber it).
       const past = takePendingPast(s)
+      // #BUG-007: this patch only lands on the CONSUMED checkpoint's `past` entry — any
+      // OTHER still-armed checkpoint(s) below it on the stack (e.g. a human gesture that
+      // began before this write and hasn't committed yet) captured boards from BEFORE this
+      // patch, so they'd go stale and, once THEY are eventually consumed, silently revert
+      // this write on undo. Re-apply the same patch to keep them in sync (mirrors
+      // patchBoardUntracked's contract for background writers).
+      rewritePendingBoards((b) => applyBoardPatch(b, id, patch))
       return s.future.length ? { boards, past, future: [] } : { boards, past }
     }),
 
@@ -824,19 +860,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   resizeBoard: (id, w, h) =>
     set((s) => {
-      let changed = false
-      const boards = s.boards.map((b) => {
-        if (b.id !== id) return b
-        const nw = Math.max(MIN_BOARD_SIZE.w, w)
-        const nh = Math.max(MIN_BOARD_SIZE.h, h)
+      const nw = Math.max(MIN_BOARD_SIZE.w, w)
+      const nh = Math.max(MIN_BOARD_SIZE.h, h)
+      // Extracted so the SAME clamp can re-apply to any still-armed checkpoint below this
+      // one on the stack (#BUG-007, see updateBoard) — not just the live boards.
+      const resize = (list: Board[]): Board[] | null => {
+        let changed = false
         // No-op resize (clamped to the same w/h) must not clear redo / re-ref (STATE-2).
-        if (nw === b.w && nh === b.h) return b
-        changed = true
-        return { ...b, w: nw, h: nh }
-      })
-      if (!changed) return s
+        const next = list.map((b) => {
+          if (b.id !== id || (nw === b.w && nh === b.h)) return b
+          changed = true
+          return { ...b, w: nw, h: nh }
+        })
+        return changed ? next : null
+      }
+      const boards = resize(s.boards)
+      if (!boards) return s
       // Consume the pending beginChange checkpoint (lazy record, #BUG-004) — see updateBoard.
       const past = takePendingPast(s)
+      rewritePendingBoards(resize) // #BUG-007: keep any other armed checkpoint(s) in sync
       return s.future.length ? { boards, past, future: [] } : { boards, past }
     }),
 
@@ -897,7 +939,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, h }
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      // #BUG-006: mirror this untracked grow into every armed checkpoint, else a later undo
+      // that consumes a checkpoint captured before it silently reverts the height bump.
+      rewritePendingBoards((bs) => bs.map((b) => (b.id === id && b.h < h ? { ...b, h } : b)))
+      return { boards }
     }),
 
   growBoardWidth: (id, w) =>
@@ -910,7 +956,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, w }
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      rewritePendingBoards((bs) => bs.map((b) => (b.id === id && b.w < w ? { ...b, w } : b))) // #BUG-006
+      return { boards }
     }),
 
   repositionBoardUntracked: (id, x, y) =>
@@ -924,7 +972,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, x, y }
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      rewritePendingBoards((bs) =>
+        bs.map((b) => (b.id === id && (b.x !== x || b.y !== y) ? { ...b, x, y } : b))
+      ) // #BUG-006
+      return { boards }
     }),
 
   setDiagramCache: (boardId, elId, svgCache) =>
@@ -942,7 +994,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         })
         return changed ? { ...b, elements } : b
       })
-      return changed ? { boards } : s
+      if (!changed) return s
+      // #BUG-006: mirror the untracked diagram-cache write into every armed checkpoint.
+      rewritePendingBoards((bs) =>
+        bs.map((b) => {
+          if (b.id !== boardId || b.type !== 'planning') return b
+          const elements = b.elements.map((el) =>
+            el.id === elId && el.kind === 'diagram' && el.svgCache !== svgCache
+              ? { ...el, svgCache }
+              : el
+          )
+          return { ...b, elements }
+        })
+      )
+      return { boards }
     }),
 
   setViewport: (vp) =>
@@ -999,7 +1064,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // after an undo, the next gesture's first real edit checkpoints the undone-to
     // present like any other state (#BUG-004).
     const s = get()
-    pendingCheckpoint = { boards: s.boards, connectors: s.connectors, groups: s.groups }
+    pendingCheckpoints.push({ boards: s.boards, connectors: s.connectors, groups: s.groups })
   },
   undo: () =>
     set((s) => {
@@ -1011,7 +1076,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (!r) return s
       // A history jump invalidates any un-consumed gesture checkpoint (#BUG-004) — the
       // next gesture re-captures from the restored present.
-      pendingCheckpoint = null
+      pendingCheckpoints = []
       // BUG-033: boards that vanish from the present snapshot (e.g. a duplicated terminal
       // clone that was just undone) must be reclaimed from idleOnMountIds, or the Set
       // accumulates dead UUIDs across duplicate+undo cycles (session-lifetime memory leak).
@@ -1053,7 +1118,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         s.future
       )
       if (!r) return s
-      pendingCheckpoint = null // see undo — a history jump stales the gesture checkpoint
+      pendingCheckpoints = [] // see undo — a history jump stales the gesture checkpoint(s)
       // BUG-012: boards this redo DROPS from the present (e.g. redoing a removeBoard of an
       // idle terminal) must park their flag too — mirrors undo's vanish sweep so an idle id
       // never strands on the live registry when its board is no longer present.
@@ -1178,14 +1243,14 @@ function noticeIfNewerDoc(d: CanvasDoc): void {
 
 /**
  * Machine-driven board patch (#BUG-057): same type-filtered merge as updateBoard but
- * HISTORY-NEUTRAL — records no checkpoint, leaves any pending gesture checkpoint armed,
+ * HISTORY-NEUTRAL — records no checkpoint, leaves any pending gesture checkpoint(s) armed,
  * and never clears an armed redo branch, so a background writer (the auto-connect detect
- * push, a 1s timer) can't silently kill the user's redo stack. An armed pendingCheckpoint
- * is REWRITTEN with the same patch (like patchBoardMeta): without that, a checkpoint
- * armed before this machine write snapshots the pre-patch board, and undoing the gesture
- * silently reverts the machine-written value. Mirrors growBoardHeight's untracked
- * contract. Module-scoped (like isIdleOnMount) rather than a CanvasState action: it is
- * for background engines, never user-gesture call sites.
+ * push, a 1s timer) can't silently kill the user's redo stack. Every ARMED checkpoint is
+ * REWRITTEN with the same patch (like patchBoardMeta, via `rewritePendingBoards`): without
+ * that, a checkpoint armed before this machine write snapshots the pre-patch board, and
+ * undoing the gesture silently reverts the machine-written value. Mirrors growBoardHeight's
+ * untracked contract. Module-scoped (like isIdleOnMount) rather than a CanvasState action:
+ * it is for background engines, never user-gesture call sites.
  *
  * NOTE: unlike patchBoardMeta, the past/future snapshot rails are intentionally NOT
  * rewritten — an undo reverts any value written here. Acceptable only for callers whose
@@ -1197,10 +1262,7 @@ export function patchBoardUntracked(id: string, patch: Partial<Board>): void {
   useCanvasStore.setState((s) => {
     const boards = applyBoardPatch(s.boards, id, patch)
     if (!boards) return s
-    if (pendingCheckpoint) {
-      const nb = applyBoardPatch(pendingCheckpoint.boards, id, patch)
-      if (nb) pendingCheckpoint = { ...pendingCheckpoint, boards: nb }
-    }
+    rewritePendingBoards((snapBoards) => applyBoardPatch(snapBoards, id, patch))
     return { boards }
   })
 }
@@ -1250,10 +1312,7 @@ export function patchBoardMeta(
     const boards = applyMeta(s.boards)
     const past = mapRail(s.past)
     const future = mapRail(s.future)
-    if (pendingCheckpoint) {
-      const nb = applyMeta(pendingCheckpoint.boards)
-      if (nb !== pendingCheckpoint.boards) pendingCheckpoint = { ...pendingCheckpoint, boards: nb }
-    }
+    rewritePendingBoards(applyMeta)
     if (boards === s.boards && past === s.past && future === s.future) return s
     return { boards, past, future }
   })

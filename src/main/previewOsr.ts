@@ -640,11 +640,15 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   }
   // 2A — if a paint-state raced ahead of this open (the liveness manager reconciles on mount),
   // drain it onto the desired flag BEFORE load so onReady honors it (a board that should open
-  // already-frozen never paints a frame). startPainting itself is the gate's job, not here.
+  // already-frozen never paints a frame). Route it through the same real-effect path the live
+  // IPC handler uses (applyOsrPaint + applyEffectiveMute) — a buffered `false` must actually call
+  // the native `wc.stopPainting()` (and mute), not just flip the JS bookkeeping flag, or a freshly
+  // created OSR window (which paints by default) keeps streaming frames/audio forever (BUG-002).
   const pendPaint = pendingPaint.get(id)
   if (pendPaint !== undefined) {
     pendingPaint.delete(id)
-    e.painting = pendPaint
+    applyOsrPaint(osrWin, e, pendPaint)
+    applyEffectiveMute(e)
   }
   applyOsrInitialLoad(
     id,
@@ -677,6 +681,13 @@ function disposeOsr(id: string): void {
 /** Close every offscreen view (window close / app shutdown). */
 export function disposeAllOsr(): void {
   for (const id of [...osr.keys()]) disposeOsr(id)
+  // BUG-042: disposeOsr(id) above only reaches ids that actually opened a window (osr.keys()). A
+  // board whose id got a buffered resize/paint request (pendingSize/pendingPaint) but never opened
+  // — e.g. a Browser board with no URL yet — is invisible to that loop, so its entry survived every
+  // prior sweep. Clear both maps outright here: this IS the deterministic "can't leak across a
+  // project switch or e2e spec" sweep, so every buffered request is stale by definition once it runs.
+  pendingSize.clear()
+  pendingPaint.clear()
   // Drop the host owner + close the readiness gate (previewOsrOwner.clearOwner).
   clearOwner()
 }

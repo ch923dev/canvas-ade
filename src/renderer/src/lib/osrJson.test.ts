@@ -80,6 +80,18 @@ describe('buildModel — fidelity', () => {
     expect(rows.filter((r) => r.kind === 'open').length).toBeLessThan(1000) // bounded ≪ 50k
   })
 
+  it('never stamps childCount higher than the rows actually between open/close (depth-cap bail)', () => {
+    // Regression for BUG-054: the deepest surviving container's one child hits the depth cap and
+    // bails before pushing any row, so childCount must reflect 0 rows there, not 1.
+    const deep = '['.repeat(300) + '1' + ']'.repeat(300)
+    const { rows } = buildModel(deep, 'application/json')
+    for (const r of rows) {
+      if (r.kind !== 'open' || r.closeId === undefined) continue
+      const rowsBetween = r.closeId - r.id - 1 // ids are sequential; nothing else interleaves
+      expect(r.childCount).toBeLessThanOrEqual(rowsBetween)
+    }
+  })
+
   it('strips a BOM before scanning', () => {
     const { rows, meta } = buildModel('﻿{"ok":true}', 'application/json')
     expect(meta.parseError).toBe(false)

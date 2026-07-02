@@ -18,6 +18,13 @@ describe('parseAuthDeepLink', () => {
     expect(parseAuthDeepLink('not a url')).toBeNull()
     expect(parseAuthDeepLink('')).toBeNull()
   })
+
+  it('rejects an expanse:// URL whose host/path is not the auth callback route (fail closed)', () => {
+    expect(parseAuthDeepLink('expanse://other/path')).toBeNull()
+    expect(parseAuthDeepLink('expanse://auth/not-callback')).toBeNull()
+    expect(parseAuthDeepLink('expanse://auth/callback/extra')).toBeNull()
+    expect(parseAuthDeepLink('expanse://evil/callback?code=abc&state=xyz')).toBeNull()
+  })
 })
 
 describe('deepLinkFromArgv', () => {

@@ -305,6 +305,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
   // let the spawn effect's ResizeObserver consume this flag on the first good fit.
   const pendingRespawnRef = useRef(false)
+  // BUG-033: re-entrancy guard for respawn(). termRef.current!==term alone only catches a
+  // full remount (a NEW term object) — it does NOT catch a second respawn() firing on the
+  // SAME term before the first's spawnTerminal IPC resolves (e.g. two Restart clicks, or a
+  // deferred pendingRespawnRef fire racing an explicit Restart). Without this, a slow OLDER
+  // spawn's rejection/`spawn-failed` can land AFTER a newer respawn already succeeded and is
+  // running, clobbering the live session with a false "spawn failed" banner. Bumped at the
+  // start of every respawn(); a result is applied only if it is still the latest generation.
+  const respawnGenerationRef = useRef(0)
   // T-resume: a one-shot launchCommand override for the NEXT respawn (the Restart menu's
   // "Resume session" sets `claude --resume <id>`); respawn consumes + clears it so only that
   // spawn uses it and a later restart falls back to board.launchCommand.
@@ -552,6 +560,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   const respawn = useCallback(() => {
     const term = termRef.current
     if (!term) return
+    // BUG-033: claim this call's generation. Any earlier in-flight respawn() on this same
+    // term is now stale — its eventual .then()/.catch() must not touch state/term below.
+    const generation = ++respawnGenerationRef.current
     // Consume a one-shot launch override (e.g. `claude --resume <id>`) for THIS spawn only.
     const override = launchOverrideRef.current
     launchOverrideRef.current = undefined
@@ -573,14 +584,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         rows: term.rows
       })
       .then((res) => {
-        if (termRef.current !== term) return
+        if (termRef.current !== term || respawnGenerationRef.current !== generation) return
         if (res.state === 'spawn-failed') {
           setState('spawn-failed')
           term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
         }
       })
       .catch((err: Error) => {
-        if (termRef.current !== term) return
+        if (termRef.current !== term || respawnGenerationRef.current !== generation) return
         setState('spawn-failed')
         term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
       })
@@ -754,12 +765,23 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const stopKeys = (e: KeyboardEvent): void => e.stopPropagation()
     el.addEventListener('keydown', stopKeys)
 
+    // S3 restore: set true just before enqueueing the disk-restored snapshot so the coalescer's
+    // NEXT flush (immediate if live, deferred to reveal if hidden — same hold gate as live PTY
+    // data) scrolls the view to the restored bottom once the write actually lands.
+    let scrollAfterRestore = false
     // Lane A write coalescer (xterm #880): batch PTY chunks into one rAF flush, and HOLD them
     // while this board is hidden (liveRef false — off-screen / below-LOD), flushing losslessly on
     // reveal. The PTY + xterm buffer stay alive; only the render is gated. The hold is bounded to
     // ~scrollback (read live via the thunk) so a hidden firehose can't grow unbounded.
     const coalescer = createTerminalWriteCoalescer({
-      write: (chunk) => term.write(chunk),
+      write: (chunk) => {
+        if (!scrollAfterRestore) {
+          term.write(chunk)
+          return
+        }
+        scrollAfterRestore = false
+        term.write(chunk, () => term.scrollToBottom())
+      },
       // Hold while hidden (Lane A) OR while a resize-backstop snapshot is in flight (S2), so PTY
       // bytes queue instead of interleaving into the reset buffer; they flush in order on resume.
       isLive: () => liveRef.current && !resizeBackstopRef.current,
@@ -867,9 +889,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       clearIdleOnMount(board.id)
       startedRef.current = true // going live — suppress any still-in-flight snapshot restore
       // S3: a restored terminal shows its prior (read-only) scrollback; Start spawns a FRESH PTY, so
-      // clear that snapshot first — the live output replaces it rather than appending after it.
+      // clear that snapshot first — the live output replaces it rather than appending after it. Also
+      // drop any restore bytes the coalescer is still HOLDING (board was hidden when restore ran) so
+      // they can't flush into the now-live session after reset.
       if (restoredSnapshot) {
         term.reset()
+        coalescer.clear()
+        scrollAfterRestore = false
         restoredSnapshot = false
         setRestored(false)
       }
@@ -893,7 +919,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           // before this async read settles — writing then would splice the stale buffer into the
           // now-live session. disposed/termRef cover a remount; startedRef covers same-term-went-live.
           if (disposed || termRef.current !== term || startedRef.current || !snap) return
-          term.write(snap, () => term.scrollToBottom())
+          // Route through the Lane A coalescer (not a direct term.write): a hidden/below-LOD board
+          // must defer this write until it goes live, exactly like the live-PTY path, so a restore
+          // on an off-screen terminal doesn't pay the render cost the liveness gate exists to avoid.
+          scrollAfterRestore = true
+          coalescer.enqueue(snap)
           restoredSnapshot = true
           setRestored(true)
         })

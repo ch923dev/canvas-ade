@@ -111,7 +111,12 @@ let mainWindow: BrowserWindow | null = null
 // Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
 // safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
 let authService: AuthService | null = null
-let pendingDeepLink: string | null = null
+let pendingDeepLinks: string[] = []
+// BUG-024: entitlementCache.isFresh() existed but no caller ever consulted it — the cache was
+// written once at sign-in and trusted indefinitely, so a Stripe-side cancel/lapse would never
+// reach the desktop. Re-check on startup (below), gated by this TTL so it costs at most one
+// license GET per hour of app runtime.
+const ENTITLEMENT_TTL_MS = 60 * 60 * 1000
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
@@ -251,13 +256,20 @@ function createWindow(): void {
 
   // The Playwright e2e boot (CANVAS_E2E) needs the renderer's seeding hook
   // (window.__canvasE2E) to populate the board mirror, so load with ?e2e=1.
+  // BUG-056: the renderer's dependency-smoke probe (useRendererSmoke) must only run
+  // under the CANVAS_SMOKE harness, so pass `?smoke=1` the same way — otherwise it
+  // has no signal and either always/never runs regardless of the env var.
   const seedHarness = !!process.env.CANVAS_E2E
+  const query: Record<string, string> = {}
+  if (seedHarness) query.e2e = '1'
+  if (SMOKE) query.smoke = '1'
+  const qs = Object.keys(query).length > 0 ? `?${new URLSearchParams(query).toString()}` : ''
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
-    mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
+    mainWindow.loadURL(`${base}${qs}`)
   } else {
     // Same path the nav guard pins to via appDocPath above (indexHtmlPath).
-    mainWindow.loadFile(indexHtmlPath, seedHarness ? { query: { e2e: '1' } } : undefined)
+    mainWindow.loadFile(indexHtmlPath, qs ? { query } : undefined)
   }
 }
 
@@ -292,7 +304,7 @@ function handleAuthDeepLink(url: string): void {
   if (authService) {
     void authService.handleCallback(url)
   } else {
-    pendingDeepLink = url
+    pendingDeepLinks.push(url)
   }
 }
 
@@ -412,7 +424,7 @@ app.whenReady().then(async () => {
   // Phase 5 · S1: frame-guarded "save terminal output to file" (native dialog + atomic write).
   registerTerminalHandlers(ipcMain, () => mainWindow)
   // SYNC platform info (Windows build number) for the terminal's xterm windowsPty hint (A-Win).
-  registerPlatformIpc(ipcMain)
+  registerPlatformIpc(ipcMain, () => mainWindow)
   // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The
   // chokidar watcher that emits file:treeEvent lands in S2; the channel is reserved here.
   registerFileIpc(ipcMain, () => mainWindow)
@@ -526,11 +538,17 @@ app.whenReady().then(async () => {
     onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
   })
   registerAuthHandlers(ipcMain, () => mainWindow, authService)
-  if (pendingDeepLink) {
-    const url = pendingDeepLink
-    pendingDeepLink = null
-    void authService.handleCallback(url)
+  if (pendingDeepLinks.length > 0) {
+    const urls = pendingDeepLinks
+    pendingDeepLinks = []
+    for (const url of urls) {
+      void authService.handleCallback(url)
+    }
   }
+  // BUG-024: re-verify a stale cached entitlement against the backend on every cold start (no-op
+  // when signed out or still within the TTL) so a lapsed/canceled subscription doesn't stay
+  // trusted indefinitely just because the app happened to stay signed in.
+  void authService.syncEntitlementIfStale(ENTITLEMENT_TTL_MS)
   // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the
   // retired CANVAS_SMOKE=e2e), so gate on both — the old SMOKE-only guard was dead (F-A).
@@ -990,12 +1008,15 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   // performGuardedQuit catches a flush rejection so shutdown() (the PTY-tree drain) always
   // runs — a wedged renderer must never orphan a deep agent child tree (before-quit-flush-no-catch).
+  // It also catches a shutdown() rejection (quit-reject-catch) so the fire-and-forget `void` call
+  // here can never surface as an unhandled rejection.
   void performGuardedQuit({
     flush: flushRenderer,
     shutdown,
     exit: (code) => app.exit(code),
     onFlushError: (err) =>
-      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err)
+      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err),
+    onShutdownError: (err) => console.error('[before-quit] shutdown failed; exiting anyway', err)
   })
 })
 

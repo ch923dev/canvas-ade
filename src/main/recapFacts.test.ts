@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { computeRecapFacts, LAST_ASK_MAX_CHARS, FACT_LIST_MAX, type RecapFacts } from './recapFacts'
+import {
+  computeRecapFacts,
+  LAST_ASK_MAX_CHARS,
+  TITLE_MAX_CHARS,
+  FACT_LIST_MAX,
+  COMMAND_LABEL_MAX,
+  type RecapFacts
+} from './recapFacts'
 import { IDLE_AFTER_MS, type TerminalRuntime } from './summaryLoop'
 
 // ── fixture helpers ──────────────────────────────────────────────────────────
@@ -64,6 +71,12 @@ describe('computeRecapFacts basics', () => {
       )
     )
     expect(f.title).toBe('Second title')
+  })
+
+  it('caps an oversized ai-title record', () => {
+    const longTitle = 'y'.repeat(TITLE_MAX_CHARS + 50)
+    const f = facts(jsonl(line({ type: 'ai-title', aiTitle: longTitle })))
+    expect(f.title).toBe('y'.repeat(TITLE_MAX_CHARS))
   })
 
   it('lastAsk prefers the last-prompt record, falls back to the last user turn, and is capped', () => {
@@ -143,6 +156,14 @@ describe('computeRecapFacts files + commands', () => {
       { label: 'git status --porcelain', count: 1 },
       { label: 'Run tests', count: 2 }
     ])
+  })
+
+  it('caps a long tool_use description at COMMAND_LABEL_MAX, same as the fallback command head', () => {
+    const longDescription = 'x'.repeat(COMMAND_LABEL_MAX + 50)
+    const f = facts(
+      jsonl(asstLine([tool('Bash', { command: 'ls', description: longDescription })], 10))
+    )
+    expect(f.commands).toEqual([{ label: 'x'.repeat(COMMAND_LABEL_MAX), count: 1 }])
   })
 
   it('caps files and commands at FACT_LIST_MAX, keeping the most recent', () => {

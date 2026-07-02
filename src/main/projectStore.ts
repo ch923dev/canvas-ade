@@ -333,6 +333,15 @@ const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
 export const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
 
 /**
+ * MAIN-side write ceiling (DoS backstop) — mirrors fileIpc.ts's `MAX_READ_BYTES`. The renderer
+ * already size-gates for UX (e.g. BackdropPicker's `IMAGE_CAP_BYTES` 30 MiB / `VIDEO_CAP_BYTES`
+ * 200 MiB), but not every caller does (usePlanningImageIO's paste/drop path has no client-side
+ * cap at all), and a renderer-side cap is advisory only regardless. 256 MiB sits safely above the
+ * largest renderer gate; a write over it is rejected before the bytes are hashed or touched.
+ */
+const MAX_WRITE_BYTES = 256 * 1024 * 1024
+
+/**
  * Content-address `bytes` (sha1) into `<dir>/.canvas/assets/<sha1>.<ext>` and return the stored
  * `assetId` — `assets/<sha1>.<ext>`, UNCHANGED by ADR 0009 (a logical id, not a physical path;
  * only the resolution base moved into `.canvas/`). Dedups: identical bytes → identical id; the
@@ -345,6 +354,11 @@ export async function writeAsset(
 ): Promise<{ assetId: string }> {
   const e = String(ext).toLowerCase()
   if (!ASSET_EXTS.has(e)) throw new Error(`writeAsset: unsupported ext ${ext}`)
+  if (bytes.byteLength > MAX_WRITE_BYTES) {
+    throw new Error(
+      `writeAsset: too large to write (${bytes.byteLength} bytes > ${MAX_WRITE_BYTES})`
+    )
+  }
   const sha1 = createHash('sha1').update(bytes).digest('hex')
   const assetId = `${ASSETS}/${sha1}.${e}`
   const abs = join(assetsDirOf(dir), `${sha1}.${e}`)

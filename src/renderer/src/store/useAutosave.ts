@@ -198,9 +198,15 @@ export function useAutosave(): void {
     // snapshot write could be cut off by `app.exit(0)`. Blur is deliberately canvas-only —
     // serializing every terminal's full buffer on each focus loss is too heavy, and close/quit/switch
     // (disposeLiveResources) already cover the durable moments.
+    //
+    // BUG-040: both moments below pass `sync: true` — `flushRenderer`'s before-quit round-trip
+    // no-ops once the window is already destroyed, so a window-close-driven quit relies on THIS
+    // beforeunload write actually landing before MAIN moves on; only a synchronous (blocking) MAIN
+    // write gives that guarantee. Every other caller (disposeLiveResources on project switch) keeps
+    // the default async writer so a large scrollback buffer never stalls MAIN during normal use.
     const onUnload = (): void => {
       void saver.flush()
-      void flushAllTerminalSnapshots()
+      void flushAllTerminalSnapshots({ sync: true })
     }
     window.addEventListener('blur', onBlur)
     window.addEventListener('beforeunload', onUnload)
@@ -211,7 +217,7 @@ export function useAutosave(): void {
     // the terminal snapshots) so the on-disk canvas.json + sidecars are current before the
     // process dies.
     const offFlush = window.api.project.onFlush(() =>
-      Promise.all([saver.flush(), flushAllTerminalSnapshots()]).then(() => undefined)
+      Promise.all([saver.flush(), flushAllTerminalSnapshots({ sync: true })]).then(() => undefined)
     )
 
     // PERSIST-B: publish this instance so a project switch can cancel its pending timer.

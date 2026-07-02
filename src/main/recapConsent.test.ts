@@ -47,6 +47,25 @@ describe('recapConsent', () => {
     expect(readConsent(dir, '/proj/ok')).toBe('enabled')
     expect(readConsent(dir, '/proj/bad')).toBeUndefined()
   })
+
+  // BUG-022: the SAME Windows project directory reopened via a differently-cased or
+  // trailing-slashed path string must resolve to the SAME stored decision — getCurrentDir()
+  // never normalizes what project:open/create was given, so the consent-store key must.
+  it('BUG-022: a Windows-style path is looked up case-insensitively (case-insensitive filesystem)', () => {
+    writeConsent(dir, 'C:\\Users\\x\\Proj', 'enabled')
+    expect(readConsent(dir, 'c:\\users\\x\\proj')).toBe('enabled')
+    expect(readConsent(dir, 'C:\\USERS\\X\\PROJ')).toBe('enabled')
+  })
+
+  it('BUG-022: a trailing separator does not create a distinct key', () => {
+    writeConsent(dir, 'C:\\Users\\x\\Proj', 'declined')
+    expect(readConsent(dir, 'C:\\Users\\x\\Proj\\')).toBe('declined')
+  })
+
+  it('BUG-022: POSIX-style paths stay case-SENSITIVE (no over-approving on a real POSIX fs)', () => {
+    writeConsent(dir, '/Users/x/Proj', 'enabled')
+    expect(readConsent(dir, '/users/x/proj')).toBeUndefined()
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -28,8 +28,14 @@ export function unregisterTerminalSnapshotter(id: string): void {
  * Serialize + persist every registered terminal. Best-effort per board (one board's serialize/write
  * error never blocks the others). Awaited by the caller so the before-quit reply can't resolve the
  * quit and let `app.exit(0)` race ahead of the writes.
+ *
+ * `sync` forces MAIN's synchronous, event-loop-blocking writer instead of the default async one — pass
+ * `true` ONLY for the main-driven before-quit flush (`project:flush`), where the process may exit right
+ * after this resolves. Every other caller (window blur, project switch) must stay async so a large
+ * scrollback buffer can't stall the whole app.
  */
-export async function flushAllTerminalSnapshots(): Promise<void> {
+export async function flushAllTerminalSnapshots(opts?: { sync?: boolean }): Promise<void> {
+  const sync = opts?.sync ?? false
   const entries = [...registry.entries()]
   await Promise.all(
     entries.map(async ([id, fn]) => {
@@ -40,7 +46,7 @@ export async function flushAllTerminalSnapshots(): Promise<void> {
         text = null
       }
       if (!text || !text.trim()) return
-      await window.api.terminal.writeSnapshot(id, text).catch(() => false)
+      await window.api.terminal.writeSnapshot(id, text, sync).catch(() => false)
     })
   )
 }

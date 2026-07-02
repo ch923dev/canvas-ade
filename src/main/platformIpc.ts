@@ -7,8 +7,10 @@
  * sendSync) so the value is present the instant the first Terminal mounts — no async race against
  * xterm construction. Returns null off Windows.
  */
-import type { IpcMain } from 'electron'
+import type { BrowserWindow, IpcMain } from 'electron'
 import { release } from 'os'
+import { isForeignSender } from './ipcGuard'
+import { computeE2ESurfaceEnabled } from './windowSecurity'
 
 /** Parse the Windows build from an `os.release()` string ("10.0.22631" → 22631). Null if unparseable. */
 export function winBuildFromRelease(rel: string): number | null {
@@ -18,11 +20,26 @@ export function winBuildFromRelease(rel: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-export function registerPlatformIpc(ipcMain: IpcMain): void {
+export function registerPlatformIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
   // SYNC (ipcMain.on + returnValue): the preload reads this ONCE at load so the renderer has the build
   // number synchronously when constructing xterm. A static, cheap, one-time value — sendSync's block
   // is negligible and avoids an async race for the very first terminal mount.
   ipcMain.on('platform:winBuild', (e) => {
+    if (isForeignSender(e, getWin)) {
+      e.returnValue = null
+      return
+    }
     e.returnValue = process.platform === 'win32' ? winBuildFromRelease(release()) : null
+  })
+
+  // BUG-057: same SYNC-at-load pattern, MAIN-owned — the renderer's e2e test-surface gate
+  // (`isE2E` in e2eRegistry.ts) reads this instead of the client-mutable `?e2e=1` URL query.
+  // Frame-guarded like every other handler (BUG-045): a foreign sender is told the surface is off.
+  ipcMain.on('platform:e2eEnabled', (e) => {
+    if (isForeignSender(e, getWin)) {
+      e.returnValue = false
+      return
+    }
+    e.returnValue = computeE2ESurfaceEnabled()
   })
 }

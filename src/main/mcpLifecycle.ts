@@ -21,6 +21,14 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  */
 const SPAWN_GROUP_MAX_NAME = 80
 
+/**
+ * BUG-003: `reapIdle`'s status-bucket fallback (used for any board without a live PTY/preview
+ * session, e.g. planning/kanban) must treat every bucket it doesn't recognize as idle-eligible,
+ * not the reverse — mirrors `BoardStatusBucket` (`boardStatus.ts`) minus 'idle'/'static': the only
+ * buckets that mean "still busy, don't reap" are liveness ('running') and the attention states.
+ */
+const NON_IDLE_STATUSES = new Set(['running', 'awaiting-review', 'blocked', 'failed'])
+
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -40,6 +48,12 @@ export interface McpLifecycleDeps {
   idleActivityMs: number
   /** The orchestrator's read-only listBoards — reapIdle reads derived per-board statuses through it. */
   listBoards: () => Promise<BoardSummary[]>
+  /**
+   * BUG-019: notified with a board's id right after `closeBoard` tears it down (close_board tool OR
+   * an idle-reap sweep), so the host can revoke that board's `connected`-tier MCP token in the same
+   * step instead of leaving it live in the TokenStore. Optional; tests omit it.
+   */
+  onBoardClosed?: (boardId: BoardId) => void
 }
 
 /** The members a {@link McpLifecycle.spawnGroup} cluster may carry (terminal is always present). */
@@ -88,7 +102,16 @@ export interface McpLifecycle {
 }
 
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
-  const { registry, now, cap: capInput, idleTtlMs, spawnGraceMs, idleActivityMs, listBoards } = deps
+  const {
+    registry,
+    now,
+    cap: capInput,
+    idleTtlMs,
+    spawnGraceMs,
+    idleActivityMs,
+    listBoards,
+    onBoardClosed
+  } = deps
   // Normalize the cap to a getter so it can be read fresh per spawn attempt (live config). Each
   // spawn reads it ONCE into a local `cap` so the check and the error message agree even if the
   // configured value changes mid-flight.
@@ -252,6 +275,11 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
     } finally {
       tracked.delete(boardId)
+      // BUG-019: revoke the board's connected-tier MCP token (if any) in the SAME step it's torn
+      // down. The board is dead either way at this point (PTY already drained/killed above), so
+      // this fires unconditionally — including when the removeBoard ack failed — mirroring the
+      // cap-slot release just above.
+      onBoardClosed?.(boardId)
     }
   }
 
@@ -284,8 +312,14 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         if (staleMs !== undefined) {
           idle = staleMs >= idleActivityMs
         } else {
+          // BUG-003: invert to an explicit non-idle allowlist rather than an idle allowlist —
+          // a passive-content bucket like 'static' (planning/kanban boards, which never carry a
+          // live PTY/preview session and so never hit the staleMs branch above) must count as
+          // reapable, and a positive-match `=== 'idle'` check silently excluded it forever. Only
+          // the liveness/attention buckets ('running' + the attention states) are non-idle, so any
+          // future BoardStatusBucket addition defaults to idle-eligible instead of repeating the gap.
           const status = statuses.get(id)
-          idle = status === undefined || status === 'idle'
+          idle = status === undefined || !NON_IDLE_STATUSES.has(status)
         }
         if (!idle) {
           rec.idleSince = null

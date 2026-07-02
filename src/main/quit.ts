@@ -7,12 +7,21 @@
  * inline `flushRenderer().then(shutdown).finally(exit)` skipped `.then(shutdown)` on a flush
  * rejection, orphaning a deep agent child-process tree on quit. The `.catch` here guarantees
  * teardown runs regardless; `exit(0)` still fires last via `.finally`.
+ *
+ * `quit-reject-catch`: a `shutdown()` rejection (e.g. the PTY drain throwing) was not caught, so
+ * the returned promise stayed rejected even though `.finally` still fired `exit(0)`. The caller
+ * in index.ts invokes this with `void performGuardedQuit(...)` (a synchronous `before-quit`
+ * handler can't await it), so that rejection had nowhere to land but
+ * `process.on('unhandledRejection', ...)` — routing a normal quit through the crash sink. The
+ * `.catch` below mirrors the flush-side handling so a shutdown failure is reported via
+ * `onShutdownError` instead of escaping as an unhandled rejection.
  */
 export function performGuardedQuit(deps: {
   flush: () => Promise<void>
   shutdown: () => Promise<void>
   exit: (code: number) => void
   onFlushError?: (err: unknown) => void
+  onShutdownError?: (err: unknown) => void
 }): Promise<void> {
   return deps
     .flush()
@@ -20,6 +29,9 @@ export function performGuardedQuit(deps: {
       deps.onFlushError?.(err)
     })
     .then(() => deps.shutdown())
+    .catch((err) => {
+      deps.onShutdownError?.(err)
+    })
     .finally(() => deps.exit(0))
 }
 

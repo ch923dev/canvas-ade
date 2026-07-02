@@ -31,6 +31,6 @@ export function sanitizeBoardTitle(raw: string | undefined): string | undefined 
     if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
     out += ch
   }
-  out = [...out.trim()].slice(0, BOARD_TITLE_MAX).join('')
+  out = [...out.trim()].slice(0, BOARD_TITLE_MAX).join('').trimEnd()
   return out.length > 0 ? out : undefined
 }

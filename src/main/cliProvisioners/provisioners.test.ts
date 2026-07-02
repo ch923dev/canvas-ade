@@ -37,6 +37,8 @@ import { codexProvisioner } from './codex'
 import { geminiProvisioner } from './gemini'
 import { opencodeProvisioner } from './opencode'
 import {
+  existingServersMap,
+  isRecord,
   maskToken,
   readJsonConfig,
   removeCodexTable,
@@ -86,6 +88,19 @@ describe('shared helpers', () => {
     expect(() => readJsonConfig(bad)).toThrow(/not valid JSON/)
   })
 
+  it('isRecord/existingServersMap treat a malformed mcpServers/mcp field as absent (BUG-023)', () => {
+    expect(isRecord({})).toBe(true)
+    expect(isRecord([])).toBe(false)
+    expect(isRecord('oops')).toBe(false)
+    expect(isRecord(null)).toBe(false)
+    expect(isRecord(undefined)).toBe(false)
+
+    expect(existingServersMap({ mcpServers: { a: 1 } }, 'mcpServers')).toEqual({ a: 1 })
+    expect(existingServersMap({ mcpServers: 'not-an-object' }, 'mcpServers')).toBeUndefined()
+    expect(existingServersMap({ mcpServers: ['a', 'b'] }, 'mcpServers')).toBeUndefined()
+    expect(existingServersMap(undefined, 'mcpServers')).toBeUndefined()
+  })
+
   it('tomlBasicString escapes backslash and quote', () => {
     expect(tomlBasicString('a"b\\c')).toBe('"a\\"b\\\\c"')
   })
@@ -108,6 +123,17 @@ describe('shared helpers', () => {
     expect(replaced).toContain('60000')
     expect(replaced).toContain('Bearer T2')
     expect(replaced).toContain('[mcp_servers.other]')
+  })
+
+  it("upsertCodexTable matches the existing file's CRLF convention (no mixed line endings)", () => {
+    const existing = '[model]\r\nname = "gpt"\r\n'
+    const appended = upsertCodexTable(existing, 52141, 'T')
+    expect(appended).not.toMatch(/[^\r]\n/) // every \n is preceded by \r — no bare LF
+    expect(appended).toContain('[mcp_servers.canvas-ade]\r\n')
+
+    const replaced = upsertCodexTable(appended, 60000, 'T2')
+    expect(replaced).not.toMatch(/[^\r]\n/)
+    expect(replaced.match(/\[mcp_servers\.canvas-ade\]/g)).toHaveLength(1)
   })
 
   it('removeCodexTable drops our table only, preserving neighbours; no-op when absent', () => {
@@ -147,6 +173,40 @@ describe('claudeProvisioner', () => {
     const settings = readJson(join(dir, '.claude', 'settings.local.json'))
     expect(settings.hooks).toBeDefined() // preserved (recap hook lives here)
     expect(settings.enabledMcpjsonServers).toEqual(['other', 'canvas-ade'])
+  })
+
+  it('rolls back .mcp.json when the second write (settings.local.json) fails, leaving no orphaned bearer-token file (BUG-020)', () => {
+    const dir = freshProject()
+    const originalMcpJson = { mcpServers: { mine: { type: 'http' } } }
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify(originalMcpJson))
+    // Force the second write to fail: a FILE sits where the `.claude` directory must be created.
+    writeFileSync(join(dir, '.claude'), 'not a directory')
+
+    expect(() => claudeProvisioner.writeSync(dir, TOK)).toThrow()
+
+    // .mcp.json is restored to exactly its pre-write state — no orphaned canvas-ade token entry.
+    expect(readJson(join(dir, '.mcp.json'))).toEqual(originalMcpJson)
+  })
+
+  it('deletes .mcp.json (rather than leaving a newly-created orphan) when it did not exist before a failed second write', () => {
+    const dir = freshProject()
+    writeFileSync(join(dir, '.claude'), 'not a directory') // forces the second write to fail
+    expect(() => claudeProvisioner.writeSync(dir, TOK)).toThrow()
+    expect(existsSync(join(dir, '.mcp.json'))).toBe(false)
+  })
+
+  it('writeSync replaces a malformed mcpServers field instead of corrupting the merge (BUG-023)', () => {
+    const dir = freshProject()
+    // Hand-edited / foreign-tool-written config: mcpServers is a STRING, not an object.
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: 'not-an-object' }))
+
+    claudeProvisioner.writeSync(dir, TOK)
+
+    const mcp = readJson(join(dir, '.mcp.json'))
+    // The malformed value is discarded, not spread into numeric-key junk (`{0:'n',1:'o',...}`).
+    expect(mcp.mcpServers).toEqual({
+      'canvas-ade': { type: 'http', url: EXPECTED_URL, headers: { Authorization: EXPECTED_BEARER } }
+    })
   })
 
   it('unsync removes only our entries and deletes a file it solely owned', () => {

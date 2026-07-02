@@ -1,4 +1,12 @@
-import { openSync, fstatSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
+import {
+  openSync,
+  fstatSync,
+  readSync,
+  closeSync,
+  readdirSync,
+  statSync,
+  existsSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve, sep, dirname, join } from 'node:path'
 import { redactSecrets } from './summaryLoop'
@@ -127,12 +135,27 @@ export function isTrustedTranscriptPath(
  * config root), and every candidate is a `.jsonl` in that SAME dir, so the result is still trusted
  * (the caller re-validates with isTrustedTranscriptPath either way). Falls back to the recorded
  * path when the dir can't be scanned or holds no `.jsonl`. Synchronous + total (never throws).
+ *
+ * BUG-005: the directory-wide newest-mtime scan is ONLY a rotation self-heal — it must not run
+ * when the recorded file itself is still present. Claude lays out every session started in the
+ * same cwd into the SAME directory, so two Terminal boards sharing a cwd (the common default —
+ * see TerminalBoard's "no explicit cwd spawns in the project folder") each have their own
+ * recorded path living side-by-side. If the scan ran unconditionally, a board that merely went
+ * idle (its own `.jsonl` still exists, just isn't the newest) would get silently reattributed to
+ * whichever sibling board's session is actively writing. Only a GENUINE rotation (compaction /
+ * `/resume` rolling onto a new file, which removes or replaces the recorded one) should trigger
+ * the scan — signaled here by the recorded path no longer existing.
  */
 export function resolveLiveTranscriptPath(
   recordedPath: string | undefined,
   env: NodeJS.ProcessEnv = process.env
 ): string | undefined {
   if (!recordedPath || !isTrustedTranscriptPath(recordedPath, env)) return recordedPath
+  try {
+    if (existsSync(recordedPath)) return recordedPath
+  } catch {
+    // treat as vanished — fall through to the directory scan below
+  }
   try {
     const dir = dirname(recordedPath)
     let newest: { path: string; mtime: number } | undefined

@@ -44,6 +44,19 @@ describe('mcpVisualize — buildPlanItems (validate + sanitize + cap)', () => {
     expect(() => buildPlanItems([{ title: 42 }], undefined)).toThrow(/must be a string/)
     expect(() => buildPlanItems([{}], undefined)).toThrow(/must be a string/)
   })
+
+  it('rejects a plan whose aggregate content exceeds MAX_PLAN_BYTES even though every item is individually within the per-field caps', () => {
+    // 100 items (the count cap) × a near-max-length note/title/status/tag/assignee each — every
+    // field passes its own per-field cap, but the SUM is well over the 16 KiB aggregate cap.
+    const items = Array.from({ length: 100 }, () => ({
+      title: 't'.repeat(200),
+      status: 's'.repeat(60),
+      tag: 'g'.repeat(40),
+      assignee: 'a'.repeat(40),
+      note: 'n'.repeat(2000)
+    }))
+    expect(() => buildPlanItems(items, undefined)).toThrow(/content too large/)
+  })
 })
 
 describe('mcpVisualize — resolveVisualization', () => {
