@@ -391,6 +391,27 @@ body:has(.fullview-scrim) .ca-inspector-wrap {
   white-space: nowrap;
 }
 
+/* F4: fault-only hook-health line at the end of the Terminal Session block (signed-off mock:
+   --warn 6px dot + --text-3 at the meta rows' 11px mono weight class; healthy renders NOTHING). */
+.ca-inspector-health {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 1px 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.ca-inspector-health-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  margin-top: 4.5px;
+}
+
 /* ── P1 BrowserInspector primitives (Segmented / nav cluster / Toggle / Slider / status chip) ───── */
 
 /* Single-select segmented pill group (viewport class, desktop size, network dock). */
