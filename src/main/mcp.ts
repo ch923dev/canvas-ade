@@ -115,6 +115,20 @@ export interface RunningMcp {
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   /**
+   * rc.6 auto-cable: spawn one board through the same cap-checked path the `spawn_board` tool
+   * uses, incl. the optional `sourceBoardId` (a connected caller's token-derived board id → the
+   * renderer creates the spawner→spawned orchestration cable). Exposed for the CANVAS_E2E
+   * `spawnBoardNow` seam; the wire path arrives with the ≥0.18.0-rc.6 package pin (whose
+   * connected-tier tool supplies ctx.boardId).
+   */
+  spawnBoard(input: {
+    type: string
+    prompt?: string
+    cwd?: string
+    title?: string
+    sourceBoardId?: string
+  }): Promise<{ id: string }>
+  /**
    * Phase C / C1: dispatch a prompt into a board's PTY through the SAME gated path the
    * `assign_prompt` MCP tool uses (sanitize → single-use nonce → human confirm → audit). Exposed
    * here so the Command board's frame-guarded renderer → MAIN IPC (`mcpOrchestratorIpc.ts`) can
@@ -226,6 +240,7 @@ export async function startMcpServer(
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       describeApp: () => orchestrator.describeApp(),
       spawnGroup: (input) => orchestrator.spawnGroup(input),
+      spawnBoard: (input) => orchestrator.spawnBoard(input),
       dispatchPrompt: (boardId, text) => orchestrator.dispatchPrompt(boardId, text),
       handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
       awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),

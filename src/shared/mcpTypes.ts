@@ -140,7 +140,14 @@ export interface PlanItem {
  *   launchCommand to a single ≤400-char PTY-safe line and rejected either field on a non-terminal
  *   type BEFORE sending; the renderer re-validates both (defense in depth) and lands them on the
  *   created board so `useTerminalSpawn` boots the CLI at first spawn. `cwd` is never executed
- *   (pty `safeCwd` stats it and falls back to the home directory).
+ *   (pty `safeCwd` stats it and falls back to the home directory). `connector` (rc.6 auto-cable)
+ *   asks the renderer to ALSO create a directed ORCHESTRATION connector `sourceId → <new board>`:
+ *   MAIN only includes it when the spawn is a terminal, the source resolves to a live TERMINAL in
+ *   the mirror, and the sourceId is the spawning agent's own token-derived board id (unforgeable —
+ *   the package tool passes ctx.boardId, never client input), so a connected terminal can
+ *   immediately `relay_prompt` into the terminal it spawned. The renderer re-validates (terminal-
+ *   only, source exists) and `addConnector` itself still rejects self/dup/missing endpoints; the
+ *   cable stays visible + deletable on canvas, and every relay still pays the human confirm.
  * - `removeBoard` (T3.2) tears one down by id.
  * - `configureBoard` (T3.3) changes a board's durable per-type config (the renderer applies it
  *   through `updateBoard`, which filters to PATCHABLE_KEYS).
@@ -172,6 +179,7 @@ export type McpCommand =
   | {
       type: 'addBoard'
       board: { id: string; type: string; title?: string; launchCommand?: string; cwd?: string }
+      connector?: { sourceId: string }
     }
   | { type: 'removeBoard'; id: string }
   | {

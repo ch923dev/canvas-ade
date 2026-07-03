@@ -671,3 +671,74 @@ describe('createMcpLifecycle.spawnBoard — prompt/cwd (spawn-time launchCommand
     expect('cwd' in sent[0]).toBe(false)
   })
 })
+
+describe('createMcpLifecycle.spawnBoard — sourceBoardId auto-cable (rc.6)', () => {
+  type SentCmd = {
+    board: { id: string; type: string }
+    connector?: { sourceId: string }
+  }
+
+  /** Records every addBoard envelope; the mirror is pre-seeded with `boards`. */
+  function cableReg(seed: Array<{ id: string; type: string; title: string }>): {
+    registry: BoardRegistry
+    sent: SentCmd[]
+  } {
+    const sent: SentCmd[] = []
+    const boards = [...seed]
+    const registry: BoardRegistry = {
+      listBoards: () => boards,
+      listSessions: () => [],
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => {
+        if (cmd.type === 'addBoard') {
+          sent.push({ board: { id: cmd.board.id, type: cmd.board.type }, connector: cmd.connector })
+          boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T' })
+        }
+        return { ok: true, type: cmd.type }
+      },
+      drainPty: async () => {},
+      ...DISPATCH_DEFAULTS
+    }
+    return { registry, sent }
+  }
+  const makeLife = (registry: BoardRegistry): ReturnType<typeof createMcpLifecycle> =>
+    createMcpLifecycle({ registry, now: () => 0, cap: 8, spawnGraceMs: 5000 })
+
+  it('a terminal spawn from a live TERMINAL source rides a connector request on the envelope', async () => {
+    const { registry, sent } = cableReg([{ id: 'src-term', type: 'terminal', title: 'A' }])
+    await makeLife(registry).spawnBoard({ type: 'terminal', sourceBoardId: 'src-term' })
+    expect(sent[0].connector).toEqual({ sourceId: 'src-term' })
+  })
+
+  it('a NON-terminal spawn never requests a cable (cables are terminal→terminal only)', async () => {
+    const { registry, sent } = cableReg([{ id: 'src-term', type: 'terminal', title: 'A' }])
+    await makeLife(registry).spawnBoard({ type: 'planning', sourceBoardId: 'src-term' })
+    expect(sent[0].connector).toBeUndefined()
+    expect(sent[0].board.type).toBe('planning') // the spawn itself still succeeds
+  })
+
+  it('a NON-terminal source never authorizes a cable (never Browser → PTY routes)', async () => {
+    const { registry, sent } = cableReg([{ id: 'src-web', type: 'browser', title: 'W' }])
+    await makeLife(registry).spawnBoard({ type: 'terminal', sourceBoardId: 'src-web' })
+    expect(sent[0].connector).toBeUndefined()
+  })
+
+  it('an unknown/closed source skips the cable but the spawn still succeeds (board > cable)', async () => {
+    const { registry, sent } = cableReg([])
+    const { id } = await makeLife(registry).spawnBoard({
+      type: 'terminal',
+      sourceBoardId: 'ghost'
+    })
+    expect(id).toBeTruthy()
+    expect(sent[0].connector).toBeUndefined()
+  })
+
+  it('no sourceBoardId → no connector key at all (back-compat envelope)', async () => {
+    const { registry, sent } = cableReg([])
+    await makeLife(registry).spawnBoard({ type: 'terminal' })
+    expect('connector' in sent[0] && sent[0].connector !== undefined).toBe(false)
+  })
+})

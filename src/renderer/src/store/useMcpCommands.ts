@@ -70,6 +70,16 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       if ((launchCommand !== undefined || cwd !== undefined) && type !== 'terminal') {
         return { ok: false, error: 'addBoard: launchCommand/cwd are terminal-only' }
       }
+      // Auto-cable request (rc.6): shape + terminal-only re-validation BEFORE any side effect
+      // (a malformed request must not leave a cable-less board behind an { ok: false } ack).
+      if (
+        command.connector !== undefined &&
+        (typeof command.connector?.sourceId !== 'string' ||
+          command.connector.sourceId.length === 0 ||
+          type !== 'terminal')
+      ) {
+        return { ok: false, error: 'addBoard: invalid connector request' }
+      }
       // Idempotent by id (mirrors removeBoard): a board with this id already exists →
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
       const store = useCanvasStore.getState()
@@ -94,6 +104,22 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
           ...(launchCommand ? { launchCommand } : {}),
           ...(cwd ? { cwd } : {})
         })
+      }
+      // 🔒 Auto-cable (rc.6): MAIN asks for a directed ORCHESTRATION connector spawner → spawned
+      // only when it verified the spawn is a terminal and the source is a live terminal whose id
+      // is the caller's own token-derived board (unforgeable; shape re-validated above, before
+      // any side effect). Final check against the LIVE store (the renderer is the truth; MAIN
+      // read a mirror): a source that vanished between MAIN's check and this tick skips the
+      // cable but keeps the board — the cable is authorization sugar, the board is the
+      // deliverable. `addConnector` itself still rejects self/dup/missing endpoints. Its own
+      // tracked step: one undo lifts the cable, the next removes the board (which sweeps
+      // incident connectors anyway).
+      if (command.connector !== undefined) {
+        const src = command.connector.sourceId
+        const sourceBoard = useCanvasStore.getState().boards.find((b) => b.id === src)
+        if (sourceBoard && sourceBoard.type === 'terminal') {
+          store.addConnector(src, id, 'orchestration')
+        }
       }
       return { ok: true, type: 'addBoard' }
     }

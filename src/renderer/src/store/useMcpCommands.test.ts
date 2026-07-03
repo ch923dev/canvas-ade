@@ -145,6 +145,58 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect('cwd' in b && b.cwd !== undefined).toBe(false)
   })
 
+  it('addBoard with a connector creates the board AND the spawner→spawned orchestration cable (rc.6)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'src-term', type: 'terminal' } })
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'worker-1', type: 'terminal' },
+      connector: { sourceId: 'src-term' }
+    })
+    expect(ack).toEqual({ ok: true, type: 'addBoard' })
+    const { connectors } = useCanvasStore.getState()
+    expect(connectors).toHaveLength(1)
+    expect(connectors[0]).toMatchObject({
+      sourceId: 'src-term',
+      targetId: 'worker-1',
+      kind: 'orchestration'
+    })
+  })
+
+  it('addBoard connector: a vanished/non-terminal source skips the cable but keeps the board', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'src-plan', type: 'planning' } })
+    const ghostSrc = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-1', type: 'terminal' },
+      connector: { sourceId: 'ghost' }
+    })
+    const planSrc = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-2', type: 'terminal' },
+      connector: { sourceId: 'src-plan' }
+    })
+    expect(ghostSrc.ok).toBe(true)
+    expect(planSrc.ok).toBe(true)
+    const s = useCanvasStore.getState()
+    expect(s.boards.map((b) => b.id)).toEqual(['src-plan', 'w-1', 'w-2'])
+    expect(s.connectors).toHaveLength(0) // no cable — the board is the deliverable
+  })
+
+  it('addBoard connector: malformed shape / non-terminal spawn rejects BEFORE any board lands', () => {
+    const badShape = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-1', type: 'terminal' },
+      connector: { sourceId: 42 as unknown as string }
+    })
+    const nonTerminal = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'p-1', type: 'planning' },
+      connector: { sourceId: 'src' }
+    })
+    expect(badShape.ok).toBe(false)
+    expect(nonTerminal.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
   it('removeBoard removes the board from the canvas (T3.2)', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
     expect(useCanvasStore.getState().boards).toHaveLength(1)
