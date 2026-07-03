@@ -12,6 +12,10 @@ import type { CSSProperties, ReactElement } from 'react'
 export interface TerminalRestoredBarProps {
   /** Agent/shell identity for the Start label (e.g. "claude"). */
   identity: string
+  /** Bg sessions Phase 5 (R6 residue): the session EXITED while its project was backgrounded —
+   *  say so (with the code) instead of the plain "Session restored" label; the residue tail is
+   *  already spliced into the read-only buffer above. Undefined = plain snapshot restore. */
+  exitCode?: number
   onStart: () => void
   /** The board carries an `agentSessionId` → offer Resume (reattach the agent conversation) beside
    *  Start. The snapshot restores the SCREEN; Resume (`claude --resume <id>`) reloads the agent's
@@ -22,22 +26,29 @@ export interface TerminalRestoredBarProps {
 
 export function TerminalRestoredBar({
   identity,
+  exitCode,
   onStart,
   canResume,
   onResume
 }: TerminalRestoredBarProps): ReactElement {
   const stop = (e: React.PointerEvent | React.MouseEvent): void => e.stopPropagation()
+  const exited = exitCode !== undefined
   return (
     <div
       className="nodrag"
       data-test="terminal-restored-bar"
+      data-exit-code={exited ? exitCode : undefined}
       style={bar}
       onPointerDown={stop}
       onMouseDown={stop}
     >
       <span style={label}>
-        <span style={dot} />
-        <span style={labelText}>Session restored — read-only</span>
+        <span style={exited && exitCode !== 0 ? errDot : dot} />
+        <span style={labelText}>
+          {exited
+            ? `Exited in background (code ${exitCode}) — read-only`
+            : 'Session restored — read-only'}
+        </span>
       </span>
       {canResume && onResume && (
         <button type="button" style={ghostBtn} onClick={onResume} data-test="restored-resume">
@@ -93,6 +104,12 @@ const dot: CSSProperties = {
   borderRadius: '50%',
   flex: 'none',
   background: 'var(--text-3)'
+}
+
+/** Non-zero background exit: the dot goes --err so the death is visible at a glance. */
+const errDot: CSSProperties = {
+  ...dot,
+  background: 'var(--err)'
 }
 
 const btnBase: CSSProperties = {

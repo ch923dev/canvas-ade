@@ -45,8 +45,12 @@ describe('registerPtyHandlers — foreign-sender rejection (#17/#20 Browser↛PT
     expect(cap.invokeAs(foreignEvent, 'pty:park', 'b1')).toBe(false)
   })
 
-  it('pty:adopt returns { adopted: false } for a foreign sender', () => {
+  it('pty:adopt returns { adopted: false } for a foreign sender', async () => {
+    // Phase 5: the handler is async now (it may read the sidecar preface before adopting),
+    // so the rejection resolves through a promise — same value, awaited.
     const cap = setup()
-    expect(cap.invokeAs(foreignEvent, 'pty:adopt', 'b1')).toEqual({ adopted: false })
+    await expect(cap.invokeAs(foreignEvent, 'pty:adopt', 'b1')).resolves.toEqual({
+      adopted: false
+    })
   })
 })

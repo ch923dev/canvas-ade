@@ -36,6 +36,8 @@ import {
 } from './e2eRegistry'
 import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
+import { performProjectSwitch } from '../store/projectSwitch'
+import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
@@ -522,6 +524,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // class). A non-empty element clipboard wins over an OS image paste (E7), which would then
       // silently break whiteboard's image-paste spec. Clear it so each test starts empty.
       clearClipboard()
+      // Phase 4c: the switch-transition overlay self-clears (IN timer / watchdog), but a
+      // spec torn down mid-switch could leave it armed for up to ~4s — an armed overlay is
+      // a full-viewport input-eating layer over the next spec (the cross-spec global-state
+      // class). Drop it and its timers now.
+      clearSwitchTransition()
       // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
       // collapse state) — extracted to e2eStickyPrefs.ts (max-lines), key literals kept
       // there for the same eager-bundle reason documented in that module.
@@ -529,6 +536,20 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()
+      // 3b. Drain the background-sessions registry (Phase 4b): it is MAIN state that
+      //     outlives a spec (workers:1 reuses one app), and teardownProject removes the
+      //     DIR, not the registry entry — leftover residents would surface as extra
+      //     project-dock cards in every later spec. Resources are already dead (the
+      //     dispose above), so this is pure bookkeeping; also resets each dir's keep
+      //     policy (closeBackgroundProject forgets it).
+      try {
+        const residents = await window.api.project.listBackground()
+        for (const r of residents) {
+          await window.api.project.closeBackground(r.dir).catch(() => false)
+        }
+      } catch {
+        /* partial bridge in smoke renders — nothing to drain */
+      }
       // 4. Reset the seed-x cursor so the next test's seedBoard positions restart.
       seedX = 0
       return { ok: true as const }
@@ -543,6 +564,31 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       return {
         status: p.status,
         error: p.error ?? null,
+        boardCount: useCanvasStore.getState().boards.length
+      }
+    },
+    async switchProjectFromDisk(dir, keep) {
+      const outcome = await performProjectSwitch(() => window.api.project.open(dir), {
+        keepBackground: keep
+      })
+      const p = useCanvasStore.getState().project
+      return {
+        outcome,
+        status: p.status,
+        dir: p.dir,
+        boardCount: useCanvasStore.getState().boards.length
+      }
+    },
+    async switchProjectAsk(dir) {
+      // Phase 4: the DEFAULT pipeline — no explicit keep, so the per-project policy decides
+      // and the ask-on-switch dialog shows when the outgoing project has live resources.
+      // The returned promise settles only after the dialog is answered (the spec clicks it).
+      const outcome = await performProjectSwitch(() => window.api.project.open(dir))
+      const p = useCanvasStore.getState().project
+      return {
+        outcome,
+        status: p.status,
+        dir: p.dir,
         boardCount: useCanvasStore.getState().boards.length
       }
     },

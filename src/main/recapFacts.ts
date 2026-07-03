@@ -13,7 +13,7 @@
  * states still apply, so the facts face stays useful instead of pinning "idle".
  */
 import { textFromContent } from './agentTranscript'
-import { IDLE_AFTER_MS, type TerminalRuntime } from './summaryLoop'
+import { IDLE_AFTER_MS, redactSecrets, type TerminalRuntime } from './summaryLoop'
 
 export type RecapStatus =
   | 'spawning'
@@ -28,11 +28,38 @@ export interface RecapFileFact {
   /** 'write' = created/overwritten (sticky once seen); 'edit' = modified in place. */
   op: 'edit' | 'write'
   count: number
+  /**
+   * Lines added/removed, summed from the file's Edit/Write tool_result `structuredPatch`
+   * hunks (recap enrichment P1). Present together only when at least one patch was seen in
+   * the tail; a tool_use whose result fell outside the tail window simply lacks them.
+   */
+  adds?: number
+  dels?: number
 }
 
 export interface RecapCommandFact {
   label: string
   count: number
+}
+
+/** Plan progress from the LAST TodoWrite tool_use in the tail — later entries win (P0). */
+export interface RecapTodoFact {
+  done: number
+  total: number
+  /** The in-progress item's label (activeForm preferred over content), when one is marked. */
+  active?: string
+}
+
+/** Tool failures: tool_results with `is_error`; `last` = scrubbed excerpt of the newest (P0). */
+export interface RecapErrorFact {
+  count: number
+  last?: string
+}
+
+/** Sub-agent (Task tool) activity: spawn count + up to AGENT_LABELS_MAX recent labels (P2). */
+export interface RecapAgentFact {
+  count: number
+  labels: string[]
 }
 
 export interface RecapFacts {
@@ -64,6 +91,24 @@ export interface RecapFacts {
   files: RecapFileFact[]
   /** Bash commands run - labeled by their `description`, deduped, recency-first. */
   commands: RecapCommandFact[]
+  // ── Recap enrichment (2026-07-03): OPTIONAL, feature-detected by the renderer. The facts
+  // bundle is computed per recap:get and never persisted, so these are additive with NO
+  // schema bump — older transcripts / truncated tails simply lack them.
+  /** Plan progress from the last TodoWrite tool_use (P0; later entries win). */
+  todos?: RecapTodoFact
+  /** Tool errors seen in the tail (P0). */
+  errors?: RecapErrorFact
+  /** Model id from the LATEST assistant message metadata (P0). */
+  model?: string
+  /** Git branch read off the transcript records (P0) — never derived by running git. */
+  gitBranch?: string
+  /**
+   * The LAST assistant `usage` (input + cache-read tokens): a POINT metric for "how full is
+   * the context", honest under tail truncation. Deliberately NOT a summed cost (P1).
+   */
+  contextTokens?: number
+  /** Sub-agent (Task tool) activity (P2). */
+  agents?: RecapAgentFact
   generatedAt: number
 }
 
@@ -77,6 +122,14 @@ export const FACT_LIST_MAX = 12
 const QUESTION_TAIL_CHARS = 200
 /** Max length for a Bash command label (from `description`, or the raw command as fallback). */
 export const COMMAND_LABEL_MAX = 60
+/** Cap the last-error excerpt (a glance line, not a log; scrubbed BEFORE capping). */
+export const ERROR_EXCERPT_MAX = 120
+/** Cap the active-todo label on the Plan row. */
+export const TODO_ACTIVE_MAX = 120
+/** Cap the sub-agent label list (the face shows a hint, not a roster). */
+export const AGENT_LABELS_MAX = 3
+/** Cap the model / gitBranch meta strings (transcripts are untrusted input). */
+export const META_FIELD_MAX = 120
 
 const FILE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 
@@ -107,10 +160,19 @@ export function computeRecapFacts(
   let lastAgentText = ''
   const files = new Map<
     string,
-    { path: string; op: 'edit' | 'write'; count: number; seq: number }
+    { path: string; op: 'edit' | 'write'; count: number; seq: number; adds?: number; dels?: number }
   >()
   const commands = new Map<string, { label: string; count: number; seq: number }>()
   let seq = 0
+  // Recap enrichment accumulators (all optional outputs; later records win where noted).
+  let todos: RecapTodoFact | undefined
+  let errorCount = 0
+  let lastError: string | undefined
+  let model: string | undefined
+  let gitBranch: string | undefined
+  let contextTokens: number | undefined
+  let agentCount = 0
+  let agentLabels: string[] = []
 
   for (const raw of jsonlTail.split('\n')) {
     const s = raw.trim()
@@ -120,7 +182,9 @@ export function computeRecapFacts(
       timestamp?: unknown
       aiTitle?: unknown
       lastPrompt?: unknown
-      message?: { role?: unknown; content?: unknown }
+      gitBranch?: unknown
+      toolUseResult?: unknown
+      message?: { role?: unknown; content?: unknown; model?: unknown; usage?: unknown }
     }
     try {
       rec = JSON.parse(s)
@@ -132,6 +196,10 @@ export function computeRecapFacts(
       if (!firstTs) firstTs = ts
       if (ts > lastTs) lastTs = ts
     }
+    // Claude Code stamps the checkout's branch on every record — tail-safe (unlike the
+    // gitStatus context block, which lives at the transcript HEAD and truncates away).
+    const branch = str(rec.gitBranch).trim()
+    if (branch) gitBranch = branch.slice(0, META_FIELD_MAX)
     if (rec.type === 'ai-title') {
       const t = str(rec.aiTitle).trim()
       if (t) title = t.slice(0, TITLE_MAX_CHARS)
@@ -149,7 +217,40 @@ export function computeRecapFacts(
       // askPending BEFORE the plumbing guard or status pins at 'waiting-on-you' (and live=false,
       // showing Resume) while the agent is actively working on the answer.
       askPending = false
-      const text = textFromContent(rec.message?.content).trim()
+      const userContent = rec.message?.content
+      if (Array.isArray(userContent)) {
+        // Tool failures ride user records as tool_result blocks with is_error (P0). The
+        // excerpt is scrubbed (redactSecrets) BEFORE the cap so a secret straddling the cap
+        // can't survive it; an empty-content error still counts but keeps the previous `last`.
+        for (const b of userContent) {
+          const blk = b as { type?: unknown; is_error?: unknown; content?: unknown }
+          if (blk.type !== 'tool_result' || blk.is_error !== true) continue
+          errorCount++
+          const excerpt = textFromContent(blk.content).replace(/\s+/g, ' ').trim()
+          if (excerpt) lastError = redactSecrets(excerpt).slice(0, ERROR_EXCERPT_MAX)
+        }
+      }
+      // Per-file diff stats (P1): Claude Code stores the Edit/Write result detail on the
+      // RECORD's top-level `toolUseResult` — `{filePath, structuredPatch: [{lines}]}` where
+      // hunk lines carry '+'/'-'/' ' prefixes. Only ANNOTATES an entry the tool_use pass
+      // already created (a result whose tool_use fell outside the tail is dropped, never
+      // fabricated into a phantom file chip).
+      const tur = rec.toolUseResult as { filePath?: unknown; structuredPatch?: unknown } | undefined
+      if (tur && typeof tur === 'object' && Array.isArray(tur.structuredPatch)) {
+        const cur = files.get(str(tur.filePath))
+        if (cur) {
+          for (const hunk of tur.structuredPatch) {
+            const hunkLines = (hunk as { lines?: unknown })?.lines
+            if (!Array.isArray(hunkLines)) continue
+            for (const l of hunkLines) {
+              if (typeof l !== 'string') continue
+              if (l.startsWith('+')) cur.adds = (cur.adds ?? 0) + 1
+              else if (l.startsWith('-')) cur.dels = (cur.dels ?? 0) + 1
+            }
+          }
+        }
+      }
+      const text = textFromContent(userContent).trim()
       if (!text) continue // tool_result-only user records are plumbing, not a user event
       userTurns++
       lastUserText = text
@@ -157,6 +258,25 @@ export function computeRecapFacts(
       continue
     }
     if (role !== 'assistant') continue
+    // Model id rides every assistant message's metadata; the latest wins (P0).
+    const modelId = str(rec.message?.model).trim()
+    if (modelId) model = modelId.slice(0, META_FIELD_MAX)
+    // Context size = the LAST assistant usage (input + cache-read), a point metric (P1).
+    const usage = rec.message?.usage as
+      | { input_tokens?: unknown; cache_read_input_tokens?: unknown }
+      | undefined
+    if (usage && typeof usage === 'object') {
+      const input = usage.input_tokens
+      if (typeof input === 'number' && Number.isFinite(input) && input >= 0) {
+        const cacheRead = usage.cache_read_input_tokens
+        contextTokens = Math.round(
+          input +
+            (typeof cacheRead === 'number' && Number.isFinite(cacheRead) && cacheRead >= 0
+              ? cacheRead
+              : 0)
+        )
+      }
+    }
     const content = rec.message?.content
     const text = textFromContent(content).trim()
     let usedTool = false
@@ -197,6 +317,36 @@ export function computeRecapFacts(
             } else {
               commands.set(label, { label, count: 1, seq: seq++ })
             }
+          }
+        } else if (name === 'TodoWrite') {
+          // Plan progress (P0): the LAST TodoWrite wins outright — an emptied list clears it.
+          const items = input.todos
+          if (Array.isArray(items)) {
+            if (items.length === 0) {
+              todos = undefined
+            } else {
+              let done = 0
+              let active: string | undefined
+              for (const t of items) {
+                const item = t as { status?: unknown; content?: unknown; activeForm?: unknown }
+                if (item?.status === 'completed') done++
+                if (!active && item?.status === 'in_progress') {
+                  const label = (str(item.activeForm) || str(item.content)).trim()
+                  if (label) active = label.slice(0, TODO_ACTIVE_MAX)
+                }
+              }
+              todos = { done, total: items.length, ...(active ? { active } : {}) }
+            }
+          }
+        } else if (name === 'Task') {
+          // Sub-agent activity (P2): count every spawn; labels deduped, recency-first, capped.
+          agentCount++
+          const label = str(input.description).trim().slice(0, COMMAND_LABEL_MAX)
+          if (label) {
+            agentLabels = [label, ...agentLabels.filter((l) => l !== label)].slice(
+              0,
+              AGENT_LABELS_MAX
+            )
           }
         } else if (name === 'AskUserQuestion') {
           askPending = true
@@ -256,11 +406,26 @@ export function computeRecapFacts(
     files: [...files.values()]
       .sort((a, b) => b.seq - a.seq)
       .slice(0, FACT_LIST_MAX)
-      .map(({ path, op, count }) => ({ path, op, count })),
+      .map(({ path, op, count, adds, dels }) => ({
+        path,
+        op,
+        count,
+        // Both present together once ANY patch was seen for the file (a 0 is honest data;
+        // the renderer shows only the non-zero halves).
+        ...(adds !== undefined || dels !== undefined ? { adds: adds ?? 0, dels: dels ?? 0 } : {})
+      })),
     commands: [...commands.values()]
       .sort((a, b) => b.seq - a.seq)
       .slice(0, FACT_LIST_MAX)
       .map(({ label, count }) => ({ label, count })),
+    ...(todos ? { todos } : {}),
+    ...(errorCount > 0
+      ? { errors: { count: errorCount, ...(lastError ? { last: lastError } : {}) } }
+      : {}),
+    ...(model ? { model } : {}),
+    ...(gitBranch ? { gitBranch } : {}),
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
+    ...(agentCount > 0 ? { agents: { count: agentCount, labels: agentLabels } } : {}),
     generatedAt: now
   }
 }

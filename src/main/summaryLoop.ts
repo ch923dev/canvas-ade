@@ -413,16 +413,50 @@ export function buildRecapNarrative(
 }
 
 /**
+ * Recap enrichment P3: up to TWO optional context lines appended to the recap egress input —
+ * plan progress (from the facts pass's TodoWrite field) + the last tool error. Both run through
+ * redactSecrets here regardless of upstream scrubbing, and the whole input stays inside
+ * MAX_INPUT_CHARS. RECAP_SYSTEM is deliberately UNCHANGED — these are model context, not schema.
+ */
+export interface RecapInputExtras {
+  plan?: { done: number; total: number; active?: string }
+  lastError?: string
+}
+
+/** Defensive per-line cap for the extras (facts already cap them far tighter). */
+const EXTRA_LINE_MAX = 300
+
+/**
  * Build the numbered-milestone summarize input for a terminal recap. SECURITY: each milestone's
  * text is run through redactSecrets BEFORE it becomes egress input (the consent contract). Capped
- * to MAX_INPUT_CHARS like the config path.
+ * to MAX_INPUT_CHARS like the config path. The P3 extras (plan progress + last error) are appended
+ * AFTER the milestones but reserve their room first — a long session's milestone overflow must not
+ * silently truncate the two lines this feature exists to add — and the total never exceeds
+ * MAX_INPUT_CHARS.
  */
-export function buildRecapInput(milestones: Milestone[]): SummarizeInput {
+export function buildRecapInput(
+  milestones: Milestone[],
+  extras?: RecapInputExtras
+): SummarizeInput {
+  const extraLines: string[] = []
+  if (extras?.plan) {
+    const p = extras.plan
+    extraLines.push(
+      `Plan progress: ${p.done}/${p.total} done${
+        p.active ? ` — current: ${redactSecrets(p.active)}` : ''
+      }`.slice(0, EXTRA_LINE_MAX)
+    )
+  }
+  if (extras?.lastError) {
+    extraLines.push(`Last tool error: ${redactSecrets(extras.lastError)}`.slice(0, EXTRA_LINE_MAX))
+  }
+  const extraText = extraLines.join('\n')
   const numbered = milestones
     .map((m, i) => `${i + 1}. [${m.role === 'user' ? 'you' : 'agent'}] ${redactSecrets(m.text)}`)
     .join('\n')
-    .slice(0, MAX_INPUT_CHARS)
-  return { system: RECAP_SYSTEM, text: numbered || 'No activity yet.' }
+    .slice(0, extraText ? Math.max(0, MAX_INPUT_CHARS - extraText.length - 1) : MAX_INPUT_CHARS)
+  const text = extraText ? (numbered ? `${numbered}\n${extraText}` : extraText) : numbered
+  return { system: RECAP_SYSTEM, text: text || 'No activity yet.' }
 }
 
 function boardsOf(doc: unknown): RawBoard[] {
@@ -491,7 +525,11 @@ export type RefreshOutcome =
  * 'no-transcript'.
  */
 export type MilestoneResult =
-  | { milestones: Milestone[] }
+  | {
+      milestones: Milestone[]
+      /** Recap enrichment P3: plan progress + last error from the same tail read. */
+      extras?: RecapInputExtras
+    }
   | { skip: 'consent-off' | 'no-transcript' | 'empty-transcript' }
 
 export interface SummaryLoopDeps {
@@ -589,6 +627,7 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // 'not-terminal'; the getter's own {skip} reasons pass through. Any skip -> the existing
         // config+runtime path runs unchanged, and the reason survives to the refresh outcome.
         let milestones: Milestone[] | undefined
+        let recapExtras: RecapInputExtras | undefined
         let recapSkipped: RecapSkipReason = 'no-transcript'
         if ((board as RawBoard)?.type !== 'terminal') {
           recapSkipped = 'not-terminal'
@@ -600,8 +639,10 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
             got = undefined
           }
           if (got && 'milestones' in got) {
-            if (got.milestones.length > 0) milestones = got.milestones
-            else recapSkipped = 'empty-transcript'
+            if (got.milestones.length > 0) {
+              milestones = got.milestones
+              recapExtras = got.extras
+            } else recapSkipped = 'empty-transcript'
           } else if (got) {
             recapSkipped = got.skip
           }
@@ -612,7 +653,7 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         const result = await runSummarize(
           config,
           useRecap
-            ? buildRecapInput(milestones!)
+            ? buildRecapInput(milestones!, recapExtras)
             : buildSummarizeInput(board, runtime, now().getTime()),
           {
             fetch: fetchImpl,

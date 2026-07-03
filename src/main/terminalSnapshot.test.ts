@@ -10,6 +10,8 @@ import {
   writeTerminalSnapshotAsync,
   readTerminalSnapshot,
   deleteTerminalSnapshot,
+  appendTerminalSnapshot,
+  readTerminalSnapshotAsync,
   MAX_SNAPSHOT_BYTES
 } from './terminalSnapshot'
 
@@ -129,5 +131,37 @@ describe('writeTerminalSnapshotAsync (BUG-040 — non-blocking write path)', () 
     const huge = 'x'.repeat(MAX_SNAPSHOT_BYTES + 1)
     await expect(writeTerminalSnapshotAsync(proj, 'b', huge)).resolves.toBe(false)
     expect(readTerminalSnapshot(proj, 'b')).toBeNull()
+  })
+})
+
+// Bg sessions Phase 5: quit-time ring-tail append + the adopt-preface async read.
+describe('appendTerminalSnapshot / readTerminalSnapshotAsync (Phase 5 continuity)', () => {
+  it('appends a tail to an existing sidecar (snapshot + tail on read-back)', () => {
+    writeTerminalSnapshot(proj, 'b1', 'SNAPSHOT')
+    expect(appendTerminalSnapshot(proj, 'b1', '-TAIL')).toBe(true)
+    expect(readTerminalSnapshot(proj, 'b1')).toBe('SNAPSHOT-TAIL')
+  })
+
+  it('creates the sidecar when none exists (the tail becomes the whole snapshot)', () => {
+    expect(appendTerminalSnapshot(proj, 'b2', 'ONLY-TAIL')).toBe(true)
+    expect(readTerminalSnapshot(proj, 'b2')).toBe('ONLY-TAIL')
+  })
+
+  it('skips WHOLE (never truncates) when existing + tail would exceed the cap', () => {
+    writeTerminalSnapshot(proj, 'b3', 'x'.repeat(1024))
+    const huge = 'y'.repeat(MAX_SNAPSHOT_BYTES)
+    expect(appendTerminalSnapshot(proj, 'b3', huge)).toBe(false)
+    expect(readTerminalSnapshot(proj, 'b3')).toBe('x'.repeat(1024)) // untouched
+  })
+
+  it('rejects an unsafe board id and an empty tail', () => {
+    expect(appendTerminalSnapshot(proj, '../escape', 'data')).toBe(false)
+    expect(appendTerminalSnapshot(proj, 'b4', '')).toBe(false)
+  })
+
+  it('readTerminalSnapshotAsync reads what the sync writer wrote; null when absent', async () => {
+    writeTerminalSnapshot(proj, 'b5', 'ASYNC-READ')
+    await expect(readTerminalSnapshotAsync(proj, 'b5')).resolves.toBe('ASYNC-READ')
+    await expect(readTerminalSnapshotAsync(proj, 'nope')).resolves.toBeNull()
   })
 })

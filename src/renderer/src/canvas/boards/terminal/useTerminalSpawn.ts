@@ -246,6 +246,10 @@ export interface TerminalSpawnApi {
   /** Phase 5 · S3: this idle mount restored a persisted scrollback snapshot — the host shows the
    *  restored (read-only) buffer with a bottom "Session restored" bar instead of the opaque overlay. */
   restored: boolean
+  /** Bg sessions Phase 5: the session EXITED while its project was backgrounded — the restored
+   *  bar says "exited in background (code N)" and the residue tail is spliced after the snapshot.
+   *  Null when the restore is a plain snapshot (no background exit). */
+  restoredExitCode: number | null
   /** Read-only from the host (it only reads `.current`); the hook's internals own writes. */
   termRef: RefObject<Terminal | null>
   portRef: RefObject<MessagePort | null>
@@ -472,6 +476,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // host then swaps the opaque "Start" overlay for a bottom bar so the restored (read-only) output
   // stays visible. Reset per new term; set by the adopt fork when a sidecar is read + written back.
   const [restored, setRestored] = useState(false)
+  // Bg sessions Phase 5: exit code of a session that died while backgrounded (residue UX).
+  const [restoredExitCode, setRestoredExitCode] = useState<number | null>(null)
 
   // Publish live PTY state so the preview-link edge can render stale when this
   // terminal is not running (bug 3); clear on unmount so a removed board stops
@@ -686,6 +692,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // terminalSnapshotRegistry). Unregistered on teardown. A new term starts un-restored.
     registerTerminalSnapshotter(board.id, () => serializeAddonRef.current?.serialize() ?? null)
     setRestored(false)
+    setRestoredExitCode(null)
     startedRef.current = false // a fresh term: no explicit Start/Resume has run on it yet
     term.open(el)
     termRef.current = term
@@ -930,13 +937,23 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         scrollAfterRestore = false
         restoredSnapshot = false
         setRestored(false)
+        setRestoredExitCode(null)
       }
       spawnAllowed = true
       setState('spawning')
       launch()
     }
     void window.api.adoptTerminal(board.id).then((res) => {
-      if (disposed) return
+      if (disposed) {
+        // Background sessions (R4): this adopt raced the unmount — a rapid switch-back-and-
+        // away can land it AFTER the boards started tearing down. The session is now LIVE with
+        // its fresh port pointing at a dead consumer, and the unmount's killTerminal already
+        // no-op'd (it ran while the session was still parked). Undo the adopt by re-parking:
+        // MAIN types the park automatically (cross-project ⇒ background/no-TTL; same project ⇒
+        // undo/TTL), so a backgrounded project's shell survives and a same-project orphan reaps.
+        if (res.adopted) void window.api.parkTerminal(board.id).catch(() => {})
+        return
+      }
       const decision = nextStateAfterAdopt(res.adopted, isIdleOnMount(board.id))
       if (decision === 'running') {
         setState('running')
@@ -946,18 +963,34 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         // output into the frozen term so the user SEES their last session read-only until Start. Keyed
         // by board id, so a duplicate (new id) has no sidecar and stays a blank idle. A later resize
         // that changes cols re-wraps this buffer losslessly via the S2 backstop (established grid).
-        void window.api.terminal.readSnapshot(board.id).then((snap) => {
+        // Bg sessions Phase 5 (R6 residue UX): alongside the snapshot, consume any exit
+        // residue — the post-park tail + code of a session that DIED while its project was
+        // backgrounded. Spliced AFTER the snapshot (the snapshot covers up to the park; the
+        // residue is exactly what followed), and the restored bar says so with the code.
+        void Promise.all([
+          window.api.terminal.readSnapshot(board.id),
+          Promise.resolve()
+            .then(() => window.api.terminal.exitResidue(board.id))
+            .catch(() => null)
+        ]).then(([snap, residue]) => {
           // startedRef guards the race where the user hits Start/Resume (which spawns on THIS term)
           // before this async read settles — writing then would splice the stale buffer into the
           // now-live session. disposed/termRef cover a remount; startedRef covers same-term-went-live.
-          if (disposed || termRef.current !== term || startedRef.current || !snap) return
+          if (disposed || termRef.current !== term || startedRef.current) return
+          // Review fix: residue with an EMPTY tail still carries the exit code — a session
+          // that died in the background without emitting bytes (and never flushed a
+          // snapshot) must still show the "Exited in background (code N)" bar, not a blank
+          // idle board. Only a mount with neither snapshot NOR residue stays plain.
+          if (!snap && !residue) return
           // Route through the Lane A coalescer (not a direct term.write): a hidden/below-LOD board
           // must defer this write until it goes live, exactly like the live-PTY path, so a restore
           // on an off-screen terminal doesn't pay the render cost the liveness gate exists to avoid.
           scrollAfterRestore = true
-          coalescer.enqueue(snap)
+          if (snap) coalescer.enqueue(snap)
+          if (residue?.output) coalescer.enqueue(residue.output)
           restoredSnapshot = true
           setRestored(true)
+          if (residue) setRestoredExitCode(residue.exitCode)
         })
       } else {
         spawnAllowed = true
@@ -1096,6 +1129,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // flag honest), and mark started so an in-flight snapshot restore can't write into this now-live
     // session. term.reset() below clears the read-only snapshot buffer for the fresh session.
     setRestored(false)
+    setRestoredExitCode(null)
     startedRef.current = true
     void window.api.killTerminal(board.id)
     try {
@@ -1128,6 +1162,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   return {
     state,
     restored,
+    restoredExitCode,
     termRef,
     portRef,
     launchOverrideRef,

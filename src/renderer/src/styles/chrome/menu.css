@@ -55,6 +55,80 @@
   background: var(--border-subtle);
   margin: 4px 0;
 }
+/* Background project sessions (Phase 4, PHASE4-UX-DESIGN §2) — live recents rows: the row is a
+   flex wrapper (main menuitem + aux ✕/∞ buttons as SIBLINGS, never nested interactives); the
+   dot marks "sessions alive now"; the badge is mono micro counts; ✕ is hover/focus-revealed. */
+.ps-live-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.ps-live-row .ps-row-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ps-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 6px;
+  background: var(--ok);
+  flex: none;
+}
+.ps-dot-spacer {
+  width: 6px;
+  flex: none;
+}
+.ps-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ps-badge {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  flex: none;
+}
+.project-switcher-menu .ps-aux {
+  flex: none;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  border-radius: 4px;
+}
+.project-switcher-menu .ps-x {
+  opacity: 0;
+}
+.ps-live-row:hover .ps-x,
+.project-switcher-menu .ps-x:focus-visible {
+  opacity: 1;
+}
+.project-switcher-menu .ps-x:hover {
+  color: var(--err);
+  background: var(--surface);
+}
+.project-switcher-menu .ps-inf {
+  width: auto;
+  height: 16px;
+  padding: 2px 4px;
+  font-family: var(--mono);
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.project-switcher-menu .ps-inf:hover {
+  color: var(--text);
+  background: var(--surface);
+}
 .board-menu {
   min-width: 132px;
   background: var(--surface-overlay);

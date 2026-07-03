@@ -57,11 +57,15 @@ export interface OutputRing {
   total: number
   /** Max retained chars; older data is dropped beyond this. */
   cap: number
+  /** Cumulative chars EVER pushed (never decremented on eviction) — the watermark axis for
+   *  `readRingSince` (bg-sessions Phase 5: park records `written`; switch-back replays only
+   *  what arrived after it, so sidecar snapshot + spliced tail = full scrollback). */
+  written: number
 }
 
 /** A fresh empty ring bounded at `cap` chars. */
 export function createRing(cap: number): OutputRing {
-  return { chunks: [], total: 0, cap }
+  return { chunks: [], total: 0, cap, written: 0 }
 }
 
 /**
@@ -73,6 +77,7 @@ export function pushRing(ring: OutputRing, chunk: string): void {
   if (!chunk) return
   ring.chunks.push(chunk)
   ring.total += chunk.length
+  ring.written += chunk.length
   // Drop whole oldest chunks while the buffer would STILL hold ≥ cap without them.
   while (ring.chunks.length > 1 && ring.total - ring.chunks[0].length >= ring.cap) {
     ring.total -= ring.chunks[0].length
@@ -98,6 +103,19 @@ export function readRing(ring: OutputRing): string {
     ring.total = joined.length
   }
   return ring.chunks[0]
+}
+
+/**
+ * The bytes pushed AFTER a `written` watermark (bg-sessions Phase 5). Best-effort under
+ * saturation: if more has arrived since the watermark than the ring still retains, the
+ * evicted middle is gone — return the whole retained tail (an honest partial, mirroring
+ * the ring's own drop-oldest contract) rather than fabricating placement.
+ */
+export function readRingSince(ring: OutputRing, watermark: number): string {
+  const fresh = Math.max(0, ring.written - watermark)
+  if (fresh === 0) return ''
+  const joined = readRing(ring)
+  return fresh >= joined.length ? joined : joined.slice(joined.length - fresh)
 }
 
 /** One capped, tail-anchored page of cleaned scrollback. */

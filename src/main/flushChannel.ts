@@ -15,7 +15,7 @@
  * logic so both behaviours are independently unit-testable.
  */
 import { randomUUID } from 'node:crypto'
-import type { BrowserWindow, IpcMainEvent } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 
 /**
@@ -82,4 +82,54 @@ export function makeFlushFinish(handlers: FlushFinishHandlers): FlushFinish {
   }
 
   return { finish, forceFinish }
+}
+
+/**
+ * Ask the renderer to flush its debounced autosave before a hard exit (BUG-M2).
+ * The quit path calls `app.exit(0)`, which never fires the renderer `beforeunload`,
+ * so the autosave flush handler (useAutosave) would be skipped and the last ~1s of
+ * edits lost. Posts `project:flush` with a unique reply channel; the renderer runs
+ * its flush (awaiting `project:save`) and replies. Resolves on the reply OR a short
+ * timeout fallback so a wedged/closed renderer can never hang the quit.
+ *
+ * Lived inline in index.ts as `flushRenderer` until the max-lines ratchet moved it
+ * here beside its channel/finish primitives (the natural home — one flush module).
+ */
+export function flushRendererAutosave(
+  ipc: IpcMain,
+  getWin: () => BrowserWindow | null,
+  timeoutMs = 1500
+): Promise<void> {
+  const win = getWin()
+  // BUG-001: accessing .webContents on a destroyed BrowserWindow throws "Object has been
+  // destroyed". Guard isDestroyed() BEFORE dereferencing .webContents so the close-then-quit
+  // path (Win/Linux: window close -> window-all-closed -> before-quit -> flushRenderer) cannot
+  // throw into the uncaughtException sink and short-circuit the guarded-quit chain.
+  if (!win || win.isDestroyed()) return Promise.resolve()
+  const wc = win.webContents
+  if (!wc || wc.isDestroyed()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    // 🔒 BUG-038: use CSPRNG randomUUID() (not predictable Date.now()/Math.random).
+    const replyChannel = makeFlushChannel()
+    const { finish, forceFinish } = makeFlushFinish({
+      getWin,
+      onCleanup: () => {
+        ipc.removeAllListeners(replyChannel)
+        clearTimeout(timer)
+      },
+      onResolve: resolve
+    })
+    // 🔒 BUG-038: `finish` accepts IpcMainEvent and guards against foreign-frame senders.
+    // BUG-019: use ipc.on (not once) so a foreign-frame message that isForeignSender
+    // correctly ignores does not consume the listener before the legitimate reply arrives.
+    // onCleanup calls removeAllListeners(replyChannel) when finish resolves, so cleanup
+    // still happens exactly once regardless of how many messages arrive on the channel.
+    const timer = setTimeout(forceFinish, timeoutMs)
+    ipc.on(replyChannel, finish)
+    try {
+      wc.send('project:flush', replyChannel)
+    } catch {
+      forceFinish() // renderer gone — nothing to flush
+    }
+  })
 }

@@ -206,7 +206,12 @@ export function useAutosave(): void {
     // the default async writer so a large scrollback buffer never stalls MAIN during normal use.
     const onUnload = (): void => {
       void saver.flush()
-      void flushAllTerminalSnapshots({ sync: true })
+      // R2 dir-pin: quit-time flushes carry the project they belong to (background sessions
+      // make a cross-project late-write race real; MAIN rejects a mismatched dir).
+      void flushAllTerminalSnapshots({
+        sync: true,
+        expectedDir: useCanvasStore.getState().project.dir ?? undefined
+      })
     }
     window.addEventListener('blur', onBlur)
     window.addEventListener('beforeunload', onUnload)
@@ -217,7 +222,13 @@ export function useAutosave(): void {
     // the terminal snapshots) so the on-disk canvas.json + sidecars are current before the
     // process dies.
     const offFlush = window.api.project.onFlush(() =>
-      Promise.all([saver.flush(), flushAllTerminalSnapshots({ sync: true })]).then(() => undefined)
+      Promise.all([
+        saver.flush(),
+        flushAllTerminalSnapshots({
+          sync: true,
+          expectedDir: useCanvasStore.getState().project.dir ?? undefined
+        })
+      ]).then(() => undefined)
     )
 
     // PERSIST-B: publish this instance so a project switch can cancel its pending timer.

@@ -21,7 +21,7 @@ import {
   type ReactNode
 } from 'react'
 import { IconBtn } from './BoardFrame'
-import { hhmm, relAge, spanLabel, baseName } from '../lib/recapFormat'
+import { hhmm, relAge, spanLabel, baseName, kTokens } from '../lib/recapFormat'
 import { refreshNoteFor } from '../lib/recapNote'
 
 // Derived from the preload contract so there is no fourth mirror of the shapes.
@@ -111,6 +111,53 @@ function Dot({ color, size = 8 }: { color: string; size?: number }): ReactElemen
 
 function SectionHead({ children }: { children: string }): ReactElement {
   return <div style={{ ...micro, color: 'var(--text-3)', marginBottom: 8 }}>{children}</div>
+}
+
+/**
+ * Recap enrichment: the Plan row — same 34px/1fr grid as Now/Next, `done/total — active`,
+ * with a 2px progress bar (border-subtle track, accent fill — mirrors the Planning
+ * checklist bar). Rendered only when the facts carry a TodoWrite-derived plan.
+ */
+function PlanRow({
+  todos
+}: {
+  todos: { done: number; total: number; active?: string }
+}): ReactElement {
+  const frac = todos.total > 0 ? Math.min(1, Math.max(0, todos.done / todos.total)) : 0
+  return (
+    <div
+      style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '34px 1fr', gap: 8 }}
+      data-test="recap-plan"
+    >
+      <span style={{ ...micro, color: 'var(--text-3)', paddingTop: 3 }}>Plan</span>
+      <span>
+        <span style={body}>
+          {todos.done}/{todos.total}
+          {todos.active ? <span style={{ color: 'var(--text-2)' }}> — {todos.active}</span> : null}
+        </span>
+        <span
+          style={{
+            display: 'block',
+            height: 2,
+            marginTop: 6,
+            borderRadius: 999,
+            background: 'var(--border-subtle)'
+          }}
+        >
+          <span
+            data-test="recap-plan-fill"
+            style={{
+              display: 'block',
+              height: 2,
+              borderRadius: 999,
+              background: 'var(--accent)',
+              width: `${Math.round(frac * 100)}%`
+            }}
+          />
+        </span>
+      </span>
+    </div>
+  )
 }
 
 /** The one-line "why the refresh changed nothing" note (recap-refresh fix). */
@@ -360,6 +407,33 @@ export function RecapView({
               />
             </div>
 
+            {/* Recap enrichment: the session meta row — model · branch · context size. Mono,
+                dim, ellipsized; renders only when at least one field exists (feature-detect:
+                older/truncated transcripts simply lack them). */}
+            {facts.model || facts.gitBranch || facts.contextTokens !== undefined ? (
+              <div
+                style={{
+                  ...meta,
+                  color: 'var(--text-3)',
+                  marginTop: 6,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+                data-test="recap-meta"
+              >
+                {[
+                  facts.model,
+                  facts.gitBranch,
+                  facts.contextTokens !== undefined
+                    ? `${kTokens(facts.contextTokens)} ctx`
+                    : undefined
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </div>
+            ) : null}
+
             {facts.title ? (
               <div
                 style={{
@@ -389,6 +463,7 @@ export function RecapView({
                   <span style={{ ...micro, color: 'var(--text-3)', paddingTop: 3 }}>Now</span>
                   <span style={body}>{narrative.now}</span>
                 </div>
+                {facts.todos ? <PlanRow todos={facts.todos} /> : null}
                 {narrative.next ? (
                   <div
                     style={{
@@ -444,6 +519,7 @@ export function RecapView({
                     </div>
                   </>
                 )}
+                {facts.todos ? <PlanRow todos={facts.todos} /> : null}
                 <RefreshNote note={busy ? null : refreshNote} />
               </div>
             )}
@@ -528,6 +604,14 @@ export function RecapView({
                         <span style={{ color: 'var(--text)', fontWeight: 500 }}>
                           {baseName(f.path)}
                         </span>
+                        {/* Recap enrichment: per-file diff stats from structuredPatch —
+                            only the non-zero halves render (a 0 is honest data, not a row). */}
+                        {typeof f.adds === 'number' && f.adds > 0 ? (
+                          <span style={{ color: 'var(--ok)' }}> +{f.adds}</span>
+                        ) : null}
+                        {typeof f.dels === 'number' && f.dels > 0 ? (
+                          <span style={{ color: 'var(--err)' }}> −{f.dels}</span>
+                        ) : null}
                         {f.op === 'write' ? (
                           <span style={{ color: 'var(--ok)' }}> new</span>
                         ) : f.count > 1 ? (
@@ -558,6 +642,18 @@ export function RecapView({
                 </span>
                 {' — '}
                 {facts.turns.user} you · {facts.turns.agent} agent
+              </div>
+            ) : null}
+
+            {/* Recap enrichment: tool-error meta line — warn-toned, above the last-ask
+                footer, only when the tail actually saw failures. */}
+            {facts.errors && facts.errors.count > 0 ? (
+              <div
+                style={{ ...meta, color: 'var(--warn)', marginTop: 14 }}
+                data-test="recap-errors"
+              >
+                {facts.errors.count} tool error{facts.errors.count === 1 ? '' : 's'}
+                {facts.errors.last ? <> — last: “{facts.errors.last}”</> : null}
               </div>
             ) : null}
 

@@ -1656,6 +1656,72 @@ isolation (handoff green fully-alone in 42s) — load flake, not a regression. *
 fix is now complete end-to-end: spawn runs the command, relays wait for a ready REPL, tools report
 honestly, and a connected agent can relay into the terminal it spawned.**
 
+## 2026-07-03 — Background Project Sessions epic (feat/bg-sessions, PR #293)
+
+Maestri-style resume: switch project A→B→A within one app run and A's terminals are STILL
+RUNNING (same PTYs, live reattach) with previews alive and in-page state intact. In-app-run
+lifetime only; ask-on-switch dialog mediates; shipped default (no flag). ADR 0011.
+
+- **Phase 1 `31fe22c7` plumbing** — projectDir-tagged sessions, typed parks (`ParkKind`
+  undo/background), owner-checked adopt, scoped disposal, `projectSessions.ts` registry.
+- **Phase 2 `102f6c79` keep-running switch** — `store/projectSwitch.ts` pipeline (lock →
+  decide → autosave-cancel → pinned flush-save → handover → load), IPC background/list/
+  close, exit tombstones, R2 dir-pins, R4 raced-adopt re-park; same-pid reattach e2e-proven.
+- **Phase 3 `f4a9c133` preview keep-alive** — synthetic state re-emit on `preview:osrOpen`
+  (kept page NEVER reloads), `GLOBAL_OSR_MAX = 8` backgrounded-only eviction, downloads
+  denied while backgrounded; same-JS-context survival e2e.
+- **Phase 4a `9b5ab7f0` ask-on-switch UX** — dialog + keep-policy ladder (session → forever
+  in `userData/background-keep.json` → ∞ forget), switcher live rows; flag REMOVED.
+- **Phase 4b `890e8fdf` + `afe43fb0` project dock** — bottom-edge hot-zone dock (session
+  projects only), canvas thumbnails (⚠️ `capturePage(rect)` on the app window KILLED the
+  app under GPU load — full-page capture + CPU-side crop; memory + ADR), 10px hot zone +
+  400ms capture budget from the manual dev check.
+- **Phase 4c `2acbf736` switch-transition motion** — signed-off minimize-to-dock overlay
+  (OUT 260ms → HOLD kills the welcome-picker flash [picker UNMOUNTED, not occluded] → IN
+  240ms rise; reduced-motion 120ms fades; 4s watchdog; error ⇒ instant drop; zero added
+  wait). Manual dev check passed (`11c428a0`).
+- **Phase 5 `f008d329` continuity + hardening** — ring watermark splice
+  (`OutputRing.written` + `readRingSince`; background adopt = sidecar preface + post-park
+  tail — full scrollback, no 256KB ceiling), `terminal:exitResidue` consume-on-read +
+  "Exited in background (code N)" restored bar, quit/darwin ring-tail appends (64MB
+  skip-not-truncate), `pruneBoardResults` union-of-residents + recap re-arm clone gate,
+  **ADR 0011** (lifetime · budgets · dialog policy · darwin=quit · no schema bump · v1
+  limitations + follow-ups).
+- **Epic-end sync merge `487c97ac`** (post-#291 main): two add-vs-add pty.ts conflicts →
+  union (`spawnedAt` readiness + `projectDir` tags). Second sync `8d9a0db2` (post-#292);
+  its index.ts growth tripped the max-lines ratchet → `14d8969e` moved the BUG-M2
+  `flushRenderer` body to `flushChannel.ts` beside its primitives.
+- **Review rounds `1bceddfb` + `0c9119e4` + `c0f0de77`** — the PR bot silent-failed twice
+  ("success", zero comments, permission denials) → substituted a LOCAL multi-agent review
+  (memory: pr-bot-silent-fail-local-review): 4 CONFIRMED + 2 PLAUSIBLE + 3 cleanups fixed
+  in `1bceddfb` (keep-forever survival [forget moved to the explicit dialog Stop],
+  flush-time watermark [`peekRingWritten`/`setFlushWatermark` committed at
+  `terminal:writeSnapshot` success — closes the reapUndoParks loss window], failed-preview
+  `did-fail-load` re-emit on remount, `'background-failed'` abort outcome, exit-bar
+  empty-residue edge, `fetchLiveDecorations`/`pickFolder` dedups, single-dir
+  `project:thumb` IPC). The bot then worked (rounds on `14d8969e` + `0c9119e4`):
+  `0c9119e4` fixed its [critical] `preview:osrOpen` remount OWNER GUARD (bare-id reuse
+  handed a cloned project the resident's live page — the R1 class, now mirrors
+  `adoptCore.requireOwner`; foreign collision ⇒ dispose + fresh window), the R4
+  adopt→re-park `flushWatermark` carry-back, and the dock's silent `'locked'` drop;
+  `c0f0de77` added switcher `'locked'` toast parity (shared `toastLockedSwitch`) and true
+  single-flight on `project:captureThumb` (`captureInFlight` flag). Final incremental
+  round verified clean. CodeQL stat→append TOCTOU dispositioned (quit-path sync block) +
+  alert dismissed. Clone-collision boardResults inheritance ACCEPTED as the ADR-0011
+  deferred dir-keyed follow-up.
+
+**Verified:** clean-env vitest 4296P · new e2e projectBackground (4) + Continuity (splice
+exactly-once, deeper than the ring + dir-isolation) + Dialog ladder + Dock + SwitchMotion
+suites · FULL pre-merge matrix on the MERGE-RESULT tree `c0f0de77` (main unmoved at
+`3ca57748`): Win 261/261 accounted (osrCrop + clone-collision cross-spec load flakes
+rerun-green isolated) + Linux-Docker 260P + 1 flaky-recovered (dataFlow, the documented
+Docker class) · CI check green ×4 heads (its ubuntu runner caught a POSIX `basename`
+test-literal bug → `a60b8228`) · manual dev checks per phase + the epic check, all
+user-signed. Merged `4d2bfeb9`. e2e gotchas paid: mint+open the DESTINATION first (R2
+pinned flush-save rejects); splice spec needs board scrollback 50000 (at the 2000-ROW
+default, wrapped filler evicts from xterm before the 256KB ring); POSIX legs need
+platform-forked markers (bash chokes on pwsh concat). Deferred (ADR'd): quit-relaunch e2e
+harness, recap-map dir-scoping, dir-keyed boardResults.
 ## 2026-07-03 — PR #290: recap refresh — structured outcomes + `recap:updated` push + lineage-guarded transcript resolution (`50701813`)
 
 User-reported: the recap face's stale banner ("Recap is out of date — describes an earlier
@@ -1722,3 +1788,36 @@ asserted, revealed, searched: exact count with ZERO further PTY writes) · full 
 the pre-merge tree (Win 245/245, Linux 247 with 1 known browserNetwork JD-2 load-flake
 retry-green) + full matrix re-run on the merged tree · manual dev check title-stamped. Bot
 review: 0 critical / 0 warning.
+
+## 2026-07-03 — PR #296: recap facts face enriched — plan, errors, meta, diff stats, agents (`c76d20d8`)
+
+Workstream C of the recap-enrichment research (design signed off 2026-07-03; built in worktree
+`recap-enrichment` per the now-deleted `docs/research/2026-07-03-recap-enrichment/HANDOFF.md` —
+this entry is its residue). Every new fact parses in `computeRecapFacts`'s **existing single 64KB
+tail pass** — no new I/O, no LLM cost, no consent change; the bundle is computed per `recap:get`
+and never persisted → all fields additive, **no schema bump**, renderer feature-detects each one.
+
+- **P0** — `todos {done,total,active}` (LAST TodoWrite wins; emptied list clears) · `errors
+  {count,last}` (`is_error` tool_results; excerpt scrubbed via `redactSecrets` BEFORE the cap so a
+  straddling secret can't survive) · `model` (latest assistant metadata) · `gitBranch` (per-record
+  top-level transcript field — tail-safe, unlike the head-anchored gitStatus block; never runs git).
+- **P1** — `contextTokens` (LAST assistant usage input + cache-read; honest point metric under
+  tail truncation) · per-file `adds`/`dels` summed from `structuredPatch` hunks (annotates existing
+  file entries only — no phantom chips from results whose tool_use fell outside the tail).
+- **P2** — `agents {count, labels}` (Task tool_use; labels deduped recency-first, ≤3). Facts-only —
+  the signed-off mock has no agents row.
+- **P3** — `buildRecapInput` appends ≤2 lines (plan progress + last error) through `redactSecrets`
+  with room **reserved** inside `MAX_INPUT_CHARS` (overflow trims milestones, never the extras);
+  `RECAP_SYSTEM` unchanged. Plumbed via `MilestoneResult.extras` off the same tail read.
+- **UI (RecapView)** — meta row `model · branch · Nk ctx` (mono, ellipsized) · Plan row (34px/1fr
+  grid, `done/total — active`, 2px accent bar) in both narrative + facts-only modes · diff stats on
+  Changed chips (`+adds` in --ok / `−dels` in --err) · warn-toned errors line above the last-ask
+  footer. Preload mirror (`recapApi.ts`) in lockstep.
+
+**Verified:** ~15 new recapFacts units (per-field fixtures, truncated-tail robustness, caps,
+later-wins, phantom-chip guard) + RecapView row tests + buildRecapInput extras (scrub, budget,
+legacy shape) + kTokens; full suite 4324 · recap e2e extended (TodoWrite + is_error fixture →
+recap-plan/recap-errors, key-less zero-egress) · full pre-push matrix ×2 (Win 248P; Linux 260P,
+documented dataFlow/browserNetwork flakes retry-green) · manual dev check title-stamped
+(`PR recap-enrichment`). Bot review: 0 critical / 0 warning (re-review after the max-lines fixup
+`7f6f4ffc` — rebase onto #293 pushed `index.ts` to 702>700; compacted, behavior identical).

@@ -1,6 +1,6 @@
 import * as os from 'node:os'
 import * as pty from 'node-pty'
-import { probeOsrPaint, probeOsrPaintWindow } from './previewOsr'
+import { probeOsrPaint, probeOsrPaintWindow } from './previewOsrProbe'
 
 export interface SelfTestResult {
   pty: boolean

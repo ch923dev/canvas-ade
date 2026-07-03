@@ -14,6 +14,7 @@ import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } fro
 import writeFileAtomic from 'write-file-atomic'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
+import { takeExitResidue, peekRingWritten, setFlushWatermark, type ExitResidue } from './pty'
 import {
   writeTerminalSnapshot,
   writeTerminalSnapshotAsync,
@@ -73,14 +74,36 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
   // after this resolves and a synchronous write is the only way to guarantee the bytes land first.
   ipc.handle(
     'terminal:writeSnapshot',
-    (e, boardId: string, text: string, sync?: boolean): boolean | Promise<boolean> => {
+    (
+      e,
+      boardId: string,
+      text: string,
+      sync?: boolean,
+      expectedDir?: string
+    ): boolean | Promise<boolean> => {
       if (guard(e)) return false
       const dir = getCurrentDir()
       if (!dir) return false
+      // Background sessions (R2, BUG-009-style): the renderer pins the write to the project it
+      // BELIEVES it is flushing. Today the pre-switch flush is safe only by ordering accident
+      // (flush runs before currentDir flips); with resident background projects, any late flush
+      // landing after a switch would write board A's scrollback into project B's
+      // `.canvas/terminal/` under a colliding id. Reject on mismatch; absent = legacy caller.
+      if (expectedDir !== undefined && expectedDir !== dir) return false
       const safeText = typeof text === 'string' ? text : ''
+      const id = String(boardId)
+      // Phase 5 splice (review fix): capture the ring watermark at handler ENTRY — the closest
+      // MAIN-side point to the renderer's serialize — and commit it only when the write LANDS.
+      // The background park then splices the tail from here instead of from park time, so
+      // output arriving between this flush and the park is replayed, not silently dropped.
+      const written = peekRingWritten(id)
+      const commit = (ok: boolean): boolean => {
+        if (ok && written !== null) setFlushWatermark(id, written)
+        return ok
+      }
       return sync
-        ? writeTerminalSnapshot(dir, String(boardId), safeText)
-        : writeTerminalSnapshotAsync(dir, String(boardId), safeText)
+        ? commit(writeTerminalSnapshot(dir, id, safeText))
+        : writeTerminalSnapshotAsync(dir, id, safeText).then(commit)
     }
   )
 
@@ -91,10 +114,23 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
     return readTerminalSnapshot(dir, String(boardId))
   })
 
-  ipc.handle('terminal:deleteSnapshot', (e, boardId: string): boolean => {
+  // Phase 5 (bg sessions R6 UX): consume-on-read exit residue — what a background-parked
+  // proc said + its exit code when it died while its project was switched away. Scoped to
+  // the ACTIVE project inside takeExitResidue (compound key), so a cloned project sharing
+  // board UUIDs can never read another project's last words. One read = gone (the restored
+  // bar shows it once; a later remount is a plain snapshot restore).
+  ipc.handle('terminal:exitResidue', (e, boardId: string): ExitResidue | null => {
+    if (guard(e)) return null
+    return takeExitResidue(String(boardId)) ?? null
+  })
+
+  ipc.handle('terminal:deleteSnapshot', (e, boardId: string, expectedDir?: string): boolean => {
     if (guard(e)) return false
     const dir = getCurrentDir()
     if (!dir) return false
+    // R2 dir-pin, mirroring writeSnapshot: a delete raced across a switch must not remove a
+    // colliding board's sidecar in the newly-active project.
+    if (expectedDir !== undefined && expectedDir !== dir) return false
     deleteTerminalSnapshot(dir, String(boardId))
     return true
   })

@@ -3,6 +3,10 @@ import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
+import AskOnSwitchModal from './canvas/AskOnSwitchModal'
+import ProjectDock from './canvas/ProjectDock'
+import SwitchTransitionOverlay from './canvas/SwitchTransitionOverlay'
+import { useSwitchTransitionStore } from './store/switchTransitionStore'
 import { ToastIsland } from './canvas/Toast'
 import { useUpdateToasts } from './canvas/useUpdateToasts'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
@@ -31,6 +35,10 @@ function App(): React.ReactElement {
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
   const accountStatus = useAccountStore((s) => s.status)
+  // Phase 4c: while the switch-transition overlay is armed, the welcome picker must never
+  // paint (killing the mid-switch flash is the point of the HOLD phase); during IN the
+  // wrapper below carries the rise animation over the freshly mounted canvas.
+  const switchPhase = useSwitchTransitionStore((s) => s.phase)
 
   // Belt-and-suspenders against drop-to-navigate (audit `packaged-fileurl-nav-allowed`):
   // a file or URL dropped anywhere on the window default-navigates the whole frame to
@@ -91,9 +99,26 @@ function App(): React.ReactElement {
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
-      {status === 'open' ? <Canvas /> : <WelcomeScreen />}
+      {/* Phase 4c: a permanent viewport-sized wrapper so Canvas keeps its tree position
+          across the transition (adding/removing a wrapper would REMOUNT it — killing the
+          PTY/preview keep-alive the epic exists for). WelcomeScreen is suppressed while
+          the overlay is up (its D0-7 loading line remains the no-overlay fallback: a
+          welcome-screen open never arms, and the watchdog force-clear lands back here). */}
+      <div className={switchPhase === 'in' ? 'st-app-ground st-app-rise' : 'st-app-ground'}>
+        {status === 'open' ? <Canvas /> : switchPhase === 'idle' ? <WelcomeScreen /> : null}
+      </div>
       {status === 'open' && <AuditLogViewer />}
+      {/* Phase 4b (bg sessions): the bottom-edge project dock — app-level (a sibling of
+          Canvas, like AskOnSwitchModal), gated on an open project so its hot zone can't
+          fire over the welcome/loading screens; a switch's 'loading' unmount auto-closes it. */}
+      {status === 'open' && <ProjectDock />}
       <ConfirmModal />
+      {/* Phase 4 (bg sessions): app-level like ConfirmModal — the ask-on-switch decision is
+          awaited mid-switch-pipeline and must not depend on any project-scoped surface. */}
+      <AskOnSwitchModal />
+      {/* Phase 4c: the switch-transition overlay — z above Canvas/Welcome, below modals
+          (the ask dialog settles BEFORE the overlay arms; Cancel paths never reach arm). */}
+      <SwitchTransitionOverlay />
       {/* D1-A: app-level so toasts survive a project switch and show on the welcome
           screen too (a failed final flush aborts the switch — its toast must outlive
           whatever surface raised it). */}
