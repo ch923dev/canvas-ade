@@ -174,6 +174,61 @@ describe('resolveResume', () => {
     expect(resolveResume(d, 'b1', { sessionId: SID })).toMatchObject({ kind: 'resume' })
   })
 
+  it('F2 rescue: dead eager stored id + a CONFIRMED prior capture → resume the confirmed session', () => {
+    const { dir, env } = fixtureRoot()
+    // The board's last REAL conversation, confirmed by a UserPromptSubmit hook line…
+    const confirmedPath = join(dir, `${OTHER}.jsonl`)
+    writeFileSync(confirmedPath, transcript(OTHER))
+    // …then a launch-quit stored a dead eager id (RC-1) whose transcript never existed.
+    const d = deps(env, {
+      b1: {
+        sessionId: SID,
+        transcriptPath: join(dir, `${SID}.jsonl`), // never written
+        confirmed: { sessionId: OTHER, transcriptPath: confirmedPath }
+      }
+    })
+    expect(resolveResume(d, 'b1', { sessionId: SID })).toEqual({
+      kind: 'resume',
+      sessionId: OTHER,
+      source: 'recorded'
+    })
+  })
+
+  it('F2 rescue: no stored id at all but a confirmed capture exists → still resumable', () => {
+    const { dir, env } = fixtureRoot()
+    const confirmedPath = join(dir, `${OTHER}.jsonl`)
+    writeFileSync(confirmedPath, transcript(OTHER))
+    const d = deps(env, {
+      b1: {
+        sessionId: '',
+        transcriptPath: '/x',
+        confirmed: { sessionId: OTHER, transcriptPath: confirmedPath }
+      }
+    })
+    expect(resolveResume(d, 'b1', {})).toMatchObject({ kind: 'resume', sessionId: OTHER })
+  })
+
+  it('F2: a dead confirmed capture never downgrades the primary continue verdict', () => {
+    const { dir, env } = fixtureRoot()
+    const p = join(dir, `${OTHER}.jsonl`)
+    writeFileSync(p, transcript(OTHER))
+    // Primary path: foreign-but-unclaimed → continue. Confirmed points at a vanished file.
+    const d = deps(
+      env,
+      {
+        b1: {
+          sessionId: SID,
+          transcriptPath: p,
+          confirmed: { sessionId: SID, transcriptPath: join(dir, 'gone.jsonl') }
+        }
+      },
+      () => p
+    )
+    expect(
+      resolveResume(d, 'b1', { sessionId: SID, transcriptPath: join(dir, 'gone2.jsonl') })
+    ).toEqual({ kind: 'continue' })
+  })
+
   it('injection-shaped stored id can never smuggle metacharacters into the launch line', () => {
     const { dir, env } = fixtureRoot()
     const raw = 'abc; curl evil.com'

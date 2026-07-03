@@ -28,7 +28,8 @@ describe('recordSession.js hook script', () => {
       session_id: 'sess-1',
       transcript_path: '/h/.claude/projects/p/sess-1.jsonl',
       cwd: '/repo',
-      source: 'startup'
+      source: 'startup',
+      hook_event_name: 'SessionStart'
     })
     execFileSync(process.execPath, ['src/main/hooks/recordSession.js', map], {
       input: stdin,
@@ -41,9 +42,34 @@ describe('recordSession.js hook script', () => {
       sessionId: 'sess-1',
       transcriptPath: '/h/.claude/projects/p/sess-1.jsonl',
       cwd: '/repo',
-      source: 'startup'
+      source: 'startup',
+      hookEvent: 'SessionStart',
+      // F2: the eager SessionStart path — the transcript does not exist yet.
+      transcriptExists: false
     })
     expect(typeof rec.ts).toBe('number')
+  })
+
+  it('F2: records transcriptExists:true once the transcript file is real (UserPromptSubmit shape)', () => {
+    const map = join(dir, 'map.jsonl')
+    const transcript = join(dir, 'sess-2.jsonl')
+    writeFileSync(transcript, '{"sessionId":"sess-2"}\n')
+    const stdin = JSON.stringify({
+      session_id: 'sess-2',
+      transcript_path: transcript,
+      cwd: '/repo',
+      hook_event_name: 'UserPromptSubmit'
+    })
+    execFileSync(process.execPath, ['src/main/hooks/recordSession.js', map], {
+      input: stdin,
+      env: { ...process.env, CANVAS_RECAP_BOARD: 'board-9' }
+    })
+    const rec = JSON.parse(readFileSync(map, 'utf8').trim())
+    expect(rec).toMatchObject({
+      sessionId: 'sess-2',
+      hookEvent: 'UserPromptSubmit',
+      transcriptExists: true
+    })
   })
 })
 
@@ -75,6 +101,57 @@ describe('readRecapMap', () => {
   })
   it('returns an empty map when the file is absent', () => {
     expect(readRecapMap(join(dir, 'nope.jsonl')).size).toBe(0)
+  })
+
+  it('F2: keeps the latest CONFIRMED capture while the top-level fields stay the latest line', () => {
+    const map = join(dir, 'map.jsonl')
+    writeFileSync(
+      map,
+      [
+        // real conversation confirmed at a prompt…
+        JSON.stringify({
+          boardId: 'b1',
+          sessionId: 's1',
+          transcriptPath: '/t/s1.jsonl',
+          transcriptExists: true,
+          ts: 1
+        }),
+        // …then a NEW session's eager SessionStart (no transcript yet)
+        JSON.stringify({
+          boardId: 'b1',
+          sessionId: 's2',
+          transcriptPath: '/t/s2.jsonl',
+          transcriptExists: false,
+          ts: 2
+        })
+      ].join('\n')
+    )
+    const m = readRecapMap(map)
+    expect(m.get('b1')).toEqual({
+      sessionId: 's2', // latest line — recap display freshness + the A4 eager-capture grace
+      transcriptPath: '/t/s2.jsonl',
+      ts: 2,
+      confirmed: { sessionId: 's1', transcriptPath: '/t/s1.jsonl', ts: 1 } // resume-grade
+    })
+  })
+
+  it('F2: an embedded confirmed object round-trips the consent-decline prune rewrite', () => {
+    const map = join(dir, 'map.jsonl')
+    const entry = {
+      boardId: 'b1',
+      sessionId: 's2',
+      transcriptPath: '/t/s2.jsonl',
+      ts: 2,
+      confirmed: { sessionId: 's1', transcriptPath: '/t/s1.jsonl', ts: 1 }
+    }
+    // What index.ts's decline prune writes for a SURVIVING board: JSON.stringify({boardId, ...entry}).
+    writeFileSync(map, JSON.stringify(entry) + '\n')
+    const m = readRecapMap(map)
+    expect(m.get('b1')?.confirmed).toEqual({
+      sessionId: 's1',
+      transcriptPath: '/t/s1.jsonl',
+      ts: 1
+    })
   })
 })
 
@@ -131,6 +208,55 @@ describe('recap hook install/merge', () => {
     const cfg = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'))
     // No dangling `{ hooks: { SessionStart: [] } }` — both keys are pruned.
     expect(cfg.hooks).toBeUndefined()
+  })
+
+  it('F2: installs the SAME exec-form hook under all three events; remove clears all three', () => {
+    installRecapHook(opts(dir))
+    const settings = join(dir, '.claude', 'settings.local.json')
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    for (const event of ['SessionStart', 'UserPromptSubmit', 'SessionEnd']) {
+      const entries = (cfg.hooks[event] ?? []).flatMap((b: { hooks: unknown[] }) => b.hooks)
+      expect(
+        entries.filter((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')),
+        `event ${event}`
+      ).toHaveLength(1)
+    }
+    removeRecapHook(dir, '/app/recordSession.js')
+    const after = JSON.parse(readFileSync(settings, 'utf8'))
+    expect(after.hooks).toBeUndefined()
+  })
+
+  it('F2: a pre-F2 settings file (SessionStart only) reads as NOT installed → re-ensure upgrades it', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/usr/bin/node',
+                  args: ['/app/recordSession.js', '/u/map.jsonl']
+                }
+              ]
+            }
+          ]
+        }
+      })
+    )
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
+    installRecapHook(opts(dir))
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(true)
+    // The upgrade did not stack a second SessionStart entry.
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const ss = cfg.hooks.SessionStart.flatMap((b: { hooks: unknown[] }) => b.hooks)
+    expect(
+      ss.filter((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js'))
+    ).toHaveLength(1)
   })
 })
 
