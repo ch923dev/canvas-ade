@@ -15,11 +15,11 @@
  * The zipformer-en-26 int8 alternative is fully Apache-2.0.
  */
 import { createHash } from 'crypto'
-import { createWriteStream } from 'fs'
+import { createWriteStream, existsSync } from 'fs'
 import { mkdir, readdir, rename, rm, stat } from 'fs/promises'
 import { join } from 'path'
 
-export type VoiceModelRole = 'encoder' | 'decoder' | 'joiner' | 'tokens'
+export type VoiceModelRole = 'encoder' | 'decoder' | 'joiner' | 'tokens' | 'vad'
 
 export interface VoiceModelFile {
   /** Local filename inside the model dir (kept = remote basename). */
@@ -28,6 +28,12 @@ export interface VoiceModelFile {
   url: string
   sha256: string
   bytes: number
+  /**
+   * V5: an optional file never gates `modelStatus` 'ready' — installs from before the
+   * file joined the manifest keep working (the engine degrades gracefully without it).
+   * Fresh downloads always fetch it. Currently: the silero VAD endpoint accelerator.
+   */
+  optional?: boolean
 }
 
 export interface VoiceModelSpec {
@@ -45,6 +51,22 @@ const KROKO_BASE =
   'https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06/resolve/572aaf4e2e0c603c3fc2a574d096e755a178faa1'
 const ZIP26_BASE =
   'https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24'
+const VAD_BASE =
+  'https://huggingface.co/csukuangfj/vad/resolve/fba88cd2e921609e7675c3aaf51e0b9b295da4bc'
+
+/**
+ * silero VAD v4 (MIT) — the V5 endpoint accelerator, shared verbatim by every model's
+ * manifest (each model dir gets its own copy: 1.8 MB of duplication buys the existing
+ * per-model status/paths/delete machinery unchanged). `optional` — see VoiceModelFile.
+ */
+const SILERO_VAD_FILE: VoiceModelFile = {
+  name: 'silero_vad.onnx',
+  role: 'vad',
+  url: `${VAD_BASE}/silero_vad.onnx`,
+  sha256: 'a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28',
+  bytes: 1_807_522,
+  optional: true
+}
 
 /**
  * Pinned manifest (verified 2026-07-02). sha256 sources: HF LFS oid (= sha256) for the
@@ -60,7 +82,7 @@ export const VOICE_MODEL_CATALOG: VoiceModelSpec[] = [
     license: 'CC-BY-SA-4.0',
     licenseNote:
       'Community model by Banafo (Kroko ASR), CC-BY-SA 4.0 — downloaded from their published mirror.',
-    totalBytes: 70_092_599 + 617_488 + 336_817 + 6_310,
+    totalBytes: 70_092_599 + 617_488 + 336_817 + 6_310 + 1_807_522,
     files: [
       {
         name: 'encoder.onnx',
@@ -89,7 +111,8 @@ export const VOICE_MODEL_CATALOG: VoiceModelSpec[] = [
         url: `${KROKO_BASE}/tokens.txt`,
         sha256: '396dbeb5f4858875690716084f54e90d339679d0ba3e6b5b584f3d7589254d2d',
         bytes: 6_310
-      }
+      },
+      SILERO_VAD_FILE
     ]
   },
   {
@@ -97,7 +120,7 @@ export const VOICE_MODEL_CATALOG: VoiceModelSpec[] = [
     label: 'Zipformer EN int8 (Apache)',
     language: 'en',
     license: 'Apache-2.0',
-    totalBytes: 71_083_163 + 1_307_236 + 259_335 + 5_048,
+    totalBytes: 71_083_163 + 1_307_236 + 259_335 + 5_048 + 1_807_522,
     files: [
       {
         name: 'encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx',
@@ -126,7 +149,8 @@ export const VOICE_MODEL_CATALOG: VoiceModelSpec[] = [
         url: `${ZIP26_BASE}/tokens.txt`,
         sha256: '49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb',
         bytes: 5_048
-      }
+      },
+      SILERO_VAD_FILE
     ]
   }
 ]
@@ -149,8 +173,9 @@ export function modelDir(userData: string, id: string): string {
 export type VoiceModelStatus = 'ready' | 'absent'
 
 /**
- * 'ready' = every manifest file present at its exact pinned byte size. Hashes are checked
- * at download time only (hashing 70 MB on every status poll would be wasteful); a
+ * 'ready' = every REQUIRED manifest file present at its exact pinned byte size (optional
+ * files — the VAD — never gate readiness, so pre-V5 installs stay 'ready'). Hashes are
+ * checked at download time only (hashing 70 MB on every status poll would be wasteful); a
  * partially-staged download never lands here thanks to the staging-dir rename.
  */
 export async function modelStatus(userData: string, id: string): Promise<VoiceModelStatus> {
@@ -158,6 +183,7 @@ export async function modelStatus(userData: string, id: string): Promise<VoiceMo
   if (!spec) return 'absent'
   const dir = modelDir(userData, id)
   for (const f of spec.files) {
+    if (f.optional) continue
     try {
       const s = await stat(join(dir, f.name))
       if (s.size !== f.bytes) return 'absent'
@@ -174,6 +200,8 @@ export interface VoiceModelPaths {
   decoder: string
   joiner: string
   tokens: string
+  /** silero VAD model, present only when the optional file is actually installed (V5). */
+  vad?: string
 }
 
 export function modelPaths(userData: string, id: string): VoiceModelPaths | null {
@@ -187,11 +215,16 @@ export function modelPaths(userData: string, id: string): VoiceModelPaths | null
   const joiner = byRole('joiner')
   const tokens = byRole('tokens')
   if (!encoder || !decoder || !joiner || !tokens) return null
+  // The optional VAD is offered only when its file is really on disk (pre-V5 installs
+  // don't have it) — the decoder degrades to the sherpa endpoint rules without it.
+  const vadName = byRole('vad')
+  const vadPath = vadName && existsSync(join(dir, vadName)) ? join(dir, vadName) : undefined
   return {
     encoder: join(dir, encoder),
     decoder: join(dir, decoder),
     joiner: join(dir, joiner),
-    tokens: join(dir, tokens)
+    tokens: join(dir, tokens),
+    ...(vadPath ? { vad: vadPath } : null)
   }
 }
 

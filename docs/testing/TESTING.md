@@ -247,6 +247,7 @@ it never runs as a scoped subset — only in the full matrix (see its row):
 | `@chrome` | `menu*` · `modal` · `commandPalette` · `wayfinding` · `titleEdit` · `boardKeyboard` · `groups` · `backdrop` | `AppChrome`, `SettingsModal`, menu/modal/toast/group/palette/wayfinding/backdrop chrome |
 | `@mcp` | `mcp` | the swarm layer — `src/main/mcp*` + `@expanse-ade/mcp`. Always-FULL: the scope script routes `src/main/**` (and `e2e/**`) to `FULL`, so `@mcp` runs in the full matrix at the merge gate / on any MAIN change, never as a scoped renderer subset. |
 | `@voice` | `voice` | voice dictation — `src/renderer/src/voice/**` + `voiceStore` (V1: capture pipeline + `voice:port`; V3 adds the pill/flyout). The MAIN half (`src/main/voiceIpc.ts`) routes to FULL via `src/main/**`. Runs under the fixtures-wide `CANVAS_FAKE_MEDIA=1` fake mic (a deterministic generated tone) — no OS mic/permission dependency on any leg. |
+| `@voicedrill` | `voiceCrashDrill` | MANUAL ONLY — self-skips in every suite run (needs win32 + `CANVAS_FAKE_MEDIA_WAV` + the installed Kroko model). Kills the real engine host by pid, twice, to prove the V5 crash policy live: transparent restart-once → error row → draft preserved → Restart CTA. Invoke: `CANVAS_FAKE_MEDIA_WAV=src/main/__fixtures__/voice-librispeech-16k.wav pnpm test:e2e --grep @voicedrill`. |
 
 `scripts/e2e-scope.mjs` is the path → tag mapping (a pure, unit-tested function — `scripts/e2e-scope.test.ts`).
 **Safety contract — it fails OPEN to `FULL`** (run every spec) for any cross-cutting or cross-OS path

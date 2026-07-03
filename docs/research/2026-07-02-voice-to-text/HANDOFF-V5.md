@@ -83,9 +83,25 @@
 
 ## Exit criteria (V5 done =)
 
-- [ ] VAD/endpoint tuning in the host; async init (no cold-start stop-race stopgap).
-- [ ] Crash/error surfaces per SPEC §3 states; draft survives an engine crash.
-- [ ] pack:dir smoke green (win-x64 here; mac/linux via the matrix); win-arm64 gate.
+- [x] VAD/endpoint tuning in the host; async init (no cold-start stop-race stopgap).
+      *(2026-07-03: decoder `worker_threads` inside the host owns recognizer init + decode
+      + silero VAD — the host loop never blocks; `stopSession` 30 s → 10 s. VAD = optional
+      per-model manifest file (silero v4, MIT, HF-pinned `csukuangfj/vad@fba88cd2`);
+      real-model integration test proves the accelerated final at 1.2 s trailing silence.)*
+- [x] Crash/error surfaces per SPEC §3 states; draft survives an engine crash.
+      *(voiceEngine `onEngineFailure` + voiceIpc restart-once policy + renderer error row
+      w/ Restart; proven LIVE by `e2e/voiceCrashDrill.e2e.ts` (@voicedrill, manual-only) —
+      real host pid-killed twice mid-Kroko-decode: transparent restart, then error row,
+      draft preserved through both.)*
+- [x] pack:dir smoke green (win-x64 here; mac/linux via the matrix); win-arm64 gate.
+      *(Packaged spike `{ok:true, workerOk:true}` — worker loads sherpa through app.asar;
+      pruned `-c.electronDist` workaround used, installed Expanse was running. arm64:
+      preload `voice.supported` false → pill dormant + Settings row + MAIN start guard.)*
 - [ ] Full e2e matrix green at the epic merge gate; title-stamped dev check before the
       epic PR opens (V4's own check is done — user eyeball on the live app 2026-07-03).
 - [ ] Doc collapse per lifecycle at the epic merge; build-history entry appended.
+
+*(Optional real-audio e2e: deliberately NOT a suite spec — `CANVAS_FAKE_MEDIA_WAV` is a
+launch-env switch and the harness shares ONE app across specs (the V3 stub lesson), so a
+suite spec would hijack every other capture test. The @voicedrill manual spec IS the
+real-audio path: fixture WAV as mic → real Kroko partials/finals end-to-end.)*

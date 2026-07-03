@@ -25,8 +25,17 @@
 > hotkey capture field), `voice:config:changed` push (showPill/hotkey apply LIVE, no
 > remount), configured accelerator via `voice/hotkey.ts` (code-based, default fallback),
 > `micDeviceId` exact-constraint w/ default retry, configured model honored at session
-> start. **NEXT: V5 — hardening + platform validation, see
-> [HANDOFF-V5.md](HANDOFF-V5.md) + [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** Gotchas
+> start. V5 ✅ built 2026-07-03: **hardening + platform validation** — async recognizer
+> init on a `worker_threads` decoder inside the utilityProcess host (the REAL fix for the
+> V3 cold-init lesson; `stopSession` stopgap tightened 30 s → 10 s), silero VAD v4 as an
+> engine-side endpoint accelerator (~0.8 s finals; optional manifest file, pre-V5 installs
+> unaffected) + rule2 1.2 → 1.0 s, SPEC §3 crash policy (host death → MAIN re-brokers ONCE
+> transparently → then `error` flyout row w/ Restart; draft survives — proven live by the
+> manual `@voicedrill` spec killing the real host twice mid-decode), win-arm64 feature gate
+> (pill dormant + Settings "unavailable" row + MAIN start guard), packaged validation
+> (pack:dir spike `{ok:true, workerOk:true}` — the worker loads sherpa from inside
+> app.asar). **Epic PR to main is next — see [HANDOFF-V5.md](HANDOFF-V5.md) exit
+> checklist.** Gotchas
 > for later slices: Electron cross-process MessagePorts NULL `e.data` when a non-port
 > transferable rides the transfer list — COPY frames across the boundary
 > (`useVoiceCapture.ts`); a RUNNING installed Expanse watching the repo locks fresh

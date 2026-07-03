@@ -115,6 +115,39 @@ describe('createVoiceEngine', () => {
     engine.dispose()
     expect(child.killed).toBe(true)
   })
+
+  it('an unexpected host exit fires onEngineFailure; dispose does not (V5)', () => {
+    const engine = createVoiceEngine(fork)
+    const onFail = vi.fn()
+    engine.onEngineFailure(onFail)
+    engine.startSession(fakePort, null)
+    child.emit('exit', 1)
+    expect(onFail).toHaveBeenCalledWith('voice engine host exited unexpectedly')
+
+    onFail.mockClear()
+    engine.startSession(fakePort, null) // respawn (same fake child instance)
+    engine.dispose()
+    child.emit('exit', 0) // the kill's own exit event
+    expect(onFail).not.toHaveBeenCalled()
+  })
+
+  it('decoder:error kills the host, fires onEngineFailure once, settles a pending stop (V5)', async () => {
+    const engine = createVoiceEngine(fork)
+    const onFail = vi.fn()
+    engine.onEngineFailure(onFail)
+    engine.startSession(fakePort, null)
+    const pending = engine.stopSession()
+    child.emit('message', { t: 'decoder:error', error: 'worker exited (1)' })
+    expect(child.killed).toBe(true)
+    expect(onFail).toHaveBeenCalledExactlyOnceWith('worker exited (1)')
+    await expect(pending).resolves.toEqual({ frames: 0 })
+    // The kill's trailing exit event must not escalate a second time.
+    child.emit('exit', 0)
+    expect(onFail).toHaveBeenCalledTimes(1)
+    // Next start respawns a fresh host.
+    engine.startSession(fakePort, null)
+    expect(fork).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('runEngineSpike (mocked utilityProcess.fork)', () => {

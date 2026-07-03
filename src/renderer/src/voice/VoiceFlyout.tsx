@@ -74,6 +74,7 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const micSilent = useVoiceStore((s) => s.micSilent)
   const micStatus = useVoiceStore((s) => s.micStatus)
   const modelStatus = useVoiceStore((s) => s.modelStatus)
+  const engineError = useVoiceStore((s) => s.engineError)
   const setDraft = useVoiceStore((s) => s.setDraft)
   const setFlyoutOpen = useVoiceStore((s) => s.setFlyoutOpen)
   // Target = the selected TERMINAL board (primitive selectors — no fresh-object churn).
@@ -94,6 +95,7 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const [dlError, setDlError] = useState<string | null>(null)
 
   const denied = micSilent || micStatus === 'denied'
+  const showError = !denied && engineError
   const modelMissing = !denied && modelStatus === 'absent'
   const hasText = (draft + partial).trim().length > 0
   const canInject = !!targetId && running && hasText
@@ -227,7 +229,35 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
         </div>
       ) : (
         <>
-          {targetId && running ? (
+          {showError ? (
+            // SPEC §3 `error`: the engine crashed past its restart budget. The row takes
+            // the header slot only — the draft below stays editable AND sendable (Send
+            // needs just the terminal registry, not the engine).
+            <div className="vf-note" data-test="voice-flyout-error">
+              <span className="vf-sdot" style={{ background: 'var(--err)' }} />
+              <span className="vf-grow">
+                Voice engine crashed
+                <span className="vf-meta"> your draft is preserved — restart to dictate more</span>
+              </span>
+              <button
+                className="vf-btn primary"
+                data-test="voice-flyout-restart"
+                onClick={() => {
+                  useVoiceStore.getState().setEngineError(false)
+                  void startVoice()
+                }}
+              >
+                Restart
+              </button>
+              <button
+                className="vf-x"
+                title="Close (draft kept)"
+                onClick={() => setFlyoutOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+          ) : targetId && running ? (
             <div className="vf-hd">
               <span className="vf-to">to</span>
               <span className="vf-target" data-test="voice-flyout-target">

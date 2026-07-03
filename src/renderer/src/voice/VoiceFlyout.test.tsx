@@ -42,6 +42,7 @@ beforeEach(() => {
     micSilent: false,
     micStatus: 'granted',
     modelStatus: 'ready',
+    engineError: false,
     draft: '',
     partial: '',
     flyoutOpen: true
@@ -218,5 +219,44 @@ describe('VoiceFlyout — targeting + draft preservation', () => {
     await act(async () => {}) // models.list resolves → label + size render
     expect(screen.getByTestId('voice-flyout-model').textContent).toContain('Kroko EN · 55 MB')
     delete (window as never as { api?: unknown }).api
+  })
+})
+
+describe('VoiceFlyout — engine error state (V5, SPEC §3)', () => {
+  it('shows the error row in the header slot; the draft stays editable AND sendable', async () => {
+    const entry = seedTarget()
+    useVoiceStore.setState({ engineError: true, draft: 'preserved through the crash' })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    expect(screen.getByTestId('voice-flyout-error')).toBeTruthy()
+    expect(screen.queryByTestId('voice-flyout-target')).toBeNull() // row takes the header slot
+    // Draft preserved and still sendable — Send needs the registry, not the engine.
+    const ta = screen.getByTestId('voice-flyout-input') as HTMLTextAreaElement
+    expect(ta.value).toBe('preserved through the crash')
+    fireEvent.click(screen.getByTitle(/Paste \+ submit/))
+    await act(async () => {})
+    expect(entry.paste).toHaveBeenCalledWith('preserved through the crash')
+  })
+
+  it('Restart clears the error and starts a new session', () => {
+    const start = vi
+      .fn()
+      .mockResolvedValue({ ok: true, micStatus: 'granted', modelStatus: 'ready' })
+    ;(window as never as { api: unknown }).api = { voice: { start } }
+    seedTarget()
+    useVoiceStore.setState({ engineError: true, draft: 'kept' })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    fireEvent.click(screen.getByTestId('voice-flyout-restart'))
+    expect(useVoiceStore.getState().engineError).toBe(false)
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(useVoiceStore.getState().draft).toBe('kept')
+    delete (window as never as { api?: unknown }).api
+  })
+
+  it('mic-denied still outranks the error row', () => {
+    seedTarget()
+    useVoiceStore.setState({ engineError: true, micSilent: true })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    expect(screen.getByTestId('voice-flyout-denied')).toBeTruthy()
+    expect(screen.queryByTestId('voice-flyout-error')).toBeNull()
   })
 })

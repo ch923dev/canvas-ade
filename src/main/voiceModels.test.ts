@@ -30,10 +30,12 @@ describe('catalog invariants', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('every model carries all four engine roles exactly once', () => {
+  it('every model carries the four engine roles exactly once, plus the optional VAD (V5)', () => {
     for (const m of VOICE_MODEL_CATALOG) {
-      const roles = m.files.map((f) => f.role).sort()
-      expect(roles).toEqual(['decoder', 'encoder', 'joiner', 'tokens'])
+      const required = m.files.filter((f) => !f.optional).map((f) => f.role)
+      expect(required.sort()).toEqual(['decoder', 'encoder', 'joiner', 'tokens'])
+      const optional = m.files.filter((f) => f.optional)
+      expect(optional.map((f) => f.role)).toEqual(['vad'])
     }
   })
 
@@ -60,21 +62,24 @@ describe('catalog invariants', () => {
 /** Tiny synthetic spec so tests don't stream 70 MB. */
 const specFile = (
   name: string,
-  role: 'encoder' | 'decoder' | 'joiner' | 'tokens',
-  body: string
+  role: 'encoder' | 'decoder' | 'joiner' | 'tokens' | 'vad',
+  body: string,
+  optional?: boolean
 ) => ({
   name,
   role,
   url: `https://models.test/${name}`,
   sha256: createHash('sha256').update(body).digest('hex'),
-  bytes: Buffer.byteLength(body)
+  bytes: Buffer.byteLength(body),
+  ...(optional ? { optional } : null)
 })
 
 const BODIES: Record<string, string> = {
   'enc.onnx': 'encoder-bytes',
   'dec.onnx': 'decoder-bytes',
   'join.onnx': 'joiner-bytes',
-  'tokens.txt': '<blk> 0\n'
+  'tokens.txt': '<blk> 0\n',
+  'vad.onnx': 'vad-bytes'
 }
 
 const TEST_SPEC: VoiceModelSpec = {
@@ -87,7 +92,8 @@ const TEST_SPEC: VoiceModelSpec = {
     specFile('enc.onnx', 'encoder', BODIES['enc.onnx']),
     specFile('dec.onnx', 'decoder', BODIES['dec.onnx']),
     specFile('join.onnx', 'joiner', BODIES['join.onnx']),
-    specFile('tokens.txt', 'tokens', BODIES['tokens.txt'])
+    specFile('tokens.txt', 'tokens', BODIES['tokens.txt']),
+    specFile('vad.onnx', 'vad', BODIES['vad.onnx'], true)
   ]
 }
 
@@ -195,6 +201,26 @@ describe('modelStatus / modelPaths / deleteModel / sweepStaging', () => {
     expect(p.encoder).toBe(join(modelDir(userData, 'test-model'), 'enc.onnx'))
     expect(p.tokens).toBe(join(modelDir(userData, 'test-model'), 'tokens.txt'))
     expect(modelPaths(userData, 'nope')).toBeNull()
+  })
+
+  it('the optional VAD never gates readiness and only enters paths when on disk (V5)', async () => {
+    const dir = modelDir(userData, 'test-model')
+    mkdirSync(dir, { recursive: true })
+    // A pre-V5 install: all four required files, no vad.onnx.
+    for (const [name, body] of Object.entries(BODIES)) {
+      if (name !== 'vad.onnx') writeFileSync(join(dir, name), body)
+    }
+    expect(await modelStatus(userData, 'test-model')).toBe('ready')
+    expect(modelPaths(userData, 'test-model')!.vad).toBeUndefined()
+    // A fresh V5 download carries it → the path appears.
+    writeFileSync(join(dir, 'vad.onnx'), BODIES['vad.onnx'])
+    expect(modelPaths(userData, 'test-model')!.vad).toBe(join(dir, 'vad.onnx'))
+  })
+
+  it('a fresh download fetches the optional VAD file too', async () => {
+    await downloadModel(userData, 'test-model', { fetchImpl: fakeFetch() })
+    expect(existsSync(join(modelDir(userData, 'test-model'), 'vad.onnx'))).toBe(true)
+    expect(modelPaths(userData, 'test-model')!.vad).toBeDefined()
   })
 
   it('deleteModel removes the install; sweepStaging clears only .staging-* leftovers', async () => {

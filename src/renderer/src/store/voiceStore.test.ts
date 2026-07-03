@@ -38,6 +38,16 @@ describe('voiceStore', () => {
     expect(s.framesSent).toBe(0)
   })
 
+  it('a fresh capture clears the engine error; the draft is untouched by both (V5)', () => {
+    useVoiceStore.setState({ draft: 'kept across the crash' })
+    useVoiceStore.getState().setEngineError(true)
+    expect(useVoiceStore.getState().engineError).toBe(true)
+    expect(useVoiceStore.getState().draft).toBe('kept across the crash')
+    useVoiceStore.getState().captureStarted()
+    expect(useVoiceStore.getState().engineError).toBe(false)
+    expect(useVoiceStore.getState().draft).toBe('kept across the crash')
+  })
+
   it('frameSent tracks the last level and counts frames', () => {
     useVoiceStore.getState().captureStarted()
     useVoiceStore.getState().frameSent(0.25)

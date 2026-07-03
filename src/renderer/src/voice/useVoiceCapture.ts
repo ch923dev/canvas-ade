@@ -138,8 +138,25 @@ export function useVoiceCapture(): void {
       session = createCapture(e.ports[0])
     }
     window.addEventListener('message', onWinMsg)
+    // V5 SPEC §3 `error`: MAIN's crash policy pushes engine events. 'restarted' is
+    // transparent — the fresh voice:port above replaces the capture (dispose folds any
+    // provisional tail into the draft, so nothing is lost across the swap). 'error'
+    // (restart budget spent) stops the capture HERE — the dead host can never post the
+    // usual {t:'stop'} — keeps the draft, and opens the flyout on its error row.
+    const offEngine = window.api.voice.onEngineEvent?.((ev) => {
+      const s = useVoiceStore.getState()
+      if (ev.kind === 'error') {
+        session?.dispose()
+        session = null
+        s.setEngineError(true)
+        s.setFlyoutOpen(true)
+      } else if (ev.kind === 'restarted') {
+        s.setEngineError(false)
+      }
+    })
     return () => {
       window.removeEventListener('message', onWinMsg)
+      offEngine?.()
       session?.dispose()
     }
   }, [])

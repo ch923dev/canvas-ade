@@ -45,7 +45,11 @@ interface MicDevice {
 }
 
 export function SettingsVoiceSection(): ReactElement | null {
-  const enabled = !!window.api?.voice
+  // Absent api (non-electron test runtimes) renders NOTHING — that guard keeps the
+  // SettingsModal voice-less unit mocks green. A present api with `supported:false`
+  // (win-arm64, V5 gate) renders the section head + one unavailable row instead.
+  const supported = window.api?.voice?.supported !== false
+  const enabled = !!window.api?.voice && supported
   const [cfg, setCfg] = useState<VoiceConfigView | null>(null)
   const [models, setModels] = useState<VoiceModelListEntry[]>([])
   const [mics, setMics] = useState<MicDevice[]>([])
@@ -86,7 +90,19 @@ export function SettingsVoiceSection(): ReactElement | null {
     }
   }, [enabled])
 
-  if (!enabled) return null
+  if (!window.api?.voice) return null
+  if (!supported) {
+    return (
+      <>
+        <div style={s.divider} />
+        <div style={s.head}>Voice dictation</div>
+        <div style={s.callout} data-test="voice-unsupported-note" role="note">
+          Voice dictation isn&rsquo;t available on this platform yet (Windows on ARM — the on-device
+          speech engine has no ARM64 build).
+        </div>
+      </>
+    )
+  }
 
   /** Immediate-apply merge-patch with optimistic UI + revert-on-failure (recap pattern). */
   const setField = (patch: Partial<VoiceConfigView>): void => {

@@ -32,6 +32,7 @@ import {
   modelStatus,
   sweepStaging,
   type DownloadProgress,
+  type VoiceModelPaths,
   type VoiceModelStatus
 } from './voiceModels'
 
@@ -118,6 +119,15 @@ function defaultEngine(): VoiceEngineHandle {
   return engineSingleton
 }
 
+/** V5: sherpa-onnx ships no win-arm64 prebuilt — the feature is gated OFF there
+ *  (approved decision; the preload mirrors this so the pill/Settings never render). */
+export function isVoicePlatformSupported(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch
+): boolean {
+  return !(platform === 'win32' && arch === 'arm64')
+}
+
 export function registerVoiceHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
@@ -138,8 +148,45 @@ export function registerVoiceHandlers(
   // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
   void ops.sweep(getUserData()).catch(() => {})
 
+  // ── V5 crash policy (SPEC §3 `error` state): while a session is live, an engine
+  // failure (host exit / decoder death) re-brokers the session ONCE transparently —
+  // the fresh voice:port replaces the renderer capture in place. A second failure in
+  // the same user-started session pushes `voice:engine:event {kind:'error'}`; the
+  // renderer stops its capture, keeps the draft, and offers Restart.
+  let liveModel: VoiceModelPaths | null = null
+  let liveActive = false
+  let restartedOnce = false
+
+  const brokerSession = (paths: VoiceModelPaths | null): boolean => {
+    const win = getWin()
+    if (!win) return false
+    const { port1, port2 } = new MessageChannelMain()
+    // Restart-idempotent: the host replaces any live session (the old renderer port gets
+    // {t:'stop'}, so a stale capture releases the mic).
+    engine().startSession(port1, paths)
+    win.webContents.postMessage('voice:port', {}, [port2])
+    return true
+  }
+
+  const onEngineFailure = (reason: string): void => {
+    if (!liveActive) return // idle host death — the next start respawns anyway
+    if (!restartedOnce) {
+      restartedOnce = true
+      if (brokerSession(liveModel)) {
+        getWin()?.webContents.send('voice:engine:event', { kind: 'restarted' })
+        return
+      }
+    }
+    liveActive = false
+    getWin()?.webContents.send('voice:engine:event', { kind: 'error', reason })
+  }
+
   ipcMain.handle('voice:session:start', async (e): Promise<VoiceStartResult> => {
     if (isForeignSender(e, getWin)) {
+      return { ok: false, micStatus: 'unknown', modelStatus: 'absent' }
+    }
+    // Defense-in-depth: the preload `supported` flag already hides every entry point.
+    if (!isVoicePlatformSupported()) {
       return { ok: false, micStatus: 'unknown', modelStatus: 'absent' }
     }
     const win = getWin()
@@ -159,16 +206,20 @@ export function registerVoiceHandlers(
       : DEFAULT_VOICE_MODEL_ID
     const status = stubActive ? 'ready' : await ops.status(userData, modelId)
     const paths = !stubActive && status === 'ready' ? ops.paths(userData, modelId) : null
-    const { port1, port2 } = new MessageChannelMain()
-    // Restart-idempotent: the host replaces any live session (the old renderer port gets
-    // {t:'stop'}, so a stale capture releases the mic).
-    engine().startSession(port1, paths)
-    win.webContents.postMessage('voice:port', {}, [port2])
+    liveModel = paths
+    liveActive = true
+    restartedOnce = false // a user-started session gets a fresh restart budget
+    engine().onEngineFailure(onEngineFailure)
+    if (!brokerSession(paths)) {
+      liveActive = false
+      return { ok: false, micStatus: 'unknown', modelStatus: 'absent' }
+    }
     return { ok: true, micStatus: micAccessStatus(), modelStatus: status }
   })
 
   ipcMain.handle('voice:session:stop', async (e): Promise<VoiceStopResult> => {
     if (isForeignSender(e, getWin)) return { ok: false, frames: 0 }
+    liveActive = false // a stop is user intent — a crash after it needs no restart
     const { frames } = await engine().stopSession()
     return { ok: true, frames }
   })

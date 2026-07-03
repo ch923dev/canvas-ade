@@ -122,6 +122,19 @@ describe('SettingsVoiceSection', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  it('supported:false renders the unavailable row instead of the section (V5 win-arm64)', () => {
+    ;(window as never as { api: unknown }).api = { voice: { supported: false } }
+    render(<SettingsVoiceSection />)
+    expect(screen.getByText('Voice dictation')).toBeTruthy()
+    expect(document.querySelector('[data-test="voice-unsupported-note"]')?.textContent).toContain(
+      'Windows on ARM'
+    )
+    // None of the live controls render — and no IPC was touched.
+    expect(document.querySelector('[data-test="voice-showpill-toggle"]')).toBeNull()
+    expect(configGet).not.toHaveBeenCalled()
+    expect(modelsList).not.toHaveBeenCalled()
+  })
+
   it('renders the catalog: DEFAULT badge, license note, ready vs download states', async () => {
     await mount()
     expect(screen.getByText('Kroko EN (low latency)')).toBeTruthy()

@@ -38,6 +38,11 @@ export interface VoiceConfigView {
   pillPosition?: { x: number; y: number }
 }
 
+/** V5 engine-failure push (SPEC §3 `error` state). 'restarted' = MAIN transparently
+ *  re-brokered the session after a crash (a fresh voice:port follows); 'error' = the
+ *  restart budget is spent — stop capturing, keep the draft, offer Restart. */
+export type VoiceEngineEvent = { kind: 'restarted' } | { kind: 'error'; reason?: string }
+
 /**
  * Control plane (frames flow over a MessagePort, not IPC). start() makes MAIN broker a
  * session port — it arrives via forwardVoicePort below as `__voicePort`, and the port IS
@@ -46,9 +51,17 @@ export interface VoiceConfigView {
  * models.* is the V2 catalog surface (download/delete/status; Settings UI lands in V4).
  */
 export const voiceApi = {
+  /** V5: false on win-arm64 (no sherpa prebuilt — approved gate). The pill renders
+   *  nothing and Settings shows an "unavailable on this platform" row instead. */
+  supported: !(process.platform === 'win32' && process.arch === 'arm64'),
   start: (): Promise<{ ok: boolean; micStatus: string; modelStatus: 'ready' | 'absent' }> =>
     ipcRenderer.invoke('voice:session:start'),
   stop: (): Promise<{ ok: boolean; frames: number }> => ipcRenderer.invoke('voice:session:stop'),
+  onEngineEvent: (cb: (ev: VoiceEngineEvent) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, ev: VoiceEngineEvent): void => cb(ev)
+    ipcRenderer.on('voice:engine:event', listener)
+    return () => ipcRenderer.removeListener('voice:engine:event', listener)
+  },
   models: {
     list: (): Promise<VoiceModelListEntry[]> => ipcRenderer.invoke('voice:models:list'),
     status: (id: string): Promise<'ready' | 'absent'> =>

@@ -11,12 +11,18 @@
  * expected transcript per its trans.txt: "after early nightfall the yellow lamps would
  * light up here and there the squalid quarter of the brothels").
  */
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { createRequire } from 'module'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { describe, expect, it } from 'vitest'
-import { buildRecognizerConfig, createFrameProcessor, type RecognizerLike } from './voiceEngineHost'
+import {
+  buildRecognizerConfig,
+  buildVadConfig,
+  createFrameProcessor,
+  type RecognizerLike,
+  type VadLike
+} from './voiceEngineHost'
 import { DEFAULT_VOICE_MODEL_ID, getModelSpec, type VoiceModelPaths } from './voiceModels'
 
 const MODELS_ROOT = process.env.CANVAS_VOICE_MODELS_ROOT
@@ -88,6 +94,58 @@ describe.runIf(!!MODELS_ROOT)('sherpa-onnx engine ↔ frame processor (model-gat
         .toLowerCase()
       expect(text).toContain('after early nightfall')
       expect(text).toContain('yellow lamps')
+    }
+  )
+
+  it(
+    'V5: the real silero VAD accelerates the final — fewer silence frames than rule1 needs',
+    { timeout: 120_000 },
+    () => {
+      const spec = getModelSpec(DEFAULT_VOICE_MODEL_ID)!
+      const dir = join(MODELS_ROOT!, spec.id)
+      const byRole = (role: string): string | undefined => {
+        const f = spec.files.find((x) => x.role === role)
+        return f ? join(dir, f.name) : undefined
+      }
+      const vadPath = byRole('vad')
+      // The VAD file is an optional install — skip (like the whole suite) when absent.
+      if (!vadPath || !existsSync(vadPath)) return
+      const model: VoiceModelPaths = {
+        encoder: byRole('encoder')!,
+        decoder: byRole('decoder')!,
+        joiner: byRole('joiner')!,
+        tokens: byRole('tokens')!,
+        vad: vadPath
+      }
+      const req = createRequire(import.meta.url)
+      const sherpa = req('sherpa-onnx-node') as {
+        OnlineRecognizer: new (cfg: unknown) => RecognizerLike
+        Vad: new (cfg: unknown, bufSec: number) => VadLike
+      }
+      const recognizer = new sherpa.OnlineRecognizer(buildRecognizerConfig(model))
+      const vad = new sherpa.Vad(buildVadConfig(vadPath), 10)
+
+      const events: Array<{ t: string; text: string }> = []
+      const proc = createFrameProcessor(recognizer, (m) => events.push(m), { vad })
+
+      const here = dirname(fileURLToPath(import.meta.url))
+      const samples = readWavPcm16(join(here, '__fixtures__', 'voice-librispeech-16k.wav'))
+      for (let i = 0; i + FRAME_SAMPLES <= samples.length; i += FRAME_SAMPLES) {
+        proc.push(samples.slice(i, i + FRAME_SAMPLES).buffer as ArrayBuffer)
+      }
+      // Only ~1.2 s of silence — under rule1's 2.4 s, so a final HERE proves either the
+      // VAD accelerator (silero close ~0.5 s + 0.3 s accumulator) or rule2 (1.0 s) fired.
+      const silence = new Int16Array(FRAME_SAMPLES)
+      for (let i = 0; i < 10; i++) proc.push(silence.buffer.slice(0) as ArrayBuffer)
+
+      const finals = events.filter((e) => e.t === 'final')
+      expect(finals.length).toBeGreaterThanOrEqual(1)
+      expect(
+        finals
+          .map((f) => f.text)
+          .join(' ')
+          .toLowerCase()
+      ).toContain('after early nightfall')
     }
   )
 })

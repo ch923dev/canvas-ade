@@ -48,6 +48,7 @@ vi.mock('electron', () => ({
 import {
   applyFakeMediaSwitches,
   disposeVoiceSession,
+  isVoicePlatformSupported,
   registerVoiceHandlers,
   type VoiceIpcDeps
 } from './voiceIpc'
@@ -87,7 +88,10 @@ interface Harness {
   engine: {
     startSession: ReturnType<typeof vi.fn>
     stopSession: ReturnType<typeof vi.fn>
+    onEngineFailure: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
+    /** The failure callback voiceIpc registered (the V5 crash-policy entry point). */
+    fail: (reason: string) => void
   }
   ops: NonNullable<VoiceIpcDeps['modelOps']> & {
     status: ReturnType<typeof vi.fn>
@@ -109,10 +113,15 @@ function makeHarness(overrides: { win?: null } = {}): Harness {
           webContents: { isDestroyed: () => false, mainFrame, postMessage, send }
         } as unknown as BrowserWindow)
   const ownEvent = { senderFrame: mainFrame } as IpcMainInvokeEvent
+  let failCb: ((reason: string) => void) | null = null
   const engine = {
     startSession: vi.fn(),
     stopSession: vi.fn(async () => ({ frames: 0 })),
-    dispose: vi.fn()
+    onEngineFailure: vi.fn((cb: ((reason: string) => void) | null) => {
+      failCb = cb
+    }),
+    dispose: vi.fn(),
+    fail: (reason: string) => failCb?.(reason)
   }
   const ops = {
     status: vi.fn(async () => 'absent' as const),
@@ -214,6 +223,76 @@ describe('voice:session:start / stop handlers', () => {
       modelStatus: 'absent'
     })
     expect(t.engine.startSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('V5 crash policy (restart once, then error)', () => {
+  it('an engine failure while live re-brokers ONCE, then surfaces error', async () => {
+    const t = makeHarness()
+    await t.handlers['voice:session:start'](t.ownEvent)
+    expect(h.channels).toHaveLength(1)
+
+    // First failure: a fresh channel goes to the engine + renderer, event = restarted.
+    t.engine.fail('host died')
+    expect(h.channels).toHaveLength(2)
+    expect(t.engine.startSession).toHaveBeenLastCalledWith(h.channels[1].port1, null)
+    expect(t.postMessage).toHaveBeenLastCalledWith('voice:port', {}, [h.channels[1].port2])
+    expect(t.send).toHaveBeenLastCalledWith('voice:engine:event', { kind: 'restarted' })
+
+    // Second failure in the same user session: budget spent — error, no new channel.
+    t.engine.fail('host died again')
+    expect(h.channels).toHaveLength(2)
+    expect(t.send).toHaveBeenLastCalledWith('voice:engine:event', {
+      kind: 'error',
+      reason: 'host died again'
+    })
+
+    // Third failure after the error: liveActive is off — silence.
+    const sends = t.send.mock.calls.length
+    t.engine.fail('still dead')
+    expect(t.send.mock.calls.length).toBe(sends)
+  })
+
+  it('a failure while idle (never started / after stop) does nothing', async () => {
+    const t = makeHarness()
+    // Registered but never started → no listener yet, fail() is a no-op by construction.
+    await t.handlers['voice:session:start'](t.ownEvent)
+    await t.handlers['voice:session:stop'](t.ownEvent)
+    const channels = h.channels.length
+    t.engine.fail('idle host reaped')
+    expect(h.channels).toHaveLength(channels)
+    expect(t.send).not.toHaveBeenCalledWith('voice:engine:event', expect.anything())
+  })
+
+  it('a new user start resets the restart budget', async () => {
+    const t = makeHarness()
+    await t.handlers['voice:session:start'](t.ownEvent)
+    t.engine.fail('crash 1') // budget spent
+    await t.handlers['voice:session:start'](t.ownEvent) // fresh session, fresh budget
+    t.engine.fail('crash 2')
+    expect(t.send).toHaveBeenLastCalledWith('voice:engine:event', { kind: 'restarted' })
+  })
+
+  it('start passes the model paths to a restart re-broker', async () => {
+    const t = makeHarness()
+    t.ops.status.mockResolvedValue('ready')
+    await t.handlers['voice:session:start'](t.ownEvent)
+    t.engine.fail('host died')
+    expect(t.engine.startSession).toHaveBeenLastCalledWith(h.channels[1].port1, {
+      encoder: 'E',
+      decoder: 'D',
+      joiner: 'J',
+      tokens: 'T'
+    })
+  })
+})
+
+describe('isVoicePlatformSupported (win-arm64 gate)', () => {
+  it('is false ONLY for win32/arm64', () => {
+    expect(isVoicePlatformSupported('win32', 'arm64')).toBe(false)
+    expect(isVoicePlatformSupported('win32', 'x64')).toBe(true)
+    expect(isVoicePlatformSupported('darwin', 'arm64')).toBe(true)
+    expect(isVoicePlatformSupported('linux', 'arm64')).toBe(true)
   })
 })
 

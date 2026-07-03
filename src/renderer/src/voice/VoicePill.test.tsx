@@ -206,3 +206,24 @@ describe('VoicePill — V4 config: custom hotkey + live push', () => {
     expect(startVoice).toHaveBeenCalledTimes(1) // hotkey still works while hidden, rebound
   })
 })
+
+describe('VoicePill — win-arm64 feature gate (V5)', () => {
+  it('supported:false renders nothing and binds no hotkey', () => {
+    ;(window as never as { api: unknown }).api = {
+      voice: { supported: false, config: { get: configGet, set: configSet } }
+    }
+    const { container } = render(<VoicePill />)
+    expect(container.querySelector('.voice-pill')).toBeNull()
+    expect(configGet).not.toHaveBeenCalled() // fully dormant — no config restore either
+    fireEvent.keyDown(window, { code: 'KeyM', key: 'M', ctrlKey: true, shiftKey: true })
+    expect(startVoice).not.toHaveBeenCalled()
+  })
+
+  it('supported:true (or absent — older preload) keeps the pill live', async () => {
+    ;(window as never as { api: unknown }).api = {
+      voice: { supported: true, config: { get: configGet, set: configSet } }
+    }
+    const pill = await mountPill()
+    expect(pill).toBeTruthy()
+  })
+})

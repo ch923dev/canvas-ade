@@ -50,6 +50,9 @@ interface VoiceState {
   micStatus: string
   /** Default model install state from the last voice.start() ('unknown' before any start). */
   modelStatus: 'ready' | 'absent' | 'unknown'
+  /** V5 SPEC §3 `error` state: the engine crashed past its restart budget. The draft is
+   *  untouched — the flyout shows the error row with Restart until a new start clears it. */
+  engineError: boolean
   /** Epoch ms of the last frame whose RMS beat SILENCE_RMS (silence auto-stop input). */
   lastVoiceAt: number
   /** Epoch ms the live capture session armed (the ~2 min hard-cap input). */
@@ -73,6 +76,7 @@ interface VoiceState {
   setFlyoutOpen: (open: boolean) => void
   /** Download CTA completion flips 'absent' → 'ready' without another start(). */
   setModelStatus: (s: 'ready' | 'absent' | 'unknown') => void
+  setEngineError: (on: boolean) => void
 }
 
 export const useVoiceStore = create<VoiceState>((set) => ({
@@ -86,6 +90,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   flyoutOpen: false,
   micStatus: 'unknown',
   modelStatus: 'unknown',
+  engineError: false,
   lastVoiceAt: 0,
   captureStartedAt: 0,
   captureStarted: () =>
@@ -94,6 +99,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       level: 0,
       micSilent: false,
       framesSent: 0,
+      engineError: false, // a fresh session (incl. Restart) leaves the error state
       captureStartedAt: Date.now(),
       // A fresh session starts its silence clock NOW — else a stale lastVoiceAt from a
       // previous session would auto-stop this one immediately.
@@ -134,5 +140,6 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   setDraft: (text) => set({ draft: text }),
   clearTranscript: () => set({ draft: '', partial: '' }),
   setFlyoutOpen: (open) => set((s) => (s.flyoutOpen === open ? s : { flyoutOpen: open })),
-  setModelStatus: (modelStatus) => set({ modelStatus })
+  setModelStatus: (modelStatus) => set({ modelStatus }),
+  setEngineError: (on) => set((s) => (s.engineError === on ? s : { engineError: on }))
 }))

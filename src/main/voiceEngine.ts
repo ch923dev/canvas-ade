@@ -7,8 +7,9 @@
  * utilityProcess via `child.postMessage(msg, [port])`), stop round-trips
  * `session:stop` → `{t:'session:stopped', frames}`. The host is spawned lazily on the
  * first session and kept alive across sessions (the recognizer cache inside it makes
- * mic re-toggles cheap); an unexpected exit just clears the handle so the next start
- * respawns — V5 hardens this into a surfaced error state with auto-restart-once.
+ * mic re-toggles cheap). An unexpected exit — or the host reporting its decoder worker
+ * died — clears the handle AND escalates through `onEngineFailure` (V5): voiceIpc
+ * auto-restarts the session once, then surfaces the renderer `error` state.
  *
  * Also hosts the V2 spike runner (CANVAS_VOICE_SPIKE gate in index.ts; kept for the V5
  * packaged validation) — it reuses the host's boot-time `{t:'spike:result'}` load proof.
@@ -43,6 +44,13 @@ export interface VoiceEngineHandle {
   startSession(port: MessagePortMain, model: VoiceModelPaths | null): void
   /** Stop the live session; resolves with the host's received-frame count. */
   stopSession(timeoutMs?: number): Promise<{ frames: number }>
+  /**
+   * V5: observe UNEXPECTED engine failures — a host crash/exit, or the host reporting
+   * its decoder worker died ({t:'decoder:error'} — the host is killed here so the next
+   * start respawns clean). Never fires for dispose() or a decoder:error-triggered kill's
+   * own exit event. One listener (voiceIpc's restart-once policy); null clears it.
+   */
+  onEngineFailure(cb: ((reason: string) => void) | null): void
   /** Kill the host outright (app quit). Safe when never spawned. */
   dispose(): void
 }
@@ -52,6 +60,7 @@ export function createVoiceEngine(
 ): VoiceEngineHandle {
   let child: EngineChildLike | null = null
   let pendingStop: ((r: { frames: number }) => void) | null = null
+  let failCb: ((reason: string) => void) | null = null
 
   const settleStop = (frames: number): void => {
     const resolve = pendingStop
@@ -63,13 +72,26 @@ export function createVoiceEngine(
     if (child) return child
     const c = fork()
     c.on('message', (m: unknown) => {
-      const msg = m as { t?: string; frames?: number } | null
+      const msg = m as { t?: string; frames?: number; error?: string } | null
       if (msg?.t === 'session:stopped') settleStop(msg.frames ?? 0)
+      else if (msg?.t === 'decoder:error' && child === c) {
+        // The decode thread died inside a still-running host — the host is degraded
+        // (frames count but nothing transcribes). Kill it and escalate; clearing `child`
+        // FIRST makes the kill's own 'exit' event a no-op below (identity guard).
+        child = null
+        settleStop(0)
+        c.kill()
+        failCb?.(msg.error ?? 'voice decoder failed')
+      }
     })
     c.on('exit', () => {
       // Crash or kill: next startSession respawns; a stop waiting on the reply gets 0.
+      // Identity guard: dispose()/decoder:error null `child` before killing, so only a
+      // genuinely unexpected exit of the CURRENT child escalates.
+      if (child !== c) return
       child = null
       settleStop(0)
+      failCb?.('voice engine host exited unexpectedly')
     })
     child = c
     return c
@@ -79,14 +101,14 @@ export function createVoiceEngine(
     startSession(port, model): void {
       ensureChild().postMessage({ t: 'session:start', model }, [port])
     },
-    // Default generous: a COLD recognizer init (~70 MB ONNX load) can block the host loop
-    // before session:stop is even processed, then the eos drain adds ≤1 s. Measured
-    // 2026-07-03 (V3): under machine load (parallel suites/Docker/instances) the cold init
-    // exceeded 10 s → the old 10 s default reported frames=0 while the renderer kept
-    // capturing until the late {t:'stop'} — exactly the @voice e2e failure pair. 30 s
-    // still fits the 60 s Playwright test budget; a finished init always replies, so a
-    // longer wait converts a spurious 0 into a slow-but-correct count.
-    stopSession(timeoutMs = 30000): Promise<{ frames: number }> {
+    onEngineFailure(cb): void {
+      failCb = cb
+    },
+    // 10 s = the eos drain (≤1 s) plus a wide margin. The V3-era 30 s stopgap existed
+    // because a COLD recognizer init (>10 s under machine load) blocked the host loop
+    // before session:stop was even processed; V5 moved init onto the decoder worker
+    // thread, so the loop always answers promptly and the stopgap tightened back down.
+    stopSession(timeoutMs = 10000): Promise<{ frames: number }> {
       if (!child) return Promise.resolve({ frames: 0 })
       const c = child
       // A second stop while one is pending settles the first with 0 (single session).
@@ -102,8 +124,9 @@ export function createVoiceEngine(
     },
     dispose(): void {
       settleStop(0)
-      child?.kill()
-      child = null
+      const c = child
+      child = null // identity guard: the kill's 'exit' must not report a failure
+      c?.kill()
     }
   }
 }

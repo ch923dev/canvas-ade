@@ -95,6 +95,9 @@ export function createStubVoiceEngine(): VoiceEngineHandle {
       if (!s) return Promise.resolve({ frames: 0 })
       return new Promise((resolve) => release(s, () => resolve({ frames: s.frames })))
     },
+    onEngineFailure(): void {
+      /* the stub never crashes — nothing to observe */
+    },
     dispose(): void {
       const s = session
       session = null

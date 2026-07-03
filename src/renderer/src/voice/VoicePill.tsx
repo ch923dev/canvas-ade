@@ -61,7 +61,9 @@ export function resolveHotkey(accel: string | undefined): HotkeyChord {
 const BAR_SHAPE = [0.45, 0.8, 1, 0.6, 0.9, 0.4, 0.7]
 
 export function VoicePill(): ReactElement | null {
-  const enabled = !!window.api?.voice // non-electron test runtimes render nothing
+  // Non-electron test runtimes render nothing; `supported:false` is the V5 win-arm64
+  // feature gate (no sherpa prebuilt) — pill, flyout AND hotkey all stay dormant.
+  const enabled = !!window.api?.voice && window.api.voice.supported !== false
   const capturing = useVoiceStore((s) => s.capturing)
   const level = useVoiceStore((s) => s.level)
   const micSilent = useVoiceStore((s) => s.micSilent)

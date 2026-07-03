@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   attachSession,
   buildRecognizerConfig,
+  buildVadConfig,
   createFrameProcessor,
   int16ToFloat32,
   type RecognizerLike,
@@ -214,20 +215,104 @@ describe('attachSession (drain protocol)', () => {
       port.emit(frameMsg())
     }
     expect(log).toHaveBeenCalledTimes(1)
-    expect(log.mock.calls[0][0]).toBe('[voice] host: 8 frames, 8.3/s, 3840 B each, model=none')
+    expect(log.mock.calls[0][0]).toBe('[voice] host: 8 frames, 8.3/s, 3840 B each, decode=none')
   })
 
-  it('forwards recognizer partials to the port alongside frame counting', () => {
-    const { rec } = fakeRecognizer([{ text: 'hi' }])
+  it('forwards each counted frame to the decode sink (the worker client seam)', () => {
     const port = new FakePort()
-    attachSession(port, rec)
+    const sink = vi.fn()
+    const s = attachSession(port, sink)
     port.emit(frameMsg())
-    expect(port.posted).toEqual([{ t: 'partial', text: 'hi' }])
+    port.emit(frameMsg())
+    port.emit({ t: 'frame', d: 'not-a-buffer' }) // junk: neither counted nor forwarded
+    expect(s.frames()).toBe(2)
+    expect(sink).toHaveBeenCalledTimes(2)
+    expect(sink.mock.calls[0][0]).toBeInstanceOf(ArrayBuffer)
+  })
+})
+
+/** Scripted VadLike: isDetected() per push (true = in-speech). */
+function fakeVad(detected: boolean[]): {
+  vad: { acceptWaveform: (s: Float32Array) => void; isDetected: () => boolean }
+  fed: number[]
+} {
+  const fed: number[] = []
+  let i = -1
+  return {
+    fed,
+    vad: {
+      acceptWaveform: (s: Float32Array) => {
+        i++
+        fed.push(s.length)
+      },
+      isDetected: () => detected[i] ?? false
+    }
+  }
+}
+
+describe('createFrameProcessor — silero VAD endpoint accelerator (V5)', () => {
+  it('forces a final once VAD-silence accumulates past the threshold with pending text', () => {
+    // Speech on frames 0-1 (partial appears), VAD silence from frame 2 on. With 120 ms
+    // frames and a 300 ms threshold, the 3rd consecutive silent frame (≥360 ms) finalizes.
+    const script = Array.from({ length: 6 }, () => ({ text: 'hello world' }))
+    const { rec, calls } = fakeRecognizer(script)
+    const { vad } = fakeVad([true, true, false, false, false, false])
+    const post = vi.fn()
+    const proc = createFrameProcessor(rec, post, { vad, frameMs: 120, vadFinalizeMs: 300 })
+    for (let i = 0; i < 5; i++) proc.push(frameOf([0]))
+    expect(post.mock.calls.map((c) => c[0])).toEqual([
+      { t: 'partial', text: 'hello world' },
+      { t: 'final', text: 'hello world' } // fired on frame index 4 (3rd silent frame)
+    ])
+    expect(calls).toContain('reset')
+  })
+
+  it('never VAD-finalizes without pending text (leading silence)', () => {
+    const script = Array.from({ length: 10 }, () => ({ text: '' }))
+    const { rec, calls } = fakeRecognizer(script)
+    const { vad } = fakeVad(Array(10).fill(false))
+    const post = vi.fn()
+    const proc = createFrameProcessor(rec, post, { vad, vadFinalizeMs: 300 })
+    for (let i = 0; i < 10; i++) proc.push(frameOf([0]))
+    expect(post).not.toHaveBeenCalled()
+    expect(calls).not.toContain('reset')
+  })
+
+  it('speech resets the silence accumulator (mid-utterance pauses never split)', () => {
+    // silent, silent, SPEECH, silent, silent — never ≥3 consecutive silent frames.
+    const script = Array.from({ length: 5 }, () => ({ text: 'hi' }))
+    const { rec } = fakeRecognizer(script)
+    const { vad } = fakeVad([false, false, true, false, false])
+    const post = vi.fn()
+    const proc = createFrameProcessor(rec, post, { vad, frameMs: 120, vadFinalizeMs: 300 })
+    for (let i = 0; i < 5; i++) proc.push(frameOf([0]))
+    expect(post.mock.calls.map((c) => c[0])).toEqual([{ t: 'partial', text: 'hi' }])
+  })
+
+  it('feeds the VAD the same float frame the recognizer gets', () => {
+    const { rec } = fakeRecognizer([{ text: '' }])
+    const { vad, fed } = fakeVad([true])
+    createFrameProcessor(rec, vi.fn(), { vad }).push(frameOf([1, 2, 3, 4]))
+    expect(fed).toEqual([4])
+  })
+
+  it('a sherpa endpoint still resets the VAD silence accumulator', () => {
+    // Frame 0: endpoint fires with text (sherpa rule) → reset. Frames 1-2 silent but the
+    // accumulator restarted at the endpoint → no premature second final.
+    const { rec } = fakeRecognizer([{ text: 'done', endpoint: true }, { text: '' }, { text: '' }])
+    const { vad } = fakeVad([false, false, false])
+    const post = vi.fn()
+    const proc = createFrameProcessor(rec, post, { vad, frameMs: 120, vadFinalizeMs: 300 })
+    for (let i = 0; i < 3; i++) proc.push(frameOf([0]))
+    expect(post.mock.calls.map((c) => c[0])).toEqual([
+      { t: 'partial', text: 'done' },
+      { t: 'final', text: 'done' }
+    ])
   })
 })
 
 describe('buildRecognizerConfig', () => {
-  it('pins 16 kHz features, greedy search, and the plan-V2 endpoint rules', () => {
+  it('pins 16 kHz features, greedy search, and the V5-tuned endpoint rules', () => {
     const cfg = buildRecognizerConfig({
       encoder: 'E',
       decoder: 'D',
@@ -244,7 +329,20 @@ describe('buildRecognizerConfig', () => {
       decodingMethod: 'greedy_search',
       enableEndpoint: true,
       rule1MinTrailingSilence: 2.4,
-      rule2MinTrailingSilence: 1.2
+      // V5 tuning: snappier finals (finals only append to the draft, never submit).
+      rule2MinTrailingSilence: 1.0
+    })
+  })
+})
+
+describe('buildVadConfig', () => {
+  it('pins the silero v4 shape: 512-sample windows at 16 kHz, single thread', () => {
+    const cfg = buildVadConfig('C:/models/silero_vad.onnx') as Record<string, unknown>
+    expect(cfg).toMatchObject({
+      sileroVad: { model: 'C:/models/silero_vad.onnx', windowSize: 512 },
+      sampleRate: 16000,
+      numThreads: 1,
+      provider: 'cpu'
     })
   })
 })
