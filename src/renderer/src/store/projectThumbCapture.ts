@@ -8,7 +8,16 @@
  *
  * Best-effort by contract: capturePage is env-flaky, so `false` is a normal outcome — the
  * dock renders its dot-grid placeholder for a dir with no cached thumb. Never throws.
+ *
+ * TIME-BOXED: this sits INSIDE the switch pipeline (awaited before the unmount), and under
+ * GPU contention (backgrounded projects' frozen previews, parked agents) a full-page
+ * capturePage can take seconds — the manual dev check read it as "saving is stuck". A
+ * capture that misses the budget is abandoned renderer-side (thumbnail = cosmetic; the
+ * switch must never wait on it). MAIN may still finish the late capture and cache a frame
+ * from after the unmount — rare, cosmetic, overwritten by the next capture.
  */
+const CAPTURE_BUDGET_MS = 400
+
 export async function captureProjectThumb(): Promise<boolean> {
   // Non-DOM test runtimes (node-env vitest driving performProjectSwitch) skip cleanly.
   if (typeof document === 'undefined') return false
@@ -24,7 +33,11 @@ export async function captureProjectThumb(): Promise<boolean> {
   if (rect.width < 8 || rect.height < 8) return false
   // Promise.resolve().then wrapper: a partial window.api mock must degrade to false,
   // not throw synchronously before .catch can attach (the integration-test contract).
-  return Promise.resolve()
+  const capture = Promise.resolve()
     .then(() => window.api.project.captureThumb(rect))
     .catch(() => false)
+  const budget = new Promise<boolean>((resolve) => {
+    window.setTimeout(() => resolve(false), CAPTURE_BUDGET_MS)
+  })
+  return Promise.race([capture, budget])
 }

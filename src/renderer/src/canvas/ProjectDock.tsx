@@ -31,8 +31,11 @@ import {
   type ProjectDockCard
 } from './projectSessionsShared'
 
-/** Bottom-edge hot zone height (window px). */
-const EDGE_ZONE_PX = 2
+/** Bottom-edge hot zone height (window px). ~2px per the original spec proved unreachable
+ *  with a REAL mouse (manual dev check 2026-07-03): windowed, the bottom few px are the OS
+ *  resize border (non-client — no pointermove reaches the page); maximized, the cursor
+ *  parks on the taskbar below the window. 10px + the intent delay stays accident-safe. */
+const EDGE_ZONE_PX = 10
 /** Intent delay before the dock reveals — a drive-by across the edge never opens it. */
 const REVEAL_DELAY_MS = 150
 /** Grace after the pointer leaves the panel region before the dock hides. */
