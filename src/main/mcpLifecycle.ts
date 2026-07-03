@@ -21,6 +21,25 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  */
 const SPAWN_GROUP_MAX_NAME = 80
 
+/**
+ * Cap on a spawn-time launchCommand (spawnBoard's `prompt` AND spawnGroup's `launchCommand` — one
+ * constant so the two spawn paths can't drift). The command becomes the terminal's first PTY line,
+ * so it is clamped at the agent-facing entry like every other agent-supplied write.
+ */
+const SPAWN_LAUNCH_MAX = 400
+
+/**
+ * Sanitize an agent-supplied spawn-time launchCommand → a single PTY-safe line, trimmed + clamped.
+ * 🔒 F5: routes through the centralized `sanitizeDispatchText` (strips C0/DEL/C1; REJECTS embedded
+ * CR/LF via DispatchPayloadError, which propagates — a multiline command is rejected to the caller,
+ * not silently flattened into multiple PTY commands). Empty/whitespace-only ⇒ undefined (bare shell).
+ * Shared by `spawnBoard` (its `prompt` param) and `spawnGroup` so both spawn paths apply ONE rule.
+ */
+const sanitizeLaunch = (raw: unknown): string | undefined => {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined
+  const clean = sanitizeDispatchText(raw).trim().slice(0, SPAWN_LAUNCH_MAX)
+  return clean || undefined
+}
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -114,6 +133,19 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if (!SPAWNABLE.has(input.type)) {
       throw new Error(`spawn_board: unsupported board type "${input.type}"`)
     }
+    // prompt/cwd are TERMINAL-ONLY (the prompt becomes the terminal's first PTY line; cwd its
+    // spawn directory). Reject a mismatched type BEFORE any side effect — no orphan board — the
+    // agent learns the call was wrong instead of getting a board that silently ignored them.
+    const hasPrompt = typeof input.prompt === 'string' && input.prompt.trim().length > 0
+    const hasCwd = typeof input.cwd === 'string' && input.cwd.trim().length > 0
+    if ((hasPrompt || hasCwd) && input.type !== 'terminal') {
+      throw new Error('spawn_board: prompt/cwd are only valid for a terminal board')
+    }
+    // Sanitize the prompt with the SAME spawn-time launchCommand rule as spawnGroup (one line,
+    // control-char-free, ≤400); DispatchPayloadError (embedded CR/LF) propagates — reject, never
+    // flatten. This also runs BEFORE the cap reservation, so a rejected prompt burns no slot.
+    const launchCommand = hasPrompt ? sanitizeLaunch(input.prompt) : undefined
+    const cwd = hasCwd ? input.cwd!.trim() : undefined
     // 🔒 Runaway-swarm guard: reconcile away user-closed boards first (so a real
     // slot can be reused), then reject BEFORE minting/sending so a capped spawn has
     // no side effects.
@@ -127,7 +159,6 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // MAIN mints the id (server-issued) so the tool can return it to the agent and
     // later lifecycle tools (close/configure) can address the exact board. The
     // renderer builds the full board (free-slot placement, per-type defaults).
-    // `prompt`/`cwd` are accepted now but applied in T3.3 (configure_board).
     const id = randomUUID()
     // 2b: sanitize + clamp the optional agent title here (the trust boundary) so the renderer
     // receives a single-line, control-char-free, bounded label. Omitted when nothing usable
@@ -143,7 +174,13 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     try {
       const ack = await registry.sendCommand({
         type: 'addBoard',
-        board: { id, type: input.type, ...(title ? { title } : {}) }
+        board: {
+          id,
+          type: input.type,
+          ...(title ? { title } : {}),
+          ...(launchCommand ? { launchCommand } : {}),
+          ...(cwd ? { cwd } : {})
+        }
       })
       if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
     } catch (err) {
@@ -163,20 +200,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if (name.length === 0) {
       throw new Error('spawn_group: a non-empty group name is required')
     }
-    // Sanitize the worker launchCommand → a single PTY-safe line, then trim + clamp. Empty ⇒ a
-    // bare shell (legacy contract).
-    const rawSrc = typeof input.launchCommand === 'string' ? input.launchCommand : ''
-    let launchCommand: string | undefined
-    if (rawSrc) {
-      // 🔒 F5: route through the centralized sanitizer (strips C0/DEL/C1; rejects embedded CR/LF)
-      // so spawnGroup and the configureBoard/runGatedWrite dispatch path share ONE sanitization
-      // rule. The old inline `c >= ' '` filter PASSED DEL (0x7F) + the C1 range (0x80-0x9F) — the
-      // 8-bit CSI/OSC/NEL escape openers — a terminal-escape injection on the PTY write path.
-      // DispatchPayloadError propagates (not caught): a multiline launchCommand is rejected to the
-      // caller, not silently flattened into multiple PTY commands.
-      const clean = sanitizeDispatchText(rawSrc).trim().slice(0, 400)
-      launchCommand = clean || undefined
-    }
+    // Sanitize the worker launchCommand with the shared spawn-time rule (`sanitizeLaunch` — the
+    // same one `spawnBoard`'s prompt uses, so the two spawn paths can't drift). Empty ⇒ a bare
+    // shell (legacy contract); DispatchPayloadError (multiline) propagates — reject, never flatten.
+    const launchCommand = sanitizeLaunch(input.launchCommand)
     // Compose the cluster: terminal always; planning/browser opt-in. The member COUNT is the
     // cap budget this spawn consumes (the group record itself isn't a board, so it's uncapped).
     const wantPlanning = input.planning === true

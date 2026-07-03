@@ -96,6 +96,55 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(t.length).toBeGreaterThan(0)
   })
 
+  it('addBoard lands launchCommand + cwd on a terminal board (spawn_board prompt/cwd path)', () => {
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'srv-1', type: 'terminal', launchCommand: 'claude', cwd: 'C:\\repos\\app' }
+    })
+    expect(ack).toEqual({ ok: true, type: 'addBoard' })
+    expect(useCanvasStore.getState().boards[0]).toMatchObject({
+      id: 'srv-1',
+      type: 'terminal',
+      launchCommand: 'claude',
+      cwd: 'C:\\repos\\app'
+    })
+  })
+
+  it('addBoard rejects launchCommand/cwd on a non-terminal board WITHOUT adding it (terminal-only)', () => {
+    const withLaunch = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'p-1', type: 'planning', launchCommand: 'claude' }
+    })
+    const withCwd = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'b-1', type: 'browser', cwd: 'C:\\x' }
+    })
+    expect(withLaunch.ok).toBe(false)
+    expect(withCwd.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('addBoard rejects a forged non-string launchCommand/cwd WITHOUT adding a board', () => {
+    const badLaunch = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'srv-1', type: 'terminal', launchCommand: 42 as unknown as string }
+    })
+    const badCwd = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'srv-2', type: 'terminal', cwd: {} as unknown as string }
+    })
+    expect(badLaunch.ok).toBe(false)
+    expect(badCwd.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('addBoard without launchCommand/cwd leaves both unset (back-compat bare shell)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    const b = useCanvasStore.getState().boards[0]
+    expect('launchCommand' in b && b.launchCommand !== undefined).toBe(false)
+    expect('cwd' in b && b.cwd !== undefined).toBe(false)
+  })
+
   it('removeBoard removes the board from the canvas (T3.2)', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
     expect(useCanvasStore.getState().boards).toHaveLength(1)

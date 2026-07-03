@@ -587,6 +587,49 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await closeBoardGated(page, mcp, ids.planningId as string)
   })
 
+  test('spawn_board prompt/cwd: the prompt lands as the launchCommand AND runs as the first PTY line; non-terminal rejected', async ({
+    page,
+    mcp
+  }) => {
+    test.slow() // boots a real PTY
+    // THE BUG THIS LOCKS OUT: spawn_board accepted `prompt` but silently dropped it — the board
+    // spawned a bare shell, ran nothing, and the tool still returned the id (reported success).
+    // The prompt is now the terminal's spawn-time launchCommand (spawn_group parity, no confirm
+    // gate on a freshly-minted board — the gate stays on content writes to EXISTING boards).
+    const sentinel = 'CANVAS_MCP_SPAWN_PROMPT_OK'
+    const spawn = await mcp.orch.call('spawn_board', {
+      type: 'terminal',
+      prompt: `echo ${sentinel}`
+    })
+    const id = okText(spawn)
+    expect(id).not.toBe('')
+    await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
+    // The sanitized prompt landed on the board as its launchCommand…
+    await expect
+      .poll(() => boardLaunchCommand(page, id), { timeout: 6000 })
+      .toBe(`echo ${sentinel}`)
+    // …and actually RAN: the PTY output carries the sentinel (not a bare idle shell).
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await expect.poll(() => boardStatus(mcp.orch, id), { timeout: 8000 }).toBe('running')
+    await expect
+      .poll(
+        async () => {
+          const txt = await readTerminalText(page, id)
+          return typeof txt === 'string' && txt.includes(sentinel)
+        },
+        { timeout: 15000 }
+      )
+      .toBe(true)
+    // prompt/cwd are terminal-only: a non-terminal spawn with either REJECTS before any board
+    // is created (no orphan board that silently ignored them).
+    const before = await mcp.orch.readJson<Array<unknown>>('canvas://boards')
+    const bad = await mcp.orch.call('spawn_board', { type: 'planning', prompt: 'echo nope' })
+    expect(rejected(bad)).toBe(true)
+    const after = await mcp.orch.readJson<Array<unknown>>('canvas://boards')
+    expect(after.length).toBe(before.length)
+    await closeBoardGated(page, mcp, id)
+  })
+
   test('C3 / BUG-009: write_result rejects an oversized summary at the wire (Zod cap), accepts a normal one', async ({
     mcp
   }) => {
