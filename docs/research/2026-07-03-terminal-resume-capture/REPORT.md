@@ -150,6 +150,14 @@ Resume click → renderer asks MAIN for the resume line instead of building it l
 Keep `resumeCommand`'s sanitization in MAIN (same charset rule — it's a security boundary,
 canvas.json is untrusted input).
 
+**F1b — Palette listing gate (PR #294 review follow-up).** The command palette's "resume
+session" ROW (`commandRegistry.ts`) still lists off the raw stored id — the listing is a
+synchronous snapshot read, so it can't await `terminal:resumeCheck`. Since F3, invoking it with
+a dead id safely degrades to a fresh launch, but silently. Follow-up (bundle with F2/F4):
+publish the validated boolean into a shared store (written by `useResumeValidity`) and gate the
+row's visibility on it — or toast "session not resumable — started fresh" when a chosen resume
+degrades.
+
 **F4 — Hook-health surfacing (kills the "is the hook even working?" class).**
 - Packaged + `recapRunner === null` → visible status, not `console.warn`: Inspector Session block
   shows "Session capture off — Node.js not found on PATH".
