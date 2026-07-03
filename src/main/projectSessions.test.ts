@@ -60,15 +60,15 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     const { deps, calls } = makeDeps()
     const ps = createProjectSessions(deps)
 
-    const res = await ps.backgroundProject('C:\\work\\alpha')
+    const res = await ps.backgroundProject('C:/work/alpha')
 
     expect(res).toEqual({ terminals: 2, previews: 1 })
     // R5: deleted boards' undo-parks die BEFORE the background park (their undo rail dies
     // with the switch's store replace).
-    expect(calls.reapUndoParks).toEqual(['C:\\work\\alpha'])
-    expect(calls.parkPtys).toEqual(['C:\\work\\alpha'])
-    expect(calls.backgroundOsr).toEqual(['C:\\work\\alpha'])
-    expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(true)
+    expect(calls.reapUndoParks).toEqual(['C:/work/alpha'])
+    expect(calls.parkPtys).toEqual(['C:/work/alpha'])
+    expect(calls.backgroundOsr).toEqual(['C:/work/alpha'])
+    expect(ps.isBackgroundProject('C:/work/alpha')).toBe(true)
     expect(ps.backgroundCount()).toBe(1)
   })
 
@@ -79,21 +79,21 @@ describe('createProjectSessions (Phase 1 registry)', () => {
       }
     })
     const ps = createProjectSessions(deps)
-    await expect(ps.backgroundProject('C:\\work\\alpha')).resolves.toEqual({
+    await expect(ps.backgroundProject('C:/work/alpha')).resolves.toEqual({
       terminals: 2,
       previews: 1
     })
-    expect(calls.parkPtys).toEqual(['C:\\work\\alpha'])
+    expect(calls.parkPtys).toEqual(['C:/work/alpha'])
   })
 
   it('listBackgroundProjects reports live counts + name + backgroundedAt', async () => {
     const { deps } = makeDeps({ now: () => 42 })
     const ps = createProjectSessions(deps)
-    await ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:/work/alpha')
 
     expect(ps.listBackgroundProjects()).toEqual([
       {
-        dir: 'C:\\work\\alpha',
+        dir: 'C:/work/alpha',
         name: 'alpha',
         terminalsRunning: 2,
         previews: 1,
@@ -105,31 +105,31 @@ describe('createProjectSessions (Phase 1 registry)', () => {
   it('foregroundProject un-registers and un-throttles — idempotent for a never-backgrounded dir', async () => {
     const { deps, calls } = makeDeps()
     const ps = createProjectSessions(deps)
-    await ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:/work/alpha')
 
-    ps.foregroundProject('C:\\work\\alpha')
-    expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(false)
-    expect(calls.foregroundOsr).toEqual(['C:\\work\\alpha'])
+    ps.foregroundProject('C:/work/alpha')
+    expect(ps.isBackgroundProject('C:/work/alpha')).toBe(false)
+    expect(calls.foregroundOsr).toEqual(['C:/work/alpha'])
 
     // Never-backgrounded dir: still calls foregroundOsr (a no-op downstream), never throws.
-    ps.foregroundProject('C:\\work\\other')
-    expect(calls.foregroundOsr).toEqual(['C:\\work\\alpha', 'C:\\work\\other'])
+    ps.foregroundProject('C:/work/other')
+    expect(calls.foregroundOsr).toEqual(['C:/work/alpha', 'C:/work/other'])
   })
 
   it('closeBackgroundProject disposes ONLY a registered dir (never an arbitrary path)', async () => {
     const { deps, calls } = makeDeps()
     const ps = createProjectSessions(deps)
-    await ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:/work/alpha')
 
     // Unregistered path (e.g. straight from a compromised renderer) → refused, nothing disposed.
     await expect(ps.closeBackgroundProject('C:\\Windows')).resolves.toBe(false)
     expect(calls.disposeOsr).toEqual([])
     expect(calls.disposePtys).toEqual([])
 
-    await expect(ps.closeBackgroundProject('C:\\work\\alpha')).resolves.toBe(true)
-    expect(calls.disposeOsr).toEqual(['C:\\work\\alpha'])
-    expect(calls.disposePtys).toEqual(['C:\\work\\alpha'])
-    expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(false)
+    await expect(ps.closeBackgroundProject('C:/work/alpha')).resolves.toBe(true)
+    expect(calls.disposeOsr).toEqual(['C:/work/alpha'])
+    expect(calls.disposePtys).toEqual(['C:/work/alpha'])
+    expect(ps.isBackgroundProject('C:/work/alpha')).toBe(false)
     expect(ps.backgroundCount()).toBe(0)
   })
 
@@ -137,8 +137,8 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     let t = 0
     const { deps } = makeDeps({ now: () => ++t })
     const ps = createProjectSessions(deps)
-    await ps.backgroundProject('C:\\work\\alpha')
-    await ps.backgroundProject('C:\\work\\alpha')
+    await ps.backgroundProject('C:/work/alpha')
+    await ps.backgroundProject('C:/work/alpha')
     expect(ps.backgroundCount()).toBe(1)
     expect(ps.listBackgroundProjects()[0].backgroundedAt).toBe(2)
   })
@@ -150,16 +150,16 @@ describe('createProjectSessions (Phase 1 registry)', () => {
       })
     })
     const ps = createProjectSessions(deps)
-    await ps.backgroundProject('C:\\work\\alpha')
-    await expect(ps.closeBackgroundProject('C:\\work\\alpha')).rejects.toThrow('taskkill hung')
-    expect(ps.isBackgroundProject('C:\\work\\alpha')).toBe(false)
+    await ps.backgroundProject('C:/work/alpha')
+    await expect(ps.closeBackgroundProject('C:/work/alpha')).rejects.toThrow('taskkill hung')
+    expect(ps.isBackgroundProject('C:/work/alpha')).toBe(false)
   })
 })
 
 // Phase 4: the per-project keep policy — the state machine behind the ask-on-switch dialog.
 // ask (default) → Keep = session 'keep' → Keep+forever = persisted → forget/close = back to ask.
 describe('switch keep policy (Phase 4)', () => {
-  const A = 'C:\\work\\alpha'
+  const A = 'C:/work/alpha'
 
   it("defaults to 'ask' and flips to 'keep' on setKeepPolicy (session-scoped: nothing persisted)", () => {
     const { deps, persisted } = makeDeps()
