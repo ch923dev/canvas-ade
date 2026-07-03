@@ -1515,3 +1515,143 @@ opacity groups/stroke tokens; kanban deep validation extracted to `kanbanSchema.
 **Verified (pre-merge gate):** typecheck clean · lint 0 errors · **4126 unit+integration pass** /
 1 skipped · **full e2e matrix GREEN both legs** on the merged tree. Maintainer dev-check
 (title-stamped `PR#278 P5 polish`) + explicit merge OK given. Unblocks the Meridian redesign epic.
+
+## 2026-07-03 — Idle reaper removed; `close_board` human-gated (disappearing-boards fix) — #281
+
+**The bug (user-reported 2026-07-02):** agent-spawned boards "randomly disappeared" — planning
+boards with the plan on them, mock-browser previews, quiet terminals. Root cause: the T3.4 **idle
+reaper** (`mcpLifecycle.reapIdle`, swept every 60s) closed any MCP-spawned board idle past
+`MCP_IDLE_TTL_MS` (5 min). A browser board reads `'idle'` once its page loads and planning/kanban
+are permanently `'static'` (BUG-003 made static reap-eligible), so every agent-spawned content
+board was guaranteed deletion ~5–7 min after spawn — un-audited, un-toasted, sweep errors
+swallowed. Recovery was in-session Ctrl+Z only.
+
+**The rule (user decision):** a board is deleted ONLY by the user on the canvas, or by the agent
+through `close_board` behind the human gate. Shipped as:
+
+- **Reaper removed wholesale** — `reapIdle`, the sweep interval, the TTL constants +
+  `CANVAS_MCP_IDLE_TTL_MS`/`CANVAS_MCP_REAP_INTERVAL_MS` env plumbing (+`positiveMsEnv`),
+  `RunningMcp.reapIdle`, and the app-model TTL rules. The spawn-cap budget
+  (`tracked`/`reconcile`/`spawnGraceMs`) is untouched. `boardActivityStaleMs` +
+  `pty.getTerminalActivityStaleMs` KEPT — `awaitSettled`'s output-silence settle consumes them;
+  the handoff backstop keeps its 5-min value as its own `MCP_HANDOFF_TIMEOUT_MS`.
+- **`close_board` human-gated** — new `mcpCloseGate.ts` DI factory (the
+  kanbanGate/visualizeGate pattern) overrides the lifecycle's raw close: resolve title →
+  ConfirmModal by NAME → teardown → audit EVERY exit (`denied`/`closed`/`failed`) to
+  `mcp-audit.jsonl` (reaper-era closes wrote no audit line at all).
+- **Renderer visibility** — agent-initiated `removeBoard` raises the `Agent closed board "…"`
+  toast with an Undo action (one tracked undo step); user deletes don't route through the applier.
+- **E2E** — every `close_board` in the MCP specs drives the confirm modal (`closeBoardGated`);
+  a bare call now hangs to the 60s SDK timeout and leaves a stale open modal that poisons the
+  next modal-driven test. The close test covers deny-keeps-board / approve-removes / toast /
+  worker-denied.
+
+**Verified:** typecheck · lint 0-err · format · unit green (reap suites removed, 4 gate-branch
+tests added) · full e2e matrix — Win 242P (+ documented osrCrop flake rerun-green), Linux Docker
+242P clean · maintainer dev-check title-stamped `PR#281 reaper-close-gate` incl. the 7-min
+no-reap eyeball. Bot review: 0 critical / 0 warning. Spec
+(`docs/research/2026-07-02-board-lifecycle-close-gate/`) deleted in this PR per doc lifecycle.
+
+## 2026-07-03 — PR #282: spawn_board prompt/cwd actually reach the spawned terminal (`7fbcda4a`)
+
+The user-reported "MCP spawns a terminal that runs NOTHING while the tool reports success" bug.
+The host adapter accepted `spawn_board`'s `prompt`/`cwd` and dropped both on the floor (the
+"applied in T3.3 (configure_board)" follow-up that never happened); the `addBoard` command
+structurally couldn't carry them.
+
+- **`shared/mcpTypes.ts`** — `addBoard` command carries optional `launchCommand`/`cwd`
+  (terminal-only, mirroring `spawnGroup.members.terminal`). IPC-only union — no schema bump.
+- **`mcpLifecycle.spawnBoard`** — rejects prompt/cwd on a non-terminal type BEFORE any side
+  effect (no orphan board); sanitizes the prompt with the new shared `sanitizeLaunch` helper
+  (`sanitizeDispatchText` → one line, C0/DEL/C1 stripped, CR/LF rejected, 400 clamp) that
+  `spawnGroup` now also uses (one rule, no drift); forwards both on the command.
+- **`useMcpCommands` addBoard applier** — shape-revalidates (terminal-only, string-only), then
+  lands the fields via `updateBoard` in the same synchronous tick (before the terminal mounts →
+  `useTerminalSpawn` boots the CLI at first spawn; one undo removes the configured board). Kept
+  out of `canvasStore.addBoard` — the store is pinned at 720 code lines (file-size doctrine).
+- Gating parity with agent-callable `spawn_group`: sanitized + cap-checked, NO human confirm on
+  a freshly-minted board; `configure_board`'s existing-board gate untouched.
+
+**Verified:** units (sanitize/clamp/multiline-reject-no-cap-burn/off-type-reject) · new @mcp e2e
+(prompt lands as launchCommand AND the PTY output proves it RAN; non-terminal rejects with no
+orphan) · full pre-push matrix (Win + Linux Docker) · manual dev check title-stamped, real MCP
+HTTP call, screenshot evidence. Bot review: 0 critical / 0 warning / 0 nits.
+
+## 2026-07-03 — PR #288: MCP dispatch readiness gate — prompts land in a READY REPL (`e5839cab`)
+
+`runGatedWrite` wrote into a target PTY the instant a session existed — before the shell profile
+or the `launchCommand` agent booted — so relay/assign/handoff into a fresh terminal could land
+mid-boot (eaten by the boot stream / a CLI trust prompt) while the tool reported success. The only
+readiness handling was the renderer Command board's fixed 1500ms settle; external MCP callers got
+none.
+
+- **`terminalReadiness.ts` (new)** — hybrid boot-readiness waiter: floor (1500ms) → activity →
+  quiet (800ms), 15s degrade-honestly backstop (resolves `'unconfirmed'`, never hangs), per-pid
+  latch + maturity fast-path (a busy mid-task agent never re-pays the wait); abortable.
+- **`dispatchGate.ts` (new)** — `runGatedWrite` extracted verbatim from `mcpOrchestrator.ts`
+  (the file crossed the 700-code-line cap; the `mcpKanbanGate` doctrine move) and extended:
+  readiness starts at nonce-issue (parallel with the human confirm → common case +0ms), awaited
+  after approval; the BUG-021 TOCTOU re-check stays immediately before consume/write (a cable
+  deleted DURING the wait is still caught — unit-locked). Denied confirm aborts the observation.
+  `interrupt` opts out.
+- **Honest ack** — `dispatched` now means "written into a readiness-confirmed REPL"; a
+  backstopped wait still writes but audits the new `dispatched_unconfirmed` +
+  `readiness=<outcome> waited=<ms>`. `dispatchPrompt`/`relayPrompt` resolve
+  `{ delivery: 'ready' | 'unconfirmed' }` (LifecycleOrchestrator widening; void-shim at the
+  rc.5 package boundary in `mcp.ts` — deleted when the pin reaches ≥0.18.0-rc.6).
+- **`pty.ts`** — `SessionLike.spawnedAt` (adopt = 0) + `getTerminalBootInfo(Core)`.
+  **Registry** — optional `awaitReady?` seam (absent ⇒ byte-identical legacy behaviour).
+
+**Verified:** 16 new units (waiter matrix, gate ordering, abort, interrupt opt-out, TOCTOU-during-
+wait) · new @mcp e2e (4s slow-boot worker: the dispatched sentinel provably lands AFTER
+BOOT_DONE) · full matrix ×2 (pre-push + post-#282 merge, Win 244P + Linux Docker) · manual dev
+check title-stamped (gate held the write ~6.7s; screenshot). Bot review: 0 critical / 0 warning.
+Follow-up owed: @expanse-ade/mcp 0.18.0-rc.6 pin bump (deletes the void-shim) + the host
+auto-cable (spawner→spawned connector for connected-tier spawns).
+
+## 2026-07-03 — PR #289: auto-cable — connected-terminal spawns mint the spawner→spawned connector (`9a28b947`)
+
+Part 3 of the MCP prompt-relay fix (#282, #288). A connected terminal could `spawn_board` a worker
+but `relay_prompt` into it was rejected (no orchestration cable) until the human hand-drew one.
+
+- **`shared/mcpTypes.ts`** — `addBoard` gains an optional `connector: { sourceId }` request.
+- **`mcpLifecycle.spawnBoard`** — accepts `sourceBoardId` (the ≥rc.6 package tool passes the
+  connected caller's token-derived `ctx.boardId`; unforgeable) and requests the connector ONLY
+  when the spawn is a terminal AND the source is a live terminal in the mirror; anything else
+  spawns without a cable rather than failing (board = deliverable, cable = authorization sugar).
+- **`useMcpCommands` applier** — connector shape + terminal-only re-validated BEFORE any side
+  effect; live-store source check; `addConnector(src, id, 'orchestration')` — visible/deletable,
+  directional; every relay still pays the human confirm + TOCTOU re-check.
+- **`RunningMcp.spawnBoard` + `spawnBoardNow` e2e seam** (the `spawnGroupNow` pattern).
+
+**Verified:** 9 new units (lifecycle cable matrix + applier reject-before-side-effect) · new @mcp
+e2e (seam spawn → cable in mirror with no gesture → connected client relays along it,
+human-confirmed + readiness-gated, sentinel lands) · full pre-push matrix 246/246 (Win + Linux
+Docker) · manual dev check title-stamped, AUTO_CABLE verified in the mirror + screenshot.
+**Follow-up owed (blocked on the rc.6 npm publish):** app pin bump `0.18.0-rc.5 → 0.18.0-rc.6`
+(activates the wire half: the connected-tier tool sending ctx.boardId + honest delivery acks)
+and deletion of the `mcp.ts` void-shim. @expanse-ade/mcp PR #6 is merged on `feat/canvas-layout`;
+the local tag `v0.18.0-rc.6` exists — pushing it triggers the OIDC npm publish.
+
+## 2026-07-03 — PR #291: pin @expanse-ade/mcp 0.18.0-rc.6 — activate the prompt-relay wire half (`ebbdadda`)
+
+Final slice of the MCP prompt-relay fix (#282/#288/#289). rc.6 published to npm (`next` tag,
+OIDC provenance); this pins the app to it.
+
+- **spawn_board honest response over the wire** — `content[0]` = bare id (back-compat),
+  `content[1]` = "launch command queued … boots asynchronously" on prompt-carrying spawns;
+  oversize (>400) / non-terminal prompt+cwd wire-rejected.
+- **assign_prompt / relay_prompt** surface a delivery WARNING to the agent on `unconfirmed`.
+- **connected-tier spawn_board** sends its token-derived `ctx.boardId` as `sourceBoardId` → the
+  #289 auto-cable fires over the real wire (spawner→spawned orchestration connector).
+- The rc.5-era `mcp.ts` void-shim is DELETED (the package declares `Promise<{delivery} | void>`,
+  so the host's honest-ack widening passes straight through).
+
+**Verified:** typecheck + main unit suites green; the FULL `@mcp` e2e suite (30/30) green over the
+real rc.6 wire (spawn_board-prompt spec updated to read `content[0]` + pin the queued-note);
+manual dev check (`BLOCKS=2`/`QUEUED_NOTE=true`/`PROMPT_RAN=true`). Pre-merge full matrix: the MCP
+surface passed every run; three unrelated specs (browserNetwork 50k-virtualization, handoff
+confirm-modal poll, osrCrop) flaked under sustained 4×-matrix machine load and each passed clean in
+isolation (handoff green fully-alone in 42s) — load flake, not a regression. **The MCP prompt-relay
+fix is now complete end-to-end: spawn runs the command, relays wait for a ready REPL, tools report
+honestly, and a connected agent can relay into the terminal it spawned.**

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
+import { showToast } from './toastStore'
 import {
   assertBoard,
   assertPlanningElement,
@@ -51,9 +52,33 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type, title } = command.board
+      const { id, type, title, launchCommand, cwd } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
+      }
+      // launchCommand/cwd are terminal-only (the spawn_board prompt/cwd path). MAIN already
+      // gated + sanitized on the real path; re-validate the SHAPE here (defense in depth, like
+      // the isSpawnable re-check — MAIN is the trust boundary, so no re-sanitize, mirroring the
+      // spawnGroup applier) so a forged/malformed payload can't land either field off-type or
+      // as a non-string.
+      if (
+        (launchCommand !== undefined && typeof launchCommand !== 'string') ||
+        (cwd !== undefined && typeof cwd !== 'string')
+      ) {
+        return { ok: false, error: 'invalid addBoard launchCommand/cwd' }
+      }
+      if ((launchCommand !== undefined || cwd !== undefined) && type !== 'terminal') {
+        return { ok: false, error: 'addBoard: launchCommand/cwd are terminal-only' }
+      }
+      // Auto-cable request (rc.6): shape + terminal-only re-validation BEFORE any side effect
+      // (a malformed request must not leave a cable-less board behind an { ok: false } ack).
+      if (
+        command.connector !== undefined &&
+        (typeof command.connector?.sourceId !== 'string' ||
+          command.connector.sourceId.length === 0 ||
+          type !== 'terminal')
+      ) {
+        return { ok: false, error: 'addBoard: invalid connector request' }
       }
       // Idempotent by id (mirrors removeBoard): a board with this id already exists →
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
@@ -66,6 +91,36 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // `undefined` (empty/whitespace-only/non-string) ⇒ the per-type default title.
       const cleanTitle = sanitizeBoardTitle(title)
       store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
+      // Land the spawn-time launchCommand/cwd IN the same synchronous applier tick, BEFORE React
+      // mounts the terminal — the mount-time spawn effect runs after this returns, so
+      // `useTerminalSpawn.launch()` sees them at first spawn (no race). `updateBoard` filters to
+      // PATCHABLE_KEYS.terminal (which carries both — the configure_board keys). Deliberately NO
+      // `beginChange`: the add's own tracked step is the only checkpoint, so ONE undo removes the
+      // whole configured board (the fields never split the history). Kept out of `canvasStore.
+      // addBoard` on purpose — MCP-only behavior stays in the MCP applier (file-size doctrine:
+      // canvasStore is pinned).
+      if (launchCommand !== undefined || cwd !== undefined) {
+        store.updateBoard(id, {
+          ...(launchCommand ? { launchCommand } : {}),
+          ...(cwd ? { cwd } : {})
+        })
+      }
+      // 🔒 Auto-cable (rc.6): MAIN asks for a directed ORCHESTRATION connector spawner → spawned
+      // only when it verified the spawn is a terminal and the source is a live terminal whose id
+      // is the caller's own token-derived board (unforgeable; shape re-validated above, before
+      // any side effect). Final check against the LIVE store (the renderer is the truth; MAIN
+      // read a mirror): a source that vanished between MAIN's check and this tick skips the
+      // cable but keeps the board — the cable is authorization sugar, the board is the
+      // deliverable. `addConnector` itself still rejects self/dup/missing endpoints. Its own
+      // tracked step: one undo lifts the cable, the next removes the board (which sweeps
+      // incident connectors anyway).
+      if (command.connector !== undefined) {
+        const src = command.connector.sourceId
+        const sourceBoard = useCanvasStore.getState().boards.find((b) => b.id === src)
+        if (sourceBoard && sourceBoard.type === 'terminal') {
+          store.addConnector(src, id, 'orchestration')
+        }
+      }
       return { ok: true, type: 'addBoard' }
     }
     case 'removeBoard': {
@@ -74,7 +129,18 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       }
       // Idempotent: removeBoard no-ops on an unknown id (a board the user already
       // closed), so a double close still acks ok.
-      useCanvasStore.getState().removeBoard(command.id)
+      const store = useCanvasStore.getState()
+      const closing = store.boards.find((b) => b.id === command.id)
+      store.removeBoard(command.id)
+      // Visibility (2026-07-02, part of the reaper removal): an AGENT-initiated close must be
+      // seen, not silent — user-initiated deletes never route through this applier. The removal
+      // is one tracked undo step, so the toast's Undo restores board + cables + memberships.
+      if (closing) {
+        showToast({
+          message: `Agent closed board "${closing.title}"`,
+          action: { label: 'Undo', run: () => useCanvasStore.getState().undo() }
+        })
+      }
       return { ok: true, type: 'removeBoard' }
     }
     case 'configureBoard': {

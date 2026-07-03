@@ -146,6 +146,12 @@ interface SessionLike {
    * an idle/parked shell (getTerminalRuntime).
    */
   lastActivityAt: number
+  /**
+   * Epoch ms the PROCESS was spawned (readiness gate): lets `getTerminalBootInfo` age a session so
+   * a dispatch into a still-booting terminal can wait for boot-quiet first. Adopt sets 0 — an
+   * adopted proc booted long ago, so the readiness floor passes immediately (never re-waited).
+   */
+  spawnedAt: number
   /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
   exitCode?: number
   /**
@@ -405,6 +411,7 @@ export function adoptCore(
     buf: p.buf,
     state: 'running',
     lastActivityAt: Date.now(), // T-F1: adopt = fresh activity (scrollback is about to replay)
+    spawnedAt: 0, // adopted proc booted long ago → the readiness floor passes immediately
     projectDir: p.owningDir ?? null // the tag survives the park→adopt round-trip
   })
   transferPort(port2)
@@ -695,6 +702,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       buf,
       state: 'running',
       lastActivityAt: Date.now(),
+      spawnedAt: Date.now(), // readiness gate: ages the boot window for getTerminalBootInfo
       // Background sessions: tag the OWNING project (the one open at spawn), not opts.cwd —
       // a board's cwd override can point anywhere. null = no project open (e2e boot).
       projectDir: getCurrentDir()
@@ -1088,14 +1096,43 @@ export function getTerminalActivityStaleMsCore(
 
 /**
  * MAIN-internal activity-staleness predicate (BUG-007): ms since terminal board `id` last produced
- * PTY output. Drives the MCP idle-reaper's dormancy measure — a live agent shell's coarse status pill
- * stays 'running' for its whole lifetime, so the reaper can't use that bucket to detect a quiescent
+ * PTY output. Drives `awaitSettled`'s output-silence settle (C2e) — a live agent shell's coarse
+ * status pill stays 'running' for its whole lifetime, so that bucket can't detect a quiescent
  * board; output silence is the real dormancy signal. Returns undefined for any id without a LIVE
- * session (non-terminal / closed / parked) — the reaper then falls back to its status-bucket check.
- * Read-only; never exposed to the renderer.
+ * session (non-terminal / closed / parked). Read-only; never exposed to the renderer.
  */
 export function getTerminalActivityStaleMs(id: string): number | undefined {
   return getTerminalActivityStaleMsCore(id, sessions, Date.now())
+}
+
+/**
+ * 🔒 Pure core of getTerminalBootInfo (readiness gate). Age of the board's live PROCESS since
+ * spawn plus its pid, computed against the injected `nowMs` clock. An absent id (non-terminal /
+ * closed / parked-not-live) → undefined. The pid is the session-identity key: a respawn under the
+ * same board id yields a new pid, so a readiness latch keyed on it resets naturally (the
+ * Windows pid-reuse class is bounded by the boardId+pid pair — reuse would need the SAME board to
+ * receive the SAME recycled pid). Keyed on `spawnedAt`+`proc.pid` only (narrowed map type) so it
+ * unit-tests with a fake map. READ-ONLY, control-plane only.
+ */
+export function getTerminalBootInfoCore(
+  id: string,
+  sessionMap: Map<string, { spawnedAt: number; proc: Pick<pty.IPty, 'pid'> }>,
+  nowMs: number
+): { ageMs: number; pid: number } | undefined {
+  const s = sessionMap.get(id)
+  if (!s) return undefined
+  return { ageMs: Math.max(0, nowMs - s.spawnedAt), pid: s.proc.pid }
+}
+
+/**
+ * MAIN-internal boot-age probe (readiness gate): how long board `id`'s live process has existed,
+ * plus its pid. Drives `terminalReadiness.awaitTerminalReady` — a dispatch into a freshly-spawned
+ * terminal waits for the boot window to quiet down first, and a mature session (age past the
+ * backstop) fast-paths without waiting. Returns undefined for any id without a LIVE session.
+ * Read-only; never exposed to the renderer.
+ */
+export function getTerminalBootInfo(id: string): { ageMs: number; pid: number } | undefined {
+  return getTerminalBootInfoCore(id, sessions, Date.now())
 }
 
 /**

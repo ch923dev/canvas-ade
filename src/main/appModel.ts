@@ -83,10 +83,6 @@ export interface AppModelRules {
   spawnCap: number
   /** Invariant: EVERY cross-board write pays `runGatedWrite` (sanitize -> nonce -> confirm -> audit). */
   everyWriteGated: true
-  /** Idle TTL (ms) before an MCP-spawned board is reaped. */
-  idleTtlMs: number
-  /** Output-silence threshold (ms) above which a live terminal counts as dormant. */
-  idleActivityMs: number
 }
 
 /** The full read-only app self-model. `version` lets a consumer reason about shape evolution. */
@@ -119,7 +115,7 @@ export const APP_TOOLS: readonly AppModelTool[] = [
   { name: 'tidy_canvas', purpose: 'Reposition-pack all boards; un-gated.', tier: 'orchestrator' },
   {
     name: 'close_board',
-    purpose: 'Remove a board (graceful PTY drain first).',
+    purpose: 'Remove a board (human-confirm gated; graceful PTY drain first).',
     tier: 'orchestrator'
   },
   {

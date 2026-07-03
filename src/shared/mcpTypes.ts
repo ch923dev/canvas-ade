@@ -128,13 +128,26 @@ export interface PlanItem {
  * Adding a variant here propagates the type error to BOTH sides simultaneously — the
  * compile-time safety this shared module exists to enforce (W1-D / F9).
  *
- * - `addBoard` carries only a MINIMAL spec (id + type + optional title), NOT a full PersistedBoard:
- *   MAIN mints the id but does not know canvas geometry, so the renderer builds the full board
- *   (free-slot placement, per-type defaults) from this spec. `board.type` is a loose `string` (MAIN
- *   is the sender and does not import renderer types); the renderer re-validates it against its
- *   SPAWNABLE allowlist at runtime (defense in depth — the value crosses IPC as JSON anyway).
- *   `board.title` (2b) is the agent-chosen display name, already sanitized + clamped by MAIN
- *   (`mcpLifecycle.spawnBoard`); absent ⇒ the renderer uses the per-type default title.
+ * - `addBoard` carries only a MINIMAL spec (id + type + optional title/launchCommand/cwd), NOT a
+ *   full PersistedBoard: MAIN mints the id but does not know canvas geometry, so the renderer builds
+ *   the full board (free-slot placement, per-type defaults) from this spec. `board.type` is a loose
+ *   `string` (MAIN is the sender and does not import renderer types); the renderer re-validates it
+ *   against its SPAWNABLE allowlist at runtime (defense in depth — the value crosses IPC as JSON
+ *   anyway). `board.title` (2b) is the agent-chosen display name, already sanitized + clamped by
+ *   MAIN (`mcpLifecycle.spawnBoard`); absent ⇒ the renderer uses the per-type default title.
+ *   `board.launchCommand`/`board.cwd` are TERMINAL-ONLY (the spawn_board `prompt`/`cwd` params —
+ *   the same first-PTY-line delivery `spawnGroup.members.terminal` uses): MAIN sanitized the
+ *   launchCommand to a single ≤400-char PTY-safe line and rejected either field on a non-terminal
+ *   type BEFORE sending; the renderer re-validates both (defense in depth) and lands them on the
+ *   created board so `useTerminalSpawn` boots the CLI at first spawn. `cwd` is never executed
+ *   (pty `safeCwd` stats it and falls back to the home directory). `connector` (rc.6 auto-cable)
+ *   asks the renderer to ALSO create a directed ORCHESTRATION connector `sourceId → <new board>`:
+ *   MAIN only includes it when the spawn is a terminal, the source resolves to a live TERMINAL in
+ *   the mirror, and the sourceId is the spawning agent's own token-derived board id (unforgeable —
+ *   the package tool passes ctx.boardId, never client input), so a connected terminal can
+ *   immediately `relay_prompt` into the terminal it spawned. The renderer re-validates (terminal-
+ *   only, source exists) and `addConnector` itself still rejects self/dup/missing endpoints; the
+ *   cable stays visible + deletable on canvas, and every relay still pays the human confirm.
  * - `removeBoard` (T3.2) tears one down by id.
  * - `configureBoard` (T3.3) changes a board's durable per-type config (the renderer applies it
  *   through `updateBoard`, which filters to PATCHABLE_KEYS).
@@ -163,7 +176,11 @@ export interface PlanItem {
  */
 export type McpCommand =
   | { type: 'ping' }
-  | { type: 'addBoard'; board: { id: string; type: string; title?: string } }
+  | {
+      type: 'addBoard'
+      board: { id: string; type: string; title?: string; launchCommand?: string; cwd?: string }
+      connector?: { sourceId: string }
+    }
   | { type: 'removeBoard'; id: string }
   | {
       type: 'configureBoard'

@@ -185,6 +185,20 @@ export interface E2EMain {
     planning?: boolean
     browser?: boolean
   }): Promise<SpawnGroupResult | null>
+  /**
+   * rc.6 auto-cable probe: spawn ONE board through the orchestrator's `spawnBoard` — the same
+   * cap-checked write path the agent-facing `spawn_board` tool uses — including the optional
+   * `sourceBoardId` (a connected caller's token-derived board id), so the e2e can prove the
+   * spawner→spawned orchestration cable lands WITHOUT waiting for the ≥rc.6 package pin (whose
+   * tool supplies ctx.boardId over the wire). Resolves null when the MCP server never mounted.
+   */
+  spawnBoardNow(input: {
+    type: string
+    prompt?: string
+    cwd?: string
+    title?: string
+    sourceBoardId?: string
+  }): Promise<{ id: string } | null>
   /** Seed a board's live PTY output ring with known ANSI content (output-pagination probe). */
   mcpSeedOutput(id: string, text: string): boolean
   /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
@@ -473,6 +487,9 @@ export function installE2EMain(
     },
     spawnGroupNow(input) {
       return mcp?.spawnGroup(input) ?? Promise.resolve(null)
+    },
+    spawnBoardNow(input) {
+      return mcp?.spawnBoard(input) ?? Promise.resolve(null)
     },
     mcpSeedOutput(id, text) {
       return debugSeedOutput(id, text)

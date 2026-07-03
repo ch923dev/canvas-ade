@@ -13,6 +13,7 @@ import {
   writeToPtyCore,
   getTerminalRuntimeCore,
   getTerminalActivityStaleMsCore,
+  getTerminalBootInfoCore,
   isValidResize,
   clampSpawnDim,
   attachPortInput,
@@ -1032,7 +1033,7 @@ describe('getTerminalRuntimeCore (T-F1 — runtime snapshot for the Context summ
   })
 })
 
-describe('getTerminalActivityStaleMsCore (BUG-007 — output-silence dormancy for the MCP reaper)', () => {
+describe('getTerminalActivityStaleMsCore (BUG-007 — output-silence dormancy for awaitSettled)', () => {
   it('returns ms since the last PTY output against the injected clock', () => {
     const sessions = new Map<string, any>([['t', { lastActivityAt: 1_000 }]])
     expect(getTerminalActivityStaleMsCore('t', sessions, 61_000)).toBe(60_000)
@@ -1045,8 +1046,29 @@ describe('getTerminalActivityStaleMsCore (BUG-007 — output-silence dormancy fo
   })
 
   it('returns undefined for a board with no LIVE session (non-terminal / closed / parked)', () => {
-    // undefined is the reaper's signal to fall back to the derived status bucket.
+    // undefined is awaitSettled's signal that there is no live PTY to measure.
     expect(getTerminalActivityStaleMsCore('ghost', new Map(), 1_000)).toBeUndefined()
+  })
+})
+
+describe('getTerminalBootInfoCore (readiness gate — boot age + pid identity)', () => {
+  it('returns the process age against the injected clock, plus the live pid', () => {
+    const sessions = new Map<string, any>([['t', { spawnedAt: 1_000, proc: { pid: 42 } }]])
+    expect(getTerminalBootInfoCore('t', sessions, 3_500)).toEqual({ ageMs: 2_500, pid: 42 })
+  })
+
+  it('an ADOPTED session (spawnedAt 0) reads as maximally old — the readiness floor passes immediately', () => {
+    const sessions = new Map<string, any>([['t', { spawnedAt: 0, proc: { pid: 42 } }]])
+    expect(getTerminalBootInfoCore('t', sessions, 60_000)!.ageMs).toBe(60_000)
+  })
+
+  it('clamps to 0 for clock skew (never a negative age)', () => {
+    const sessions = new Map<string, any>([['t', { spawnedAt: 9_000, proc: { pid: 42 } }]])
+    expect(getTerminalBootInfoCore('t', sessions, 8_000)!.ageMs).toBe(0)
+  })
+
+  it('returns undefined for a board with no LIVE session', () => {
+    expect(getTerminalBootInfoCore('ghost', new Map(), 1_000)).toBeUndefined()
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */

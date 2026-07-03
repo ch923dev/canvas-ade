@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BoardOutput, BoardResult, BoardStatusChange, MemoryDoc } from '@expanse-ade/mcp'
-import {
-  buildOrchestrator,
-  MCP_SPAWN_CAP,
-  type BoardRegistry,
-  type LifecycleOrchestrator
-} from './mcpOrchestrator'
+import { buildOrchestrator, MCP_SPAWN_CAP, type BoardRegistry } from './mcpOrchestrator'
 import { createDispatchGuard } from './dispatchGuard'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
@@ -501,6 +496,96 @@ describe('buildOrchestrator', () => {
       // …until we close one, which frees a slot.
       await orch.closeBoard(ids[0])
       await expect(orch.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
+    })
+
+    describe('🔒 human gate (2026-07-02 — replaces the removed idle reaper)', () => {
+      /** A closeBoard registry recording confirms + audits + commands, with a scriptable verdict. */
+      function gateReg(opts: {
+        approved: boolean
+        boards?: Array<{ id: string; type: string; title: string; status?: string }>
+        removeAck?: McpCommandAck
+      }): {
+        registry: BoardRegistry
+        seen: McpCommand[]
+        drained: string[]
+        confirms: Array<{ title: string; body: string }>
+        audits: AuditInput[]
+      } {
+        const seen: McpCommand[] = []
+        const drained: string[] = []
+        const confirms: Array<{ title: string; body: string }> = []
+        const audits: AuditInput[] = []
+        const registry: BoardRegistry = {
+          ...reg(
+            opts.boards ?? [],
+            [],
+            {},
+            {},
+            {},
+            async (cmd) => {
+              seen.push(cmd)
+              return opts.removeAck ?? { ok: true, type: cmd.type }
+            },
+            async (id) => {
+              drained.push(id)
+            }
+          ),
+          confirm: async (req) => {
+            confirms.push(req)
+            return { approved: opts.approved }
+          },
+          audit: async (input) => {
+            audits.push(input)
+          }
+        }
+        return { registry, seen, drained, confirms, audits }
+      }
+
+      it('denied → throws, audits `denied`, and the board is neither drained nor removed', async () => {
+        const { registry, seen, drained, confirms, audits } = gateReg({
+          approved: false,
+          boards: [{ id: 'p1', type: 'planning', title: 'Auth plan', status: 'static' }]
+        })
+        const orch = buildOrchestrator(registry)
+        await expect(orch.closeBoard('p1')).rejects.toThrow(/denied/i)
+        // Fail-closed: the deny happened BEFORE any teardown side effect.
+        expect(drained).toEqual([])
+        expect(seen).toEqual([])
+        expect(audits).toMatchObject([{ type: 'close_board', targetId: 'p1', status: 'denied' }])
+        // The human saw the board by NAME, not a bare UUID.
+        expect(confirms[0].title).toContain('Auth plan')
+        expect(confirms[0].body).toContain('Auth plan')
+      })
+
+      it('approved → tears down and audits `closed` (the reaper-era close was un-audited)', async () => {
+        const { registry, seen, drained, audits } = gateReg({
+          approved: true,
+          boards: [{ id: 'b1', type: 'browser', title: 'Mock preview', status: 'idle' }]
+        })
+        const orch = buildOrchestrator(registry)
+        await orch.closeBoard('b1')
+        expect(drained).toEqual(['b1'])
+        expect(seen).toEqual([{ type: 'removeBoard', id: 'b1' }])
+        expect(audits).toMatchObject([{ type: 'close_board', targetId: 'b1', status: 'closed' }])
+      })
+
+      it('approved but the renderer rejects the removal → audits `failed` + rethrows', async () => {
+        const { registry, audits } = gateReg({
+          approved: true,
+          boards: [{ id: 't1', type: 'terminal', title: 'Worker', status: 'idle' }],
+          removeAck: { ok: false, error: 'no-window' }
+        })
+        const orch = buildOrchestrator(registry)
+        await expect(orch.closeBoard('t1')).rejects.toThrow(/no-window/)
+        expect(audits).toMatchObject([{ type: 'close_board', targetId: 't1', status: 'failed' }])
+      })
+
+      it('an unknown id still confirms (UUID label) — approval then no-ops idempotently', async () => {
+        const { registry, confirms } = gateReg({ approved: true })
+        const orch = buildOrchestrator(registry)
+        await orch.closeBoard('ghost-id')
+        expect(confirms[0].title).toContain('ghost-id') // UUID fallback label
+      })
     })
   })
 
@@ -1243,7 +1328,7 @@ describe('buildOrchestrator', () => {
         boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
       })
       const orch = buildOrchestrator(registry)
-      await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toBeUndefined()
+      await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toEqual({ delivery: 'ready' })
       expect(confirms).toHaveLength(1)
       expect(writes).toEqual([
         { id: 't1', text: 'pnpm build' },
@@ -1268,7 +1353,7 @@ describe('buildOrchestrator', () => {
       // No `sleep` injected: a fire-and-forget dispatch must not enter an await-idle poll
       // (which would need the sleep seam), so this resolves without hanging.
       const orch = buildOrchestrator(registry)
-      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toBeUndefined()
+      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toEqual({ delivery: 'ready' })
     })
 
     it('🔒 a failed PTY write (no live session) audits failed and throws', async () => {
@@ -1615,7 +1700,7 @@ describe('buildOrchestrator', () => {
         connectors: cableAB
       })
       const orch = buildOrchestrator(registry)
-      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toBeUndefined()
+      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toEqual({ delivery: 'ready' })
       expect(confirms).toHaveLength(1)
       expect(writes).toEqual([
         { id: 'B', text: 'pnpm build' }, // written to the TARGET
@@ -1893,13 +1978,12 @@ describe('buildOrchestrator', () => {
   })
   // ─────────────────────────────────────────────────────────────────────────────
 
-  describe('🔒 cap reconciliation + idle-reaping (T3.4, the M3 gate)', () => {
+  describe('🔒 cap reconciliation (T3.4, the M3 gate)', () => {
     // A registry whose mirror is mutated by the commands the adapter issues (so the
     // adapter's own spawns/closes show up in listBoards, like the real renderer).
     function liveReg(opts: { drained?: string[] } = {}): {
       registry: BoardRegistry
       boards: Array<{ id: string; type: string; title: string; status?: string }>
-      setStatus: (id: string, status: string) => void
     } {
       const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
       const registry: BoardRegistry = {
@@ -1923,11 +2007,7 @@ describe('buildOrchestrator', () => {
         },
         ...DISPATCH_DEFAULTS
       }
-      const setStatus = (id: string, status: string): void => {
-        const b = boards.find((x) => x.id === id)
-        if (b) b.status = status
-      }
-      return { registry, boards, setStatus }
+      return { registry, boards }
     }
 
     it('reconciles the cap against the live mirror — a vanished board frees a slot', async () => {
@@ -1944,142 +2024,6 @@ describe('buildOrchestrator', () => {
       clock = 5000
       // Next spawn reconciles the vanished id out of the budget → a slot is free.
       await expect(orch.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
-    })
-
-    it('reapIdle closes a spawned board idle past the TTL (and leaves running ones)', async () => {
-      let clock = 0
-      const drained: string[] = []
-      const { registry, boards, setStatus } = liveReg({ drained })
-      const orch = buildOrchestrator(registry, { now: () => clock, idleTtlMs: 1000 })
-      const { id: idle } = await orch.spawnBoard({ type: 'terminal' })
-      const { id: busy } = await orch.spawnBoard({ type: 'terminal' })
-      setStatus(idle, 'idle')
-      setStatus(busy, 'running')
-      // Sweep 1 marks idleSince; nothing reaped yet.
-      expect(await orch.reapIdle()).toEqual([])
-      clock = 500
-      expect(await orch.reapIdle()).toEqual([]) // still within the TTL
-      clock = 1500 // idle for 1500ms >= ttl 1000
-      const reaped = await orch.reapIdle()
-      expect(reaped).toEqual([idle])
-      expect(drained).toContain(idle) // it was gracefully closed (drained + removed)
-      expect(boards.some((b) => b.id === idle)).toBe(false) // gone from the mirror
-      expect(boards.some((b) => b.id === busy)).toBe(true) // the running board survives
-    })
-
-    it('BUG-009: a failing close mid-sweep does not abort the reap — the rest are still closed', async () => {
-      // Two boards go idle past the TTL in the same sweep, but the renderer rejects the
-      // removeBoard for the FIRST one. OLD code: the throw propagated out of reapIdle,
-      // abandoning the second board and re-failing on the first every future sweep. The
-      // fix swallows per-id so the second board is still reaped.
-      let clock = 0
-      const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
-      const removed: string[] = []
-      let failId: string | null = null
-      const registry: BoardRegistry = {
-        listBoards: () => boards,
-        listSessions: () => [],
-        readOutput: () => EMPTY_OUTPUT,
-        readResult: () => EMPTY_RESULT,
-        readMemory: () => EMPTY_MEMORY,
-        readSummary: () => EMPTY_MEMORY,
-        sendCommand: async (cmd) => {
-          if (cmd.type === 'addBoard')
-            boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
-          if (cmd.type === 'removeBoard') {
-            if (cmd.id === failId) return { ok: false, error: 'no-window' }
-            const i = boards.findIndex((b) => b.id === cmd.id)
-            if (i >= 0) boards.splice(i, 1)
-            removed.push(cmd.id)
-          }
-          return { ok: true, type: cmd.type }
-        },
-        drainPty: async () => {},
-        ...DISPATCH_DEFAULTS
-      }
-      const setStatus = (id: string, status: string): void => {
-        const b = boards.find((x) => x.id === id)
-        if (b) b.status = status
-      }
-      const orch = buildOrchestrator(registry, { now: () => clock, idleTtlMs: 1000 })
-      const { id: a } = await orch.spawnBoard({ type: 'terminal' })
-      const { id: b } = await orch.spawnBoard({ type: 'terminal' })
-      setStatus(a, 'idle')
-      setStatus(b, 'idle')
-      failId = a // the FIRST reapable board's removal will fail
-      await orch.reapIdle() // sweep 1: arm idleSince for both
-      clock = 1500 // both idle past the TTL
-      const reaped = await orch.reapIdle()
-      // The whole sweep did NOT abort: board b was still closed despite a failing.
-      expect(reaped).toEqual([b])
-      expect(removed).toEqual([b])
-      expect(boards.some((x) => x.id === b)).toBe(false) // b gone from the mirror
-    })
-
-    it('a board that returns to running before the TTL is NOT reaped (idle clock resets)', async () => {
-      let clock = 0
-      const { registry, setStatus } = liveReg()
-      const orch = buildOrchestrator(registry, { now: () => clock, idleTtlMs: 1000 })
-      const { id } = await orch.spawnBoard({ type: 'terminal' })
-      setStatus(id, 'idle')
-      await orch.reapIdle() // marks idleSince=0
-      clock = 800
-      setStatus(id, 'running') // came back to life before the TTL
-      await orch.reapIdle() // running → idle clock cleared
-      clock = 1700
-      setStatus(id, 'idle')
-      expect(await orch.reapIdle()).toEqual([]) // idleSince re-armed at 1700, not yet past TTL
-    })
-
-    it('🔒 APP-N2: a reapIdle fired while a sweep is in flight no-ops (no double close)', async () => {
-      // The periodic reaper interval and an explicit reapIdle() (the smoke) can overlap; each
-      // close awaits drainPty + a renderer round-trip, so two sweeps could read the same id and
-      // closeBoard it twice (re-arming idleSince on an already-deleted record). The fix skips a
-      // sweep that starts while another is in flight. We re-enter mid-drain to prove it.
-      let clock = 0
-      const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
-      const removed: string[] = []
-      let drainCalls = 0
-      let reentrant: string[] | null = null
-      const registry: BoardRegistry = {
-        listBoards: () => boards,
-        listSessions: () => [],
-        readOutput: () => EMPTY_OUTPUT,
-        readResult: () => EMPTY_RESULT,
-        readMemory: () => EMPTY_MEMORY,
-        readSummary: () => EMPTY_MEMORY,
-        sendCommand: async (cmd) => {
-          if (cmd.type === 'addBoard')
-            boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
-          if (cmd.type === 'removeBoard') {
-            const i = boards.findIndex((b) => b.id === cmd.id)
-            if (i >= 0) {
-              boards.splice(i, 1)
-              removed.push(cmd.id)
-            }
-          }
-          return { ok: true, type: cmd.type }
-        },
-        drainPty: async () => {
-          drainCalls++
-          // Mid-close in the FIRST sweep — fire a concurrent sweep. The re-entrancy guard
-          // must return [] without starting a second close of the same board.
-          if (drainCalls === 1) reentrant = await orch.reapIdle()
-        },
-        ...DISPATCH_DEFAULTS
-      }
-      const orch: LifecycleOrchestrator = buildOrchestrator(registry, {
-        now: () => clock,
-        idleTtlMs: 1000
-      })
-      const { id } = await orch.spawnBoard({ type: 'terminal' })
-      boards[0].status = 'idle'
-      await orch.reapIdle() // sweep 0: arm idleSince (no close → no drain)
-      clock = 1500
-      expect(await orch.reapIdle()).toEqual([id]) // sweep 1 reaps; mid-drain it re-enters
-      expect(reentrant).toEqual([]) // the concurrent sweep no-oped (guard), not a 2nd close
-      expect(drainCalls).toBe(1) // the board was closed exactly once despite two reapIdle calls
-      expect(removed).toEqual([id]) // removed once
     })
   })
 })
@@ -2208,5 +2152,164 @@ describe('buildOrchestrator lazy session lookup (perf: listSessions only on a te
     })
     await orch.listBoards()
     expect(listSessions).toHaveBeenCalledTimes(1) // one shared lazy map across all boards
+  })
+})
+
+describe('🔒 dispatch readiness gate (runGatedWrite, 2026-07-03)', () => {
+  type Board = { id: string; type: string; title: string; status?: string }
+  type Conn = { id: string; sourceId: string; targetId: string; kind: string }
+  type Ready = { outcome: string; waitedMs: number }
+
+  /** dispatchReg-shaped registry PLUS a controllable awaitReady probe + an ordered event log. */
+  function readyReg(opts: {
+    boards: Board[]
+    connectors?: () => Conn[]
+    confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+    awaitReady?: (id: string, o?: { signal?: AbortSignal }) => Promise<Ready>
+  }): {
+    registry: BoardRegistry
+    audits: AuditInput[]
+    writes: Array<{ id: string; text: string }>
+    events: string[]
+  } {
+    const audits: AuditInput[] = []
+    const writes: Array<{ id: string; text: string }> = []
+    const events: string[] = []
+    const registry: BoardRegistry = {
+      listBoards: () => opts.boards,
+      listConnectors: () => opts.connectors?.() ?? [],
+      listSessions: () => [],
+      subscribeStatus: () => () => {},
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+      drainPty: async () => {},
+      writeToPty: (id, text) => {
+        events.push(`write:${text === '\r' ? 'CR' : text === '\x03' ? 'ETX' : 'text'}`)
+        writes.push({ id, text })
+        return true
+      },
+      confirm: async (req) => {
+        events.push('confirm')
+        return opts.confirm ? opts.confirm(req) : { approved: true }
+      },
+      audit: async (input) => {
+        audits.push(input)
+      },
+      recordResult: () => {},
+      ...(opts.awaitReady
+        ? {
+            awaitReady: async (id: string, o?: { signal?: AbortSignal }) => {
+              const r = await opts.awaitReady!(id, o)
+              events.push(`ready:${r.outcome}`)
+              return r
+            }
+          }
+        : {})
+    }
+    return { registry, audits, writes, events }
+  }
+
+  const terminal: Board[] = [{ id: 't1', type: 'terminal', title: 'Worker', status: 'running' }]
+
+  it('write happens only AFTER the readiness observation settles (confirm → ready → write)', async () => {
+    const { registry, audits, events } = readyReg({
+      boards: terminal,
+      awaitReady: async () => ({ outcome: 'ready', waitedMs: 42 })
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toEqual({ delivery: 'ready' })
+    expect(events).toEqual(['confirm', 'ready:ready', 'write:text', 'write:CR'])
+    const dispatched = audits.find((a) => a.status === 'dispatched')
+    expect(dispatched?.detail).toMatch(/readiness=ready waited=42ms/)
+  })
+
+  it('an unconfirmed readiness still WRITES but audits dispatched_unconfirmed + returns delivery unconfirmed', async () => {
+    const { registry, audits, writes } = readyReg({
+      boards: terminal,
+      awaitReady: async () => ({ outcome: 'unconfirmed', waitedMs: 15000 })
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toEqual({
+      delivery: 'unconfirmed'
+    })
+    expect(writes.map((w) => w.text)).toEqual(['pnpm build', '\r']) // degrade, never block/fail
+    const landed = audits.find((a) => a.status === 'dispatched_unconfirmed')
+    expect(landed).toBeTruthy()
+    expect(landed?.detail).toMatch(/readiness=unconfirmed waited=15000ms/)
+    expect(audits.some((a) => a.status === 'dispatched')).toBe(false) // honest: never both
+  })
+
+  it('ready_latched / ready_assumed count as confirmed delivery (dispatched)', async () => {
+    for (const outcome of ['ready_latched', 'ready_assumed']) {
+      const { registry, audits } = readyReg({
+        boards: terminal,
+        awaitReady: async () => ({ outcome, waitedMs: 0 })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toEqual({ delivery: 'ready' })
+      expect(audits.some((a) => a.status === 'dispatched')).toBe(true)
+    }
+  })
+
+  it('a DENIED confirm aborts the readiness observation (no leaked wait) and never writes', async () => {
+    let seenSignal: AbortSignal | undefined
+    const { registry, writes } = readyReg({
+      boards: terminal,
+      confirm: async () => ({ approved: false }),
+      awaitReady: (_id, o) =>
+        new Promise((resolve) => {
+          seenSignal = o?.signal
+          o?.signal?.addEventListener('abort', () =>
+            resolve({ outcome: 'unconfirmed', waitedMs: 0 })
+          )
+        })
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'x')).rejects.toThrow(/deni/i)
+    expect(seenSignal?.aborted).toBe(true) // the gate released the waiter on deny
+    expect(writes).toEqual([])
+  })
+
+  it('interrupt OPTS OUT of readiness (a Ctrl-C into a booting/hung proc must never wait)', async () => {
+    const awaitReady = vi.fn(async () => ({ outcome: 'ready', waitedMs: 0 }))
+    const { registry, writes } = readyReg({ boards: terminal, awaitReady })
+    const orch = buildOrchestrator(registry)
+    await orch.interrupt('t1')
+    expect(awaitReady).not.toHaveBeenCalled()
+    expect(writes.map((w) => w.text)).toEqual(['\x03'])
+  })
+
+  it('a registry WITHOUT the awaitReady probe keeps today’s exact behaviour (dispatched, delivery ready)', async () => {
+    const { registry, audits, writes } = readyReg({ boards: terminal })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'x')).resolves.toEqual({ delivery: 'ready' })
+    expect(writes.map((w) => w.text)).toEqual(['x', '\r'])
+    const dispatched = audits.find((a) => a.status === 'dispatched')
+    expect(dispatched?.detail).not.toMatch(/readiness=/) // no probe → no readiness claim
+  })
+
+  it('🔒 TOCTOU: a cable deleted DURING the readiness wait is still caught by the pre-write re-check', async () => {
+    const boards: Board[] = [
+      { id: 'A', type: 'terminal', title: 'Alpha' },
+      { id: 'B', type: 'terminal', title: 'Beta' }
+    ]
+    let cables: Conn[] = [{ id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }]
+    const { registry, audits, writes } = readyReg({
+      boards,
+      connectors: () => cables,
+      // The cable vanishes while the readiness observation is still pending — the widened
+      // window must not let the write through on the stale authorization.
+      awaitReady: async () => {
+        cables = []
+        return { outcome: 'ready', waitedMs: 5 }
+      }
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/removed during confirm/i)
+    expect(writes).toEqual([])
+    expect(audits.some((a) => a.status === 'rejected')).toBe(true)
   })
 })

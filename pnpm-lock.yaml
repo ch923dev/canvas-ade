@@ -24,8 +24,8 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(electron@42.3.3)
       '@expanse-ade/mcp':
-        specifier: 0.18.0-rc.5
-        version: 0.18.0-rc.5
+        specifier: 0.18.0-rc.6
+        version: 0.18.0-rc.6
       '@uiw/codemirror-extensions-langs':
         specifier: ^4.25.10
         version: 4.25.10(@codemirror/autocomplete@6.20.3)(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.43.1)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/javascript@1.5.4)(@lezer/lr@1.4.10)
@@ -674,8 +674,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@expanse-ade/mcp@0.18.0-rc.5':
-    resolution: {integrity: sha512-2rnJzQq37VKITppw2f/3lBsUv4iIbio68yVShOa6TZ2634iG0S1TTzK6aWay+8lmVnWhdVcII9KLCckZ1iZvlA==}
+  '@expanse-ade/mcp@0.18.0-rc.6':
+    resolution: {integrity: sha512-CQFnX1E440LfQaez6PoFupDIxPjGgfzfhxwREDorDS9uNnJsU7uypipeqgbghtc56YIJzvEJwh6adQtG1F2v8Q==}
     engines: {node: '>=20'}
 
   '@gar/promisify@1.1.3':
@@ -4555,7 +4555,7 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.2.0
 
-  '@expanse-ade/mcp@0.18.0-rc.5':
+  '@expanse-ade/mcp@0.18.0-rc.6':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       express: 5.2.1
