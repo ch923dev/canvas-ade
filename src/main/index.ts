@@ -94,6 +94,7 @@ import {
 } from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 import { registerRecapIpc } from './recapIpc'
+import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
@@ -718,6 +719,13 @@ app.whenReady().then(async () => {
       return resolveBoardTranscript(boardId, recorded)
     },
     getTerminalRuntime
+  })
+  // Terminal-resume F1+F3 (see terminalResume.ts): validate canResume + build the Resume launch
+  // line from the transcript's on-disk reality, through the SAME A4 resolver the recap reads use.
+  registerTerminalResumeIpc(ipcMain, {
+    getWin: () => mainWindow,
+    resolveTranscript: resolveBoardTranscript,
+    getMapEntries: () => recapMap
   })
   registerProjectHandlers(
     ipcMain,

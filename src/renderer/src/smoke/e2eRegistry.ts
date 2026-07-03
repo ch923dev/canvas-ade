@@ -59,3 +59,11 @@ export const e2eTerminalLink = new Map<
  * stays frozen — and that the buffer drains to ~0 once the terminal is revealed and flushes.
  */
 export const e2eTerminalHeld = new Map<string, () => number>()
+
+/**
+ * Per-board result of the last MAIN resume-validity check (terminal-resume F1), populated by
+ * useResumeValidity ONLY in e2e mode. The check is an async IPC round-trip, so a spec asserting
+ * the ABSENCE of the Resume affordance must first await the check settling for the id it staged
+ * — a bare `toHaveCount(0)` would pass trivially before the round-trip lands.
+ */
+export const e2eResumeChecks = new Map<string, { sessionId?: string; canResume: boolean }>()
