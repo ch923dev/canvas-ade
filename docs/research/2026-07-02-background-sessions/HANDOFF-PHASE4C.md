@@ -40,8 +40,8 @@
   overlay. Gate: 4210 unit (+10 store, +4 overlay integration) · `projectSwitchMotion.e2e`
   2/2 (@chrome, reduced-motion leg via `page.emulateMedia`) · full Win leg 250P with the
   documented osrCropSupersample + a projectBackground-clone teardown flake rerun-green.
-  **Still owed: the manual dev check (`CANVAS_DEV_TITLE='bg-sessions P4c'`) with user
-  sign-off, then Phase 5.**
+  **Manual dev check PASSED with user sign-off 2026-07-03 (`CANVAS_DEV_TITLE='bg-sessions
+  P4c'`) — next is Phase 5 (below), then the epic PR.**
 
 ## Phase 4c — switch-transition motion (BUILT 2026-07-03 — spec kept for reference)
 
