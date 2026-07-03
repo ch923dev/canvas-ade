@@ -16,6 +16,9 @@ export interface TerminalIdleAffordanceProps {
   state: TerminalState
   /** True when this idle mount restored a persisted snapshot (show the bar, not the opaque overlay). */
   restored: boolean
+  /** Bg sessions Phase 5: the session exited while its project was backgrounded — the bar
+   *  reports "exited in background (code N)" instead of the plain restored label. */
+  restoredExitCode?: number | null
   /** Agent/shell identity for the Start label (e.g. "claude"). */
   identity: string
   onStart: () => void
@@ -31,6 +34,7 @@ export interface TerminalIdleAffordanceProps {
 export function TerminalIdleAffordance({
   state,
   restored,
+  restoredExitCode,
   identity,
   background,
   onStart,
@@ -42,6 +46,7 @@ export function TerminalIdleAffordance({
     return (
       <TerminalRestoredBar
         identity={identity}
+        exitCode={restoredExitCode ?? undefined}
         onStart={onStart}
         canResume={canResume}
         onResume={onResume}

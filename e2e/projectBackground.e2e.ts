@@ -223,7 +223,9 @@ test.describe('@terminal background project sessions — keep-running switch', (
         .toEqual([])
 
       // Switch back: adopt finds nothing → idle + the read-only restored bar (M-1), showing
-      // the switch-time snapshot content.
+      // the switch-time snapshot content. Phase 5 (R6 residue UX): the bar now REPORTS the
+      // background death — "Exited in background (code N)" — instead of the plain restored
+      // label, so the user learns their agent died rather than blaming a stale snapshot.
       const toA = await switchTo(page, dirA)
       expect(toA.outcome).toBe('switched')
       await expect
@@ -236,7 +238,8 @@ test.describe('@terminal background project sessions — keep-running switch', (
           { timeout: 20_000 }
         )
         .toBe(true)
-      await expect(page.locator('text=Session restored')).toHaveCount(1)
+      await expect(page.locator('text=Exited in background')).toHaveCount(1, { timeout: 20_000 })
+      await expect(page.locator('[data-test="terminal-restored-bar"]')).toHaveCount(1)
       await expect.poll(() => readTerm(page, id), { timeout: 20_000 }).toContain('BGEXIT-MARKER')
     } finally {
       await teardownProjects(electronApp, [dirA, dirB])

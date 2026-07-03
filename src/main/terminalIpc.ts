@@ -14,6 +14,7 @@ import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } fro
 import writeFileAtomic from 'write-file-atomic'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
+import { takeExitResidue, type ExitResidue } from './pty'
 import {
   writeTerminalSnapshot,
   writeTerminalSnapshotAsync,
@@ -101,6 +102,16 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
     const dir = getCurrentDir()
     if (!dir) return null
     return readTerminalSnapshot(dir, String(boardId))
+  })
+
+  // Phase 5 (bg sessions R6 UX): consume-on-read exit residue — what a background-parked
+  // proc said + its exit code when it died while its project was switched away. Scoped to
+  // the ACTIVE project inside takeExitResidue (compound key), so a cloned project sharing
+  // board UUIDs can never read another project's last words. One read = gone (the restored
+  // bar shows it once; a later remount is a plain snapshot restore).
+  ipc.handle('terminal:exitResidue', (e, boardId: string): ExitResidue | null => {
+    if (guard(e)) return null
+    return takeExitResidue(String(boardId)) ?? null
   })
 
   ipc.handle('terminal:deleteSnapshot', (e, boardId: string, expectedDir?: string): boolean => {

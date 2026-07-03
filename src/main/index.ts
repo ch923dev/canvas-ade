@@ -20,8 +20,11 @@ import {
   parkProjectSessions,
   disposeProjectPtys,
   countProjectSessions,
-  reapUndoParks
+  reapUndoParks,
+  persistBackgroundRingTails,
+  backgroundParkedBoardIds
 } from './pty'
+import { appendTerminalSnapshot } from './terminalSnapshot'
 import { boardGitDiff } from './gitDiff'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import {
@@ -215,7 +218,13 @@ function createWindow(): void {
       platform: process.platform,
       disposeOsr: disposeAllOsr, // close offscreen preview renderers
       disposeDiagramWorker, // close the hidden Mermaid render worker (S4)
-      disposePtys: disposeAllPtys // darwin-only PTY-tree reap (guarded inside)
+      // darwin-only PTY-tree reap (guarded inside). Phase 5: persist background parks'
+      // ring tails first — this darwin close is a quit-equivalent for PTYs (see quit.ts),
+      // and the before-quit shutdown() that normally appends them never fires here.
+      disposePtys: () => {
+        persistBackgroundRingTails(appendTerminalSnapshot)
+        return disposeAllPtys()
+      }
     })
     // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
     // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
@@ -716,8 +725,11 @@ app.whenReady().then(async () => {
     (dir) => {
       // BUG-035 (verify follow-up): board results are per-project — an id-colliding
       // board in the next project must not inherit the previous project's verdict.
-      // Clear-all on open; onBoardsObserved's prune handles deletions WITHIN a project.
-      pruneBoardResults(new Set())
+      // Phase 5 (bg sessions): the open-clear now SPARES background residents' results —
+      // a resident's verdict must survive until its switch-back (id-keyed, so the R1
+      // clone-collision caveat applies; accepted + ADR'd for v1). onBoardsObserved's
+      // prune handles deletions WITHIN a project.
+      pruneBoardResults(backgroundParkedBoardIds())
       // File-tree epic (S2): (re)point the live tree watcher at the now-open project root.
       // watch() closes any prior watcher first, so a project switch re-targets cleanly.
       void fileWatcher?.watch(dir)
@@ -741,11 +753,18 @@ app.whenReady().then(async () => {
       recapWatcher?.retain(liveBoardIds)
       // PR-4: drop pending result-synthesis re-check timers for boards no longer live.
       resultSynth?.retain(liveBoardIds)
-      pruneBoardResults(liveBoardIds)
+      // Phase 5 (bg sessions): prune to the UNION of the active project's live boards and
+      // the background residents' parked ids — a switch must not destroy a resident's
+      // verdict (it re-surfaces on switch-back).
+      const residentIds = backgroundParkedBoardIds()
+      pruneBoardResults(new Set([...liveBoardIds, ...residentIds]))
       // Re-arm watchers for live boards that the in-memory recapMap knows about but whose
       // fs.watch handle was disposed when we switched away from this project.
+      // Phase 5 recap gating: SKIP ids that are also background-parked — an id that is both
+      // live here and parked for a resident is the R1 clone collision, and tracking the
+      // RESIDENT's transcript for the active clone's board would cross-wire the projects.
       for (const [boardId, entry] of recapMap.entries()) {
-        if (liveBoardIds.has(boardId)) {
+        if (liveBoardIds.has(boardId) && !residentIds.has(boardId)) {
           recapWatcher?.track(boardId, entry.transcriptPath)
         }
       }
@@ -977,6 +996,11 @@ app.whenReady().then(async () => {
  * hooks fire it best-effort without awaiting (an uncaughtException handler can't).
  */
 function shutdown(): Promise<void> {
+  // Phase 5 (bg sessions): background parks' post-park output lives ONLY in their rings
+  // (the renderer flush serializes just the ACTIVE project's mounted xterms) — append each
+  // tail to its owning project's sidecar BEFORE the rings die in the PTY drain. Sync +
+  // best-effort, so the crash sinks that share this teardown can run it too.
+  persistBackgroundRingTails(appendTerminalSnapshot)
   const drained = disposeAllPtys()
   disposeAllOsr() // close offscreen preview renderers
   disposeDiagramWorker() // close the hidden Mermaid render worker (S4)

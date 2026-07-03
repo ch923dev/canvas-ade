@@ -33,5 +33,14 @@ export const terminalApi = {
     ipcRenderer.invoke('terminal:readSnapshot', boardId),
   /** Delete the board's sidecar (on board removal). `expectedDir` pins like writeSnapshot. */
   deleteSnapshot: (boardId: string, expectedDir?: string): Promise<boolean> =>
-    ipcRenderer.invoke('terminal:deleteSnapshot', boardId, expectedDir)
+    ipcRenderer.invoke('terminal:deleteSnapshot', boardId, expectedDir),
+  /**
+   * Phase 5 (bg sessions): consume-on-read residue of a session that EXITED while its
+   * project was backgrounded — the post-park output tail + exit code. Null when none
+   * (never exited in background, already consumed, or another project's board).
+   */
+  exitResidue: (
+    boardId: string
+  ): Promise<{ output: string; exitCode: number; exitedAt: number } | null> =>
+    ipcRenderer.invoke('terminal:exitResidue', boardId)
 }

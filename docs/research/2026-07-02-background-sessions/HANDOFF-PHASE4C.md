@@ -116,15 +116,35 @@ title-bar pill badge · replacing the WelcomeScreen picker.
   switch's pinned flush-save reject → `'save-failed'` and (4c) the overlay never arms.
   Mint+open the destination FIRST, then the source (the projectDock.e2e pattern).
 
-## After Phase 4c → Phase 5 (hardening + ADR), then the epic PR
+## Phase 5 — BUILT (this commit, 2026-07-03) → next is the epic PR
 
-Unchanged from HANDOFF-PHASE4B.md: ring watermark splice · `pty:exitResidue` UX ·
-quit/darwin ring-tail sidecars · recap project-gating + `pruneBoardResults`
-union-of-residents · the epic ADR (in-app-run lifetime · budgets · dialog policy ·
-darwin=quit · no schema bump · v1 MCP limitation · ADD: the capturePage(rect) finding +
-thumbnail cache design). Epic PR: full matrix (`pnpm test:e2e:matrix`, Docker up), manual
-dev check BEFORE the PR, delete this folder in the PR, build-history entry, inline replies
-to every reviewer comment.
+All Phase-5 items landed:
+- **Ring watermark splice**: `OutputRing.written` + `readRingSince`; park records the
+  watermark; a background adopt replays sidecar-preface (read MAIN-side in `pty:adopt`,
+  `readTerminalSnapshotAsync`) + post-watermark tail — full scrollback, no duplication, no
+  256KB ceiling; missing sidecar degrades to full-ring replay; undo parks unchanged.
+- **`terminal:exitResidue` UX**: consume-on-read IPC; residue = POST-PARK tail + code; the
+  idle restore splices it after the snapshot and `TerminalRestoredBar` says "Exited in
+  background (code N)" (`--err` dot on non-zero).
+- **Quit/darwin ring tails**: `persistBackgroundRingTails(appendTerminalSnapshot)` in
+  `shutdown()` + the darwin closed-handler; `appendTerminalSnapshot` is sync, 64MB-capped,
+  skip-not-truncate.
+- **Prune union + recap gate**: `pruneBoardResults` keeps `backgroundParkedBoardIds()`
+  across switches (resident verdicts survive to switch-back); the recap re-arm loop skips
+  ids that are also background-parked (the R1 clone cross-wire case). Full recap-map
+  dir-scoping + id-keyed results = ADR follow-ups.
+- **ADR 0011** (`docs/decisions/0011-background-project-sessions.md`) — lifetime, budgets,
+  dialog policy, darwin=quit, no schema bump, splice semantics, v1 limitations
+  (MCP single-project, downloads deny, id-keyed results), capturePage(rect) finding.
+- Tests: `readRingSince`/watermark/preface/persist-core/append-cap units;
+  `projectBackgroundContinuity.e2e.ts` (@terminal — deeper-than-ring splice exactly-once +
+  snapshot dir-isolation); projectBackground residue-label assertion updated. **Deferred:
+  the quit-relaunch e2e** (needs a mid-spec second `_electron` launch harness — same
+  deferred class as auto-update; mechanism unit-covered), noted in the ADR.
+
+**Epic PR (the remaining step):** rebase onto the integration tip, full matrix
+(`pnpm test:e2e:matrix`, Docker up), manual dev check BEFORE the PR, delete this folder in
+the PR, build-history entry, inline replies to every reviewer comment.
 
 ## Gate ritual (unchanged, per phase)
 

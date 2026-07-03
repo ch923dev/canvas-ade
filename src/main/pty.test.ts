@@ -18,7 +18,8 @@ import {
   attachPortInput,
   parkProjectSessionsCore,
   disposeProjectPtysCore,
-  countProjectSessionsCore
+  countProjectSessionsCore,
+  persistBackgroundRingTailsCore
 } from './pty'
 import {
   canonicalizeShellPath,
@@ -1161,5 +1162,163 @@ describe('clampSpawnDim (BUG-023 — spawn/resize bounds parity)', () => {
       const clamped = clampSpawnDim(raw, 80)
       expect(isValidResize(clamped, 24)).toBe(true)
     }
+  })
+})
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Bg sessions Phase 5: the snapshot+tail splice — park records the ring watermark; a
+// background adopt replays sidecar-preface + post-watermark tail (full-ring when no
+// preface exists); an undo adopt keeps the classic full-ring replay.
+describe('adoptCore Phase-5 splice (watermark + preface)', () => {
+  it('parkCore records the ring watermark at park time', () => {
+    const port = makePort()
+    const buf = createRing(1024)
+    pushRing(buf, 'pre-park-output')
+    const sessions = new Map<string, any>([['a', { proc: makeProc(1).proc, port, buf }]])
+    const parked = new Map<string, any>()
+    parkCore('a', sessions, parked, vi.fn(), undefined, 'background')
+    expect(parked.get('a').watermark).toBe('pre-park-output'.length)
+  })
+
+  it('background adopt with a preface replays preface THEN only the post-park tail', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(41)
+    const buf = createRing(1024)
+    pushRing(buf, 'pre-park')
+    const watermark = buf.written
+    pushRing(buf, 'TAIL')
+    const parked = new Map<string, any>([
+      ['t', { proc, buf, kind: 'background', owningDir: 'C:/p', watermark }]
+    ])
+    adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:/p' },
+      'SNAPSHOT-PREFACE'
+    )
+    expect(port1.posted).toEqual([
+      { t: 'data', d: 'SNAPSHOT-PREFACE' },
+      { t: 'data', d: 'TAIL' },
+      { t: 'state', state: 'running' }
+    ])
+  })
+
+  it('background adopt with NO preface degrades to the classic full-ring replay', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(42)
+    const buf = createRing(1024)
+    pushRing(buf, 'pre-park')
+    const watermark = buf.written
+    pushRing(buf, 'TAIL')
+    const parked = new Map<string, any>([
+      ['t', { proc, buf, kind: 'background', owningDir: 'C:/p', watermark }]
+    ])
+    adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:/p' },
+      null
+    )
+    expect(port1.posted).toEqual([
+      { t: 'data', d: 'pre-parkTAIL' },
+      { t: 'state', state: 'running' }
+    ])
+  })
+
+  it('undo adopt ignores the preface and keeps the full-ring replay', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(43)
+    const buf = createRing(1024)
+    pushRing(buf, 'everything')
+    const timer = setTimeout(() => {}, 100000)
+    const parked = new Map<string, any>([['t', { proc, buf, timer, kind: 'undo' }]])
+    adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      undefined,
+      'SNAPSHOT-PREFACE'
+    )
+    expect(port1.posted).toEqual([
+      { t: 'data', d: 'everything' },
+      { t: 'state', state: 'running' }
+    ])
+    clearTimeout(timer)
+  })
+})
+
+// Bg sessions Phase 5: quit/darwin-close ring-tail persistence for background parks.
+describe('persistBackgroundRingTailsCore (quit continuity)', () => {
+  it(
+    'appends only background parks' +
+      String.fromCharCode(8217) +
+      's post-watermark tails, keyed to their owning dir',
+    () => {
+      const bufA = createRing(1024)
+      pushRing(bufA, 'pre')
+      const watermarkA = bufA.written
+      pushRing(bufA, 'tail-a')
+      const bufUndo = createRing(1024)
+      pushRing(bufUndo, 'undo-park-output')
+      const bufQuiet = createRing(1024)
+      pushRing(bufQuiet, 'pre-only')
+      const parked = new Map<string, any>([
+        [
+          'a',
+          {
+            proc: makeProc(1).proc,
+            buf: bufA,
+            kind: 'background',
+            owningDir: 'C:/projA',
+            watermark: watermarkA
+          }
+        ],
+        ['u', { proc: makeProc(2).proc, buf: bufUndo, kind: 'undo' }],
+        [
+          'q',
+          {
+            proc: makeProc(3).proc,
+            buf: bufQuiet,
+            kind: 'background',
+            owningDir: 'C:/projB',
+            watermark: bufQuiet.written
+          }
+        ]
+      ])
+      const appended: Array<[string, string, string]> = []
+      persistBackgroundRingTailsCore(parked, (dir, id, text) => appended.push([dir, id, text]))
+      // undo park skipped; quiet background park (no post-watermark bytes) skipped.
+      expect(appended).toEqual([['C:/projA', 'a', 'tail-a']])
+    }
+  )
+
+  it('one failing append does not block the rest (best-effort quit drain)', () => {
+    const mk = (text: string): any => {
+      const buf = createRing(1024)
+      const watermark = buf.written
+      pushRing(buf, text)
+      return { proc: makeProc(9).proc, buf, kind: 'background', owningDir: 'C:/p', watermark }
+    }
+    const parked = new Map<string, any>([
+      ['x', mk('one')],
+      ['y', mk('two')]
+    ])
+    const appended: string[] = []
+    persistBackgroundRingTailsCore(parked, (_d, id, text) => {
+      if (id === 'x') throw new Error('disk full')
+      appended.push(text)
+    })
+    expect(appended).toEqual(['two'])
   })
 })

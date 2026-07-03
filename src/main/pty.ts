@@ -11,9 +11,11 @@ import {
   createRing,
   pushRing,
   readRing,
+  readRingSince,
   type OutputPage,
   type OutputRing
 } from './ptyOutput'
+import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
 
@@ -172,6 +174,11 @@ interface ParkedLike {
   kind?: ParkKind
   /** Owning project dir, copied from the session's `projectDir` at park time. */
   owningDir?: string | null
+  /** Ring `written` at park time (Phase 5 splice): the sidecar snapshot flushed just before
+   *  the park covers everything up to here, so a background switch-back replays only the
+   *  post-watermark tail (readRingSince) after re-writing the snapshot — full scrollback,
+   *  no duplication, no 256KB ceiling. Undo parks ignore it (full-ring replay as ever). */
+  watermark?: number
 }
 
 const sessions = new Map<string, SessionLike>()
@@ -338,7 +345,16 @@ export function parkCore(
     timer = setTimeout(() => reap(id), parkTtlMs)
     timer.unref?.()
   }
-  parkedMap.set(id, { proc: s.proc, buf: s.buf, timer, kind, owningDir: s.projectDir ?? null })
+  parkedMap.set(id, {
+    proc: s.proc,
+    buf: s.buf,
+    timer,
+    kind,
+    owningDir: s.projectDir ?? null,
+    // Phase 5 splice: everything up to here is (≈) in the sidecar snapshot the switch
+    // flushed moments ago; adopt/residue/quit-tail read only what lands after.
+    watermark: s.buf.written
+  })
 }
 
 /**
@@ -353,7 +369,10 @@ export function adoptCore(
   parkedMap: Map<string, ParkedLike>,
   deps: Pick<SessionDeps, 'newChannel' | 'killTree'>,
   transferPort: (port2: MessagePortMain) => void,
-  requireOwner?: { dir: string | null }
+  requireOwner?: { dir: string | null },
+  /** Phase 5 splice: the sidecar snapshot to replay BEFORE the ring tail on a background
+   *  adopt (pre-park scrollback, unbounded by the ring cap). Null/absent ⇒ no preface. */
+  preface?: string | null
 ): { adopted: boolean; pid?: number } {
   const p = parkedMap.get(id)
   if (!p) return { adopted: false }
@@ -392,7 +411,17 @@ export function adoptCore(
 
   // Replay recorded scrollback, then re-announce running. PERF-06: the deque is joined
   // here (readRing), not on every onData chunk.
-  const replay = readRing(p.buf)
+  //
+  // Phase 5 splice: a BACKGROUND park replays snapshot-preface + post-watermark tail —
+  // the sidecar flushed at switch-away already holds everything up to the park, so a
+  // full-ring replay on top of it would duplicate the overlap and cap history at the
+  // ring's 256KB. Gated on the preface actually EXISTING: a missing sidecar (flush
+  // failed / never ran) degrades to the classic full-ring replay rather than showing a
+  // bare post-park tail. Undo parks (deleted board; nothing was flushed at delete)
+  // always full-ring replay. Port messages are ordered, so the preface lands first.
+  const watermark = p.kind === 'background' && preface ? p.watermark : undefined
+  const replay = watermark !== undefined ? readRingSince(p.buf, watermark) : readRing(p.buf)
+  if (watermark !== undefined && preface) port1.postMessage({ t: 'data', d: preface })
   if (replay) port1.postMessage({ t: 'data', d: replay })
   port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
 
@@ -444,7 +473,11 @@ function park(id: string): void {
  * `running`. Returns the live pid so the e2e can assert process identity. If no
  * session is parked, returns `{ adopted: false }` and the caller spawns fresh.
  */
-function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number } {
+function adopt(
+  id: string,
+  win: BrowserWindow,
+  preface?: string | null
+): { adopted: boolean; pid?: number } {
   // Owner-scoped (R1): only a parked session owned by the ACTIVE project may reattach.
   return adoptCore(
     id,
@@ -452,8 +485,52 @@ function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number
     parked,
     sessionDeps,
     (port2) => win.webContents.postMessage('pty:port', { id }, [port2]),
-    { dir: getCurrentDir() }
+    { dir: getCurrentDir() },
+    preface
   )
+}
+
+/**
+ * Phase 5 (quit/darwin-close continuity): append every BACKGROUND park's post-watermark
+ * ring tail to its owning project's sidecar, so output produced while backgrounded
+ * survives an app quit the renderer flush can't see (the flush serializes only the ACTIVE
+ * project's mounted xterms). `append` is injected (terminalSnapshot.appendTerminalSnapshot)
+ * to keep this module fs-free; callers run it BEFORE the rings die in disposeAllPtys.
+ */
+export function persistBackgroundRingTails(
+  append: (projectDir: string, boardId: string, text: string) => void
+): void {
+  persistBackgroundRingTailsCore(parked, append)
+}
+
+/**
+ * Board ids currently BACKGROUND-parked (any owning project). Phase 5 consumers:
+ * `pruneBoardResults` keeps these ids' results across switches (a resident's verdict must
+ * survive until its switch-back), and the recap re-arm loop SKIPS them (an id that is both
+ * live and background-parked is the R1 clone collision — tracking the resident's transcript
+ * for the active clone's board would cross-wire projects).
+ */
+export function backgroundParkedBoardIds(): Set<string> {
+  const ids = new Set<string>()
+  for (const [id, p] of parked) if (p.kind === 'background') ids.add(id)
+  return ids
+}
+
+/** Pure core of the above (module map injected) so the walk is unit-testable. */
+export function persistBackgroundRingTailsCore(
+  parkedMap: Map<string, ParkedLike>,
+  append: (projectDir: string, boardId: string, text: string) => void
+): void {
+  for (const [id, p] of parkedMap) {
+    if (p.kind !== 'background' || !p.owningDir) continue
+    const tail = readRingSince(p.buf, p.watermark ?? 0)
+    if (!tail) continue
+    try {
+      append(p.owningDir, id, tail)
+    } catch {
+      /* best-effort — one board's failed append must not block the quit drain */
+    }
+  }
 }
 
 /**
@@ -597,7 +674,10 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         parked.delete(opts.id)
         if (p.kind === 'background') {
           recordExitResidue(p.owningDir ?? null, opts.id, {
-            output: readRing(p.buf),
+            // Phase 5 splice: the residue is the POST-PARK tail only — the switch-back
+            // restore re-writes the sidecar snapshot first, then appends this, so the
+            // user sees pre-park scrollback + exactly what the agent said before dying.
+            output: readRingSince(p.buf, p.watermark ?? 0),
             exitCode,
             exitedAt: Date.now()
           })
@@ -668,11 +748,21 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     return true
   })
 
-  ipcMain.handle('pty:adopt', (e, id: string) => {
+  ipcMain.handle('pty:adopt', async (e, id: string) => {
     if (isForeignSender(e, getWin)) return { adopted: false }
     const win = getWin()
     if (!win) return { adopted: false }
-    return adopt(id, win)
+    // Phase 5 splice: for a background park owned by the ACTIVE project, read its sidecar
+    // snapshot (flushed at switch-away) to replay as the preface before the ring tail.
+    // Read here (async, before the sync adopt) so adoptCore stays pure of fs. If the
+    // entry changes while the read is in flight (exit/reap), adopt just settles false.
+    const p = parked.get(id)
+    const owner = p?.kind === 'background' ? (p.owningDir ?? null) : null
+    const preface =
+      owner !== null && owner === getCurrentDir()
+        ? await readTerminalSnapshotAsync(owner, id).catch(() => null)
+        : null
+    return adopt(id, win, preface)
   })
 }
 
