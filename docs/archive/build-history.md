@@ -1788,3 +1788,36 @@ asserted, revealed, searched: exact count with ZERO further PTY writes) · full 
 the pre-merge tree (Win 245/245, Linux 247 with 1 known browserNetwork JD-2 load-flake
 retry-green) + full matrix re-run on the merged tree · manual dev check title-stamped. Bot
 review: 0 critical / 0 warning.
+
+## 2026-07-03 — PR #296: recap facts face enriched — plan, errors, meta, diff stats, agents (`c76d20d8`)
+
+Workstream C of the recap-enrichment research (design signed off 2026-07-03; built in worktree
+`recap-enrichment` per the now-deleted `docs/research/2026-07-03-recap-enrichment/HANDOFF.md` —
+this entry is its residue). Every new fact parses in `computeRecapFacts`'s **existing single 64KB
+tail pass** — no new I/O, no LLM cost, no consent change; the bundle is computed per `recap:get`
+and never persisted → all fields additive, **no schema bump**, renderer feature-detects each one.
+
+- **P0** — `todos {done,total,active}` (LAST TodoWrite wins; emptied list clears) · `errors
+  {count,last}` (`is_error` tool_results; excerpt scrubbed via `redactSecrets` BEFORE the cap so a
+  straddling secret can't survive) · `model` (latest assistant metadata) · `gitBranch` (per-record
+  top-level transcript field — tail-safe, unlike the head-anchored gitStatus block; never runs git).
+- **P1** — `contextTokens` (LAST assistant usage input + cache-read; honest point metric under
+  tail truncation) · per-file `adds`/`dels` summed from `structuredPatch` hunks (annotates existing
+  file entries only — no phantom chips from results whose tool_use fell outside the tail).
+- **P2** — `agents {count, labels}` (Task tool_use; labels deduped recency-first, ≤3). Facts-only —
+  the signed-off mock has no agents row.
+- **P3** — `buildRecapInput` appends ≤2 lines (plan progress + last error) through `redactSecrets`
+  with room **reserved** inside `MAX_INPUT_CHARS` (overflow trims milestones, never the extras);
+  `RECAP_SYSTEM` unchanged. Plumbed via `MilestoneResult.extras` off the same tail read.
+- **UI (RecapView)** — meta row `model · branch · Nk ctx` (mono, ellipsized) · Plan row (34px/1fr
+  grid, `done/total — active`, 2px accent bar) in both narrative + facts-only modes · diff stats on
+  Changed chips (`+adds` in --ok / `−dels` in --err) · warn-toned errors line above the last-ask
+  footer. Preload mirror (`recapApi.ts`) in lockstep.
+
+**Verified:** ~15 new recapFacts units (per-field fixtures, truncated-tail robustness, caps,
+later-wins, phantom-chip guard) + RecapView row tests + buildRecapInput extras (scrub, budget,
+legacy shape) + kTokens; full suite 4324 · recap e2e extended (TodoWrite + is_error fixture →
+recap-plan/recap-errors, key-less zero-egress) · full pre-push matrix ×2 (Win 248P; Linux 260P,
+documented dataFlow/browserNetwork flakes retry-green) · manual dev check title-stamped
+(`PR recap-enrichment`). Bot review: 0 critical / 0 warning (re-review after the max-lines fixup
+`7f6f4ffc` — rebase onto #293 pushed `index.ts` to 702>700; compacted, behavior identical).
