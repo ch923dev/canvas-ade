@@ -30,8 +30,15 @@ export interface RecapFacts {
   lastActivity?: number
   turns: { user: number; agent: number }
   lastAsk?: string
-  files: { path: string; op: 'edit' | 'write'; count: number }[]
+  files: { path: string; op: 'edit' | 'write'; count: number; adds?: number; dels?: number }[]
   commands: { label: string; count: number }[]
+  // Recap enrichment (2026-07-03): OPTIONAL, feature-detected — see src/main/recapFacts.ts.
+  todos?: { done: number; total: number; active?: string }
+  errors?: { count: number; last?: string }
+  model?: string
+  gitBranch?: string
+  contextTokens?: number
+  agents?: { count: number; labels: string[] }
   generatedAt: number
 }
 export interface RecapNarrative {

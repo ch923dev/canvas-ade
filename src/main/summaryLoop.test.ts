@@ -13,6 +13,7 @@ import {
   sanitizeSummary,
   sanitizeTitle,
   createSummaryLoop,
+  buildRecapInput,
   buildRecapMarkdown,
   buildRecapNarrative,
   parseRecapPayload,
@@ -1011,6 +1012,67 @@ describe('recap assembly', () => {
     }))
     const notes = Array.from({ length: 10 }, (_, k) => ({ i: k + 1, text: `n${k}` }))
     expect(buildRecapNarrative({ now: 'x', notes }, many, 1).beats.length).toBe(MAX_RECAP_NOTES)
+  })
+})
+
+describe('buildRecapInput — P3 extras (plan progress + last error)', () => {
+  const ms: Milestone[] = [
+    { ts: Date.parse('2026-06-07T14:32:00Z'), role: 'user', text: 'review auth' },
+    { ts: Date.parse('2026-06-07T14:35:00Z'), role: 'agent', text: 'found 3 issues' }
+  ]
+
+  it('appends the two lines after the numbered milestones; RECAP_SYSTEM untouched', () => {
+    const input = buildRecapInput(ms, {
+      plan: { done: 4, total: 7, active: 'wiring terminalInputRegistry' },
+      lastError: 'EBUSY: rename locked'
+    })
+    expect(input.system).toBe(RECAP_SYSTEM)
+    expect(input.text).toContain('1. [you] review auth')
+    expect(input.text).toContain('Plan progress: 4/7 done — current: wiring terminalInputRegistry')
+    expect(input.text).toContain('Last tool error: EBUSY: rename locked')
+    // extras come AFTER the milestones
+    expect(input.text.indexOf('Plan progress:')).toBeGreaterThan(input.text.indexOf('2. [agent]'))
+  })
+
+  it('scrubs secrets in the active item and the error line', () => {
+    const input = buildRecapInput(ms, {
+      plan: { done: 1, total: 2, active: 'rotate sk-abc123DEF456ghi789jklMNO' },
+      lastError: 'push failed: ghp_abcdefghijklmnopqrstuvwxyz0123456789'
+    })
+    expect(input.text).toContain('[redacted]')
+    expect(input.text).not.toContain('sk-abc123DEF456ghi789jklMNO')
+    expect(input.text).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789')
+  })
+
+  it('never exceeds MAX_INPUT_CHARS and the extras survive milestone overflow', () => {
+    const long: Milestone[] = Array.from({ length: 12 }, (_, k) => ({
+      ts: 1000 + k,
+      role: 'agent' as const,
+      text: 'x'.repeat(600)
+    }))
+    const input = buildRecapInput(long, {
+      plan: { done: 3, total: 9, active: 'still going' },
+      lastError: 'ENOENT: missing file'
+    })
+    expect(input.text.length).toBeLessThanOrEqual(MAX_INPUT_CHARS)
+    // room for the extras is RESERVED — the overflow trims milestones, not the new lines
+    expect(input.text).toContain('Plan progress: 3/9 done — current: still going')
+    expect(input.text).toContain('Last tool error: ENOENT: missing file')
+  })
+
+  it('no extras (or empty extras) -> the legacy milestone-only shape', () => {
+    expect(buildRecapInput(ms).text).toBe(buildRecapInput(ms, {}).text)
+    expect(buildRecapInput(ms).text).not.toContain('Plan progress')
+    expect(buildRecapInput([]).text).toBe('No activity yet.')
+  })
+
+  it('a lone extra line renders without the other', () => {
+    const planOnly = buildRecapInput(ms, { plan: { done: 2, total: 2 } })
+    expect(planOnly.text).toContain('Plan progress: 2/2 done')
+    expect(planOnly.text).not.toContain('Last tool error')
+    const errOnly = buildRecapInput(ms, { lastError: 'boom' })
+    expect(errOnly.text).toContain('Last tool error: boom')
+    expect(errOnly.text).not.toContain('Plan progress')
   })
 })
 

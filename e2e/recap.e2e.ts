@@ -132,6 +132,47 @@ test('@terminal facts render from the transcript with no LLM key', async ({
             ]
           }
         }),
+        // Recap enrichment: a TodoWrite (plan progress) + a failed tool_result (errors line) —
+        // both BEFORE the final assistant question so the waiting-on-you status stays pinned.
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-06-13T04:11:20.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                name: 'TodoWrite',
+                input: {
+                  todos: [
+                    { content: 'review docs', status: 'completed', activeForm: 'Reviewing docs' },
+                    {
+                      content: 'tidy structure',
+                      status: 'in_progress',
+                      activeForm: 'tidying structure'
+                    },
+                    { content: 'delete strays', status: 'pending', activeForm: 'Deleting strays' }
+                  ]
+                }
+              }
+            ]
+          }
+        }),
+        JSON.stringify({
+          type: 'user',
+          timestamp: '2026-06-13T04:11:30.000Z',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 't-err',
+                content: 'EBUSY: rename locked',
+                is_error: true
+              }
+            ]
+          }
+        }),
         JSON.stringify({ type: 'ai-title', aiTitle: 'Tidy the docs' }),
         JSON.stringify({
           type: 'assistant',
@@ -171,6 +212,14 @@ test('@terminal facts render from the transcript with no LLM key', async ({
     const chips = page.locator('[data-test="recap-chips"]')
     await expect(chips).toContainText('CLAUDE.md')
     await expect(chips).toContainText('List files')
+    // Recap enrichment: the Plan row (from the TodoWrite) + the errors line (from the
+    // is_error tool_result) render from the same zero-LLM Layer-0 pass.
+    const plan = page.locator('[data-test="recap-plan"]')
+    await expect(plan).toContainText('1/3')
+    await expect(plan).toContainText('tidying structure')
+    const errors = page.locator('[data-test="recap-errors"]')
+    await expect(errors).toContainText('1 tool error')
+    await expect(errors).toContainText('EBUSY: rename locked')
     await expect(page.locator('[data-test="recap-lastask"]')).toContainText('tidy the docs')
   } finally {
     // Restore the CLAUDE_CONFIG_DIR seedRecapTranscript mutated, so the throwaway fixture root

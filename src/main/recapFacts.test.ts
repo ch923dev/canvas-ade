@@ -5,6 +5,9 @@ import {
   TITLE_MAX_CHARS,
   FACT_LIST_MAX,
   COMMAND_LABEL_MAX,
+  ERROR_EXCERPT_MAX,
+  TODO_ACTIVE_MAX,
+  AGENT_LABELS_MAX,
   type RecapFacts
 } from './recapFacts'
 import { IDLE_AFTER_MS, type TerminalRuntime } from './summaryLoop'
@@ -275,5 +278,266 @@ describe('computeRecapFacts status', () => {
     expect(recent.status).toBe('running')
     const question = computeRecapFacts(jsonl(asstLine([txt('Which one?')], 595)), undefined, NOW)
     expect(question.status).toBe('waiting-on-you')
+  })
+})
+
+// ── recap enrichment (P0-P2) ─────────────────────────────────────────────────
+/** A user record carrying one tool_result block (the real transcript shape for tool replies). */
+const resultLine = (content: unknown, atSec: number, extra: Record<string, unknown> = {}): string =>
+  line({
+    type: 'user',
+    timestamp: iso(atSec),
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 't1', content, ...extra }]
+    }
+  })
+/** A user tool-result record whose top-level toolUseResult carries an Edit/Write patch. */
+const patchLine = (filePath: string, hunkLines: string[], atSec: number): string =>
+  line({
+    type: 'user',
+    timestamp: iso(atSec),
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }]
+    },
+    toolUseResult: {
+      filePath,
+      structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: hunkLines }]
+    }
+  })
+const todoItem = (
+  status: string,
+  content: string,
+  activeForm?: string
+): Record<string, unknown> => ({ status, content, ...(activeForm ? { activeForm } : {}) })
+
+describe('computeRecapFacts enrichment: todos (P0)', () => {
+  it('reads done/total/active from the LAST TodoWrite (later entries win); activeForm preferred', () => {
+    const f = facts(
+      jsonl(
+        asstLine([tool('TodoWrite', { todos: [todoItem('pending', 'a')] })], 10),
+        asstLine(
+          [
+            tool('TodoWrite', {
+              todos: [
+                todoItem('completed', 'design'),
+                todoItem('completed', 'parse'),
+                todoItem('in_progress', 'wire registry', 'wiring terminalInputRegistry'),
+                todoItem('pending', 'tests')
+              ]
+            })
+          ],
+          20
+        )
+      )
+    )
+    expect(f.todos).toEqual({ done: 2, total: 4, active: 'wiring terminalInputRegistry' })
+  })
+
+  it('falls back to content when the in-progress item has no activeForm; caps the label', () => {
+    const long = 'y'.repeat(TODO_ACTIVE_MAX + 40)
+    const f = facts(
+      jsonl(asstLine([tool('TodoWrite', { todos: [todoItem('in_progress', long)] })], 10))
+    )
+    expect(f.todos?.active).toBe('y'.repeat(TODO_ACTIVE_MAX))
+    expect(f.todos?.total).toBe(1)
+    expect(f.todos?.done).toBe(0)
+  })
+
+  it('absent without a TodoWrite; malformed todos never throw; a later EMPTY list clears the plan', () => {
+    expect(facts(jsonl(userLine('go', 5))).todos).toBeUndefined()
+    expect(
+      facts(jsonl(asstLine([tool('TodoWrite', { todos: 'not-an-array' })], 10))).todos
+    ).toBeUndefined()
+    const cleared = facts(
+      jsonl(
+        asstLine([tool('TodoWrite', { todos: [todoItem('pending', 'a')] })], 10),
+        asstLine([tool('TodoWrite', { todos: [] })], 20)
+      )
+    )
+    expect(cleared.todos).toBeUndefined()
+  })
+})
+
+describe('computeRecapFacts enrichment: errors (P0)', () => {
+  it('counts is_error tool_results only; last = the newest non-empty excerpt, whitespace-collapsed', () => {
+    const f = facts(
+      jsonl(
+        resultLine('fine output', 10), // no is_error -> not counted
+        resultLine('EACCES: denied', 20, { is_error: true }),
+        resultLine('EBUSY: rename\n  locked file', 30, { is_error: true })
+      )
+    )
+    expect(f.errors).toEqual({ count: 2, last: 'EBUSY: rename locked file' })
+  })
+
+  it('reads array-shaped tool_result content; an empty-content error still counts but keeps the previous last', () => {
+    const f = facts(
+      jsonl(
+        resultLine([{ type: 'text', text: 'boom happened' }], 10, { is_error: true }),
+        resultLine([], 20, { is_error: true })
+      )
+    )
+    expect(f.errors).toEqual({ count: 2, last: 'boom happened' })
+  })
+
+  it('scrubs secrets from the excerpt and caps it at ERROR_EXCERPT_MAX', () => {
+    const secret = facts(
+      jsonl(resultLine('auth failed for sk-abc123DEF456ghi789jklMNO', 10, { is_error: true }))
+    )
+    expect(secret.errors?.last).toContain('[redacted]')
+    expect(secret.errors?.last).not.toContain('sk-abc123DEF456ghi789jklMNO')
+
+    // 'z' on purpose: an all-hex-chars run ('e'/'a'...) >= 40 chars is itself a redactSecrets
+    // target (the long-hex-blob rule), which would collapse before the cap could apply.
+    const long = facts(
+      jsonl(resultLine('z'.repeat(ERROR_EXCERPT_MAX + 80), 10, { is_error: true }))
+    )
+    expect(long.errors?.last).toBe('z'.repeat(ERROR_EXCERPT_MAX))
+    expect(facts(jsonl(userLine('all fine', 5))).errors).toBeUndefined()
+  })
+})
+
+describe('computeRecapFacts enrichment: model / gitBranch / contextTokens (P0+P1)', () => {
+  const asstMeta = (atSec: number, over: Record<string, unknown>): string =>
+    line({
+      type: 'assistant',
+      timestamp: iso(atSec),
+      ...(over.gitBranch !== undefined ? { gitBranch: over.gitBranch } : {}),
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+        ...(over.model !== undefined ? { model: over.model } : {}),
+        ...(over.usage !== undefined ? { usage: over.usage } : {})
+      }
+    })
+
+  it('model comes from the LATEST assistant metadata; non-strings ignored', () => {
+    const f = facts(
+      jsonl(asstMeta(10, { model: 'claude-opus-4-8' }), asstMeta(20, { model: 'claude-sonnet-5' }))
+    )
+    expect(f.model).toBe('claude-sonnet-5')
+    expect(facts(jsonl(asstMeta(10, { model: 42 }))).model).toBeUndefined()
+    expect(facts(jsonl(userLine('hi', 5))).model).toBeUndefined()
+  })
+
+  it('gitBranch reads the top-level record field on ANY record type; later wins', () => {
+    const f = facts(
+      jsonl(
+        line({ type: 'user', gitBranch: 'main', message: { role: 'user', content: 'go' } }),
+        asstMeta(20, { gitBranch: 'feat/voice-to-text' })
+      )
+    )
+    expect(f.gitBranch).toBe('feat/voice-to-text')
+    expect(facts(jsonl(userLine('hi', 5))).gitBranch).toBeUndefined()
+  })
+
+  it('contextTokens = LAST usage input + cache-read (a point metric); missing cache-read -> input only', () => {
+    const f = facts(
+      jsonl(
+        asstMeta(10, { usage: { input_tokens: 9, cache_read_input_tokens: 1 } }),
+        asstMeta(20, { usage: { input_tokens: 15_076, cache_read_input_tokens: 19_734 } })
+      )
+    )
+    expect(f.contextTokens).toBe(34_810)
+    expect(facts(jsonl(asstMeta(10, { usage: { input_tokens: 500 } }))).contextTokens).toBe(500)
+    expect(
+      facts(jsonl(asstMeta(10, { usage: { input_tokens: 'NaN-ish' } }))).contextTokens
+    ).toBeUndefined()
+    expect(facts(jsonl(userLine('hi', 5))).contextTokens).toBeUndefined()
+  })
+})
+
+describe('computeRecapFacts enrichment: per-file adds/dels (P1)', () => {
+  it('annotates the file entry from its structuredPatch and accumulates across results', () => {
+    const f = facts(
+      jsonl(
+        asstLine([tool('Edit', { file_path: 'a.ts' })], 10),
+        patchLine('a.ts', ['+one', '+two', '-gone', ' ctx'], 11),
+        asstLine([tool('Edit', { file_path: 'a.ts' })], 20),
+        patchLine('a.ts', ['+three'], 21)
+      )
+    )
+    expect(f.files).toEqual([{ path: 'a.ts', op: 'edit', count: 2, adds: 3, dels: 1 }])
+  })
+
+  it('a result with no matching tool_use entry is dropped (never fabricates a phantom chip)', () => {
+    const f = facts(jsonl(patchLine('orphan.ts', ['+x'], 10)))
+    expect(f.files).toEqual([])
+  })
+
+  it('entries without a seen patch stay stat-less; malformed patches never throw', () => {
+    const f = facts(
+      jsonl(
+        asstLine([tool('Edit', { file_path: 'plain.ts' })], 10),
+        asstLine([tool('Edit', { file_path: 'bad.ts' })], 20),
+        line({
+          type: 'user',
+          timestamp: iso(21),
+          message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+          toolUseResult: { filePath: 'bad.ts', structuredPatch: [{ lines: 'not-an-array' }, null] }
+        })
+      )
+    )
+    expect(f.files).toEqual([
+      { path: 'bad.ts', op: 'edit', count: 1 },
+      { path: 'plain.ts', op: 'edit', count: 1 }
+    ])
+  })
+})
+
+describe('computeRecapFacts enrichment: agents (P2)', () => {
+  it('counts Task spawns; labels deduped, recency-first, capped at AGENT_LABELS_MAX', () => {
+    const f = facts(
+      jsonl(
+        asstLine([tool('Task', { description: 'explore auth' })], 10),
+        asstLine([tool('Task', { description: 'review diff' })], 20),
+        asstLine([tool('Task', { description: 'explore auth' })], 30),
+        asstLine([tool('Task', { description: 'fix lints' })], 40),
+        asstLine([tool('Task', { description: 'write docs' })], 50)
+      )
+    )
+    expect(f.agents?.count).toBe(5)
+    expect(f.agents?.labels).toEqual(['write docs', 'fix lints', 'explore auth'])
+    expect(f.agents?.labels.length).toBeLessThanOrEqual(AGENT_LABELS_MAX)
+  })
+
+  it('absent without Task activity; a label-less Task still counts', () => {
+    expect(facts(jsonl(userLine('go', 5))).agents).toBeUndefined()
+    const f = facts(jsonl(asstLine([tool('Task', {})], 10)))
+    expect(f.agents).toEqual({ count: 1, labels: [] })
+  })
+})
+
+describe('computeRecapFacts enrichment: truncated-tail robustness', () => {
+  it('a partial first line carrying every new field is dropped: fields absent, never a throw', () => {
+    const full = line({
+      type: 'assistant',
+      timestamp: iso(10),
+      gitBranch: 'feat/x',
+      toolUseResult: { filePath: 'a.ts', structuredPatch: [{ lines: ['+x'] }] },
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-5',
+        usage: { input_tokens: 10, cache_read_input_tokens: 5 },
+        content: [
+          tool('TodoWrite', { todos: [todoItem('in_progress', 'a')] }),
+          tool('Task', { description: 'sub' }),
+          { type: 'tool_result', is_error: true, content: 'err' }
+        ]
+      }
+    })
+    // Simulate the tail read starting mid-record: the head half of the line is gone.
+    const truncated = full.slice(Math.floor(full.length / 2)) + '\n' + userLine('hello', 20)
+    const f = facts(truncated)
+    expect(f.turns).toEqual({ user: 1, agent: 0 })
+    expect(f.todos).toBeUndefined()
+    expect(f.errors).toBeUndefined()
+    expect(f.model).toBeUndefined()
+    expect(f.gitBranch).toBeUndefined()
+    expect(f.contextTokens).toBeUndefined()
+    expect(f.agents).toBeUndefined()
+    expect(f.files).toEqual([])
   })
 })

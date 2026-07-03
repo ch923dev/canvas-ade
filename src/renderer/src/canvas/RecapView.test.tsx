@@ -315,6 +315,126 @@ describe('RecapView (two-zone face)', () => {
   })
 })
 
+// ── Recap enrichment: the four new feature-detected rows ─────────────────────────────
+describe('RecapView enrichment rows (feature-detected)', () => {
+  afterEach(cleanup)
+
+  it('meta row renders model · branch · context and is ABSENT when no field exists', async () => {
+    const b = fullBundle()
+    b.facts.model = 'claude-sonnet-5'
+    b.facts.gitBranch = 'feat/voice-to-text'
+    b.facts.contextTokens = 62_000
+    setApi(b)
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(container.querySelector('[data-test=recap-meta]')).toBeTruthy())
+    expect(container.querySelector('[data-test=recap-meta]')?.textContent).toBe(
+      'claude-sonnet-5 · feat/voice-to-text · 62k ctx'
+    )
+
+    cleanup()
+    setApi(fullBundle()) // no enrichment fields -> the row must not render
+    const bare = render(<RecapView boardId="b1" />)
+    await waitFor(() =>
+      expect(bare.container.querySelector('[data-test=recap-status]')).toBeTruthy()
+    )
+    expect(bare.container.querySelector('[data-test=recap-meta]')).toBeNull()
+  })
+
+  it('meta row renders a lone field without separators', async () => {
+    const b = fullBundle()
+    b.facts.model = 'claude-sonnet-5'
+    setApi(b)
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(container.querySelector('[data-test=recap-meta]')).toBeTruthy())
+    expect(container.querySelector('[data-test=recap-meta]')?.textContent).toBe('claude-sonnet-5')
+  })
+
+  it('Plan row renders done/total + active with the bar width from done/total; absent without todos', async () => {
+    const b = fullBundle()
+    b.facts.todos = { done: 4, total: 7, active: 'wiring terminalInputRegistry' }
+    setApi(b)
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(container.querySelector('[data-test=recap-plan]')).toBeTruthy())
+    const plan = container.querySelector('[data-test=recap-plan]')
+    expect(plan?.textContent).toContain('4/7')
+    expect(plan?.textContent).toContain('wiring terminalInputRegistry')
+    const fill = container.querySelector('[data-test=recap-plan-fill]') as HTMLElement
+    expect(fill.style.width).toBe('57%') // Math.round(4/7 * 100)
+
+    cleanup()
+    setApi(fullBundle())
+    const bare = render(<RecapView boardId="b1" />)
+    await waitFor(() =>
+      expect(bare.container.querySelector('[data-test=recap-status]')).toBeTruthy()
+    )
+    expect(bare.container.querySelector('[data-test=recap-plan]')).toBeNull()
+  })
+
+  it('Plan row also renders in facts-only mode (no narrative)', async () => {
+    const b = fullBundle()
+    delete (b as { narrative?: unknown }).narrative
+    b.facts.todos = { done: 2, total: 4 }
+    setApi(b)
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() =>
+      expect(container.querySelector('[data-test=recap-facts-only]')).toBeTruthy()
+    )
+    const plan = container.querySelector('[data-test=recap-plan]')
+    expect(plan?.textContent).toContain('2/4')
+    expect(
+      (container.querySelector('[data-test=recap-plan-fill]') as HTMLElement).style.width
+    ).toBe('50%')
+  })
+
+  it('Changed chips show +adds/−dels, rendering only the non-zero halves', async () => {
+    const b = fullBundle()
+    b.facts.files = [
+      { path: 'Z:\\repo\\MEMORY.md', op: 'edit', count: 2, adds: 12, dels: 4 },
+      { path: 'Z:\\repo\\zeroAdds.ts', op: 'edit', count: 1, adds: 0, dels: 3 },
+      { path: 'Z:\\repo\\plain.ts', op: 'edit', count: 1 }
+    ]
+    setApi(b)
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(container.querySelector('[data-test=recap-chips]')).toBeTruthy())
+    const chips = container.querySelector('[data-test=recap-chips]')
+    expect(chips?.textContent).toContain('+12')
+    expect(chips?.textContent).toContain('−4')
+    expect(chips?.textContent).toContain('−3')
+    expect(chips?.textContent).not.toContain('+0')
+  })
+
+  it('errors line renders only when count > 0, with singular/plural + the last excerpt', async () => {
+    const b = fullBundle()
+    b.facts.errors = { count: 2, last: 'EBUSY: rename' }
+    setApi(b)
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(container.querySelector('[data-test=recap-errors]')).toBeTruthy())
+    const errors = container.querySelector('[data-test=recap-errors]')
+    expect(errors?.textContent).toContain('2 tool errors')
+    expect(errors?.textContent).toContain('EBUSY: rename')
+
+    cleanup()
+    const one = fullBundle()
+    one.facts.errors = { count: 1 }
+    setApi(one)
+    const single = render(<RecapView boardId="b1" />)
+    await waitFor(() =>
+      expect(single.container.querySelector('[data-test=recap-errors]')).toBeTruthy()
+    )
+    expect(single.container.querySelector('[data-test=recap-errors]')?.textContent).toContain(
+      '1 tool error'
+    )
+
+    cleanup()
+    setApi(fullBundle()) // no errors field -> no line
+    const none = render(<RecapView boardId="b1" />)
+    await waitFor(() =>
+      expect(none.container.querySelector('[data-test=recap-status]')).toBeTruthy()
+    )
+    expect(none.container.querySelector('[data-test=recap-errors]')).toBeNull()
+  })
+})
+
 describe('refreshNoteFor (pure outcome → note mapping)', () => {
   it('says nothing for a regenerated recap and unwraps a coalesced outcome', () => {
     expect(refreshNoteFor({ status: 'recap-written', asOf: 1 })).toBeNull()
