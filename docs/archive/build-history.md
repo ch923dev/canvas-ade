@@ -1551,3 +1551,60 @@ tests added) · full e2e matrix — Win 242P (+ documented osrCrop flake rerun-g
 242P clean · maintainer dev-check title-stamped `PR#281 reaper-close-gate` incl. the 7-min
 no-reap eyeball. Bot review: 0 critical / 0 warning. Spec
 (`docs/research/2026-07-02-board-lifecycle-close-gate/`) deleted in this PR per doc lifecycle.
+
+## 2026-07-03 — PR #282: spawn_board prompt/cwd actually reach the spawned terminal (`7fbcda4a`)
+
+The user-reported "MCP spawns a terminal that runs NOTHING while the tool reports success" bug.
+The host adapter accepted `spawn_board`'s `prompt`/`cwd` and dropped both on the floor (the
+"applied in T3.3 (configure_board)" follow-up that never happened); the `addBoard` command
+structurally couldn't carry them.
+
+- **`shared/mcpTypes.ts`** — `addBoard` command carries optional `launchCommand`/`cwd`
+  (terminal-only, mirroring `spawnGroup.members.terminal`). IPC-only union — no schema bump.
+- **`mcpLifecycle.spawnBoard`** — rejects prompt/cwd on a non-terminal type BEFORE any side
+  effect (no orphan board); sanitizes the prompt with the new shared `sanitizeLaunch` helper
+  (`sanitizeDispatchText` → one line, C0/DEL/C1 stripped, CR/LF rejected, 400 clamp) that
+  `spawnGroup` now also uses (one rule, no drift); forwards both on the command.
+- **`useMcpCommands` addBoard applier** — shape-revalidates (terminal-only, string-only), then
+  lands the fields via `updateBoard` in the same synchronous tick (before the terminal mounts →
+  `useTerminalSpawn` boots the CLI at first spawn; one undo removes the configured board). Kept
+  out of `canvasStore.addBoard` — the store is pinned at 720 code lines (file-size doctrine).
+- Gating parity with agent-callable `spawn_group`: sanitized + cap-checked, NO human confirm on
+  a freshly-minted board; `configure_board`'s existing-board gate untouched.
+
+**Verified:** units (sanitize/clamp/multiline-reject-no-cap-burn/off-type-reject) · new @mcp e2e
+(prompt lands as launchCommand AND the PTY output proves it RAN; non-terminal rejects with no
+orphan) · full pre-push matrix (Win + Linux Docker) · manual dev check title-stamped, real MCP
+HTTP call, screenshot evidence. Bot review: 0 critical / 0 warning / 0 nits.
+
+## 2026-07-03 — PR #288: MCP dispatch readiness gate — prompts land in a READY REPL (`e5839cab`)
+
+`runGatedWrite` wrote into a target PTY the instant a session existed — before the shell profile
+or the `launchCommand` agent booted — so relay/assign/handoff into a fresh terminal could land
+mid-boot (eaten by the boot stream / a CLI trust prompt) while the tool reported success. The only
+readiness handling was the renderer Command board's fixed 1500ms settle; external MCP callers got
+none.
+
+- **`terminalReadiness.ts` (new)** — hybrid boot-readiness waiter: floor (1500ms) → activity →
+  quiet (800ms), 15s degrade-honestly backstop (resolves `'unconfirmed'`, never hangs), per-pid
+  latch + maturity fast-path (a busy mid-task agent never re-pays the wait); abortable.
+- **`dispatchGate.ts` (new)** — `runGatedWrite` extracted verbatim from `mcpOrchestrator.ts`
+  (the file crossed the 700-code-line cap; the `mcpKanbanGate` doctrine move) and extended:
+  readiness starts at nonce-issue (parallel with the human confirm → common case +0ms), awaited
+  after approval; the BUG-021 TOCTOU re-check stays immediately before consume/write (a cable
+  deleted DURING the wait is still caught — unit-locked). Denied confirm aborts the observation.
+  `interrupt` opts out.
+- **Honest ack** — `dispatched` now means "written into a readiness-confirmed REPL"; a
+  backstopped wait still writes but audits the new `dispatched_unconfirmed` +
+  `readiness=<outcome> waited=<ms>`. `dispatchPrompt`/`relayPrompt` resolve
+  `{ delivery: 'ready' | 'unconfirmed' }` (LifecycleOrchestrator widening; void-shim at the
+  rc.5 package boundary in `mcp.ts` — deleted when the pin reaches ≥0.18.0-rc.6).
+- **`pty.ts`** — `SessionLike.spawnedAt` (adopt = 0) + `getTerminalBootInfo(Core)`.
+  **Registry** — optional `awaitReady?` seam (absent ⇒ byte-identical legacy behaviour).
+
+**Verified:** 16 new units (waiter matrix, gate ordering, abort, interrupt opt-out, TOCTOU-during-
+wait) · new @mcp e2e (4s slow-boot worker: the dispatched sentinel provably lands AFTER
+BOOT_DONE) · full matrix ×2 (pre-push + post-#282 merge, Win 244P + Linux Docker) · manual dev
+check title-stamped (gate held the write ~6.7s; screenshot). Bot review: 0 critical / 0 warning.
+Follow-up owed: @expanse-ade/mcp 0.18.0-rc.6 pin bump (deletes the void-shim) + the host
+auto-cable (spawner→spawned connector for connected-tier spawns).
