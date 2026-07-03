@@ -1688,17 +1688,40 @@ lifetime only; ask-on-switch dialog mediates; shipped default (no flag). ADR 001
   **ADR 0011** (lifetime · budgets · dialog policy · darwin=quit · no schema bump · v1
   limitations + follow-ups).
 - **Epic-end sync merge `487c97ac`** (post-#291 main): two add-vs-add pty.ts conflicts →
-  union (`spawnedAt` readiness + `projectDir` tags).
+  union (`spawnedAt` readiness + `projectDir` tags). Second sync `8d9a0db2` (post-#292);
+  its index.ts growth tripped the max-lines ratchet → `14d8969e` moved the BUG-M2
+  `flushRenderer` body to `flushChannel.ts` beside its primitives.
+- **Review rounds `1bceddfb` + `0c9119e4` + `c0f0de77`** — the PR bot silent-failed twice
+  ("success", zero comments, permission denials) → substituted a LOCAL multi-agent review
+  (memory: pr-bot-silent-fail-local-review): 4 CONFIRMED + 2 PLAUSIBLE + 3 cleanups fixed
+  in `1bceddfb` (keep-forever survival [forget moved to the explicit dialog Stop],
+  flush-time watermark [`peekRingWritten`/`setFlushWatermark` committed at
+  `terminal:writeSnapshot` success — closes the reapUndoParks loss window], failed-preview
+  `did-fail-load` re-emit on remount, `'background-failed'` abort outcome, exit-bar
+  empty-residue edge, `fetchLiveDecorations`/`pickFolder` dedups, single-dir
+  `project:thumb` IPC). The bot then worked (rounds on `14d8969e` + `0c9119e4`):
+  `0c9119e4` fixed its [critical] `preview:osrOpen` remount OWNER GUARD (bare-id reuse
+  handed a cloned project the resident's live page — the R1 class, now mirrors
+  `adoptCore.requireOwner`; foreign collision ⇒ dispose + fresh window), the R4
+  adopt→re-park `flushWatermark` carry-back, and the dock's silent `'locked'` drop;
+  `c0f0de77` added switcher `'locked'` toast parity (shared `toastLockedSwitch`) and true
+  single-flight on `project:captureThumb` (`captureInFlight` flag). Final incremental
+  round verified clean. CodeQL stat→append TOCTOU dispositioned (quit-path sync block) +
+  alert dismissed. Clone-collision boardResults inheritance ACCEPTED as the ADR-0011
+  deferred dir-keyed follow-up.
 
-**Verified:** clean-env vitest 4260P · new e2e projectBackground (4) + Continuity (splice
+**Verified:** clean-env vitest 4296P · new e2e projectBackground (4) + Continuity (splice
 exactly-once, deeper than the ring + dir-isolation) + Dialog ladder + Dock + SwitchMotion
-suites · FULL pre-merge matrix on the final tree: Win 256P (osrCrop documented flake
-rerun-green) + Linux-Docker 256P (dataFlow documented flake retry-recovered) · manual dev
-checks per phase + the epic check, all user-signed. e2e gotchas paid: mint+open the
-DESTINATION first (R2 pinned flush-save rejects); splice spec needs board scrollback 50000
-(at the 2000-ROW default, wrapped filler evicts from xterm before the 256KB ring); POSIX
-legs need platform-forked markers (bash chokes on pwsh concat). Deferred (ADR'd):
-quit-relaunch e2e harness, recap-map dir-scoping, dir-keyed boardResults.
+suites · FULL pre-merge matrix on the MERGE-RESULT tree `c0f0de77` (main unmoved at
+`3ca57748`): Win 261/261 accounted (osrCrop + clone-collision cross-spec load flakes
+rerun-green isolated) + Linux-Docker 260P + 1 flaky-recovered (dataFlow, the documented
+Docker class) · CI check green ×4 heads (its ubuntu runner caught a POSIX `basename`
+test-literal bug → `a60b8228`) · manual dev checks per phase + the epic check, all
+user-signed. Merged `4d2bfeb9`. e2e gotchas paid: mint+open the DESTINATION first (R2
+pinned flush-save rejects); splice spec needs board scrollback 50000 (at the 2000-ROW
+default, wrapped filler evicts from xterm before the 256KB ring); POSIX legs need
+platform-forked markers (bash chokes on pwsh concat). Deferred (ADR'd): quit-relaunch e2e
+harness, recap-map dir-scoping, dir-keyed boardResults.
 ## 2026-07-03 — PR #290: recap refresh — structured outcomes + `recap:updated` push + lineage-guarded transcript resolution (`50701813`)
 
 User-reported: the recap face's stale banner ("Recap is out of date — describes an earlier
