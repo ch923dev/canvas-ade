@@ -48,6 +48,15 @@ export interface TerminalWriteCoalescer {
   enqueue: (chunk: string) => void
   /** Signal the board became visible — flush the held buffer (next frame). No-op if nothing held. */
   onVisible: () => void
+  /**
+   * Flush pending chunks NOW (synchronous write) instead of waiting for the next frame; returns
+   * whether anything was written. Find-in-terminal calls this before searching so the SearchAddon
+   * scans a buffer that includes bytes still queued for the next rAF. Respects the hold gate
+   * (below-LOD hidden AND the resize-backstop hold): while gated it refuses — a forced write
+   * would interleave into a mid-backstop reset buffer — and the normal onVisible catch-up plus
+   * the find bar's settle re-search cover that window instead.
+   */
+  flushNow: () => boolean
   /** Current held character count (the e2e held-bytes probe; proves the PTY produced while gated). */
   held: () => number
   /** Drop the buffer + cancel any scheduled flush. Used on restart (reuse the term) and teardown. */
@@ -101,6 +110,18 @@ export function createTerminalWriteCoalescer(deps: WriteCoalescerDeps): Terminal
     },
     onVisible() {
       if (chunks.length > 0) ensureScheduled()
+    },
+    flushNow() {
+      if (chunks.length === 0 || !isLive()) return false
+      if (handle !== 0) {
+        cancel(handle)
+        handle = 0
+      }
+      const out = chunks.join('')
+      chunks = []
+      len = 0
+      write(out)
+      return true
     },
     held() {
       return len

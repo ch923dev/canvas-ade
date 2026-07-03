@@ -9,7 +9,7 @@
 // Determinism: the board launches `exit`, so the PTY dies and emits no more bytes; we wait for the
 // "[process exited]" marker, then resetTerminalWrite a known buffer. No live-shell race.
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { evalIn, mainCall, pollEval, seed } from './helpers'
 
 // needle ×3 (all lowercase) · "Foo"+"foo" → 2 case-insensitive / 1 case-sensitive · no "zzzzz".
 const CONTENT = [
@@ -123,5 +123,74 @@ test.describe('@terminal find-in-terminal (Ctrl+F)', () => {
       `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { launchCommand: 'exit 0' })`
     )
     await expect(input, 'find bar closes on a full re-spawn').toHaveCount(0)
+  })
+})
+
+// ── Find-count fix: the two gated/streaming states the static-buffer specs above never cover ──
+
+const live = (id: string): string => `window.__canvasE2E.terminalLive(${JSON.stringify(id)})`
+const heldBytes = (id: string): string =>
+  `window.__canvasE2E.terminalHeldBytes(${JSON.stringify(id)})`
+
+/** Seed a LIVE shell terminal (unlike seedWithBuffer's dead `exit` PTY) framed in view. */
+async function seedLive(page: import('@playwright/test').Page): Promise<string> {
+  const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+  await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 10_000)
+  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+  expect(await pollEval(page, `${live(id)} === true`, 4_000), 'terminal live in view').toBe(true)
+  await page.waitForTimeout(500) // let the spawn banner finish streaming
+  return id
+}
+
+test.describe('@terminal find-in-terminal — live/gated buffers (find-count fix)', () => {
+  test('the count converges on STREAMING output with no further user input', async ({
+    page,
+    electronApp
+  }) => {
+    const id = await seedLive(page)
+    const input = page.locator(`${node(id)} [data-test="terminal-find-input"]`)
+    const count = page.locator(`${node(id)} [data-test="terminal-find-count"]`)
+
+    await openFind(page, id)
+    await expect(input).toBeFocused()
+    // Not in the buffer yet — the bar reports an HONEST negative...
+    await input.fill('FINDME_STREAM')
+    await expect(count).toHaveText('No results')
+
+    // ...then the agent prints it. The addon's write-driven recount must update the open bar
+    // without the user touching the query (the pre-fix behavior this spec pins, plus proof the
+    // lastFound gating never masks a genuine late match).
+    await mainCall(electronApp, 'writeTerminal', id, `echo FINDME_STREAM\r`)
+    await expect(count).toHaveText(/\d+ \/ \d+/, { timeout: 8_000 })
+  })
+
+  test('REVEAL-LATCH regression: a search right after reveal converges with ZERO further PTY writes', async ({
+    page,
+    electronApp
+  }) => {
+    const id = await seedLive(page)
+    const input = page.locator(`${node(id)} [data-test="terminal-find-input"]`)
+    const count = page.locator(`${node(id)} [data-test="terminal-find-count"]`)
+
+    // Gate the board below LOD; produce the needle while hidden (bytes HELD, not rendered).
+    await evalIn(page, `window.__canvasE2E.setZoom(0.3)`)
+    expect(await pollEval(page, `${live(id)} === false`, 4_000), 'gated below LOD').toBe(true)
+    await mainCall(electronApp, 'writeTerminal', id, `echo FINDME_LATCH\r`)
+    expect(
+      await pollEval(page, `${heldBytes(id)} > 0`, 8_000),
+      'needle bytes are held while gated (the stale-buffer precondition)'
+    ).toBe(true)
+
+    // Reveal and IMMEDIATELY search — inside the liveness-settle/rAF window the searched buffer
+    // can still lack the needle. Pre-fix, that initial 0 LATCHED until the next PTY output
+    // (this spec writes none). The fix converges it: flush-at-open + the one-shot settle
+    // re-search recount with no further output.
+    await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    await openFind(page, id)
+    await input.fill('FINDME_LATCH')
+    await expect(count, 'count is exact with no further PTY writes').toHaveText(/\d+ \/ \d+/, {
+      timeout: 5_000
+    })
+    await expect(count).not.toHaveClass(/warn/)
   })
 })

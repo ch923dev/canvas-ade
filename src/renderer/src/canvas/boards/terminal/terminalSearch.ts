@@ -57,3 +57,13 @@ export function formatMatchCount(resultIndex: number, resultCount: number): stri
   if (resultIndex < 0) return String(resultCount)
   return `${resultIndex + 1} / ${resultCount}`
 }
+
+/**
+ * Find-count fix: how long after a type-ahead search the bar re-runs the SAME incremental search
+ * once. The addon's decoration count can transiently read 0 on a just-revealed / mid-refit
+ * terminal even though the match was found+selected, and it only self-corrects on the next PTY
+ * write (its `onWriteParsed` recount, +200ms debounce) — minutes away on an idle terminal. One
+ * settle re-run re-registers the decorations after the addon's 200ms highlight debounce AND the
+ * 120ms liveness reveal settle (+ a frame), converging the count without further output.
+ */
+export const SEARCH_SETTLE_MS = 350
