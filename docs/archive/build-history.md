@@ -1608,3 +1608,27 @@ BOOT_DONE) · full matrix ×2 (pre-push + post-#282 merge, Win 244P + Linux Dock
 check title-stamped (gate held the write ~6.7s; screenshot). Bot review: 0 critical / 0 warning.
 Follow-up owed: @expanse-ade/mcp 0.18.0-rc.6 pin bump (deletes the void-shim) + the host
 auto-cable (spawner→spawned connector for connected-tier spawns).
+
+## 2026-07-03 — PR #289: auto-cable — connected-terminal spawns mint the spawner→spawned connector (`9a28b947`)
+
+Part 3 of the MCP prompt-relay fix (#282, #288). A connected terminal could `spawn_board` a worker
+but `relay_prompt` into it was rejected (no orchestration cable) until the human hand-drew one.
+
+- **`shared/mcpTypes.ts`** — `addBoard` gains an optional `connector: { sourceId }` request.
+- **`mcpLifecycle.spawnBoard`** — accepts `sourceBoardId` (the ≥rc.6 package tool passes the
+  connected caller's token-derived `ctx.boardId`; unforgeable) and requests the connector ONLY
+  when the spawn is a terminal AND the source is a live terminal in the mirror; anything else
+  spawns without a cable rather than failing (board = deliverable, cable = authorization sugar).
+- **`useMcpCommands` applier** — connector shape + terminal-only re-validated BEFORE any side
+  effect; live-store source check; `addConnector(src, id, 'orchestration')` — visible/deletable,
+  directional; every relay still pays the human confirm + TOCTOU re-check.
+- **`RunningMcp.spawnBoard` + `spawnBoardNow` e2e seam** (the `spawnGroupNow` pattern).
+
+**Verified:** 9 new units (lifecycle cable matrix + applier reject-before-side-effect) · new @mcp
+e2e (seam spawn → cable in mirror with no gesture → connected client relays along it,
+human-confirmed + readiness-gated, sentinel lands) · full pre-push matrix 246/246 (Win + Linux
+Docker) · manual dev check title-stamped, AUTO_CABLE verified in the mirror + screenshot.
+**Follow-up owed (blocked on the rc.6 npm publish):** app pin bump `0.18.0-rc.5 → 0.18.0-rc.6`
+(activates the wire half: the connected-tier tool sending ctx.boardId + honest delivery acks)
+and deletion of the `mcp.ts` void-shim. @expanse-ade/mcp PR #6 is merged on `feat/canvas-layout`;
+the local tag `v0.18.0-rc.6` exists — pushing it triggers the OIDC npm publish.
