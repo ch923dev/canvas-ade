@@ -23,8 +23,34 @@ import {
 } from './disposeLiveResources'
 import { requestAskOnSwitch } from './askOnSwitchStore'
 import { captureProjectThumb } from './projectThumbCapture'
+import {
+  armSwitchTransition,
+  settleSwitchTransitionIn,
+  clearSwitchTransition
+} from './switchTransitionStore'
 
 export type SwitchOutcome = 'switched' | 'locked' | 'save-failed' | 'cancelled'
+
+/** Phase 4c: budget for pulling the outgoing thumb as the overlay's OUT snapshot — same
+ *  contract as the capture itself (cosmetic; the switch never waits on it). */
+const SNAPSHOT_FETCH_BUDGET_MS = 400
+
+/**
+ * The switch-away snapshot for the transition overlay: the dock thumbnail
+ * `captureProjectThumb` just cached for the outgoing dir. Time-boxed like the capture; any
+ * miss (no cached thumb, slow IPC, partial test mock) resolves null and the overlay skips
+ * the scale-out for the fade/HOLD path — still no picker, never a blocked switch.
+ */
+async function fetchOutgoingSnapshot(dir: string): Promise<string | null> {
+  const fetched = Promise.resolve()
+    .then(() => window.api.project.thumbs())
+    .then((t) => t[dir] ?? null)
+    .catch(() => null)
+  const budget = new Promise<string | null>((resolve) => {
+    setTimeout(() => resolve(null), SNAPSHOT_FETCH_BUDGET_MS)
+  })
+  return Promise.race([fetched, budget])
+}
 
 /**
  * Decide whether the outgoing project keeps running (Phase 4). Explicit `keepBackground`
@@ -116,6 +142,18 @@ export async function performProjectSwitch(
     // covers BOTH the keep and stop paths. Best-effort: capturePage is env-flaky, so a
     // failed capture is a normal outcome (the dock shows its dot-grid placeholder).
     if (outgoingDir !== null) await captureProjectThumb()
+    // Phase 4c: arm the switch-transition overlay BEFORE the setProjectLoading() unmount —
+    // the overlay is what stands in for the outgoing canvas the moment it disappears.
+    // Cancel/locked/save-failed all returned above, so those paths arm NOTHING; the
+    // welcome-screen open (no outgoing project) keeps its D0-7 fallback. The overlay
+    // settles below off the real landing; a throw in between is the watchdog's job.
+    if (outgoingDir !== null) {
+      armSwitchTransition({
+        snapshotUrl: await fetchOutgoingSnapshot(outgoingDir),
+        incomingName: opts?.incomingName ?? null,
+        outgoingName: useCanvasStore.getState().project.name
+      })
+    }
     // 2. Hand over live resources, then suppress autosave + unmount.
     if (keep && outgoingDir !== null) {
       // BEFORE the unmount (see module doc) — MAIN parks PTYs + freezes previews while the
@@ -148,6 +186,12 @@ export async function performProjectSwitch(
       const msg = err instanceof Error ? err.message : 'failed to load project'
       await applyOpenResult({ ok: false, error: msg })
     }
+    // Phase 4c: settle the overlay off the REAL landing — 'open' plays the IN rise over
+    // the freshly mounted canvas; anything else (load error, .bak retry that also failed)
+    // drops the overlay IMMEDIATELY so the error screen is reachable. Both are no-ops
+    // when nothing was armed (welcome-screen open).
+    if (useCanvasStore.getState().project.status === 'open') settleSwitchTransitionIn()
+    else clearSwitchTransition()
     return 'switched'
   } finally {
     releaseProjectSwitchLock()

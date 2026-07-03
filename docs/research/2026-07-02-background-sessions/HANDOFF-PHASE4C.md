@@ -28,8 +28,22 @@
   full-page capture + CPU-side `nativeImage.crop`). Never pass a rect to capturePage.
 - Manual dev check passed 2026-07-03 (`CANVAS_DEV_TITLE='bg-sessions P4b'`); the same
   session surfaced the findings fixed in `afe43fb0` and requested Phase 4c below.
+- **Phase 4c BUILT (this commit, 2026-07-03)** — the spec below implemented as approved:
+  `store/switchTransitionStore.ts` (idle→out→hold→in machine + watchdog; reduced-motion
+  sampled at arm; missing snapshot ⇒ straight to HOLD) · `SwitchTransitionOverlay.tsx` +
+  `styles/screens/switch-transition.css` (mock values verbatim) · App.tsx suppresses the
+  welcome picker while armed (UNMOUNTED, not occluded) behind a PERMANENT `.st-app-ground`
+  wrapper that carries `.st-app-rise` during IN (permanent so Canvas never remounts — a
+  remount would kill the very keep-alive this epic exists for) · `performProjectSwitch`
+  arms after flush-save + thumb capture (snapshot fetch time-boxed 400ms) and settles off
+  the real landing ('open' → IN; load error → IMMEDIATE clear) · e2e `reset()` drains the
+  overlay. Gate: 4210 unit (+10 store, +4 overlay integration) · `projectSwitchMotion.e2e`
+  2/2 (@chrome, reduced-motion leg via `page.emulateMedia`) · full Win leg 250P with the
+  documented osrCropSupersample + a projectBackground-clone teardown flake rerun-green.
+  **Still owed: the manual dev check (`CANVAS_DEV_TITLE='bg-sessions P4c'`) with user
+  sign-off, then Phase 5.**
 
-## Phase 4c — switch-transition motion (THE NEXT WORK, approved, not started)
+## Phase 4c — switch-transition motion (BUILT 2026-07-03 — spec kept for reference)
 
 **Design SIGNED OFF by the user 2026-07-03** on the interactive motion mock — do NOT
 produce a new artifact and do NOT re-ask for approval. The artifact is
@@ -97,6 +111,10 @@ title-bar pill badge · replacing the WelcomeScreen picker.
 - The dev-check app instance from 2026-07-03 was left RUNNING deliberately (user's live
   claude session inside it) — never kill other sessions' dev instances; stamp your own with
   a distinct `CANVAS_DEV_TITLE` (e.g. `'bg-sessions P4c'`).
+- **e2e mint order = the R2 dir-pin (hit building the 4c spec):** `createTempProject` flips
+  MAIN's `currentDir`, so minting the DESTINATION after opening the source makes the
+  switch's pinned flush-save reject → `'save-failed'` and (4c) the overlay never arms.
+  Mint+open the destination FIRST, then the source (the projectDock.e2e pattern).
 
 ## After Phase 4c → Phase 5 (hardening + ADR), then the epic PR
 
