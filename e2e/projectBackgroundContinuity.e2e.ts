@@ -195,7 +195,11 @@ test.describe('@terminal background project sessions — Phase 5 scrollback cont
     try {
       await openFromDisk(page, dirA)
       const { id } = await seedLiveTerminal(page, electronApp)
-      await writePty(electronApp, id, "echo ('ISO-'+'MARKER')\r")
+      // Platform-forked like the splice test — pwsh concat vs POSIX string-splitting (the
+      // Linux leg's bash errors on `('…'+'…')`, so the marker would never print there).
+      const mark =
+        process.platform === 'win32' ? "echo ('ISO-'+'MARKER')\r" : 'echo "ISO-""MARKER"\r'
+      await writePty(electronApp, id, mark)
       await expect.poll(() => readTerm(page, id), { timeout: 20_000 }).toContain('ISO-MARKER')
 
       const toB = await switchTo(page, dirB)
