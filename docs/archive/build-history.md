@@ -1821,3 +1821,46 @@ recap-plan/recap-errors, key-less zero-egress) · full pre-push matrix ×2 (Win 
 documented dataFlow/browserNetwork flakes retry-green) · manual dev check title-stamped
 (`PR recap-enrichment`). Bot review: 0 critical / 0 warning (re-review after the max-lines fixup
 `7f6f4ffc` — rebase onto #293 pushed `index.ts` to 702>700; compacted, behavior identical).
+
+## 2026-07-04 — Terminal-resume epic (feat/terminal-resume-umbrella, umbrella PR)
+
+**Resume no longer errors `No conversation found with session ID: <id>`.** The recap hook
+captured `session_id` eagerly at SessionStart — before Claude persists a resumable `.jsonl`
+transcript — so a launch-and-quit session stored a dead id that every Resume surface trusted.
+Research (4-layer design): `docs/research/2026-07-03-terminal-resume-capture/REPORT.md` (kept;
+the F1b/F4 handoffs are deleted in this PR per doc lifecycle). Four phases, each PR'd into the
+umbrella; F1b + F4 ran as parallel MCP-spawned sessions (spawn_board + relay_prompt lanes).
+
+- **F1+F3 (#294, `7201cc31`)** — MAIN-validated Resume. `terminal:resumeCheck`: canResume =
+  transcript resolves (A4 resolver) + exists + non-empty + tail carries the stored id (lineage,
+  MIN 8 chars). `terminal:resumeLaunch` re-resolves at click: lineage-proven → `--resume` the
+  ACTUAL tail id (rotation adoption); foreign-but-unclaimed → `--continue`; sibling-claimed or
+  nothing → fresh. Renderer `useResumeValidity` fail-closed hook; renderer `resumeCommand.ts`
+  DELETED — the id is sanitized (charset strip) where the launch line is built, in MAIN.
+- **F2 (#295, `37d284b9`)** — capture when the transcript is REAL: `recordSession.js` also runs
+  on UserPromptSubmit + SessionEnd (`RECAP_HOOK_EVENTS`), records `hookEvent` +
+  `transcriptExists`; `readRecapMap` keeps the latest CONFIRMED capture (embedded `confirmed`
+  round-trips the consent-decline prune rewrite); `resolveResume` rescues a dead eager id via
+  the confirmed candidate (never downgrades a `continue`).
+- **F1b (#297, `6a96585b`)** — palette Resume row gated on the validated boolean
+  (`resumeValidityStore` published by `useResumeValidity`), not raw `agentSessionId`; picking
+  Resume that lands fresh now fires a "Session not resumable — started fresh" toast.
+- **F4 (#298, `f82ca6bd`)** — hook-health surfacing: `recap:health` IPC
+  (runner/hookInstalled/captured/sessionAgeMs; consent-off → null) + Inspector Session
+  fault-only line (`useHookHealth`; runner missing → hook not installed → capture didn't
+  record, no chrome when healthy — signed-off wireframe) + `browser-window-focus` self-heal
+  re-ensures the hook (heals the mid-session settings.local.json clobber) + the #295 carry-in
+  (`selectTranscriptClocks` also matches `entry.confirmed.transcriptPath` so a rotated
+  confirmed session adopts its successor).
+
+**Epic-end sync merge** (`cc2df56b`): origin/main (#293 bg-sessions + #296 recap enrichment)
+merged in; one conflict (`terminalApi.ts`, union) + a post-merge max-lines ratchet fix —
+`getAgentMilestones` body + `persistedTranscriptPath` extracted to new
+`src/main/agentMilestones.ts` (+5 units; behavior unchanged, flushChannel precedent).
+
+**Verified:** terminalResume matrix + F2 rescue + injection units · agentRecapMap 3-event
+install/upgrade/confirmed units · useResumeValidity/useHookHealth/palette/store units ·
+e2e: terminalPolish DEAD-id → no Resume + `{mode:'fresh'}`, seeded lineage → Resume +
+`{mode:'resume'}`, palette row absent/present, recapHealth clobber → fault line → re-ensure
+heal · full pre-merge matrix + title-stamped dev check + real-claude manual check (this PR).
+Product call still open: decouple Resume from recap (egress) consent — resume is local-only.
