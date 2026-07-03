@@ -949,7 +949,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           // before this async read settles — writing then would splice the stale buffer into the
           // now-live session. disposed/termRef cover a remount; startedRef covers same-term-went-live.
           if (disposed || termRef.current !== term || startedRef.current) return
-          if (!snap && !residue?.output) return
+          // Review fix: residue with an EMPTY tail still carries the exit code — a session
+          // that died in the background without emitting bytes (and never flushed a
+          // snapshot) must still show the "Exited in background (code N)" bar, not a blank
+          // idle board. Only a mount with neither snapshot NOR residue stays plain.
+          if (!snap && !residue) return
           // Route through the Lane A coalescer (not a direct term.write): a hidden/below-LOD board
           // must defer this write until it goes live, exactly like the live-PTY path, so a restore
           // on an off-screen terminal doesn't pay the render cost the liveness gate exists to avoid.

@@ -26,6 +26,7 @@ import { CloseBackgroundModal } from './CloseBackgroundModal'
 import {
   bgBadge,
   dockCards,
+  fetchLiveDecorations,
   pickCreateProject,
   pickOpenFolder,
   type ProjectDockCard
@@ -73,15 +74,10 @@ export function ProjectDock(): ReactElement {
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
-    // Promise.resolve().then wrappers: a partial window.api mock (integration tests stub
-    // only what they use) must degrade to empty state, not throw before .catch attaches.
-    const [bg, forever, info] = await Promise.all([
-      Promise.resolve()
-        .then(() => window.api.project.listBackground())
-        .catch(() => []),
-      Promise.resolve()
-        .then(() => window.api.project.keepForeverDirs())
-        .catch(() => []),
+    const [{ bg, forever }, info] = await Promise.all([
+      fetchLiveDecorations(),
+      // Promise.resolve().then wrapper: a partial window.api mock (integration tests stub
+      // only what they use) must degrade to null, not throw before .catch attaches.
       Promise.resolve()
         .then(() => window.api.project.askOnSwitchInfo())
         .catch(() => null)

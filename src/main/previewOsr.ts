@@ -428,8 +428,12 @@ interface OsrRemountSource {
  * board sits at "Connecting…" with a stale URL bar forever. Emit did-navigate (live URL +
  * history state) and — only when the page is genuinely ready and not failed — did-finish-load,
  * so the store converges WITHOUT reloading the page (in-page form/SPA state surviving the switch
- * is the whole feature; a reload here would defeat it). When !ready || failed only the navigate
- * goes out — stay honest: the real lifecycle (or the user's Reload) resolves the rest.
+ * is the whole feature; a reload here would defeat it). A FAILED page re-emits did-fail-load
+ * (review fix): the kept window fires no new lifecycle events, so without it the remounted
+ * board sits at "Connecting…" with no Reload affordance while the page is actually broken.
+ * The entry latches only the failed BIT (not the original code/description), so the re-emit
+ * carries a synthetic description; the user's Reload then produces the real one. Only the
+ * never-ready, never-failed page stays navigate-only — its real first lifecycle is still coming.
  */
 export function emitOsrRemountState(
   id: string,
@@ -446,6 +450,14 @@ export function emitOsrRemountState(
       canGoForward: wc.navigationHistory.canGoForward()
     })
     if (e.ready && !e.failed) emit({ id, type: 'did-finish-load', url: wc.getURL() })
+    else if (e.failed)
+      emit({
+        id,
+        type: 'did-fail-load',
+        url: wc.getURL(),
+        errorCode: -1,
+        errorDescription: 'Page failed to load before the project switch'
+      })
   } catch {
     /* window died mid-remount — the crash/lifecycle events resolve the board state instead */
   }

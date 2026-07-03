@@ -25,7 +25,12 @@ import type { BackgroundProjectInfo } from '../../../preload'
 import { Icon } from './Icon'
 import { Menu } from './Menu'
 import { CloseBackgroundModal } from './CloseBackgroundModal'
-import { bgBadge, pickCreateProject, pickOpenFolder } from './projectSessionsShared'
+import {
+  bgBadge,
+  fetchLiveDecorations,
+  pickCreateProject,
+  pickOpenFolder
+} from './projectSessionsShared'
 
 export function ProjectSwitcher(): ReactElement {
   const name = useCanvasStore((s) => s.project.name)
@@ -58,16 +63,7 @@ export function ProjectSwitcher(): ReactElement {
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const refreshLive = useCallback(async (): Promise<void> => {
-    // Promise.resolve().then wrappers: a partial window.api mock (integration tests stub only
-    // what they use) must degrade to empty lists, not throw before .catch can attach.
-    const [bg, forever] = await Promise.all([
-      Promise.resolve()
-        .then(() => window.api.project.listBackground())
-        .catch(() => []),
-      Promise.resolve()
-        .then(() => window.api.project.keepForeverDirs())
-        .catch(() => [])
-    ])
+    const { bg, forever } = await fetchLiveDecorations()
     setBgList(bg)
     setForeverDirs(forever)
   }, [])

@@ -29,7 +29,12 @@ import {
   clearSwitchTransition
 } from './switchTransitionStore'
 
-export type SwitchOutcome = 'switched' | 'locked' | 'save-failed' | 'cancelled'
+export type SwitchOutcome =
+  | 'switched'
+  | 'locked'
+  | 'save-failed'
+  | 'background-failed'
+  | 'cancelled'
 
 /** Phase 4c: budget for pulling the outgoing thumb as the overlay's OUT snapshot — same
  *  contract as the capture itself (cosmetic; the switch never waits on it). */
@@ -42,9 +47,11 @@ const SNAPSHOT_FETCH_BUDGET_MS = 400
  * the scale-out for the fade/HOLD path — still no picker, never a blocked switch.
  */
 async function fetchOutgoingSnapshot(dir: string): Promise<string | null> {
+  // Review fix: single-dir fetch — the whole-map `thumbs()` re-read + base64-encoded EVERY
+  // resident's PNG synchronously in MAIN just to keep this one entry, on the switch's
+  // animation-critical path.
   const fetched = Promise.resolve()
-    .then(() => window.api.project.thumbs())
-    .then((t) => t[dir] ?? null)
+    .then(() => window.api.project.thumb(dir))
     .catch(() => null)
   const budget = new Promise<string | null>((resolve) => {
     setTimeout(() => resolve(null), SNAPSHOT_FETCH_BUDGET_MS)
@@ -78,7 +85,15 @@ async function decideKeep(
     previews: info.previews
   })
   if (choice.action === 'cancel') return 'cancelled'
-  if (choice.action === 'stop') return false
+  if (choice.action === 'stop') {
+    // Review fix: the Phase-4 single-gesture policy reset belongs to the USER'S explicit
+    // Stop pick, not to the closeActive mechanics (which also serve the zero-resource
+    // auto-stop — forgetting there deleted a persisted "always keep" behind the user's back).
+    await Promise.resolve()
+      .then(() => window.api.project.forgetKeepPolicy(outgoingDir))
+      .catch(() => false)
+    return false
+  }
   await Promise.resolve()
     .then(() => window.api.project.setKeepPolicy(choice.forever))
     .catch(() => false)
@@ -158,7 +173,19 @@ export async function performProjectSwitch(
     if (keep && outgoingDir !== null) {
       // BEFORE the unmount (see module doc) — MAIN parks PTYs + freezes previews while the
       // boards are still mounted, so their unmount cleanups no-op instead of killing.
-      await backgroundLiveResources(outgoingDir)
+      // Review fix: a FAILED handover must abort the switch (mirroring save-failed) — the
+      // sessions were never parked, so proceeding would let the unmount kill the very
+      // terminals the user just chose to keep, silently.
+      const backgrounded = await backgroundLiveResources(outgoingDir)
+      if (!backgrounded) {
+        // eslint-disable-next-line no-console
+        console.error('project switch: background handover failed; aborting to keep sessions')
+        useSaveStatusStore
+          .getState()
+          .setSaveFailure('Could not move the project to the background — switch cancelled')
+        clearSwitchTransition()
+        return 'background-failed'
+      }
       useCanvasStore.getState().setProjectLoading()
     } else if (outgoingDir !== null) {
       // STOP: the SCOPED close — kills only what the outgoing project owns. The legacy

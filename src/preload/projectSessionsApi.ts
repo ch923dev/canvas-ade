@@ -51,5 +51,8 @@ export const projectSessionsApi = {
   captureThumb: (rect: { x: number; y: number; width: number; height: number }): Promise<boolean> =>
     ipcRenderer.invoke('project:captureThumb', rect),
   /** Phase 4b: cached thumbnails for the SESSION set (active + residents) as data URLs. */
-  thumbs: (): Promise<Record<string, string>> => ipcRenderer.invoke('project:thumbs')
+  thumbs: (): Promise<Record<string, string>> => ipcRenderer.invoke('project:thumbs'),
+  /** Single-dir thumb (the switch-transition snapshot) — cheaper than the whole map on the
+   *  switch's animation-critical path. Null = no cached thumb / not a session dir. */
+  thumb: (dir: string): Promise<string | null> => ipcRenderer.invoke('project:thumb', dir)
 }

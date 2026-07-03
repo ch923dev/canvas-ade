@@ -750,6 +750,52 @@ describe('parkCore background kind (no-TTL park)', () => {
     expect(reap).toHaveBeenCalledWith('a')
     vi.useRealTimers()
   })
+
+  // Review fix: the watermark must be the FLUSH-time `written` (committed by the
+  // terminal:writeSnapshot handler), not park-time `written` — output arriving between the
+  // sidecar flush and the park (reapUndoParks can add hundreds of ms) would otherwise fall
+  // below the watermark AND outside the snapshot: dropped from the switch-back replay.
+  it('a background park prefers the flush watermark over park-time written', () => {
+    const port = makePort()
+    const { proc } = makeProc(803)
+    const buf = createRing(1024)
+    pushRing(buf, 'in-the-snapshot')
+    const flushedAt = buf.written
+    const sessions = new Map<string, any>([
+      ['a', { proc, port, buf, projectDir: 'C:/proj/A', flushWatermark: flushedAt }]
+    ])
+    const parked = new Map<string, any>()
+
+    // Output lands AFTER the flush but BEFORE the park (the reapUndoParks window).
+    pushRing(buf, 'between-flush-and-park')
+    parkCore('a', sessions, parked, () => {}, undefined, 'background')
+
+    // The gap bytes sit ABOVE the watermark → the switch-back tail replays them.
+    expect(parked.get('a').watermark).toBe(flushedAt)
+  })
+
+  it('a background park with NO flush watermark falls back to park-time written; undo parks ignore it', () => {
+    const mk = (flushWatermark?: number): Map<string, any> => {
+      const buf = createRing(1024)
+      pushRing(buf, 'xyz')
+      return new Map<string, any>([
+        ['a', { proc: makeProc(804).proc, port: makePort(), buf, projectDir: null, flushWatermark }]
+      ])
+    }
+    const parkedA = new Map<string, any>()
+    const noFlush = mk(undefined)
+    parkCore('a', noFlush, parkedA, () => {}, undefined, 'background')
+    expect(parkedA.get('a').watermark).toBe(3)
+
+    // An undo park keeps park-time written even when a stale flush watermark exists
+    // (undo replay is full-ring; the watermark is never read).
+    const parkedB = new Map<string, any>()
+    const undoWithStale = mk(1)
+    parkCore('a', undoWithStale, parkedB, () => {}, 1000)
+    expect(parkedB.get('a').watermark).toBe(3)
+    const t = parkedB.get('a').timer
+    if (t) clearTimeout(t)
+  })
 })
 
 describe('adoptCore owner scoping (R1 — cloned projects share board UUIDs)', () => {

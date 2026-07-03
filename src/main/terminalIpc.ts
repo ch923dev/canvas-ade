@@ -14,7 +14,7 @@ import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } fro
 import writeFileAtomic from 'write-file-atomic'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
-import { takeExitResidue, type ExitResidue } from './pty'
+import { takeExitResidue, peekRingWritten, setFlushWatermark, type ExitResidue } from './pty'
 import {
   writeTerminalSnapshot,
   writeTerminalSnapshotAsync,
@@ -91,9 +91,19 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
       // `.canvas/terminal/` under a colliding id. Reject on mismatch; absent = legacy caller.
       if (expectedDir !== undefined && expectedDir !== dir) return false
       const safeText = typeof text === 'string' ? text : ''
+      const id = String(boardId)
+      // Phase 5 splice (review fix): capture the ring watermark at handler ENTRY — the closest
+      // MAIN-side point to the renderer's serialize — and commit it only when the write LANDS.
+      // The background park then splices the tail from here instead of from park time, so
+      // output arriving between this flush and the park is replayed, not silently dropped.
+      const written = peekRingWritten(id)
+      const commit = (ok: boolean): boolean => {
+        if (ok && written !== null) setFlushWatermark(id, written)
+        return ok
+      }
       return sync
-        ? writeTerminalSnapshot(dir, String(boardId), safeText)
-        : writeTerminalSnapshotAsync(dir, String(boardId), safeText)
+        ? commit(writeTerminalSnapshot(dir, id, safeText))
+        : writeTerminalSnapshotAsync(dir, id, safeText).then(commit)
     }
   )
 

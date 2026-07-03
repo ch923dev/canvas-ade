@@ -33,12 +33,18 @@ export async function disposeLiveResources(expectedDir?: string): Promise<void> 
   await window.api.disposeAllTerminals().catch(() => false)
 }
 
-export async function backgroundLiveResources(expectedDir?: string): Promise<void> {
+export async function backgroundLiveResources(expectedDir?: string): Promise<boolean> {
   // Flush FIRST (needs the mounted xterms + currentDir still on the outgoing project): the
   // switch-time sidecar is the durability baseline — post-switch output lives only in each
   // parked session's ring until quit-tail persistence (Phase 5) lands.
   await flushAllTerminalSnapshots({ expectedDir }).catch(() => {})
-  await window.api.project.background().catch(() => null)
+  // Review fix: report the handover honestly — a swallowed failure here let the switch
+  // proceed to the unmount, whose cleanups then KILLED the never-parked sessions the user
+  // chose to keep. The caller aborts the switch on false (the save-failed pattern).
+  const res = await Promise.resolve()
+    .then(() => window.api.project.background())
+    .catch(() => null)
+  return res?.ok === true
 }
 
 export async function closeActiveLiveResources(expectedDir?: string): Promise<void> {

@@ -386,11 +386,24 @@ describe('emitOsrRemountState (switch-back re-emit)', () => {
     expect(emit.mock.calls[0][0]).toMatchObject({ id: 'b2', type: 'did-navigate' })
   })
 
-  it('emits ONLY did-navigate for a failed page (the real lifecycle / Reload resolves it)', () => {
+  it('re-emits did-fail-load for a failed page (review fix: the kept window fires no new lifecycle, so navigate-only left the board stuck at "Connecting…")', () => {
     const emit = vi.fn()
     emitOsrRemountState('b3', { ready: true, failed: true }, mkWc(), emit)
-    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit).toHaveBeenCalledTimes(2)
     expect(emit.mock.calls[0][0]).toMatchObject({ id: 'b3', type: 'did-navigate' })
+    expect(emit.mock.calls[1][0]).toMatchObject({
+      id: 'b3',
+      type: 'did-fail-load',
+      url: 'http://localhost:5173/deep/route',
+      errorCode: -1
+    })
+  })
+
+  it('failed wins over never-ready — the board must land on load-failed, not Connecting', () => {
+    const emit = vi.fn()
+    emitOsrRemountState('b5', { ready: false, failed: true }, mkWc(), emit)
+    expect(emit).toHaveBeenCalledTimes(2)
+    expect(emit.mock.calls[1][0]).toMatchObject({ id: 'b5', type: 'did-fail-load' })
   })
 
   it('swallows a webContents that throws (window died mid-remount)', () => {

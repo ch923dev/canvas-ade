@@ -162,6 +162,15 @@ interface SessionLike {
    * (adopt, parked-buffer reads) must be scoped by this tag, never by bare id.
    */
   projectDir?: string | null
+  /**
+   * Phase 5 splice (review fix): ring `written` at the moment the renderer SERIALIZED this
+   * board's sidecar snapshot, committed by the `terminal:writeSnapshot` handler on a
+   * successful write. A background park uses this instead of park-time `written`: the gap
+   * between the flush and the park (reapUndoParks/taskkill can take hundreds of ms) would
+   * otherwise fall below the watermark AND outside the snapshot, silently dropped from the
+   * switch-back replay. Absent (no flush ever landed) = park-time fallback.
+   */
+  flushWatermark?: number
 }
 
 /**
@@ -357,9 +366,14 @@ export function parkCore(
     timer,
     kind,
     owningDir: s.projectDir ?? null,
-    // Phase 5 splice: everything up to here is (≈) in the sidecar snapshot the switch
-    // flushed moments ago; adopt/residue/quit-tail read only what lands after.
-    watermark: s.buf.written
+    // Phase 5 splice: everything up to the FLUSH watermark is in the sidecar snapshot the
+    // switch serialized moments ago; adopt/residue/quit-tail read only what lands after.
+    // Review fix: prefer the watermark committed at snapshot-write time over park-time
+    // `written` — output that arrived between the flush and this park (reapUndoParks can
+    // add hundreds of ms) belongs to the post-snapshot tail, not below the watermark.
+    // Undo parks (nothing was flushed at delete) keep the park-time value; it is unused.
+    watermark:
+      kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written
   })
 }
 
@@ -439,6 +453,24 @@ const sessionDeps: SessionDeps = {
   killTree: (proc) => killTree(proc),
   newChannel: () => new MessageChannelMain(),
   parkTtlMs: PARK_TTL_MS
+}
+
+/**
+ * Phase 5 splice (review fix): capture/commit the flush watermark for a live session.
+ * `peekRingWritten` is read at `terminal:writeSnapshot` handler ENTRY (the closest MAIN-side
+ * point to the renderer's serialize moment) and committed via `setFlushWatermark` only when
+ * the sidecar write SUCCEEDS — a failed write leaves the previous watermark (matching the
+ * stale snapshot still on disk) so the switch-back tail replays from the snapshot that
+ * actually exists. Null when the board has no live session (parked/exited — nothing to splice).
+ */
+export function peekRingWritten(id: string): number | null {
+  const s = sessions.get(id)
+  return s ? s.buf.written : null
+}
+
+export function setFlushWatermark(id: string, written: number): void {
+  const s = sessions.get(id)
+  if (s) s.flushWatermark = written
 }
 
 /** Reap a parked session: stop its TTL timer and kill its process tree. */

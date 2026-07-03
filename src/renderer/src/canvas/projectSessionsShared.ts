@@ -83,27 +83,52 @@ export function dockCards(
   return cards
 }
 
+/**
+ * The live-decoration state the ProjectSwitcher rows and the ProjectDock cards both render:
+ * backgrounded residents + the persisted keep-forever set. One fetch (review dedup) so the
+ * two surfaces can never drift on how residents are loaded. Promise.resolve().then wrappers:
+ * a partial window.api mock (integration tests stub only what they use) must degrade to
+ * empty lists, not throw before .catch can attach.
+ */
+export async function fetchLiveDecorations(): Promise<{
+  bg: BackgroundProjectInfo[]
+  forever: string[]
+}> {
+  const [bg, forever] = await Promise.all([
+    Promise.resolve()
+      .then(() => window.api.project.listBackground())
+      .catch(() => [] as BackgroundProjectInfo[]),
+    Promise.resolve()
+      .then(() => window.api.project.keepForeverDirs())
+      .catch(() => [] as string[])
+  ])
+  return { bg, forever }
+}
+
 /** A picked folder resolved to the switch-pipeline load thunk + display name. */
 export interface PickedProject {
   load: () => Promise<unknown>
   name: string
 }
 
-/** "Open folder…": pick a dir → open it as a project. Null = picker cancelled/unavailable. */
-export async function pickOpenFolder(): Promise<PickedProject | null> {
-  // Promise.resolve().then wrapper: partial window.api mocks must degrade to null, not throw.
-  const dir = await Promise.resolve()
+/** The shared "pick a folder" preamble (review dedup): null = cancelled/unavailable.
+ *  Promise.resolve().then wrapper: partial window.api mocks must degrade to null, not throw. */
+async function pickFolder(): Promise<string | null> {
+  return Promise.resolve()
     .then(() => window.api.dialog.openFolder())
     .catch(() => null)
+}
+
+/** "Open folder…": pick a dir → open it as a project. Null = picker cancelled/unavailable. */
+export async function pickOpenFolder(): Promise<PickedProject | null> {
+  const dir = await pickFolder()
   if (!dir) return null
   return { load: () => window.api.project.open(dir), name: basenameOf(dir) }
 }
 
 /** "Create project…": pick a dir → create a project named after it. Null = cancelled. */
 export async function pickCreateProject(): Promise<PickedProject | null> {
-  const dir = await Promise.resolve()
-    .then(() => window.api.dialog.openFolder())
-    .catch(() => null)
+  const dir = await pickFolder()
   if (!dir) return null
   const name = basenameOf(dir)
   return { load: () => window.api.project.create(dir, name, {}), name }

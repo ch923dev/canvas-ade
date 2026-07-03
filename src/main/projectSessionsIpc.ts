@@ -106,7 +106,10 @@ export function registerProjectSessionsHandlers(
     if (guard(e)) return false
     const dir = deps.getCurrentDir()
     if (!dir) return false
-    deps.sessions.forgetKeepPolicy(dir) // closing resets the policy (Phase 4 single gesture)
+    // Review fix: NO forgetKeepPolicy here. The scoped close also serves the zero-resource
+    // auto-stop (nothing running → nothing to keep — no dialog), and forgetting there
+    // silently deleted a persisted "always keep" the user had ticked. The Phase-4
+    // single-gesture reset now rides the EXPLICIT dialog Stop choice (decideKeep, renderer).
     deps.disposeProjectOsr(dir)
     await deps.disposeProjectPtys(dir)
     return true

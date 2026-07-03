@@ -24,7 +24,7 @@ beforeEach(() => {
     project: {
       save: vi.fn().mockResolvedValue(true),
       captureThumb: vi.fn().mockResolvedValue(true),
-      thumbs: vi.fn().mockResolvedValue({}),
+      thumb: vi.fn().mockResolvedValue(null),
       closeActive: vi.fn().mockResolvedValue(true)
     }
   }
@@ -66,7 +66,7 @@ describe('SwitchTransitionOverlay (Phase 4c)', () => {
     // keepBackground:false = the explicit harness path (no dialog); the stop-path IPCs the
     // partial mock lacks degrade through their .catch wrappers.
     const p = performProjectSwitch(load, { keepBackground: false, incomingName: 'beta' })
-    // Overlay is up mid-switch (thumbs() returned {} → no snapshot → HOLD ground).
+    // Overlay is up mid-switch (thumb() returned null → no snapshot → HOLD ground).
     await waitFor(() => expect(screen.getByTestId('switch-transition')).toBeTruthy())
     resolveLoad({ ok: false, error: 'disk gone' })
     expect(await p).toBe('switched')

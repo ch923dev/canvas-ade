@@ -164,4 +164,20 @@ export function registerProjectThumbHandlers(
       }
     })
   })
+
+  // Single-dir fetch for the switch-transition snapshot (review fix): the whole-map
+  // `project:thumbs` read + base64-encoded EVERY resident's PNG synchronously just to serve
+  // one entry on the switch's animation-critical path. Same membership rule as the map —
+  // only the active dir or a registry resident is servable (never an arbitrary file read).
+  ipc.handle('project:thumb', (e, rawDir: unknown): string | null => {
+    if (guard(e)) return null
+    if (typeof rawDir !== 'string' || rawDir.length === 0) return null
+    const allowed = rawDir === deps.getCurrentDir() || deps.sessionDirs().includes(rawDir)
+    if (!allowed) return null
+    try {
+      return pngDataUrl(readFileSync(join(deps.thumbsDir(), `${dirHash(rawDir)}.png`)))
+    } catch {
+      return null // no cached thumb — the overlay takes its fade/HOLD path
+    }
+  })
 }
