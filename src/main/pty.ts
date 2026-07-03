@@ -11,10 +11,13 @@ import {
   createRing,
   pushRing,
   readRing,
+  readRingSince,
   type OutputPage,
   type OutputRing
 } from './ptyOutput'
+import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
+import { getCurrentDir } from './projectStore'
 
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
 // Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
@@ -151,17 +154,98 @@ interface SessionLike {
   spawnedAt: number
   /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
   exitCode?: number
+  /**
+   * Background sessions: the project dir that OWNS this session, captured from
+   * projectStore.getCurrentDir() at spawn time — NOT from opts.cwd (a board's cwd override can
+   * point anywhere). `null` = spawned with no project open (e.g. the e2e boot). Board ids are
+   * UUIDs but they collide across git-cloned/copied projects, so every cross-session lookup
+   * (adopt, parked-buffer reads) must be scoped by this tag, never by bare id.
+   */
+  projectDir?: string | null
+  /**
+   * Phase 5 splice (review fix): ring `written` at the moment the renderer SERIALIZED this
+   * board's sidecar snapshot, committed by the `terminal:writeSnapshot` handler on a
+   * successful write. A background park uses this instead of park-time `written`: the gap
+   * between the flush and the park (reapUndoParks/taskkill can take hundreds of ms) would
+   * otherwise fall below the watermark AND outside the snapshot, silently dropped from the
+   * switch-back replay. Absent (no flush ever landed) = park-time fallback.
+   */
+  flushWatermark?: number
 }
+
+/**
+ * Why a session was parked. `'undo'` = board delete awaiting undo (#15) — reaped after
+ * PARK_TTL_MS. `'background'` = its project was switched away with "keep running" — NO TTL;
+ * reaped only by an explicit project close or app quit.
+ */
+export type ParkKind = 'undo' | 'background'
+
 interface ParkedLike {
   proc: pty.IPty
   buf: OutputRing
-  timer: ReturnType<typeof setTimeout>
+  /** TTL reaper — absent for a `'background'` park (no timer is ever armed). */
+  timer?: ReturnType<typeof setTimeout>
+  /** Park reason (see {@link ParkKind}). Absent (legacy shape) reads as 'undo'. */
+  kind?: ParkKind
+  /** Owning project dir, copied from the session's `projectDir` at park time. */
+  owningDir?: string | null
+  /** Ring `written` at park time (Phase 5 splice): the sidecar snapshot flushed just before
+   *  the park covers everything up to here, so a background switch-back replays only the
+   *  post-watermark tail (readRingSince) after re-writing the snapshot — full scrollback,
+   *  no duplication, no 256KB ceiling. Undo parks ignore it (full-ring replay as ever). */
+  watermark?: number
 }
 
 const sessions = new Map<string, SessionLike>()
 
 /** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
 const parked = new Map<string, ParkedLike>()
+
+/**
+ * Background sessions (R6): what a background-parked proc left behind when it exited on its
+ * own — the ring tail + exit code, keyed `(owningDir, boardId)`. Without this the parked-exit
+ * path silently destroys the evidence (often the error that killed the agent), and a
+ * switch-back shows a stale snapshot with no explanation. Consume-on-read (Phase-5 UX);
+ * bounded; cleared per-project on close and wholesale on quit. Undo-parked exits keep
+ * today's silent-drop (a deleted board's process, not a running terminal).
+ */
+export interface ExitResidue {
+  output: string
+  exitCode: number
+  exitedAt: number
+}
+const exitResidue = new Map<string, ExitResidue>()
+const EXIT_RESIDUE_CAP = 32
+
+/** Compound residue key — bare board ids collide across cloned projects (R1). NUL join
+ *  mirrors the summaryLoop precedent. */
+function residueKey(dir: string | null, id: string): string {
+  return `${dir ?? ''}\u0000${id}`
+}
+
+function recordExitResidue(dir: string | null, id: string, r: ExitResidue): void {
+  if (exitResidue.size >= EXIT_RESIDUE_CAP) {
+    // Drop the oldest entry (Map preserves insertion order) — bounded, self-draining.
+    const oldest = exitResidue.keys().next().value
+    if (oldest !== undefined) exitResidue.delete(oldest)
+  }
+  exitResidue.set(residueKey(dir, id), r)
+}
+
+/** Consume (read + delete) the ACTIVE project's exit residue for a board, if any. */
+export function takeExitResidue(id: string): ExitResidue | undefined {
+  const key = residueKey(getCurrentDir(), id)
+  const r = exitResidue.get(key)
+  if (r) exitResidue.delete(key)
+  return r
+}
+
+function clearExitResidueForProject(dir: string | null): void {
+  const prefix = `${dir ?? ''}\u0000`
+  for (const key of [...exitResidue.keys()]) {
+    if (key.startsWith(prefix)) exitResidue.delete(key)
+  }
+}
 
 /**
  * PR-2: resolved spawn cwd per board id, for the read-only gitDiff (getTerminalCwd → gitDiff.ts).
@@ -241,7 +325,7 @@ export function reapParkedCore(
   const p = parkedMap.get(id)
   if (!p) return Promise.resolve()
   parkedMap.delete(id)
-  clearTimeout(p.timer)
+  if (p.timer) clearTimeout(p.timer) // a background park never armed one
   onReap?.(id)
   return deps.killTree(p.proc)
 }
@@ -250,13 +334,18 @@ export function reapParkedCore(
  * Core of `park` (#15): move the live session out of `sessions`, close its
  * renderer port, arm a TTL whose expiry reaps the tree, and store it in `parked`.
  * `reap` is the bound reaper invoked when the timer fires.
+ *
+ * Background sessions: `parkTtlMs === undefined` arms NO timer (the park lives until an
+ * explicit project close or quit) — used with `kind: 'background'` by parkProjectSessionsCore.
+ * The session's owning project travels into the parked entry so adopt/reads stay project-scoped.
  */
 export function parkCore(
   id: string,
   sessionsMap: Map<string, SessionLike>,
   parkedMap: Map<string, ParkedLike>,
   reap: (id: string) => void,
-  parkTtlMs: number
+  parkTtlMs?: number,
+  kind: ParkKind = 'undo'
 ): void {
   const s = sessionsMap.get(id)
   if (!s) return
@@ -266,9 +355,26 @@ export function parkCore(
   } catch {
     /* already closed */
   }
-  const timer = setTimeout(() => reap(id), parkTtlMs)
-  timer.unref?.()
-  parkedMap.set(id, { proc: s.proc, buf: s.buf, timer })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  if (parkTtlMs !== undefined) {
+    timer = setTimeout(() => reap(id), parkTtlMs)
+    timer.unref?.()
+  }
+  parkedMap.set(id, {
+    proc: s.proc,
+    buf: s.buf,
+    timer,
+    kind,
+    owningDir: s.projectDir ?? null,
+    // Phase 5 splice: everything up to the FLUSH watermark is in the sidecar snapshot the
+    // switch serialized moments ago; adopt/residue/quit-tail read only what lands after.
+    // Review fix: prefer the watermark committed at snapshot-write time over park-time
+    // `written` — output that arrived between the flush and this park (reapUndoParks can
+    // add hundreds of ms) belongs to the post-snapshot tail, not below the watermark.
+    // Undo parks (nothing was flushed at delete) keep the park-time value; it is unused.
+    watermark:
+      kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written
+  })
 }
 
 /**
@@ -282,11 +388,22 @@ export function adoptCore(
   sessionsMap: Map<string, SessionLike>,
   parkedMap: Map<string, ParkedLike>,
   deps: Pick<SessionDeps, 'newChannel' | 'killTree'>,
-  transferPort: (port2: MessagePortMain) => void
+  transferPort: (port2: MessagePortMain) => void,
+  requireOwner?: { dir: string | null },
+  /** Phase 5 splice: the sidecar snapshot to replay BEFORE the ring tail on a background
+   *  adopt (pre-park scrollback, unbounded by the ring cap). Null/absent ⇒ no preface. */
+  preface?: string | null
 ): { adopted: boolean; pid?: number } {
   const p = parkedMap.get(id)
   if (!p) return { adopted: false }
-  clearTimeout(p.timer)
+  // Background sessions (R1): board UUIDs collide across git-cloned/copied projects. When the
+  // caller supplies the ACTIVE project dir, a parked entry owned by a DIFFERENT project must
+  // never be handed to this renderer — leave it parked untouched (its true owner adopts it on
+  // switch-back) and let the caller fall through to the snapshot-restore/spawn path.
+  if (requireOwner !== undefined && (p.owningDir ?? null) !== requireOwner.dir) {
+    return { adopted: false }
+  }
+  if (p.timer) clearTimeout(p.timer)
   parkedMap.delete(id)
 
   // BUG-024: mirror the Bug #13 spawn-path guard — if a LIVE session already holds
@@ -308,13 +425,31 @@ export function adoptCore(
     buf: p.buf,
     state: 'running',
     lastActivityAt: Date.now(), // T-F1: adopt = fresh activity (scrollback is about to replay)
-    spawnedAt: 0 // adopted proc booted long ago → the readiness floor passes immediately
+    spawnedAt: 0, // adopted proc booted long ago → the readiness floor passes immediately
+    projectDir: p.owningDir ?? null, // the tag survives the park→adopt round-trip
+    // R4 raced re-park (review [warning]): carry the park watermark back as the session's
+    // flush watermark — no new flush happens during an adopt, so the on-disk sidecar
+    // boundary is unchanged. Without this, an adopt-then-immediate-re-park (the raced
+    // switch-back-and-away) records watermark = live `written`, and the bytes between the
+    // snapshot and that point land in neither the preface nor the tail. A later real
+    // flush overwrites it; undo parks carry nothing (their watermark is never read).
+    flushWatermark: p.kind === 'background' ? p.watermark : undefined
   })
   transferPort(port2)
 
   // Replay recorded scrollback, then re-announce running. PERF-06: the deque is joined
   // here (readRing), not on every onData chunk.
-  const replay = readRing(p.buf)
+  //
+  // Phase 5 splice: a BACKGROUND park replays snapshot-preface + post-watermark tail —
+  // the sidecar flushed at switch-away already holds everything up to the park, so a
+  // full-ring replay on top of it would duplicate the overlap and cap history at the
+  // ring's 256KB. Gated on the preface actually EXISTING: a missing sidecar (flush
+  // failed / never ran) degrades to the classic full-ring replay rather than showing a
+  // bare post-park tail. Undo parks (deleted board; nothing was flushed at delete)
+  // always full-ring replay. Port messages are ordered, so the preface lands first.
+  const watermark = p.kind === 'background' && preface ? p.watermark : undefined
+  const replay = watermark !== undefined ? readRingSince(p.buf, watermark) : readRing(p.buf)
+  if (watermark !== undefined && preface) port1.postMessage({ t: 'data', d: preface })
   if (replay) port1.postMessage({ t: 'data', d: replay })
   port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
 
@@ -325,6 +460,23 @@ const sessionDeps: SessionDeps = {
   killTree: (proc) => killTree(proc),
   newChannel: () => new MessageChannelMain(),
   parkTtlMs: PARK_TTL_MS
+}
+
+/**
+ * Phase 5 splice (review fix): capture/commit the flush watermark for a live session.
+ * `peekRingWritten` is read at `terminal:writeSnapshot` handler ENTRY (the closest MAIN-side
+ * point to the renderer's serialize moment) and committed via `setFlushWatermark` only when
+ * the sidecar write SUCCEEDS — a failed write leaves the previous watermark (matching the
+ * stale snapshot still on disk) so the switch-back tail replays from the snapshot that
+ * actually exists. Null when the board has no live session (parked/exited — nothing to splice).
+ */
+export function peekRingWritten(id: string): number | null {
+  return sessions.get(id)?.buf.written ?? null
+}
+
+export function setFlushWatermark(id: string, written: number): void {
+  const s = sessions.get(id)
+  if (s) s.flushWatermark = written
 }
 
 /** Reap a parked session: stop its TTL timer and kill its process tree. */
@@ -339,9 +491,24 @@ function reapParked(id: string): Promise<void> {
  * `sessions` (so the board-unmount's `pty:kill` no-ops), close the renderer port
  * (the proc keeps running and the onData listener keeps recording into `buf`), and
  * start a TTL after which the process tree is reaped if no undo adopts it.
+ *
+ * Background sessions (R4): the kind is chosen by OWNERSHIP — a session whose owning
+ * project is no longer the active one can only be a background session (the raced-adopt
+ * re-park path), so it parks with NO TTL; a same-project park keeps the classic
+ * delete-undo semantics (TTL reap).
  */
 function park(id: string): void {
-  parkCore(id, sessions, parked, (pid) => void reapParked(pid), sessionDeps.parkTtlMs)
+  const s = sessions.get(id)
+  if (!s) return
+  const crossProject = (s.projectDir ?? null) !== getCurrentDir()
+  parkCore(
+    id,
+    sessions,
+    parked,
+    (pid) => void reapParked(pid),
+    crossProject ? undefined : sessionDeps.parkTtlMs,
+    crossProject ? 'background' : 'undo'
+  )
 }
 
 /**
@@ -351,10 +518,75 @@ function park(id: string): void {
  * `running`. Returns the live pid so the e2e can assert process identity. If no
  * session is parked, returns `{ adopted: false }` and the caller spawns fresh.
  */
-function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number } {
-  return adoptCore(id, sessions, parked, sessionDeps, (port2) =>
-    win.webContents.postMessage('pty:port', { id }, [port2])
+function adopt(
+  id: string,
+  win: BrowserWindow,
+  preface?: string | null
+): { adopted: boolean; pid?: number } {
+  // Owner-scoped (R1): only a parked session owned by the ACTIVE project may reattach.
+  return adoptCore(
+    id,
+    sessions,
+    parked,
+    sessionDeps,
+    (port2) => win.webContents.postMessage('pty:port', { id }, [port2]),
+    { dir: getCurrentDir() },
+    preface
   )
+}
+
+/**
+ * Phase 5 (quit/darwin-close continuity): append every BACKGROUND park's post-watermark
+ * ring tail to its owning project's sidecar, so output produced while backgrounded
+ * survives an app quit the renderer flush can't see (the flush serializes only the ACTIVE
+ * project's mounted xterms). `append` is injected (terminalSnapshot.appendTerminalSnapshot)
+ * to keep this module fs-free; callers run it BEFORE the rings die in disposeAllPtys.
+ */
+export function persistBackgroundRingTails(
+  append: (projectDir: string, boardId: string, text: string) => void
+): void {
+  persistBackgroundRingTailsCore(parked, append)
+}
+
+/**
+ * Board ids currently BACKGROUND-parked (any owning project). Phase 5 consumers:
+ * `pruneBoardResults` keeps these ids' results across switches (a resident's verdict must
+ * survive until its switch-back), and the recap re-arm loop SKIPS them (an id that is both
+ * live and background-parked is the R1 clone collision — tracking the resident's transcript
+ * for the active clone's board would cross-wire projects).
+ */
+export function backgroundParkedBoardIds(): Set<string> {
+  const ids = new Set<string>()
+  for (const [id, p] of parked) if (p.kind === 'background') ids.add(id)
+  return ids
+}
+
+/** Pure core of the above (module map injected) so the walk is unit-testable. */
+export function persistBackgroundRingTailsCore(
+  parkedMap: Map<string, ParkedLike>,
+  append: (projectDir: string, boardId: string, text: string) => void
+): void {
+  for (const [id, p] of parkedMap) {
+    if (p.kind !== 'background' || !p.owningDir) continue
+    const tail = readRingSince(p.buf, p.watermark ?? 0)
+    if (!tail) continue
+    try {
+      append(p.owningDir, id, tail)
+    } catch {
+      /* best-effort — one board's failed append must not block the quit drain */
+    }
+  }
+}
+
+/**
+ * The parked entry for `id` ONLY when the ACTIVE project owns it (R1: board UUIDs collide
+ * across cloned projects — a background project's buffered output must never leak into a
+ * same-id board of another project via the parked fallbacks below).
+ */
+function parkedForActiveProject(id: string): ParkedLike | undefined {
+  const p = parked.get(id)
+  if (!p) return undefined
+  return (p.owningDir ?? null) === getCurrentDir() ? p : undefined
 }
 
 /**
@@ -369,8 +601,8 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
   ipcMain.handle('terminal:detectPorts', (e, id: string) => {
     if (isForeignSender(e, getWin)) return []
-    // Read whichever buffer holds this board's output — live session or parked.
-    const box = sessions.get(id)?.buf ?? parked.get(id)?.buf
+    // Read whichever buffer holds this board's output — live session or (owner-scoped) parked.
+    const box = sessions.get(id)?.buf ?? parkedForActiveProject(id)?.buf
     return parsePortsFromOutput(box ? readRing(box) : '')
   })
 
@@ -477,11 +709,24 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // Reference our OWN proc so a late exit from this (old) process cannot tear
       // down a freshly respawned session that now occupies the same id.
       cleanup(opts.id, proc)
-      // If this proc was parked (deleted, awaiting undo) and exited on its own, drop it.
+      // If this proc was parked and exited on its own, drop it. Fork by park kind (R6): a
+      // BACKGROUND park's last words (ring tail + exit code) become consumable residue so the
+      // switch-back can say "exited in background (code N)" instead of showing a stale snapshot;
+      // an UNDO park (deleted board) keeps today's silent drop.
       const p = parked.get(opts.id)
       if (p && p.proc === proc) {
-        clearTimeout(p.timer)
+        if (p.timer) clearTimeout(p.timer)
         parked.delete(opts.id)
+        if (p.kind === 'background') {
+          recordExitResidue(p.owningDir ?? null, opts.id, {
+            // Phase 5 splice: the residue is the POST-PARK tail only — the switch-back
+            // restore re-writes the sidecar snapshot first, then appends this, so the
+            // user sees pre-park scrollback + exactly what the agent said before dying.
+            output: readRingSince(p.buf, p.watermark ?? 0),
+            exitCode,
+            exitedAt: Date.now()
+          })
+        }
         // FIND-009: this parked exit bypasses cleanupCore too, so drop the gitDiff cwd here as well.
         boardCwds.delete(opts.id)
       }
@@ -495,7 +740,10 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       buf,
       state: 'running',
       lastActivityAt: Date.now(),
-      spawnedAt: Date.now() // readiness gate: ages the boot window for getTerminalBootInfo
+      spawnedAt: Date.now(), // readiness gate: ages the boot window for getTerminalBootInfo
+      // Background sessions: tag the OWNING project (the one open at spawn), not opts.cwd —
+      // a board's cwd override can point anywhere. null = no project open (e2e boot).
+      projectDir: getCurrentDir()
     })
     boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
@@ -546,11 +794,21 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     return true
   })
 
-  ipcMain.handle('pty:adopt', (e, id: string) => {
+  ipcMain.handle('pty:adopt', async (e, id: string) => {
     if (isForeignSender(e, getWin)) return { adopted: false }
     const win = getWin()
     if (!win) return { adopted: false }
-    return adopt(id, win)
+    // Phase 5 splice: for a background park owned by the ACTIVE project, read its sidecar
+    // snapshot (flushed at switch-away) to replay as the preface before the ring tail.
+    // Read here (async, before the sync adopt) so adoptCore stays pure of fs. If the
+    // entry changes while the read is in flight (exit/reap), adopt just settles false.
+    const p = parked.get(id)
+    const owner = p?.kind === 'background' ? (p.owningDir ?? null) : null
+    const preface =
+      owner !== null && owner === getCurrentDir()
+        ? await readTerminalSnapshotAsync(owner, id).catch(() => null)
+        : null
+    return adopt(id, win, preface)
   })
 }
 
@@ -711,7 +969,116 @@ function killTree(proc: pty.IPty): Promise<void> {
  */
 export function disposeAllPtys(): Promise<void> {
   boardCwds.clear() // PR-2: drop all gitDiff cwd entries on project switch
+  exitResidue.clear() // quit/e2e-reset: nothing will ever consume them
   return disposeAllPtysCore(sessions, parked, sessionDeps)
+}
+
+/* ── Background project sessions (Phase 1 plumbing) ─────────────────────────────────────────────
+ * A project switch may PARK a project's live sessions (keep the procs running, ports closed,
+ * output buffering into each ring) instead of killing them, so a switch-back live-reattaches via
+ * the existing adopt-first terminal mount. These are the project-scoped siblings of park/
+ * disposeAllPtys; nothing calls the park path until the Phase-2 switch pipeline lands. */
+
+/**
+ * Core of `parkProjectSessions`: park every LIVE session owned by `dir` as a `'background'`
+ * park — NO TTL (reaped only by disposeProjectPtys or quit's disposeAllPtys). Returns how many
+ * sessions were parked. The no-op `reap` is never invoked (no timer is armed without a TTL).
+ */
+export function parkProjectSessionsCore(
+  dir: string | null,
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>
+): number {
+  let parkedCount = 0
+  for (const [id, s] of [...sessionsMap.entries()]) {
+    if ((s.projectDir ?? null) !== dir) continue
+    parkCore(id, sessionsMap, parkedMap, () => undefined, undefined, 'background')
+    parkedCount++
+  }
+  return parkedCount
+}
+
+/** Park the ACTIVE project's live sessions for a background switch (Phase-2 pipeline entry). */
+export function parkProjectSessions(dir: string | null): number {
+  return parkProjectSessionsCore(dir, sessions, parked)
+}
+
+/**
+ * Core of `reapUndoParks` (R5): immediately reap `dir`'s UNDO-parked sessions. Runs at the
+ * top of a background switch — the store replace wipes the undo rail (`past: []`), so a
+ * deleted board's parked proc can never be adopted again after the switch; without this it
+ * would be re-typed into limbo (background parks have no TTL) and leak until project close.
+ */
+export function reapUndoParksCore(
+  dir: string | null,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'killTree'>,
+  onReap?: (id: string) => void
+): Promise<void> {
+  const done = [...parkedMap.entries()]
+    .filter(([, p]) => (p.kind ?? 'undo') === 'undo' && (p.owningDir ?? null) === dir)
+    .map(([id]) => reapParkedCore(id, parkedMap, deps, onReap))
+  return Promise.all(done).then(() => undefined)
+}
+
+/** Reap `dir`'s undo-parked sessions (background-switch preamble — see the core's doc). */
+export function reapUndoParks(dir: string | null): Promise<void> {
+  return reapUndoParksCore(dir, parked, sessionDeps, (id) => boardCwds.delete(id))
+}
+
+/**
+ * Core of `disposeProjectPtys`: the project-scoped sibling of disposeAllPtysCore — reap the
+ * parked sessions and tear down the live ones owned by `dir`, leaving every other project's
+ * resident sessions untouched (closing project B must never kill backgrounded project A).
+ */
+export function disposeProjectPtysCore(
+  dir: string | null,
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'killTree'>,
+  onReap?: (id: string) => void
+): Promise<void> {
+  const parkedDone = [...parkedMap.entries()]
+    .filter(([, p]) => (p.owningDir ?? null) === dir)
+    .map(([id]) => reapParkedCore(id, parkedMap, deps, onReap))
+  const liveDone = [...sessionsMap.entries()]
+    .filter(([, s]) => (s.projectDir ?? null) === dir)
+    .map(([id]) => cleanupCore(id, sessionsMap, deps))
+  return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
+}
+
+/** Kill every session (live + parked) owned by `dir` — the "Close project" path. */
+export function disposeProjectPtys(dir: string | null): Promise<void> {
+  clearExitResidueForProject(dir) // a closed project's residue is unreachable — drop it
+  // FIND-009 discipline: parked reaps forget their gitDiff cwd per-id (cleanupCore already
+  // deletes the live ones) — no wholesale boardCwds.clear() here, other projects keep theirs.
+  return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, (id) => boardCwds.delete(id))
+}
+
+/**
+ * Core of `countProjectSessions`: how many of `dir`'s terminals are RUNNING — live sessions
+ * still in 'running' plus background-parked sessions (their procs run headless; an exited
+ * parked proc is dropped from the map by its onExit, so parked ≈ running). Undo-parked
+ * sessions are excluded: they are deleted boards, not running terminals of a project.
+ */
+export function countProjectSessionsCore(
+  dir: string | null,
+  sessionsMap: Map<string, Pick<SessionLike, 'state' | 'projectDir'>>,
+  parkedMap: Map<string, Pick<ParkedLike, 'kind' | 'owningDir'>>
+): { running: number } {
+  let running = 0
+  for (const s of sessionsMap.values()) {
+    if ((s.projectDir ?? null) === dir && s.state === 'running') running++
+  }
+  for (const p of parkedMap.values()) {
+    if ((p.owningDir ?? null) === dir && p.kind === 'background') running++
+  }
+  return { running }
+}
+
+/** Running-terminal count for `dir` (switch dialog + switcher badges). */
+export function countProjectSessions(dir: string | null): { running: number } {
+  return countProjectSessionsCore(dir, sessions, parked)
 }
 
 /**
@@ -888,7 +1255,9 @@ export async function drainPtyCore(
  * honestly report `droppedOlder` when the cap has discarded older output.
  */
 export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: number }): OutputPage {
-  const box = sessions.get(id)?.buf ?? parked.get(id)?.buf
+  // Parked fallback is owner-scoped (R1): an active-project agent must not read a background
+  // project's terminal output through a colliding board id.
+  const box = sessions.get(id)?.buf ?? parkedForActiveProject(id)?.buf
   const raw = box ? readRing(box) : ''
   const truncatedHead = raw.length >= RING_CAP_BYTES
   return pageOutput(stripAnsi(raw), {
@@ -919,6 +1288,15 @@ export function debugSeedOutput(id: string, text: string): boolean {
  */
 export function debugTerminalPid(id: string): number | null {
   return sessions.get(id)?.proc.pid ?? parked.get(id)?.proc.pid ?? null
+}
+
+/**
+ * E2E ONLY — the total live/parked session counts, so the rapid-switch stress spec can
+ * assert zero orphans after a settle (an adopt raced by a park must never leave a proc
+ * outside both maps or duplicated in either). Read-only.
+ */
+export function debugSessionCounts(): { live: number; parked: number } {
+  return { live: sessions.size, parked: parked.size }
 }
 
 /**

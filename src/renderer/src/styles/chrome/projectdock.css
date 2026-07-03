@@ -1,0 +1,164 @@
+/* ── Project dock (bg sessions Phase 4b, PHASE4-UX-DESIGN §4) ──
+   Bottom-edge-hover Task-View panel: one card per SESSION project (active + backgrounded
+   residents), each a §2-grammar header over a static canvas thumbnail. Solid surfaces only
+   (--surface panel, --surface-raised cards) — no blur/glass (locked contract). The reveal is
+   the window-level hot-zone listener in ProjectDock.tsx, not element hover. */
+.pd-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  animation: pd-rise 0.14s ease-out;
+}
+@keyframes pd-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-panel {
+    animation: none;
+  }
+}
+
+.pd-card {
+  width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+}
+/* Active card: the 1.5px accent ring (outside the subtle border) + the ACTIVE micro tag. */
+.pd-card[data-active] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+.pd-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pd-name {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Aux ✕/∞ — the switcher's .ps-aux grammar, re-scoped to the dock card (menu.css scopes
+   its rules to .project-switcher-menu). */
+.pd-card .ps-aux {
+  flex: none;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.pd-card .ps-x {
+  opacity: 0;
+}
+.pd-card:hover .ps-x,
+.pd-card .ps-x:focus-visible {
+  opacity: 1;
+}
+.pd-card .ps-x:hover {
+  color: var(--err);
+  background: var(--surface);
+}
+.pd-card .ps-inf {
+  width: auto;
+  height: 16px;
+  padding: 2px 4px;
+  font-family: var(--mono);
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.pd-card .ps-inf:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* The thumbnail button — the card's click-to-switch target. */
+.pd-shot {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 96px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--inset);
+  cursor: pointer;
+}
+.pd-shot:hover {
+  border-color: var(--accent);
+}
+.pd-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Capture-failure fallback: a quiet dot-grid (reads as an empty canvas, not an error). */
+.pd-thumb-empty {
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 12px 12px;
+  background-position: center;
+}
+.pd-active-tag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+
+/* Trailing + tile: dashed, opens the Open folder… / Create project… menu. */
+.pd-plus {
+  width: 64px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 20px;
+  cursor: pointer;
+}
+.pd-plus:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}

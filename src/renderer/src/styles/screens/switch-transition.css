@@ -1,0 +1,181 @@
+/* ── Switch-transition overlay (bg sessions Phase 4c — the signed-off PHASE4C-MOTION-MOCK
+   spec table). OUT: the switch-away snapshot minimizes into its project-dock card slot over
+   solid --void. HOLD: void + a quiet mono "Opening …" line — the welcome picker never
+   paints mid-switch. IN: the overlay goes transparent and the REAL incoming canvas rises
+   underneath (App.tsx's .st-app-rise wrapper) while the minidock tucks away. Solid surfaces
+   only; reduced motion = plain 120ms fades, no dock peek. */
+.st-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above Canvas/Welcome + the project dock (100); below modals (Modal z 10000) and
+     toasts (10100) — the ask-on-switch dialog settles BEFORE the overlay ever arms. */
+  z-index: 9000;
+  background: var(--void);
+}
+/* IN: the incoming canvas plays underneath — stop painting and stop eating input. */
+.st-overlay.st-in {
+  background: transparent;
+  pointer-events: none;
+}
+
+/* OUT — scale 1 → 0.05 toward bottom-center (the dock card slot), fade to 0.3, corners
+   round off. 260ms · cubic-bezier(.32,0,.67,0) (spec row 1). */
+.st-snapshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: 50% 96%;
+}
+.st-out .st-snapshot {
+  animation: st-proj-out 260ms cubic-bezier(0.32, 0, 0.67, 0) forwards;
+}
+@keyframes st-proj-out {
+  from {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+    border-radius: 0;
+  }
+  to {
+    transform: scale(0.05) translateY(2%);
+    opacity: 0.3;
+    border-radius: 40px;
+  }
+}
+
+/* HOLD — quiet mono line + small spinner over the solid void (spec row 2). */
+.st-hold {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.st-hold-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.st-spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  border-top-color: var(--accent);
+  animation: st-rot 0.8s linear infinite;
+}
+@keyframes st-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Minidock — the presentation-only dock peek (mock's .minidock; NOT the data-driven
+   ProjectDock). Peeks up ~180ms during OUT/HOLD with the receiving card wearing the
+   accent ring; tucks away when IN starts. */
+.st-minidock {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%) translateY(120px);
+  display: flex;
+  gap: 8px;
+  padding: 7px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-pop);
+  transition: transform 180ms cubic-bezier(0.33, 1, 0.68, 1);
+}
+.st-minidock.st-peek {
+  transform: translateX(-50%) translateY(0);
+}
+.st-mcard {
+  position: relative;
+  width: 120px;
+  height: 72px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+.st-mcard[data-recv] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.st-mname {
+  position: absolute;
+  top: 5px;
+  left: 7px;
+  max-width: calc(100% - 22px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.st-mdot {
+  position: absolute;
+  top: 8px;
+  right: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--ok);
+}
+
+/* IN — applied by App.tsx to the wrapper around the REAL incoming canvas: scale 1.03 → 1,
+   +10px → 0, fade 0 → 1. 240ms · cubic-bezier(.33,1,.68,1) (spec row 3). The wrapper is
+   viewport-sized, so the transform's fixed-descendant containing block is a wash. */
+.st-app-ground {
+  position: absolute;
+  inset: 0;
+}
+.st-app-rise {
+  animation: st-proj-in 240ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+@keyframes st-proj-in {
+  from {
+    transform: scale(1.03) translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* REDUCED — plain 120ms cross-fade, no dock peek, no spinner loop (spec row 4). The
+   component also skips the minidock render off the store's sampled flag; this block keeps
+   the visuals honest even if only CSS is in play. */
+@media (prefers-reduced-motion: reduce) {
+  .st-out .st-snapshot {
+    animation: st-fade-out 120ms linear forwards;
+  }
+  .st-app-rise {
+    animation: st-fade-in 120ms linear both;
+  }
+  .st-minidock {
+    display: none;
+  }
+  .st-spin {
+    animation: none;
+  }
+}
+@keyframes st-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes st-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

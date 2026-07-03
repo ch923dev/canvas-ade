@@ -1,5 +1,5 @@
 import type { IpcMain } from 'electron'
-import { WebContentsView, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import { existsSync } from 'node:fs'
 import { isForeignSender } from './ipcGuard'
 import {
@@ -37,6 +37,7 @@ import {
   type OsrSizeRequest
 } from './previewOsrSizing'
 import { scaleOsrInputEvent, type OsrInputEvent } from './previewOsrInput'
+import { getCurrentDir } from './projectStore'
 
 /**
  * Offscreen Browser-preview producer (OSR) — the SOLE preview engine since OS-3 Phase 5C deleted
@@ -56,7 +57,7 @@ import { scaleOsrInputEvent, type OsrInputEvent } from './previewOsrInput'
  * presets all shipped.
  */
 
-interface OsrEntry {
+export interface OsrEntry {
   // Hidden offscreen BrowserWindow host — the window's size drives the render surface,
   // which a bare off-tree WebContentsView lacks (spec §8b: a WebContentsView loads but
   // emits zero frames; a hidden offscreen BrowserWindow paints a real, sized frame).
@@ -99,6 +100,18 @@ interface OsrEntry {
   teardownDownloads?: () => void
   // Per-board DevTools Network/WS capture (MAIN ring buffer + subscription state). See previewOsrNetwork.
   net: OsrNetState
+  // Background sessions: the project dir that OWNS this preview, captured from
+  // projectStore.getCurrentDir() at open time. null = no project open (e2e boot). Board ids
+  // collide across cloned projects, so project-scoped sweeps key off this tag, never bare id.
+  projectDir: string | null
+  // TRUE while the owning project is backgrounded. The board unmounts on a project switch and
+  // its cleanup fires `preview:osrClose` — that close is SUPPRESSED for a backgrounded entry
+  // (the window must survive the switch); disposeProjectOsr/disposeAllOsr still destroy it.
+  backgrounded: boolean
+  // Epoch ms of the last foreground→background transition (previewOsrBackground stamps it so
+  // applyOsrBackground stays clock-free; cleared on foreground). Feeds pickOsrEvictions'
+  // longest-backgrounded-first ordering under the GLOBAL_OSR_MAX existence budget.
+  backgroundedAt?: number
 }
 
 // Browser-preview lifecycle events are the SHARED `PreviewEvent` union (previewShared) — emitted on
@@ -115,6 +128,12 @@ const pendingSize = new Map<string, OsrSizeRequest>()
 // ensureOsr — so a board that should open ALREADY-FROZEN (off-screen at mount) never paints a
 // frame before the manager's decision lands. Default-true means an un-buffered board paints.
 const pendingPaint = new Map<string, boolean>()
+// Background sessions: the project that owned a pendingSize/pendingPaint buffer at request time.
+// A board that never opened its window is invisible to the osr-map sweeps (BUG-042), and with
+// project switches no longer routing through disposeAllOsr, a stale buffered request could
+// otherwise outlive its project and mis-drain into an id-colliding later ensureOsr. Set when a
+// request is buffered; dropped on drain/dispose; swept per-project by sweepPendingForProject.
+const pendingOwner = new Map<string, string | null>()
 // A debounced follow-up `invalidate()` per board, scheduled after a REAL resize (applyOsrSize
 // returned true). A large size jump (full-view enter) makes an idle page re-render asynchronously;
 // the single synchronous invalidate inside applyOsrSize can fire before that re-render lands, so a
@@ -137,8 +156,45 @@ function scheduleResizeSettle(id: string): void {
     }, RESIZE_SETTLE_MS)
   )
 }
-/** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). */
-const OSR_FRAME_RATE = 30
+/** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). Exported for the
+ *  self-test probes (previewOsrProbe.ts — split out under the max-lines ratchet). */
+export const OSR_FRAME_RATE = 30
+
+/** Background sessions (Phase 3): the EXISTENCE budget across ALL projects — at most this many
+ *  offscreen windows may exist at once (foreground + backgrounded residents). Checked in ensureOsr
+ *  before every new-window construction; over budget, the longest-backgrounded entries are evicted
+ *  (pickOsrEvictions) — never a foreground one (the renderer's OSR_MAX_LIVE=4 already bounds
+ *  those, and background residents must not starve foreground creation). */
+export const GLOBAL_OSR_MAX = 8
+
+/** The slice of `OsrEntry` the eviction picker reads (pure — unit-testable without Electron). */
+interface OsrEvictionCandidate {
+  backgrounded: boolean
+  backgroundedAt?: number
+}
+
+/**
+ * Pick which OSR entries to evict so ONE new window fits under the `max` existence budget.
+ * Only BACKGROUNDED entries are candidates — a foreground board's window is never destroyed to
+ * make room; when everything over budget is foreground the budget deliberately overshoots.
+ * Victims are the longest-backgrounded first (a missing `backgroundedAt` sorts as maximally
+ * stale — defensive; the background transition always stamps it). Returns [] while under budget.
+ * Evicted boards fall back to the existing freeze+revive path: the renderer keeps the frozen
+ * last frame, and the in-memory `preview-osr-${id}` partition keeps cookies for the re-open.
+ */
+export function pickOsrEvictions(
+  entries: Iterable<[string, OsrEvictionCandidate]>,
+  max: number
+): string[] {
+  const all = [...entries]
+  const need = all.length - max + 1
+  if (need <= 0) return []
+  return all
+    .filter(([, e]) => e.backgrounded)
+    .sort(([, a], [, b]) => (a.backgroundedAt ?? 0) - (b.backgroundedAt ?? 0))
+    .slice(0, need)
+    .map(([id]) => id)
+}
 
 /** The frame-guarded IPC args for `preview:osrResize` (an `OsrSizeRequest` + the board id). */
 export interface OsrResizeArgs extends OsrSizeRequest {
@@ -359,6 +415,54 @@ function emitEvent(payload: PreviewEvent): void {
   emitToOwner('preview:event', payload)
 }
 
+/** The webContents slice the switch-back re-emit reads (pure — unit-testable without Electron). */
+interface OsrRemountSource {
+  getURL(): string
+  navigationHistory: { canGoBack(): boolean; canGoForward(): boolean }
+}
+
+/**
+ * Background sessions (Phase 3): synthesize the CURRENT lifecycle state for a board whose OSR
+ * window SURVIVED a project switch. On switch-back the board remounts with a fresh previewStore
+ * entry ('connecting'), but the kept window fires no new lifecycle events — so without this the
+ * board sits at "Connecting…" with a stale URL bar forever. Emit did-navigate (live URL +
+ * history state) and — only when the page is genuinely ready and not failed — did-finish-load,
+ * so the store converges WITHOUT reloading the page (in-page form/SPA state surviving the switch
+ * is the whole feature; a reload here would defeat it). A FAILED page re-emits did-fail-load
+ * (review fix): the kept window fires no new lifecycle events, so without it the remounted
+ * board sits at "Connecting…" with no Reload affordance while the page is actually broken.
+ * The entry latches only the failed BIT (not the original code/description), so the re-emit
+ * carries a synthetic description; the user's Reload then produces the real one. Only the
+ * never-ready, never-failed page stays navigate-only — its real first lifecycle is still coming.
+ */
+export function emitOsrRemountState(
+  id: string,
+  e: { ready: boolean; failed: boolean },
+  wc: OsrRemountSource,
+  emit: (ev: PreviewEvent) => void
+): void {
+  try {
+    emit({
+      id,
+      type: 'did-navigate',
+      url: wc.getURL(),
+      canGoBack: wc.navigationHistory.canGoBack(),
+      canGoForward: wc.navigationHistory.canGoForward()
+    })
+    if (e.ready && !e.failed) emit({ id, type: 'did-finish-load', url: wc.getURL() })
+    else if (e.failed)
+      emit({
+        id,
+        type: 'did-fail-load',
+        url: wc.getURL(),
+        errorCode: -1,
+        errorDescription: 'Page failed to load before the project switch'
+      })
+  } catch {
+    /* window died mid-remount — the crash/lifecycle events resolve the board state instead */
+  }
+}
+
 /* ── OS-3 Phase 4 emit helpers (native widgets & dialogs) ───────────────────────────────────────
  * Ferry a MAIN-detected page event to the renderer (its osrWidgetStore + OsrWidgetLayer draw the
  * dialog modal / popup overlay; downloads → showToast). One generic sender; audible diff-skips. */
@@ -414,6 +518,9 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   armOwner(win)
   const existing = osr.get(id)
   if (existing) return existing
+  // Background sessions (Phase 3): enforce the GLOBAL_OSR_MAX existence budget BEFORE minting a
+  // new window — evict the longest-backgrounded residents (never a foreground entry) to make room.
+  for (const victim of pickOsrEvictions(osr.entries(), GLOBAL_OSR_MAX)) disposeOsr(victim)
   // Hidden offscreen BrowserWindow (never shown, off the taskbar). Its width/height set
   // the render surface — the proven OSR host (spec §8b).
   const osrWin = new BrowserWindow({
@@ -444,7 +551,9 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     superSample: 1,
     painting: true,
     manualMuted: false,
-    net: createNetState()
+    net: createNetState(),
+    projectDir: getCurrentDir(), // background sessions: owning-project tag at open time
+    backgrounded: false
   }
   osr.set(id, e)
   const wc = osrWin.webContents
@@ -491,10 +600,13 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   // Downloads (4D): saved into the project's `.canvas/downloads/` (ADR 0009; OS Downloads when no
   // project is open — no parented save-dialog freeze), resolved per-download + toast, token-bucket
   // throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
+  // Backgrounded (Phase 3): denied outright — getDownloadsDir() resolves the ACTIVE project's dir
+  // at save time, so a backgrounded page's download would land in the WRONG project's
+  // `.canvas/downloads/` (R2). Short-circuit BEFORE the bucket so the denial burns no token.
   const allowDownload = createOpenExternalLimiter()
   e.teardownDownloads = registerOsrDownloads(sess, {
     exists: existsSync,
-    allow: allowDownload,
+    allow: () => !e.backgrounded && allowDownload(),
     emit: (info) => emitWidget('preview:osrDownload', { id, ...info })
   })
   // Audio (4A): surface a mute toggle while the page plays media. media-started/paused fire
@@ -650,6 +762,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     applyOsrPaint(osrWin, e, pendPaint)
     applyEffectiveMute(e)
   }
+  pendingOwner.delete(id) // both buffers drained (or absent) — the owner note is spent
   applyOsrInitialLoad(
     id,
     url,
@@ -660,9 +773,13 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   return e
 }
 
-function disposeOsr(id: string): void {
+/** Destroy one board's offscreen window + buffered state. Exported for previewOsrBackground's
+ *  project-scoped dispose; renderer traffic routes through `preview:osrClose` (which suppresses
+ *  the close for a backgrounded entry — this function itself never checks the flag). */
+export function disposeOsr(id: string): void {
   pendingSize.delete(id) // drop a buffered-but-never-applied resize
   pendingPaint.delete(id) // …and a buffered-but-never-applied paint-state
+  pendingOwner.delete(id) // …and its owning-project note
   const settle = resizeSettle.get(id) // cancel a pending settle-invalidate before the window dies
   if (settle) clearTimeout(settle)
   resizeSettle.delete(id) // Map.delete is idempotent when the id was never scheduled
@@ -688,8 +805,31 @@ export function disposeAllOsr(): void {
   // project switch or e2e spec" sweep, so every buffered request is stale by definition once it runs.
   pendingSize.clear()
   pendingPaint.clear()
+  pendingOwner.clear()
   // Drop the host owner + close the readiness gate (previewOsrOwner.clearOwner).
   clearOwner()
+}
+
+/* ── Background project sessions (Phase 1 plumbing) ─────────────────────────────────────────────
+ * The project-scoped background/foreground/dispose/count operations live in
+ * previewOsrBackground.ts (kept out of this god-file under the max-lines ratchet, like
+ * previewOsrOwner). They drive the private maps through the narrow surface below. */
+
+/** Iterate the open OSR entries (for previewOsrBackground's project-scoped sweeps only). */
+export function getOsrEntries(): IterableIterator<[string, OsrEntry]> {
+  return osr.entries()
+}
+
+/** Drop buffered-but-never-opened resize/paint requests owned by `dir` — the project-scoped
+ *  sibling of disposeAllOsr's BUG-042 sweep (a board that never opened its window is invisible
+ *  to the osr-map sweeps in previewOsrBackground). */
+export function sweepPendingForProject(dir: string | null): void {
+  for (const [id, owner] of [...pendingOwner.entries()]) {
+    if (owner !== dir) continue
+    pendingSize.delete(id)
+    pendingPaint.delete(id)
+    pendingOwner.delete(id)
+  }
 }
 
 /**
@@ -699,152 +839,6 @@ export function disposeAllOsr(): void {
  */
 export function getOsrWindow(id: string): BrowserWindow | undefined {
   return osr.get(id)?.osrWin
-}
-
-/**
- * Self-test paint probe — does an OFF-TREE offscreen `WebContentsView` actually paint? Creates a
- * throwaway offscreen view (NEVER added to the window's view tree), loads `url`, and resolves on
- * the FIRST `paint` with the frame size — or a timeout/failure verdict. A headless viability check
- * (no headed app, no human eyes) for the offscreen→canvas approach. Standalone (its own session,
- * not in the live `osr` Map) so it never collides with real preview windows. Surfaced via the self-test.
- */
-export function probeOsrPaint(
-  url: string,
-  timeoutMs = 8000
-): Promise<{ painted: boolean; detail: string }> {
-  return new Promise((resolve) => {
-    let done = false
-    let loaded = false
-    const view = new WebContentsView({
-      webPreferences: {
-        offscreen: true,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        partition: 'preview-osr-probe'
-      }
-    })
-    const wc = view.webContents
-    const finish = (painted: boolean, detail: string): void => {
-      if (done) return
-      done = true
-      try {
-        wc.close() // throwaway view — close or leak the renderer
-      } catch {
-        /* already gone */
-      }
-      resolve({ painted, detail })
-    }
-    if (!isAllowedPreviewUrl(url)) {
-      finish(false, `blocked/empty url: ${url || '(none)'}`)
-      return
-    }
-    let paints = 0
-    let lastSize = '0x0'
-    view.setBounds({ x: 0, y: 0, width: OSR_WIDTH, height: OSR_HEIGHT })
-    wc.setFrameRate(OSR_FRAME_RATE)
-    wc.on('paint', (_ev, _dirty, image) => {
-      const size = image.getSize()
-      paints++
-      lastSize = `${size.width}x${size.height}`
-      // Ignore pre-layout 0×0 frames; only a real, sized frame proves the path works.
-      if (size.width > 0 && size.height > 0)
-        finish(true, `painted ${lastSize} (after ${paints} paints)`)
-    })
-    wc.once('did-finish-load', () => {
-      loaded = true
-      try {
-        wc.startPainting() // nudge the offscreen frame scheduler
-      } catch {
-        /* not an OSR-capable webContents */
-      }
-    })
-    wc.once('did-fail-load', (_e, code, desc) => finish(false, `did-fail-load ${code} ${desc}`))
-    void wc.loadURL(url)
-    setTimeout(() => {
-      let painting = 'n/a'
-      try {
-        painting = String(wc.isPainting())
-      } catch {
-        /* gone */
-      }
-      finish(
-        false,
-        `no sized paint in ${timeoutMs}ms (paints=${paints}, last=${lastSize}, finishLoad=${loaded}, painting=${painting})`
-      )
-    }, timeoutMs)
-  })
-}
-
-/**
- * Self-test paint probe variant — the production OSR host: a hidden offscreen `BrowserWindow` whose
- * size drives the render surface. The plain `WebContentsView` probe above renders 0×0 off-tree (no
- * window → no size); this confirms a hidden window paints a real frame, which is why "one hidden OSR
- * window per Browser board" is the producer rather than a bare WebContentsView.
- */
-export function probeOsrPaintWindow(
-  url: string,
-  timeoutMs = 8000
-): Promise<{ painted: boolean; detail: string }> {
-  return new Promise((resolve) => {
-    let done = false
-    let loaded = false
-    const win = new BrowserWindow({
-      width: OSR_WIDTH,
-      height: OSR_HEIGHT,
-      show: false,
-      webPreferences: {
-        offscreen: true,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        partition: 'preview-osr-probe-win'
-      }
-    })
-    const wc = win.webContents
-    const finish = (painted: boolean, detail: string): void => {
-      if (done) return
-      done = true
-      try {
-        win.destroy()
-      } catch {
-        /* already gone */
-      }
-      resolve({ painted, detail })
-    }
-    if (!isAllowedPreviewUrl(url)) {
-      finish(false, `blocked/empty url: ${url || '(none)'}`)
-      return
-    }
-    let paints = 0
-    let lastSize = '0x0'
-    wc.setFrameRate(OSR_FRAME_RATE)
-    wc.on('paint', (_ev, _dirty, image) => {
-      const size = image.getSize()
-      paints++
-      lastSize = `${size.width}x${size.height}`
-      if (size.width > 0 && size.height > 0)
-        finish(true, `painted ${lastSize} (after ${paints} paints)`)
-    })
-    wc.once('did-finish-load', () => {
-      loaded = true
-      try {
-        wc.startPainting()
-      } catch {
-        /* not an OSR-capable webContents */
-      }
-    })
-    wc.once('did-fail-load', (_e, code, desc) => finish(false, `did-fail-load ${code} ${desc}`))
-    void wc.loadURL(url)
-    setTimeout(
-      () =>
-        finish(
-          false,
-          `no sized paint in ${timeoutMs}ms (paints=${paints}, last=${lastSize}, finishLoad=${loaded})`
-        ),
-      timeoutMs
-    )
-  })
 }
 
 interface OsrOpenArgs {
@@ -864,11 +858,39 @@ export function registerPreviewOsrHandlers(
     if (isForeignSender(ev, getWin)) throw new Error('preview:osrOpen — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('preview:osrOpen — no window')
+    // Background sessions (Phase 3): an entry that already exists here is a switch-back remount —
+    // the window survived the switch (its unmount close was suppressed, R3). The kept page must
+    // NEVER reload (in-page state surviving is the feature; args.url may even be staler than the
+    // live page). Re-arm the emit owner, then re-emit the CURRENT state so the board's fresh
+    // previewStore entry converges off 'connecting' without a load.
+    const existing = osr.get(args.id)
+    if (existing) {
+      // R1 ownership guard (review [critical]): board UUIDs collide across cloned/copied
+      // projects, and this remount branch previously reused ANY existing entry by bare id —
+      // handing a clone the resident's live page (cross-project content leak), which then
+      // froze under the resident's `backgrounded` short-circuits. Mirror pty.ts adoptCore's
+      // requireOwner: reuse only when the entry belongs to the CURRENT project.
+      if ((existing.projectDir ?? null) === getCurrentDir()) {
+        armOwner(win)
+        emitOsrRemountState(args.id, existing, existing.osrWin.webContents, emitEvent)
+        return true
+      }
+      // Foreign owner: the visible board must never show another project's page — the
+      // foreground wins. Dispose the resident's colliding window and mint a fresh one for
+      // this project; the resident's board degrades to a plain reload on ITS switch-back
+      // (the accepted R1 clone-collision cost, ADR 0011).
+      disposeOsr(args.id)
+    }
     ensureOsr(args.id, win, args.url)
     return true
   })
   ipcMain.handle('preview:osrClose', (ev, id: string) => {
     if (isForeignSender(ev, getWin)) return true
+    // Background sessions (R3): a backgrounded project's boards unmount on the switch, and each
+    // unmount's cleanup fires this close. The window must SURVIVE the switch (that is the whole
+    // feature) — suppress the per-board close while backgrounded. disposeProjectOsr /
+    // disposeAllOsr bypass this handler and still destroy backgrounded windows.
+    if (osr.get(id)?.backgrounded) return true
     disposeOsr(id)
     return true
   })
@@ -1008,8 +1030,13 @@ export function registerPreviewOsrHandlers(
     const e = osr.get(args.id)
     if (!e) {
       pendingSize.set(args.id, size)
+      pendingOwner.set(args.id, getCurrentDir()) // background sessions: attributable sweep
       return true
     }
+    // Background sessions: a settle firing in the teardown gap between project:background and
+    // the board unmount must not relayout a frozen window (and an id-colliding board of another
+    // project must never resize it). foregroundProjectOsr clears the flag before boards remount.
+    if (e.backgrounded) return true
     if (applyOsrSize(e.osrWin, e, size)) scheduleResizeSettle(args.id)
     return true
   })
@@ -1024,8 +1051,13 @@ export function registerPreviewOsrHandlers(
     const e = osr.get(args.id)
     if (!e) {
       pendingPaint.set(args.id, on)
+      pendingOwner.set(args.id, getCurrentDir()) // background sessions: attributable sweep
       return true
     }
+    // Background sessions: the liveness manager's last settle can race the switch teardown —
+    // a `true` here would un-freeze a window we just backgrounded (paint + audio resume with
+    // no board attached). Frozen-while-backgrounded is owned by MAIN; drop the request.
+    if (e.backgrounded) return true
     applyOsrPaint(e.osrWin, e, on)
     // 4A — a frozen off-screen board is auto-muted; on resume the user's manual choice is restored.
     applyEffectiveMute(e)

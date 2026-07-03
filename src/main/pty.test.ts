@@ -16,7 +16,11 @@ import {
   getTerminalBootInfoCore,
   isValidResize,
   clampSpawnDim,
-  attachPortInput
+  attachPortInput,
+  parkProjectSessionsCore,
+  disposeProjectPtysCore,
+  countProjectSessionsCore,
+  persistBackgroundRingTailsCore
 } from './pty'
 import {
   canonicalizeShellPath,
@@ -702,6 +706,325 @@ describe('disposeAllPtysCore (T1)', () => {
   })
 })
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// ── Background project sessions (Phase 1): typed parks + project-scoped park/dispose/count ──
+describe('parkCore background kind (no-TTL park)', () => {
+  it('arms NO timer for a background park and records kind + owningDir', () => {
+    vi.useFakeTimers()
+    const reap = vi.fn()
+    const port = makePort()
+    const { proc } = makeProc(801)
+    const sessions = new Map<string, any>([
+      ['a', { proc, port, buf: createRing(1024), projectDir: 'C:\\proj\\A' }]
+    ])
+    const parked = new Map<string, any>()
+
+    parkCore('a', sessions, parked, reap, undefined, 'background')
+
+    expect(sessions.has('a')).toBe(false)
+    expect(port.closed).toBe(true)
+    const p = parked.get('a')
+    expect(p.kind).toBe('background')
+    expect(p.owningDir).toBe('C:\\proj\\A')
+    expect(p.timer).toBeUndefined()
+    // No TTL: nothing ever reaps it on a timer.
+    vi.advanceTimersByTime(10 * 60_000)
+    expect(reap).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('an undo park still arms the TTL and copies the owning dir', () => {
+    vi.useFakeTimers()
+    const reap = vi.fn()
+    const port = makePort()
+    const { proc } = makeProc(802)
+    const sessions = new Map<string, any>([
+      ['a', { proc, port, buf: createRing(1024), projectDir: 'C:\\proj\\A' }]
+    ])
+    const parked = new Map<string, any>()
+
+    parkCore('a', sessions, parked, reap, 1000)
+
+    expect(parked.get('a').kind).toBe('undo')
+    expect(parked.get('a').owningDir).toBe('C:\\proj\\A')
+    vi.advanceTimersByTime(1000)
+    expect(reap).toHaveBeenCalledWith('a')
+    vi.useRealTimers()
+  })
+
+  // Review fix: the watermark must be the FLUSH-time `written` (committed by the
+  // terminal:writeSnapshot handler), not park-time `written` — output arriving between the
+  // sidecar flush and the park (reapUndoParks can add hundreds of ms) would otherwise fall
+  // below the watermark AND outside the snapshot: dropped from the switch-back replay.
+  it('a background park prefers the flush watermark over park-time written', () => {
+    const port = makePort()
+    const { proc } = makeProc(803)
+    const buf = createRing(1024)
+    pushRing(buf, 'in-the-snapshot')
+    const flushedAt = buf.written
+    const sessions = new Map<string, any>([
+      ['a', { proc, port, buf, projectDir: 'C:/proj/A', flushWatermark: flushedAt }]
+    ])
+    const parked = new Map<string, any>()
+
+    // Output lands AFTER the flush but BEFORE the park (the reapUndoParks window).
+    pushRing(buf, 'between-flush-and-park')
+    parkCore('a', sessions, parked, () => {}, undefined, 'background')
+
+    // The gap bytes sit ABOVE the watermark → the switch-back tail replays them.
+    expect(parked.get('a').watermark).toBe(flushedAt)
+  })
+
+  it('a background park with NO flush watermark falls back to park-time written; undo parks ignore it', () => {
+    const mk = (flushWatermark?: number): Map<string, any> => {
+      const buf = createRing(1024)
+      pushRing(buf, 'xyz')
+      return new Map<string, any>([
+        ['a', { proc: makeProc(804).proc, port: makePort(), buf, projectDir: null, flushWatermark }]
+      ])
+    }
+    const parkedA = new Map<string, any>()
+    const noFlush = mk(undefined)
+    parkCore('a', noFlush, parkedA, () => {}, undefined, 'background')
+    expect(parkedA.get('a').watermark).toBe(3)
+
+    // An undo park keeps park-time written even when a stale flush watermark exists
+    // (undo replay is full-ring; the watermark is never read).
+    const parkedB = new Map<string, any>()
+    const undoWithStale = mk(1)
+    parkCore('a', undoWithStale, parkedB, () => {}, 1000)
+    expect(parkedB.get('a').watermark).toBe(3)
+    const t = parkedB.get('a').timer
+    if (t) clearTimeout(t)
+  })
+})
+
+describe('adoptCore owner scoping (R1 — cloned projects share board UUIDs)', () => {
+  const mkParked = (pid: number, owningDir: string | null): any => ({
+    proc: makeProc(pid).proc,
+    buf: createRing(1024),
+    kind: 'background',
+    owningDir
+  })
+
+  it('refuses to adopt a parked session owned by a DIFFERENT project — entry stays parked', () => {
+    const parked = new Map<string, any>([['t', mkParked(810, 'C:\\proj\\A')]])
+    const res = adoptCore('t', new Map(), parked, { newChannel: vi.fn() } as any, vi.fn() as any, {
+      dir: 'C:\\proj\\CLONE'
+    })
+    expect(res).toEqual({ adopted: false })
+    expect(parked.has('t')).toBe(true) // left for its true owner's switch-back
+  })
+
+  it('adopts when the active dir matches the owning dir, and the tag survives onto the session', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const sessions = new Map<string, any>()
+    const parked = new Map<string, any>([['t', mkParked(811, 'C:\\proj\\A')]])
+    const res = adoptCore(
+      't',
+      sessions,
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:\\proj\\A' }
+    )
+    expect(res.adopted).toBe(true)
+    expect(sessions.get('t').projectDir).toBe('C:\\proj\\A')
+  })
+
+  it('treats a legacy entry (no owningDir) as owned by the null project', () => {
+    const parked = new Map<string, any>([
+      ['t', { proc: makeProc(812).proc, buf: createRing(1024) }]
+    ])
+    // Active project open → refuse the null-owned entry.
+    expect(
+      adoptCore('t', new Map(), parked, { newChannel: vi.fn() } as any, vi.fn() as any, {
+        dir: 'C:\\proj\\A'
+      })
+    ).toEqual({ adopted: false })
+    // No project open (dir null) → adoptable.
+    const port1 = makePort()
+    const port2 = makePort()
+    const res = adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: null }
+    )
+    expect(res.adopted).toBe(true)
+  })
+
+  it('adopts WITHOUT an owner check when no requireOwner is supplied (legacy call shape)', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const parked = new Map<string, any>([['t', mkParked(813, 'C:\\proj\\A')]])
+    const res = adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any
+    )
+    expect(res.adopted).toBe(true)
+  })
+})
+
+describe('parkProjectSessionsCore (background switch parks only the owning project)', () => {
+  it('parks every live session tagged with the dir — others stay live', () => {
+    const portA1 = makePort()
+    const portA2 = makePort()
+    const portB = makePort()
+    const sessions = new Map<string, any>([
+      ['a1', { proc: makeProc(820).proc, port: portA1, buf: createRing(1024), projectDir: 'A' }],
+      ['a2', { proc: makeProc(821).proc, port: portA2, buf: createRing(1024), projectDir: 'A' }],
+      ['b1', { proc: makeProc(822).proc, port: portB, buf: createRing(1024), projectDir: 'B' }]
+    ])
+    const parked = new Map<string, any>()
+
+    const n = parkProjectSessionsCore('A', sessions, parked)
+
+    expect(n).toBe(2)
+    expect(sessions.size).toBe(1)
+    expect(sessions.has('b1')).toBe(true)
+    expect(portB.closed).toBe(false)
+    expect(parked.get('a1').kind).toBe('background')
+    expect(parked.get('a1').timer).toBeUndefined()
+    expect(parked.get('a2').owningDir).toBe('A')
+    expect(portA1.closed).toBe(true)
+    expect(portA2.closed).toBe(true)
+  })
+
+  it('treats an untagged session as owned by the null project', () => {
+    const sessions = new Map<string, any>([
+      ['x', { proc: makeProc(823).proc, port: makePort(), buf: createRing(1024) }]
+    ])
+    const parked = new Map<string, any>()
+    expect(parkProjectSessionsCore('A', sessions, parked)).toBe(0)
+    expect(parkProjectSessionsCore(null, sessions, parked)).toBe(1)
+    expect(parked.get('x').owningDir).toBe(null)
+  })
+})
+
+describe('disposeProjectPtysCore (scoped close — never reaps other projects)', () => {
+  it('reaps only the dir-owned parked + live sessions and fires onReap per parked reap', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const onReap = vi.fn()
+    const liveA = makeProc(830).proc
+    const liveB = makeProc(831).proc
+    const parkA = makeProc(832).proc
+    const parkB = makeProc(833).proc
+    const sessions = new Map<string, any>([
+      ['la', { proc: liveA, port: makePort(), buf: createRing(1024), projectDir: 'A' }],
+      ['lb', { proc: liveB, port: makePort(), buf: createRing(1024), projectDir: 'B' }]
+    ])
+    const parked = new Map<string, any>([
+      ['pa', { proc: parkA, buf: createRing(1024), kind: 'background', owningDir: 'A' }],
+      ['pb', { proc: parkB, buf: createRing(1024), kind: 'background', owningDir: 'B' }]
+    ])
+
+    await disposeProjectPtysCore('A', sessions, parked, { killTree } as any, onReap)
+
+    expect(killTree).toHaveBeenCalledWith(liveA)
+    expect(killTree).toHaveBeenCalledWith(parkA)
+    expect(killTree).toHaveBeenCalledTimes(2)
+    expect(sessions.has('lb')).toBe(true) // B untouched
+    expect(parked.has('pb')).toBe(true)
+    expect(onReap).toHaveBeenCalledTimes(1)
+    expect(onReap).toHaveBeenCalledWith('pa')
+  })
+})
+
+describe('countProjectSessionsCore (dialog + badge counts)', () => {
+  it('counts running live sessions + background parks for the dir; excludes undo parks and other dirs', () => {
+    const sessions = new Map<string, any>([
+      ['l1', { state: 'running', projectDir: 'A' }],
+      ['l2', { state: 'exited', projectDir: 'A' }], // exited → not running
+      ['l3', { state: 'running', projectDir: 'B' }]
+    ])
+    const parked = new Map<string, any>([
+      ['p1', { kind: 'background', owningDir: 'A' }],
+      ['p2', { kind: 'undo', owningDir: 'A' }], // deleted board, not a running terminal
+      ['p3', { kind: 'background', owningDir: 'B' }]
+    ])
+    expect(countProjectSessionsCore('A', sessions, parked)).toEqual({ running: 2 })
+    expect(countProjectSessionsCore('B', sessions, parked)).toEqual({ running: 2 })
+    expect(countProjectSessionsCore('C', sessions, parked)).toEqual({ running: 0 })
+  })
+})
+
+describe('reapUndoParksCore (R5 — undo rail dies with the switch)', () => {
+  it('reaps only the dir-owned UNDO parks; background parks and other dirs survive', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const onReap = vi.fn()
+    const undoA = makeProc(850).proc
+    const bgA = makeProc(851).proc
+    const undoB = makeProc(852).proc
+    const parked = new Map<string, any>([
+      [
+        'ua',
+        {
+          proc: undoA,
+          buf: createRing(1024),
+          kind: 'undo',
+          owningDir: 'A',
+          timer: setTimeout(() => {}, 100000)
+        }
+      ],
+      ['ba', { proc: bgA, buf: createRing(1024), kind: 'background', owningDir: 'A' }],
+      [
+        'ub',
+        {
+          proc: undoB,
+          buf: createRing(1024),
+          kind: 'undo',
+          owningDir: 'B',
+          timer: setTimeout(() => {}, 100000)
+        }
+      ]
+    ])
+
+    const { reapUndoParksCore } = await import('./pty')
+    await reapUndoParksCore('A', parked, { killTree } as any, onReap)
+
+    expect(killTree).toHaveBeenCalledTimes(1)
+    expect(killTree).toHaveBeenCalledWith(undoA)
+    expect(parked.has('ba')).toBe(true)
+    expect(parked.has('ub')).toBe(true)
+    expect(onReap).toHaveBeenCalledWith('ua')
+    clearTimeout(parked.get('ub').timer)
+  })
+
+  it('treats a legacy entry (no kind) as an undo park', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const legacy = makeProc(853).proc
+    const parked = new Map<string, any>([
+      [
+        'x',
+        { proc: legacy, buf: createRing(1024), owningDir: 'A', timer: setTimeout(() => {}, 100000) }
+      ]
+    ])
+    const { reapUndoParksCore } = await import('./pty')
+    await reapUndoParksCore('A', parked, { killTree } as any)
+    expect(killTree).toHaveBeenCalledWith(legacy)
+    expect(parked.size).toBe(0)
+  })
+})
+
+describe('reapParkedCore with a timerless (background) park', () => {
+  it('reaps a background park that has no TTL timer without throwing', async () => {
+    const { proc } = makeProc(840)
+    const killTree = vi.fn(() => Promise.resolve())
+    const parked = new Map<string, any>([
+      ['p', { proc, buf: createRing(1024), kind: 'background', owningDir: 'A' }]
+    ])
+    await reapParkedCore('p', parked, { killTree } as any)
+    expect(parked.has('p')).toBe(false)
+    expect(killTree).toHaveBeenCalledWith(proc)
+  })
+})
+
 // ── T4.3 (🔒 dispatch write primitive): writeToPty writes into a LIVE terminal
 // session's proc. Keyed on the `sessions` map (only terminals have sessions), so a
 // non-terminal / absent / unknown id has no session → false (no write, never crashes).
@@ -907,5 +1230,196 @@ describe('clampSpawnDim (BUG-023 — spawn/resize bounds parity)', () => {
       const clamped = clampSpawnDim(raw, 80)
       expect(isValidResize(clamped, 24)).toBe(true)
     }
+  })
+})
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Bg sessions Phase 5: the snapshot+tail splice — park records the ring watermark; a
+// background adopt replays sidecar-preface + post-watermark tail (full-ring when no
+// preface exists); an undo adopt keeps the classic full-ring replay.
+describe('adoptCore Phase-5 splice (watermark + preface)', () => {
+  it('parkCore records the ring watermark at park time', () => {
+    const port = makePort()
+    const buf = createRing(1024)
+    pushRing(buf, 'pre-park-output')
+    const sessions = new Map<string, any>([['a', { proc: makeProc(1).proc, port, buf }]])
+    const parked = new Map<string, any>()
+    parkCore('a', sessions, parked, vi.fn(), undefined, 'background')
+    expect(parked.get('a').watermark).toBe('pre-park-output'.length)
+  })
+
+  it('background adopt with a preface replays preface THEN only the post-park tail', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(41)
+    const buf = createRing(1024)
+    pushRing(buf, 'pre-park')
+    const watermark = buf.written
+    pushRing(buf, 'TAIL')
+    const parked = new Map<string, any>([
+      ['t', { proc, buf, kind: 'background', owningDir: 'C:/p', watermark }]
+    ])
+    adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:/p' },
+      'SNAPSHOT-PREFACE'
+    )
+    expect(port1.posted).toEqual([
+      { t: 'data', d: 'SNAPSHOT-PREFACE' },
+      { t: 'data', d: 'TAIL' },
+      { t: 'state', state: 'running' }
+    ])
+  })
+
+  // R4 raced re-park (review [warning]): an adopt carries the park watermark back onto the
+  // session as flushWatermark — no flush happens during an adopt, so the sidecar boundary is
+  // unchanged. An adopt-then-immediate-re-park (raced switch-back-and-away) must re-record
+  // the SAME watermark, or the bytes between the snapshot and the re-park land in neither
+  // the preface nor the tail.
+  it('adopt→re-park round-trip preserves the flush watermark (raced R4 path)', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(43)
+    const buf = createRing(1024)
+    pushRing(buf, 'in-snapshot')
+    const watermark = buf.written
+    pushRing(buf, 'after-flush-before-park')
+    const parked = new Map<string, any>([
+      ['t', { proc, buf, kind: 'background', owningDir: 'C:/p', watermark }]
+    ])
+    const sessions = new Map<string, any>()
+    adoptCore(
+      't',
+      sessions,
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:/p' }
+    )
+    expect(sessions.get('t').flushWatermark).toBe(watermark)
+
+    // The compensating re-park (no flush in between) records the SAME boundary.
+    pushRing(buf, 'while-adopted')
+    parkCore('t', sessions, parked, vi.fn(), undefined, 'background')
+    expect(parked.get('t').watermark).toBe(watermark)
+  })
+
+  it('background adopt with NO preface degrades to the classic full-ring replay', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(42)
+    const buf = createRing(1024)
+    pushRing(buf, 'pre-park')
+    const watermark = buf.written
+    pushRing(buf, 'TAIL')
+    const parked = new Map<string, any>([
+      ['t', { proc, buf, kind: 'background', owningDir: 'C:/p', watermark }]
+    ])
+    adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:/p' },
+      null
+    )
+    expect(port1.posted).toEqual([
+      { t: 'data', d: 'pre-parkTAIL' },
+      { t: 'state', state: 'running' }
+    ])
+  })
+
+  it('undo adopt ignores the preface and keeps the full-ring replay', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(43)
+    const buf = createRing(1024)
+    pushRing(buf, 'everything')
+    const timer = setTimeout(() => {}, 100000)
+    const parked = new Map<string, any>([['t', { proc, buf, timer, kind: 'undo' }]])
+    adoptCore(
+      't',
+      new Map(),
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      undefined,
+      'SNAPSHOT-PREFACE'
+    )
+    expect(port1.posted).toEqual([
+      { t: 'data', d: 'everything' },
+      { t: 'state', state: 'running' }
+    ])
+    clearTimeout(timer)
+  })
+})
+
+// Bg sessions Phase 5: quit/darwin-close ring-tail persistence for background parks.
+describe('persistBackgroundRingTailsCore (quit continuity)', () => {
+  it(
+    'appends only background parks' +
+      String.fromCharCode(8217) +
+      's post-watermark tails, keyed to their owning dir',
+    () => {
+      const bufA = createRing(1024)
+      pushRing(bufA, 'pre')
+      const watermarkA = bufA.written
+      pushRing(bufA, 'tail-a')
+      const bufUndo = createRing(1024)
+      pushRing(bufUndo, 'undo-park-output')
+      const bufQuiet = createRing(1024)
+      pushRing(bufQuiet, 'pre-only')
+      const parked = new Map<string, any>([
+        [
+          'a',
+          {
+            proc: makeProc(1).proc,
+            buf: bufA,
+            kind: 'background',
+            owningDir: 'C:/projA',
+            watermark: watermarkA
+          }
+        ],
+        ['u', { proc: makeProc(2).proc, buf: bufUndo, kind: 'undo' }],
+        [
+          'q',
+          {
+            proc: makeProc(3).proc,
+            buf: bufQuiet,
+            kind: 'background',
+            owningDir: 'C:/projB',
+            watermark: bufQuiet.written
+          }
+        ]
+      ])
+      const appended: Array<[string, string, string]> = []
+      persistBackgroundRingTailsCore(parked, (dir, id, text) => appended.push([dir, id, text]))
+      // undo park skipped; quiet background park (no post-watermark bytes) skipped.
+      expect(appended).toEqual([['C:/projA', 'a', 'tail-a']])
+    }
+  )
+
+  it('one failing append does not block the rest (best-effort quit drain)', () => {
+    const mk = (text: string): any => {
+      const buf = createRing(1024)
+      const watermark = buf.written
+      pushRing(buf, text)
+      return { proc: makeProc(9).proc, buf, kind: 'background', owningDir: 'C:/p', watermark }
+    }
+    const parked = new Map<string, any>([
+      ['x', mk('one')],
+      ['y', mk('two')]
+    ])
+    const appended: string[] = []
+    persistBackgroundRingTailsCore(parked, (_d, id, text) => {
+      if (id === 'x') throw new Error('disk full')
+      appended.push(text)
+    })
+    expect(appended).toEqual(['two'])
   })
 })

@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync, existsSync } from 'fs'
+import { writeFileSync, mkdtempSync, existsSync, readFileSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -17,11 +17,27 @@ import {
   getTerminalBootInfo,
   getTerminalCwd,
   setRecapEnvProvider,
-  setOrchestrationSyncProvider
+  setOrchestrationSyncProvider,
+  parkProjectSessions,
+  disposeProjectPtys,
+  countProjectSessions,
+  reapUndoParks,
+  persistBackgroundRingTails,
+  backgroundParkedBoardIds
 } from './pty'
+import { appendTerminalSnapshot } from './terminalSnapshot'
 import { boardGitDiff } from './gitDiff'
 import { createReadinessWaiter } from './terminalReadiness'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
+import {
+  backgroundProjectOsr,
+  foregroundProjectOsr,
+  disposeProjectOsr,
+  countProjectOsr
+} from './previewOsrBackground'
+import { createProjectSessions } from './projectSessions'
+import { registerProjectSessionsHandlers } from './projectSessionsIpc'
+import { registerProjectThumbHandlers } from './projectThumbs'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
@@ -65,7 +81,7 @@ import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
 import { registerTerminalHandlers } from './terminalIpc'
 import { registerPlatformIpc } from './platformIpc'
-import { makeFlushChannel, makeFlushFinish } from './flushChannel'
+import { flushRendererAutosave } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
 import {
   watchRecapMap,
@@ -130,6 +146,29 @@ let fileWatcher: FileWatcher | null = null
 // PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
 // when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
 let resultSynth: ResultSynthesizer | null = null
+// Background project sessions (Phase 1): the backgrounded-project registry, wired over the real
+// pty/previewOsr project-scoped resource functions. App-run lifetime only — quit's disposeAll*
+// kills background resources too, so the registry is never persisted or drained at shutdown.
+// Phase 4: the persisted forever-keep list (the dialog's opt-in checkbox) — app/machine
+// preference in userData, NEVER the project folder. Read lazily by the registry (first policy
+// access is post-ready); a missing/corrupt file reads as [].
+const foreverKeepFile = (): string => join(app.getPath('userData'), 'background-keep.json')
+const projectSessions = createProjectSessions({
+  reapUndoParks,
+  parkPtys: parkProjectSessions,
+  disposePtys: disposeProjectPtys,
+  countPtys: countProjectSessions,
+  backgroundOsr: backgroundProjectOsr,
+  foregroundOsr: foregroundProjectOsr,
+  disposeOsr: disposeProjectOsr,
+  countOsr: countProjectOsr,
+  now: () => Date.now(),
+  loadForeverKeeps: () => {
+    const parsed: unknown = JSON.parse(readFileSync(foreverKeepFile(), 'utf8'))
+    return Array.isArray(parsed) ? parsed.filter((d): d is string => typeof d === 'string') : []
+  },
+  saveForeverKeeps: (dirs) => writeFileSync(foreverKeepFile(), JSON.stringify(dirs), 'utf8')
+})
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
@@ -181,7 +220,13 @@ function createWindow(): void {
       platform: process.platform,
       disposeOsr: disposeAllOsr, // close offscreen preview renderers
       disposeDiagramWorker, // close the hidden Mermaid render worker (S4)
-      disposePtys: disposeAllPtys // darwin-only PTY-tree reap (guarded inside)
+      // darwin-only PTY-tree reap (guarded inside). Phase 5: persist background parks'
+      // ring tails first — this darwin close is a quit-equivalent for PTYs (see quit.ts),
+      // and the before-quit shutdown() that normally appends them never fires here.
+      disposePtys: () => {
+        persistBackgroundRingTails(appendTerminalSnapshot)
+        return disposeAllPtys()
+      }
     })
     // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
     // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
@@ -736,8 +781,11 @@ app.whenReady().then(async () => {
     (dir) => {
       // BUG-035 (verify follow-up): board results are per-project — an id-colliding
       // board in the next project must not inherit the previous project's verdict.
-      // Clear-all on open; onBoardsObserved's prune handles deletions WITHIN a project.
-      pruneBoardResults(new Set())
+      // Phase 5 (bg sessions): the open-clear now SPARES background residents' results —
+      // a resident's verdict must survive until its switch-back (id-keyed, so the R1
+      // clone-collision caveat applies; accepted + ADR'd for v1). onBoardsObserved's
+      // prune handles deletions WITHIN a project.
+      pruneBoardResults(backgroundParkedBoardIds())
       // File-tree epic (S2): (re)point the live tree watcher at the now-open project root.
       // watch() closes any prior watcher first, so a project switch re-targets cleanly.
       void fileWatcher?.watch(dir)
@@ -761,16 +809,43 @@ app.whenReady().then(async () => {
       recapWatcher?.retain(liveBoardIds)
       // PR-4: drop pending result-synthesis re-check timers for boards no longer live.
       resultSynth?.retain(liveBoardIds)
-      pruneBoardResults(liveBoardIds)
+      // Phase 5 (bg sessions): prune to the UNION of the active project's live boards and
+      // the background residents' parked ids — a switch must not destroy a resident's
+      // verdict (it re-surfaces on switch-back).
+      const residentIds = backgroundParkedBoardIds()
+      pruneBoardResults(new Set([...liveBoardIds, ...residentIds]))
       // Re-arm watchers for live boards that the in-memory recapMap knows about but whose
       // fs.watch handle was disposed when we switched away from this project.
+      // Phase 5 recap gating: SKIP ids that are also background-parked — an id that is both
+      // live here and parked for a resident is the R1 clone collision, and tracking the
+      // RESIDENT's transcript for the active clone's board would cross-wire the projects.
       for (const [boardId, entry] of recapMap.entries()) {
-        if (liveBoardIds.has(boardId)) {
+        if (liveBoardIds.has(boardId) && !residentIds.has(boardId)) {
           recapWatcher?.track(boardId, entry.transcriptPath)
         }
       }
-    }
+    },
+    // Background sessions (Phase 1): a successful open/reopen forgets any backgrounded state
+    // for the now-active dir (idempotent for a never-backgrounded one) — see projectSessions.
+    (dir) => projectSessions.foregroundProject(dir)
   )
+  // Background project sessions: the switch-pipeline control plane (Phase 2) + the Phase-4
+  // keep-policy plane (ask-on-switch info · set/forget keep · ∞ badges). Flag-free since
+  // Phase 4 — keep-running is the shipped behavior, mediated by the dialog.
+  registerProjectSessionsHandlers(ipcMain, () => mainWindow, {
+    sessions: projectSessions,
+    getCurrentDir,
+    disposeProjectPtys,
+    disposeProjectOsr
+  })
+  // Phase 4b: project-dock thumbnails — capture keyed to the MAIN-resolved active dir, cached
+  // in userData/project-thumbs (app cache, never the project folder), served only for the
+  // session set (active + registry residents).
+  registerProjectThumbHandlers(ipcMain, () => mainWindow, {
+    getCurrentDir,
+    sessionDirs: () => projectSessions.listBackgroundProjects().map((b) => b.dir),
+    thumbsDir: () => join(app.getPath('userData'), 'project-thumbs')
+  })
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
   // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated
@@ -977,6 +1052,11 @@ app.whenReady().then(async () => {
  * hooks fire it best-effort without awaiting (an uncaughtException handler can't).
  */
 function shutdown(): Promise<void> {
+  // Phase 5 (bg sessions): background parks' post-park output lives ONLY in their rings
+  // (the renderer flush serializes just the ACTIVE project's mounted xterms) — append each
+  // tail to its owning project's sidecar BEFORE the rings die in the PTY drain. Sync +
+  // best-effort, so the crash sinks that share this teardown can run it too.
+  persistBackgroundRingTails(appendTerminalSnapshot)
   const drained = disposeAllPtys()
   disposeAllOsr() // close offscreen preview renderers
   disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
@@ -1002,47 +1082,11 @@ function shutdown(): Promise<void> {
   return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 
-/**
- * Ask the renderer to flush its debounced autosave before we hard-exit (BUG-M2).
- * The quit path calls `app.exit(0)`, which never fires the renderer `beforeunload`,
- * so the autosave flush handler (useAutosave) would be skipped and the last ~1s of
- * edits lost. We post `project:flush` with a unique reply channel; the renderer runs
- * its flush (awaiting `project:save`) and replies. We resolve on the reply OR a short
- * timeout fallback so a wedged/closed renderer can never hang the quit.
- */
+/** BUG-M2 renderer autosave flush before a hard exit — body lives in flushChannel.ts
+ *  (`flushRendererAutosave`, moved beside its channel/finish primitives by the max-lines
+ *  ratchet); this wrapper just binds the module's ipcMain + live window. */
 function flushRenderer(timeoutMs = 1500): Promise<void> {
-  const win = mainWindow
-  // BUG-001: accessing .webContents on a destroyed BrowserWindow throws "Object has been
-  // destroyed". Guard isDestroyed() BEFORE dereferencing .webContents so the close-then-quit
-  // path (Win/Linux: window close -> window-all-closed -> before-quit -> flushRenderer) cannot
-  // throw into the uncaughtException sink and short-circuit the guarded-quit chain.
-  if (!win || win.isDestroyed()) return Promise.resolve()
-  const wc = win.webContents
-  if (!wc || wc.isDestroyed()) return Promise.resolve()
-  return new Promise<void>((resolve) => {
-    // 🔒 BUG-038: use CSPRNG randomUUID() (not predictable Date.now()/Math.random).
-    const replyChannel = makeFlushChannel()
-    const { finish, forceFinish } = makeFlushFinish({
-      getWin: () => mainWindow,
-      onCleanup: () => {
-        ipcMain.removeAllListeners(replyChannel)
-        clearTimeout(timer)
-      },
-      onResolve: resolve
-    })
-    // 🔒 BUG-038: `finish` accepts IpcMainEvent and guards against foreign-frame senders.
-    // BUG-019: use ipcMain.on (not once) so a foreign-frame message that isForeignSender
-    // correctly ignores does not consume the listener before the legitimate reply arrives.
-    // onCleanup calls removeAllListeners(replyChannel) when finish resolves, so cleanup
-    // still happens exactly once regardless of how many messages arrive on the channel.
-    const timer = setTimeout(forceFinish, timeoutMs)
-    ipcMain.on(replyChannel, finish)
-    try {
-      wc.send('project:flush', replyChannel)
-    } catch {
-      forceFinish() // renderer gone — nothing to flush
-    }
-  })
+  return flushRendererAutosave(ipcMain, () => mainWindow, timeoutMs)
 }
 
 app.on('window-all-closed', () => {

@@ -15,8 +15,8 @@
  * MAIN-only + Electron-free (explicit `projectDir`) so it unit-tests without Electron. Every write is
  * atomic (`write-file-atomic`) and best-effort — a snapshot is regenerable session state, never fatal.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
-import { mkdir as mkdirAsync } from 'fs/promises'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'fs'
+import { mkdir as mkdirAsync, readFile as readFileAsync } from 'fs/promises'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 import { isSafeId } from './safeId'
@@ -118,12 +118,64 @@ export async function writeTerminalSnapshotAsync(
   }
 }
 
+/**
+ * Phase 5 (bg sessions): APPEND a background session's post-park ring tail to its owning
+ * project's sidecar at quit/darwin-close — output produced while backgrounded would
+ * otherwise die with the ring (the renderer flush serializes only the ACTIVE project's
+ * mounted xterms). Synchronous by design (quit path — same rationale as
+ * `writeTerminalSnapshot`); appending raw ring ANSI after serialized-buffer ANSI is safe
+ * (both are plain VT streams, replayed in order on restore). Cap discipline: if the
+ * existing sidecar + tail would exceed `MAX_SNAPSHOT_BYTES`, the append is SKIPPED whole
+ * (never truncated — slicing ANSI mid-sequence garbles the restore), keeping the
+ * skip-not-truncate contract. Returns true only when the tail landed.
+ */
+export function appendTerminalSnapshot(projectDir: string, boardId: string, tail: string): boolean {
+  const file = terminalSnapshotPath(projectDir, boardId)
+  if (!file || typeof tail !== 'string' || tail.length === 0) return false
+  try {
+    let existing = 0
+    try {
+      existing = statSync(file).size
+    } catch {
+      /* no sidecar yet — the tail becomes the whole snapshot */
+    }
+    const tailBytes = Buffer.byteLength(tail, 'utf8')
+    if (existing + tailBytes > MAX_SNAPSHOT_BYTES) {
+      console.warn(`[terminalSnapshot] ${boardId} tail append exceeds cap — skipped`)
+      return false
+    }
+    mkdirSync(terminalSnapshotDir(projectDir), { recursive: true })
+    appendFileSync(file, tail, 'utf8')
+    return true
+  } catch (err) {
+    console.warn('[terminalSnapshot] tail append failed (non-fatal)', err)
+    return false
+  }
+}
+
 /** Read a board's snapshot, or null when absent / unreadable / rejected id. Never throws. */
 export function readTerminalSnapshot(projectDir: string, boardId: string): string | null {
   const file = terminalSnapshotPath(projectDir, boardId)
   if (!file || !existsSync(file)) return null
   try {
     return readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Async read for the adopt-preface path (Phase 5 splice): the switch-back adopt reads the
+ * sidecar off the event loop before replaying it over the port. Null when absent/bad id.
+ */
+export async function readTerminalSnapshotAsync(
+  projectDir: string,
+  boardId: string
+): Promise<string | null> {
+  const file = terminalSnapshotPath(projectDir, boardId)
+  if (!file) return null
+  try {
+    return await readFileAsync(file, 'utf8')
   } catch {
     return null
   }

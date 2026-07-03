@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, createRing, pushRing, readRing } from './ptyOutput'
+import {
+  MAX_OUTPUT_PAGE,
+  pageOutput,
+  stripAnsi,
+  createRing,
+  pushRing,
+  readRing,
+  readRingSince
+} from './ptyOutput'
 
 describe('OutputRing (PERF-06 chunk deque)', () => {
   it('concatenates chunks under the cap (read joins them)', () => {
@@ -175,5 +183,45 @@ describe('pageOutput', () => {
     expect(p.text).toBe('')
     expect(p.returned).toBe(0)
     expect(p.nextCursor).toBeUndefined()
+  })
+})
+
+// Bg sessions Phase 5: the `written` watermark + post-watermark reads that make the
+// snapshot+tail splice possible (park records `written`; adopt replays only what followed).
+describe('readRingSince (Phase 5 watermark splice)', () => {
+  it('tracks cumulative written across pushes (never decremented by eviction)', () => {
+    const ring = createRing(4)
+    pushRing(ring, 'abcd')
+    pushRing(ring, 'efgh')
+    expect(ring.written).toBe(8)
+    expect(readRing(ring)).toBe('efgh') // capped retained tail
+  })
+
+  it('returns only the bytes pushed after the watermark', () => {
+    const ring = createRing(1024)
+    pushRing(ring, 'before-park')
+    const watermark = ring.written
+    pushRing(ring, 'AFTER')
+    expect(readRingSince(ring, watermark)).toBe('AFTER')
+  })
+
+  it('returns empty when nothing followed the watermark', () => {
+    const ring = createRing(1024)
+    pushRing(ring, 'x')
+    expect(readRingSince(ring, ring.written)).toBe('')
+  })
+
+  it('degrades to the whole retained tail when eviction ate part of the fresh bytes', () => {
+    const ring = createRing(4)
+    pushRing(ring, 'old')
+    const watermark = ring.written
+    pushRing(ring, 'abcdefgh') // 8 fresh chars, only 4 retained
+    expect(readRingSince(ring, watermark)).toBe('efgh')
+  })
+
+  it('a watermark of 0 (legacy park) reads as the full retained ring', () => {
+    const ring = createRing(1024)
+    pushRing(ring, 'everything')
+    expect(readRingSince(ring, 0)).toBe('everything')
   })
 })

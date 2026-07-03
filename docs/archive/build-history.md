@@ -1656,6 +1656,49 @@ isolation (handoff green fully-alone in 42s) — load flake, not a regression. *
 fix is now complete end-to-end: spawn runs the command, relays wait for a ready REPL, tools report
 honestly, and a connected agent can relay into the terminal it spawned.**
 
+## 2026-07-03 — Background Project Sessions epic (feat/bg-sessions, PR #293)
+
+Maestri-style resume: switch project A→B→A within one app run and A's terminals are STILL
+RUNNING (same PTYs, live reattach) with previews alive and in-page state intact. In-app-run
+lifetime only; ask-on-switch dialog mediates; shipped default (no flag). ADR 0011.
+
+- **Phase 1 `31fe22c7` plumbing** — projectDir-tagged sessions, typed parks (`ParkKind`
+  undo/background), owner-checked adopt, scoped disposal, `projectSessions.ts` registry.
+- **Phase 2 `102f6c79` keep-running switch** — `store/projectSwitch.ts` pipeline (lock →
+  decide → autosave-cancel → pinned flush-save → handover → load), IPC background/list/
+  close, exit tombstones, R2 dir-pins, R4 raced-adopt re-park; same-pid reattach e2e-proven.
+- **Phase 3 `f4a9c133` preview keep-alive** — synthetic state re-emit on `preview:osrOpen`
+  (kept page NEVER reloads), `GLOBAL_OSR_MAX = 8` backgrounded-only eviction, downloads
+  denied while backgrounded; same-JS-context survival e2e.
+- **Phase 4a `9b5ab7f0` ask-on-switch UX** — dialog + keep-policy ladder (session → forever
+  in `userData/background-keep.json` → ∞ forget), switcher live rows; flag REMOVED.
+- **Phase 4b `890e8fdf` + `afe43fb0` project dock** — bottom-edge hot-zone dock (session
+  projects only), canvas thumbnails (⚠️ `capturePage(rect)` on the app window KILLED the
+  app under GPU load — full-page capture + CPU-side crop; memory + ADR), 10px hot zone +
+  400ms capture budget from the manual dev check.
+- **Phase 4c `2acbf736` switch-transition motion** — signed-off minimize-to-dock overlay
+  (OUT 260ms → HOLD kills the welcome-picker flash [picker UNMOUNTED, not occluded] → IN
+  240ms rise; reduced-motion 120ms fades; 4s watchdog; error ⇒ instant drop; zero added
+  wait). Manual dev check passed (`11c428a0`).
+- **Phase 5 `f008d329` continuity + hardening** — ring watermark splice
+  (`OutputRing.written` + `readRingSince`; background adopt = sidecar preface + post-park
+  tail — full scrollback, no 256KB ceiling), `terminal:exitResidue` consume-on-read +
+  "Exited in background (code N)" restored bar, quit/darwin ring-tail appends (64MB
+  skip-not-truncate), `pruneBoardResults` union-of-residents + recap re-arm clone gate,
+  **ADR 0011** (lifetime · budgets · dialog policy · darwin=quit · no schema bump · v1
+  limitations + follow-ups).
+- **Epic-end sync merge `487c97ac`** (post-#291 main): two add-vs-add pty.ts conflicts →
+  union (`spawnedAt` readiness + `projectDir` tags).
+
+**Verified:** clean-env vitest 4260P · new e2e projectBackground (4) + Continuity (splice
+exactly-once, deeper than the ring + dir-isolation) + Dialog ladder + Dock + SwitchMotion
+suites · FULL pre-merge matrix on the final tree: Win 256P (osrCrop documented flake
+rerun-green) + Linux-Docker 256P (dataFlow documented flake retry-recovered) · manual dev
+checks per phase + the epic check, all user-signed. e2e gotchas paid: mint+open the
+DESTINATION first (R2 pinned flush-save rejects); splice spec needs board scrollback 50000
+(at the 2000-ROW default, wrapped filler evicts from xterm before the 256KB ring); POSIX
+legs need platform-forked markers (bash chokes on pwsh concat). Deferred (ADR'd):
+quit-relaunch e2e harness, recap-map dir-scoping, dir-keyed boardResults.
 ## 2026-07-03 — PR #290: recap refresh — structured outcomes + `recap:updated` push + lineage-guarded transcript resolution (`50701813`)
 
 User-reported: the recap face's stale banner ("Recap is out of date — describes an earlier

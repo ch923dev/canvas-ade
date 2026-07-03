@@ -159,6 +159,7 @@ export function TerminalBoard({
   const {
     state,
     restored,
+    restoredExitCode,
     termRef,
     portRef,
     launchOverrideRef,
@@ -606,6 +607,7 @@ export function TerminalBoard({
               <TerminalIdleAffordance
                 state={state}
                 restored={restored}
+                restoredExitCode={restoredExitCode}
                 identity={identity}
                 background={themeBg}
                 onStart={() => startLaunchRef.current?.()}

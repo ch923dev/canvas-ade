@@ -26,7 +26,13 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { captureOsrPng, debugCrashOsr, debugReplayOsrReadyInvalidations } from './previewOsrCapture'
 import { getOsrWindow } from './previewOsr'
-import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
+import {
+  debugSeedOutput,
+  debugSessionCounts,
+  debugTerminalPid,
+  debugWriteTerminal,
+  disposeAllPtys
+} from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
 import { readBoardResult, recordBoardResult } from './boardResults'
@@ -81,6 +87,14 @@ export interface E2EMain {
   osrLogicalSize(
     id: string
   ): { physW: number; physH: number; zoom: number; logicalW: number; logicalH: number } | null
+  /**
+   * Background sessions (Phase 3): run JS inside a board's OFFSCREEN page and return the result
+   * (`executeJavaScript` on the OSR webContents; null when no window is open / the eval threw).
+   * The no-reload keep-alive probe plants a window-global before a project switch and reads it
+   * back after — same value ⇒ same JS context ⇒ the kept page never reloaded. E2E ONLY, gated by
+   * __ENABLE_E2E_MAIN__ + CANVAS_E2E like the rest of this registry (mirrors osrPainting).
+   */
+  osrEval(id: string, code: string): Promise<unknown>
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -117,6 +131,8 @@ export interface E2EMain {
   pidsAlive(pids: number[]): number[]
   /** Tear down EVERY pty session (live + parked) — the real MAIN kill path. */
   disposeAllPtys(): Promise<void>
+  /** Background sessions: live/parked session totals (the rapid-switch zero-orphan probe). */
+  ptySessionCounts(): { live: number; parked: number }
   /** Put plain text on the system clipboard (paste-text sliver). */
   putTextOnClipboard(text: string): void
   /** Read the system clipboard text (assert a copy landed). */
@@ -357,6 +373,15 @@ export function installE2EMain(
     osrReplayReadyInvalidations(id) {
       return debugReplayOsrReadyInvalidations(id)
     },
+    async osrEval(id, code) {
+      const wc = getOsrWindow(id)?.webContents
+      if (!wc || wc.isDestroyed()) return null
+      try {
+        return await wc.executeJavaScript(code)
+      } catch {
+        return null
+      }
+    },
     osrLogicalSize(id) {
       const osrWin = getOsrWindow(id)
       if (!osrWin || osrWin.isDestroyed()) return null
@@ -437,6 +462,9 @@ export function installE2EMain(
     },
     disposeAllPtys() {
       return disposeAllPtys()
+    },
+    ptySessionCounts() {
+      return debugSessionCounts()
     },
     applicationMenuIsNull() {
       return Menu.getApplicationMenu() === null

@@ -22,6 +22,7 @@
 @import './styles/boards/text-toolbar.css';
 @import './styles/screens/welcome.css';
 @import './styles/chrome/menu.css';
+@import './styles/chrome/projectdock.css';
 @import './styles/chrome/tidy.css';
 @import './styles/chrome/fullview.css';
 @import './styles/boards/terminal.css';
@@ -36,3 +37,4 @@
 @import './styles/panels/library.css';
 @import './styles/canvas/drag-create.css';
 @import './styles/canvas/board-groups.css';
+@import './styles/screens/switch-transition.css';
