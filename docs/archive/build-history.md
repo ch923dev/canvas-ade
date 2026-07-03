@@ -1655,3 +1655,39 @@ confirm-modal poll, osrCrop) flaked under sustained 4×-matrix machine load and 
 isolation (handoff green fully-alone in 42s) — load flake, not a regression. **The MCP prompt-relay
 fix is now complete end-to-end: spawn runs the command, relays wait for a ready REPL, tools report
 honestly, and a connected agent can relay into the terminal it spawned.**
+
+## 2026-07-03 — PR #290: recap refresh — structured outcomes + `recap:updated` push + lineage-guarded transcript resolution (`50701813`)
+
+User-reported: the recap face's stale banner ("Recap is out of date — describes an earlier
+session") never cleared on ⟳. Root cause: banner and regeneration were **unsynchronized paths
+with different gates** — the banner is renderer-only math over always-available local facts
+(`asOf < lastActivity − 120s`), while regeneration silently no-oped on ANY gate (consent off,
+missing/untrusted transcript, no LLM key, budget exhausted, in-flight watcher collision) with
+`memory:refresh` still reporting `{ok:true}`. The "earlier session" wording was literal: the
+SessionStart hook records the transcript path before the `.jsonl` exists (eager capture), and
+compaction/`/resume` rolls onto a new transcript without re-firing SessionStart.
+
+- **`summaryLoop`** — body refactored into `run()` returning a typed `RefreshOutcome`
+  (`recap-written{asOf}` / `summary-written{recapSkipped}` / `llm-unavailable{reason}` /
+  `skipped{reason}` / `coalesced{with}`); `inFlight` Set → `Map<key, Promise<outcome>>`; new
+  `refresh()` coalesces onto an in-flight run (no second budgeted LLM call per click) while the
+  watcher's `onIntent` pending-park/drain (BUG-015/BUG-007) stays byte-compatible; `onRecapWritten`
+  dep fires only after `writeBoardRecap` durably lands.
+- **IPC/push** — `memory:refresh` returns `{ok, outcome?}` (additive); new **`recap:updated`**
+  push (destroyed-window guards as `recap:learned`) so background watcher regens update an open
+  RecapView live. `getAgentMilestones` reports WHY it skipped instead of `undefined`.
+- **RecapView** — `refreshNoteFor(outcome)` (`lib/recapNote.ts`) renders a calm one-line reason
+  ("Regenerating needs an LLM key…", budget, consent, no-transcript; warn tone on errors);
+  subscribes to `recap:updated`.
+- **`resolveLiveTranscriptPath`** — eager-capture grace (fresh map entry + missing `.jsonl` ⇒
+  `undefined`, never scan onto an OLDER session) + lineage-proven rotation adoption (active
+  board's transcript mtime lags >120s ⇒ adopt a newer sibling ONLY when its 64KB tail contains
+  the recorded session id — BUG-005 sibling protection intact). `readRecapMap` parses the hook `ts`.
+- **preload** — recap namespace factored to `recapApi.ts` (max-lines ratchet, terminalApi
+  precedent). Chore: ignore the local `.impeccable/` design-hook cache.
+
+**Verified:** 18 new units (7 refresh-outcome incl. coalesce = ONE provider call · 7 resolver
+grace/rotation/lineage/sibling · 3 RecapView note/push · outcome-passthrough integration), full
+suite 4180 pass · +2 @terminal e2e (key-less why-note, deterministic zero-egress; mock-LLM manual
+refresh regenerates in place) · full pre-push matrix (Win + Linux Docker) + full matrix re-run on
+the merged tree · manual dev check title-stamped. Bot review: 0 critical / 0 warning.
