@@ -151,10 +151,14 @@ export function registerVoiceHandlers(
     // there swapped the flyout body for the model-missing row and failed the composer
     // specs Linux-only. deps.engine (unit-test injection) keeps the real disk check.
     const stubActive = !deps.engine && currentVoiceStubEngine() !== null
-    // V4 makes the model user-selectable via voiceConfig; V2 pins the default.
-    const status = stubActive ? 'ready' : await ops.status(userData, DEFAULT_VOICE_MODEL_ID)
-    const paths =
-      !stubActive && status === 'ready' ? ops.paths(userData, DEFAULT_VOICE_MODEL_ID) : null
+    // V4: the configured model drives the session. An id missing from the catalog is
+    // preserved on disk but falls back to the default here (scene-id discipline).
+    const cfgModel = readVoiceConfig(userData).modelId
+    const modelId = VOICE_MODEL_CATALOG.some((m) => m.id === cfgModel)
+      ? cfgModel
+      : DEFAULT_VOICE_MODEL_ID
+    const status = stubActive ? 'ready' : await ops.status(userData, modelId)
+    const paths = !stubActive && status === 'ready' ? ops.paths(userData, modelId) : null
     const { port1, port2 } = new MessageChannelMain()
     // Restart-idempotent: the host replaces any live session (the old renderer port gets
     // {t:'stop'}, so a stale capture releases the mic).
@@ -217,11 +221,12 @@ export function registerVoiceHandlers(
     }
   )
 
-  // V3 minimal config (voiceConfig.ts pulled forward from V4): the pill's show flag +
-  // persisted drag position. set() is a merge-patch funneled through repairVoiceConfig so
-  // a malformed renderer payload can never write junk to disk.
+  // App voice config (SPEC §5). set() is a merge-patch funneled through repairVoiceConfig
+  // so a malformed renderer payload can never write junk to disk; the repaired result is
+  // pushed back on voice:config:changed so consumers apply LIVE (V4 — the Settings
+  // showPill/hotkey toggles take effect without a pill remount).
   ipcMain.handle('voice:config:get', async (e): Promise<VoiceConfig> => {
-    if (isForeignSender(e, getWin)) return { showPill: true }
+    if (isForeignSender(e, getWin)) return repairVoiceConfig(null)
     return readVoiceConfig(getUserData())
   })
 
@@ -230,7 +235,9 @@ export function registerVoiceHandlers(
       return { ok: false }
     }
     const userData = getUserData()
-    writeVoiceConfig(userData, repairVoiceConfig({ ...readVoiceConfig(userData), ...patch }))
+    const next = repairVoiceConfig({ ...readVoiceConfig(userData), ...patch })
+    writeVoiceConfig(userData, next)
+    getWin()?.webContents.send('voice:config:changed', next)
     return { ok: true }
   })
 

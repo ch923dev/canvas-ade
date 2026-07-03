@@ -24,8 +24,16 @@ export interface VoiceDownloadProgress {
   fileCount: number
 }
 
-/** V3 minimal config slice (mirrors main voiceConfig.ts; V4 adds the rest). */
+/** Mirrors main voiceConfig.ts (SPEC §5). autoSendOnFinal is typed literal-false —
+ *  reserved, never honored in v1. */
 export interface VoiceConfigView {
+  engine: 'sherpa-onnx' | 'cloud'
+  modelId: string
+  language: string
+  micDeviceId?: string
+  hotkey?: string
+  autoSendOnFinal: false
+  cloudProvider?: string
   showPill: boolean
   pillPosition?: { x: number; y: number }
 }
@@ -55,12 +63,18 @@ export const voiceApi = {
       return () => ipcRenderer.removeListener('voice:models:progress', listener)
     }
   },
-  // V3: pill visibility + persisted drag position (userData/voice-config.json). set() is a
-  // merge-patch; MAIN sanitizes through repairVoiceConfig.
+  // App-level voice config (userData/voice-config.json). set() is a merge-patch; MAIN
+  // sanitizes through repairVoiceConfig and pushes the repaired result back on
+  // voice:config:changed so consumers (pill visibility/hotkey) apply LIVE (V4).
   config: {
     get: (): Promise<VoiceConfigView> => ipcRenderer.invoke('voice:config:get'),
     set: (patch: Partial<VoiceConfigView>): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('voice:config:set', patch)
+      ipcRenderer.invoke('voice:config:set', patch),
+    onChanged: (cb: (cfg: VoiceConfigView) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, cfg: VoiceConfigView): void => cb(cfg)
+      ipcRenderer.on('voice:config:changed', listener)
+      return () => ipcRenderer.removeListener('voice:config:changed', listener)
+    }
   }
 }
 

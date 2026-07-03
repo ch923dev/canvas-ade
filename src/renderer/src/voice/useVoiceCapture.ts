@@ -15,7 +15,7 @@
  */
 import { useEffect } from 'react'
 import workletUrl from './captureWorklet?worker&url'
-import { createSilenceWatchdog, type WorkletFrameMsg } from './captureMath'
+import { createSilenceWatchdog, micConstraints, type WorkletFrameMsg } from './captureMath'
 import { useVoiceStore } from '../store/voiceStore'
 
 interface ActiveCapture {
@@ -73,10 +73,22 @@ function createCapture(port: MessagePort): ActiveCapture {
   }
 
   const start = async (): Promise<void> => {
+    // V4: the configured mic, as an `exact` deviceId constraint. A device that has gone
+    // away rejects (OverconstrainedError) → retry the system default rather than dying —
+    // dictation should survive the user unplugging their headset between sessions.
+    const micDeviceId = await window.api.voice.config
+      .get()
+      .then((c) => c.micDeviceId)
+      .catch(() => undefined)
     // V0's default-session posture grants audio-only media for the app page — no per-call
     // permission code here. A missing OS grant does NOT reject: it yields a live all-zeros
     // stream (electron#42714) — that case is the watchdog's job, not this catch's.
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(micConstraints(micDeviceId))
+    } catch (err) {
+      if (!micDeviceId) throw err
+      stream = await navigator.mediaDevices.getUserMedia(micConstraints(undefined))
+    }
     if (disposed) {
       stream.getTracks().forEach((t) => t.stop())
       return

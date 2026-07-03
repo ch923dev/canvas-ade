@@ -176,3 +176,12 @@ export function createSilenceWatchdog(
     }
   }
 }
+
+/**
+ * getUserMedia constraints for the configured mic (V4 `voiceConfig.micDeviceId`).
+ * `exact` so a stale id FAILS (OverconstrainedError) instead of silently capturing the
+ * wrong device — the caller catches that and retries with the default (`{ audio: true }`).
+ */
+export function micConstraints(micDeviceId?: string): MediaStreamConstraints {
+  return micDeviceId ? { audio: { deviceId: { exact: micDeviceId } } } : { audio: true }
+}

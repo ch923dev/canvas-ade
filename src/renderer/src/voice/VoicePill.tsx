@@ -1,8 +1,9 @@
 /**
  * Voice V3 — the floating VoicePill (SPEC §3, pill mock v2 approved as-is). A screen-fixed
  * draggable overlay island (like toast/minimap — NOT inside React Flow): grip dots + app
- * logo + live RMS waveform bars. Click or Ctrl/Cmd+Shift+M toggles listening; press-and-
- * hold the hotkey is push-to-talk (release stops). Dragging never toggles (a small
+ * logo + live RMS waveform bars. Click or the configured hotkey (default Ctrl/Cmd+Shift+M,
+ * V4 `voiceConfig.hotkey`) toggles listening; press-and-hold the hotkey is push-to-talk
+ * (release stops). Dragging never toggles (a small
  * movement threshold decides click vs drag); the position is viewport-clamped and persists
  * app-level via `voiceConfig.pillPosition` (debounced). This component also owns the
  * session babysitters: the silence auto-STOP (~15 s, never submits) + the ~2 min hard cap,
@@ -13,6 +14,7 @@ import logoUrl from '../../../../build/icon.png'
 import { useVoiceStore } from '../store/voiceStore'
 import { startVoice, stopVoice, toggleVoice } from './voiceSession'
 import { VoiceFlyout } from './VoiceFlyout'
+import { defaultHotkey, hotkeyLabel, matchesHotkey, parseHotkey, type HotkeyChord } from './hotkey'
 
 /** Nominal pill box for clamping (measured look; exact width varies a few px with DPI). */
 export const PILL_W = 150
@@ -47,9 +49,12 @@ export function defaultPillPos(vw: number, vh: number): PillPos {
   return clampPillPos({ x: Math.round((vw - PILL_W) / 2), y: vh - PILL_H - 24 }, vw, vh)
 }
 
-/** Ctrl/Cmd+Shift+M — `code` so the binding survives keyboard layouts. */
-function isVoiceHotkey(e: KeyboardEvent): boolean {
-  return e.code === 'KeyM' && e.shiftKey && !e.altKey && (IS_MAC ? e.metaKey : e.ctrlKey)
+/** The platform-default chord — the fallback for a missing/unparsable configured hotkey. */
+const DEFAULT_CHORD: HotkeyChord = parseHotkey(defaultHotkey(IS_MAC)) as HotkeyChord
+
+/** Resolve a configured accelerator to the chord the listeners match (V4, SPEC §5). */
+export function resolveHotkey(accel: string | undefined): HotkeyChord {
+  return parseHotkey(accel) ?? DEFAULT_CHORD
 }
 
 /** Per-bar level multipliers (mock v2's uneven waveform silhouette). */
@@ -75,8 +80,19 @@ export function VoicePill(): ReactElement | null {
   // PTT bookkeeping (hotkey keydown → keyup pairing).
   const downAtRef = useRef<number | null>(null)
   const wasIdleRef = useRef(false)
+  // The configured chord lives in a ref (the key listeners are registered once); the
+  // label is state only because the tooltip renders it.
+  const chordRef = useRef<HotkeyChord>(DEFAULT_CHORD)
+  const [chordLabel, setChordLabel] = useState(() => hotkeyLabel(DEFAULT_CHORD, IS_MAC))
 
-  // Restore config once: position (re-clamped — displays change between runs) + show flag.
+  const applyConfig = (cfg: { showPill: boolean; hotkey?: string }): void => {
+    setShowPill(cfg.showPill)
+    chordRef.current = resolveHotkey(cfg.hotkey)
+    setChordLabel(hotkeyLabel(chordRef.current, IS_MAC))
+  }
+
+  // Restore config once: position (re-clamped — displays change between runs) + show
+  // flag + hotkey chord.
   useEffect(() => {
     if (!enabled) return
     let alive = true
@@ -84,7 +100,7 @@ export function VoicePill(): ReactElement | null {
       .get()
       .then((cfg) => {
         if (!alive) return
-        setShowPill(cfg.showPill)
+        applyConfig(cfg)
         const restored = cfg.pillPosition ?? defaultPillPos(window.innerWidth, window.innerHeight)
         setPos(clampPillPos(restored, window.innerWidth, window.innerHeight))
       })
@@ -94,6 +110,16 @@ export function VoicePill(): ReactElement | null {
     return () => {
       alive = false
     }
+  }, [enabled])
+
+  // V4 live-apply: MAIN pushes the repaired config after every voice:config:set, so the
+  // Settings showPill toggle / hotkey change take effect without a remount. pillPosition
+  // is deliberately NOT applied from the push — the drag owns it locally, and the echo of
+  // our own debounced persist would fight an in-flight drag.
+  useEffect(() => {
+    if (!enabled) return
+    const off = window.api.voice.config.onChanged?.((cfg) => applyConfig(cfg))
+    return off
   }, [enabled])
 
   // Keep the pill on-screen across window resizes.
@@ -111,7 +137,7 @@ export function VoicePill(): ReactElement | null {
   useEffect(() => {
     if (!enabled) return
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (!isVoiceHotkey(e)) return
+      if (!matchesHotkey(e, chordRef.current)) return
       e.preventDefault()
       e.stopPropagation()
       if (e.repeat || downAtRef.current !== null) return
@@ -120,8 +146,8 @@ export function VoicePill(): ReactElement | null {
       if (wasIdleRef.current) void startVoice()
     }
     const onKeyUp = (e: KeyboardEvent): void => {
-      // Match on code alone: the modifiers may already be released by the M keyup.
-      if (e.code !== 'KeyM' || downAtRef.current === null) return
+      // Match on code alone: the modifiers may already be released by the key's keyup.
+      if (e.code !== chordRef.current.code || downAtRef.current === null) return
       const held = Date.now() - downAtRef.current
       downAtRef.current = null
       // Quick press from idle = toggle ON (stay listening). Everything else — a hold
@@ -224,7 +250,7 @@ export function VoicePill(): ReactElement | null {
           title={
             capturing
               ? 'Drag to reposition · click to stop'
-              : `Click or ${IS_MAC ? 'Cmd' : 'Ctrl'}+Shift+M to dictate · drag to move`
+              : `Click or ${chordLabel} to dictate · drag to move`
           }
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}

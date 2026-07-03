@@ -164,3 +164,45 @@ describe('VoicePill — hotkey (Ctrl+Shift+M): tap toggles, hold is push-to-talk
     expect(startVoice).not.toHaveBeenCalled()
   })
 })
+
+describe('VoicePill — V4 config: custom hotkey + live push', () => {
+  it('honors a configured accelerator instead of the default', async () => {
+    configGet.mockResolvedValue({
+      showPill: true,
+      hotkey: 'Ctrl+Alt+V',
+      pillPosition: { x: 50, y: 50 }
+    })
+    const { container } = render(<VoicePill />)
+    await act(async () => {})
+    expect(container.querySelector('.voice-pill')).toBeTruthy()
+    fireEvent.keyDown(window, { code: 'KeyM', key: 'M', ctrlKey: true, shiftKey: true })
+    expect(startVoice).not.toHaveBeenCalled() // old default no longer bound
+    fireEvent.keyDown(window, { code: 'KeyV', key: 'v', ctrlKey: true, altKey: true })
+    expect(startVoice).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the default chord when the configured hotkey is unparsable', async () => {
+    configGet.mockResolvedValue({ showPill: true, hotkey: 'M', pillPosition: { x: 50, y: 50 } })
+    render(<VoicePill />)
+    await act(async () => {})
+    fireEvent.keyDown(window, { code: 'KeyM', key: 'M', ctrlKey: true, shiftKey: true })
+    expect(startVoice).toHaveBeenCalledTimes(1)
+  })
+
+  it('applies a pushed config LIVE: showPill hides the pill, hotkey rebinds', async () => {
+    let push: ((cfg: { showPill: boolean; hotkey?: string }) => void) | null = null
+    const onChanged = vi.fn((cb: (cfg: { showPill: boolean; hotkey?: string }) => void) => {
+      push = cb
+      return () => {}
+    })
+    ;(window as never as { api: { voice: { config: unknown } } }).api = {
+      voice: { config: { get: configGet, set: configSet, onChanged } }
+    }
+    const pill = await mountPill()
+    expect(pill).toBeTruthy()
+    act(() => push!({ showPill: false, hotkey: 'Ctrl+Alt+V' }))
+    expect(document.querySelector('.voice-pill')).toBeNull() // hidden without a remount
+    fireEvent.keyDown(window, { code: 'KeyV', key: 'v', ctrlKey: true, altKey: true })
+    expect(startVoice).toHaveBeenCalledTimes(1) // hotkey still works while hidden, rebound
+  })
+})
