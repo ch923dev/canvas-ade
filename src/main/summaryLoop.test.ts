@@ -1058,7 +1058,7 @@ describe('createSummaryLoop — terminal recap branch (getAgentMilestones)', () 
       encryptor: fakeEncryptor,
       getCurrentDir: () => proj,
       readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
-      getAgentMilestones: () => recapMilestones,
+      getAgentMilestones: () => ({ milestones: recapMilestones }),
       now: () => new Date(),
       fetch: recapFetch,
       env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
@@ -1088,7 +1088,7 @@ describe('createSummaryLoop — terminal recap branch (getAgentMilestones)', () 
       encryptor: fakeEncryptor,
       getCurrentDir: () => proj,
       readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
-      getAgentMilestones: () => [],
+      getAgentMilestones: () => ({ milestones: [] }),
       now: () => new Date(),
       env: { CANVAS_LLM_MOCK: '1' } // mock echoes the board-content input
     })
@@ -1195,7 +1195,7 @@ describe('createSummaryLoop — terminal recap branch (getAgentMilestones)', () 
       encryptor: fakeEncryptor,
       getCurrentDir: () => proj,
       readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
-      getAgentMilestones: () => secretMs,
+      getAgentMilestones: () => ({ milestones: secretMs }),
       now: () => new Date(),
       fetch: captureFetch,
       env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
@@ -1208,6 +1208,241 @@ describe('createSummaryLoop — terminal recap branch (getAgentMilestones)', () 
     } finally {
       rmSync(proj, { recursive: true, force: true })
       rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('createSummaryLoop.refresh — structured outcomes (recap-refresh fix)', () => {
+  const claudeTerminal = (over: Record<string, unknown> = {}): unknown => ({
+    id: 't1',
+    type: 'terminal',
+    title: 'Agent',
+    launchCommand: 'claude',
+    cwd: '/repo',
+    ...over
+  })
+  const ms: Milestone[] = [
+    { ts: Date.parse('2026-06-07T14:32:00Z'), role: 'user', text: 'review auth' },
+    { ts: Date.parse('2026-06-07T14:35:00Z'), role: 'agent', text: 'found 3 issues' }
+  ]
+  const recapFetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ now: 'Refreshed now-line', notes: [{ i: 1, text: 'beat' }] })
+          }
+        }
+      ]
+    }),
+    text: async () => ''
+  })) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+
+  function dirs(): { proj: string; llmDataDir: string; clean: () => void } {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-refresh-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    return {
+      proj,
+      llmDataDir,
+      clean: () => {
+        rmSync(proj, { recursive: true, force: true })
+        rmSync(llmDataDir, { recursive: true, force: true })
+      }
+    }
+  }
+
+  it('reports recap-written with the sidecar asOf and fires onRecapWritten', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    const written: { boardId: string; asOf: number }[] = []
+    const fixed = new Date('2026-07-03T10:00:00Z')
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => ({ milestones: ms }),
+      onRecapWritten: (boardId, asOf) => written.push({ boardId, asOf }),
+      now: () => fixed,
+      fetch: recapFetch,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      const out = await loop.refresh('t1')
+      expect(out).toEqual({ status: 'recap-written', asOf: fixed.getTime() })
+      expect(written).toEqual([{ boardId: 't1', asOf: fixed.getTime() }])
+      // the sidecar really landed with that stamp
+      const sidecar = createCanvasMemory(proj).readBoardRecap('t1') as { asOf?: number }
+      expect(sidecar?.asOf).toBe(fixed.getTime())
+    } finally {
+      clean()
+    }
+  })
+
+  it('reports the milestone getter skip reason (consent-off) and does NOT fire onRecapWritten', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    const written: string[] = []
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => ({ skip: 'consent-off' }),
+      onRecapWritten: (boardId) => written.push(boardId),
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      expect(await loop.refresh('t1')).toEqual({
+        status: 'summary-written',
+        recapSkipped: 'consent-off'
+      })
+      expect(written).toEqual([])
+    } finally {
+      clean()
+    }
+  })
+
+  it('maps getter undefined to no-transcript and empty milestones to empty-transcript', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    let result: { milestones: Milestone[] } | undefined = undefined
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => result,
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      expect(await loop.refresh('t1')).toEqual({
+        status: 'summary-written',
+        recapSkipped: 'no-transcript'
+      })
+      result = { milestones: [] }
+      expect(await loop.refresh('t1')).toEqual({
+        status: 'summary-written',
+        recapSkipped: 'empty-transcript'
+      })
+    } finally {
+      clean()
+    }
+  })
+
+  it('reports not-terminal for a non-terminal board', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({
+        ok: true,
+        dir: proj,
+        name: 'proj',
+        doc: docWith([planNote('p1', 'hello')])
+      }),
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      expect(await loop.refresh('p1')).toEqual({
+        status: 'summary-written',
+        recapSkipped: 'not-terminal'
+      })
+    } finally {
+      clean()
+    }
+  })
+
+  it('reports llm-unavailable{no-provider} with no key and leaves the sidecar untouched', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => ({ milestones: ms }),
+      now: () => new Date(),
+      env: {} // no CANVAS_LLM_MOCK, no provider key: runSummarize reports no-provider
+    })
+    try {
+      expect(await loop.refresh('t1')).toEqual({ status: 'llm-unavailable', reason: 'no-provider' })
+      expect(createCanvasMemory(proj).readBoardRecap('t1')).toBeUndefined()
+    } finally {
+      clean()
+    }
+  })
+
+  it('reports skipped{no-project} / skipped{board-missing}', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    let dir: string | null = null
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => dir,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([]) }),
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      expect(await loop.refresh('t1')).toEqual({ status: 'skipped', reason: 'no-project' })
+      dir = proj
+      expect(await loop.refresh('missing')).toEqual({ status: 'skipped', reason: 'board-missing' })
+    } finally {
+      clean()
+    }
+  })
+
+  it('coalesces onto an in-flight run: ONE provider call, outcome = coalesced{with}', async () => {
+    const { proj, llmDataDir, clean } = dirs()
+    let fetchCalls = 0
+    let releaseFirst: () => void = () => {}
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let unblock: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve
+    })
+    const slowRecapFetch = (async () => {
+      fetchCalls++
+      releaseFirst()
+      await gate
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({ now: 'slow now', notes: [] }) } }]
+        }),
+        text: async () => ''
+      }
+    }) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => ({ milestones: ms }),
+      now: () => new Date(),
+      fetch: slowRecapFetch,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      const first = loop.onIntent({ boardId: 't1' }) // watcher-style run, in flight
+      await firstStarted
+      const second = loop.refresh('t1') // the user's click while the watcher run is mid-flight
+      unblock()
+      await first
+      const out = await second
+      expect(out.status).toBe('coalesced')
+      expect(out.status === 'coalesced' && out.with.status).toBe('recap-written')
+      // the click did NOT queue a second budgeted call, and no pending retry re-fired later
+      await new Promise((r) => setTimeout(r, 20))
+      expect(fetchCalls).toBe(1)
+    } finally {
+      clean()
     }
   })
 })

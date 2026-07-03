@@ -566,6 +566,31 @@ app.whenReady().then(async () => {
   const llmDataDir = llmIsolated ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-')) : userData
   if (llmIsolated) process.env.CANVAS_E2E_LLM_DIR = llmDataDir
 
+  // Recap-refresh fix A4: the ONE transcript resolver every recap read path uses. Threads the
+  // recap-map entry's clocks (recordedAt = the hook's ts; sessionId = the lineage anchor) and
+  // the board's live PTY activity into resolveLiveTranscriptPath so it can (a) refuse to scan
+  // onto an OLDER session during the eager-capture window and (b) adopt a lineage-proven
+  // rotation successor while the old file still exists. Entry clocks apply only when the
+  // recorded path IS the map entry's (a divergent persisted board path keeps legacy behavior).
+  const resolveBoardTranscript = (
+    boardId: string,
+    recorded: string | undefined
+  ): string | undefined => {
+    const entry = recapMap.get(boardId)
+    let lastActive: number | undefined
+    try {
+      lastActive = getTerminalRuntime(boardId)?.lastActivityAt
+    } catch {
+      lastActive = undefined
+    }
+    const fromMap = !!entry && entry.transcriptPath === recorded
+    return resolveLiveTranscriptPath(recorded, {
+      sessionId: fromMap ? entry.sessionId : undefined,
+      recordedAt: fromMap ? entry.ts : undefined,
+      agentActiveAt: lastActive
+    })
+  }
+
   // T-M3: the Tier-2 autonomous summary loop. The detector (T-M2) emits a {boardId} intent;
   // the loop re-reads the board, summarizes via the budgeted runSummarize (own file-backed
   // key/budget on the same llmDataDir → shared cap/key), and caches the prose into .canvas/.
@@ -592,18 +617,37 @@ app.whenReady().then(async () => {
       // BUG-002: gate the egress path on consent. readConsent is already checked at PTY-spawn
       // time and at hook-install, but the actual transcript read + LLM egress path was never
       // gated, so revoking consent did not stop ongoing summary-loop recap egress.
+      // Recap-refresh fix: report WHY there are no milestones (consent / transcript) instead of
+      // an indistinguishable undefined, so a manual refresh can tell the user what gated it.
       const dir = getCurrentDir()
-      if (!dir || readConsent(userData, dir) !== 'enabled') return undefined
-      const path = resolveLiveTranscriptPath(
+      if (!dir || readConsent(userData, dir) !== 'enabled') return { skip: 'consent-off' }
+      const path = resolveBoardTranscript(
+        boardId,
         (board as { agentTranscriptPath?: string })?.agentTranscriptPath ??
           recapMap.get(boardId)?.transcriptPath
       )
-      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return undefined
+      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path))
+        return { skip: 'no-transcript' }
       try {
-        return extractMilestones(readTranscriptTail(path), { maxMilestones: 12, maxTextChars: 600 })
+        return {
+          milestones: extractMilestones(readTranscriptTail(path), {
+            maxMilestones: 12,
+            maxTextChars: 600
+          })
+        }
       } catch {
-        return undefined
+        return { skip: 'no-transcript' }
       }
+    },
+    // Recap-refresh fix: the sidecar-regen push. Fired by the loop ONLY after writeBoardRecap
+    // durably rewrote board-<id>.recap.json (watcher-driven OR manual refresh), so an open
+    // RecapView re-reads instead of waiting for the next flip. Same destroyed-window guards as
+    // the recap:learned sender below (this too can fire from a debounced timer at teardown).
+    onRecapWritten: (boardId, asOf) => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) return
+      const wc = win.webContents
+      if (!wc.isDestroyed()) wc.send('recap:updated', { boardId, asOf })
     }
   })
   // PR-4: derive a board's BoardResult from its recap transcript. getFacts resolves the SAME
@@ -613,7 +657,7 @@ app.whenReady().then(async () => {
   // boardResultSynth.ts). Driven below off the watcher's onIntent settle signal.
   resultSynth = createResultSynthesizer({
     getFacts: (boardId) => {
-      const path = resolveLiveTranscriptPath(recapMap.get(boardId)?.transcriptPath)
+      const path = resolveBoardTranscript(boardId, recapMap.get(boardId)?.transcriptPath)
       if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return null
       let runtime: ReturnType<typeof getTerminalRuntime> | undefined
       try {
@@ -671,7 +715,7 @@ app.whenReady().then(async () => {
         }
       }
       recorded ??= recapMap.get(boardId)?.transcriptPath
-      return resolveLiveTranscriptPath(recorded)
+      return resolveBoardTranscript(boardId, recorded)
     },
     getTerminalRuntime
   })
@@ -683,7 +727,9 @@ app.whenReady().then(async () => {
     memoryEngine,
     // T-F4: manual ⟳ refresh → the SAME budgeted/passive summarize the detector drives (awaited so
     // the renderer can flip its "updating…" state off once the prose is rewritten).
-    (boardId) => summaryLoop.onIntent({ boardId }),
+    // Recap-refresh fix: route the manual path through refresh() so the outcome (recap written /
+    // skipped + reason / llm-unavailable / coalesced) reaches the renderer via memory:refresh.
+    (boardId) => summaryLoop.refresh(boardId),
     // Terminal recap (Task 10 Step 5): on opening an already-consented project, re-ensure the recap
     // SessionStart hook so a project consented in a prior session keeps recording. Idempotent
     // (installRecapHook no-ops when present). Best-effort — projectIpc wraps this in try/catch.

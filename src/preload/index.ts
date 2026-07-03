@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { authApi } from './authApi'
 import { terminalApi } from './terminalApi'
+import { recapApi, type RecapRefreshOutcome } from './recapApi'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -361,8 +362,17 @@ export interface LlmStatus {
 
 export type LlmWriteResult = { ok: boolean; reason?: string }
 
-// ── Terminal-recap T12: consent state ──
-export type RecapConsentState = 'enabled' | 'declined' | 'undecided'
+// ── Terminal-recap T12 + recap redesign S1: consent state, bundle mirrors, and the recap
+// namespace live in recapApi.ts (max-lines ratchet; the terminalApi.ts precedent). Types are
+// re-exported below so existing importers keep their paths.
+export type {
+  RecapConsentState,
+  RecapStatus,
+  RecapFacts,
+  RecapNarrative,
+  RecapBundle,
+  RecapRefreshOutcome
+} from './recapApi'
 
 // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
 // MIRRORS src/main/orchestrationConsent.ts OrchestrationConsentState (process boundary → no
@@ -382,42 +392,6 @@ export interface OrchestrationSyncResult {
   status: 'synced' | 'error'
   detail: string
   path?: string
-}
-
-// ── Recap redesign S1: the recap face's data bundle. MIRRORS src/main (recapFacts.ts +
-// summaryLoop.ts RecapNarrative + recapIpc.ts RecapBundle) — the process boundary means no
-// shared import (tsconfig.preload ⊥ tsconfig.node); keep the three in lockstep, same as PtyState.
-export type RecapStatus =
-  | 'spawning'
-  | 'running'
-  | 'waiting-on-you'
-  | 'idle'
-  | 'exited'
-  | 'spawn-failed'
-export interface RecapFacts {
-  v: 1
-  status: RecapStatus
-  /** PTY session currently alive (running/spawning); Resume is offered only when false. */
-  live: boolean
-  exitCode?: number
-  title?: string
-  sessionStart?: number
-  lastActivity?: number
-  turns: { user: number; agent: number }
-  lastAsk?: string
-  files: { path: string; op: 'edit' | 'write'; count: number }[]
-  commands: { label: string; count: number }[]
-  generatedAt: number
-}
-export interface RecapNarrative {
-  now: string
-  next?: string
-  beats: { ts: number; text: string; role: 'user' | 'agent' }[]
-  asOf: number
-}
-export interface RecapBundle {
-  facts: RecapFacts
-  narrative?: RecapNarrative
 }
 
 // ── PREV-02: ONE shared IPC listener per OSR stream, fanned out by board id ──
@@ -804,7 +778,10 @@ const api = {
       ipcRenderer.invoke('memory:readBoards', ids),
     // T-F4: force a re-summary of one board (bypasses the debounce; still budget/key-gated +
     // passive in MAIN). {ok:false} when no project is open / over cap. Renderer re-reads prose after.
-    refresh: (boardId: string): Promise<{ ok: boolean }> =>
+    // Recap-refresh fix: `outcome` reports what the summarize actually did (recap regenerated /
+    // skipped + why / LLM unavailable / coalesced onto an in-flight run) so the recap face can
+    // surface the reason instead of silently showing the unchanged sidecar.
+    refresh: (boardId: string): Promise<{ ok: boolean; outcome?: RecapRefreshOutcome }> =>
       ipcRenderer.invoke('memory:refresh', boardId)
   },
   // ── M-brain T-B1/T-B2: provider-agnostic LLM (MAIN owns the key/egress) ──
@@ -824,25 +801,8 @@ const api = {
     }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args)
   },
 
-  // ── Terminal-recap T12: consent + learned-patches push ──
-  recap: {
-    /** S1: one-shot read for the recap face — live LOCAL facts + the cached narrative. */
-    get: (boardId: string): Promise<RecapBundle | null> => ipcRenderer.invoke('recap:get', boardId),
-    getConsent: (): Promise<RecapConsentState> => ipcRenderer.invoke('recap:getConsent'),
-    setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('recap:setConsent', decision),
-    /** main → renderer: learned patches `{boardId, sessionId, transcriptPath}[]` to persist on boards. */
-    onLearned: (
-      cb: (patches: { boardId: string; sessionId: string; transcriptPath: string }[]) => void
-    ): (() => void) => {
-      const h = (
-        _e: IpcRendererEvent,
-        p: { boardId: string; sessionId: string; transcriptPath: string }[]
-      ): void => cb(p)
-      ipcRenderer.on('recap:learned', h)
-      return () => ipcRenderer.removeListener('recap:learned', h)
-    }
-  },
+  // ── Terminal-recap T12: consent + learned/updated pushes (factored to recapApi.ts) ──
+  recap: recapApi,
 
   // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
   // The one-time "Enable agent orchestration?" grant (the mock's Step 1). Separate from recap
