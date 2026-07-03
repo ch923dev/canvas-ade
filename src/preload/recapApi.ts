@@ -63,10 +63,22 @@ export type RecapRefreshOutcome =
   | { status: 'skipped'; reason: 'no-project' | 'board-missing' | 'project-switched' | 'error' }
   | { status: 'coalesced'; with: RecapRefreshOutcome }
 
+// F4 (terminal-resume): MIRRORS src/main/recapHealth.ts RecapHealth (process boundary, no
+// shared import). Null = no project / consent off — the Inspector renders nothing.
+export interface RecapHealthView {
+  runner: 'ok' | 'missing'
+  hookInstalled: boolean
+  captured: boolean
+  sessionAgeMs: number | null
+}
+
 // ── Terminal-recap T12: consent + learned-patches push ──
 export const recapApi = {
   /** S1: one-shot read for the recap face — live LOCAL facts + the cached narrative. */
   get: (boardId: string): Promise<RecapBundle | null> => ipcRenderer.invoke('recap:get', boardId),
+  /** F4: per-board hook-health probe for the Inspector's fault-only status line. */
+  health: (boardId: string): Promise<RecapHealthView | null> =>
+    ipcRenderer.invoke('recap:health', boardId),
   getConsent: (): Promise<RecapConsentState> => ipcRenderer.invoke('recap:getConsent'),
   setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('recap:setConsent', decision),

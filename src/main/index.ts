@@ -89,8 +89,10 @@ import {
   installRecapHook,
   removeRecapHook,
   findNodeExecutable,
+  isRecapHookInstalled,
   type RecapMapEntry
 } from './agentRecapMap'
+import { registerRecapHealthIpc, createFocusReEnsure, selectTranscriptClocks } from './recapHealth'
 import { registerRecapHandlers, readConsent } from './recapConsent'
 import { registerOrchestrationHandlers } from './orchestrationConsent'
 import { registerOrchestrationProvisionHandlers } from './orchestrationProvision'
@@ -103,13 +105,14 @@ import {
   unsyncProvisioners
 } from './cliProvisioners'
 import {
-  extractMilestones,
   isTrustedTranscriptPath,
   readTranscriptTail,
   resolveLiveTranscriptPath
 } from './agentTranscript'
+import { createGetAgentMilestones, persistedTranscriptPath } from './agentMilestones'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 import { registerRecapIpc } from './recapIpc'
+import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
@@ -621,17 +624,16 @@ app.whenReady().then(async () => {
     boardId: string,
     recorded: string | undefined
   ): string | undefined => {
-    const entry = recapMap.get(boardId)
     let lastActive: number | undefined
     try {
       lastActive = getTerminalRuntime(boardId)?.lastActivityAt
     } catch {
       lastActive = undefined
     }
-    const fromMap = !!entry && entry.transcriptPath === recorded
+    // F4 (#295 carry-in): clock selection now also matches the entry's CONFIRMED capture path,
+    // so a rotated confirmed session adopts its successor — see selectTranscriptClocks.
     return resolveLiveTranscriptPath(recorded, {
-      sessionId: fromMap ? entry.sessionId : undefined,
-      recordedAt: fromMap ? entry.ts : undefined,
+      ...selectTranscriptClocks(recapMap.get(boardId), recorded),
       agentActiveAt: lastActive
     })
   }
@@ -648,47 +650,15 @@ app.whenReady().then(async () => {
     readProject,
     // T-F1: fold each terminal board's live runtime (running/idle/exited) into its summary.
     getTerminalRuntime,
-    // Terminal recap (Task 10 Step 4): distil a terminal board's transcript into milestones. The
-    // loop invokes this for any terminal board in a consented project; we prefer an explicit
-    // per-board transcript path on the doc, else the learned recap-map entry.
-    // Security: the path is persisted in canvas.json, so a hand-crafted file could otherwise aim
-    // it at an arbitrary file whose scrubbed contents would egress to the user's LLM. isTrusted-
-    // TranscriptPath restricts reads to .jsonl files under Claude's config root (where the hook
-    // legitimately writes), honoring the consent modal's "nothing else leaves" promise.
-    // Perf: readTranscriptTail reads only the file's tail (we keep just the last N turns).
-    // Defensive + read-only: a missing/untrusted path / read error / parse failure → undefined,
-    // and the loop falls back to its config+runtime summary (no action surface, never throws past this).
-    getAgentMilestones: (boardId, board) => {
-      // BUG-002: gate the egress path on consent. readConsent is already checked at PTY-spawn
-      // time and at hook-install, but the actual transcript read + LLM egress path was never
-      // gated, so revoking consent did not stop ongoing summary-loop recap egress.
-      // Recap-refresh fix: report WHY there are no milestones (consent / transcript) instead of
-      // an indistinguishable undefined, so a manual refresh can tell the user what gated it.
-      const dir = getCurrentDir()
-      if (!dir || readConsent(userData, dir) !== 'enabled') return { skip: 'consent-off' }
-      const path = resolveBoardTranscript(
-        boardId,
-        (board as { agentTranscriptPath?: string })?.agentTranscriptPath ??
-          recapMap.get(boardId)?.transcriptPath
-      )
-      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path))
-        return { skip: 'no-transcript' }
-      try {
-        // Recap enrichment P3: plan progress + last tool error ride the SAME tail read into the
-        // narrative input (computeRecapFacts is pure + local; buildRecapInput re-redacts pre-egress).
-        const tail = readTranscriptTail(path)
-        const facts = computeRecapFacts(tail, undefined, Date.now())
-        return {
-          milestones: extractMilestones(tail, { maxMilestones: 12, maxTextChars: 600 }),
-          extras: {
-            ...(facts.todos ? { plan: facts.todos } : {}),
-            ...(facts.errors?.last ? { lastError: facts.errors.last } : {})
-          }
-        }
-      } catch {
-        return { skip: 'no-transcript' }
-      }
-    },
+    // Terminal recap (Task 10 Step 4): distil a terminal board's transcript into milestones —
+    // body + the BUG-002 consent gate + trusted-path guard live in agentMilestones.ts
+    // (extracted under the max-lines ratchet; behavior unchanged).
+    getAgentMilestones: createGetAgentMilestones({
+      getCurrentDir,
+      isConsented: (dir) => readConsent(userData, dir) === 'enabled',
+      resolveTranscript: resolveBoardTranscript,
+      getRecordedPath: (id) => recapMap.get(id)?.transcriptPath
+    }),
     // Recap-refresh fix: the sidecar-regen push. Fired by the loop ONLY after writeBoardRecap
     // durably rewrote board-<id>.recap.json (watcher-driven OR manual refresh), so an open
     // RecapView re-reads instead of waiting for the next flip. Same destroyed-window guards as
@@ -751,24 +721,48 @@ app.whenReady().then(async () => {
       // Resolve the recorded path (board doc, else learned map), then self-heal it to the LIVE
       // transcript (newest .jsonl in its dir) so a compaction/resume rotation can't strand the
       // recap on a dead session — see resolveLiveTranscriptPath.
-      let recorded: string | undefined
       const dir = getCurrentDir()
-      if (dir) {
-        const r = readProject(dir)
-        if (r.ok) {
-          const boards = (r.doc as { boards?: unknown }).boards
-          const b = Array.isArray(boards)
-            ? (boards as { id?: unknown }[]).find((x) => x.id === boardId)
-            : undefined
-          const p = (b as { agentTranscriptPath?: unknown })?.agentTranscriptPath
-          if (typeof p === 'string' && p) recorded = p
-        }
-      }
-      recorded ??= recapMap.get(boardId)?.transcriptPath
+      const recorded =
+        (dir ? persistedTranscriptPath(readProject, dir, boardId) : undefined) ??
+        recapMap.get(boardId)?.transcriptPath
       return resolveBoardTranscript(boardId, recorded)
     },
     getTerminalRuntime
   })
+  // Terminal-resume F1+F3 (see terminalResume.ts): validate canResume + build the Resume launch
+  // line from the transcript's on-disk reality, through the SAME A4 resolver the recap reads use.
+  registerTerminalResumeIpc(ipcMain, {
+    getWin: () => mainWindow,
+    resolveTranscript: resolveBoardTranscript,
+    getMapEntries: () => recapMap
+  })
+  // F4 (terminal-resume): hook-health probe for the Inspector's fault-only status line, and the
+  // focus-time self-heal — a clobbered .claude/settings.local.json re-ensures on the next window
+  // focus instead of waiting for the next project open. Consent-off → null → renders nothing.
+  const recapHealthDeps = {
+    getCurrentDir,
+    isConsented: (dir: string) => readConsent(userData, dir) === 'enabled',
+    runnerOk: () => recapRunner !== null
+  }
+  registerRecapHealthIpc(ipcMain, {
+    ...recapHealthDeps,
+    getWin: () => mainWindow,
+    hookInstalled: (dir) => isRecapHookInstalled(dir, recordScript),
+    hasCapture: (id) => recapMap.has(id),
+    sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null
+  })
+  const recapReEnsure = createFocusReEnsure({
+    ...recapHealthDeps,
+    // installRecapHook no-ops on an empty command; runnerOk gates before this runs anyway.
+    install: (dir) =>
+      installRecapHook({
+        projectDir: dir,
+        command: recapRunner ?? '',
+        scriptPath: recordScript,
+        mapPath: recapMapPath
+      })
+  })
+  app.on('browser-window-focus', recapReEnsure)
   registerProjectHandlers(
     ipcMain,
     () => mainWindow,
@@ -1007,7 +1001,9 @@ app.whenReady().then(async () => {
   createWindow()
   // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
   // `onSettle` deterministically (it is created above in this same setup scope).
-  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth)
+  // F4: recapReEnsure rides along so a spec can drive the heal without a real OS focus event.
+  if (mainWindow)
+    installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth, recapReEnsure)
 
   // Phase 5 auto-update (gated). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
   // electron.vite.config.ts); in a signed production build it checks the GitHub feed,

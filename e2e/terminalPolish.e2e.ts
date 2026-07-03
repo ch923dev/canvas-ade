@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, seed, selectForInspector } from './helpers'
+import { evalIn, mainCall, seed, selectForInspector } from './helpers'
 
 /**
  * D2-B terminal polish (design-audit wave D2):
@@ -8,7 +8,8 @@ import { evalIn, seed, selectForInspector } from './helpers'
  *    × dismisses app-wide forever (sticky localStorage — leading-reset + restored
  *    below, the e2e harness reuses a persistent userData dir);
  *  - restart controls (P5: Inspector Session actions — the title-bar menu is gone):
- *    canResume splits Restart into explicit Resume / New actions;
+ *    a MAIN-validated canResume (terminal-resume F1) splits Restart into explicit
+ *    Resume / New actions — a dead stored id must NOT offer Resume;
  *  - A6 recap-flip focus transfer: focus follows the visible face both ways.
  *
  * The seed()-derived board id flows into page.evaluate as a STRUCTURED ARG, never
@@ -92,23 +93,99 @@ test.describe('@terminal terminal polish (D2-B)', () => {
     }
   })
 
-  test('restart controls: canResume splits into Resume/New Inspector actions', async ({ page }) => {
+  test('restart controls: Resume appears only for a MAIN-validated session (F1/F3)', async ({
+    page,
+    electronApp
+  }) => {
     // P5 replaced the title-bar restart MENU (TerminalRestartMenu) with flat Inspector Session
-    // actions — the menu's auto-close semantics are gone with the component; what remains to pin
-    // is the canResume split, driven by the SAME handlers the menu items used.
+    // actions. Terminal-resume F1 then replaced the bare `!!agentSessionId` gate with a MAIN
+    // validation against the transcript's on-disk reality — a stored id with no transcript
+    // (eager capture / rotation / retention, the "No conversation found" class) must NOT offer
+    // Resume, while a lineage-proven transcript must.
     const id = await seed(page, 'terminal', { launchCommand: 'echo RESTART' })
     await selectForInspector(page, id)
     const inspector = page.locator('[data-test="board-inspector"]')
+    const DEAD = 'sess-e2e-dead-1'
+    const LIVE = 'sess-e2e-live-1'
+    const checkState = (): Promise<{ sessionId?: string; canResume: boolean } | null> =>
+      page.evaluate((a) => (globalThis as any).__canvasE2E.resumeCheckState(a), id)
 
-    // No resumable agent session → a single Restart action.
+    // No agent session → a single Restart action.
     await expect(inspector.locator('[data-test="inspector-restart"]')).toBeVisible()
     await expect(inspector.getByRole('button', { name: 'Resume session' })).toHaveCount(0)
 
-    // A resumable session id → the explicit Resume / New pair replaces Restart.
-    await patchBoard(page, id, { agentSessionId: 'sess-e2e-1' })
-    await expect(inspector.getByRole('button', { name: 'Resume session' })).toBeVisible()
-    await expect(inspector.getByRole('button', { name: 'New session' })).toBeVisible()
-    await expect(inspector.locator('[data-test="inspector-restart"]')).toHaveCount(0)
+    try {
+      // RC-1 shape: a bare stored id whose transcript never existed. Await the ASYNC MAIN check
+      // settling for THIS id before asserting absence (a bare toHaveCount(0) passes trivially
+      // before the IPC round-trip lands).
+      await patchBoard(page, id, { agentSessionId: DEAD })
+      await expect
+        .poll(async () => {
+          const s = await checkState()
+          return s && s.sessionId === DEAD ? s.canResume : null
+        })
+        .toBe(false)
+      await expect(inspector.getByRole('button', { name: 'Resume session' })).toHaveCount(0)
+      await expect(inspector.locator('[data-test="inspector-restart"]')).toBeVisible()
+      // F1b: the command palette gates its Resume row on the SAME MAIN verdict (via
+      // resumeValidityStore) — the dead id must not list it. restart-new anchors the
+      // assertion: it proves the terminal's selected-board rows actually built.
+      await page.keyboard.press('Control+k')
+      await expect(page.locator('[data-test="command-palette"]')).toBeVisible()
+      await expect(page.locator('[data-test="palette-row-restart-new"]')).toBeVisible()
+      await expect(page.locator('[data-test="palette-row-restart-resume"]')).toHaveCount(0)
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-test="command-palette"]')).toHaveCount(0)
+      // F3: at click time MAIN resolves the same dead id to a FRESH start, not a dead --resume.
+      const dead = await page.evaluate(
+        (a) => (globalThis as any).window.api.terminal.resumeLaunch(a.id, { sessionId: a.sid }),
+        { id, sid: DEAD }
+      )
+      expect(dead).toEqual({ mode: 'fresh' })
+
+      // A real transcript whose lineage carries the id → the Resume / New pair replaces Restart.
+      const jsonl =
+        [
+          JSON.stringify({
+            sessionId: LIVE,
+            type: 'user',
+            timestamp: '2026-07-03T10:00:00.000Z',
+            message: { role: 'user', content: 'fix the auth bug' }
+          }),
+          JSON.stringify({
+            sessionId: LIVE,
+            type: 'assistant',
+            timestamp: '2026-07-03T10:00:05.000Z',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'On it.' }] }
+          })
+        ].join('\n') + '\n'
+      const transcript = await mainCall<string>(electronApp, 'seedRecapTranscript', jsonl)
+      await patchBoard(page, id, { agentSessionId: LIVE, agentTranscriptPath: transcript })
+      await expect(inspector.getByRole('button', { name: 'Resume session' })).toBeVisible()
+      await expect(inspector.getByRole('button', { name: 'New session' })).toBeVisible()
+      await expect(inspector.locator('[data-test="inspector-restart"]')).toHaveCount(0)
+      // F1b: the validated verdict flips the palette row ON (the Inspector Resume button
+      // above proves the same hook published true — one source of truth, two surfaces).
+      await page.keyboard.press('Control+k')
+      await expect(page.locator('[data-test="command-palette"]')).toBeVisible()
+      await expect(page.locator('[data-test="palette-row-restart-resume"]')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-test="command-palette"]')).toHaveCount(0)
+      // F3: the click-time launch line resumes the transcript's actual session id.
+      const live = await page.evaluate(
+        (a) =>
+          (globalThis as any).window.api.terminal.resumeLaunch(a.id, {
+            sessionId: a.sid,
+            transcriptPath: a.path
+          }),
+        { id, sid: LIVE, path: transcript }
+      )
+      expect(live).toEqual({ mode: 'resume', command: `claude --resume ${LIVE}` })
+    } finally {
+      // Restore the CLAUDE_CONFIG_DIR seedRecapTranscript mutated so the throwaway fixture root
+      // can't leak into a later e2e file and untrust its real-transcript paths (N1).
+      await mainCall(electronApp, 'restoreClaudeConfigDir')
+    }
   })
 
   test('A6: flipping transfers focus to the recap and back to xterm', async ({ page }) => {

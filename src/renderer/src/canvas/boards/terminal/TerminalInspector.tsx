@@ -19,6 +19,14 @@ import {
   InspectorSection,
   InspectorStepper
 } from '../../inspector/primitives'
+import type { HookHealthFault } from './useHookHealth'
+
+/** F4: the fault-only capture-health copy (signed-off wireframe — one quiet line, or nothing). */
+const HEALTH_COPY: Record<Exclude<HookHealthFault, null>, string> = {
+  runner: 'Session capture off — Node.js not found on PATH',
+  hook: 'Session capture off — hook not installed',
+  'no-capture': "Capture didn't record this session"
+}
 
 export interface TerminalInspectorProps {
   running: boolean
@@ -40,6 +48,8 @@ export interface TerminalInspectorProps {
   recapShown: boolean
   onToggleRecap: () => void
   onFind: () => void
+  /** F4: hook-health fault for the Session block's status line; null renders nothing. */
+  health: HookHealthFault
   shell?: string
   command?: string
   cwd?: string
@@ -66,6 +76,7 @@ export function TerminalInspector({
   recapShown,
   onToggleRecap,
   onFind,
+  health,
   shell,
   command,
   cwd,
@@ -139,6 +150,16 @@ export function TerminalInspector({
         >
           Find in terminal
         </InspectorAction>
+        {health && (
+          <div
+            className="ca-inspector-health"
+            data-test="inspector-hook-health"
+            data-fault={health}
+          >
+            <span className="ca-inspector-health-dot" aria-hidden="true" />
+            <span>{HEALTH_COPY[health]}</span>
+          </div>
+        )}
       </InspectorSection>
 
       <InspectorSection

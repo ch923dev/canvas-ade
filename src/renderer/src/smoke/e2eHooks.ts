@@ -27,7 +27,13 @@ import { makeChecklist } from '../canvas/boards/planning/elements'
 import { clearClipboard } from '../canvas/boards/planning/elementClipboard'
 import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
-import { e2eTerminals, e2eTerminalInput, e2eTerminalLink, e2eTerminalHeld } from './e2eRegistry'
+import {
+  e2eTerminals,
+  e2eTerminalInput,
+  e2eTerminalLink,
+  e2eTerminalHeld,
+  e2eResumeChecks
+} from './e2eRegistry'
 import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { performProjectSwitch } from '../store/projectSwitch'
@@ -272,6 +278,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalHeldBytes(id) {
       return e2eTerminalHeld.get(id)?.() ?? 0
+    },
+    resumeCheckState(id) {
+      return e2eResumeChecks.get(id) ?? null
     },
     terminalFontSize(id) {
       return e2eTerminals.get(id)?.options.fontSize

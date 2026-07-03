@@ -120,15 +120,22 @@ describe('buildCommands — visibility matrix', () => {
     expect(ids).not.toContain('duplicate-board')
   })
 
-  it('terminal restart rows: new always (when terminal selected), resume only with agentSessionId', () => {
-    const noSession = buildCommands(snap({ boards: [T], selectedIds: ['t1'] }), verbsMock())
-    expect(noSession.some((c) => c.id === 'restart-new')).toBe(true)
-    expect(noSession.some((c) => c.id === 'restart-resume')).toBe(false)
-    const withSession = buildCommands(
-      snap({ boards: [{ ...T, agentSessionId: 's-1' }], selectedIds: ['t1'] }),
+  it('terminal restart rows: new always (when terminal selected), resume only with validated canResume', () => {
+    // F1b: the gate is the MAIN-validated verdict, not the raw stored-id truthiness — a
+    // board with a dead session id arrives here as canResume:false and must not offer Resume.
+    const noVerdict = buildCommands(snap({ boards: [T], selectedIds: ['t1'] }), verbsMock())
+    expect(noVerdict.some((c) => c.id === 'restart-new')).toBe(true)
+    expect(noVerdict.some((c) => c.id === 'restart-resume')).toBe(false)
+    const refuted = buildCommands(
+      snap({ boards: [{ ...T, canResume: false }], selectedIds: ['t1'] }),
       verbsMock()
     )
-    expect(withSession.some((c) => c.id === 'restart-resume')).toBe(true)
+    expect(refuted.some((c) => c.id === 'restart-resume')).toBe(false)
+    const validated = buildCommands(
+      snap({ boards: [{ ...T, canResume: true }], selectedIds: ['t1'] }),
+      verbsMock()
+    )
+    expect(validated.some((c) => c.id === 'restart-resume')).toBe(true)
   })
 
   it('export rows only for a selected planning board; restart absent', () => {
@@ -214,7 +221,7 @@ describe('buildCommands — visibility matrix', () => {
   it('every command sits in a known section', () => {
     const cmds = buildCommands(
       snap({
-        boards: [{ ...T, agentSessionId: 's' }, P, B],
+        boards: [{ ...T, canResume: true }, P, B],
         selectedIds: ['t1'],
         groups: [{ id: 'g1', name: 'g' }],
         canUndo: true,
@@ -228,7 +235,7 @@ describe('buildCommands — visibility matrix', () => {
   it('runs route to the right verb with the right args', () => {
     const verbs = verbsMock()
     const cmds = buildCommands(
-      snap({ boards: [{ ...T, agentSessionId: 's' }], selectedIds: ['t1'] }),
+      snap({ boards: [{ ...T, canResume: true }], selectedIds: ['t1'] }),
       verbs
     )
     cmds.find((c) => c.id === 'new-planning')!.run()

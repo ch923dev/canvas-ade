@@ -42,5 +42,19 @@ export const terminalApi = {
   exitResidue: (
     boardId: string
   ): Promise<{ output: string; exitCode: number; exitedAt: number } | null> =>
-    ipcRenderer.invoke('terminal:exitResidue', boardId)
+    ipcRenderer.invoke('terminal:exitResidue', boardId),
+  // ── Terminal-resume F1+F3: MAIN validates the stored session against the transcript's on-disk
+  // reality (terminalResume.ts). `stored` relays the board's canvas.json fields — UNTRUSTED, so
+  // MAIN sanitizes the id + trusted-path-guards the path before either nears a read or a command.
+  /** F1: is the board's stored agent session actually resumable right now? */
+  resumeCheck: (
+    boardId: string,
+    stored: { sessionId?: string; transcriptPath?: string }
+  ): Promise<{ canResume: boolean }> => ipcRenderer.invoke('terminal:resumeCheck', boardId, stored),
+  /** F3: the Resume launch line, re-resolved at click time. `command` absent ⇒ start fresh. */
+  resumeLaunch: (
+    boardId: string,
+    stored: { sessionId?: string; transcriptPath?: string }
+  ): Promise<{ mode: 'resume' | 'continue' | 'fresh'; command?: string }> =>
+    ipcRenderer.invoke('terminal:resumeLaunch', boardId, stored)
 }

@@ -369,7 +369,8 @@ export type {
   RecapFacts,
   RecapNarrative,
   RecapBundle,
-  RecapRefreshOutcome
+  RecapRefreshOutcome,
+  RecapHealthView
 } from './recapApi'
 
 // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
