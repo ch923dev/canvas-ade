@@ -73,8 +73,10 @@ import {
   installRecapHook,
   removeRecapHook,
   findNodeExecutable,
+  isRecapHookInstalled,
   type RecapMapEntry
 } from './agentRecapMap'
+import { registerRecapHealthIpc, createFocusReEnsure, selectTranscriptClocks } from './recapHealth'
 import { registerRecapHandlers, readConsent } from './recapConsent'
 import { registerOrchestrationHandlers } from './orchestrationConsent'
 import { registerOrchestrationProvisionHandlers } from './orchestrationProvision'
@@ -577,17 +579,16 @@ app.whenReady().then(async () => {
     boardId: string,
     recorded: string | undefined
   ): string | undefined => {
-    const entry = recapMap.get(boardId)
     let lastActive: number | undefined
     try {
       lastActive = getTerminalRuntime(boardId)?.lastActivityAt
     } catch {
       lastActive = undefined
     }
-    const fromMap = !!entry && entry.transcriptPath === recorded
+    // F4 (#295 carry-in): clock selection now also matches the entry's CONFIRMED capture path,
+    // so a rotated confirmed session adopts its successor — see selectTranscriptClocks.
     return resolveLiveTranscriptPath(recorded, {
-      sessionId: fromMap ? entry.sessionId : undefined,
-      recordedAt: fromMap ? entry.ts : undefined,
+      ...selectTranscriptClocks(recapMap.get(boardId), recorded),
       agentActiveAt: lastActive
     })
   }
@@ -727,6 +728,33 @@ app.whenReady().then(async () => {
     resolveTranscript: resolveBoardTranscript,
     getMapEntries: () => recapMap
   })
+  // F4 (terminal-resume): hook-health probe for the Inspector's fault-only status line, and the
+  // focus-time self-heal — a clobbered .claude/settings.local.json re-ensures on the next window
+  // focus instead of waiting for the next project open. Consent-off → null → renders nothing.
+  const recapHealthDeps = {
+    getCurrentDir,
+    isConsented: (dir: string) => readConsent(userData, dir) === 'enabled',
+    runnerOk: () => recapRunner !== null
+  }
+  registerRecapHealthIpc(ipcMain, {
+    ...recapHealthDeps,
+    getWin: () => mainWindow,
+    hookInstalled: (dir) => isRecapHookInstalled(dir, recordScript),
+    hasCapture: (id) => recapMap.has(id),
+    sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null
+  })
+  const recapReEnsure = createFocusReEnsure({
+    ...recapHealthDeps,
+    // installRecapHook no-ops on an empty command; runnerOk gates before this runs anyway.
+    install: (dir) =>
+      installRecapHook({
+        projectDir: dir,
+        command: recapRunner ?? '',
+        scriptPath: recordScript,
+        mapPath: recapMapPath
+      })
+  })
+  app.on('browser-window-focus', recapReEnsure)
   registerProjectHandlers(
     ipcMain,
     () => mainWindow,
@@ -935,7 +963,9 @@ app.whenReady().then(async () => {
   createWindow()
   // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
   // `onSettle` deterministically (it is created above in this same setup scope).
-  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth)
+  // F4: recapReEnsure rides along so a spec can drive the heal without a real OS focus event.
+  if (mainWindow)
+    installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth, recapReEnsure)
 
   // Phase 5 auto-update (gated). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
   // electron.vite.config.ts); in a signed production build it checks the GitHub feed,

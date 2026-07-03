@@ -37,6 +37,7 @@ import {
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { useResumeValidity } from './terminal/useResumeValidity'
+import { useHookHealth } from './terminal/useHookHealth'
 import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
 import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
@@ -197,6 +198,8 @@ export function TerminalBoard({
   // F1: MAIN-validated — the stored id alone proves nothing (eager capture / rotation /
   // retention all leave a dead id in canvas.json); see useResumeValidity.
   const canResume = useResumeValidity(board, state)
+  // F4: hook-health fault for the Inspector's Session line (null = healthy, renders nothing).
+  const hookHealth = useHookHealth(board, state)
   // P0.5 Board Inspector: non-null only when THIS terminal is the single eligible selection (the
   // shell publishes its content slot then). We portal our per-type inspector into it below — reusing
   // the very same handlers every other affordance uses, so there is no duplicated wiring or state.
@@ -557,6 +560,7 @@ export function TerminalBoard({
             recapShown={flipped}
             onToggleRecap={flip.toggle}
             onFind={openFind}
+            health={hookHealth}
             shell={board.shell}
             command={board.launchCommand}
             cwd={board.cwd}

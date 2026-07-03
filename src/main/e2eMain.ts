@@ -252,6 +252,12 @@ export interface E2EMain {
    * a runtime mutation takes effect on the next summarize.
    */
   setLlmMock(on: boolean): void
+  /**
+   * F4 (terminal-resume): run the SAME re-ensure MAIN's browser-window-focus handler runs (the
+   * hook-health self-heal), so a spec can drive the heal without synthesizing a real OS focus
+   * event (flaky territory — the renderer's synthetic window `focus` never reaches MAIN).
+   */
+  recapReEnsure(): void
 }
 
 /**
@@ -332,7 +338,8 @@ export function installE2EMain(
   win: BrowserWindow,
   localUrl: string,
   mcp: RunningMcp | null,
-  getResultSynth: () => ResultSynthesizer | null
+  getResultSynth: () => ResultSynthesizer | null,
+  recapReEnsure: () => void
 ): void {
   if (!__ENABLE_E2E_MAIN__ || !process.env.CANVAS_E2E) return
   globalThis.__canvasE2EMain = {
@@ -557,6 +564,7 @@ export function installE2EMain(
     setLlmMock(on) {
       if (on) process.env.CANVAS_LLM_MOCK = '1'
       else delete process.env.CANVAS_LLM_MOCK
-    }
+    },
+    recapReEnsure
   }
 }
