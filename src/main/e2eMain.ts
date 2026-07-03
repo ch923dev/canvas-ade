@@ -33,6 +33,7 @@ import {
   debugWriteTerminal,
   disposeAllPtys
 } from './pty'
+import { setVoiceStubEnabled } from './voiceEngineStub'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
 import { readBoardResult, recordBoardResult } from './boardResults'
@@ -274,6 +275,13 @@ export interface E2EMain {
    * event (flaky territory — the renderer's synthetic window `focus` never reaches MAIN).
    */
   recapReEnsure(): void
+  /**
+   * Voice V3: toggle the canned stub engine behind voiceIpc's engine seam (voiceEngineStub.ts)
+   * so the voiceComposer spec gets deterministic partial/final without a model or mic, while
+   * voice.e2e.ts keeps exercising the REAL utilityProcess host (workers:1 shares one app across
+   * spec files — a launch-env gate could not be per-spec). Always flip back off in the spec.
+   */
+  voiceStubSet(on: boolean): void
 }
 
 /**
@@ -572,6 +580,9 @@ export function installE2EMain(
       if (savedClaudeConfigDir.value === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = savedClaudeConfigDir.value
       savedClaudeConfigDir = undefined
+    },
+    voiceStubSet(on) {
+      setVoiceStubEnabled(on)
     },
     recordRecapSession(boardId, transcriptPath) {
       const mapPath = join(app.getPath('userData'), 'recap', 'session-map.jsonl')

@@ -8,8 +8,17 @@
 > per-file HF model manifest (Kroko default + Apache int8 alt; per-file beats the
 > release `.tar.bz2` — Node has no bzip2), download/verify/delete IPC, streaming
 > recognizer loop (partial/final over the session port), WAV-fixture integration test
-> green against the real model. **NEXT: V3 — pill widget + flyout + injection, see
-> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** V4–V5 pending after that. Gotchas
+> green against the real model. V3 ✅ shipped: **VoicePill + VoiceFlyout + terminal
+> injection live** — draggable screen-fixed pill (RMS bars, position persisted via a
+> minimal `voiceConfig.ts` pulled forward from V4), flyout review composer (dimmed-italic
+> partial tail via a mirror overlay, Enter=Send/Shift+Enter/Esc, no-target /
+> model-missing+Download / mic-denied rows), `terminalInputRegistry` injection (Send =
+> bracketed paste → ~150 ms settle → ONE discrete `\r`, gated on `running[id]`; Insert =
+> paste only), Ctrl/Cmd+Shift+M quick-press toggle + press-and-hold PTT (capture-phase —
+> works with a focused terminal), silence auto-STOP ~15 s + ~2 min cap, e2e stub engine
+> behind the `VoiceIpcDeps.engine` seam (runtime-toggled via `voiceStubSet` so
+> voice.e2e.ts keeps the real host). **NEXT: V4 — settings + config, see
+> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** V5 after that. Gotchas
 > for later slices: Electron cross-process MessagePorts NULL `e.data` when a non-port
 > transferable rides the transfer list — COPY frames across the boundary
 > (`useVoiceCapture.ts`); a RUNNING installed Expanse watching the repo locks fresh
@@ -29,9 +38,9 @@ Terminal boards. Local-first STT (no API key, offline, private), review-first co
    the design artifact (token-faithful states mock, per the design-before-code rule).
 4. **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — slices V0–V5, per-slice
    files/IPC/tests, collision map. Written after design-artifact sign-off.
-5. **[HANDOFF-V3.md](HANDOFF-V3.md)** — live handoff for the next slice (state snapshot,
-   seams with file:line pointers, sharp edges, exit criteria). `HANDOFF-V1.md` is the
-   superseded V1 edition (kept until the epic-merge doc collapse).
+5. **[HANDOFF-V4.md](HANDOFF-V4.md)** — live handoff for the next slice (state snapshot,
+   seams, sharp edges, exit criteria). `HANDOFF-V1.md` / `HANDOFF-V3.md` are the
+   superseded editions (kept until the epic-merge doc collapse).
 
 ## Decisions locked at kickoff (user-confirmed 2026-07-02)
 

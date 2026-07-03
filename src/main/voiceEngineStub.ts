@@ -1,0 +1,121 @@
+/**
+ * Voice V3 — the e2e stub engine (plan §V3 testing). A fake `VoiceEngineHandle` behind
+ * the SAME `VoiceIpcDeps.engine` seam voiceIpc.test.ts uses: it holds the session
+ * MessagePortMain like the real utilityProcess host and speaks the identical port
+ * protocol — counts `{t:'frame'}`, posts the canned `{t:'partial'}`/`{t:'final'}` script
+ * below keyed by FRAME COUNT (deterministic under the fake-media tone's ~8.3 frames/s;
+ * no model, no mic), honors the `{t:'eos'}` drain before reporting frames, and posts
+ * `{t:'stop'}` so the renderer capture releases cleanly. All messages plain JSON — never
+ * a transferable in a cross-process port transfer list (sharp edge 2).
+ *
+ * RUNTIME-TOGGLED, not env-gated at launch: Playwright runs every spec file in ONE
+ * worker-scoped app, so a launch-env stub would also hijack voice.e2e.ts and lose the
+ * real-engine coverage V2 paid for. The only setter is `__canvasE2EMain.voiceStubSet`
+ * (e2eMain — compile-gated __ENABLE_E2E_MAIN__ AND runtime CANVAS_E2E), so a normal run
+ * can never activate this; `currentVoiceStubEngine()` is a dormant null everywhere else.
+ */
+import type { MessagePortMain } from 'electron'
+import type { VoiceEngineHandle } from './voiceEngine'
+
+/** Canned recognition script — the voiceComposer e2e asserts these exact texts. Frames
+ *  arrive ~8.3/s, so the dimmed-tail window (first partial → final) is ~1.4 s — wide
+ *  enough that the spec's tail-visibility poll can never race the final. */
+export const VOICE_STUB_SCRIPT: ReadonlyArray<{
+  atFrame: number
+  t: 'partial' | 'final'
+  text: string
+}> = [
+  { atFrame: 2, t: 'partial', text: 'refactor the' },
+  { atFrame: 6, t: 'partial', text: 'refactor the preview cap' },
+  { atFrame: 14, t: 'final', text: 'refactor the preview cap' }
+]
+
+interface StubSession {
+  port: MessagePortMain
+  frames: number
+  eos: boolean
+  onEos: (() => void) | null
+}
+
+export function createStubVoiceEngine(): VoiceEngineHandle {
+  let session: StubSession | null = null
+
+  /** Signal teardown to the renderer end; close only after the eos drain (or timeout). */
+  const release = (s: StubSession, onDrained: () => void): void => {
+    try {
+      s.port.postMessage({ t: 'stop' })
+    } catch {
+      /* port already gone */
+    }
+    if (s.eos) {
+      s.port.close()
+      onDrained()
+      return
+    }
+    const timer = setTimeout(() => {
+      s.onEos = null
+      s.port.close()
+      onDrained()
+    }, 1000)
+    s.onEos = () => {
+      clearTimeout(timer)
+      s.port.close()
+      onDrained()
+    }
+  }
+
+  return {
+    startSession(port, _model): void {
+      // Restart-idempotent like the real host: the replaced session's renderer end gets
+      // {t:'stop'} so a stale capture releases the mic.
+      if (session) {
+        const old = session
+        session = null
+        release(old, () => {})
+      }
+      const s: StubSession = { port, frames: 0, eos: false, onEos: null }
+      session = s
+      port.on('message', (e) => {
+        const m = e.data as { t?: string } | null
+        if (m?.t === 'frame') {
+          s.frames++
+          for (const step of VOICE_STUB_SCRIPT) {
+            if (step.atFrame === s.frames) s.port.postMessage({ t: step.t, text: step.text })
+          }
+        } else if (m?.t === 'eos') {
+          s.eos = true
+          s.onEos?.()
+        }
+      })
+      port.start()
+    },
+    stopSession(): Promise<{ frames: number }> {
+      const s = session
+      session = null
+      if (!s) return Promise.resolve({ frames: 0 })
+      return new Promise((resolve) => release(s, () => resolve({ frames: s.frames })))
+    },
+    dispose(): void {
+      const s = session
+      session = null
+      if (s) release(s, () => {})
+    }
+  }
+}
+
+// ── the runtime toggle (only reachable through e2eMain's gated registry) ──
+let active: VoiceEngineHandle | null = null
+
+/** The live stub, or null in every normal run (voiceIpc's engine() falls through). */
+export function currentVoiceStubEngine(): VoiceEngineHandle | null {
+  return active
+}
+
+export function setVoiceStubEnabled(on: boolean): void {
+  if (on) {
+    active ??= createStubVoiceEngine()
+    return
+  }
+  active?.dispose()
+  active = null
+}

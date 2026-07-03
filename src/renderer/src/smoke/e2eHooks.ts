@@ -180,6 +180,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     readTerminalInput(id) {
       return (e2eTerminalInput.get(id) ?? []).join('')
     },
+    readTerminalInputChunks(id) {
+      return [...(e2eTerminalInput.get(id) ?? [])]
+    },
     clearTerminalInput(id) {
       e2eTerminalInput.delete(id)
     },
@@ -539,7 +542,16 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         level: 0,
         micSilent: false,
         framesSent: 0,
-        activeBoardId: null
+        activeBoardId: null,
+        // V3 composer state is the same ephemeral-isolation class: a draft/open flyout
+        // left by one spec would occlude + retarget the next spec's probes.
+        draft: '',
+        partial: '',
+        flyoutOpen: false,
+        micStatus: 'unknown',
+        modelStatus: 'unknown',
+        lastVoiceAt: 0,
+        captureStartedAt: 0
       })
       // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
       // collapse state) — extracted to e2eStickyPrefs.ts (max-lines), key literals kept
@@ -575,7 +587,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         capturing: s.capturing,
         level: s.level,
         micSilent: s.micSilent,
-        framesSent: s.framesSent
+        framesSent: s.framesSent,
+        draft: s.draft,
+        partial: s.partial,
+        flyoutOpen: s.flyoutOpen,
+        modelStatus: s.modelStatus
       }
     },
     async openProjectFromDisk(dir) {

@@ -58,10 +58,18 @@ function createCapture(port: MessagePort): ActiveCapture {
   }
 
   // MAIN's engine end signals teardown over the data plane (voice:session:stop → {t:'stop'}),
-  // so a bare devtools `window.api.voice.stop()` still releases the mic.
+  // so a bare devtools `window.api.voice.stop()` still releases the mic. V3: transcript
+  // events ({t:'partial'|'final', text} — host emits partial only on text change) route
+  // into the composer state the flyout renders. Nothing here reorders dispose(): {t:'eos'}
+  // stays the LAST message posted on this port (the drain handshake, sharp edge 1).
   port.onmessage = (e: MessageEvent): void => {
-    const m = e.data as { t?: string } | null
+    const m = e.data as { t?: string; text?: string } | null
     if (m?.t === 'stop') dispose()
+    else if (m?.t === 'partial' && typeof m.text === 'string') {
+      useVoiceStore.getState().partialReceived(m.text)
+    } else if (m?.t === 'final' && typeof m.text === 'string') {
+      useVoiceStore.getState().finalReceived(m.text)
+    }
   }
 
   const start = async (): Promise<void> => {

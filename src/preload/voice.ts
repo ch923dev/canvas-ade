@@ -24,6 +24,12 @@ export interface VoiceDownloadProgress {
   fileCount: number
 }
 
+/** V3 minimal config slice (mirrors main voiceConfig.ts; V4 adds the rest). */
+export interface VoiceConfigView {
+  showPill: boolean
+  pillPosition?: { x: number; y: number }
+}
+
 /**
  * Control plane (frames flow over a MessagePort, not IPC). start() makes MAIN broker a
  * session port — it arrives via forwardVoicePort below as `__voicePort`, and the port IS
@@ -48,6 +54,13 @@ export const voiceApi = {
       ipcRenderer.on('voice:models:progress', listener)
       return () => ipcRenderer.removeListener('voice:models:progress', listener)
     }
+  },
+  // V3: pill visibility + persisted drag position (userData/voice-config.json). set() is a
+  // merge-patch; MAIN sanitizes through repairVoiceConfig.
+  config: {
+    get: (): Promise<VoiceConfigView> => ipcRenderer.invoke('voice:config:get'),
+    set: (patch: Partial<VoiceConfigView>): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('voice:config:set', patch)
   }
 }
 

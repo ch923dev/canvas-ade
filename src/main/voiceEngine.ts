@@ -80,8 +80,13 @@ export function createVoiceEngine(
       ensureChild().postMessage({ t: 'session:start', model }, [port])
     },
     // Default generous: a COLD recognizer init (~70 MB ONNX load) can block the host loop
-    // for seconds before session:stop is even processed, then the eos drain adds ≤1 s.
-    stopSession(timeoutMs = 10000): Promise<{ frames: number }> {
+    // before session:stop is even processed, then the eos drain adds ≤1 s. Measured
+    // 2026-07-03 (V3): under machine load (parallel suites/Docker/instances) the cold init
+    // exceeded 10 s → the old 10 s default reported frames=0 while the renderer kept
+    // capturing until the late {t:'stop'} — exactly the @voice e2e failure pair. 30 s
+    // still fits the 60 s Playwright test budget; a finished init always replies, so a
+    // longer wait converts a spurious 0 into a slow-but-correct count.
+    stopSession(timeoutMs = 30000): Promise<{ frames: number }> {
       if (!child) return Promise.resolve({ frames: 0 })
       const c = child
       // A second stop while one is pending settles the first with 0 (single session).

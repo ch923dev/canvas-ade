@@ -1,5 +1,9 @@
 # HANDOFF — Voice slice V3: VoicePill + VoiceFlyout + terminal injection
 
+> **SUPERSEDED 2026-07-03 — V3 shipped.** The live handoff is now
+> [`HANDOFF-V4.md`](HANDOFF-V4.md) (settings + config). Kept until the epic-merge doc
+> collapse, per the doc lifecycle.
+
 > For the session picking up V3. Worktree: `Z:\Canvas ADE\.worktrees\voice-to-text`
 > (branch `feat/voice-to-text` — one session per worktree; do NOT work in the main checkout).
 > Read `IMPLEMENTATION-PLAN.md` (§V3) + `SPEC.md` §3 (UX contract — the states table is the

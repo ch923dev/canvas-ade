@@ -61,6 +61,7 @@ import {
   appendTerminalInput
 } from '../../../smoke/e2eRegistry'
 import { handleTerminalKey, TERMINAL_NEWLINE } from './terminalKeymap'
+import { registerTerminalInput, unregisterTerminalInput } from './terminalInputRegistry'
 import { isIdleOnMount, clearIdleOnMount } from '../../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
 import {
@@ -756,6 +757,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       if (isE2E()) appendTerminalInput(board.id, d)
       portRef.current?.postMessage({ t: 'input', d })
     }
+    // Voice V3 injection seam: paste rides term.paste (bracketed), submit is ONE discrete \r
+    // down the same sendInput path as typed keys. Registered here (not at :705) because it
+    // closes over sendInput; unregistered in teardown beside the e2e registries.
+    registerTerminalInput(board.id, {
+      paste: (text) => term.paste(text),
+      submit: () => sendInput('\r')
+    })
     const dataDisp = term.onData((d) => sendInput(d))
     const resizeDisp = term.onResize(({ cols, rows }) =>
       portRef.current?.postMessage({ t: 'resize', cols, rows })
@@ -1066,6 +1074,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // Find-count fix: disarm the find bar's flush seam (a respawn re-arms it on the new
       // coalescer above; between teardown and respawn it must be a no-op, never a stale flush).
       flushPendingRef.current = (): void => {}
+      unregisterTerminalInput(board.id)
       if (isE2E()) e2eTerminals.delete(board.id)
       if (isE2E()) e2eTerminalInput.delete(board.id)
       if (isE2E()) e2eTerminalLink.delete(board.id)

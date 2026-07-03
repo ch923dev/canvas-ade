@@ -31,6 +31,7 @@
 @import './styles/islands/command-palette.css';
 @import './styles/islands/terminal-find.css';
 @import './styles/islands/terminal-jump.css';
+@import './styles/islands/voice-pill.css';
 @import './styles/canvas/connect-picker.css';
 @import './styles/canvas/align-guides.css';
 @import './styles/panels/digest.css';

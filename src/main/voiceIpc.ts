@@ -16,6 +16,13 @@ import { app, MessageChannelMain, systemPreferences } from 'electron'
 import type { BrowserWindow, IpcMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { createVoiceEngine, type VoiceEngineHandle } from './voiceEngine'
+import { currentVoiceStubEngine } from './voiceEngineStub'
+import {
+  readVoiceConfig,
+  repairVoiceConfig,
+  writeVoiceConfig,
+  type VoiceConfig
+} from './voiceConfig'
 import {
   DEFAULT_VOICE_MODEL_ID,
   VOICE_MODEL_CATALOG,
@@ -124,7 +131,9 @@ export function registerVoiceHandlers(
     remove: deleteModel,
     sweep: sweepStaging
   }
-  const engine = (): VoiceEngineHandle => deps.engine ?? defaultEngine()
+  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in
+  // every normal run — only settable through e2eMain's gated registry) → the real host.
+  const engine = (): VoiceEngineHandle => deps.engine ?? currentVoiceStubEngine() ?? defaultEngine()
 
   // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
   void ops.sweep(getUserData()).catch(() => {})
@@ -136,9 +145,16 @@ export function registerVoiceHandlers(
     const win = getWin()
     if (!win) return { ok: false, micStatus: 'unknown', modelStatus: 'absent' }
     const userData = getUserData()
+    // With the e2e stub engine active the session is model-live BY DESIGN (canned
+    // partials/finals, no files) — report 'ready' so the flyout renders the composer,
+    // not the Download CTA. The Linux Docker leg has no model on disk, and 'absent'
+    // there swapped the flyout body for the model-missing row and failed the composer
+    // specs Linux-only. deps.engine (unit-test injection) keeps the real disk check.
+    const stubActive = !deps.engine && currentVoiceStubEngine() !== null
     // V4 makes the model user-selectable via voiceConfig; V2 pins the default.
-    const status = await ops.status(userData, DEFAULT_VOICE_MODEL_ID)
-    const paths = status === 'ready' ? ops.paths(userData, DEFAULT_VOICE_MODEL_ID) : null
+    const status = stubActive ? 'ready' : await ops.status(userData, DEFAULT_VOICE_MODEL_ID)
+    const paths =
+      !stubActive && status === 'ready' ? ops.paths(userData, DEFAULT_VOICE_MODEL_ID) : null
     const { port1, port2 } = new MessageChannelMain()
     // Restart-idempotent: the host replaces any live session (the old renderer port gets
     // {t:'stop'}, so a stale capture releases the mic).
@@ -200,6 +216,23 @@ export function registerVoiceHandlers(
       }
     }
   )
+
+  // V3 minimal config (voiceConfig.ts pulled forward from V4): the pill's show flag +
+  // persisted drag position. set() is a merge-patch funneled through repairVoiceConfig so
+  // a malformed renderer payload can never write junk to disk.
+  ipcMain.handle('voice:config:get', async (e): Promise<VoiceConfig> => {
+    if (isForeignSender(e, getWin)) return { showPill: true }
+    return readVoiceConfig(getUserData())
+  })
+
+  ipcMain.handle('voice:config:set', async (e, patch: unknown): Promise<{ ok: boolean }> => {
+    if (isForeignSender(e, getWin) || typeof patch !== 'object' || patch === null) {
+      return { ok: false }
+    }
+    const userData = getUserData()
+    writeVoiceConfig(userData, repairVoiceConfig({ ...readVoiceConfig(userData), ...patch }))
+    return { ok: true }
+  })
 
   ipcMain.handle(
     'voice:models:delete',
