@@ -56,6 +56,9 @@
 - Gate at handoff: cheap trio green · full units green (4300+; one unrelated flake class
   rerun-recovers) · Windows e2e: @voice 8/8 (voice 2 + composer 5 + new settings
   live-apply 1) and the full @chrome leg 56/56 with the modal changes.
+- **V4 manual dev check DONE (2026-07-03):** user eyeballed the live dev app
+  (title-stamped `voice V4`) and signed off — "actually great". The epic-PR-time
+  title-stamped check remains standard practice but V4's is satisfied.
 - Coordination: ACTIVE-WORK.md `voice-to-text` row current. `useTerminalSpawn.ts` +
   `src/main/index.ts` remain cross-zone with bg-sessions. SettingsModal.tsx was claimed
   + released this session.
@@ -83,7 +86,6 @@
 - [ ] VAD/endpoint tuning in the host; async init (no cold-start stop-race stopgap).
 - [ ] Crash/error surfaces per SPEC §3 states; draft survives an engine crash.
 - [ ] pack:dir smoke green (win-x64 here; mac/linux via the matrix); win-arm64 gate.
-- [ ] Full e2e matrix green at the epic merge gate; manual dev check with
-      `CANVAS_DEV_TITLE` before the epic PR opens (owed from V4: the V4 dev check was
-      e2e-driven with screenshots — do the human title-stamped pass at PR time).
+- [ ] Full e2e matrix green at the epic merge gate; title-stamped dev check before the
+      epic PR opens (V4's own check is done — user eyeball on the live app 2026-07-03).
 - [ ] Doc collapse per lifecycle at the epic merge; build-history entry appended.
