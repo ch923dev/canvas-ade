@@ -17,8 +17,16 @@
 > paste only), Ctrl/Cmd+Shift+M quick-press toggle + press-and-hold PTT (capture-phase —
 > works with a focused terminal), silence auto-STOP ~15 s + ~2 min cap, e2e stub engine
 > behind the `VoiceIpcDeps.engine` seam (runtime-toggled via `voiceStubSet` so
-> voice.e2e.ts keeps the real host). **NEXT: V4 — settings + config, see
-> [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** V5 after that. Gotchas
+> voice.e2e.ts keeps the real host). V4 ✅ shipped: **settings + config live** — full
+> SPEC §5 `voiceConfig` shape (read-repaired, V3-era files open clean, `autoSendOnFinal`
+> literal-false), Settings › Voice section (design artifact `mock-voice-settings.html`
+> signed off 2026-07-03: live showPill toggle, engine select w/ Cloud greyed, radio model
+> picker w/ download-progress/delete/DEFAULT badge/CC-BY-SA note, language, mic device,
+> hotkey capture field), `voice:config:changed` push (showPill/hotkey apply LIVE, no
+> remount), configured accelerator via `voice/hotkey.ts` (code-based, default fallback),
+> `micDeviceId` exact-constraint w/ default retry, configured model honored at session
+> start. **NEXT: V5 — hardening + platform validation, see
+> [HANDOFF-V5.md](HANDOFF-V5.md) + [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).** Gotchas
 > for later slices: Electron cross-process MessagePorts NULL `e.data` when a non-port
 > transferable rides the transfer list — COPY frames across the boundary
 > (`useVoiceCapture.ts`); a RUNNING installed Expanse watching the repo locks fresh
@@ -38,9 +46,9 @@ Terminal boards. Local-first STT (no API key, offline, private), review-first co
    the design artifact (token-faithful states mock, per the design-before-code rule).
 4. **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — slices V0–V5, per-slice
    files/IPC/tests, collision map. Written after design-artifact sign-off.
-5. **[HANDOFF-V4.md](HANDOFF-V4.md)** — live handoff for the next slice (state snapshot,
-   seams, sharp edges, exit criteria). `HANDOFF-V1.md` / `HANDOFF-V3.md` are the
-   superseded editions (kept until the epic-merge doc collapse).
+5. **[HANDOFF-V5.md](HANDOFF-V5.md)** — live handoff for the next slice (state snapshot,
+   seams, sharp edges, exit criteria). `HANDOFF-V1.md` / `HANDOFF-V3.md` / `HANDOFF-V4.md`
+   are the superseded editions (kept until the epic-merge doc collapse).
 
 ## Decisions locked at kickoff (user-confirmed 2026-07-02)
 
