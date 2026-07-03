@@ -107,6 +107,7 @@ export function registerProjectThumbHandlers(
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
   let lastCaptureAt = 0
+  let captureInFlight = false
 
   ipc.handle('project:captureThumb', async (e, raw: unknown): Promise<boolean> => {
     if (guard(e)) return false
@@ -114,11 +115,15 @@ export function registerProjectThumbHandlers(
     const rect = sanitizeThumbRect(raw)
     const win = getWin()
     if (!dir || !rect || !win || win.isDestroyed()) return false
-    // Throttle + de-facto single-flight: stamp BEFORE the async capture so a concurrent
-    // request inside the gap can never start a second capturePage.
+    // Throttle + TRUE single-flight (review [warning]): the timestamp gate alone let a
+    // second capturePage start whenever the first one itself outlasted the 1s gap — the
+    // exact GPU-load scenario the crop-kill note below describes. The in-flight flag
+    // blocks concurrency outright; the time gap still limits back-to-back captures once idle.
+    if (captureInFlight) return false
     const now = Date.now()
     if (now - lastCaptureAt < CAPTURE_MIN_GAP_MS) return false
     lastCaptureAt = now
+    captureInFlight = true
     try {
       // Capture the FULL page and crop CPU-side (nativeImage.crop): the rect-parameterized
       // capturePage path reproducibly killed the app under e2e GPU load (3/3 full-leg runs;
@@ -147,6 +152,8 @@ export function registerProjectThumbHandlers(
       return true
     } catch {
       return false // env-flaky capture / disk failure — the placeholder path, not an error
+    } finally {
+      captureInFlight = false
     }
   })
 

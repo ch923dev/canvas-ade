@@ -6,6 +6,7 @@
  * under the max-lines ratchet when the dock landed.
  */
 import type { BackgroundProjectInfo } from '../../../preload'
+import { showToast } from '../store/toastStore'
 
 /** Last path segment as a display name (Windows + POSIX separators). */
 export function basenameOf(dir: string): string {
@@ -103,6 +104,21 @@ export async function fetchLiveDecorations(): Promise<{
       .catch(() => [] as string[])
   ])
   return { bg, forever }
+}
+
+/**
+ * Surface a 'locked' switch outcome (review [warning], both rounds): the pipeline owns the
+ * other outcomes ('save-failed' raises the global chip; 'cancelled' is the user's own act),
+ * but a switch dropped because ANOTHER one is mid-flight had no surface on any entry point —
+ * the dock/switcher UI closes on click, so the user just saw nothing happen. Keyed toast so
+ * rapid repeats update in place. Shared by the dock cards, the + tile, and the switcher rows.
+ */
+export function toastLockedSwitch(outcome: string): void {
+  if (outcome !== 'locked') return
+  showToast({
+    id: 'project-switch-locked',
+    message: 'A project switch is already in progress — try again in a moment'
+  })
 }
 
 /** A picked folder resolved to the switch-pipeline load thunk + display name. */

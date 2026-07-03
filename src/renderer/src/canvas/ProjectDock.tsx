@@ -20,7 +20,6 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from 'rea
 import { useCanvasStore } from '../store/canvasStore'
 import { performProjectSwitch } from '../store/projectSwitch'
 import { captureProjectThumb } from '../store/projectThumbCapture'
-import { showToast } from '../store/toastStore'
 import type { BackgroundProjectInfo } from '../../../preload'
 import { Menu } from './Menu'
 import { CloseBackgroundModal } from './CloseBackgroundModal'
@@ -30,6 +29,7 @@ import {
   fetchLiveDecorations,
   pickCreateProject,
   pickOpenFolder,
+  toastLockedSwitch,
   type ProjectDockCard
 } from './projectSessionsShared'
 
@@ -197,14 +197,7 @@ export function ProjectDock(): ReactElement {
   // (~800ms of thumb capture + snapshot fetch, before the overlay arms) silently did
   // nothing. Toast it so the dropped click is explained; keyed so repeats update in place.
   const startSwitch = (load: () => Promise<unknown>, incomingName: string): void => {
-    void performProjectSwitch(load, { incomingName }).then((outcome) => {
-      if (outcome === 'locked') {
-        showToast({
-          id: 'project-switch-locked',
-          message: 'A project switch is already in progress — try again in a moment'
-        })
-      }
-    })
+    void performProjectSwitch(load, { incomingName }).then(toastLockedSwitch)
   }
   const onCardClick = (card: ProjectDockCard): void => {
     closeDock()

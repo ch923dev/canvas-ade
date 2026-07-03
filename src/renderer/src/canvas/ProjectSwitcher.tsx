@@ -29,7 +29,8 @@ import {
   bgBadge,
   fetchLiveDecorations,
   pickCreateProject,
-  pickOpenFolder
+  pickOpenFolder,
+  toastLockedSwitch
 } from './projectSessionsShared'
 
 export function ProjectSwitcher(): ReactElement {
@@ -85,9 +86,13 @@ export function ProjectSwitcher(): ReactElement {
     try {
       // The pipeline itself (lock → keep-decision/dialog → autosave cancel → pinned
       // flush-save → live-resource handover → load) lives in store/projectSwitch.ts,
-      // shared with the e2e harness. Lock/flush failures surface through the save-status
-      // store it writes; a dialog Cancel settles 'cancelled' (no side effects).
-      await performProjectSwitch(load, incomingName ? { incomingName } : undefined)
+      // shared with the e2e harness. Flush failures surface through the save-status
+      // store it writes; a dialog Cancel settles 'cancelled' (no side effects); a
+      // 'locked' drop (another switch mid-flight) toasts — review [warning], the pill
+      // otherwise just flickered back with zero explanation (dock parity).
+      toastLockedSwitch(
+        await performProjectSwitch(load, incomingName ? { incomingName } : undefined)
+      )
     } finally {
       setSwitching(false)
     }
