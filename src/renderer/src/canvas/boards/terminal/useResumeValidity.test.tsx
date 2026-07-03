@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, waitFor, cleanup } from '@testing-library/react'
 import { useResumeValidity } from './useResumeValidity'
+import { useResumeValidityStore } from '../../../store/resumeValidityStore'
 import type { TerminalBoard } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 
@@ -14,6 +15,7 @@ const resumeCheck = vi.fn()
 beforeEach(() => {
   resumeCheck.mockReset()
   window.api = { terminal: { resumeCheck } } as never
+  useResumeValidityStore.setState({ validity: {} })
 })
 afterEach(cleanup)
 
@@ -77,5 +79,21 @@ describe('useResumeValidity', () => {
     rerender({ s: 'running' })
     await waitFor(() => expect(result.current).toBe(false))
     expect(resumeCheck).toHaveBeenCalledTimes(2)
+  })
+
+  // F1b: the hook is also the PUBLISHER for synchronous consumers (the palette snapshot).
+  it('publishes each verdict to resumeValidityStore and clears it on unmount', async () => {
+    resumeCheck.mockResolvedValue({ canResume: true })
+    const { result, unmount } = renderHook(() => useResumeValidity(board(), 'exited'))
+    await waitFor(() => expect(result.current).toBe(true))
+    expect(useResumeValidityStore.getState().validity['t1']).toBe(true)
+    unmount()
+    // A stale `true` for a removed board must not linger for the palette to read.
+    expect('t1' in useResumeValidityStore.getState().validity).toBe(false)
+  })
+
+  it('publishes the fail-closed false too (no stored id → store says false)', () => {
+    renderHook(() => useResumeValidity(board({ agentSessionId: undefined }), 'exited'))
+    expect(useResumeValidityStore.getState().validity['t1']).toBe(false)
   })
 })

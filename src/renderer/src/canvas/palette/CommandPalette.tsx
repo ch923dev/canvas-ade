@@ -27,6 +27,7 @@ import {
 import { useCanvasStore } from '../../store/canvasStore'
 import { useCommandStore } from '../../store/commandStore'
 import { useOrchestrationStore } from '../../store/orchestrationStore'
+import { useResumeValidityStore } from '../../store/resumeValidityStore'
 import { Modal } from '../Modal'
 import { TypeGlyph } from '../TypeGlyph'
 import {
@@ -92,6 +93,9 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
       (t) => t.status === 'routing' || t.status === 'executing' || t.status === 'reporting'
     )
   )
+  // F1b: the MAIN-validated resume verdicts (fail-closed: missing entry ⇒ false). Live
+  // subscription like the rest — the Resume row must appear/vanish while the palette is open.
+  const resumeValidity = useResumeValidityStore((s) => s.validity)
 
   // switchView is deliberately not a dep: it only touches setState setters + a ref,
   // so a stale capture is harmless and the memo stays keyed on the caller's verbs.
@@ -107,7 +111,7 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
             id: b.id,
             type: b.type,
             title: b.title,
-            agentSessionId: b.type === 'terminal' ? b.agentSessionId : undefined
+            canResume: b.type === 'terminal' ? (resumeValidity[b.id] ?? false) : undefined
           })),
           groups: groups.map((g) => ({ id: g.id, name: g.name })),
           selectedIds,
@@ -132,6 +136,7 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
       canRedo,
       orchestrationEnabled,
       hasExecutingTasks,
+      resumeValidity,
       fullVerbs
     ]
   )

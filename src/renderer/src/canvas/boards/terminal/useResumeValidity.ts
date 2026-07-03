@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import { isE2E, e2eResumeChecks } from '../../../smoke/e2eRegistry'
+import { useResumeValidityStore } from '../../../store/resumeValidityStore'
 
 export function useResumeValidity(board: TerminalBoardData, state: TerminalState): boolean {
   const [canResume, setCanResume] = useState(false)
@@ -29,6 +30,9 @@ export function useResumeValidity(board: TerminalBoardData, state: TerminalState
     const apply = (ok: boolean): void => {
       if (cancelled) return
       setCanResume(ok)
+      // F1b: publish the verdict for synchronous consumers (the command palette builds
+      // its rows from a store snapshot and cannot await the IPC round-trip itself).
+      useResumeValidityStore.getState().setResumeValidity(id, ok)
       if (isE2E()) e2eResumeChecks.set(id, { sessionId: agentSessionId, canResume: ok })
     }
     if (!agentSessionId) {
@@ -43,5 +47,8 @@ export function useResumeValidity(board: TerminalBoardData, state: TerminalState
       cancelled = true
     }
   }, [id, agentSessionId, agentTranscriptPath, state])
+  // GC on unmount (board delete / undo-park): keyed on id only, so lifecycle re-runs of the
+  // effect above never wipe a published verdict — mirrors useTerminalSpawn's runtime clear.
+  useEffect(() => () => useResumeValidityStore.getState().clearResumeValidity(id), [id])
   return canResume
 }

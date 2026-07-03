@@ -45,6 +45,7 @@ import { presetById } from './terminal/agentPresets'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
 import { usePaletteRestart } from './terminal/usePaletteRestart'
+import { notifyResumeFellBack } from './terminal/resumeFallbackToast'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
 import {
@@ -215,10 +216,13 @@ export function TerminalBoard({
         transcriptPath: board.agentTranscriptPath
       })
       .then((r) => {
+        // F1b: the fresh degrade is safe but silent — the user picked Resume; say so.
+        if (r?.mode === 'fresh') notifyResumeFellBack()
         launchOverrideRef.current = r?.command
         restart()
       })
       .catch(() => {
+        notifyResumeFellBack()
         launchOverrideRef.current = undefined
         restart()
       })

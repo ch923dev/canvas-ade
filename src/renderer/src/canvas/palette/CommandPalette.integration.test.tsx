@@ -13,6 +13,7 @@ import { render, screen, fireEvent, cleanup, act, configure } from '@testing-lib
 configure({ testIdAttribute: 'data-test' })
 import { CommandPalette, type CommandPaletteProps } from './CommandPalette'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useResumeValidityStore } from '../../store/resumeValidityStore'
 import type { Board } from '../../lib/boardSchema'
 
 afterEach(cleanup)
@@ -71,6 +72,7 @@ beforeEach(() => {
     past: [],
     future: []
   })
+  useResumeValidityStore.setState({ validity: {} })
 })
 
 function open(over: Partial<CommandPaletteProps> = {}): {
@@ -104,12 +106,28 @@ describe('command view', () => {
     expect(screen.queryByTestId('palette-row-undo')).toBeNull()
   })
 
-  it('selected-board rows appear for a single selection (terminal: resume gated on session id)', () => {
+  it('selected-board rows appear for a single selection (terminal: resume gated on the MAIN verdict)', () => {
     useCanvasStore.setState({ selectedIds: ['t1'], selectedId: 't1' })
+    // F1b: a stored session id alone (BOARDS carries one) no longer lists Resume — only
+    // the published MAIN-validated verdict does.
     open()
     expect(screen.getByTestId('palette-row-rename-board')).toBeTruthy()
-    expect(screen.getByTestId('palette-row-restart-resume')).toBeTruthy()
+    expect(screen.queryByTestId('palette-row-restart-resume')).toBeNull()
     expect(screen.queryByTestId('palette-row-export-png')).toBeNull()
+    cleanup()
+    act(() => useResumeValidityStore.getState().setResumeValidity('t1', true))
+    open()
+    expect(screen.getByTestId('palette-row-restart-resume')).toBeTruthy()
+  })
+
+  it('the Resume row tracks a live verdict flip while the palette is open', () => {
+    useCanvasStore.setState({ selectedIds: ['t1'], selectedId: 't1' })
+    act(() => useResumeValidityStore.getState().setResumeValidity('t1', true))
+    open()
+    expect(screen.getByTestId('palette-row-restart-resume')).toBeTruthy()
+    // The transcript dies (e.g. pruned) → the publisher refutes → the row vanishes live.
+    act(() => useResumeValidityStore.getState().setResumeValidity('t1', false))
+    expect(screen.queryByTestId('palette-row-restart-resume')).toBeNull()
   })
 
   it('focuses the search input on mount and filters as you type', () => {

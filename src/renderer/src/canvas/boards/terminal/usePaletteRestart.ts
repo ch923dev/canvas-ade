@@ -10,6 +10,7 @@
  */
 import { useEffect, type MutableRefObject } from 'react'
 import { usePaletteIntentStore } from '../../palette/paletteIntentStore'
+import { notifyResumeFellBack } from './resumeFallbackToast'
 
 export function usePaletteRestart(
   boardId: string,
@@ -31,10 +32,12 @@ export function usePaletteRestart(
     void window.api.terminal
       .resumeLaunch(boardId, { sessionId: agentSessionId, transcriptPath: agentTranscriptPath })
       .then((r) => {
+        if (r?.mode === 'fresh') notifyResumeFellBack()
         launchOverrideRef.current = r?.command
         restart()
       })
       .catch(() => {
+        notifyResumeFellBack()
         launchOverrideRef.current = undefined
         restart()
       })
