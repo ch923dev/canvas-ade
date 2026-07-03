@@ -32,6 +32,7 @@ import {
 } from './previewOsrBackground'
 import { createProjectSessions } from './projectSessions'
 import { registerProjectSessionsHandlers } from './projectSessionsIpc'
+import { registerProjectThumbHandlers } from './projectThumbs'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
@@ -761,6 +762,14 @@ app.whenReady().then(async () => {
     getCurrentDir,
     disposeProjectPtys,
     disposeProjectOsr
+  })
+  // Phase 4b: project-dock thumbnails — capture keyed to the MAIN-resolved active dir, cached
+  // in userData/project-thumbs (app cache, never the project folder), served only for the
+  // session set (active + registry residents).
+  registerProjectThumbHandlers(ipcMain, () => mainWindow, {
+    getCurrentDir,
+    sessionDirs: () => projectSessions.listBackgroundProjects().map((b) => b.dir),
+    thumbsDir: () => join(app.getPath('userData'), 'project-thumbs')
   })
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in

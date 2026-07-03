@@ -521,6 +521,20 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()
+      // 3b. Drain the background-sessions registry (Phase 4b): it is MAIN state that
+      //     outlives a spec (workers:1 reuses one app), and teardownProject removes the
+      //     DIR, not the registry entry — leftover residents would surface as extra
+      //     project-dock cards in every later spec. Resources are already dead (the
+      //     dispose above), so this is pure bookkeeping; also resets each dir's keep
+      //     policy (closeBackgroundProject forgets it).
+      try {
+        const residents = await window.api.project.listBackground()
+        for (const r of residents) {
+          await window.api.project.closeBackground(r.dir).catch(() => false)
+        }
+      } catch {
+        /* partial bridge in smoke renders — nothing to drain */
+      }
       // 4. Reset the seed-x cursor so the next test's seedBoard positions restart.
       seedX = 0
       return { ok: true as const }

@@ -22,6 +22,7 @@
 @import './styles/boards/text-toolbar.css';
 @import './styles/screens/welcome.css';
 @import './styles/chrome/menu.css';
+@import './styles/chrome/projectdock.css';
 @import './styles/chrome/tidy.css';
 @import './styles/chrome/fullview.css';
 @import './styles/boards/terminal.css';

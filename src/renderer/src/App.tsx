@@ -4,6 +4,7 @@ import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
 import AskOnSwitchModal from './canvas/AskOnSwitchModal'
+import ProjectDock from './canvas/ProjectDock'
 import { ToastIsland } from './canvas/Toast'
 import { useUpdateToasts } from './canvas/useUpdateToasts'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
@@ -94,6 +95,10 @@ function App(): React.ReactElement {
     <div style={{ position: 'fixed', inset: 0 }}>
       {status === 'open' ? <Canvas /> : <WelcomeScreen />}
       {status === 'open' && <AuditLogViewer />}
+      {/* Phase 4b (bg sessions): the bottom-edge project dock — app-level (a sibling of
+          Canvas, like AskOnSwitchModal), gated on an open project so its hot zone can't
+          fire over the welcome/loading screens; a switch's 'loading' unmount auto-closes it. */}
+      {status === 'open' && <ProjectDock />}
       <ConfirmModal />
       {/* Phase 4 (bg sessions): app-level like ConfirmModal — the ask-on-switch decision is
           awaited mid-switch-pipeline and must not depend on any project-scoped surface. */}

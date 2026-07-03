@@ -5,7 +5,9 @@
  * store/projectSwitch.ts runs (lock → keep-decision/dialog → flush-save → handover → load).
  * Phase 4 (bg sessions): recents rows carry live decorations — --ok dot + counts badge for a
  * backgrounded resident, hover-✕ (close, confirmed when running), ∞ forget badge for a
- * persisted keep policy (PHASE4-UX-DESIGN §2–3).
+ * persisted keep policy (PHASE4-UX-DESIGN §2–3). Phase 4b extracted the helpers the
+ * ProjectDock shares (badge/close copy, pick-a-folder flows, the §3 confirm) to
+ * projectSessionsShared.ts + CloseBackgroundModal.tsx.
  */
 import {
   useCallback,
@@ -22,7 +24,8 @@ import { performProjectSwitch } from '../store/projectSwitch'
 import type { BackgroundProjectInfo } from '../../../preload'
 import { Icon } from './Icon'
 import { Menu } from './Menu'
-import { Modal } from './Modal'
+import { CloseBackgroundModal } from './CloseBackgroundModal'
+import { bgBadge, pickCreateProject, pickOpenFolder } from './projectSessionsShared'
 
 export function ProjectSwitcher(): ReactElement {
   const name = useCanvasStore((s) => s.project.name)
@@ -138,8 +141,8 @@ export function ProjectSwitcher(): ReactElement {
   const openRecent = (r: RecentProject): Promise<void> =>
     switchTo(() => window.api.project.open(r.path), r.name)
   const openFolder = async (): Promise<void> => {
-    const dir = await window.api.dialog.openFolder()
-    if (dir) await switchTo(() => window.api.project.open(dir), basenameOf(dir))
+    const picked = await pickOpenFolder()
+    if (picked) await switchTo(picked.load, picked.name)
     else setOpen(false)
   }
 
@@ -167,13 +170,9 @@ export function ProjectSwitcher(): ReactElement {
       .then(() => refreshLive())
   }
   const createNew = async (): Promise<void> => {
-    const dir = await window.api.dialog.openFolder()
-    if (!dir) {
-      setOpen(false)
-      return
-    }
-    const pname = basenameOf(dir)
-    await switchTo(() => window.api.project.create(dir, pname, {}), pname)
+    const picked = await pickCreateProject()
+    if (picked) await switchTo(picked.load, picked.name)
+    else setOpen(false)
   }
 
   return (
@@ -274,89 +273,17 @@ export function ProjectSwitcher(): ReactElement {
           </button>
         </Menu>
       )}
-      {/* Phase 4 (PHASE4-UX-DESIGN §3): the ✕ close confirm — plain two-button card; the
-          body carries the consequence (no red-button grammar). */}
+      {/* Phase 4 (PHASE4-UX-DESIGN §3): the ✕ close confirm — extracted to
+          CloseBackgroundModal (shared with the ProjectDock's card-✕, Phase 4b). */}
       {closeTarget && (
-        <Modal
-          label="Close project"
-          onClose={() => setCloseTarget(null)}
-          zIndex={10000}
-          scrimProps={{ 'data-testid': 'close-bg-backdrop' }}
-          cardProps={{ 'data-testid': 'close-bg-modal' }}
-          cardStyle={{ width: 420, maxWidth: '90vw', padding: 20 }}
-        >
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 'var(--fs-label)',
-              fontWeight: 600,
-              letterSpacing: 'var(--tr-label)'
-            }}
-          >
-            Close “{closeTarget.name}”?
-          </h2>
-          <p
-            style={{
-              margin: '10px 0 18px',
-              fontSize: 'var(--fs-body)',
-              lineHeight: 'var(--lh-body)',
-              color: 'var(--text-2)'
-            }}
-          >
-            This stops {closeBody(closeTarget)}. The project stays on disk and in recents.
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <button
-              type="button"
-              className="ca-btn-ghost"
-              data-testid="close-bg-cancel"
-              onClick={() => setCloseTarget(null)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="ca-btn-primary"
-              data-testid="close-bg-confirm"
-              onClick={() => void confirmCloseBackground()}
-            >
-              Stop &amp; close
-            </button>
-          </div>
-        </Modal>
+        <CloseBackgroundModal
+          target={closeTarget}
+          onCancel={() => setCloseTarget(null)}
+          onConfirm={() => void confirmCloseBackground()}
+        />
       )}
     </div>
   )
-}
-
-/** Last path segment as a display name (mirrors createNew's old inline derivation). */
-function basenameOf(dir: string): string {
-  return (
-    dir
-      .replace(/[/\\]+$/, '')
-      .split(/[/\\]/)
-      .pop() || dir
-  )
-}
-
-/** Row badge: mono micro counts, non-zero parts only (PHASE4-UX-DESIGN §2). */
-function bgBadge(bg: BackgroundProjectInfo): string {
-  const parts: string[] = []
-  if (bg.terminalsRunning > 0) parts.push(`${bg.terminalsRunning} term`)
-  if (bg.previews > 0) parts.push(`${bg.previews} prev`)
-  return parts.join(' · ')
-}
-
-/** Close-confirm body: what actually dies, singular/plural, non-zero parts only. */
-function closeBody(bg: BackgroundProjectInfo): string {
-  const parts: string[] = []
-  if (bg.terminalsRunning > 0)
-    parts.push(
-      `${bg.terminalsRunning} running ${bg.terminalsRunning === 1 ? 'terminal' : 'terminals'} (their processes are killed)`
-    )
-  if (bg.previews > 0)
-    parts.push(`closes ${bg.previews} ${bg.previews === 1 ? 'preview' : 'previews'}`)
-  return parts.join(' and ')
 }
 
 // PERSIST-03: ambient save-status indicator — a quiet --text-3 confirmation next to the

@@ -22,6 +22,7 @@ import {
   disposeLiveResources
 } from './disposeLiveResources'
 import { requestAskOnSwitch } from './askOnSwitchStore'
+import { captureProjectThumb } from './projectThumbCapture'
 
 export type SwitchOutcome = 'switched' | 'locked' | 'save-failed' | 'cancelled'
 
@@ -110,6 +111,11 @@ export async function performProjectSwitch(
     // now, or the global store carries the old project's stale message into the new one
     // (it would flash on the next project until its first autosave).
     useSaveStatusStore.getState().markSaved()
+    // Phase 4b (project dock): snapshot the outgoing canvas for its dock card. MUST run
+    // BEFORE the setProjectLoading() unmount below (after it the canvas DOM is gone) and
+    // covers BOTH the keep and stop paths. Best-effort: capturePage is env-flaky, so a
+    // failed capture is a normal outcome (the dock shows its dot-grid placeholder).
+    if (outgoingDir !== null) await captureProjectThumb()
     // 2. Hand over live resources, then suppress autosave + unmount.
     if (keep && outgoingDir !== null) {
       // BEFORE the unmount (see module doc) — MAIN parks PTYs + freezes previews while the

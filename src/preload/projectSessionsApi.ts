@@ -45,5 +45,11 @@ export const projectSessionsApi = {
   closeBackground: (dir: string): Promise<boolean> =>
     ipcRenderer.invoke('project:closeBackground', dir),
   /** Scoped close of the ACTIVE project's resources (never touches other residents). */
-  closeActive: (): Promise<boolean> => ipcRenderer.invoke('project:closeActive')
+  closeActive: (): Promise<boolean> => ipcRenderer.invoke('project:closeActive'),
+  /** Phase 4b: snapshot the ACTIVE project's canvas rect into the userData thumb cache
+   *  (dir MAIN-resolved). False = capture failed — normal (the dock placeholders it). */
+  captureThumb: (rect: { x: number; y: number; width: number; height: number }): Promise<boolean> =>
+    ipcRenderer.invoke('project:captureThumb', rect),
+  /** Phase 4b: cached thumbnails for the SESSION set (active + residents) as data URLs. */
+  thumbs: (): Promise<Record<string, string>> => ipcRenderer.invoke('project:thumbs')
 }
