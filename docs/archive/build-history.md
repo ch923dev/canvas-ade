@@ -1632,3 +1632,26 @@ Docker) · manual dev check title-stamped, AUTO_CABLE verified in the mirror + s
 (activates the wire half: the connected-tier tool sending ctx.boardId + honest delivery acks)
 and deletion of the `mcp.ts` void-shim. @expanse-ade/mcp PR #6 is merged on `feat/canvas-layout`;
 the local tag `v0.18.0-rc.6` exists — pushing it triggers the OIDC npm publish.
+
+## 2026-07-03 — PR #291: pin @expanse-ade/mcp 0.18.0-rc.6 — activate the prompt-relay wire half (`ebbdadda`)
+
+Final slice of the MCP prompt-relay fix (#282/#288/#289). rc.6 published to npm (`next` tag,
+OIDC provenance); this pins the app to it.
+
+- **spawn_board honest response over the wire** — `content[0]` = bare id (back-compat),
+  `content[1]` = "launch command queued … boots asynchronously" on prompt-carrying spawns;
+  oversize (>400) / non-terminal prompt+cwd wire-rejected.
+- **assign_prompt / relay_prompt** surface a delivery WARNING to the agent on `unconfirmed`.
+- **connected-tier spawn_board** sends its token-derived `ctx.boardId` as `sourceBoardId` → the
+  #289 auto-cable fires over the real wire (spawner→spawned orchestration connector).
+- The rc.5-era `mcp.ts` void-shim is DELETED (the package declares `Promise<{delivery} | void>`,
+  so the host's honest-ack widening passes straight through).
+
+**Verified:** typecheck + main unit suites green; the FULL `@mcp` e2e suite (30/30) green over the
+real rc.6 wire (spawn_board-prompt spec updated to read `content[0]` + pin the queued-note);
+manual dev check (`BLOCKS=2`/`QUEUED_NOTE=true`/`PROMPT_RAN=true`). Pre-merge full matrix: the MCP
+surface passed every run; three unrelated specs (browserNetwork 50k-virtualization, handoff
+confirm-modal poll, osrCrop) flaked under sustained 4×-matrix machine load and each passed clean in
+isolation (handoff green fully-alone in 42s) — load flake, not a regression. **The MCP prompt-relay
+fix is now complete end-to-end: spawn runs the command, relays wait for a ready REPL, tools report
+honestly, and a connected agent can relay into the terminal it spawned.**
