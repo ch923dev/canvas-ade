@@ -68,6 +68,16 @@ healthy state: NO extra line (zero added chrome)
 Tokens: `var(--warn)` dot + `var(--text-3)` text, matching the Inspector's existing muted rows.
 No toast, no modal — Inspector-only (calm/dense doctrine).
 
+## Carry-in from the F2 review (#295, non-blocking — small, same zone)
+
+`resolveBoardTranscript` (`src/main/index.ts`) threads the A4 clocks (`sessionId`/`recordedAt`
+for eager-grace + rotation adoption) only when the candidate's recorded path equals the map
+entry's TOP-LEVEL `transcriptPath`. The F2 confirmed-capture candidate never matches that, so a
+confirmed session that itself rotates while its old file survives resumes the pre-rotation id
+(stale fork, not a wrong session — the tail-lineage check still holds). Fix: also match
+`entry.confirmed?.transcriptPath === recorded` and thread `confirmed.sessionId`/`confirmed.ts`
+as the clocks. One conditional + a unit test beside the existing resolveBoardTranscript coverage.
+
 ## Tests
 
 - MAIN unit: health resolver matrix (runner null / hook missing / no map entry / healthy) — pure
