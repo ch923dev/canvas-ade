@@ -22,11 +22,11 @@ import {
 } from 'react'
 import { IconBtn } from './BoardFrame'
 import { hhmm, relAge, spanLabel, baseName } from '../lib/recapFormat'
+import { refreshNoteFor } from '../lib/recapNote'
 
 // Derived from the preload contract so there is no fourth mirror of the shapes.
 type RecapBundle = NonNullable<Awaited<ReturnType<typeof window.api.recap.get>>>
 type RecapFacts = RecapBundle['facts']
-
 /** How many chips each evidence column shows (facts arrive recency-first, capped in MAIN). */
 const CHIPS_SHOWN = 6
 
@@ -113,6 +113,28 @@ function SectionHead({ children }: { children: string }): ReactElement {
   return <div style={{ ...micro, color: 'var(--text-3)', marginBottom: 8 }}>{children}</div>
 }
 
+/** The one-line "why the refresh changed nothing" note (recap-refresh fix). */
+function RefreshNote({
+  note
+}: {
+  note: { text: string; tone: 'info' | 'warn' } | null
+}): ReactElement | null {
+  if (!note) return null
+  return (
+    <div
+      style={{
+        ...meta,
+        color: note.tone === 'warn' ? 'var(--warn)' : 'var(--text-3)',
+        marginTop: 6
+      }}
+      role={note.tone === 'warn' ? 'alert' : undefined}
+      data-test="recap-refresh-note"
+    >
+      {note.text}
+    </div>
+  )
+}
+
 function Chip({ children }: { children: ReactNode }): ReactElement {
   return (
     <span
@@ -149,6 +171,10 @@ export function RecapView({
   const [bundle, setBundle] = useState<RecapBundle | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Recap-refresh fix: WHY the last manual refresh did not regenerate (null = nothing to say).
+  const [refreshNote, setRefreshNote] = useState<{ text: string; tone: 'info' | 'warn' } | null>(
+    null
+  )
 
   const load = useCallback(async () => {
     const out = await window.api.recap.get(boardId)
@@ -165,11 +191,23 @@ export function RecapView({
   const refresh = useCallback(async () => {
     setBusy(true)
     try {
-      await window.api.memory.refresh(boardId)
+      const res = await window.api.memory.refresh(boardId)
+      setRefreshNote(refreshNoteFor(res?.outcome))
       await load()
     } finally {
       setBusy(false)
     }
+  }, [boardId, load])
+  // Recap-refresh fix: a background (watcher-driven) regen rewrote the sidecar — re-read so an
+  // open recap face updates live instead of waiting for the next flip. Board-scoped; the optional
+  // chain matches the App.tsx/AppChrome guard style for late-added preload members.
+  useEffect(() => {
+    return window.api.recap.onUpdated?.((p) => {
+      if (p.boardId === boardId) {
+        setRefreshNote(null)
+        void load()
+      }
+    })
   }, [boardId, load])
 
   const facts = bundle?.facts
@@ -235,6 +273,7 @@ export function RecapView({
                 ? 'Resume and restart need a session — start a new one to begin.'
                 : 'Launch claude here, with Agent recaps enabled in Settings, to get one.'}
           </div>
+          <RefreshNote note={busy ? null : refreshNote} />
           {canStart && onStart ? (
             <button
               type="button"
@@ -405,6 +444,7 @@ export function RecapView({
                     </div>
                   </>
                 )}
+                <RefreshNote note={busy ? null : refreshNote} />
               </div>
             )}
 

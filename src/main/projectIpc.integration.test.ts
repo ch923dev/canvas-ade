@@ -53,6 +53,7 @@ vi.mock('electron', () => ({
 import { registerProjectHandlers } from './projectIpc'
 import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
 import type { MemoryEngine } from './memoryEngine'
+import type { RefreshOutcome } from './summaryLoop'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -525,7 +526,7 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
   const getWin = (): null => null
 
   function withRefresh(
-    onRefresh: (boardId: string) => Promise<void>
+    onRefresh: (boardId: string) => Promise<RefreshOutcome | undefined>
   ): ReturnType<typeof createIpcCapture> {
     const cap = createIpcCapture()
     registerProjectHandlers(cap.ipcMain, getWin, '/userData', undefined, undefined, onRefresh)
@@ -534,16 +535,28 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
 
   it('calls onRefresh with the board id and returns {ok:true} when a project is open', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = withRefresh(onRefresh)
 
     expect(await cap.invoke('memory:refresh', 't1')).toEqual({ ok: true })
     expect(onRefresh).toHaveBeenCalledWith('t1')
   })
 
+  // Recap-refresh fix: the sink's structured outcome rides the reply (additive `outcome` key)
+  // so RecapView can say WHY a refresh regenerated nothing; a void-ish sink keeps {ok:true}.
+  it('passes the onRefresh outcome through to the reply when the sink reports one', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const outcome: RefreshOutcome = { status: 'llm-unavailable', reason: 'no-provider' }
+    const onRefresh = vi.fn(async () => outcome)
+    const cap = withRefresh(onRefresh)
+
+    expect(await cap.invoke('memory:refresh', 't1')).toEqual({ ok: true, outcome })
+    expect(onRefresh).toHaveBeenCalledWith('t1')
+  })
+
   it('no-ops ({ok:false}) when no project is open — never calls onRefresh', async () => {
     store.getCurrentDir.mockReturnValue(null)
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = withRefresh(onRefresh)
 
     expect(await cap.invoke('memory:refresh', 't1')).toEqual({ ok: false })
@@ -552,7 +565,7 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
 
   it('rejects a non-string / empty board id ({ok:false}, no refresh)', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = withRefresh(onRefresh)
 
     expect(await cap.invoke('memory:refresh', 123)).toEqual({ ok: false })
@@ -565,7 +578,7 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
   // The fix adds a safeBoardId() check (MAX_ID_LEN=64, charset [A-Za-z0-9_-]) at IPC ingress.
   it('BUG-032: rejects an over-long boardId (>64 chars) before calling onRefresh', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = withRefresh(onRefresh)
 
     // 65-char id (one over the MAX_ID_LEN=64 limit).
@@ -576,7 +589,7 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
 
   it('BUG-032: rejects a boardId with invalid charset (non-nanoid chars) before calling onRefresh', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = withRefresh(onRefresh)
 
     // Space and slash are outside the [A-Za-z0-9_-] safe charset.
@@ -587,7 +600,7 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
 
   it('BUG-032: still accepts a valid nanoid-style boardId (regression guard)', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = withRefresh(onRefresh)
 
     // Valid nanoid: alphanumeric + _ + - within 64 chars.
@@ -597,7 +610,7 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
 
   it('rejects a foreign sender and never refreshes (#17)', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    const onRefresh = vi.fn(async () => {})
+    const onRefresh = vi.fn(async () => undefined)
     const cap = createIpcCapture()
     registerProjectHandlers(cap.ipcMain, mainWin, '/userData', undefined, undefined, onRefresh)
 

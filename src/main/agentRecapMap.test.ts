@@ -69,7 +69,8 @@ describe('readRecapMap', () => {
       ].join('\n')
     )
     const m = readRecapMap(map)
-    expect(m.get('b1')).toEqual({ sessionId: 's2', transcriptPath: '/t/s2.jsonl' })
+    // Recap-refresh fix A4: the hook's `ts` now survives the parse (the eager-capture clock).
+    expect(m.get('b1')).toEqual({ sessionId: 's2', transcriptPath: '/t/s2.jsonl', ts: 2 })
     expect(m.has('')).toBe(false)
   })
   it('returns an empty map when the file is absent', () => {
