@@ -1328,7 +1328,7 @@ describe('buildOrchestrator', () => {
         boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
       })
       const orch = buildOrchestrator(registry)
-      await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toBeUndefined()
+      await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toEqual({ delivery: 'ready' })
       expect(confirms).toHaveLength(1)
       expect(writes).toEqual([
         { id: 't1', text: 'pnpm build' },
@@ -1353,7 +1353,7 @@ describe('buildOrchestrator', () => {
       // No `sleep` injected: a fire-and-forget dispatch must not enter an await-idle poll
       // (which would need the sleep seam), so this resolves without hanging.
       const orch = buildOrchestrator(registry)
-      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toBeUndefined()
+      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toEqual({ delivery: 'ready' })
     })
 
     it('🔒 a failed PTY write (no live session) audits failed and throws', async () => {
@@ -1700,7 +1700,7 @@ describe('buildOrchestrator', () => {
         connectors: cableAB
       })
       const orch = buildOrchestrator(registry)
-      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toBeUndefined()
+      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toEqual({ delivery: 'ready' })
       expect(confirms).toHaveLength(1)
       expect(writes).toEqual([
         { id: 'B', text: 'pnpm build' }, // written to the TARGET
@@ -2152,5 +2152,164 @@ describe('buildOrchestrator lazy session lookup (perf: listSessions only on a te
     })
     await orch.listBoards()
     expect(listSessions).toHaveBeenCalledTimes(1) // one shared lazy map across all boards
+  })
+})
+
+describe('🔒 dispatch readiness gate (runGatedWrite, 2026-07-03)', () => {
+  type Board = { id: string; type: string; title: string; status?: string }
+  type Conn = { id: string; sourceId: string; targetId: string; kind: string }
+  type Ready = { outcome: string; waitedMs: number }
+
+  /** dispatchReg-shaped registry PLUS a controllable awaitReady probe + an ordered event log. */
+  function readyReg(opts: {
+    boards: Board[]
+    connectors?: () => Conn[]
+    confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+    awaitReady?: (id: string, o?: { signal?: AbortSignal }) => Promise<Ready>
+  }): {
+    registry: BoardRegistry
+    audits: AuditInput[]
+    writes: Array<{ id: string; text: string }>
+    events: string[]
+  } {
+    const audits: AuditInput[] = []
+    const writes: Array<{ id: string; text: string }> = []
+    const events: string[] = []
+    const registry: BoardRegistry = {
+      listBoards: () => opts.boards,
+      listConnectors: () => opts.connectors?.() ?? [],
+      listSessions: () => [],
+      subscribeStatus: () => () => {},
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+      drainPty: async () => {},
+      writeToPty: (id, text) => {
+        events.push(`write:${text === '\r' ? 'CR' : text === '\x03' ? 'ETX' : 'text'}`)
+        writes.push({ id, text })
+        return true
+      },
+      confirm: async (req) => {
+        events.push('confirm')
+        return opts.confirm ? opts.confirm(req) : { approved: true }
+      },
+      audit: async (input) => {
+        audits.push(input)
+      },
+      recordResult: () => {},
+      ...(opts.awaitReady
+        ? {
+            awaitReady: async (id: string, o?: { signal?: AbortSignal }) => {
+              const r = await opts.awaitReady!(id, o)
+              events.push(`ready:${r.outcome}`)
+              return r
+            }
+          }
+        : {})
+    }
+    return { registry, audits, writes, events }
+  }
+
+  const terminal: Board[] = [{ id: 't1', type: 'terminal', title: 'Worker', status: 'running' }]
+
+  it('write happens only AFTER the readiness observation settles (confirm → ready → write)', async () => {
+    const { registry, audits, events } = readyReg({
+      boards: terminal,
+      awaitReady: async () => ({ outcome: 'ready', waitedMs: 42 })
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toEqual({ delivery: 'ready' })
+    expect(events).toEqual(['confirm', 'ready:ready', 'write:text', 'write:CR'])
+    const dispatched = audits.find((a) => a.status === 'dispatched')
+    expect(dispatched?.detail).toMatch(/readiness=ready waited=42ms/)
+  })
+
+  it('an unconfirmed readiness still WRITES but audits dispatched_unconfirmed + returns delivery unconfirmed', async () => {
+    const { registry, audits, writes } = readyReg({
+      boards: terminal,
+      awaitReady: async () => ({ outcome: 'unconfirmed', waitedMs: 15000 })
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toEqual({
+      delivery: 'unconfirmed'
+    })
+    expect(writes.map((w) => w.text)).toEqual(['pnpm build', '\r']) // degrade, never block/fail
+    const landed = audits.find((a) => a.status === 'dispatched_unconfirmed')
+    expect(landed).toBeTruthy()
+    expect(landed?.detail).toMatch(/readiness=unconfirmed waited=15000ms/)
+    expect(audits.some((a) => a.status === 'dispatched')).toBe(false) // honest: never both
+  })
+
+  it('ready_latched / ready_assumed count as confirmed delivery (dispatched)', async () => {
+    for (const outcome of ['ready_latched', 'ready_assumed']) {
+      const { registry, audits } = readyReg({
+        boards: terminal,
+        awaitReady: async () => ({ outcome, waitedMs: 0 })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toEqual({ delivery: 'ready' })
+      expect(audits.some((a) => a.status === 'dispatched')).toBe(true)
+    }
+  })
+
+  it('a DENIED confirm aborts the readiness observation (no leaked wait) and never writes', async () => {
+    let seenSignal: AbortSignal | undefined
+    const { registry, writes } = readyReg({
+      boards: terminal,
+      confirm: async () => ({ approved: false }),
+      awaitReady: (_id, o) =>
+        new Promise((resolve) => {
+          seenSignal = o?.signal
+          o?.signal?.addEventListener('abort', () =>
+            resolve({ outcome: 'unconfirmed', waitedMs: 0 })
+          )
+        })
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'x')).rejects.toThrow(/deni/i)
+    expect(seenSignal?.aborted).toBe(true) // the gate released the waiter on deny
+    expect(writes).toEqual([])
+  })
+
+  it('interrupt OPTS OUT of readiness (a Ctrl-C into a booting/hung proc must never wait)', async () => {
+    const awaitReady = vi.fn(async () => ({ outcome: 'ready', waitedMs: 0 }))
+    const { registry, writes } = readyReg({ boards: terminal, awaitReady })
+    const orch = buildOrchestrator(registry)
+    await orch.interrupt('t1')
+    expect(awaitReady).not.toHaveBeenCalled()
+    expect(writes.map((w) => w.text)).toEqual(['\x03'])
+  })
+
+  it('a registry WITHOUT the awaitReady probe keeps today’s exact behaviour (dispatched, delivery ready)', async () => {
+    const { registry, audits, writes } = readyReg({ boards: terminal })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.dispatchPrompt('t1', 'x')).resolves.toEqual({ delivery: 'ready' })
+    expect(writes.map((w) => w.text)).toEqual(['x', '\r'])
+    const dispatched = audits.find((a) => a.status === 'dispatched')
+    expect(dispatched?.detail).not.toMatch(/readiness=/) // no probe → no readiness claim
+  })
+
+  it('🔒 TOCTOU: a cable deleted DURING the readiness wait is still caught by the pre-write re-check', async () => {
+    const boards: Board[] = [
+      { id: 'A', type: 'terminal', title: 'Alpha' },
+      { id: 'B', type: 'terminal', title: 'Beta' }
+    ]
+    let cables: Conn[] = [{ id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }]
+    const { registry, audits, writes } = readyReg({
+      boards,
+      connectors: () => cables,
+      // The cable vanishes while the readiness observation is still pending — the widened
+      // window must not let the write through on the stale authorization.
+      awaitReady: async () => {
+        cables = []
+        return { outcome: 'ready', waitedMs: 5 }
+      }
+    })
+    const orch = buildOrchestrator(registry)
+    await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/removed during confirm/i)
+    expect(writes).toEqual([])
+    expect(audits.some((a) => a.status === 'rejected')).toBe(true)
   })
 })

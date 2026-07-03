@@ -36,7 +36,7 @@ function spyMcp(): OrchestratorDrive {
       terminalId: 't1',
       planningId: 'p1'
     })),
-    dispatchPrompt: vi.fn(async () => {}),
+    dispatchPrompt: vi.fn(async () => ({ delivery: 'ready' as const })),
     handoffPrompt: vi.fn(async () => ({ present: true, status: 'success', summary: 'done' })),
     awaitSettled: vi.fn(async () => ({ present: true, status: 'success', summary: 'settled' })),
     interrupt: vi.fn(async () => {}),

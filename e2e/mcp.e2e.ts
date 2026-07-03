@@ -766,6 +766,47 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     if (baId) await closeBoardGated(page, mcp, baId)
   })
 
+  test('readiness gate: a dispatch into a SLOW-BOOTING worker lands AFTER its boot finishes, not mid-boot', async ({
+    page,
+    mcp
+  }) => {
+    test.slow() // deliberately boots a worker that streams boot noise for ~4s
+    // THE RACE THIS LOCKS OUT: runGatedWrite used to write the moment a PTY session existed —
+    // before the launchCommand agent finished booting — so the prompt could land mid-boot (eaten
+    // by the boot stream / a trust prompt) while the tool still reported success. The readiness
+    // gate (floor → activity → quiet) now holds the write until the boot stream goes quiet.
+    // Worker: streams BOOTING lines for ~4s, prints BOOT_DONE, then echoes stdin (a fake REPL).
+    const bootScript =
+      "node -e \"let n=0;const t=setInterval(()=>{console.log('BOOTING '+n++)},200);" +
+      "setTimeout(()=>{clearInterval(t);console.log('BOOT_DONE');" +
+      'process.stdin.pipe(process.stdout)},4000)"'
+    const wId = await seed(page, 'terminal', { launchCommand: bootScript })
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(wId)})`)
+    await expect.poll(() => boardStatus(mcp.orch, wId), { timeout: 8000 }).toBe('running')
+    // Dispatch IMMEDIATELY — mid-boot, while BOOTING lines are still streaming.
+    const sentinel = 'CANVAS_MCP_READINESS_OK'
+    const assignP = mcp.orch.call('assign_prompt', { boardId: wId, prompt: `echo ${sentinel}` })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    // The call resolves only after the gate's readiness wait + write (boot quiet ≈ t+4.8s).
+    expect(acked(await assignP)).toBe(true)
+    await expect
+      .poll(
+        async () => {
+          const txt = await readTerminalText(page, wId)
+          return typeof txt === 'string' && txt.includes(sentinel)
+        },
+        { timeout: 15000 }
+      )
+      .toBe(true)
+    // Ordering proof: the sentinel's FIRST appearance is AFTER BOOT_DONE — the write waited out
+    // the boot window instead of landing between BOOTING lines.
+    const txt = (await readTerminalText(page, wId)) ?? ''
+    expect(txt).toContain('BOOT_DONE')
+    expect(txt.indexOf(sentinel)).toBeGreaterThan(txt.indexOf('BOOT_DONE'))
+    await closeBoardGated(page, mcp, wId)
+  })
+
   test('SECURITY: interrupt sends Ctrl-C to a terminal through the gate, with an audit entry; worker + non-terminal denied', async ({
     page,
     mcp

@@ -118,9 +118,11 @@ export interface RunningMcp {
    * Phase C / C1: dispatch a prompt into a board's PTY through the SAME gated path the
    * `assign_prompt` MCP tool uses (sanitize → single-use nonce → human confirm → audit). Exposed
    * here so the Command board's frame-guarded renderer → MAIN IPC (`mcpOrchestratorIpc.ts`) can
-   * drive it without a token; every write still pays the gate.
+   * drive it without a token; every write still pays the gate. Resolves with the readiness
+   * verdict (2026-07-03): `'ready'` = landed in a readiness-confirmed REPL; `'unconfirmed'` =
+   * written, but the target never showed boot-quiet before the backstop.
    */
-  dispatchPrompt(boardId: string, text: string): Promise<void>
+  dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   /**
    * Phase C / C2: dispatch a prompt AND await the worker's two-gate settle (PR-0), resolving with
    * its `BoardResult`. The Command board's authoritative done/failed signal — same gate as
@@ -185,8 +187,21 @@ export async function startMcpServer(
     // the package (the server is a process singleton but orchestration consent is per-project +
     // runtime-toggleable). Gates the `add_planning_elements` content-write tool + `spawn_board`
     // seed for the orchestrator AND `connected` tiers (ADR 0003 + consent, ConfirmModal-gated).
+    // The pinned package (0.18.0-rc.5) still declares dispatchPrompt/relayPrompt as
+    // `Promise<void>`, so the host's honest-ack widening (`{ delivery }`, LifecycleOrchestrator)
+    // is void-ified at this ONE boundary. Delete the shim when the app pin reaches ≥0.18.0-rc.6
+    // (whose tools read + surface the delivery verdict to the calling agent).
+    const packageOrchestrator = {
+      ...orchestrator,
+      dispatchPrompt: async (boardId: string, text: string): Promise<void> => {
+        await orchestrator.dispatchPrompt(boardId, text)
+      },
+      relayPrompt: async (sourceId: string, targetId: string, text: string): Promise<void> => {
+        await orchestrator.relayPrompt(sourceId, targetId, text)
+      }
+    }
     const server = await createMcpHttpServer({
-      orchestrator,
+      orchestrator: packageOrchestrator,
       tokens,
       commandBoardId: 'app',
       planningWrite: () => planningWriteEnabled()
