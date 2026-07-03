@@ -201,21 +201,11 @@ export async function startMcpServer(
     // the package (the server is a process singleton but orchestration consent is per-project +
     // runtime-toggleable). Gates the `add_planning_elements` content-write tool + `spawn_board`
     // seed for the orchestrator AND `connected` tiers (ADR 0003 + consent, ConfirmModal-gated).
-    // The pinned package (0.18.0-rc.5) still declares dispatchPrompt/relayPrompt as
-    // `Promise<void>`, so the host's honest-ack widening (`{ delivery }`, LifecycleOrchestrator)
-    // is void-ified at this ONE boundary. Delete the shim when the app pin reaches ≥0.18.0-rc.6
-    // (whose tools read + surface the delivery verdict to the calling agent).
-    const packageOrchestrator = {
-      ...orchestrator,
-      dispatchPrompt: async (boardId: string, text: string): Promise<void> => {
-        await orchestrator.dispatchPrompt(boardId, text)
-      },
-      relayPrompt: async (sourceId: string, targetId: string, text: string): Promise<void> => {
-        await orchestrator.relayPrompt(sourceId, targetId, text)
-      }
-    }
+    // ≥0.18.0-rc.6 declares dispatchPrompt/relayPrompt as `Promise<{delivery} | void>`, so the
+    // host's honest-ack widening passes straight through — the tools read the verdict and surface
+    // a delivery WARNING to the agent on 'unconfirmed'. (The rc.5-era void-shim is gone.)
     const server = await createMcpHttpServer({
-      orchestrator: packageOrchestrator,
+      orchestrator,
       tokens,
       commandBoardId: 'app',
       planningWrite: () => planningWriteEnabled()
