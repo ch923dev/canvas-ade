@@ -24,3 +24,5 @@ pnpm-lock.yaml
 docs/research/**/mock-*.html
 docs/research/**/*-mock.html
 docs/research/**/mocks/
+# Local Claude Code design-hook cache (impeccable plugin) — tool output, never reflow.
+.impeccable/

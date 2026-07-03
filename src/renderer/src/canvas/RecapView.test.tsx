@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { RecapView } from './RecapView'
+import { refreshNoteFor } from '../lib/recapNote'
 
 type Bundle = NonNullable<Awaited<ReturnType<typeof window.api.recap.get>>>
+type RefreshReply = Awaited<ReturnType<typeof window.api.memory.refresh>>
 
 const T0 = new Date(2026, 5, 13, 4, 0).getTime() // local 04:00
 
@@ -37,17 +39,29 @@ function fullBundle(): Bundle {
   }
 }
 
-function setApi(bundle: Bundle | null): {
+function setApi(
+  bundle: Bundle | null,
+  refreshReply: RefreshReply = { ok: true }
+): {
   get: ReturnType<typeof vi.fn>
   refresh: ReturnType<typeof vi.fn>
+  /** Fire the captured recap:updated subscriber (undefined until the view subscribes). */
+  pushUpdated: (payload: { boardId: string; asOf: number }) => void
 } {
   const get = vi.fn().mockResolvedValue(bundle)
-  const refresh = vi.fn().mockResolvedValue({ ok: true })
+  const refresh = vi.fn().mockResolvedValue(refreshReply)
+  let updatedCb: ((p: { boardId: string; asOf: number }) => void) | undefined
+  const onUpdated = vi.fn((cb: (p: { boardId: string; asOf: number }) => void) => {
+    updatedCb = cb
+    return () => {
+      updatedCb = undefined
+    }
+  })
   ;(window as unknown as { api: unknown }).api = {
-    recap: { get },
+    recap: { get, onUpdated },
     memory: { refresh }
   }
-  return { get, refresh }
+  return { get, refresh, pushUpdated: (p) => updatedCb?.(p) }
 }
 
 describe('RecapView (two-zone face)', () => {
@@ -266,5 +280,74 @@ describe('RecapView (two-zone face)', () => {
     expect(btn).toBeTruthy()
     btn.click()
     expect(onStart).toHaveBeenCalledTimes(1)
+  })
+
+  // ── Recap-refresh fix: skip-reason note + recap:updated live re-read ──────────────────
+
+  it('a refresh that could not regenerate surfaces WHY (no-provider note on the stale banner)', async () => {
+    const b = fullBundle()
+    b.facts.status = 'running'
+    b.facts.live = true
+    b.facts.lastActivity = T0 + 60 * 60_000
+    if (b.narrative) b.narrative.asOf = T0 + 10 * 60_000 // stale → auto-refresh fires once
+    const { refresh } = setApi(b, {
+      ok: true,
+      outcome: { status: 'llm-unavailable', reason: 'no-provider' }
+    })
+    const { container } = render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(refresh).toHaveBeenCalledWith('b1'))
+    await waitFor(() =>
+      expect(container.querySelector('[data-test=recap-refresh-note]')?.textContent).toContain(
+        'needs an LLM key'
+      )
+    )
+  })
+
+  it('recap:updated for THIS board re-reads the bundle; another board is ignored', async () => {
+    const { get, pushUpdated } = setApi(fullBundle())
+    render(<RecapView boardId="b1" />)
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    pushUpdated({ boardId: 'other', asOf: T0 })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(get).toHaveBeenCalledTimes(1)
+    pushUpdated({ boardId: 'b1', asOf: T0 + 1 })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('refreshNoteFor (pure outcome → note mapping)', () => {
+  it('says nothing for a regenerated recap and unwraps a coalesced outcome', () => {
+    expect(refreshNoteFor({ status: 'recap-written', asOf: 1 })).toBeNull()
+    expect(
+      refreshNoteFor({ status: 'coalesced', with: { status: 'recap-written', asOf: 1 } })
+    ).toBeNull()
+    expect(
+      refreshNoteFor({
+        status: 'coalesced',
+        with: { status: 'llm-unavailable', reason: 'budget-exceeded' }
+      })?.text
+    ).toContain('budget')
+  })
+
+  it('maps every skip/gate to a user-readable line with the right tone', () => {
+    expect(
+      refreshNoteFor({ status: 'summary-written', recapSkipped: 'consent-off' })?.text
+    ).toContain('Settings')
+    expect(
+      refreshNoteFor({ status: 'summary-written', recapSkipped: 'no-transcript' })?.text
+    ).toContain('transcript')
+    expect(
+      refreshNoteFor({ status: 'summary-written', recapSkipped: 'empty-transcript' })?.text
+    ).toContain('no turns')
+    expect(refreshNoteFor({ status: 'summary-written', recapSkipped: 'not-terminal' })).toBeNull()
+    expect(refreshNoteFor({ status: 'llm-unavailable', reason: 'no-provider' })?.text).toContain(
+      'LLM key'
+    )
+    expect(refreshNoteFor({ status: 'llm-unavailable', reason: 'provider-error' })?.tone).toBe(
+      'warn'
+    )
+    expect(refreshNoteFor({ status: 'skipped', reason: 'error' })?.tone).toBe('warn')
+    expect(refreshNoteFor({ status: 'skipped', reason: 'project-switched' })).toBeNull()
+    expect(refreshNoteFor(undefined)).toBeNull()
   })
 })

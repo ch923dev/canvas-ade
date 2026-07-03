@@ -145,17 +145,136 @@ export function isTrustedTranscriptPath(
  * whichever sibling board's session is actively writing. Only a GENUINE rotation (compaction /
  * `/resume` rolling onto a new file, which removes or replaces the recorded one) should trigger
  * the scan — signaled here by the recorded path no longer existing.
+ *
+ * Recap-refresh fix A4 adds two clock-guarded branches (everything below up to the function
+ * is that cluster): an EAGER-CAPTURE grace (fresh map entry + still-missing file resolves to
+ * undefined -- never scan onto an OLDER session) and lineage-proven ROTATION adoption for the
+ * roll-while-the-old-file-survives case the missing-file signal can't see.
  */
+/** Options for resolveLiveTranscriptPath (recap-refresh fix A4). All optional + additive. */
+export interface ResolveOpts {
+  env?: NodeJS.ProcessEnv
+  /** The recorded session id (recap map) -- the lineage anchor for rotation detection. */
+  sessionId?: string
+  /** When the SessionStart hook recorded the entry (epoch ms) -- the eager-capture clock. */
+  recordedAt?: number
+  /** The board's live PTY last-activity clock (epoch ms) -- the rotation-suspicion signal. */
+  agentActiveAt?: number
+  /** Injected for deterministic tests; default Date.now(). */
+  now?: number
+}
+
+/**
+ * Eager-capture grace: the SessionStart hook records the transcript path BEFORE Claude has
+ * written the `.jsonl` (it only lands once the conversation has real content). Inside this
+ * window a missing recorded file means "session too young", NOT "rotated away" -- and the
+ * newest EXISTING `.jsonl` in the dir is by definition an OLDER session, so scanning would
+ * present the previous session's recap as current (the "describes an earlier session" bug).
+ */
+export const EAGER_CAPTURE_GRACE_MS = 60_000
+
+/** The agent counts as actively producing when its PTY saw data within this window. */
+const ROTATION_ACTIVE_MS = 60_000
+
+/**
+ * Rotation suspicion threshold: the agent's PTY is demonstrably active but the recorded
+ * transcript stopped receiving writes this much earlier than the activity clock -- the
+ * signature of compaction/`/resume` rolling onto a NEW file without firing SessionStart.
+ */
+export const ROTATION_LAG_MS = 120_000
+
+/** How many newer sibling transcripts get a lineage tail-read before giving up (bounded IO). */
+const MAX_LINEAGE_CANDIDATES = 5
+
+/**
+ * Find the rotation successor of `recordedPath`: a `.jsonl` in the SAME dir, newer than the
+ * recorded file's mtime, whose bounded tail CONTAINS the recorded session id -- the lineage a
+ * compacted/resumed successor carries via its copied history. The lineage requirement is what
+ * preserves BUG-005: a sibling board's unrelated live session never references this session's
+ * id, so it can never be adopted. Newest-first, capped tail reads. Never throws.
+ */
+function findLineageSuccessor(
+  recordedPath: string,
+  recordedMtime: number,
+  sessionId: string
+): string | undefined {
+  try {
+    const dir = dirname(recordedPath)
+    const candidates: { path: string; mtime: number }[] = []
+    for (const name of readdirSync(dir)) {
+      if (!name.toLowerCase().endsWith('.jsonl')) continue
+      const p = join(dir, name)
+      if (p === recordedPath) continue
+      let mtime: number
+      try {
+        mtime = statSync(p).mtimeMs
+      } catch {
+        continue // vanished between readdir and stat
+      }
+      if (mtime > recordedMtime) candidates.push({ path: p, mtime })
+    }
+    candidates.sort((a, b) => b.mtime - a.mtime)
+    for (const c of candidates.slice(0, MAX_LINEAGE_CANDIDATES)) {
+      try {
+        if (readTranscriptTail(c.path).includes(sessionId)) return c.path
+      } catch {
+        continue // unreadable candidate -- try the next
+      }
+    }
+  } catch {
+    /* unreadable dir -- no successor */
+  }
+  return undefined
+}
+
 export function resolveLiveTranscriptPath(
   recordedPath: string | undefined,
-  env: NodeJS.ProcessEnv = process.env
+  opts: ResolveOpts = {}
 ): string | undefined {
+  const env = opts.env ?? process.env
   if (!recordedPath || !isTrustedTranscriptPath(recordedPath, env)) return recordedPath
+  const now = opts.now ?? Date.now()
+  let recordedExists = false
   try {
-    if (existsSync(recordedPath)) return recordedPath
+    recordedExists = existsSync(recordedPath)
   } catch {
-    // treat as vanished — fall through to the directory scan below
+    recordedExists = false // treat as vanished — fall through to the missing-file branches
   }
+
+  if (recordedExists) {
+    // Recap-refresh fix A4: rotation-WHILE-recorded-exists. Compaction/`/resume` can roll the
+    // agent onto a new transcript while the OLD file survives on disk — the recorded-file-gone
+    // signal below never fires, stranding the recap. Detect it by clocks (PTY active, recorded
+    // mtime stale) and adopt only a LINEAGE-PROVEN successor (tail contains our session id) —
+    // an active sibling board's unrelated session can never match (BUG-005 stays fixed).
+    // A session id shorter than 8 chars is too weak an anchor to trust as lineage.
+    if (
+      opts.sessionId &&
+      opts.sessionId.length >= 8 &&
+      typeof opts.agentActiveAt === 'number' &&
+      now - opts.agentActiveAt < ROTATION_ACTIVE_MS
+    ) {
+      try {
+        const recordedMtime = statSync(recordedPath).mtimeMs
+        if (opts.agentActiveAt - recordedMtime > ROTATION_LAG_MS) {
+          const successor = findLineageSuccessor(recordedPath, recordedMtime, opts.sessionId)
+          if (successor) return successor
+        }
+      } catch {
+        /* stat failed — keep the recorded path */
+      }
+    }
+    return recordedPath
+  }
+
+  // Recap-refresh fix A4: eager-capture grace. A FRESH map entry whose file is still missing
+  // means Claude has not written the transcript yet — return undefined (facts degrade to
+  // runtime-only; the recap watcher's dir-watch fallback re-arms when the real file lands)
+  // instead of scanning, which would resolve to an OLDER session's file.
+  if (typeof opts.recordedAt === 'number' && now - opts.recordedAt < EAGER_CAPTURE_GRACE_MS) {
+    return undefined
+  }
+
   try {
     const dir = dirname(recordedPath)
     let newest: { path: string; mtime: number } | undefined

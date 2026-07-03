@@ -77,3 +77,6 @@ opencode.json
 /e2e/_repro.e2e.ts
 # Playwright MCP scratch (browser snapshots / console logs from the MCP server) — never tracked
 /.playwright-mcp/
+
+# Local Claude Code design-hook cache (impeccable plugin) — session tooling, never source.
+.impeccable/
