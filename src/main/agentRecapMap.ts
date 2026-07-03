@@ -1,10 +1,14 @@
 /**
  * agentRecapMap.ts
  *
- * Install / remove the SessionStart hook that maps Claude Code sessions to
- * their Canvas ADE board (via the recordSession.js hook script).
+ * Install / remove the Claude Code hooks that map Claude sessions to their Canvas ADE board
+ * (via the recordSession.js hook script). Since F2 (terminal-resume research) the SAME script
+ * registers for THREE events — SessionStart, UserPromptSubmit, SessionEnd — because SessionStart
+ * alone captures EAGERLY (before the transcript exists, RC-1) and never re-fires on a mid-session
+ * rotation (RC-2); the per-prompt events both self-heal the map every turn boundary and record
+ * `transcriptExists`, which readRecapMap keeps as the resume-grade `confirmed` entry.
  *
- * The hook is merged idempotently into `<projectDir>/.claude/settings.local.json`
+ * The hooks are merged idempotently into `<projectDir>/.claude/settings.local.json`
  * without clobbering any pre-existing hooks. Idempotency is keyed on whether
  * our scriptPath already appears in any hook's `args` array.
  */
@@ -75,7 +79,15 @@ export function findNodeExecutable(): string | null {
 
 type HookCmd = { type: string; command: string; args?: string[] }
 type HookBlock = { matcher?: string; hooks: HookCmd[] }
-type SettingsCfg = { hooks?: { SessionStart?: HookBlock[] } } & Record<string, unknown>
+type SettingsCfg = { hooks?: Partial<Record<string, HookBlock[]>> } & Record<string, unknown>
+
+/**
+ * The Claude Code hook events our script registers under (F2). SessionEnd's reliability on a
+ * hard kill is undocumented (our PTY teardown is `taskkill /T /F`), so it is best-effort;
+ * UserPromptSubmit is the workhorse — it fires with {session_id, transcript_path} on every
+ * prompt, exactly when the transcript is (about to be) real.
+ */
+export const RECAP_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const
 
 function settingsPath(projectDir: string): string {
   return join(projectDir, '.claude', 'settings.local.json')
@@ -101,11 +113,18 @@ function argsReferenceScript(args: string[] | undefined, scriptPath: string): bo
   return !!args?.some((a) => typeof a === 'string' && a.includes(scriptPath))
 }
 
-/** Returns true if our hook (identified by scriptPath in args) is already installed. */
+/**
+ * Returns true only when our hook (identified by scriptPath in args) is installed under EVERY
+ * event in RECAP_HOOK_EVENTS — so a settings file written by a pre-F2 build (SessionStart only)
+ * reads as not-installed and the next re-ensure upgrades it to the full set.
+ */
 export function isRecapHookInstalled(projectDir: string, scriptPath: string): boolean {
   const cfg = readSettings(projectDir)
-  const blocks = cfg.hooks?.SessionStart ?? []
-  return blocks.some((b) => b.hooks?.some((h) => argsReferenceScript(h.args, scriptPath)))
+  return RECAP_HOOK_EVENTS.every((event) => {
+    const blocks = cfg.hooks?.[event]
+    if (!Array.isArray(blocks)) return false
+    return blocks.some((b) => b?.hooks?.some((h) => argsReferenceScript(h.args, scriptPath)))
+  })
 }
 
 /**
@@ -125,74 +144,100 @@ export function installRecapHook(opts: InstallOpts): void {
   if (!opts.command) return
   const cfg = readSettings(opts.projectDir)
   cfg.hooks ??= {}
-  const before = Array.isArray(cfg.hooks.SessionStart) ? cfg.hooks.SessionStart : []
-  const stripped = before
-    .filter((b) => b && typeof b === 'object')
-    .map((b) => ({
-      ...b,
-      hooks: Array.isArray(b.hooks) ? b.hooks.filter((h: HookCmd) => !isRecapHook(h)) : []
-    }))
-    .filter((b) => b.hooks.length > 0)
   const hookCmd: HookCmd = {
     type: 'command',
     command: opts.command,
     args: [opts.scriptPath, opts.mapPath]
   }
-  const next: HookBlock[] = [...stripped, { matcher: '', hooks: [hookCmd] }]
-  // No-op write avoidance: a re-ensure on every project open shouldn't churn the file mtime.
-  if (JSON.stringify(before) === JSON.stringify(next)) return
-  cfg.hooks.SessionStart = next
-  writeSettings(opts.projectDir, cfg)
+  let changed = false
+  for (const event of RECAP_HOOK_EVENTS) {
+    const before = Array.isArray(cfg.hooks[event]) ? cfg.hooks[event]! : []
+    const stripped = before
+      .filter((b) => b && typeof b === 'object')
+      .map((b) => ({
+        ...b,
+        hooks: Array.isArray(b.hooks) ? b.hooks.filter((h: HookCmd) => !isRecapHook(h)) : []
+      }))
+      .filter((b) => b.hooks.length > 0)
+    const next: HookBlock[] = [...stripped, { matcher: '', hooks: [hookCmd] }]
+    // No-op write avoidance: a re-ensure on every project open shouldn't churn the file mtime.
+    if (JSON.stringify(before) !== JSON.stringify(next)) {
+      cfg.hooks[event] = next
+      changed = true
+    }
+  }
+  if (changed) writeSettings(opts.projectDir, cfg)
 }
 
 /**
- * Removes only our hook entry (identified by scriptPath in args).
- * Pre-existing unrelated hooks are preserved.
- * Empty SessionStart blocks are pruned after removal.
+ * Removes only our hook entries (identified by scriptPath in args), across every event we
+ * register under. Pre-existing unrelated hooks are preserved. Empty containers are pruned.
  */
 export function removeRecapHook(projectDir: string, scriptPath: string): void {
   if (!existsSync(settingsPath(projectDir))) return
   const cfg = readSettings(projectDir)
-  const blocks = cfg.hooks?.SessionStart
-  if (!blocks) return
-  // BUG-032: guard against malformed settings.local.json (hand-edited or third-party-written)
-  // where a SessionStart block is not an array or has a non-array `hooks` field. Mirror the
-  // defensiveness of isRecapHookInstalled (b.hooks?.some). Without this, a TypeError escapes
-  // the ipcMain.handle callback, leaving consent persisted as 'declined' while the hook stays
-  // installed (no retry path on the decline side).
-  if (!Array.isArray(blocks)) return
-  const kept = blocks
-    .filter((b) => b && typeof b === 'object')
-    .map((b) => ({
-      ...b,
-      hooks: Array.isArray(b.hooks)
-        ? b.hooks.filter((h: HookCmd) => !argsReferenceScript(h.args, scriptPath))
-        : []
-    }))
-    .filter((b) => b.hooks.length > 0)
-  // Prune empty containers so removing our last hook leaves a clean file, not a dangling
-  // `{ hooks: { SessionStart: [] } }`.
-  if (kept.length > 0) {
-    cfg.hooks!.SessionStart = kept
-  } else {
-    delete cfg.hooks!.SessionStart
-    if (cfg.hooks && Object.keys(cfg.hooks).length === 0) delete cfg.hooks
+  if (!cfg.hooks) return
+  let changed = false
+  for (const event of RECAP_HOOK_EVENTS) {
+    const blocks = cfg.hooks[event]
+    if (!blocks) continue
+    // BUG-032: guard against malformed settings.local.json (hand-edited or third-party-written)
+    // where an event block is not an array or has a non-array `hooks` field. Mirror the
+    // defensiveness of isRecapHookInstalled (b.hooks?.some). Without this, a TypeError escapes
+    // the ipcMain.handle callback, leaving consent persisted as 'declined' while the hook stays
+    // installed (no retry path on the decline side).
+    if (!Array.isArray(blocks)) continue
+    const kept = blocks
+      .filter((b) => b && typeof b === 'object')
+      .map((b) => ({
+        ...b,
+        hooks: Array.isArray(b.hooks)
+          ? b.hooks.filter((h: HookCmd) => !argsReferenceScript(h.args, scriptPath))
+          : []
+      }))
+      .filter((b) => b.hooks.length > 0)
+    // Prune empty containers so removing our last hook leaves a clean file, not a dangling
+    // `{ hooks: { SessionStart: [] } }`.
+    if (kept.length > 0) {
+      cfg.hooks[event] = kept
+    } else {
+      delete cfg.hooks[event]
+    }
+    changed = true
   }
-  writeSettings(projectDir, cfg)
+  if (cfg.hooks && Object.keys(cfg.hooks).length === 0) delete cfg.hooks
+  if (changed) writeSettings(projectDir, cfg)
+}
+
+/** A resume-grade capture: the latest hook line that SAW the transcript on disk (F2). */
+export interface ConfirmedCapture {
+  sessionId: string
+  transcriptPath: string
+  ts?: number
 }
 
 export interface RecapMapEntry {
   sessionId: string
   transcriptPath: string
   /**
-   * When the SessionStart hook recorded this entry (epoch ms; recordSession.js has always
-   * written it). Optional: entries from pre-`ts` builds parse without it. Used by
+   * When the hook recorded this entry (epoch ms; recordSession.js has always written it).
+   * Optional: entries from pre-`ts` builds parse without it. Used by
    * resolveLiveTranscriptPath's eager-capture grace (recap-refresh fix A4).
    */
   ts?: number
+  /**
+   * F2: the latest line for this board whose `transcriptExists` was true at fire time — proof
+   * the session became a real conversation. The TOP-LEVEL fields stay the latest line of ANY
+   * kind (the eager SessionStart entry keeps the recap display fresh + the A4 grace working);
+   * resume paths prefer this. Absent for pre-F2 lines and never-prompted sessions.
+   */
+  confirmed?: ConfirmedCapture
 }
 
-/** Parse the mapping JSONL -> boardId -> latest {sessionId, transcriptPath, ts}. Best-effort. */
+/**
+ * Parse the mapping JSONL -> boardId -> latest {sessionId, transcriptPath, ts} + the latest
+ * CONFIRMED (transcriptExists:true) capture. Best-effort.
+ */
 export function readRecapMap(mapPath: string): Map<string, RecapMapEntry> {
   const out = new Map<string, RecapMapEntry>()
   if (!existsSync(mapPath)) return out
@@ -211,12 +256,35 @@ export function readRecapMap(mapPath: string): Map<string, RecapMapEntry> {
         sessionId?: string
         transcriptPath?: string
         ts?: unknown
+        transcriptExists?: unknown
+        confirmed?: unknown
       }
       if (r.boardId && r.transcriptPath) {
+        const ts = typeof r.ts === 'number' && Number.isFinite(r.ts) ? { ts: r.ts } : {}
+        // An EMBEDDED confirmed object round-trips the consent-decline prune, which rewrites
+        // surviving boards' lines as JSON.stringify({boardId, ...entry}) — without this, any
+        // decline in one project would silently drop every OTHER project's confirmed capture.
+        let embedded: ConfirmedCapture | undefined
+        if (r.confirmed && typeof r.confirmed === 'object') {
+          const c = r.confirmed as { sessionId?: unknown; transcriptPath?: unknown; ts?: unknown }
+          if (typeof c.transcriptPath === 'string' && c.transcriptPath) {
+            embedded = {
+              sessionId: typeof c.sessionId === 'string' ? c.sessionId : '',
+              transcriptPath: c.transcriptPath,
+              ...(typeof c.ts === 'number' && Number.isFinite(c.ts) ? { ts: c.ts } : {})
+            }
+          }
+        }
+        // A confirmed LINE is its own capture; otherwise carry the embedded / prior one forward.
+        const confirmed =
+          r.transcriptExists === true
+            ? { sessionId: r.sessionId ?? '', transcriptPath: r.transcriptPath, ...ts }
+            : (embedded ?? out.get(r.boardId)?.confirmed)
         out.set(r.boardId, {
           sessionId: r.sessionId ?? '',
           transcriptPath: r.transcriptPath,
-          ...(typeof r.ts === 'number' && Number.isFinite(r.ts) ? { ts: r.ts } : {})
+          ...ts,
+          ...(confirmed ? { confirmed } : {})
         })
       }
     } catch {

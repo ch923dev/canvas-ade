@@ -106,25 +106,14 @@ export interface ResumeDeps {
   env?: NodeJS.ProcessEnv
 }
 
-/**
- * Resolve what Resume should actually do for a board, from the transcript's on-disk reality —
- * never from the stored id alone. Synchronous + total (never throws); IO is one bounded 64KB
- * tail read behind the trusted-path guard.
- */
-export function resolveResume(
+/** One resolution attempt for a concrete {sessionId, transcriptPath} candidate. */
+function resolveAttempt(
   deps: ResumeDeps,
   boardId: string,
-  stored: StoredSession
+  sid: string,
+  recorded: string | undefined,
+  env: NodeJS.ProcessEnv
 ): ResumeResolution {
-  const env = deps.env ?? process.env
-  const sid = sanitizeSessionId(stored.sessionId)
-  if (sid.length < MIN_LINEAGE_ID_LEN) return { kind: 'fresh', reason: 'no-session' }
-
-  const entry = deps.getMapEntries().get(boardId)
-  const recorded =
-    typeof stored.transcriptPath === 'string' && stored.transcriptPath
-      ? stored.transcriptPath
-      : entry?.transcriptPath
   const resolved = deps.resolveTranscript(boardId, recorded)
   if (!resolved || !isTrustedTranscriptPath(resolved, env) || !existsSync(resolved)) {
     return { kind: 'fresh', reason: 'no-transcript' }
@@ -158,6 +147,53 @@ export function resolveResume(
     }
   }
   return { kind: 'continue' }
+}
+
+/**
+ * Resolve what Resume should actually do for a board, from the transcript's on-disk reality —
+ * never from the stored id alone. Synchronous + total (never throws); IO is bounded 64KB
+ * tail reads behind the trusted-path guard.
+ *
+ * Two candidates, in order:
+ * 1. the STORED session (board doc fields, falling back to the map's latest entry's path);
+ * 2. F2: the map's CONFIRMED capture — the latest hook line that saw the transcript on disk.
+ *    This is what rescues the original bug's worst shape: the stored id is a dead eager capture
+ *    (launch-then-quit), but the board HAD a real conversation before it — Resume reattaches
+ *    that one instead of being withheld entirely.
+ * A `resume` from either wins; otherwise the stored candidate's continue/fresh verdict stands
+ * (the confirmed capture never downgrades a `continue` to `fresh`).
+ */
+export function resolveResume(
+  deps: ResumeDeps,
+  boardId: string,
+  stored: StoredSession
+): ResumeResolution {
+  const env = deps.env ?? process.env
+  const entry = deps.getMapEntries().get(boardId)
+
+  const sid = sanitizeSessionId(stored.sessionId)
+  let primary: ResumeResolution = { kind: 'fresh', reason: 'no-session' }
+  if (sid.length >= MIN_LINEAGE_ID_LEN) {
+    const recorded =
+      typeof stored.transcriptPath === 'string' && stored.transcriptPath
+        ? stored.transcriptPath
+        : entry?.transcriptPath
+    primary = resolveAttempt(deps, boardId, sid, recorded, env)
+    if (primary.kind === 'resume') return primary
+  }
+
+  const conf = entry?.confirmed
+  const confSid = sanitizeSessionId(conf?.sessionId)
+  if (
+    conf &&
+    confSid.length >= MIN_LINEAGE_ID_LEN &&
+    // Skip a no-op retry of the identical candidate the primary attempt already rejected.
+    (confSid !== sid || conf.transcriptPath !== stored.transcriptPath)
+  ) {
+    const secondary = resolveAttempt(deps, boardId, confSid, conf.transcriptPath, env)
+    if (secondary.kind === 'resume') return secondary
+  }
+  return primary
 }
 
 /** The PTY launch line for a resolution — built ONLY from sanitized parts. */
