@@ -38,3 +38,8 @@ export function baseName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts.length > 0 ? parts[parts.length - 1] : path
 }
+
+/** Token count -> compact context label ("62k" for >= 1000, else the exact count). */
+export function kTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hhmm, relAge, spanLabel, baseName } from './recapFormat'
+import { hhmm, relAge, spanLabel, baseName, kTokens } from './recapFormat'
 
 describe('recapFormat', () => {
   it('hhmm formats epoch ms as local HH:MM and degrades on zero', () => {
@@ -28,5 +28,13 @@ describe('recapFormat', () => {
     expect(baseName('/home/u/x/file.ts')).toBe('file.ts')
     expect(baseName('plain.txt')).toBe('plain.txt')
     expect(baseName('')).toBe('')
+  })
+
+  it('kTokens compacts >= 1000 to a rounded k-count, keeps small counts exact', () => {
+    expect(kTokens(62_345)).toBe('62k')
+    expect(kTokens(1_500)).toBe('2k')
+    expect(kTokens(1_000)).toBe('1k')
+    expect(kTokens(999)).toBe('999')
+    expect(kTokens(0)).toBe('0')
   })
 })

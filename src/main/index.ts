@@ -674,11 +674,20 @@ app.whenReady().then(async () => {
       if (!path || !isTrustedTranscriptPath(path) || !existsSync(path))
         return { skip: 'no-transcript' }
       try {
+        const tail = readTranscriptTail(path)
+        // Recap enrichment P3: plan progress + last tool error ride the SAME tail read into
+        // the narrative input (computeRecapFacts is pure + local; caps + scrubbing applied
+        // there, and buildRecapInput re-redacts before egress).
+        const facts = computeRecapFacts(tail, undefined, Date.now())
         return {
-          milestones: extractMilestones(readTranscriptTail(path), {
+          milestones: extractMilestones(tail, {
             maxMilestones: 12,
             maxTextChars: 600
-          })
+          }),
+          extras: {
+            ...(facts.todos ? { plan: facts.todos } : {}),
+            ...(facts.errors?.last ? { lastError: facts.errors.last } : {})
+          }
         }
       } catch {
         return { skip: 'no-transcript' }
