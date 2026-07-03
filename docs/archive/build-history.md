@@ -1656,7 +1656,7 @@ isolation (handoff green fully-alone in 42s) — load flake, not a regression. *
 fix is now complete end-to-end: spawn runs the command, relays wait for a ready REPL, tools report
 honestly, and a connected agent can relay into the terminal it spawned.**
 
-## 2026-07-03 — Background Project Sessions epic (feat/bg-sessions, PR #TBD)
+## 2026-07-03 — Background Project Sessions epic (feat/bg-sessions, PR #293)
 
 Maestri-style resume: switch project A→B→A within one app run and A's terminals are STILL
 RUNNING (same PTYs, live reattach) with previews alive and in-page state intact. In-app-run
