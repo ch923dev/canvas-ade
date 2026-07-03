@@ -191,3 +191,45 @@ describe('createTerminalWriteCoalescer — clear (restart / teardown)', () => {
     expect(h.writes).toEqual(['new'])
   })
 })
+
+describe('createTerminalWriteCoalescer - flushNow (find-count fix)', () => {
+  it('writes pending chunks synchronously when live and cancels the scheduled frame', () => {
+    const h = harness()
+    h.c.enqueue('a')
+    h.c.enqueue('b')
+    expect(h.writes).toEqual([]) // still queued for the next frame
+    expect(h.c.flushNow()).toBe(true)
+    expect(h.writes).toEqual(['ab']) // one synchronous coalesced write
+    h.runFrame() // the cancelled frame must not double-write
+    expect(h.writes).toEqual(['ab'])
+    expect(h.c.held()).toBe(0)
+  })
+
+  it('refuses while hidden (never interleaves into a gated buffer) and keeps the hold', () => {
+    const h = harness({ live: false })
+    h.c.enqueue('held')
+    expect(h.c.flushNow()).toBe(false)
+    expect(h.writes).toEqual([])
+    expect(h.c.held()).toBe('held'.length)
+    // the normal reveal catch-up still flushes the untouched buffer
+    h.setLive(true)
+    h.c.onVisible()
+    h.runFrame()
+    expect(h.writes).toEqual(['held'])
+  })
+
+  it('is a no-op on an empty buffer', () => {
+    const h = harness()
+    expect(h.c.flushNow()).toBe(false)
+    expect(h.writes).toEqual([])
+  })
+
+  it('a fresh enqueue after flushNow re-arms the frame flush (no stuck buffer)', () => {
+    const h = harness()
+    h.c.enqueue('x')
+    h.c.flushNow()
+    h.c.enqueue('y')
+    h.runFrame()
+    expect(h.writes).toEqual(['x', 'y'])
+  })
+})
