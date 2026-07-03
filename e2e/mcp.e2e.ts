@@ -1069,6 +1069,80 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await closeBoardGated(page, mcp, aId)
     await closeBoardGated(page, mcp, bId)
   })
+
+  test('rc.6 auto-cable: a spawn carrying sourceBoardId mints the spawner→spawned cable; the spawner relays along it with NO hand-drawn connector', async ({
+    page,
+    electronApp,
+    mcp
+  }) => {
+    test.slow()
+    // THE GAP THIS CLOSES: a connected terminal could spawn_board a worker but relay_prompt into
+    // it was rejected (no orchestration cable) until the human hand-drew one. With rc.6 the tool
+    // passes the caller's token-derived boardId as sourceBoardId; the host verifies terminal→
+    // terminal and the renderer creates the cable IN the spawn. Driven here via the in-process
+    // `spawnBoardNow` seam (the same orchestrator path the ≥rc.6 package tool calls); the
+    // ctx.boardId wire half is locked by the package contract tests.
+    const aId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    expect(aId).not.toBe('')
+    await expect.poll(() => boardStatus(mcp.orch, aId), { timeout: 8000 }).toBe('running')
+    // Spawn the worker WITH the source id — the auto-cable spawn.
+    const spawned = await mainCall<{ id: string } | null>(electronApp, 'spawnBoardNow', {
+      type: 'terminal',
+      sourceBoardId: aId
+    })
+    expect(spawned).not.toBeNull()
+    const wId = spawned!.id
+    await expect.poll(() => boardOnCanvas(page, wId), { timeout: 6000 }).toBe(true)
+    // The spawner→spawned orchestration cable landed in MAIN's mirror — no gesture drew it.
+    await expect
+      .poll(
+        async () => {
+          const cables = await mainCall<
+            Array<{ sourceId: string; targetId: string; kind: string }>
+          >(electronApp, 'mcpListConnectors')
+          return cables.some(
+            (c) => c.kind === 'orchestration' && c.sourceId === aId && c.targetId === wId
+          )
+        },
+        { timeout: 6000 }
+      )
+      .toBe(true)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(wId)})`)
+    await expect.poll(() => boardStatus(mcp.orch, wId), { timeout: 8000 }).toBe('running')
+    // A connected client bound to A relays into its freshly-spawned worker — authorized by the
+    // auto-cable, still human-confirmed, and readiness-gated into the worker's ready REPL.
+    const minted = await mainCall<{ token: string; port: number } | null>(
+      electronApp,
+      'mcpMintConnectedToken',
+      aId
+    )
+    expect(minted).not.toBeNull()
+    const connected = await connect(`http://127.0.0.1:${mcp.info.port}/mcp`, minted!.token)
+    try {
+      const sentinel = 'CANVAS_MCP_AUTOCABLE_OK'
+      const relayP = connected.call('relay_prompt', {
+        sourceId: aId,
+        targetId: wId,
+        prompt: `echo ${sentinel}`
+      })
+      expect(await pollEval(page, MODAL, 8000)).toBe(true)
+      await evalIn(page, APPROVE)
+      expect(acked(await relayP)).toBe(true)
+      await expect
+        .poll(
+          async () => {
+            const txt = await readTerminalText(page, wId)
+            return typeof txt === 'string' && txt.includes(sentinel)
+          },
+          { timeout: 15000 }
+        )
+        .toBe(true)
+    } finally {
+      await connected.close().catch(() => {})
+    }
+    await closeBoardGated(page, mcp, aId)
+    await closeBoardGated(page, mcp, wId)
+  })
 })
 
 /**

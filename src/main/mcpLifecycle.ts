@@ -89,6 +89,13 @@ export interface McpLifecycle {
     cwd?: string
     /** Agent-chosen board title (2b); host sanitizes + clamps. Absent/empty ⇒ per-type default. */
     title?: string
+    /**
+     * Auto-cable (rc.6): the CONNECTED-tier caller's token-derived board id (the package tool
+     * passes ctx.boardId — never client input). When the spawn is a terminal AND this resolves
+     * to a live terminal, the addBoard command also carries a `connector` request so the
+     * renderer creates the spawner→spawned orchestration cable. Otherwise silently ignored.
+     */
+    sourceBoardId?: string
   }): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
@@ -127,12 +134,25 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     prompt?: string
     cwd?: string
     title?: string
+    sourceBoardId?: string
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
     if (!SPAWNABLE.has(input.type)) {
       throw new Error(`spawn_board: unsupported board type "${input.type}"`)
     }
+    // 🔒 Auto-cable (rc.6): `sourceBoardId` is the CONNECTED-tier caller's token-derived board id
+    // (the package tool passes ctx.boardId — never client input, so it can't be forged). Include
+    // the connector request ONLY when a cable is actually possible — the spawn is a terminal AND
+    // the source resolves to a live TERMINAL in the mirror. Anything else (planning/browser spawn,
+    // a source closed between mint and call) silently spawns WITHOUT a cable rather than failing:
+    // the board is the deliverable, the cable is authorization sugar for follow-up relays.
+    const source =
+      typeof input.sourceBoardId === 'string' && input.sourceBoardId.length > 0
+        ? registry.listBoards().find((b) => b.id === input.sourceBoardId)
+        : undefined
+    const wantCable =
+      input.type === 'terminal' && source !== undefined && source.type === 'terminal'
     // prompt/cwd are TERMINAL-ONLY (the prompt becomes the terminal's first PTY line; cwd its
     // spawn directory). Reject a mismatched type BEFORE any side effect — no orphan board — the
     // agent learns the call was wrong instead of getting a board that silently ignored them.
@@ -180,7 +200,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           ...(title ? { title } : {}),
           ...(launchCommand ? { launchCommand } : {}),
           ...(cwd ? { cwd } : {})
-        }
+        },
+        ...(wantCable ? { connector: { sourceId: input.sourceBoardId! } } : {})
       })
       if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
     } catch (err) {
