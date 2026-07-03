@@ -23,7 +23,9 @@ import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 /** The minimal orchestrator facet the renderer may drive (a structural subset of `RunningMcp`). */
 export interface OrchestratorDrive {
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
-  dispatchPrompt(boardId: string, text: string): Promise<void>
+  /** Resolves with the readiness verdict (see `RunningMcp.dispatchPrompt`); the IPC handler
+   *  currently discards it (renderer surfacing is a follow-up — the audit already carries it). */
+  dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   handoffPrompt(boardId: string, text: string): Promise<BoardResult>
   awaitSettled(boardId: string): Promise<BoardResult>
   interrupt(boardId: string): Promise<void>

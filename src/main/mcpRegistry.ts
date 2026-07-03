@@ -29,15 +29,20 @@ export const MCP_SPAWN_GRACE_MS = 5_000
  * error, not a silently-mislabelled audit line. `rejected` covers a pre-write refusal
  * (not-found / non-terminal / unsafe payload / replayed nonce / removed cable);
  * `denied` is a human "no"; `failed` is an attempted-but-errored write; `dispatched`
- * is a landed write; `completed`/`closed`/`timed_out` are the handoff await-idle exits;
- * `configured` is a persisted launchCommand; `applied` is a confirmed planning content
- * write that landed on the canvas (S2 `add_planning_elements`).
+ * is a landed write INTO A READINESS-CONFIRMED REPL (the readiness gate observed boot-quiet, or
+ * the target was already mature/latched, or the registry wires no readiness probe);
+ * `dispatched_unconfirmed` is a landed write whose target never showed boot-quiet before the
+ * readiness backstop — the bytes are in the PTY, but delivery into a ready REPL is NOT
+ * guaranteed (verify via read_output); `completed`/`closed`/`timed_out` are the handoff
+ * await-idle exits; `configured` is a persisted launchCommand; `applied` is a confirmed planning
+ * content write that landed on the canvas (S2 `add_planning_elements`).
  */
 export type DispatchStatus =
   | 'rejected'
   | 'denied'
   | 'failed'
   | 'dispatched'
+  | 'dispatched_unconfirmed'
   | 'completed'
   | 'closed'
   | 'timed_out'
@@ -90,7 +95,23 @@ export type LifecycleOrchestrator = Omit<
   | 'updateCard'
   | 'removeCard'
   | 'visualizePlan'
+  | 'dispatchPrompt'
+  | 'relayPrompt'
 > & {
+  /**
+   * Honest-ack WIDENING of the package's `dispatchPrompt/relayPrompt(): Promise<void>` (same
+   * Omit-and-redeclare discipline as `describeApp`): the fire-and-forget write now reports HOW it
+   * landed — `'ready'` = written into a readiness-confirmed REPL; `'unconfirmed'` = written, but
+   * the target never showed boot-quiet before the readiness backstop (delivery not guaranteed —
+   * verify via read_output). A `Promise<{...}>` narrows the package's `Promise<void>` for callers
+   * that know the host type; the package tools surface it to agents from @expanse-ade/mcp 0.18.0-rc.6.
+   */
+  dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
+  relayPrompt(
+    sourceId: string,
+    targetId: string,
+    text: string
+  ): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   /**
    * Assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
    * NARROWS the package's `describeApp(): Promise<unknown>` to the concrete `AppModel` (the package
@@ -243,6 +264,19 @@ export interface BoardRegistry {
    * does not wire it (older tests / non-terminal-only stubs) keeps the poll-only behaviour.
    */
   boardActivityStaleMs?(id: string): number | undefined
+  /**
+   * Readiness gate (2026-07-03): resolve once terminal board `id` has finished its BOOT window
+   * (floor → activity → quiet, with a degrade-honestly backstop — see `terminalReadiness.ts`),
+   * so a dispatched prompt lands in a ready REPL instead of mid-boot. MAIN injects a
+   * `createReadinessWaiter` wired to pty.ts's boot/activity probes. NEVER rejects; the backstop
+   * resolves `'unconfirmed'` and the gate then writes anyway but audits `dispatched_unconfirmed`.
+   * Optional so a registry that does not wire it (older tests / stubs) keeps today's
+   * write-immediately behaviour. Read-only observation; control-plane only.
+   */
+  awaitReady?(
+    id: string,
+    opts?: { signal?: AbortSignal }
+  ): Promise<{ outcome: string; waitedMs: number }>
   /**
    * Subscribe to per-board coarse status changes (M5 event-driven attention). MAIN injects
    * `boardRegistry.ts`'s `subscribeBoardStatus`. Emits `{ id, status }` on each change

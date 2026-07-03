@@ -13,6 +13,7 @@ import {
   writeToPtyCore,
   getTerminalRuntimeCore,
   getTerminalActivityStaleMsCore,
+  getTerminalBootInfoCore,
   isValidResize,
   clampSpawnDim,
   attachPortInput
@@ -770,6 +771,27 @@ describe('getTerminalActivityStaleMsCore (BUG-007 — output-silence dormancy fo
   it('returns undefined for a board with no LIVE session (non-terminal / closed / parked)', () => {
     // undefined is awaitSettled's signal that there is no live PTY to measure.
     expect(getTerminalActivityStaleMsCore('ghost', new Map(), 1_000)).toBeUndefined()
+  })
+})
+
+describe('getTerminalBootInfoCore (readiness gate — boot age + pid identity)', () => {
+  it('returns the process age against the injected clock, plus the live pid', () => {
+    const sessions = new Map<string, any>([['t', { spawnedAt: 1_000, proc: { pid: 42 } }]])
+    expect(getTerminalBootInfoCore('t', sessions, 3_500)).toEqual({ ageMs: 2_500, pid: 42 })
+  })
+
+  it('an ADOPTED session (spawnedAt 0) reads as maximally old — the readiness floor passes immediately', () => {
+    const sessions = new Map<string, any>([['t', { spawnedAt: 0, proc: { pid: 42 } }]])
+    expect(getTerminalBootInfoCore('t', sessions, 60_000)!.ageMs).toBe(60_000)
+  })
+
+  it('clamps to 0 for clock skew (never a negative age)', () => {
+    const sessions = new Map<string, any>([['t', { spawnedAt: 9_000, proc: { pid: 42 } }]])
+    expect(getTerminalBootInfoCore('t', sessions, 8_000)!.ageMs).toBe(0)
+  })
+
+  it('returns undefined for a board with no LIVE session', () => {
+    expect(getTerminalBootInfoCore('ghost', new Map(), 1_000)).toBeUndefined()
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */

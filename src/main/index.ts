@@ -14,11 +14,13 @@ import {
   writeToPty,
   getTerminalRuntime,
   getTerminalActivityStaleMs,
+  getTerminalBootInfo,
   getTerminalCwd,
   setRecapEnvProvider,
   setOrchestrationSyncProvider
 } from './pty'
 import { boardGitDiff } from './gitDiff'
+import { createReadinessWaiter } from './terminalReadiness'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
@@ -451,6 +453,14 @@ app.whenReady().then(async () => {
       // BUG-007: ms-since-last-PTY-output per board — the output-silence dormancy signal
       // awaitSettled (C2e) polls, since a live agent shell's status never flips off 'running'.
       boardActivityStaleMs: getTerminalActivityStaleMs,
+      // Readiness gate (2026-07-03): boot-quiet waiter so a dispatched prompt lands in a READY
+      // REPL, not mid-boot (floor → activity → quiet, degrade-honestly backstop). One waiter
+      // instance per server so its per-process latch spans dispatches.
+      awaitReady: createReadinessWaiter({
+        bootInfo: getTerminalBootInfo,
+        activityStaleMs: getTerminalActivityStaleMs,
+        now: Date.now
+      }).awaitTerminalReady,
       subscribeStatus: subscribeBoardStatus,
       readOutput: readPtyOutput,
       readResult: readBoardResult,
