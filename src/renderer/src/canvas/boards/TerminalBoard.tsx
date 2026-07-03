@@ -36,7 +36,7 @@ import {
 } from './terminalPreview'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
-import { resumeCommand } from './terminal/resumeCommand'
+import { useResumeValidity } from './terminal/useResumeValidity'
 import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
 import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
@@ -193,27 +193,49 @@ export function TerminalBoard({
   const flipped = flip.flipped
   // T-resume: the Inspector's Session controls offer Resume-vs-New only when we know a session
   // to resume (P5: the title-bar restart button + its anchored popover menu are gone).
-  const canResume = !!board.agentSessionId
+  // F1: MAIN-validated — the stored id alone proves nothing (eager capture / rotation /
+  // retention all leave a dead id in canvas.json); see useResumeValidity.
+  const canResume = useResumeValidity(board, state)
   // P0.5 Board Inspector: non-null only when THIS terminal is the single eligible selection (the
   // shell publishes its content slot then). We portal our per-type inspector into it below — reusing
   // the very same handlers every other affordance uses, so there is no duplicated wiring or state.
   const inspectorSlot = useInspectorSlot(board.id)
   // Shared respawn routines (D2-B) used by every re-run affordance — the idle restored bar,
   // the end-state CTA, the recap face, and the Inspector's Session actions (P5: the title-bar
-  // restart menu is gone). Resume reattaches the agent's conversation (`claude --resume <id>` via
-  // the sanitising resumeCommand); New/Restart starts fresh (clears the override). Both consume
-  // launchOverrideRef then hit the shared respawn.
+  // restart menu is gone). F3: Resume asks MAIN for the launch line AT CLICK TIME
+  // (`terminal:resumeLaunch` re-resolves the transcript fresh, so a stored id that died since
+  // the last check degrades to `claude --continue` / a fresh start instead of a dead
+  // `--resume`; sanitization lives in MAIN — canvas.json is untrusted input). New/Restart
+  // starts fresh (clears the override). Both consume launchOverrideRef then hit the shared
+  // respawn; an IPC failure also falls back to fresh (never a stale guess).
   const resumeSession = useCallback((): void => {
-    launchOverrideRef.current = resumeCommand(board.agentSessionId)
-    restart()
-  }, [board.agentSessionId, launchOverrideRef, restart])
+    void window.api.terminal
+      .resumeLaunch(board.id, {
+        sessionId: board.agentSessionId,
+        transcriptPath: board.agentTranscriptPath
+      })
+      .then((r) => {
+        launchOverrideRef.current = r?.command
+        restart()
+      })
+      .catch(() => {
+        launchOverrideRef.current = undefined
+        restart()
+      })
+  }, [board.id, board.agentSessionId, board.agentTranscriptPath, launchOverrideRef, restart])
   const restartFresh = useCallback((): void => {
     launchOverrideRef.current = undefined
     restart()
   }, [launchOverrideRef, restart])
   // D4-A: consume palette restart intents for this board (resume/new — same launch
   // override + respawn path as the Restart menu below).
-  usePaletteRestart(board.id, board.agentSessionId, launchOverrideRef, restart)
+  usePaletteRestart(
+    board.id,
+    board.agentSessionId,
+    board.agentTranscriptPath,
+    launchOverrideRef,
+    restart
+  )
 
   // D2-B (audit A6): flipping moves focus WITH the visible face — the recap wrapper on
   // flip, xterm back on flip-back. Without this, focus stayed on the hidden xterm behind

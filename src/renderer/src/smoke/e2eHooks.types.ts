@@ -145,6 +145,10 @@ export interface CanvasE2E {
   /** Lane A — the write coalescer's HELD byte count for a terminal (PTY bytes buffered but not yet
    *  rendered). Grows while the board is gated (proves the PTY keeps producing); ~0 while live. */
   terminalHeldBytes: (id: string) => number
+  /** Terminal-resume F1: the last settled MAIN resume-validity check for a board (null until one
+   *  lands). Specs asserting the Resume affordance's ABSENCE await the check for the id they
+   *  staged first — a bare toHaveCount(0) would pass trivially before the IPC round-trip. */
+  resumeCheckState: (id: string) => { sessionId?: string; canResume: boolean } | null
   /** The live xterm font size for a terminal board (px), or undefined if not mounted. */
   terminalFontSize: (id: string) => number | undefined
   /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
