@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from 'rea
 import { useCanvasStore } from '../store/canvasStore'
 import { performProjectSwitch } from '../store/projectSwitch'
 import { captureProjectThumb } from '../store/projectThumbCapture'
+import { showToast } from '../store/toastStore'
 import type { BackgroundProjectInfo } from '../../../preload'
 import { Menu } from './Menu'
 import { CloseBackgroundModal } from './CloseBackgroundModal'
@@ -190,13 +191,25 @@ export function ProjectDock(): ReactElement {
   }, [closeDock])
 
   // Card click = the exact §1 switch pipeline (dialog/policy come free). Active card just
-  // closes the dock. Fire-and-forget like the switcher rows — the pipeline owns outcomes.
+  // closes the dock. Near-fire-and-forget — the pipeline owns most outcomes ('save-failed'
+  // raises its own global chip), but 'locked' (review [warning]) had NO surface: the dock
+  // closes on click, so a second click inside the first switch's pre-transition window
+  // (~800ms of thumb capture + snapshot fetch, before the overlay arms) silently did
+  // nothing. Toast it so the dropped click is explained; keyed so repeats update in place.
+  const startSwitch = (load: () => Promise<unknown>, incomingName: string): void => {
+    void performProjectSwitch(load, { incomingName }).then((outcome) => {
+      if (outcome === 'locked') {
+        showToast({
+          id: 'project-switch-locked',
+          message: 'A project switch is already in progress — try again in a moment'
+        })
+      }
+    })
+  }
   const onCardClick = (card: ProjectDockCard): void => {
     closeDock()
     if (card.active) return
-    void performProjectSwitch(() => window.api.project.open(card.dir), {
-      incomingName: card.name
-    })
+    startSwitch(() => window.api.project.open(card.dir), card.name)
   }
 
   // ✕ on a resident card: running → the shared §3 confirm; idle → silent close (§3 rule).
@@ -239,7 +252,7 @@ export function ProjectDock(): ReactElement {
     const picked = await pick()
     if (!picked) return
     closeDock()
-    void performProjectSwitch(picked.load, { incomingName: picked.name })
+    startSwitch(picked.load, picked.name)
   }
 
   const cards = dockCards({ dir: activeDir, name: activeName }, activeCounts, bgList)

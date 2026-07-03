@@ -1275,6 +1275,39 @@ describe('adoptCore Phase-5 splice (watermark + preface)', () => {
     ])
   })
 
+  // R4 raced re-park (review [warning]): an adopt carries the park watermark back onto the
+  // session as flushWatermark — no flush happens during an adopt, so the sidecar boundary is
+  // unchanged. An adopt-then-immediate-re-park (raced switch-back-and-away) must re-record
+  // the SAME watermark, or the bytes between the snapshot and the re-park land in neither
+  // the preface nor the tail.
+  it('adopt→re-park round-trip preserves the flush watermark (raced R4 path)', () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc } = makeProc(43)
+    const buf = createRing(1024)
+    pushRing(buf, 'in-snapshot')
+    const watermark = buf.written
+    pushRing(buf, 'after-flush-before-park')
+    const parked = new Map<string, any>([
+      ['t', { proc, buf, kind: 'background', owningDir: 'C:/p', watermark }]
+    ])
+    const sessions = new Map<string, any>()
+    adoptCore(
+      't',
+      sessions,
+      parked,
+      { newChannel: () => ({ port1, port2 }) } as any,
+      (() => {}) as any,
+      { dir: 'C:/p' }
+    )
+    expect(sessions.get('t').flushWatermark).toBe(watermark)
+
+    // The compensating re-park (no flush in between) records the SAME boundary.
+    pushRing(buf, 'while-adopted')
+    parkCore('t', sessions, parked, vi.fn(), undefined, 'background')
+    expect(parked.get('t').watermark).toBe(watermark)
+  })
+
   it('background adopt with NO preface degrades to the classic full-ring replay', () => {
     const port1 = makePort()
     const port2 = makePort()

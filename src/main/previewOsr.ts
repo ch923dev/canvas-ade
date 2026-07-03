@@ -865,9 +865,21 @@ export function registerPreviewOsrHandlers(
     // previewStore entry converges off 'connecting' without a load.
     const existing = osr.get(args.id)
     if (existing) {
-      armOwner(win)
-      emitOsrRemountState(args.id, existing, existing.osrWin.webContents, emitEvent)
-      return true
+      // R1 ownership guard (review [critical]): board UUIDs collide across cloned/copied
+      // projects, and this remount branch previously reused ANY existing entry by bare id —
+      // handing a clone the resident's live page (cross-project content leak), which then
+      // froze under the resident's `backgrounded` short-circuits. Mirror pty.ts adoptCore's
+      // requireOwner: reuse only when the entry belongs to the CURRENT project.
+      if ((existing.projectDir ?? null) === getCurrentDir()) {
+        armOwner(win)
+        emitOsrRemountState(args.id, existing, existing.osrWin.webContents, emitEvent)
+        return true
+      }
+      // Foreign owner: the visible board must never show another project's page — the
+      // foreground wins. Dispose the resident's colliding window and mint a fresh one for
+      // this project; the resident's board degrades to a plain reload on ITS switch-back
+      // (the accepted R1 clone-collision cost, ADR 0011).
+      disposeOsr(args.id)
     }
     ensureOsr(args.id, win, args.url)
     return true

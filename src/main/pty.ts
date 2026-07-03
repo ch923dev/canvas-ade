@@ -426,7 +426,14 @@ export function adoptCore(
     state: 'running',
     lastActivityAt: Date.now(), // T-F1: adopt = fresh activity (scrollback is about to replay)
     spawnedAt: 0, // adopted proc booted long ago → the readiness floor passes immediately
-    projectDir: p.owningDir ?? null // the tag survives the park→adopt round-trip
+    projectDir: p.owningDir ?? null, // the tag survives the park→adopt round-trip
+    // R4 raced re-park (review [warning]): carry the park watermark back as the session's
+    // flush watermark — no new flush happens during an adopt, so the on-disk sidecar
+    // boundary is unchanged. Without this, an adopt-then-immediate-re-park (the raced
+    // switch-back-and-away) records watermark = live `written`, and the bytes between the
+    // snapshot and that point land in neither the preface nor the tail. A later real
+    // flush overwrites it; undo parks carry nothing (their watermark is never read).
+    flushWatermark: p.kind === 'background' ? p.watermark : undefined
   })
   transferPort(port2)
 
@@ -464,8 +471,7 @@ const sessionDeps: SessionDeps = {
  * actually exists. Null when the board has no live session (parked/exited — nothing to splice).
  */
 export function peekRingWritten(id: string): number | null {
-  const s = sessions.get(id)
-  return s ? s.buf.written : null
+  return sessions.get(id)?.buf.written ?? null
 }
 
 export function setFlushWatermark(id: string, written: number): void {
