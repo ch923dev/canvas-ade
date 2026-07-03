@@ -127,6 +127,15 @@ test.describe('@terminal terminal polish (D2-B)', () => {
         .toBe(false)
       await expect(inspector.getByRole('button', { name: 'Resume session' })).toHaveCount(0)
       await expect(inspector.locator('[data-test="inspector-restart"]')).toBeVisible()
+      // F1b: the command palette gates its Resume row on the SAME MAIN verdict (via
+      // resumeValidityStore) — the dead id must not list it. restart-new anchors the
+      // assertion: it proves the terminal's selected-board rows actually built.
+      await page.keyboard.press('Control+k')
+      await expect(page.locator('[data-test="command-palette"]')).toBeVisible()
+      await expect(page.locator('[data-test="palette-row-restart-new"]')).toBeVisible()
+      await expect(page.locator('[data-test="palette-row-restart-resume"]')).toHaveCount(0)
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-test="command-palette"]')).toHaveCount(0)
       // F3: at click time MAIN resolves the same dead id to a FRESH start, not a dead --resume.
       const dead = await page.evaluate(
         (a) => (globalThis as any).window.api.terminal.resumeLaunch(a.id, { sessionId: a.sid }),
@@ -155,6 +164,13 @@ test.describe('@terminal terminal polish (D2-B)', () => {
       await expect(inspector.getByRole('button', { name: 'Resume session' })).toBeVisible()
       await expect(inspector.getByRole('button', { name: 'New session' })).toBeVisible()
       await expect(inspector.locator('[data-test="inspector-restart"]')).toHaveCount(0)
+      // F1b: the validated verdict flips the palette row ON (the Inspector Resume button
+      // above proves the same hook published true — one source of truth, two surfaces).
+      await page.keyboard.press('Control+k')
+      await expect(page.locator('[data-test="command-palette"]')).toBeVisible()
+      await expect(page.locator('[data-test="palette-row-restart-resume"]')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-test="command-palette"]')).toHaveCount(0)
       // F3: the click-time launch line resumes the transcript's actual session id.
       const live = await page.evaluate(
         (a) =>

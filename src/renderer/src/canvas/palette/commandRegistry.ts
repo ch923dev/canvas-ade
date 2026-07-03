@@ -78,7 +78,9 @@ export interface PaletteVerbs {
 
 /** The store facts the registry gates on — extracted by the caller. */
 export interface PaletteSnapshot {
-  boards: { id: string; type: BoardType; title: string; agentSessionId?: string }[]
+  /** `canResume` is the MAIN-validated verdict (resumeValidityStore, F1b) — never the raw
+   *  stored-id truthiness, which a dead session id satisfies. */
+  boards: { id: string; type: BoardType; title: string; canResume?: boolean }[]
   groups: { id: string; name: string }[]
   selectedIds: string[]
   /** GROUP-01: orchestration connectors, so the connect/disconnect rows know if the two
@@ -177,7 +179,9 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       }
     )
     if (selected.type === 'terminal') {
-      if (selected.agentSessionId) {
+      // F1b: gate on the MAIN-validated verdict — a dead stored id must not offer a Resume
+      // row that silently degrades to a fresh launch at click time.
+      if (selected.canResume) {
         out.push({
           id: 'restart-resume',
           section: 'Selected board',
