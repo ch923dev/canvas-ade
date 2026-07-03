@@ -601,8 +601,15 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       type: 'terminal',
       prompt: `echo ${sentinel}`
     })
-    const id = okText(spawn)
+    // rc.6: a prompt-carrying spawn returns TWO content blocks — content[0] stays the bare id
+    // (back-compat), content[1] is the honest "launch command queued … boots asynchronously"
+    // note. Take block 0 for the id and pin the note's presence (the honest-ack contract).
+    const blocks = spawn.ok
+      ? ((spawn.result as { content?: Array<{ text?: string }> }).content ?? [])
+      : []
+    const id = (blocks[0]?.text ?? '').trim()
     expect(id).not.toBe('')
+    expect(blocks[1]?.text ?? '').toMatch(/launch command queued/i)
     await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
     // The sanitized prompt landed on the board as its launchCommand…
     await expect
