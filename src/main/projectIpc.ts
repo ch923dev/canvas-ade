@@ -32,6 +32,7 @@ import {
   type RecentProject
 } from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
+import type { RefreshOutcome } from './summaryLoop'
 
 /**
  * True when a renderer-supplied project dir must be REJECTED before any fs touch
@@ -160,7 +161,10 @@ export function registerProjectHandlers(
   memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent }),
   // T-F4: the manual-refresh sink. index.ts wires this to summaryLoop.onIntent so a user ⟳ runs
   // the SAME budgeted/passive summarize the detector does (no new egress). Default = no-op.
-  onRefresh: (boardId: string) => Promise<void> = async () => {},
+  // Recap-refresh fix: the sink now reports WHAT the summarize did (index.ts wires it to
+  // summaryLoop.refresh) so the handler can pass the outcome to the renderer. `undefined`
+  // (the default no-op) keeps the legacy {ok:true}-only shape.
+  onRefresh: (boardId: string) => Promise<RefreshOutcome | undefined> = async () => undefined,
   // Terminal recap (Task 10): fired with the project dir whenever a project is opened/reopened
   // (project:open + project:current). index.ts wires this to re-ensure the recap SessionStart hook
   // for an already-consented project. Default = no-op. Best-effort (never aborts the open).
@@ -516,16 +520,22 @@ export function registerProjectHandlers(
   // key/budget-gated INSIDE the loop (no new egress rule): with no key / over cap the loop simply
   // no-ops and the prose is unchanged. Foreign sender / non-string id / no open project → {ok:false}.
   // {ok:true} means the refresh ran (the renderer re-reads prose via memory:readBoards either way).
-  ipcMain.handle('memory:refresh', async (e, boardId: unknown): Promise<{ ok: boolean }> => {
-    if (guard(e)) return { ok: false }
-    // BUG-032: enforce safeBoardId (MAX_ID_LEN=64, charset [A-Za-z0-9_-]) at IPC ingress.
-    // The original check only rejected non-string / empty — a 1 MB or invalid-charset id
-    // passed through to onRefresh, causing a transient allocation + O(n) board scan.
-    if (typeof boardId !== 'string' || !safeBoardId(boardId)) return { ok: false }
-    if (!getCurrentDir()) return { ok: false }
-    await onRefresh(boardId)
-    return { ok: true }
-  })
+  // Recap-refresh fix: `outcome` (additive) reports what the summarize actually did so the
+  // recap face can tell the user WHY nothing regenerated (consent off / no transcript / no
+  // LLM key / budget / coalesced). Existing callers keep reading `.ok` unchanged.
+  ipcMain.handle(
+    'memory:refresh',
+    async (e, boardId: unknown): Promise<{ ok: boolean; outcome?: RefreshOutcome }> => {
+      if (guard(e)) return { ok: false }
+      // BUG-032: enforce safeBoardId (MAX_ID_LEN=64, charset [A-Za-z0-9_-]) at IPC ingress.
+      // The original check only rejected non-string / empty -- a 1 MB or invalid-charset id
+      // passed through to onRefresh, causing a transient allocation + O(n) board scan.
+      if (typeof boardId !== 'string' || !safeBoardId(boardId)) return { ok: false }
+      if (!getCurrentDir()) return { ok: false }
+      const outcome = await onRefresh(boardId)
+      return outcome ? { ok: true, outcome } : { ok: true }
+    }
+  )
 
   ipcMain.handle(
     'export:save',

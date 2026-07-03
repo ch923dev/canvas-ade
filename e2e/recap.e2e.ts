@@ -179,3 +179,139 @@ test('@terminal facts render from the transcript with no LLM key', async ({
     await mainCall(electronApp, 'teardownProject', tmp)
   }
 })
+
+/**
+ * Recap-refresh fix (a): a refresh that cannot regenerate must SAY WHY instead of silently
+ * leaving the stale banner. Seed a stale narrative (asOf far behind the live PTY activity),
+ * flip - the once-per-flip auto-refresh fires against the key-less e2e LLM store - and the
+ * llm-unavailable outcome renders the "needs an LLM key" note. Fully deterministic: no key,
+ * no egress, no canned prose.
+ */
+test('@terminal stale recap + no LLM key: refresh surfaces the why-note', async ({
+  page,
+  electronApp
+}) => {
+  const tmp = await mainCall<string>(electronApp, 'createTempProject', 'recap-note-', 'recap-n')
+  try {
+    // Decide consent BEFORE the renderer binds the project: AppChrome prompts (a scrim that
+    // would swallow every later click) off getConsent on each projectDir change, so the
+    // decision must already be persisted when the open effect fires. MAIN's current dir is
+    // already the temp project (createTempProject), so the store keys correctly. Consent
+    // state doesn't matter to THIS spec (the key-less LLM gate fires before any write).
+    await evalIn<{ ok: boolean }>(page, `window.api.recap.setConsent('enabled')`)
+    // ...and the SEPARATE orchestration consent (its 'enable' prompt fires once recap
+    // consent is decided - another scrim that would swallow the Inspector clicks).
+    await evalIn<{ ok: boolean }>(page, `window.api.orchestration.setConsent('declined')`)
+    // Bind the RENDERER to the temp project and flush the seeded board into canvas.json —
+    // summaryLoop.run() re-reads the doc from disk, so an unsaved board would report
+    // skipped{board-missing} (a legit-null note) instead of exercising the LLM gate.
+    const opened = await evalIn<{ status: string }>(
+      page,
+      `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
+    )
+    expect(opened.status, 'fresh temp project opens clean').toBe('open')
+    const id = await seed(page, 'terminal', { launchCommand: 'claude', agentTranscriptPath: 'x' })
+    const saved = await evalIn<boolean>(
+      page,
+      `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
+    )
+    expect(saved, 'seeded board flushed to canvas.json').toBe(true)
+    const stale = mkNarrative()
+    stale.asOf = Date.now() - 10 * 60_000 // trails the live PTY activity by ~10m -> stale
+    const wrote = await mainCall<boolean>(electronApp, 'writeRecapJson', id, stale)
+    expect(wrote).toBe(true)
+
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-recap"]').click()
+    // the stale banner shows (narrative suppressed), the auto-refresh runs, and the outcome
+    // note explains what gated the regeneration. Two gates can legitimately fire first here:
+    // the key-less LLM store ("needs an LLM key") or the untrusted 'x' transcript ("no session
+    // transcript") when a sibling spec's runtime LLM mock is live on the shared worker app —
+    // the spec pins the CONTRACT (a visible why-note), not one gate's wording.
+    await expect(page.locator('[data-test="recap-stale"]')).toBeVisible()
+    await expect(page.locator('[data-test="recap-refresh-note"]')).toContainText(
+      /LLM key|transcript/,
+      { timeout: 10_000 }
+    )
+  } finally {
+    await mainCall(electronApp, 'teardownProject', tmp)
+  }
+})
+
+/**
+ * Recap-refresh fix (b): the full regen chain - learned transcript + consent + (mock) LLM ->
+ * manual refresh writes the narrative sidecar and the OPEN face re-reads it without a reflip.
+ * CANVAS_LLM_MOCK is toggled at runtime through the e2e seam (the loop reads the live
+ * process.env) and restored in the finally so later specs keep the key-less default.
+ */
+test('@terminal manual refresh regenerates the narrative in place (mock LLM)', async ({
+  page,
+  electronApp
+}) => {
+  const tmp = await mainCall<string>(electronApp, 'createTempProject', 'recap-regen-', 'recap-g')
+  try {
+    await mainCall(electronApp, 'setLlmMock', true)
+    const jsonl =
+      [
+        JSON.stringify({
+          type: 'user',
+          timestamp: '2026-06-13T04:10:00.000Z',
+          message: { role: 'user', content: 'review the auth module' }
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-06-13T04:11:00.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Found 3 issues.' }] }
+        })
+      ].join('\n') + '\n'
+    const transcript = await mainCall<string>(electronApp, 'seedRecapTranscript', jsonl)
+    // Consent BEFORE the renderer binds the project (AppChrome prompts off getConsent on the
+    // projectDir change — a pre-persisted decision keeps the scrim away) AND before the
+    // transcript->LLM path runs (BUG-002 gate).
+    await evalIn<{ ok: boolean }>(page, `window.api.recap.setConsent('enabled')`)
+    // ...and the SEPARATE orchestration consent (its 'enable' prompt fires once recap
+    // consent is decided - another scrim that would swallow the Inspector clicks).
+    await evalIn<{ ok: boolean }>(page, `window.api.orchestration.setConsent('declined')`)
+    // Bind the renderer + flush the board to disk (see the why-note spec) so run() finds it.
+    const opened = await evalIn<{ status: string }>(
+      page,
+      `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
+    )
+    expect(opened.status, 'fresh temp project opens clean').toBe('open')
+    const id = await seed(page, 'terminal', { launchCommand: 'claude' })
+    const saved = await evalIn<boolean>(
+      page,
+      `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
+    )
+    expect(saved, 'seeded board flushed to canvas.json').toBe(true)
+    await mainCall(electronApp, 'recordRecapSession', id, transcript)
+
+    // wait for the learned map entry to land (same poll as the facts spec)
+    await expect
+      .poll(
+        () =>
+          evalIn<number>(
+            page,
+            `window.api.recap.get(${JSON.stringify(id)}).then((b) => (b ? b.facts.turns.user + b.facts.turns.agent : 0))`
+          ),
+        { timeout: 10_000 }
+      )
+      .toBeGreaterThan(0)
+
+    await selectForInspector(page, id)
+    await page.locator('[data-test="inspector-recap"]').click()
+    await expect(page.locator('[data-test="recap-facts-only"]')).toContainText('No narrative yet')
+
+    // ONE manual refresh: the mock provider echoes the milestone input, the loop persists it
+    // as the NOW line, and the face re-reads in place - no reflip, banner gone.
+    await page.locator('button[title="Refresh recap"]').click()
+    await expect(page.locator('[data-test="recap-now"]')).toContainText('[mock]', {
+      timeout: 15_000
+    })
+    await expect(page.locator('[data-test="recap-facts-only"]')).toHaveCount(0)
+  } finally {
+    await mainCall(electronApp, 'setLlmMock', false)
+    await mainCall(electronApp, 'restoreClaudeConfigDir')
+    await mainCall(electronApp, 'teardownProject', tmp)
+  }
+})

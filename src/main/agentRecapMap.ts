@@ -184,9 +184,15 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
 export interface RecapMapEntry {
   sessionId: string
   transcriptPath: string
+  /**
+   * When the SessionStart hook recorded this entry (epoch ms; recordSession.js has always
+   * written it). Optional: entries from pre-`ts` builds parse without it. Used by
+   * resolveLiveTranscriptPath's eager-capture grace (recap-refresh fix A4).
+   */
+  ts?: number
 }
 
-/** Parse the mapping JSONL -> boardId -> latest {sessionId, transcriptPath}. Best-effort. */
+/** Parse the mapping JSONL -> boardId -> latest {sessionId, transcriptPath, ts}. Best-effort. */
 export function readRecapMap(mapPath: string): Map<string, RecapMapEntry> {
   const out = new Map<string, RecapMapEntry>()
   if (!existsSync(mapPath)) return out
@@ -200,9 +206,18 @@ export function readRecapMap(mapPath: string): Map<string, RecapMapEntry> {
     const s = raw.trim()
     if (!s) continue
     try {
-      const r = JSON.parse(s) as { boardId?: string; sessionId?: string; transcriptPath?: string }
+      const r = JSON.parse(s) as {
+        boardId?: string
+        sessionId?: string
+        transcriptPath?: string
+        ts?: unknown
+      }
       if (r.boardId && r.transcriptPath) {
-        out.set(r.boardId, { sessionId: r.sessionId ?? '', transcriptPath: r.transcriptPath })
+        out.set(r.boardId, {
+          sessionId: r.sessionId ?? '',
+          transcriptPath: r.transcriptPath,
+          ...(typeof r.ts === 'number' && Number.isFinite(r.ts) ? { ts: r.ts } : {})
+        })
       }
     } catch {
       /* skip */

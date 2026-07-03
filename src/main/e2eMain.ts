@@ -261,6 +261,13 @@ export interface E2EMain {
    * project, so the board-doc field never reaches disk - the map IS the path that works.)
    */
   recordRecapSession(boardId: string, transcriptPath: string): void
+  /**
+   * Recap-refresh fix: toggle the CANVAS_LLM_MOCK env flag at runtime so a spec can drive the
+   * summary loop's recap branch end-to-end (mock provider, zero egress) and then restore the
+   * key-less default in its finally. The loop reads the LIVE process.env object per call, so
+   * a runtime mutation takes effect on the next summarize.
+   */
+  setLlmMock(on: boolean): void
 }
 
 /**
@@ -574,6 +581,10 @@ export function installE2EMain(
           ts: Date.now()
         }) + '\n'
       )
+    },
+    setLlmMock(on) {
+      if (on) process.env.CANVAS_LLM_MOCK = '1'
+      else delete process.env.CANVAS_LLM_MOCK
     }
   }
 }

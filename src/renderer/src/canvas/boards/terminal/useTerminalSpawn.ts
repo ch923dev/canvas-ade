@@ -232,6 +232,13 @@ export interface TerminalFindApi {
   /** The live SearchAddon loaded on the current term (null before first spawn). */
   addonRef: RefObject<SearchAddon | null>
   termRef: RefObject<Terminal | null>
+  /**
+   * Find-count fix: synchronously flush the write coalescer's pending PTY bytes into the term
+   * so the SearchAddon scans a buffer that matches the screen — without this, a query typed in
+   * the same tick as fresh output searches a buffer that lacks it, and the addon's write-gated
+   * recount latches the under-count until the NEXT output (minutes on an idle terminal).
+   */
+  flushPending: () => void
 }
 
 export interface TerminalSpawnApi {
@@ -298,10 +305,27 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   const [findOpen, setFindOpen] = useState(false)
   const closeFind = useCallback(() => setFindOpen(false), [])
   const openFind = useCallback(() => setFindOpen(true), [])
+  // Find-count fix: the bar's flush-before-search seam. Routed through its OWN function ref
+  // (the refitRef precedent above) rather than reading coalescerRef here: a coalescerRef read
+  // reachable from an effect would make the spawn effect's `coalescerRef.current = coalescer`
+  // a forbidden cross-effect mutation under the compiler lint. The spawn effect fills this
+  // right after it creates the coalescer and resets it on teardown.
+  const flushPendingRef = useRef<() => void>(() => {})
   const findApi = useMemo<TerminalFindApi>(
-    () => ({ close: closeFind, addonRef: searchAddonRef, termRef }),
+    () => ({
+      close: closeFind,
+      addonRef: searchAddonRef,
+      termRef,
+      flushPending: () => flushPendingRef.current()
+    }),
     [closeFind]
   )
+  // Make the buffer current the moment the bar opens (the seed-from-selection search runs on
+  // mount). If the board is mid-reveal (liveness still settling) the flush refuses and the
+  // bar's settle re-search covers the catch-up instead.
+  useEffect(() => {
+    if (findOpen) findApi.flushPending()
+  }, [findOpen, findApi])
   // True once the grid has had a real IN-CANVAS fit, i.e. it carries an established column
   // count. The full-view freeze applies ONLY to an established grid: a FRESH mount that happens
   // while maximized (e.g. reconfigure-while-full-view respawns the term) must still take its
@@ -805,6 +829,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         )
     })
     coalescerRef.current = coalescer
+    // Find-count fix: arm the find bar's flush-before-search seam on THIS coalescer.
+    flushPendingRef.current = (): void => {
+      coalescer.flushNow()
+    }
     // e2e: surface the held-byte count so a spec can prove a hidden terminal's PTY keeps producing
     // (buffer accumulating) while its rendered framebuffer stays frozen.
     if (isE2E()) e2eTerminalHeld.set(board.id, () => coalescer.held())
@@ -1035,6 +1063,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // Lane A: drop the held buffer + cancel any scheduled flush (the term is disposed below).
       coalescer.clear()
       if (coalescerRef.current === coalescer) coalescerRef.current = null
+      // Find-count fix: disarm the find bar's flush seam (a respawn re-arms it on the new
+      // coalescer above; between teardown and respawn it must be a no-op, never a stale flush).
+      flushPendingRef.current = (): void => {}
       if (isE2E()) e2eTerminals.delete(board.id)
       if (isE2E()) e2eTerminalInput.delete(board.id)
       if (isE2E()) e2eTerminalLink.delete(board.id)

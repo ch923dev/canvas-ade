@@ -24,5 +24,5 @@ pnpm-lock.yaml
 docs/research/**/mock-*.html
 docs/research/**/*-mock.html
 docs/research/**/mocks/
-# Local Impeccable plugin hook cache (gitignored tool output) — never reflow.
+# Local Claude Code design-hook cache (impeccable plugin) — tool output, never reflow.
 .impeccable/

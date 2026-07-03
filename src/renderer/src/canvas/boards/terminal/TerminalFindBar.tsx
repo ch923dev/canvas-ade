@@ -10,7 +10,7 @@
 // primitive deps) and the explicit next/prev `step` is a plain handler-only fn — compiler-clean.
 import { memo, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { TerminalFindApi } from './useTerminalSpawn'
-import { buildSearchOptions, formatMatchCount } from './terminalSearch'
+import { buildSearchOptions, formatMatchCount, SEARCH_SETTLE_MS } from './terminalSearch'
 
 function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -23,6 +23,11 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
   const [caseSensitive, setCaseSensitive] = useState(false)
   const [regex, setRegex] = useState(false)
   const [results, setResults] = useState<{ index: number; count: number }>({ index: -1, count: 0 })
+  // Find-count fix: did the LAST search call actually find a match (findNext's boolean)?
+  // The decoration-based `results.count` can transiently read 0 for a found+selected match on a
+  // just-revealed / mid-refit terminal — while that holds, the bar shows a quiet pending count
+  // instead of a false "No results" (the count converges via the settle re-search below).
+  const [lastFound, setLastFound] = useState(false)
 
   // The match counter's only source: the addon emits this only when decorations are enabled
   // (buildSearchOptions always attaches them). The setState here is in an event callback, not the
@@ -44,9 +49,28 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
 
   // Type-ahead: re-search as the query/options change. Incremental holds the selection in place
   // while typing. Inlined (no shared useCallback) so there's no manual memo for the compiler to
-  // skip; the count updates via the onDidChangeResults listener above, so no setState runs here.
-  // A bad regex mid-typing makes findNext throw — swallow it; the count reports 0 and the bar
-  // stays usable.
+  // skip. A bad regex mid-typing makes findNext throw — swallow it; the count reports 0 and the
+  // bar stays usable.
+  //
+  // Find-count fix (three moves, one effect):
+  //  1. flushPending() first, so the addon scans a buffer that includes bytes still queued for
+  //     the next rAF (a query typed in the same tick as fresh output searched a stale buffer).
+  //  2. Capture findNext's boolean — the honest "a match exists" signal even when the
+  //     decoration-based count transiently reads 0 (see `lastFound` above).
+  //  3. ONE settle re-run of the same incremental search: the addon recounts ONLY on PTY
+  //     write/resize (its onWriteParsed hook), so a transient initial under-count would latch
+  //     until the next output — minutes on an idle terminal. Re-searching after the addon's
+  //     200ms highlight debounce + the 120ms liveness settle re-registers the decorations and
+  //     fires onDidChangeResults with the true count, no output needed. Timer cleared on every
+  //     query/option change, on unmount, AND by step() below (see settleRef); no loop
+  //     (onDidChangeResults only sets `results`, which is not a dep of this effect).
+  //
+  // settleRef: a pending settle re-run is SUPERSEDED by a manual step. Incremental "holds the
+  // selection" only when the selection came from an incremental search — after an
+  // incremental:false step, a late settle re-run ADVANCES the cursor past the user's position
+  // (caught by the Ctrl+F e2e under load: Enter to 2/3, late settle pushed it to 3/3). The
+  // step's own find call refreshes the decorations/count anyway, so the settle is redundant then.
+  const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     const addon = api.addonRef.current
     if (!addon) return
@@ -54,10 +78,28 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
       addon.clearDecorations()
       return
     }
-    try {
-      addon.findNext(query, buildSearchOptions({ caseSensitive, regex, incremental: true }))
-    } catch {
-      /* invalid regex while typing */
+    api.flushPending()
+    const search = (): boolean => {
+      try {
+        return addon.findNext(
+          query,
+          buildSearchOptions({ caseSensitive, regex, incremental: true })
+        )
+      } catch {
+        return false /* invalid regex while typing */
+      }
+    }
+    // The sync setState mirrors the search we just ran (same tick as the user's keystroke) — the
+    // async-boundary caveat of the lint rule doesn't apply, matches the RecapView.tsx precedent.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLastFound(search())
+    settleRef.current = setTimeout(() => {
+      settleRef.current = null
+      setLastFound(search())
+    }, SEARCH_SETTLE_MS)
+    return () => {
+      if (settleRef.current) clearTimeout(settleRef.current)
+      settleRef.current = null
     }
   }, [query, caseSensitive, regex, api])
 
@@ -75,10 +117,16 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
   const step = (dir: 'next' | 'prev'): void => {
     const addon = api.addonRef.current
     if (!addon || !query) return
+    // A manual step supersedes any pending settle re-run — a late incremental re-search after
+    // an incremental:false step advances the cursor past the user's position (see settleRef).
+    if (settleRef.current) {
+      clearTimeout(settleRef.current)
+      settleRef.current = null
+    }
+    api.flushPending() // find-count fix: step against a buffer that matches the screen
     const opts = buildSearchOptions({ caseSensitive, regex, incremental: false })
     try {
-      if (dir === 'prev') addon.findPrevious(query, opts)
-      else addon.findNext(query, opts)
+      setLastFound(dir === 'prev' ? addon.findPrevious(query, opts) : addon.findNext(query, opts))
     } catch {
       /* invalid regex */
     }
@@ -97,8 +145,15 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
     }
   }
 
-  const label = query ? formatMatchCount(results.index, results.count) : ''
-  const none = query !== '' && results.count === 0
+  // Find-count fix: "no results" needs BOTH signals to agree — a zero decoration count while
+  // findNext just returned true is a transient under-count (match found+selected, decorations not
+  // yet registered), shown as a quiet pending '' until the settle re-search converges the count.
+  const none = query !== '' && results.count === 0 && !lastFound
+  const label = query
+    ? results.count === 0 && lastFound
+      ? ''
+      : formatMatchCount(results.index, results.count)
+    : ''
 
   return (
     <div
@@ -154,7 +209,7 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
         className="tf-btn"
         title="Previous match (Shift+Enter)"
         aria-label="Previous match"
-        disabled={none || !label}
+        disabled={none || query === ''}
         onClick={() => step('prev')}
       >
         ↑
@@ -164,7 +219,7 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
         className="tf-btn"
         title="Next match (Enter)"
         aria-label="Next match"
-        disabled={none || !label}
+        disabled={none || query === ''}
         onClick={() => step('next')}
       >
         ↓

@@ -460,6 +460,40 @@ export function buildProjectRollup(name: string, doc: unknown): string {
   )
 }
 
+// ── Refresh outcome (recap-refresh fix) ──────────────────────────────────────────────
+//
+// The manual ⟳ refresh path used to funnel into the same void onIntent as the watcher, so
+// EVERY silent gate (consent off, no transcript, no LLM key, budget, in-flight collision)
+// looked identical to success from the renderer: {ok:true}, nothing changed, banner stuck.
+// `refresh()` runs the SAME budgeted summarize but returns a structured outcome so the
+// RecapView can tell the user WHY nothing regenerated. Purely observational — no gate is
+// weakened; the watcher's onIntent semantics (pending-park + drain) are unchanged.
+
+/** Why the recap branch was skipped in favor of the plain config summary. */
+export type RecapSkipReason = 'consent-off' | 'no-transcript' | 'empty-transcript' | 'not-terminal'
+
+export type RefreshOutcome =
+  /** The recap narrative sidecar was regenerated (asOf = its new stamp). */
+  | { status: 'recap-written'; asOf: number }
+  /** The plain board summary ran instead; the recap sidecar was NOT touched. */
+  | { status: 'summary-written'; recapSkipped: RecapSkipReason }
+  /** runSummarize returned a typed failure before any write. */
+  | { status: 'llm-unavailable'; reason: 'no-provider' | 'budget-exceeded' | 'provider-error' }
+  /** Nothing ran (guards) or the run failed/was dropped mid-flight. */
+  | { status: 'skipped'; reason: 'no-project' | 'board-missing' | 'project-switched' | 'error' }
+  /** A summarize for this (project,board) was already in flight; `with` is ITS outcome. */
+  | { status: 'coalesced'; with: RefreshOutcome }
+
+/**
+ * What the injected milestone getter reports: milestones when the transcript is readable,
+ * else WHY it isn't — the skip reason survives to the refresh outcome instead of collapsing
+ * into an indistinguishable `undefined`. `undefined` (getter absent / threw) reads as
+ * 'no-transcript'.
+ */
+export type MilestoneResult =
+  | { milestones: Milestone[] }
+  | { skip: 'consent-off' | 'no-transcript' | 'empty-transcript' }
+
 export interface SummaryLoopDeps {
   /** Where the file-backed key/budget stores live (userData; e2e temp dir). */
   llmDataDir: string
@@ -477,10 +511,18 @@ export interface SummaryLoopDeps {
   getTerminalRuntime?: (boardId: string) => TerminalRuntime | undefined
   /**
    * Terminal recap (this feature): MAIN-internal accessor for a board's distilled transcript
-   * milestones. Optional + defensive (mirrors getTerminalRuntime): absent/throwing/empty → the
-   * loop falls back to the config+runtime summary. NEVER an action surface — read-only.
+   * milestones. Optional + defensive (mirrors getTerminalRuntime): absent/throwing → treated as
+   * 'no-transcript' and the loop falls back to the config+runtime summary. NEVER an action
+   * surface — read-only.
    */
-  getAgentMilestones?: (boardId: string, board: unknown) => Milestone[] | undefined
+  getAgentMilestones?: (boardId: string, board: unknown) => MilestoneResult | undefined
+  /**
+   * Fired AFTER the recap narrative sidecar is durably rewritten (writeBoardRecap returned
+   * true) so index.ts can push `recap:updated` to the renderer — a background (watcher-driven)
+   * regen now updates an open RecapView instead of waiting for the next flip. Defensive:
+   * called inside try/catch; a throwing callback never fails the summarize.
+   */
+  onRecapWritten?: (boardId: string, asOf: number) => void
   /** Clock for the per-day budget (default new Date()). */
   now?: () => Date
   /** Transport (default global fetch); the mock seam short-circuits it under e2e. */
@@ -492,6 +534,13 @@ export interface SummaryLoopDeps {
 export interface SummaryLoop {
   /** Handle one detector intent: read → summarize → write. Best-effort; never throws. */
   onIntent(intent: SummarizeIntent): Promise<void>
+  /**
+   * The manual ⟳ path: the SAME budgeted/passive summarize as onIntent, but it reports what
+   * happened. On collision with an in-flight run it does NOT park a retry (no double LLM
+   * spend for one click) — it awaits that run and returns `{status:'coalesced', with}`.
+   * Never throws.
+   */
+  refresh(boardId: string): Promise<RefreshOutcome>
 }
 
 export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
@@ -501,30 +550,26 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
   // different board's intent in project B after a rapid switch. `pending` remembers an intent
   // dropped by the guard so the in-flight call's `finally` re-fires it: a content change that
   // raced an in-flight summarize is no longer lost when the first call fails.
-  const inFlight = new Set<string>()
+  //
+  // Recap-refresh fix: the guard is now a Map to the run's outcome promise so `refresh()` can
+  // COALESCE onto an in-flight run (await + report it) instead of blindly parking a retry.
+  const inFlight = new Map<string, Promise<RefreshOutcome>>()
   const pending = new Set<string>()
   const fetchImpl = deps.fetch ?? defaultDeps().fetch
   const env = deps.env ?? process.env
   const now = deps.now ?? ((): Date => new Date())
 
-  async function doIntent({ boardId }: SummarizeIntent): Promise<void> {
+  /** The one summarize body. Never throws -- every exit is a typed RefreshOutcome. */
+  async function run(dir: string, boardId: string): Promise<RefreshOutcome> {
     {
-      const dir = deps.getCurrentDir()
-      if (!dir) return
-      const key = `${dir}\u0000${boardId}` // NUL can't appear in a real path → unambiguous join
-      if (inFlight.has(key)) {
-        pending.add(key) // a slow call for this (project,board) is running — remember to retry
-        return
-      }
-      inFlight.add(key)
       try {
         const r = deps.readProject(dir)
-        if (!r.ok) return
+        if (!r.ok) return { status: 'skipped', reason: 'error' }
         const boards = (r.doc as { boards?: unknown })?.boards
         const board = Array.isArray(boards)
           ? (boards as { id?: unknown }[]).find((b) => b.id === boardId)
           : undefined
-        if (!board) return // deleted between the debounce and the fire
+        if (!board) return { status: 'skipped', reason: 'board-missing' } // deleted between the debounce and the fire
 
         // T-F1: fold the terminal's live runtime (if the getter is wired + returns one) into the
         // input. Defensive: a throwing/absent getter must never fail the summarize or block a save.
@@ -538,19 +583,30 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // Task 9 (terminal recap): ADDITIVE branch. Taken for ANY terminal board once the injected
         // getAgentMilestones returns >= 1 milestone. We do NOT gate on launchCommand==='claude' here:
         // a transcript is only ever learned (via the SessionStart hook) for a real claude session, so
-        // the presence of milestones IS the claude signal — and gating on launchCommand wrongly
+        // the presence of milestones IS the claude signal -- and gating on launchCommand wrongly
         // excluded shell boards where the user typed `claude` by hand. Defensive (mirrors
-        // getTerminalRuntime): a throwing/absent getter, a non-terminal board, or an empty milestone
-        // list → milestones stays undefined → the existing config+runtime path runs unchanged.
+        // getTerminalRuntime): a throwing/absent getter -> 'no-transcript'; a non-terminal board ->
+        // 'not-terminal'; the getter's own {skip} reasons pass through. Any skip -> the existing
+        // config+runtime path runs unchanged, and the reason survives to the refresh outcome.
         let milestones: Milestone[] | undefined
-        try {
-          if ((board as RawBoard)?.type === 'terminal') {
-            milestones = deps.getAgentMilestones?.(boardId, board)
+        let recapSkipped: RecapSkipReason = 'no-transcript'
+        if ((board as RawBoard)?.type !== 'terminal') {
+          recapSkipped = 'not-terminal'
+        } else {
+          let got: MilestoneResult | undefined
+          try {
+            got = deps.getAgentMilestones?.(boardId, board)
+          } catch {
+            got = undefined
           }
-        } catch {
-          milestones = undefined
+          if (got && 'milestones' in got) {
+            if (got.milestones.length > 0) milestones = got.milestones
+            else recapSkipped = 'empty-transcript'
+          } else if (got) {
+            recapSkipped = got.skip
+          }
         }
-        const useRecap = !!milestones && milestones.length > 0
+        const useRecap = !!milestones
 
         const config = readLlmConfig(deps.llmDataDir)
         const result = await runSummarize(
@@ -565,14 +621,14 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
             budget: createBudgetStore(deps.llmDataDir, now)
           }
         )
-        if (!result.ok) return // no-provider / budget-exceeded / provider-error → Tier-1 stays
+        if (!result.ok) return { status: 'llm-unavailable', reason: result.reason } // Tier-1 stays
 
         // BUG-006: TOCTOU guard. `dir` was snapshotted before the (up to 30 s) await; the user can
         // close project A and open project B while the LLM call is in flight. memoryEngine.reset()
         // cancels pending debounces but has no handle to this already-running promise, so without
         // this re-check we'd write board-<id>.md / MEMORY.md / project.md into the OLD project's
         // .canvas/ — stale prose for a board that may not even exist in the now-open project.
-        if (deps.getCurrentDir() !== dir) return // project switched mid-summarize → drop the write
+        if (deps.getCurrentDir() !== dir) return { status: 'skipped', reason: 'project-switched' } // mid-summarize switch
 
         const mem = createCanvasMemory(dir)
         // BUG-017: ensure the .canvas/ scaffold (incl. the default-private .gitignore) exists before
@@ -593,6 +649,7 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // BUG-017: sanitize the title to prevent newlines from breaking the # heading (both paths).
         const title = sanitizeTitle(str((board as RawBoard).title)) || boardId
         let md: string
+        let outcome: RefreshOutcome
         if (useRecap && milestones) {
           const payload = parseRecapPayload(result.text)
           md = buildRecapMarkdown(title, payload, milestones)
@@ -600,12 +657,27 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
           // markdown - the rebuilt RecapView renders the sidecar; the md stays the
           // DigestPanel/MCP surface. Best-effort like every memory write (returns false,
           // never throws), so a sidecar failure cannot lose the md write below.
-          mem.writeBoardRecap(boardId, buildRecapNarrative(payload, milestones, now().getTime()))
+          const asOf = now().getTime()
+          const wrote = mem.writeBoardRecap(boardId, buildRecapNarrative(payload, milestones, asOf))
+          if (wrote) {
+            outcome = { status: 'recap-written', asOf }
+            // Push seam for an open RecapView (recap:updated). Defensive: a throwing callback
+            // must never fail the summarize -- the sidecar is already durably written.
+            try {
+              deps.onRecapWritten?.(boardId, asOf)
+            } catch (err) {
+              console.warn('[summaryLoop] onRecapWritten failed (non-fatal)', err)
+            }
+          } else {
+            // Sidecar write failed: asOf on disk is unchanged, so do NOT claim recap-written.
+            outcome = { status: 'skipped', reason: 'error' }
+          }
         } else {
           md = `# ${title}
 
 ${sanitizeSummary(result.text)}
 `
+          outcome = { status: 'summary-written', recapSkipped }
         }
         mem.writeBoard(boardId, md)
         // BUG-014: the index + rollup enumerate the WHOLE board list, so they must reflect any
@@ -618,29 +690,62 @@ ${sanitizeSummary(result.text)}
         const doc = fresh.ok ? fresh.doc : r.doc
         mem.writeIndex(buildMemoryIndex(doc, (id) => mem.readBoard(id) !== undefined))
         mem.writeProject(buildProjectRollup(projectName(dir), doc))
+        return outcome
       } catch (err) {
         console.warn('[summaryLoop] onIntent failed (non-fatal)', err)
-      } finally {
-        inFlight.delete(key)
-        // BUG-015: a content change that raced this in-flight call was parked in `pending` (and
-        // its fingerprint already advanced in memoryEngine, so no future observe() would re-arm
-        // it). Re-fire it now that the slot is free — whether this call succeeded OR failed — so a
-        // warranted re-summarize is not silently lost on a slow first-call failure.
-        //
-        // BUG-007: but ONLY if the project hasn't switched out from under the parked intent. The
-        // re-fire carries the bare boardId, so a fresh doIntent would re-snapshot getCurrentDir()
-        // — if the user opened project B while this projA intent was parked, the retry would
-        // summarize + write B's same-id board OUTSIDE the debounce/fingerprint flow (an
-        // uninstructed spend; pending is keyed on the OLD projA dir and reset() never clears it).
-        // `dir` is this invocation's captured project dir, so skip the re-fire when the live dir
-        // no longer matches — the parked intent was for a now-closed project.
-        if (pending.delete(key) && deps.getCurrentDir() === dir) void loop.onIntent({ boardId })
+        return { status: 'skipped', reason: 'error' }
       }
     }
   }
 
+  /** Start a run for (dir,board): register it in-flight; drain `pending` when it settles. */
+  function start(dir: string, boardId: string): Promise<RefreshOutcome> {
+    const key = `${dir}\u0000${boardId}` // NUL can't appear in a real path -> unambiguous join
+    const p = run(dir, boardId).finally(() => {
+      inFlight.delete(key)
+      // BUG-015: a content change that raced this in-flight call was parked in `pending` (and
+      // its fingerprint already advanced in memoryEngine, so no future observe() would re-arm
+      // it). Re-fire it now that the slot is free -- whether this call succeeded OR failed -- so a
+      // warranted re-summarize is not silently lost on a slow first-call failure.
+      //
+      // BUG-007: but ONLY if the project hasn't switched out from under the parked intent. The
+      // re-fire carries the bare boardId, so a fresh doIntent would re-snapshot getCurrentDir()
+      // -- if the user opened project B while this projA intent was parked, the retry would
+      // summarize + write B's same-id board OUTSIDE the debounce/fingerprint flow (an
+      // uninstructed spend; pending is keyed on the OLD projA dir and reset() never clears it).
+      // `dir` is this invocation's captured project dir, so skip the re-fire when the live dir
+      // no longer matches -- the parked intent was for a now-closed project.
+      if (pending.delete(key) && deps.getCurrentDir() === dir) void loop.onIntent({ boardId })
+    })
+    inFlight.set(key, p)
+    return p
+  }
+
+  async function doIntent({ boardId }: SummarizeIntent): Promise<void> {
+    const dir = deps.getCurrentDir()
+    if (!dir) return
+    const key = `${dir}\u0000${boardId}`
+    if (inFlight.has(key)) {
+      pending.add(key) // a slow call for this (project,board) is running -- remember to retry
+      return
+    }
+    await start(dir, boardId)
+  }
+
+  async function refresh(boardId: string): Promise<RefreshOutcome> {
+    const dir = deps.getCurrentDir()
+    if (!dir) return { status: 'skipped', reason: 'no-project' }
+    // Coalesce, don't park: the user clicked refresh once -- awaiting the in-flight run's
+    // outcome answers the click without queueing a SECOND budgeted LLM call behind it (the
+    // watcher's pending-park stays reserved for content-change intents).
+    const existing = inFlight.get(`${dir}\u0000${boardId}`)
+    if (existing) return { status: 'coalesced', with: await existing }
+    return start(dir, boardId)
+  }
+
   const loop: SummaryLoop = {
-    onIntent: doIntent
+    onIntent: doIntent,
+    refresh
   }
   return loop
 }

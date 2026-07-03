@@ -1699,3 +1699,69 @@ DESTINATION first (R2 pinned flush-save rejects); splice spec needs board scroll
 (at the 2000-ROW default, wrapped filler evicts from xterm before the 256KB ring); POSIX
 legs need platform-forked markers (bash chokes on pwsh concat). Deferred (ADR'd):
 quit-relaunch e2e harness, recap-map dir-scoping, dir-keyed boardResults.
+## 2026-07-03 — PR #290: recap refresh — structured outcomes + `recap:updated` push + lineage-guarded transcript resolution (`50701813`)
+
+User-reported: the recap face's stale banner ("Recap is out of date — describes an earlier
+session") never cleared on ⟳. Root cause: banner and regeneration were **unsynchronized paths
+with different gates** — the banner is renderer-only math over always-available local facts
+(`asOf < lastActivity − 120s`), while regeneration silently no-oped on ANY gate (consent off,
+missing/untrusted transcript, no LLM key, budget exhausted, in-flight watcher collision) with
+`memory:refresh` still reporting `{ok:true}`. The "earlier session" wording was literal: the
+SessionStart hook records the transcript path before the `.jsonl` exists (eager capture), and
+compaction/`/resume` rolls onto a new transcript without re-firing SessionStart.
+
+- **`summaryLoop`** — body refactored into `run()` returning a typed `RefreshOutcome`
+  (`recap-written{asOf}` / `summary-written{recapSkipped}` / `llm-unavailable{reason}` /
+  `skipped{reason}` / `coalesced{with}`); `inFlight` Set → `Map<key, Promise<outcome>>`; new
+  `refresh()` coalesces onto an in-flight run (no second budgeted LLM call per click) while the
+  watcher's `onIntent` pending-park/drain (BUG-015/BUG-007) stays byte-compatible; `onRecapWritten`
+  dep fires only after `writeBoardRecap` durably lands.
+- **IPC/push** — `memory:refresh` returns `{ok, outcome?}` (additive); new **`recap:updated`**
+  push (destroyed-window guards as `recap:learned`) so background watcher regens update an open
+  RecapView live. `getAgentMilestones` reports WHY it skipped instead of `undefined`.
+- **RecapView** — `refreshNoteFor(outcome)` (`lib/recapNote.ts`) renders a calm one-line reason
+  ("Regenerating needs an LLM key…", budget, consent, no-transcript; warn tone on errors);
+  subscribes to `recap:updated`.
+- **`resolveLiveTranscriptPath`** — eager-capture grace (fresh map entry + missing `.jsonl` ⇒
+  `undefined`, never scan onto an OLDER session) + lineage-proven rotation adoption (active
+  board's transcript mtime lags >120s ⇒ adopt a newer sibling ONLY when its 64KB tail contains
+  the recorded session id — BUG-005 sibling protection intact). `readRecapMap` parses the hook `ts`.
+- **preload** — recap namespace factored to `recapApi.ts` (max-lines ratchet, terminalApi
+  precedent). Chore: ignore the local `.impeccable/` design-hook cache.
+
+**Verified:** 18 new units (7 refresh-outcome incl. coalesce = ONE provider call · 7 resolver
+grace/rotation/lineage/sibling · 3 RecapView note/push · outcome-passthrough integration), full
+suite 4180 pass · +2 @terminal e2e (key-less why-note, deterministic zero-egress; mock-LLM manual
+refresh regenerates in place) · full pre-push matrix (Win + Linux Docker) + full matrix re-run on
+the merged tree · manual dev check title-stamped. Bot review: 0 critical / 0 warning.
+
+## 2026-07-03 — PR #292: find-in-terminal count no longer latches stale — flush + settle re-search (`e8bc21df`)
+
+User-reported: searching a word **visibly on screen** showed "No results", flipping to the right
+count minutes later (or never). Two mechanisms compound: the match counter's only refresh source
+is `SearchAddon.onDidChangeResults`, and the addon recounts ONLY on PTY write/resize (+200ms
+debounce) — so any transient initial under-count **latches until the next output** (minutes on an
+idle terminal). Transient under-counts are easy to hit: `resultCount` is the decoration count
+(registration can transiently fail on a just-revealed / mid-refit terminal), and the searched
+buffer trails the screen while the write coalescer holds/batches bytes.
+
+- **`terminalWriteCoalescer.flushNow()`** — synchronous flush when live (cancels the scheduled
+  frame); refuses while hidden/backstop-held so it never interleaves into a reset buffer.
+- **`TerminalFindApi.flushPending()`** — function-ref armed by the spawn effect (`refitRef`
+  precedent; a direct `coalescerRef` read from another effect trips the compiler's
+  cross-effect-mutation rule). Bar-open effect + every search/step flush first.
+- **`TerminalFindBar`** — `lastFound` captures `findNext`'s boolean: found-but-uncounted shows a
+  quiet pending `''`, not a false "No results" (both signals must agree for the negative). ONE
+  settle re-search (`SEARCH_SETTLE_MS = 350` > addon 200ms debounce + 120ms liveness settle)
+  re-registers decorations and fires the true count with zero further output. A manual step
+  (Enter/⇧Enter/↑↓) **supersedes** the pending settle — a late incremental re-run after an
+  `incremental:false` step advances the cursor past the user's position (caught live by the
+  Ctrl+F e2e under load: step to 2/3, late settle pushed 3/3).
+
+**Verified:** 10 new units (4 coalescer flushNow · 6 find-bar: flush ordering, one-shot settle +
+unmount cancel, step-supersedes-settle, honest pending vs honest negative) · +2 @terminal e2e
+(streaming count convergence; REVEAL-LATCH regression — needle written below-LOD with held bytes
+asserted, revealed, searched: exact count with ZERO further PTY writes) · full matrix manually on
+the pre-merge tree (Win 245/245, Linux 247 with 1 known browserNetwork JD-2 load-flake
+retry-green) + full matrix re-run on the merged tree · manual dev check title-stamped. Bot
+review: 0 critical / 0 warning.

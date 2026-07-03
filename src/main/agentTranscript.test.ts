@@ -7,6 +7,8 @@ import {
   isTrustedTranscriptPath,
   readTranscriptTail,
   resolveLiveTranscriptPath,
+  EAGER_CAPTURE_GRACE_MS,
+  ROTATION_LAG_MS,
   TRANSCRIPT_TAIL_BYTES
 } from './agentTranscript'
 
@@ -199,7 +201,9 @@ describe('resolveLiveTranscriptPath', () => {
       { name: 'mid.jsonl', mtime: 3000 }
     ])
     // the dunly-dunning case: recorded session file is gone, but its dir holds the live one
-    expect(resolveLiveTranscriptPath(join(dir, 'gone.jsonl'), env)).toBe(join(dir, 'live.jsonl'))
+    expect(resolveLiveTranscriptPath(join(dir, 'gone.jsonl'), { env })).toBe(
+      join(dir, 'live.jsonl')
+    )
   })
 
   // BUG-005: a still-existing recorded file must NEVER be swapped for a newer sibling — Claude
@@ -212,7 +216,7 @@ describe('resolveLiveTranscriptPath', () => {
       { name: 'boardA.jsonl', mtime: 1000 },
       { name: 'boardB.jsonl', mtime: 5000 }
     ])
-    expect(resolveLiveTranscriptPath(join(dir, 'boardA.jsonl'), env)).toBe(
+    expect(resolveLiveTranscriptPath(join(dir, 'boardA.jsonl'), { env })).toBe(
       join(dir, 'boardA.jsonl')
     )
   })
@@ -222,19 +226,159 @@ describe('resolveLiveTranscriptPath', () => {
       { name: 'a.jsonl', mtime: 1000 },
       { name: 'notes.txt', mtime: 9000 }
     ])
-    expect(resolveLiveTranscriptPath(join(dir, 'a.jsonl'), env)).toBe(join(dir, 'a.jsonl'))
+    expect(resolveLiveTranscriptPath(join(dir, 'a.jsonl'), { env })).toBe(join(dir, 'a.jsonl'))
   })
 
   it('passes an untrusted / empty recorded path through unchanged (never scans)', () => {
     const { env } = makeProject([])
     const outside = join(tmpdir(), 'elsewhere', 'x.jsonl')
-    expect(resolveLiveTranscriptPath(outside, env)).toBe(outside)
-    expect(resolveLiveTranscriptPath(undefined, env)).toBeUndefined()
+    expect(resolveLiveTranscriptPath(outside, { env })).toBe(outside)
+    expect(resolveLiveTranscriptPath(undefined, { env })).toBeUndefined()
   })
 
   it('falls back to the recorded path when the dir holds no .jsonl', () => {
     const { dir, env } = makeProject([{ name: 'readme.md', mtime: 1000 }])
     const recorded = join(dir, 'session.jsonl')
-    expect(resolveLiveTranscriptPath(recorded, env)).toBe(recorded)
+    expect(resolveLiveTranscriptPath(recorded, { env })).toBe(recorded)
+  })
+})
+
+describe('resolveLiveTranscriptPath — A4 clock-guarded branches (recap-refresh fix)', () => {
+  const roots: string[] = []
+  afterEach(() => roots.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })))
+  // Like the legacy makeProject, but each file carries CONTENT (for the lineage tail check).
+  const makeProject = (
+    files: { name: string; mtime: number; content?: string }[]
+  ): { dir: string; env: NodeJS.ProcessEnv } => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-root-'))
+    roots.push(root)
+    const dir = join(root, 'projects', 'Z--proj')
+    mkdirSync(dir, { recursive: true })
+    for (const f of files) {
+      const p = join(dir, f.name)
+      writeFileSync(p, f.content ?? '{}\n')
+      utimesSync(p, f.mtime, f.mtime)
+    }
+    return { dir, env: { CLAUDE_CONFIG_DIR: root } as NodeJS.ProcessEnv }
+  }
+  const SESSION = 'aaaa1111-2222-3333-4444-555566667777'
+
+  it('eager-capture grace: a FRESH entry with a still-missing file resolves to undefined, not an older sibling', () => {
+    const { dir, env } = makeProject([{ name: 'older.jsonl', mtime: 1000 }])
+    const recorded = join(dir, 'brand-new.jsonl') // hook recorded it; claude has not written it yet
+    const now = 1_000_000_000
+    expect(
+      resolveLiveTranscriptPath(recorded, { env, recordedAt: now - 5_000, now })
+    ).toBeUndefined()
+  })
+
+  it('past the grace window the legacy newest-mtime self-heal resumes', () => {
+    const { dir, env } = makeProject([{ name: 'older.jsonl', mtime: 1000 }])
+    const recorded = join(dir, 'gone.jsonl')
+    const now = 1_000_000_000
+    expect(
+      resolveLiveTranscriptPath(recorded, {
+        env,
+        recordedAt: now - EAGER_CAPTURE_GRACE_MS - 1,
+        now
+      })
+    ).toBe(join(dir, 'older.jsonl'))
+  })
+
+  it('a missing file with NO recordedAt keeps the legacy scan (pre-ts map entries)', () => {
+    const { dir, env } = makeProject([{ name: 'older.jsonl', mtime: 1000 }])
+    expect(resolveLiveTranscriptPath(join(dir, 'gone.jsonl'), { env })).toBe(
+      join(dir, 'older.jsonl')
+    )
+  })
+
+  it('rotation: adopts a NEWER sibling whose tail carries the recorded session id (lineage)', () => {
+    const nowSec = 2_000_000 // epoch SECONDS for utimesSync
+    const now = nowSec * 1000
+    const { dir, env } = makeProject([
+      { name: 'recorded.jsonl', mtime: nowSec - 600 }, // stopped receiving writes 10 min ago
+      {
+        name: 'successor.jsonl',
+        mtime: nowSec - 5,
+        content: `{"sessionId":"${SESSION}","note":"compaction successor carries the lineage"}\n`
+      }
+    ])
+    expect(
+      resolveLiveTranscriptPath(join(dir, 'recorded.jsonl'), {
+        env,
+        sessionId: SESSION,
+        agentActiveAt: now - 1_000, // PTY demonstrably active
+        now
+      })
+    ).toBe(join(dir, 'successor.jsonl'))
+  })
+
+  it('rotation: does NOT adopt an active sibling WITHOUT lineage (BUG-005 stays fixed)', () => {
+    const nowSec = 2_000_000
+    const now = nowSec * 1000
+    const { dir, env } = makeProject([
+      { name: 'recorded.jsonl', mtime: nowSec - 600 },
+      { name: 'sibling.jsonl', mtime: nowSec - 5, content: '{"sessionId":"someone-else"}\n' }
+    ])
+    expect(
+      resolveLiveTranscriptPath(join(dir, 'recorded.jsonl'), {
+        env,
+        sessionId: SESSION,
+        agentActiveAt: now - 1_000,
+        now
+      })
+    ).toBe(join(dir, 'recorded.jsonl'))
+  })
+
+  it('rotation: not even considered while the recorded mtime tracks the activity clock', () => {
+    const nowSec = 2_000_000
+    const now = nowSec * 1000
+    const lagSec = Math.floor((ROTATION_LAG_MS - 10_000) / 1000) // inside the lag threshold
+    const { dir, env } = makeProject([
+      { name: 'recorded.jsonl', mtime: nowSec - lagSec },
+      { name: 'newer.jsonl', mtime: nowSec - 1, content: `{"sessionId":"${SESSION}"}\n` }
+    ])
+    expect(
+      resolveLiveTranscriptPath(join(dir, 'recorded.jsonl'), {
+        env,
+        sessionId: SESSION,
+        agentActiveAt: now - 1_000,
+        now
+      })
+    ).toBe(join(dir, 'recorded.jsonl'))
+  })
+
+  it('rotation: not considered when the agent has been inactive (no live PTY signal)', () => {
+    const nowSec = 2_000_000
+    const now = nowSec * 1000
+    const { dir, env } = makeProject([
+      { name: 'recorded.jsonl', mtime: nowSec - 600 },
+      { name: 'newer.jsonl', mtime: nowSec - 5, content: `{"sessionId":"${SESSION}"}\n` }
+    ])
+    expect(
+      resolveLiveTranscriptPath(join(dir, 'recorded.jsonl'), {
+        env,
+        sessionId: SESSION,
+        agentActiveAt: now - 10 * 60_000, // idle for 10 minutes
+        now
+      })
+    ).toBe(join(dir, 'recorded.jsonl'))
+  })
+
+  it('rotation: a too-short session id is never used as a lineage anchor', () => {
+    const nowSec = 2_000_000
+    const now = nowSec * 1000
+    const { dir, env } = makeProject([
+      { name: 'recorded.jsonl', mtime: nowSec - 600 },
+      { name: 'newer.jsonl', mtime: nowSec - 5, content: '{"x":"ab"}\n' }
+    ])
+    expect(
+      resolveLiveTranscriptPath(join(dir, 'recorded.jsonl'), {
+        env,
+        sessionId: 'ab', // 2 chars: would false-match almost any tail
+        agentActiveAt: now - 1_000,
+        now
+      })
+    ).toBe(join(dir, 'recorded.jsonl'))
   })
 })
