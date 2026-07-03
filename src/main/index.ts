@@ -81,7 +81,7 @@ import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
 import { registerTerminalHandlers } from './terminalIpc'
 import { registerPlatformIpc } from './platformIpc'
-import { makeFlushChannel, makeFlushFinish } from './flushChannel'
+import { flushRendererAutosave } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
 import {
   watchRecapMap,
@@ -1082,47 +1082,11 @@ function shutdown(): Promise<void> {
   return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 
-/**
- * Ask the renderer to flush its debounced autosave before we hard-exit (BUG-M2).
- * The quit path calls `app.exit(0)`, which never fires the renderer `beforeunload`,
- * so the autosave flush handler (useAutosave) would be skipped and the last ~1s of
- * edits lost. We post `project:flush` with a unique reply channel; the renderer runs
- * its flush (awaiting `project:save`) and replies. We resolve on the reply OR a short
- * timeout fallback so a wedged/closed renderer can never hang the quit.
- */
+/** BUG-M2 renderer autosave flush before a hard exit — body lives in flushChannel.ts
+ *  (`flushRendererAutosave`, moved beside its channel/finish primitives by the max-lines
+ *  ratchet); this wrapper just binds the module's ipcMain + live window. */
 function flushRenderer(timeoutMs = 1500): Promise<void> {
-  const win = mainWindow
-  // BUG-001: accessing .webContents on a destroyed BrowserWindow throws "Object has been
-  // destroyed". Guard isDestroyed() BEFORE dereferencing .webContents so the close-then-quit
-  // path (Win/Linux: window close -> window-all-closed -> before-quit -> flushRenderer) cannot
-  // throw into the uncaughtException sink and short-circuit the guarded-quit chain.
-  if (!win || win.isDestroyed()) return Promise.resolve()
-  const wc = win.webContents
-  if (!wc || wc.isDestroyed()) return Promise.resolve()
-  return new Promise<void>((resolve) => {
-    // 🔒 BUG-038: use CSPRNG randomUUID() (not predictable Date.now()/Math.random).
-    const replyChannel = makeFlushChannel()
-    const { finish, forceFinish } = makeFlushFinish({
-      getWin: () => mainWindow,
-      onCleanup: () => {
-        ipcMain.removeAllListeners(replyChannel)
-        clearTimeout(timer)
-      },
-      onResolve: resolve
-    })
-    // 🔒 BUG-038: `finish` accepts IpcMainEvent and guards against foreign-frame senders.
-    // BUG-019: use ipcMain.on (not once) so a foreign-frame message that isForeignSender
-    // correctly ignores does not consume the listener before the legitimate reply arrives.
-    // onCleanup calls removeAllListeners(replyChannel) when finish resolves, so cleanup
-    // still happens exactly once regardless of how many messages arrive on the channel.
-    const timer = setTimeout(forceFinish, timeoutMs)
-    ipcMain.on(replyChannel, finish)
-    try {
-      wc.send('project:flush', replyChannel)
-    } catch {
-      forceFinish() // renderer gone — nothing to flush
-    }
-  })
+  return flushRendererAutosave(ipcMain, () => mainWindow, timeoutMs)
 }
 
 app.on('window-all-closed', () => {
