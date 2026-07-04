@@ -47,7 +47,14 @@ const GRID_SEGMENTS: ReadonlyArray<{ key: 'off' | GridStyle; label: string }> = 
   { key: 'cross', label: 'Cross' }
 ]
 
-export function BackdropPicker(): ReactElement {
+export function BackdropPicker({
+  menuZIndex
+}: {
+  /** Raise the picker's floating Menu above a host layer (default 250). The Settings › Appearance
+   *  pane sets this so the popover paints over the Settings modal (zIndex 300); the toolbar leaves
+   *  it undefined. */
+  menuZIndex?: number
+} = {}): ReactElement {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -140,6 +147,7 @@ export function BackdropPicker(): ReactElement {
           label="Backdrop"
           className="bd-menu"
           onClose={() => setOpen(false)}
+          style={menuZIndex != null ? { zIndex: menuZIndex } : undefined}
         >
           <div className="bd-head">Backdrop</div>
           <button

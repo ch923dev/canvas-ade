@@ -14,7 +14,8 @@ import { cameraAnim } from '../lib/motion'
 import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
-import { SettingsModal } from './SettingsModal'
+import { SettingsPanel } from './settings/SettingsPanel'
+import type { SettingsSectionId } from './settings/settingsSections'
 import { BackdropPicker } from './BackdropPicker'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { RecapConsentModal } from './RecapConsentModal'
@@ -39,6 +40,9 @@ export interface AppChromeProps {
 
 export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
+  // Which tile the Settings panel opens on: null = the category grid (the gear); 'account' = drilled
+  // straight into Account (the account pill / avatar). Reset on each open.
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null)
   const [showSignIn, setShowSignIn] = useState(false)
   const [askRecap, setAskRecap] = useState(false)
   // Re-run whenever the user switches to a different project (project.dir changes).
@@ -70,17 +74,24 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       <ProjectSwitcher />
       <CameraCluster
         onTidy={onTidy}
-        onSettings={() => setShowSettings(true)}
+        onSettings={() => {
+          setSettingsSection(null)
+          setShowSettings(true)
+        }}
         onFocusGroup={onFocusGroup}
         onSignIn={() => setShowSignIn(true)}
-        onAccount={() => setShowSettings(true)}
+        onAccount={() => {
+          setSettingsSection('account')
+          setShowSettings(true)
+        }}
       />
       <SidePanel />
       <BoardInspector />
       <Dock />
       {showSettings && (
-        <SettingsModal
+        <SettingsPanel
           onClose={() => setShowSettings(false)}
+          initialSection={settingsSection}
           // Account section's "Sign in" CTA: close Settings first, then open SignInView — stacking
           // two shared Modals would duel their focus traps + Esc handling (the orchestration-modal
           // pattern). The pill's own signed-out click opens SignInView directly.

@@ -44,7 +44,13 @@ interface MicDevice {
   label: string
 }
 
-export function SettingsVoiceSection(): ReactElement | null {
+export function SettingsVoiceSection({
+  embedded = false
+}: {
+  /** When the caller already renders a "Voice" section heading (the Settings tab panel), suppress
+   *  this section's own leading divider + "Voice dictation" head so the title isn't doubled. */
+  embedded?: boolean
+} = {}): ReactElement | null {
   // Absent api (non-electron test runtimes) renders NOTHING — that guard keeps the
   // SettingsModal voice-less unit mocks green. A present api with `supported:false`
   // (win-arm64, V5 gate) renders the section head + one unavailable row instead.
@@ -94,8 +100,12 @@ export function SettingsVoiceSection(): ReactElement | null {
   if (!supported) {
     return (
       <>
-        <div style={s.divider} />
-        <div style={s.head}>Voice dictation</div>
+        {!embedded && (
+          <>
+            <div style={s.divider} />
+            <div style={s.head}>Voice dictation</div>
+          </>
+        )}
         <div style={s.callout} data-test="voice-unsupported-note" role="note">
           Voice dictation isn&rsquo;t available on this platform yet (Windows on ARM — the on-device
           speech engine has no ARM64 build).
@@ -184,9 +194,12 @@ export function SettingsVoiceSection(): ReactElement | null {
 
   return (
     <>
-      <div style={s.divider} />
-
-      <div style={s.head}>Voice dictation</div>
+      {!embedded && (
+        <>
+          <div style={s.divider} />
+          <div style={s.head}>Voice dictation</div>
+        </>
+      )}
 
       <div style={s.setrow} data-test="voice-showpill-row">
         <div style={{ flex: 1 }}>

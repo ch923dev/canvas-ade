@@ -76,25 +76,25 @@ test.describe('@chrome accounts (Phase 1)', () => {
     await expect(pill).toBeVisible()
     await expect(pill).toContainText('PRO')
 
-    // Clicking the avatar opens Settings at the Account section (top of the modal).
+    // Clicking the avatar opens Settings on the "You" tab (initialSection='account'), so the Account
+    // section is visible without any extra navigation.
     await pill.click()
-    await expect(page.locator('[data-test="settings-modal"]')).toBeVisible()
+    await expect(page.locator('[data-test="settings-panel"]')).toBeVisible()
     const row = page.locator('[data-test="account-row"]')
     await expect(row).toBeVisible()
     await expect(row).toContainText('pro@example.com')
     await expect(row).toContainText('PRO')
-    // Manage-subscription is present but disabled in Phase 1 (billing is Phase 2).
-    await expect(page.locator('[data-test="account-manage"]')).toBeDisabled()
+    // (Manage-subscription is now its own Billing tile — covered by modal.e2e's tiles-nav test.)
 
     // Sign out drives the REAL auth:signOut IPC; MAIN clears local state and pushes signed-out,
-    // and the Account section flips to the signed-out CTA in place (the modal stays open).
+    // and the Account section flips to the signed-out CTA in place (the panel stays open).
     await page.locator('[data-test="account-signout"]').click()
     await expect(page.locator('[data-test="account-cta"]')).toBeVisible()
     await expect(page.locator('[data-test="account-row"]')).toHaveCount(0)
 
-    // Close Settings → the chrome pill is back to the signed-out "Sign in".
+    // Close Settings (Esc closes from any tab) → the chrome pill is back to the signed-out "Sign in".
     await page.keyboard.press('Escape')
-    await expect(page.locator('[data-test="settings-modal"]')).toHaveCount(0)
+    await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
     await expect(page.locator('[data-test="account-signin"]')).toBeVisible()
   })
 
@@ -103,13 +103,14 @@ test.describe('@chrome accounts (Phase 1)', () => {
   }) => {
     await setStatus(page, { isLoggedIn: false, encryptionAvailable: true })
 
-    // Open Settings via the gear → the Account section is the signed-out CTA card.
+    // Open Settings via the gear → the "You" tab is active, so the Account section (signed-out CTA)
+    // shows without any extra navigation.
     await page.locator('button[title="Settings"]').click()
-    await expect(page.locator('[data-test="settings-modal"]')).toBeVisible()
+    await expect(page.locator('[data-test="settings-panel"]')).toBeVisible()
     await expect(page.locator('[data-test="account-cta"]')).toBeVisible()
     await expect(page.locator('[data-test="account-cta-signin"]')).toBeVisible()
     await page.keyboard.press('Escape')
-    await expect(page.locator('[data-test="settings-modal"]')).toHaveCount(0)
+    await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
 
     // No system keyring (safeStorage off) → the SignInView shows the hard-block notice and offers
     // NO provider buttons (we never write plaintext tokens), only "Continue offline".

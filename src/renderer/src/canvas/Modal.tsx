@@ -1,6 +1,6 @@
 /**
  * Shared modal primitive (design-audit D1-B, finding A7). One scrim/portal/Esc/focus
- * implementation for ConfirmModal / RecapConsentModal / SettingsModal — replaces the three
+ * implementation for ConfirmModal / RecapConsentModal / SettingsPanel — replaces the three
  * hand-rolled copies and their hardcoded scrims (0.5 / .45 / .4 black) with the `--scrim`
  * token. FullViewModal is deliberately NOT on this primitive: its 0.66 scrim is a full-bleed
  * workspace overlay, intentionally heavier than a modal (approved 2026-06-10).
