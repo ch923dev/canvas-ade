@@ -55,6 +55,14 @@ export interface BoardMirror {
    * already sees on-canvas — never file content / PTY bytes. Absent on every non-kanban board.
    */
   kanban?: KanbanMirror
+  /**
+   * Planning board's bounded elements + their ids (S6; `type:'planning'` only) — validated + capped on
+   * ingest ({@link sanitizePlanning}) since `mcp:boards` is an IPC channel, then served as the per-board
+   * `canvas://board/{id}/planning` read resource so an agent can EDIT an element in place (by id) instead
+   * of re-appending a duplicate. Element TEXT the human already sees on-canvas — never PTY bytes. Absent
+   * on every non-planning board.
+   */
+  planning?: PlanningMirror
 }
 
 /** A single agent-readable file reference on the board mirror (file-tree S5). Path only, no content. */
@@ -84,6 +92,34 @@ export interface KanbanCardMirror {
 export interface KanbanMirror {
   columns: KanbanColumnMirror[]
   cards: KanbanCardMirror[]
+}
+
+/** One checklist item in a Planning board's mirror projection (S6) — id + label + done. */
+export interface PlanningItemMirror {
+  id: string
+  label: string
+  done: boolean
+}
+
+/**
+ * One element in a Planning board's mirror projection (S6) — always its `id` + `kind`, plus the
+ * editable fields that apply to that kind (text/tint for a note, title/items for a checklist, source
+ * for a diagram, …). Long free-text is TRUNCATED to a preview on ingest (identification, not fidelity —
+ * an `update_planning_element` supplies full new content). Served as `canvas://board/{id}/planning`.
+ */
+export interface PlanningElementMirror {
+  id: string
+  kind: string
+  text?: string
+  tint?: string
+  title?: string
+  source?: string
+  items?: PlanningItemMirror[]
+}
+
+/** A Planning board's bounded elements on the mirror (S6). The host serves it as the read resource. */
+export interface PlanningMirror {
+  elements: PlanningElementMirror[]
 }
 
 /**
@@ -242,6 +278,12 @@ const MAX_FILEREFS = 500
 const MAX_KANBAN_COLUMNS = 50
 const MAX_KANBAN_CARDS = 300
 const MAX_FIELD_LEN = 256
+/** Cap a single planning board's mirrored elements + items (S6) so a forged push can't grow MAIN memory. */
+const MAX_PLANNING_ELEMENTS = 300
+const MAX_PLANNING_ITEMS = 100
+/** Free-text preview length for a mirrored note/text/diagram/label (S6) — long content is TRUNCATED (not
+ *  dropped) so the element stays addressable by id for an edit; the edit itself supplies full content. */
+const MAX_PLANNING_PREVIEW = 500
 
 /**
  * Keep only well-formed {path,label} file references; drop anything else (file-tree S5). Bounded
@@ -273,6 +315,62 @@ function sanitizeFileRefs(input: unknown): FileRefMirror[] | undefined {
 function boundedStr(v: unknown): string | undefined {
   if (typeof v !== 'string' || v.length === 0 || v.length > MAX_FIELD_LEN) return undefined
   return v
+}
+
+/** A non-empty free-text PREVIEW, TRUNCATED to {@link MAX_PLANNING_PREVIEW} (S6) — unlike {@link boundedStr}
+ *  an over-length value is cut, not dropped, so a long note stays identifiable by its opening text. */
+function boundedPreview(v: unknown): string | undefined {
+  if (typeof v !== 'string' || v.length === 0) return undefined
+  return v.length > MAX_PLANNING_PREVIEW ? v.slice(0, MAX_PLANNING_PREVIEW) : v
+}
+
+/**
+ * Keep only well-formed Planning elements + their ids (S6). Bounded like the other snapshot fields —
+ * `mcp:boards` is an IPC channel — cap elements ({@link MAX_PLANNING_ELEMENTS}) + checklist items
+ * ({@link MAX_PLANNING_ITEMS}); every element keeps its `id`+`kind`, and the editable free-text fields are
+ * truncated to a preview ({@link boundedPreview}). An element missing a required id/kind is dropped.
+ * Returns `undefined` (not an empty projection) when nothing survives, so {@link sanitizeSnapshot} omits
+ * the field. The host serves the survivors as `canvas://board/{id}/planning` (read half of the edit loop).
+ */
+function sanitizePlanning(input: unknown): PlanningMirror | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  const { elements } = input as { elements?: unknown }
+  if (!Array.isArray(elements)) return undefined
+  const out: PlanningElementMirror[] = []
+  for (const e of elements) {
+    if (out.length >= MAX_PLANNING_ELEMENTS) break
+    if (!e || typeof e !== 'object') continue
+    const rec = e as Record<string, unknown>
+    const id = boundedStr(rec.id)
+    const kind = boundedStr(rec.kind)
+    if (id === undefined || kind === undefined) continue
+    const el: PlanningElementMirror = { id, kind }
+    const text = boundedPreview(rec.text)
+    if (text !== undefined) el.text = text
+    const tint = boundedStr(rec.tint)
+    if (tint !== undefined) el.tint = tint
+    const title = boundedPreview(rec.title)
+    if (title !== undefined) el.title = title
+    const source = boundedPreview(rec.source)
+    if (source !== undefined) el.source = source
+    if (kind === 'checklist' && Array.isArray(rec.items)) {
+      const items: PlanningItemMirror[] = []
+      for (const it of rec.items) {
+        if (items.length >= MAX_PLANNING_ITEMS) break
+        if (!it || typeof it !== 'object') continue
+        const iid = boundedStr((it as Record<string, unknown>).id)
+        if (iid === undefined) continue
+        items.push({
+          id: iid,
+          label: boundedPreview((it as Record<string, unknown>).label) ?? '',
+          done: (it as Record<string, unknown>).done === true
+        })
+      }
+      el.items = items
+    }
+    out.push(el)
+  }
+  return out.length > 0 ? { elements: out } : undefined
 }
 
 /**
@@ -356,7 +454,8 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
         y,
         w,
         h,
-        kanban
+        kanban,
+        planning
       } = b as BoardMirror
       if (
         id.length > MAX_FIELD_LEN ||
@@ -394,6 +493,9 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       // P3b: a kanban board's bounded lanes+cards (validated/capped; absent otherwise).
       const sanitizedKanban = sanitizeKanban(kanban)
       if (sanitizedKanban !== undefined) entry.kanban = sanitizedKanban
+      // S6: a planning board's bounded elements+ids (validated/capped; absent otherwise).
+      const sanitizedPlanning = sanitizePlanning(planning)
+      if (sanitizedPlanning !== undefined) entry.planning = sanitizedPlanning
       out.push(entry)
     }
   }

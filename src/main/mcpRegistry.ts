@@ -6,6 +6,8 @@ import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse
 import type { AppModel } from './appModel'
 import type { LayoutDigest } from './layoutModel'
 import type { BoardCards } from './mcpBoardCards'
+import type { BoardPlanning } from './mcpBoardPlanning'
+import type { PlanningEditPatch } from '../shared/mcpTypes'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
@@ -89,6 +91,9 @@ export type LifecycleOrchestrator = Omit<
   | 'spawnGroup'
   | 'describeLayout'
   | 'boardCards'
+  | 'boardPlanning'
+  | 'updatePlanningElement'
+  | 'removePlanningElement'
   | 'tidyCanvas'
   | 'addCard'
   | 'moveCard'
@@ -134,6 +139,24 @@ export type LifecycleOrchestrator = Omit<
    * matches the concrete method on 0.18.0-rc.4 at integration.
    */
   boardCards(boardId: string): Promise<BoardCards>
+  /**
+   * Project one Planning board's elements + their ids (S6) — the read half of the edit loop, served as
+   * `canvas://board/{id}/planning`. NARROWS the package's `boardPlanning(): Promise<unknown>` to the
+   * concrete host-owned {@link BoardPlanning} (the package does not own that type — same discipline as
+   * `boardCards`). Omitting it from the base is a harmless no-op on a package predating it (rc.6), and
+   * matches the concrete method on 0.18.0-rc.7 at integration.
+   */
+  boardPlanning(boardId: string): Promise<BoardPlanning>
+  /**
+   * 🔒 Edit / remove ONE existing planning element in place (S6) — the read-then-update loop closing the
+   * append-only gap. `updatePlanningElement` resolves the element by id, validates the patch against its
+   * kind, human-confirms, and applies via the `patchPlanningEdit` command; `removePlanningElement`
+   * deletes by id (also human-confirmed). Host-local `PlanningEditPatch` type (the installed package
+   * predates it); Omitting them from the base is a harmless no-op on rc.6 and matches the concrete
+   * methods on 0.18.0-rc.7 — same discipline as `boardCards` / the card methods.
+   */
+  updatePlanningElement(boardId: string, elementId: string, patch: PlanningEditPatch): Promise<void>
+  removePlanningElement(boardId: string, elementId: string): Promise<void>
   /**
    * 🔒 Tidy the whole canvas (P2) — reposition every board into a clean, non-overlapping arrangement
    * via the renderer's deterministic packer (`canvasStore.tidyBoards`). NARROWS the package's
@@ -239,6 +262,20 @@ export interface BoardRegistry {
         tag?: string
         assignee?: string
         ref?: string
+      }>
+    }
+    /** S6: a planning board's bounded elements (mirror-sanitized) — id+kind + editable fields, served
+     *  as `canvas://board/{id}/planning` AND read by the edit gate to resolve an element's kind.
+     *  Absent on every non-planning board. */
+    planning?: {
+      elements: Array<{
+        id: string
+        kind: string
+        text?: string
+        tint?: string
+        title?: string
+        source?: string
+        items?: Array<{ id: string; label: string; done: boolean }>
       }>
     }
   }>

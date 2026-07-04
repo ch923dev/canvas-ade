@@ -145,6 +145,17 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     tier: 'orchestrator'
   },
   {
+    name: 'update_planning_element',
+    purpose:
+      'Edit ONE existing planning element in place by id — note/text/checklist/diagram/arrow (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'remove_planning_element',
+    purpose: 'Remove ONE planning element by id (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
     name: 'add_card',
     purpose: 'Add a card to a Kanban board column (gated; flag-gated off by default).',
     tier: 'orchestrator'
@@ -226,7 +237,13 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
   {
     type: 'planning',
     purpose: 'A whiteboard: notes, arrows, text, freehand, and checklists.',
-    tools: ['spawn_board', 'add_planning_elements', 'close_board'],
+    tools: [
+      'spawn_board',
+      'add_planning_elements',
+      'update_planning_element',
+      'remove_planning_element',
+      'close_board'
+    ],
     states: ['static'],
     seedable: true, // add_planning_elements (flag-gated)
     autowire: null

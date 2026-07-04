@@ -20,6 +20,8 @@ import { createCloseBoardMethod } from './mcpCloseGate'
 import { buildAppModel, type AppModel } from './appModel'
 import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { createBoardCardsMethod } from './mcpBoardCards'
+import { createBoardPlanningMethod } from './mcpBoardPlanning'
+import { createPlanningEditMethods } from './mcpPlanningEditGate'
 import { createTidyMethod } from './mcpTidy'
 import { canRelay } from './orchestration/seam'
 import {
@@ -251,6 +253,17 @@ export function buildOrchestrator(
     audit: writeAudit
   })
 
+  // 🔒 S6 planning-element edit/remove (update/remove_planning_element) — the resolve→planning-check→
+  // resolve-element→confirm→patchPlanningEdit→audit gate + the two methods live in ./mcpPlanningEditGate
+  // (keeps this file under the max-lines gate, like ./mcpKanbanGate); spread into the returned object
+  // below. No PTY / nonce — an element is passive content (ADR 0003). This closes the append-only gap.
+  const planningEditMethods = createPlanningEditMethods({
+    listBoards: () => registry.listBoards(),
+    confirm: (req) => registry.confirm(req),
+    sendCommand: (cmd) => registry.sendCommand(cmd),
+    audit: writeAudit
+  })
+
   // 🔒 The single, unskippable PTY write gate shared by ALL four dispatch tools
   // (handoff_prompt / assign_prompt / relay_prompt / interrupt) — the canonical ordered pipeline
   // (sanitize → nonce → confirm → readiness → TOCTOU re-check → consume → write → audit) lives in
@@ -338,6 +351,10 @@ export function buildOrchestrator(
     // grouped from the live mirror). Built in ./mcpBoardCards + spread here to keep this file under the
     // max-lines gate. Read-only (no PTY / nonce / confirm) — card TEXT the human already sees on-canvas.
     ...createBoardCardsMethod(registry.listBoards),
+    // 🔒 S6 canvas://board/{id}/planning — the READ half of the edit loop (one planning board's elements +
+    // ids, projected from the live mirror). Built in ./mcpBoardPlanning + spread here to keep this file
+    // under the max-lines gate. Read-only (no PTY / nonce / confirm) — element TEXT the human already sees.
+    ...createBoardPlanningMethod(registry.listBoards),
     // 🔒 P2 tidy_canvas — reposition the whole canvas via the renderer's deterministic packer. Built
     // in ./mcpTidy + spread here to keep this file under the max-lines gate. UN-GATED + content-less
     // (reposition-only, one host-undo reversible — the spawn_group precedent): no cap/mint/confirm/audit.
@@ -382,6 +399,29 @@ export function buildOrchestrator(
       boardId: BoardId,
       config: { shell?: string; launchCommand?: string; cwd?: string }
     ): Promise<void> {
+      // 🔒 S6 guard (user rule 2026-07-04): everything on the canvas is updatable EXCEPT a terminal that
+      // is currently RUNNING. Reconfiguring a live terminal's shell/launchCommand/cwd is refused — the
+      // change can't take effect until the next spawn and reconfiguring under a live session is confusing.
+      // Resolved from the live mirror status (the same bucket the human sees on the board's status pill);
+      // a non-terminal / idle / stopped terminal passes through to the existing behaviour below.
+      const guardBoard = registry.listBoards().find((b) => b.id === boardId)
+      if (
+        guardBoard &&
+        guardBoard.type === 'terminal' &&
+        deriveStatus(guardBoard, sessionLookup()) === 'running'
+      ) {
+        await writeAudit({
+          type: 'configure_board',
+          targetId: boardId,
+          prompt: '',
+          nonce: '',
+          status: 'rejected',
+          detail: 'terminal is currently running'
+        })
+        throw new Error(
+          `configure_board: terminal "${guardBoard.title}" is currently running; stop it before reconfiguring`
+        )
+      }
       // 🔒 `launchCommand` is the exec vector (BUG-002): it is free-text written verbatim
       // as the FIRST PTY line on the board's next spawn, so a configure that sets it can
       // pre-stage an arbitrary shell command with deferred execution. It has no live PTY to
@@ -588,6 +628,8 @@ export function buildOrchestrator(
     },
     // 🔒 P3 Kanban card writes (add/move/update/remove) — built in ./mcpKanbanGate (see kanbanMethods).
     ...kanbanMethods,
+    // 🔒 S6 planning-element edit/remove (update/remove_planning_element) — built in ./mcpPlanningEditGate.
+    ...planningEditMethods,
     // 🔒 P5 plan-visualize (visualize_plan) — the upgraded content-write gate (chooser + create),
     // built in ./mcpVisualizeGate (keeps this file under the max-lines gate). NO PTY / nonce (a board
     // is passive content, ADR 0003). Inlined into the spread to stay under the gate.

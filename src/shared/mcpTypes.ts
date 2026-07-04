@@ -56,6 +56,51 @@ export type PlanningOp =
   | { kind: 'arrow'; dx: number; dy: number; section?: string }
   | { kind: 'diagram'; source: string; section?: string }
 
+// ── Planning-element EDIT op types (S6 — MCP in-place update/remove, MAIN → renderer) ──
+
+/** Edit ONE existing checklist item by its id (S6) — set its label and/or done. */
+export interface PlanningEditItemSet {
+  id: string
+  label?: string
+  done?: boolean
+}
+
+/** Append ONE checklist item (S6) — a fully-specified label + done (the renderer mints its id). */
+export interface PlanningEditItemAdd {
+  label: string
+  done: boolean
+}
+
+/**
+ * The SANITIZED, kind-validated in-place edit for ONE planning element (S6). MAIN resolved the
+ * element by id, read its `kind`, and validated + sanitized ONLY the fields that apply to that kind
+ * (a field for another kind is rejected before this is minted). All fields optional; MAIN guarantees
+ * ≥1. Field → kind: text (note/text) · tint (note) · title (checklist) · source (diagram) · dx/dy
+ * (arrow) · setItems/addItems/removeItemIds (checklist).
+ */
+export interface PlanningEditPatch {
+  text?: string
+  tint?: PlanningOpTint
+  title?: string
+  source?: string
+  dx?: number
+  dy?: number
+  setItems?: PlanningEditItemSet[]
+  addItems?: PlanningEditItemAdd[]
+  removeItemIds?: string[]
+}
+
+/**
+ * One SANITIZED planning-element edit op (S6), MAIN → renderer. `update` carries the resolved
+ * `elementId`, its `kind` (so the renderer can re-assert the patch matches, defense in depth), and the
+ * validated `patch`; `remove` deletes the element by id. The renderer applier re-resolves the element,
+ * applies the patch via the pure `planning/elements` mutators, and commits as ONE undoable edit
+ * (PATCHABLE_KEYS.planning `elements`). 🔒 Passive content — an edited element renders, never runs.
+ */
+export type PlanningEditOp =
+  | { op: 'update'; elementId: string; kind: string; patch: PlanningEditPatch }
+  | { op: 'remove'; elementId: string }
+
 // ── Kanban card op types (P3 — MCP card mutation, MAIN → renderer) ──
 
 /**
@@ -154,6 +199,10 @@ export interface PlanItem {
  * - `patchPlanning` (S2) appends agent-authored CONTENT (notes/checklists/text/arrows) to a
  *   planning board's `elements`; the ops are already validated + sanitized + capped + human-
  *   confirmed by the orchestrator before this carries them.
+ * - `patchPlanningEdit` (S6) EDITS or REMOVES one EXISTING element of a planning board's `elements`
+ *   in place (the read-then-update loop). MAIN resolved the element by id, validated the patch
+ *   against its kind, and human-confirmed it; the renderer re-resolves + applies via the pure
+ *   `planning/elements` mutators as ONE undoable edit (no re-append — the anti-duplicate path).
  * - `patchKanban` (P3) mutates a KANBAN board's `cards` — add / move / update / remove, one or more
  *   ops per confirmed call. The orchestrator resolved + kanban-checked the board, minted any new card
  *   id, and human-confirmed the ops before this carries them; the renderer re-validates + applies.
@@ -188,6 +237,7 @@ export type McpCommand =
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
+  | { type: 'patchPlanningEdit'; id: string; op: PlanningEditOp }
   | { type: 'patchKanban'; id: string; ops: KanbanOp[] }
   | {
       type: 'visualizePlan'

@@ -125,6 +125,29 @@ export interface KanbanCardSummary {
   ref?: string
 }
 
+/** One checklist item in a Planning board's mirror projection (S6) — id + label + done. */
+export interface PlanningItemSummary {
+  id: string
+  label: string
+  done: boolean
+}
+
+/**
+ * One element in a Planning board's mirror projection (S6) — always its `id` + `kind`, plus the editable
+ * fields that apply to that kind (text/tint for a note, title/items for a checklist, source for a
+ * diagram). So the host can serve one board's elements as `canvas://board/{id}/planning`, letting an agent
+ * EDIT an element in place by id instead of re-appending a duplicate. Element TEXT the human already sees.
+ */
+export interface PlanningElementSummary {
+  id: string
+  kind: string
+  text?: string
+  tint?: string
+  title?: string
+  source?: string
+  items?: PlanningItemSummary[]
+}
+
 /** A board's metadata projection the mirror carries (control plane; no content). */
 export interface BoardMirrorEntry {
   id: string
@@ -171,6 +194,13 @@ export interface BoardMirrorEntry {
    * Absent (not empty) on every non-kanban board, keeping their snapshots byte-identical.
    */
   kanban?: { columns: KanbanColumnSummary[]; cards: KanbanCardSummary[] }
+  /**
+   * Planning board's bounded elements + their ids (S6; `type:'planning'` only) — so the host serves one
+   * board's elements as `canvas://board/{id}/planning` (the read half of the in-place edit loop). A
+   * BOUNDED projection (count-capped here, field-capped on the host ingest), NOT the raw elements. Absent
+   * (not empty) on every non-planning board, keeping their snapshots byte-identical.
+   */
+  planning?: { elements: PlanningElementSummary[] }
 }
 
 /**
@@ -187,8 +217,20 @@ export interface BoardSnapshotInput {
   monitorActivity?: boolean
   /** Present on a `'file'` board (FileBoard.path). */
   path?: string
-  /** Present on a `'planning'` board (PlanningBoard.elements); read to derive `fileRefs`. */
-  elements?: ReadonlyArray<{ kind: string; path?: string; label?: string }>
+  /** Present on a `'planning'` board (PlanningBoard.elements); read to derive `fileRefs` (S5) AND the
+   *  bounded `planning` element projection (S6). A structural superset of the live `PlanningElement`
+   *  union's mirrored fields; the live boards satisfy it, and a test stub sets only what it needs. */
+  elements?: ReadonlyArray<{
+    id?: string
+    kind: string
+    path?: string
+    label?: string
+    text?: string
+    tint?: string
+    title?: string
+    source?: string
+    items?: ReadonlyArray<{ id?: string; label?: string; done?: boolean }>
+  }>
   /** World-space geometry (P1) — every real `Board` carries these via `BoardCommon`; optional here
    *  so a minimal test stub still satisfies the read shape. Forwarded to the mirror when finite. */
   x?: number
@@ -285,6 +327,50 @@ function deriveKanban(
   return cols.length > 0 || out.length > 0 ? { columns: cols, cards: out } : undefined
 }
 
+/** Cap the mirrored planning projection so a pathological board can't push an unbounded payload over the
+ *  `mcp:boards` IPC channel (the host re-caps + field-truncates authoritatively on ingest). Counts only. */
+const MAX_PLANNING_ELEMENTS = 300
+const MAX_PLANNING_ITEMS = 100
+
+/**
+ * Project a planning board's `elements` into the bounded mirror summary (S6). Keeps every element that
+ * has a string `id`+`kind`, count-caps elements + a checklist's items, and carries the editable fields
+ * (text/tint for a note, title/items for a checklist, source for a diagram) through when present so the
+ * host can serve `canvas://board/{id}/planning`. Returns `undefined` (not an empty projection) when there
+ * is nothing to project, so the conditional spread in {@link buildBoardSnapshot} omits the field. Field
+ * lengths are the host's trust-boundary job (mirrors the `deriveKanban` → host `sanitizeKanban` split).
+ */
+function derivePlanning(
+  elements: BoardSnapshotInput['elements']
+): { elements: PlanningElementSummary[] } | undefined {
+  if (!elements) return undefined
+  const out: PlanningElementSummary[] = []
+  for (const e of elements) {
+    if (out.length >= MAX_PLANNING_ELEMENTS) break
+    if (typeof e?.id !== 'string' || e.id.length === 0 || typeof e.kind !== 'string') continue
+    const el: PlanningElementSummary = { id: e.id, kind: e.kind }
+    if (typeof e.text === 'string' && e.text.length > 0) el.text = e.text
+    if (typeof e.tint === 'string' && e.tint.length > 0) el.tint = e.tint
+    if (typeof e.title === 'string' && e.title.length > 0) el.title = e.title
+    if (typeof e.source === 'string' && e.source.length > 0) el.source = e.source
+    if (e.kind === 'checklist' && Array.isArray(e.items)) {
+      const items: PlanningItemSummary[] = []
+      for (const it of e.items) {
+        if (items.length >= MAX_PLANNING_ITEMS) break
+        if (typeof it?.id !== 'string' || it.id.length === 0) continue
+        items.push({
+          id: it.id,
+          label: typeof it.label === 'string' ? it.label : '',
+          done: it.done === true
+        })
+      }
+      el.items = items
+    }
+    out.push(el)
+  }
+  return out.length > 0 ? { elements: out } : undefined
+}
+
 /**
  * Build the renderer→MAIN board snapshot: each board's `{id,type,title}` plus its
  * derived `status` bucket. Pure — no store/React access — so it is unit-testable and
@@ -301,6 +387,8 @@ export function buildBoardSnapshot(
     // its fileref elements as path+label summaries. Both omitted (not empty) when absent.
     const path = b.type === 'file' && typeof b.path === 'string' ? b.path : undefined
     const fileRefs = b.type === 'planning' ? deriveFileRefs(b.elements) : undefined
+    // S6: a planning board projects its bounded elements+ids so the host serves canvas://board/{id}/planning.
+    const planning = b.type === 'planning' ? derivePlanning(b.elements) : undefined
     // P3b: a kanban board projects its bounded columns+cards so the host serves canvas://board/{id}/cards.
     const kanban = b.type === 'kanban' ? deriveKanban(b.columns, b.cards) : undefined
     return {
@@ -322,7 +410,9 @@ export function buildBoardSnapshot(
       ...(Number.isFinite(b.w) ? { w: b.w } : {}),
       ...(Number.isFinite(b.h) ? { h: b.h } : {}),
       // P3b: kanban lanes+cards ride out only for kanban boards (omitted ⇒ byte-identical elsewhere).
-      ...(kanban !== undefined ? { kanban } : {})
+      ...(kanban !== undefined ? { kanban } : {}),
+      // S6: planning elements+ids ride out only for planning boards (omitted ⇒ byte-identical elsewhere).
+      ...(planning !== undefined ? { planning } : {})
     }
   })
 }
