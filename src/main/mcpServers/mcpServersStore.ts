@@ -25,6 +25,7 @@ import type {
   NamedSecret,
   ResolvedServer,
   SaveResult,
+  SaveSecret,
   SaveServerInput,
   Transport
 } from './types'
@@ -187,12 +188,16 @@ export function createMcpServersStore(userDataDir: string, encryptor: Encryptor)
 
   /**
    * Build the persisted secret list for a save: a non-empty value is (re-)encrypted; a blank value
-   * KEEPS the prior ciphertext when the name existed before (the "leave blank to keep" contract),
-   * else persists as empty. Returns null if a NEW non-empty secret needs encryption but none is
-   * available (the caller maps that to `encryption-unavailable`).
+   * KEEPS the prior ciphertext (the "leave blank to keep" contract), else persists as empty. Returns
+   * null if a NEW non-empty secret needs encryption but none is available (the caller maps that to
+   * `encryption-unavailable`).
+   *
+   * The blank-keep lookup uses the row's `origName` (its ORIGINAL name) when present — so RENAMING a
+   * row while leaving its value blank still carries the stored ciphertext across to the new name,
+   * instead of matching by the (now-changed) current name and silently dropping the token.
    */
   const persistSecrets = (
-    next: NamedSecret[] | undefined,
+    next: SaveSecret[] | undefined,
     prev: NamedSecret[] | undefined
   ): NamedSecret[] | null | undefined => {
     if (!next) return undefined
@@ -203,7 +208,7 @@ export function createMcpServersStore(userDataDir: string, encryptor: Encryptor)
         if (!encryptor.isEncryptionAvailable()) return null
         out.push({ name: s.name, value: encrypt(s.value) })
       } else {
-        out.push({ name: s.name, value: prevByName.get(s.name) ?? '' })
+        out.push({ name: s.name, value: prevByName.get(s.origName ?? s.name) ?? '' })
       }
     }
     return out

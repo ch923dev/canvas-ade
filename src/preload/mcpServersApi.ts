@@ -37,16 +37,23 @@ export interface MaskedMcpServer {
   targets: McpCliId[]
   lastTest?: McpTestResult
 }
+/** A submitted secret. `value: ''` = keep the stored one; `origName` = the row's original name, so a
+ *  blank-value KEEP survives a rename (matching by current name alone would drop the token). */
+export interface McpSaveSecret {
+  name: string
+  value: string
+  origName?: string
+}
 export interface McpServerSaveInput {
   id?: string
   name: string
   enabled: boolean
   transport: McpTransport
   url?: string
-  headers?: { name: string; value: string }[]
+  headers?: McpSaveSecret[]
   command?: string
   args?: string[]
-  env?: { name: string; value: string }[]
+  env?: McpSaveSecret[]
   targets: McpCliId[]
 }
 export type McpSaveResult =

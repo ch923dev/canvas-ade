@@ -20,11 +20,15 @@ import type {
 
 const CLIS: OrchestrationCliId[] = ['claude', 'codex', 'gemini', 'opencode']
 
-/** A secret row in the draft: `hadValue` marks an existing (kept-when-blank) secret. */
+/**
+ * A secret row in the draft. `hadValue` marks an existing (kept-when-blank) secret; `origName` is
+ * its stored name so a blank-value keep survives a rename (MAIN correlates the ciphertext by it).
+ */
 interface SecretRow {
   name: string
   value: string
   hadValue: boolean
+  origName?: string
 }
 
 export interface McpServerFormProps {
@@ -101,8 +105,18 @@ function fromServer(sv: MaskedMcpServer | undefined): {
 } {
   return {
     transport: sv?.transport ?? 'http',
-    headers: (sv?.headers ?? []).map((h) => ({ name: h.name, value: '', hadValue: h.hasValue })),
-    env: (sv?.env ?? []).map((e) => ({ name: e.name, value: '', hadValue: e.hasValue }))
+    headers: (sv?.headers ?? []).map((h) => ({
+      name: h.name,
+      value: '',
+      hadValue: h.hasValue,
+      origName: h.name
+    })),
+    env: (sv?.env ?? []).map((e) => ({
+      name: e.name,
+      value: '',
+      hadValue: e.hasValue,
+      origName: e.name
+    }))
   }
 }
 
@@ -136,8 +150,14 @@ export function McpServerForm({
     patch: Partial<SecretRow>
   ): void => set(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
 
-  const secretsFor = (rows: SecretRow[]): { name: string; value: string }[] =>
-    rows.filter((r) => r.name.trim() !== '').map((r) => ({ name: r.name.trim(), value: r.value }))
+  const secretsFor = (rows: SecretRow[]): { name: string; value: string; origName?: string }[] =>
+    rows
+      .filter((r) => r.name.trim() !== '')
+      .map((r) => ({
+        name: r.name.trim(),
+        value: r.value,
+        ...(r.origName ? { origName: r.origName } : {})
+      }))
 
   const buildInput = (): McpServerSaveInput => ({
     id: initial?.id,

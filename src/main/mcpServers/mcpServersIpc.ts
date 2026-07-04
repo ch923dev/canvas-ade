@@ -20,22 +20,26 @@ import type {
   CliId,
   ExternalMcpTestResult,
   MaskedServer,
-  NamedSecret,
   SaveResult,
+  SaveSecret,
   SaveServerInput
 } from './types'
 
 const CLI_SET: readonly CliId[] = ['claude', 'codex', 'gemini', 'opencode']
 
-/** Coerce untrusted `[{name,value}]` — drop anything not a `{string,string}` pair. */
-function asSecrets(v: unknown): NamedSecret[] | undefined {
+/** Coerce untrusted `[{name,value,origName?}]` — drop anything not a `{string,string}` pair. */
+function asSecrets(v: unknown): SaveSecret[] | undefined {
   if (!Array.isArray(v)) return undefined
-  const out: NamedSecret[] = []
+  const out: SaveSecret[] = []
   for (const e of v) {
     if (e && typeof e === 'object') {
       const r = e as Record<string, unknown>
       if (typeof r.name === 'string' && typeof r.value === 'string') {
-        out.push({ name: r.name, value: r.value })
+        out.push({
+          name: r.name,
+          value: r.value,
+          ...(typeof r.origName === 'string' ? { origName: r.origName } : {})
+        })
       }
     }
   }

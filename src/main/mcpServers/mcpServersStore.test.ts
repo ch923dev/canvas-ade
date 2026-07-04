@@ -110,6 +110,23 @@ describe('createMcpServersStore', () => {
     expect(store.getResolved(id)?.headers?.[0].value).toBe('Bearer secret-token')
   })
 
+  it('RENAMING a kept (blank) secret carries the stored value to the new name (origName)', () => {
+    const store = createMcpServersStore(dir, fakeEncryptor())
+    const id = (store.upsert(stdioInput()) as { ok: true; id: string }).id // env GITHUB_TOKEN=ghp_secret
+    // Rename GITHUB_TOKEN → GH_TOKEN with a BLANK value; origName carries the keep across the rename.
+    store.upsert(
+      stdioInput({ id, env: [{ name: 'GH_TOKEN', value: '', origName: 'GITHUB_TOKEN' }] })
+    )
+    expect(store.getResolved(id)?.env).toEqual([{ name: 'GH_TOKEN', value: 'ghp_secret' }])
+  })
+
+  it('renaming a blank secret WITHOUT origName drops it (no false keep by new name)', () => {
+    const store = createMcpServersStore(dir, fakeEncryptor())
+    const id = (store.upsert(stdioInput()) as { ok: true; id: string }).id
+    store.upsert(stdioInput({ id, env: [{ name: 'GH_TOKEN', value: '' }] }))
+    expect(store.getResolved(id)?.env).toEqual([{ name: 'GH_TOKEN', value: '' }])
+  })
+
   it('a new non-empty secret without a keyring fails with encryption-unavailable', () => {
     const store = createMcpServersStore(dir, fakeEncryptor(false))
     expect(store.upsert(httpInput())).toMatchObject({

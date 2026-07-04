@@ -98,16 +98,26 @@ export interface ResolvedServer {
  * is '' means KEEP the stored value (the "leave blank to keep" contract); a non-empty value replaces
  * it; a name absent from the array is removed.
  */
+/**
+ * A secret as SUBMITTED from the form. `value === ''` means "keep the stored secret"; `origName` is
+ * the row's ORIGINAL name (present for a pre-existing row), so a blank-value KEEP still resolves the
+ * prior ciphertext even when the user RENAMED the row — matching by current name alone would miss the
+ * rename and silently discard the token.
+ */
+export interface SaveSecret extends NamedSecret {
+  origName?: string
+}
+
 export interface SaveServerInput {
   id?: string
   name: string
   enabled: boolean
   transport: Transport
   url?: string
-  headers?: NamedSecret[]
+  headers?: SaveSecret[]
   command?: string
   args?: string[]
-  env?: NamedSecret[]
+  env?: SaveSecret[]
   targets: CliId[]
 }
 
