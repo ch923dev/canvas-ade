@@ -16,6 +16,8 @@ import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
 import { useAccountStore, useAccountSync } from './store/accountStore'
 import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
+import { useVoiceCapture } from './voice/useVoiceCapture'
+import { VoicePill } from './voice/VoicePill'
 import { isE2E } from './smoke/e2eRegistry'
 
 /**
@@ -31,6 +33,9 @@ function App(): React.ReactElement {
   useUpdateToasts()
   // Phase 1 accounts: hydrate the account store at boot + subscribe to MAIN's auth:statusChanged.
   useAccountSync()
+  // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
+  // voice:session:start is the start signal (see useVoiceCapture).
+  useVoiceCapture()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
@@ -112,6 +117,9 @@ function App(): React.ReactElement {
           Canvas, like AskOnSwitchModal), gated on an open project so its hot zone can't
           fire over the welcome/loading screens; a switch's 'loading' unmount auto-closes it. */}
       {status === 'open' && <ProjectDock />}
+      {/* Voice V3: pill + flyout — screen-fixed overlay islands (not inside React Flow);
+          dictation needs an open canvas (terminal targets), so they gate on it too. */}
+      {status === 'open' && <VoicePill />}
       <ConfirmModal />
       {/* Phase 4 (bg sessions): app-level like ConfirmModal — the ask-on-switch decision is
           awaited mid-switch-pipeline and must not depend on any project-scoped surface. */}

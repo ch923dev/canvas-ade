@@ -67,6 +67,12 @@ export interface CanvasE2E {
   readTerminal: (id: string) => string | null
   /** Concatenated bytes the terminal posted to its PTY since the last clear (e2e). */
   readTerminalInput: (id: string) => string
+  /**
+   * The same log as discrete per-write chunks. Voice V3's Send contract is byte-shape
+   * sensitive: the paste text and the `\r` must be SEPARATE port writes (never
+   * `text + '\r'` in one), which only the chunk boundaries can prove.
+   */
+  readTerminalInputChunks: (id: string) => string[]
   /** Drop a terminal's recorded input log (call before driving a key probe). */
   clearTerminalInput: (id: string) => void
   /** Focus a terminal's xterm so real key input lands on it. */
@@ -355,6 +361,22 @@ export interface CanvasE2E {
    * Account section react exactly as in production. Sign-OUT is tested via the real IPC (no external
    * dependency); only the sign-IN side needs this mock.
    */
+  /**
+   * Voice V1 — the live capture pipeline state (`voiceStore`, ephemeral). The voice e2e
+   * asserts frames flow (framesSent grows, level rises under the fake-media tone) and that
+   * stop() lands (capturing false). All plain numbers/booleans — evaluate-bridge safe.
+   */
+  voiceState: () => {
+    capturing: boolean
+    level: number
+    micSilent: boolean
+    framesSent: number
+    /** V3 composer state — the voiceComposer e2e asserts the partial→final→draft flow. */
+    draft: string
+    partial: string
+    flyoutOpen: boolean
+    modelStatus: 'ready' | 'absent' | 'unknown'
+  }
   setAuthStatus: (status: {
     isLoggedIn: boolean
     email?: string

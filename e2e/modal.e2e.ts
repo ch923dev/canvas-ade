@@ -50,6 +50,32 @@ test('@chrome settings modal: token scrim, initial focus, Esc close, focus resto
   expect(restored, 'focus restored to the Settings opener').toBe('Settings')
 })
 
+test('@chrome @voice settings voice section: catalog over real IPC + showPill applies LIVE', async ({
+  page
+}, testInfo) => {
+  // The pill is on by default (fresh voice-config) — the live-apply baseline.
+  await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
+
+  await page.click('[title="Settings"]')
+  await expect(page.locator('[data-test="voice-showpill-row"]')).toBeVisible()
+  // Model catalog rendered over the REAL voice:models:list IPC (no models on disk in the
+  // e2e userData → both cards show Download CTAs; the default badge still renders).
+  await expect(page.locator('[data-test="voice-model-kroko-en-2025-08-06"]')).toBeVisible()
+  await expect(page.locator('[data-test="voice-model-zipformer-en-2023-06-26-int8"]')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('voice-settings-section.png') })
+
+  // V4 live-apply: toggling OFF removes the pill from the DOM while Settings stays open
+  // (voice:config:changed push → no remount needed), and toggling back ON restores it —
+  // which also restores the shared e2e userData for later specs (sticky-prefs class).
+  await page.click('[data-test="voice-showpill-toggle"]')
+  await expect(page.locator('[data-test="voice-pill"]')).toHaveCount(0)
+  await page.click('[data-test="voice-showpill-toggle"]')
+  await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-test="settings-modal"]')).toHaveCount(0)
+})
+
 test('@chrome no modal scrim occludes the canvas after close / without a project (PR #93 regression)', async ({
   page
 }) => {

@@ -1,0 +1,277 @@
+/* Voice V3 — pill + flyout islands (pill mock v2, approved 2026-07-02 as-is; tokens per
+   DESIGN.md §2-4). Both are screen-fixed overlay islands like toast/minimap — never inside
+   React Flow. z-index 120: above boards + docked panels (inspector 45 · chrome islands 50 ·
+   library/digest 70), below the full-view scrim (200 — a full-view board deliberately
+   covers the pill; the hotkey still toggles, review UI returns on exit), the Menu (250),
+   every modal (Settings 300 · Confirm 10000) and the toast island (10100). */
+.voice-pill {
+  position: fixed;
+  z-index: 120;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px 0 7px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-pop);
+  cursor: grab;
+  user-select: none;
+  touch-action: none; /* pointer-capture drag owns the gesture */
+}
+.voice-pill:active {
+  cursor: grabbing;
+}
+.voice-pill.listening {
+  border-color: rgba(79, 140, 255, 0.45);
+}
+.voice-pill.denied {
+  border-color: rgba(242, 84, 91, 0.4);
+}
+.vp-grip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 1px;
+}
+.vp-grip i {
+  display: block;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-faint);
+}
+.vp-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: block;
+  pointer-events: none;
+}
+.vp-sdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--err);
+}
+.vp-bars {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 20px;
+  padding: 0 8px;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+}
+/* Bars keep a constant 16px layout box and animate via scaleY (no layout thrash);
+   idle look = scaleY(0.25) ≈ the mock's 4px flat bars. */
+.vp-bars i {
+  display: block;
+  width: 2.5px;
+  border-radius: 1px;
+  background: var(--text-faint);
+  height: 16px;
+  transform: scaleY(0.25);
+  transform-origin: center;
+  transition: transform 90ms ease-out;
+}
+.vp-bars.live i {
+  background: var(--accent);
+}
+.vp-bars.live {
+  border-color: rgba(79, 140, 255, 0.45);
+}
+@media (prefers-reduced-motion: reduce) {
+  .vp-bars i {
+    transition: none;
+  }
+}
+
+/* ── flyout ── */
+.voice-flyout {
+  position: fixed;
+  z-index: 120;
+  width: 400px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.vf-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.vf-to {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.vf-target {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vf-target b {
+  color: var(--text);
+  font-weight: 500;
+}
+.vf-x {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex: none;
+}
+.vf-x:hover,
+.vf-x:focus-visible {
+  color: var(--text);
+}
+.vf-body {
+  padding: 8px;
+}
+/* The transcript box: a metrics-identical mirror renders the dimmed-italic partial tail
+   behind a transparent-backed textarea (a textarea can't style a span). Both layers share
+   font/line-height/padding/wrapping exactly, so the tail continues where the typed text
+   wraps. */
+.vf-text {
+  position: relative;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+}
+.vf-mirror,
+.vf-input {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 17px;
+  padding: 7px 9px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.vf-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent; /* the ghost span only reserves layout for the tail's anchor */
+}
+.vf-partial {
+  color: var(--text-3);
+  font-style: italic;
+}
+.vf-caret {
+  border-left: 1px solid var(--accent);
+  margin-left: 1px;
+}
+.vf-input {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 31px;
+  max-height: 112px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  margin: 0;
+}
+.vf-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 0;
+}
+.vf-hint {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  margin-right: auto;
+}
+.vf-hint b {
+  color: var(--text-3);
+  font-weight: 450;
+}
+.vf-btn {
+  font-family: var(--ui);
+  font-size: 11px;
+  border-radius: var(--r-ctl);
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-3);
+}
+.vf-btn:hover:not(:disabled),
+.vf-btn:focus-visible:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.vf-btn.primary {
+  color: var(--accent-hover);
+  border-color: rgba(79, 140, 255, 0.45);
+  background: var(--accent-wash);
+}
+.vf-btn.primary:hover:not(:disabled),
+.vf-btn.primary:focus-visible:not(:disabled) {
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.vf-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.vf-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.vf-sdot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.vf-grow {
+  flex: 1;
+  min-width: 0;
+}
+.vf-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.vf-progress {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-overlay);
+  overflow: hidden;
+  margin-top: 5px;
+}
+.vf-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}

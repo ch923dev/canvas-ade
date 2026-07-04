@@ -9,6 +9,7 @@ import { useEffect, useState, type CSSProperties, type ReactElement } from 'reac
 import { Modal } from './Modal'
 import { Icon } from './Icon'
 import { AccountAvatar } from './AccountAvatar'
+import { SettingsVoiceSection } from './SettingsVoiceSection'
 import { DEFAULT_MODELS } from '../lib/llmModels'
 import { useCanvasStore } from '../store/canvasStore'
 import { useAccountStore } from '../store/accountStore'
@@ -420,6 +421,11 @@ export function SettingsModal({
         </div>
       </label>
 
+      {/* Voice V4: the dictation section (SPEC §5) — own file for the max-lines ratchet.
+          Renders nothing (incl. its leading divider) when window.api.voice is absent
+          (non-electron test runtimes), so the modal layout is unchanged there. */}
+      <SettingsVoiceSection />
+
       <div style={styles.divider} />
 
       <div style={styles.head}>Agent orchestration</div>
@@ -597,7 +603,12 @@ const styles: Record<string, CSSProperties> = {
     padding: 16,
     display: 'flex',
     flexDirection: 'column',
-    gap: 12
+    gap: 12,
+    // The Voice section (V4) pushed the card past small viewport heights; the shared Modal
+    // centers without clipping-awareness, so cap + scroll HERE (the one cardStyle override).
+    maxHeight: '86vh',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain'
   },
   head: { fontSize: 13, fontWeight: 600, color: 'var(--text)' },
   field: { display: 'flex', flexDirection: 'column', gap: 5 },

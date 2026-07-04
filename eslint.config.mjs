@@ -13,6 +13,13 @@ export default tseslint.config(
       'out/**',
       'dist/**',
       'release/**',
+      // electron-builder alternate output dirs + pruned electronDist copies: a RUNNING
+      // installed Expanse instance watching the repo permanently locks fresh .asar files
+      // (Electron asar-fs handle cache), so packaged-validation runs pack into fresh
+      // `release-*` dirs from a `spike-*`/pruned dist copy that can't always be deleted
+      // afterward (still locked). Same class of local-only build output as release/.
+      'release-*/**',
+      'spike-*/**',
       'coverage/**',
       'node_modules/**',
       // Generated Playwright e2e artifacts (gitignored): the HTML report bundles

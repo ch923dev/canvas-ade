@@ -1864,3 +1864,47 @@ e2e: terminalPolish DEAD-id → no Resume + `{mode:'fresh'}`, seeded lineage →
 `{mode:'resume'}`, palette row absent/present, recapHealth clobber → fault line → re-ensure
 heal · full pre-merge matrix + title-stamped dev check + real-claude manual check (this PR).
 Product call still open: decouple Resume from recap (egress) consent — resume is local-only.
+
+## 2026-07-04 — Voice-to-text epic (feat/voice-to-text, epic PR)
+
+**Dictate prompts into Terminal boards — local-first STT, review-first composer.** No API
+key, offline, private: sherpa-onnx-node 1.13.3 `OnlineRecognizer` in an Electron
+`utilityProcess` host; models download to userData from a pinned per-file HuggingFace
+manifest (immutable revision URLs, LFS oid = sha256; Kroko EN ~71 MB default + Apache
+zipformer int8 alt; silero VAD v4 as an optional per-model file). Review-first UX:
+draggable screen-fixed **VoicePill** (RMS bars; Ctrl/Cmd+Shift+M tap-toggle + hold-PTT;
+silence auto-stop ~15 s / ~2 min cap) + **VoiceFlyout** composer (dimmed-italic partial
+tail, Enter=Send / Shift+Enter / Esc, no-target / model-missing+Download / mic-denied /
+engine-error rows). Injection via `terminalInputRegistry`: **Send = bracketed paste →
+~150 ms settle → ONE discrete `\r` (the only `\r` emitter); Insert = paste only;
+`autoSendOnFinal` hard-false.** Research package kept at
+`docs/research/2026-07-02-voice-to-text/` (REPORT/SPEC/mocks/IMPLEMENTATION-PLAN);
+per-slice HANDOFFs + KICKOFF deleted in this PR per doc lifecycle.
+
+- **V0** — mic-permission posture (audio-only media + clipboard-sanitized-write for the
+  app page, request AND check handlers) + mac mic entitlements/usage string.
+- **V1** — capture pipeline: AudioWorklet 16 kHz Int16 120 ms frames over `voice:port`
+  (pty:port pattern); ephemeral `voiceStore`. Gotcha: Electron cross-process MessagePorts
+  NULL `e.data` when a transferable rides the transfer list — frames are COPIED.
+- **V2** — engine host + model manager: boot spike gate (proves the addon loads dev AND
+  packaged), download = `.staging` → hash-while-stream → atomic rename, streaming
+  partial/final over the session port, in-band `{t:'eos'}` stop drain (parentPort-vs-port
+  delivery-order race the full-suite gate caught).
+- **V3** — VoicePill + VoiceFlyout + injection; e2e stub engine runtime-toggled via
+  `voiceStubSet` (voice.e2e.ts keeps the REAL host). Lesson logged: cold recognizer init
+  under load blocked the host loop >10 s (stopgap stopSession 30 s; real fix = V5).
+- **V4** — SPEC §5 config layer + Settings › Voice section (signed-off mock; ALL fields
+  immediate-apply; `voice:config:changed` live push; configured hotkey/mic/model honored).
+- **V5** — hardening: async decoder `worker_threads` INSIDE the utilityProcess host (the
+  real cold-init fix; stopSession 30 s → 10 s), silero VAD endpoint accelerator (~0.8 s
+  finals; sherpa rule2 1.2 → 1.0 s fallback), SPEC §3 crash policy (host death → MAIN
+  re-brokers ONCE transparently → then `error` flyout row + Restart CTA; draft survives —
+  proven by the manual `@voicedrill` spec pid-killing the real host twice mid-decode),
+  win-arm64 feature gate (pill dormant + Settings "unavailable" row + MAIN guard),
+  packaged spike `{ok:true, workerOk:true}`, `voiceBoot.ts` + `deepLinkBoot.ts`
+  extractions from `index.ts` (max-lines ratchet).
+
+**Verified:** 4494 units · @voice / voiceComposer / modal e2e (+ manual `@voicedrill`) ·
+full e2e matrix both legs on the push tree (Win 267P + 2 documented flakes rerun-green
+isolated; Linux-Docker 269P clean) · pack:dir spike win-x64 · title-stamped dev checks
+user-eyeballed at V4 ("actually great") and V5 (2026-07-04).
