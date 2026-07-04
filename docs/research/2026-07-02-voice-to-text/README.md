@@ -34,8 +34,9 @@
 > manual `@voicedrill` spec killing the real host twice mid-decode), win-arm64 feature gate
 > (pill dormant + Settings "unavailable" row + MAIN start guard), packaged validation
 > (pack:dir spike `{ok:true, workerOk:true}` — the worker loads sherpa from inside
-> app.asar). **Epic PR to main is next — see [HANDOFF-V5.md](HANDOFF-V5.md) exit
-> checklist.** Gotchas
+> app.asar). **EPIC COMPLETE — PR to main opened 2026-07-04** (V4 + V5 title-stamped dev
+> checks user-eyeballed; per-slice HANDOFFs + KICKOFF collapsed per doc lifecycle — the
+> residue lives in `docs/archive/build-history.md`). Gotchas
 > for later slices: Electron cross-process MessagePorts NULL `e.data` when a non-port
 > transferable rides the transfer list — COPY frames across the boundary
 > (`useVoiceCapture.ts`); a RUNNING installed Expanse watching the repo locks fresh
@@ -54,10 +55,9 @@ Terminal boards. Local-first STT (no API key, offline, private), review-first co
 3. **[mock-voice-composer.html](mock-voice-composer.html)** (+ `mock-voice-composer.png`) —
    the design artifact (token-faithful states mock, per the design-before-code rule).
 4. **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — slices V0–V5, per-slice
-   files/IPC/tests, collision map. Written after design-artifact sign-off.
-5. **[HANDOFF-V5.md](HANDOFF-V5.md)** — live handoff for the next slice (state snapshot,
-   seams, sharp edges, exit criteria). `HANDOFF-V1.md` / `HANDOFF-V3.md` / `HANDOFF-V4.md`
-   are the superseded editions (kept until the epic-merge doc collapse).
+   files/IPC/tests, collision map. Written after design-artifact sign-off. (The per-slice
+   HANDOFF/KICKOFF docs were deleted in the epic-merge doc collapse; slice residue is the
+   epic entry in `docs/archive/build-history.md`.)
 
 ## Decisions locked at kickoff (user-confirmed 2026-07-02)
 
