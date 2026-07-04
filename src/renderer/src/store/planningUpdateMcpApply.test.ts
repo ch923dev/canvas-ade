@@ -149,6 +149,25 @@ describe('applyPlanningEditOp — in-place element edits', () => {
     items: Array.from({ length: 100 }, (_, i) => ({ id: `x${i}`, label: `${i}`, done: false }))
   })
 
+  it('throws on an unmatched setItems / removeItemIds id (stale read → not a false success)', () => {
+    expect(() =>
+      applyPlanningEditOp(els, {
+        op: 'update',
+        elementId: 'c1',
+        kind: 'checklist',
+        patch: { setItems: [{ id: 'ghost', done: true }] }
+      })
+    ).toThrow(/unknown checklist item/)
+    expect(() =>
+      applyPlanningEditOp(els, {
+        op: 'update',
+        elementId: 'c1',
+        kind: 'checklist',
+        patch: { removeItemIds: ['ghost'] }
+      })
+    ).toThrow(/unknown checklist item/)
+  })
+
   it('rejects an add that grows the checklist past the cumulative item cap', () => {
     expect(() =>
       applyPlanningEditOp([bigChecklist()], {

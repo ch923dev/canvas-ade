@@ -57,8 +57,16 @@ function editElement(el: PlanningElement, p: PlanningEditPatch): PlanningElement
     case 'text':
       return p.text !== undefined ? { ...el, text: p.text } : el
     case 'checklist': {
+      // 🔒 An item id that matches no LIVE item is a stale/raced read — throw (→ useMcpCommands acks
+      // {ok:false}) rather than silently no-op'ing to a false-positive {ok:true}, mirroring
+      // kanbanMcpApply's "unknown card" and the gate's "element not found". A false success would
+      // undermine the read → update-the-existing-element discipline this feature is built on.
+      const liveIds = new Set(el.items.map((it) => it.id))
       let items: ChecklistItem[] = el.items
       if (p.setItems && p.setItems.length > 0) {
+        for (const s of p.setItems) {
+          if (!liveIds.has(s.id)) throw new Error(`unknown checklist item: ${s.id}`)
+        }
         const byId = new Map(p.setItems.map((s) => [s.id, s]))
         items = items.map((it) => {
           const s = byId.get(it.id)
@@ -71,6 +79,9 @@ function editElement(el: PlanningElement, p: PlanningEditPatch): PlanningElement
         })
       }
       if (p.removeItemIds && p.removeItemIds.length > 0) {
+        for (const id of p.removeItemIds) {
+          if (!liveIds.has(id)) throw new Error(`unknown checklist item: ${id}`)
+        }
         const rm = new Set(p.removeItemIds)
         items = items.filter((it) => !rm.has(it.id))
       }

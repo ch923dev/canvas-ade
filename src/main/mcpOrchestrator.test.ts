@@ -634,6 +634,46 @@ describe('buildOrchestrator', () => {
       ])
     })
 
+    // 🔒 S6 guard (user rule 2026-07-04): everything on the canvas is updatable EXCEPT a terminal that
+    // is currently RUNNING. A terminal's derived status is 'running' for the whole life of its PTY
+    // session (no per-command idle transition — BUG-002), so this refuses a configure on any live terminal.
+    it('🔒 rejects configuring a RUNNING terminal — audits `rejected`, sends no command', async () => {
+      const { registry, seen, audits } = configReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.configureBoard('t1', { shell: 'pwsh' })).rejects.toThrow(
+        /currently running/
+      )
+      expect(seen).toEqual([]) // never reached the renderer
+      expect(audits).toMatchObject([
+        {
+          type: 'configure_board',
+          targetId: 't1',
+          status: 'rejected',
+          detail: 'terminal is currently running'
+        }
+      ])
+    })
+
+    it('allows configuring an IDLE terminal (the guard blocks only running)', async () => {
+      const { registry, seen } = configReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.configureBoard('t1', { shell: 'pwsh' })
+      expect(seen).toEqual([{ type: 'configureBoard', id: 't1', patch: { shell: 'pwsh' } }])
+    })
+
+    it('does NOT block a non-terminal board even if its status reads running', async () => {
+      const { registry, seen } = configReg({
+        boards: [{ id: 'b1', type: 'browser', title: 'Web', status: 'running' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.configureBoard('b1', { cwd: '/x' })
+      expect(seen).toEqual([{ type: 'configureBoard', id: 'b1', patch: { cwd: '/x' } }])
+    })
+
     it('throws when the renderer rejects the command (no silent failure)', async () => {
       const orch = buildOrchestrator(
         reg([], [], {}, {}, {}, async () => ({ ok: false, error: 'no-window' }))
