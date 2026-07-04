@@ -1970,3 +1970,53 @@ covered at the unit tier) fixed + inline-dispositioned before merge. Squash `da9
 
 > ⚠️ Follow-on: the in-flight **mcp-add-server** lane (PR #304) mounted its UI into the now-deleted
 > `SettingsModal` — it must rebase and re-home onto `SettingsPanel`/`SettingsSectionBody`.
+
+## 2026-07-05 — PR #302: planning-element update/remove in place + planning read mirror (S6) (`4fc17266`)
+
+Closed the **append-only gap** on planning boards — the bug that littered a board with stale duplicate
+"Build progress" checklists because an agent could only *re-add* a planning element, never edit the
+existing one. An agent now **reads** a board's planning elements (with ids) and **edits one in place**
+or **removes it**, exactly like kanban cards already could.
+
+**MCP package (`@expanse-ade/mcp` rc.6 → rc.7, published to npm; lineage PR mcp#7 squash `9949cfa`):**
+a `canvas://board/{id}/planning` read resource · `update_planning_element` (one flat patch, validated
+host-side against the element's resolved kind: note text/tint · text body · checklist title/items
+[set-by-id · add · remove-by-id] · diagram source · arrow dx/dy) · `remove_planning_element`. Both
+flag-gated (`planningWrite`), registered in both the orchestrator and connected tiers. The
+orientation prompt gained a **"keep plans LIVE — update in place, never re-append"** section. 246
+contract tests.
+
+**Host (this repo):** the crux was the **board mirror** — planning elements were never mirrored (only
+kanban was), so nothing host-side could resolve an element by id. Added a bounded `planning` projection
+threaded through the whole pipeline: renderer `derivePlanning` → `mcp:boards` → host `sanitizePlanning`
+(caps: 300 elements / 100 items / text truncated to 500) → `registry.listBoards().planning` → the read
+grouper (`mcpBoardPlanning`) **and** the edit gate. The gate (`mcpPlanningEdit` + `mcpPlanningEditGate`)
+resolves the board → planning-checks → resolves the element by id → `buildPlanningUpdateOp` kind-validates
++ sanitizes the patch (reuses the S2 add-path sanitizers so an edit lands byte-identical to an add) →
+human-confirms → emits a `patchPlanningEdit` command → audits every branch. The renderer applier
+(`planningUpdateMcpApply` → `useMcpCommands` case) materializes the op as **one undoable edit**,
+re-validating the changed element before it lands.
+
+**User rule folded in:** *everything on the canvas is updatable EXCEPT a terminal that is currently
+running* — `configure_board` now rejects (audited) a live-running terminal.
+
+**Version skew handled:** host code compiled against installed rc.6 via the `Omit`-and-redeclare
+`LifecycleOrchestrator` pattern + a forward-tolerant drift guard (rc.7 tools listed as `PENDING_TOOLS`
+until the shared `node_modules` carries rc.7). The pin (`package.json` rc.6 → rc.7 + `pnpm-lock.yaml`)
+was bumped **by hand** — a worktree `pnpm install` refuses (insists on nuking MAIN's junctioned
+`node_modules`); deps unchanged rc.6 → rc.7 so only 4 lockfile spots moved. CI `check` (frozen-install)
+passing = the hand-edit is valid.
+
+**Verified:** typecheck · lint · format clean; full unit suite green (2 pre-existing env-only `pathSafe`
+fails from short-name `TEMP`, branch-independent); CI `check`/CodeQL/analyze/review all green. Merged
+**without** the pre-merge e2e matrix — the new tools are unreachable until rc.7 is installed into the
+shared tree (so not e2e-able pre-merge), and the mirror change is unit-covered. claude-review ran **3
+rounds, converged 0 critical / 0 warning**: R1 (checklist item cap enforced renderer-side where the
+live count is authoritative; empty-array no-op edit `{setItems:[]}` slipped the empty-patch guard) →
+fixed; R2 (`configure_board` guard had no test; `setItems`/`removeItemIds` silently no-op'd on an
+unmatched id → false `{ok:true}`, now **throws** `unknown checklist item` like kanban's `unknown card`;
++3 guard tests) → fixed; R3 clean. All 5 inline comments dispositioned. Squash `4fc17266`.
+
+> **Live-activation owed (user-run, local):** on MAIN `git pull && pnpm install` (pulls rc.7 into the
+> shared `node_modules` — heavy native rebuild, affects all worktrees) + **restart Expanse** → the tools
+> go live. Until then the drift guard keeps the app compiling against installed rc.6.
