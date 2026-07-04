@@ -25,6 +25,7 @@ import writeFileAtomic from 'write-file-atomic'
 import { cliIdForLaunchCommand, type OrchestrationSyncProvider } from '../cliProvisioners'
 import {
   EXTERNAL_WRITERS,
+  detectExternalClisSync,
   writerTargetDir,
   type ExternalCliWriter
 } from '../cliProvisioners/external'
@@ -36,18 +37,30 @@ export interface ExternalSyncStore {
   listMasked(): { name: string }[]
 }
 
-/** A server targets a CLI when it lists it, or lists NOTHING (empty targets ⇒ all detected). */
-function targetsCli(s: { targets: CliId[] }, id: CliId): boolean {
-  return s.targets.length === 0 || s.targets.includes(id)
+/**
+ * Does a server apply to CLI `id`? An explicit `targets` list is authoritative. An EMPTY list means
+ * "every DETECTED CLI" (REPORT contract) — NOT literally every CLI — so a server the user never
+ * scoped (or one left empty by the detect-load race in the form) is never written into a CLI that
+ * isn't installed, which would otherwise leak its decrypted headers/env into e.g. a freshly-created
+ * `~/.codex/config.toml` for a tool the user doesn't use.
+ */
+function targetsCli(s: { targets: CliId[] }, id: CliId, detected: Record<CliId, boolean>): boolean {
+  return s.targets.length === 0 ? detected[id] : s.targets.includes(id)
 }
 
 /**
  * Bring ONE CLI's config at `dir` into exact agreement with the registry: upsert every enabled
  * server that targets this CLI, and remove every OTHER server we own (disabled, removed, or no
- * longer targeting). Idempotent; the single primitive behind both entry points.
+ * longer targeting). `detected` resolves the empty-targets case. Idempotent; the single primitive
+ * behind both entry points.
  */
-function resyncCliDir(writer: ExternalCliWriter, dir: string, store: ExternalSyncStore): void {
-  const write = store.listResolvedEnabled().filter((s) => targetsCli(s, writer.id))
+function resyncCliDir(
+  writer: ExternalCliWriter,
+  dir: string,
+  store: ExternalSyncStore,
+  detected: Record<CliId, boolean>
+): void {
+  const write = store.listResolvedEnabled().filter((s) => targetsCli(s, writer.id, detected))
   const writeNames = new Set(write.map((s) => s.name))
   const remove = store
     .listMasked()
@@ -115,7 +128,11 @@ export function makeExternalMcpSyncProvider(deps: {
     // Project-scoped CLIs need a real dir; home-scoped (gemini/codex) ignore it.
     if (writer.scope === 'project' && (!base || base.trim() === '')) return
     const dir = writerTargetDir(cliId, base ?? '')
-    resyncCliDir(writer, dir, deps.store)
+    // The launching CLI is definitionally in use → count it as detected even if its home config dir
+    // doesn't exist yet (first run), so an empty-targets server still reaches the terminal starting now.
+    const detected = detectExternalClisSync()
+    detected[cliId] = true
+    resyncCliDir(writer, dir, deps.store, detected)
     if (writer.scope === 'project') {
       if (!projectDirs.has(dir)) {
         projectDirs.add(dir)
@@ -135,9 +152,12 @@ export function makeExternalMcpSyncProvider(deps: {
  * dir/CLI; a locked file never blocks the others. Fire-and-forget from the IPC handler.
  */
 export function onRegistryChanged(store: ExternalSyncStore): void {
+  // Empty-targets servers apply only to DETECTED CLIs here (no launching CLI to force-include), so a
+  // resync never creates a config — with decrypted secrets — for a CLI the user hasn't installed.
+  const detected = detectExternalClisSync()
   const tryResync = (writer: ExternalCliWriter, dir: string): void => {
     try {
-      resyncCliDir(writer, dir, store)
+      resyncCliDir(writer, dir, store, detected)
     } catch {
       /* best-effort — one bad CLI/dir never blocks the rest */
     }

@@ -12,6 +12,7 @@
  * (the store decrypts in MAIN immediately before the write); they live only for the duration of the
  * write. MAIN-only (node fs via the shared helpers).
  */
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CliId, NamedSecret, ResolvedServer } from '../mcpServers/types'
 import {
@@ -286,16 +287,38 @@ export function writerTargetDir(id: CliId, projectOrBoardDir: string): string {
   }
 }
 
-/** Detection map (config dir present per CLI) — reused by the IPC `detectClis` handler. */
-export async function detectExternalClis(): Promise<Record<CliId, boolean>> {
-  const dirs: Record<CliId, string> = {
+/** Config dir per CLI (drives detection — present ⇒ that CLI is installed/used on this host). */
+function cliConfigDirs(): Record<CliId, string> {
+  return {
     claude: claudeHome(),
     codex: codexHome(),
     gemini: geminiHome(),
     opencode: opencodeHome()
   }
+}
+
+/** Detection map (config dir present per CLI) — reused by the IPC `detectClis` handler. */
+export async function detectExternalClis(): Promise<Record<CliId, boolean>> {
+  const dirs = cliConfigDirs()
   const entries = await Promise.all(
     (Object.keys(dirs) as CliId[]).map(async (id) => [id, await dirExists(dirs[id])] as const)
   )
   return Object.fromEntries(entries) as Record<CliId, boolean>
+}
+
+/**
+ * Synchronous detection — used by the spawn-time + on-change resync (which must decide, WITHOUT
+ * awaiting, whether a server with EMPTY targets applies to a CLI). Empty targets resolve to the
+ * DETECTED set (REPORT contract), so a server the user never explicitly scoped is never written into
+ * a CLI that isn't even installed (which would create e.g. a `~/.codex/config.toml` holding decrypted
+ * secrets for a tool the user doesn't use).
+ */
+export function detectExternalClisSync(): Record<CliId, boolean> {
+  const dirs = cliConfigDirs()
+  return {
+    claude: existsSync(dirs.claude),
+    codex: existsSync(dirs.codex),
+    gemini: existsSync(dirs.gemini),
+    opencode: existsSync(dirs.opencode)
+  }
 }

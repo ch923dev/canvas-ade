@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, readFileSync, existsSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -104,10 +104,29 @@ describe('onRegistryChanged cleanup', () => {
   it('re-adds a re-enabled server to a tracked dir without a respawn', () => {
     const provider = makeExternalMcpSyncProvider({
       getProjectDir: () => proj,
-      store: fakeStore([srv({ enabled: false })])
+      store: fakeStore([srv({ enabled: false, targets: ['claude'] })])
     })
     provider({ id: 'b1', launchCommand: 'claude', cwd: proj }) // tracks the dir even with nothing to write
-    onRegistryChanged(fakeStore([srv({ enabled: true })]))
+    onRegistryChanged(fakeStore([srv({ enabled: true, targets: ['claude'] })]))
     expect(claudeMap().linear).toBeDefined()
+  })
+})
+
+describe('empty-targets resolves to the DETECTED set (never an uninstalled CLI)', () => {
+  it('spawn: an empty-targets server still reaches the launching CLI even if undetected', () => {
+    // No ~/.claude in the temp home ⇒ claude is "undetected", but a claude terminal is launching.
+    const provider = makeExternalMcpSyncProvider({
+      getProjectDir: () => proj,
+      store: fakeStore([srv()])
+    })
+    provider({ id: 'b1', launchCommand: 'claude', cwd: proj })
+    expect(claudeMap().linear).toBeDefined()
+  })
+
+  it('onRegistryChanged: an empty-targets server writes only to detected home CLIs', () => {
+    mkdirSync(join(home, '.gemini'), { recursive: true }) // gemini detected; codex is NOT
+    onRegistryChanged(fakeStore([srv()]))
+    expect(existsSync(join(home, '.gemini', 'settings.json'))).toBe(true)
+    expect(existsSync(join(home, '.codex', 'config.toml'))).toBe(false)
   })
 })
