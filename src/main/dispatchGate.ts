@@ -222,6 +222,16 @@ export function createGatedWriter(
     const readinessDetail = readiness
       ? `; readiness=${readiness.outcome} waited=${readiness.waitedMs}ms`
       : ''
+    // (readiness verdict) Resolve the pre-write delivery signal NOW: it BOTH composes into the
+    // final `delivered` (OR echo, below) AND gates the echo poll — an already-`ready` write skips
+    // the (up to ECHO_CONFIRM_MS) echo wait entirely, since echo can only UPGRADE `delivered`,
+    // never downgrade a readiness-confirmed write. No readiness probe wired ⇒ null ⇒ ready (older
+    // registries keep today's `dispatched`).
+    const ready =
+      !readiness ||
+      readiness.outcome === 'ready' ||
+      readiness.outcome === 'ready_latched' ||
+      readiness.outcome === 'ready_assumed'
 
     // (pre-write re-check) 🔒 relay's BUG-021 TOCTOU slots HERE — after confirm, before the
     // nonce is consumed / the PTY is written. A vanished authorization → evict + reject.
@@ -259,18 +269,30 @@ export function createGatedWriter(
       const body = deps.isBracketedPaste?.(targetId)
         ? `${PASTE_START}${safeText}${PASTE_END}`
         : safeText
-      for (let i = 0; i < body.length; i += WRITE_CHUNK_CHARS) {
+      // Chunk by code UNITS, but never split a surrogate pair across two writes: a lone high
+      // surrogate at a chunk boundary is UTF-8-encoded to U+FFFD independently in each write,
+      // corrupting a non-BMP char (emoji / CJK-ext / math symbol) and defeating byte-exact
+      // delivery. When the boundary lands on a high surrogate, pull it back one unit so the pair
+      // rides together into the next chunk.
+      for (let i = 0; i < body.length; ) {
+        let end = Math.min(i + WRITE_CHUNK_CHARS, body.length)
+        const lastUnit = body.charCodeAt(end - 1)
+        if (end < body.length && lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1
         if (i > 0) await wait(WRITE_CHUNK_GAP_MS)
-        if (!deps.writeToPty(targetId, body.slice(i, i + WRITE_CHUNK_CHARS))) {
+        if (!deps.writeToPty(targetId, body.slice(i, end))) {
           await audit('failed', { detail: `pty write failed; ${seqDetail}` })
           throw new Error(`${type}: PTY write failed (no live terminal session)`)
         }
+        i = end
       }
-      // (echo confirm) Bounded wait for the target to visibly react to the body BEFORE the submit.
-      // Output-arrived-since-write test: staleMs is now−lastActivityAt, so stale ≤ elapsed ⇔ the
-      // last output happened at/after the write began. Degrade-and-submit at the cap (the human
-      // already approved) — the ack honesty, not the submit, carries an unseen echo.
-      if (deps.activityStaleMs) {
+      // (echo confirm) ONLY when readiness did NOT already confirm delivery — echo can only
+      // UPGRADE `delivered`, so an already-`ready` write skips this wait and submits immediately
+      // (no avoidable ECHO_CONFIRM_MS latency on the common confirmed case). Bounded wait for the
+      // target to visibly react to the body BEFORE the submit. Output-arrived-since-write test:
+      // staleMs is now−lastActivityAt, so stale ≤ elapsed ⇔ the last output happened at/after the
+      // write began. Degrade-and-submit at the cap (the human already approved) — the ack honesty,
+      // not the submit, carries an unseen echo.
+      if (!ready && deps.activityStaleMs) {
         const writeStart = Date.now()
         for (;;) {
           const stale = deps.activityStaleMs(targetId)
@@ -306,16 +328,15 @@ export function createGatedWriter(
     // `dispatched_unconfirmed` — same write, honest label. No readiness probe wired ⇒ null ⇒
     // today's `dispatched` (older registries keep their exact behaviour).
     // Echo confirm (2026-07-04): the target visibly reacting to the write is independent positive
-    // evidence, composed with OR — `dispatched` iff the boot settled OR the target echoed; only
-    // BOTH-negative degrades to `dispatched_unconfirmed` (see the echo-confirm rationale above).
-    const ready =
-      !readiness ||
-      readiness.outcome === 'ready' ||
-      readiness.outcome === 'ready_latched' ||
-      readiness.outcome === 'ready_assumed'
+    // evidence, composed with OR — `dispatched` iff the boot settled (`ready`, resolved above) OR
+    // the target echoed; only BOTH-negative degrades to `dispatched_unconfirmed`. `echo=` is
+    // recorded ONLY when the poll actually ran (i.e. `!ready`) — a `ready` write skips the poll,
+    // so claiming `echo=none` there would be dishonest ("didn't check", not "checked, saw none").
     const delivered = ready || echoSeen
     const echoDetail =
-      deps.activityStaleMs && safeText.length > 0 ? `; echo=${echoSeen ? 'seen' : 'none'}` : ''
+      !ready && deps.activityStaleMs && safeText.length > 0
+        ? `; echo=${echoSeen ? 'seen' : 'none'}`
+        : ''
     try {
       await audit(delivered ? 'dispatched' : 'dispatched_unconfirmed', {
         detail: `${seqDetail}${readinessDetail}${echoDetail}`

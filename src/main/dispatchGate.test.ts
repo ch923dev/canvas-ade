@@ -82,6 +82,25 @@ describe('createGatedWriter — paste framing + paced chunking (relay cut-off fi
     expect(body.join('')).toBe(`${PASTE_START}${text}${PASTE_END}`)
   })
 
+  it('a non-BMP char straddling a 1024-char boundary is NOT split across chunks (surrogate-safe)', async () => {
+    // '😀' (U+1F600 = 😀) is placed so its surrogate pair spans index 1023/1024. A naive
+    // slice would land the lone high surrogate at the end of chunk 1 → U+FFFD corruption. Raw body
+    // (no framing) so the boundary is exactly WRITE_CHUNK_CHARS; sanitize:false keeps the length
+    // exact.
+    const text = 'a'.repeat(1023) + '😀' + 'z'.repeat(1500)
+    const { deps, writes } = makeDeps()
+    await createGatedWriter(deps)(input({ text, sanitize: false }))
+    const body = writes.slice(0, -1)
+    expect(writes[writes.length - 1]).toBe('\r')
+    expect(body.join('')).toBe(text) // reassembly byte-exact
+    for (const c of body) {
+      const lastUnit = c.charCodeAt(c.length - 1)
+      expect(lastUnit >= 0xd800 && lastUnit <= 0xdbff).toBe(false) // no chunk ends on a high surrogate
+      const firstUnit = c.charCodeAt(0)
+      expect(firstUnit >= 0xdc00 && firstUnit <= 0xdfff).toBe(false) // nor starts on a low surrogate
+    }
+  })
+
   it('a session vanishing MID-body aborts the remaining chunks AND the submit (no orphan \\r)', async () => {
     const text = 'b'.repeat(3000)
     const { deps, writes, audits } = makeDeps({ failWriteAt: 2 })
@@ -134,17 +153,25 @@ describe('createGatedWriter — post-write echo confirmation (honest ack, OR-com
     expect(writes[writes.length - 1]).toBe('\r') // degrade-and-submit, never a swallowed Enter
   })
 
-  it('echo NEVER downgrades: readiness ready + echo none → still dispatched (readiness carries it)', async () => {
+  it('readiness ready → echo poll SKIPPED (no avoidable wait); still dispatched, no echo= recorded', async () => {
+    // Perf gate: an already-`ready` write needs no echo confirmation (echo can only UPGRADE), so
+    // the poll is skipped entirely — activityStaleMs is never consulted and `echo=` is not
+    // recorded (claiming echo=none here would mean "didn't check", not "checked, saw none").
+    const probe = { calls: 0 }
     const { deps, audits } = makeDeps({
       awaitReady: async () => ({ outcome: 'ready', waitedMs: 5 }),
-      activityStaleMs: () => 99_999
+      activityStaleMs: () => {
+        probe.calls += 1
+        return 99_999
+      }
     })
     const r = await createGatedWriter(deps)(input())
     expect(r.delivery).toBe('ready')
+    expect(probe.calls).toBe(0) // echo poll never ran — readiness already carried delivery
     const last = audits[audits.length - 1]
     expect(last.status).toBe('dispatched')
     expect(last.detail).toContain('readiness=ready')
-    expect(last.detail).toContain('echo=none') // recorded honestly, but does not degrade delivery
+    expect(last.detail).not.toContain('echo=')
   })
 
   it('no activityStaleMs probe wired → no echo check, delivery stays readiness-only (back-compat)', async () => {
