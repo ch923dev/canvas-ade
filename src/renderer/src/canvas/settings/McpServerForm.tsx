@@ -51,13 +51,31 @@ const s = {
     padding: '7px 9px',
     width: '100%'
   },
+  // A balanced two-up segmented control: a full-width inset track (matches the sibling inputs'
+  // width) split into two equal, centred segments — so BOTH options read as toggle halves, not a
+  // pill next to floating label text.
   seg: {
-    display: 'inline-flex',
+    display: 'flex',
+    width: '100%',
     background: 'var(--inset)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--r-ctl)',
-    padding: 2,
-    gap: 2
+    padding: 3,
+    gap: 3
+  },
+  segBtn: {
+    flex: 1,
+    minHeight: 26,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'var(--ui)',
+    fontSize: 'var(--fs-label)',
+    fontWeight: 500,
+    borderRadius: 4,
+    border: 'none',
+    cursor: 'pointer',
+    transition: 'background 0.12s ease-out, color 0.12s ease-out'
   },
   kv: { display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 6, alignItems: 'center' },
   targets: { display: 'flex', flexWrap: 'wrap', gap: 7 },
@@ -257,29 +275,31 @@ export function McpServerForm({
       <div style={s.field}>
         <span style={s.label}>Transport</span>
         <div style={s.seg} role="radiogroup" aria-label="Transport">
-          {(['http', 'stdio'] as McpTransport[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="radio"
-              aria-checked={transport === t}
-              onClick={() => setTransport(t)}
-              data-test={`mcp-form-transport-${t}`}
-              style={{
-                fontSize: 'var(--fs-label)',
-                padding: '4px 12px',
-                borderRadius: 'var(--r-ctl)',
-                border: 'none',
-                cursor: 'pointer',
-                background: transport === t ? 'var(--surface-overlay)' : 'transparent',
-                color: transport === t ? 'var(--text)' : 'var(--text-2)',
-                boxShadow: transport === t ? 'inset 0 0 0 1px var(--border)' : 'none'
-              }}
-            >
-              {t === 'http' ? 'HTTP' : 'stdio (local command)'}
-            </button>
-          ))}
+          {(['http', 'stdio'] as McpTransport[]).map((t) => {
+            const on = transport === t
+            return (
+              <button
+                key={t}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => setTransport(t)}
+                data-test={`mcp-form-transport-${t}`}
+                style={{
+                  ...s.segBtn,
+                  background: on ? 'var(--surface-overlay)' : 'transparent',
+                  color: on ? 'var(--text)' : 'var(--text-2)',
+                  boxShadow: on ? 'inset 0 0 0 1px var(--border-strong)' : 'none'
+                }}
+              >
+                {t === 'http' ? 'HTTP' : 'stdio'}
+              </button>
+            )
+          })}
         </div>
+        <span style={s.hint}>
+          HTTP connects to a remote URL with headers. stdio runs a local command on your machine.
+        </span>
       </div>
 
       {transport === 'http' ? (
