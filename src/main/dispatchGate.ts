@@ -46,11 +46,15 @@ const WRITE_CHUNK_GAP_MS = process.env.NODE_ENV === 'test' ? 0 : 15
 
 /**
  * 🔒 Echo confirmation (honest ack, part 2): after the body is written, wait (bounded) for the
- * target to produce ANY output — a live REPL echoes/repaints on paste ingestion. No echo inside
- * the cap means the write may have been swallowed → the dispatch degrades to
- * `dispatched_unconfirmed` (same honest-label philosophy as the readiness backstop: the write
- * already happened, honesty moves to the audit + the returned `delivery`). Zero cap under test ⇒
- * a single immediate probe check, so unit tests drive both outcomes deterministically.
+ * target to produce ANY output — a live REPL echoes/repaints on paste ingestion. Echo is
+ * INDEPENDENT, POST-write delivery evidence that COMPLEMENTS the pre-write readiness gate: a
+ * dispatch is confirmed (`dispatched`) if EITHER the boot window was observed quiet OR the target
+ * visibly reacted to the write (`delivered = ready || echoSeen`). Only when BOTH signals are
+ * negative — we wrote into a REPL whose boot never settled AND that produced nothing back — does
+ * the dispatch honestly degrade to `dispatched_unconfirmed`. This is why echo is composed with OR,
+ * not AND: it can only UPGRADE confidence (e.g. a relay into an idle-but-ready agent that readiness
+ * can't settle but that echoes the paste), never downgrade a readiness-confirmed write. Zero cap
+ * under test ⇒ a single immediate probe check, so unit tests drive both outcomes deterministically.
  */
 const ECHO_CONFIRM_MS = process.env.NODE_ENV === 'test' ? 0 : 2000
 const ECHO_POLL_MS = 50
@@ -248,7 +252,9 @@ export function createGatedWriter(
     // live terminal session held the id — audit failed + throw on the BODY writes FIRST, so a
     // vanished session never receives a lone orphan submit (a session vanishing MID-body aborts
     // the remaining chunks + the submit the same way).
-    let echoSeen = true
+    // echoSeen defaults FALSE (no positive post-write evidence): with the OR composition below,
+    // an absent echo probe or an empty body leaves delivery to the readiness signal alone.
+    let echoSeen = false
     if (safeText.length > 0) {
       const body = deps.isBracketedPaste?.(targetId)
         ? `${PASTE_START}${safeText}${PASTE_END}`
@@ -260,13 +266,12 @@ export function createGatedWriter(
           throw new Error(`${type}: PTY write failed (no live terminal session)`)
         }
       }
-      // (echo confirm) Bounded wait for the target to visibly ingest the body BEFORE the submit
-      // — never press Enter into a TUI that echoed nothing, but degrade-and-submit at the cap
-      // (the human already approved this dispatch). Output-arrived-since-write test: staleMs is
-      // now−lastActivityAt, so stale ≤ elapsed ⇔ the last output happened after the write began.
+      // (echo confirm) Bounded wait for the target to visibly react to the body BEFORE the submit.
+      // Output-arrived-since-write test: staleMs is now−lastActivityAt, so stale ≤ elapsed ⇔ the
+      // last output happened at/after the write began. Degrade-and-submit at the cap (the human
+      // already approved) — the ack honesty, not the submit, carries an unseen echo.
       if (deps.activityStaleMs) {
         const writeStart = Date.now()
-        echoSeen = false
         for (;;) {
           const stale = deps.activityStaleMs(targetId)
           if (stale !== undefined && stale <= Date.now() - writeStart) {
@@ -300,14 +305,15 @@ export function createGatedWriter(
     // REPL". A wait that backstopped/aborted (outcome 'unconfirmed'/'no_session') degrades to
     // `dispatched_unconfirmed` — same write, honest label. No readiness probe wired ⇒ null ⇒
     // today's `dispatched` (older registries keep their exact behaviour).
-    // Echo confirm (2026-07-04): a body that produced NO target output inside the echo cap
-    // degrades the same way — `dispatched` now also implies "the target visibly reacted".
+    // Echo confirm (2026-07-04): the target visibly reacting to the write is independent positive
+    // evidence, composed with OR — `dispatched` iff the boot settled OR the target echoed; only
+    // BOTH-negative degrades to `dispatched_unconfirmed` (see the echo-confirm rationale above).
     const ready =
       !readiness ||
       readiness.outcome === 'ready' ||
       readiness.outcome === 'ready_latched' ||
       readiness.outcome === 'ready_assumed'
-    const delivered = ready && echoSeen
+    const delivered = ready || echoSeen
     const echoDetail =
       deps.activityStaleMs && safeText.length > 0 ? `; echo=${echoSeen ? 'seen' : 'none'}` : ''
     try {

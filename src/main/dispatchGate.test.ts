@@ -105,18 +105,27 @@ describe('createGatedWriter — paste framing + paced chunking (relay cut-off fi
   })
 })
 
-describe('createGatedWriter — post-write echo confirmation (honest ack)', () => {
-  it('echo seen (output arrived since the write) → dispatched + delivery ready + echo=seen', async () => {
-    const { deps, audits } = makeDeps({ activityStaleMs: () => 0 })
+describe('createGatedWriter — post-write echo confirmation (honest ack, OR-composed)', () => {
+  it('UPGRADE: readiness unconfirmed BUT echo seen → dispatched + delivery ready + echo=seen', async () => {
+    // The idle-but-ready case: the boot window never settled to observe, but the target echoed
+    // the paste → delivery IS confirmed (this is the e2e-flake fix — echo upgrades, not downgrades).
+    const { deps, audits } = makeDeps({
+      awaitReady: async () => ({ outcome: 'unconfirmed', waitedMs: 15000 }),
+      activityStaleMs: () => 0
+    })
     const r = await createGatedWriter(deps)(input())
     expect(r.delivery).toBe('ready')
     const last = audits[audits.length - 1]
     expect(last.status).toBe('dispatched')
+    expect(last.detail).toContain('readiness=unconfirmed')
     expect(last.detail).toContain('echo=seen')
   })
 
-  it('no echo inside the cap → dispatched_unconfirmed + delivery unconfirmed + echo=none (terminator still sent)', async () => {
-    const { deps, writes, audits } = makeDeps({ activityStaleMs: () => 99_999 })
+  it('BOTH negative: readiness unconfirmed AND no echo → dispatched_unconfirmed + echo=none (terminator still sent)', async () => {
+    const { deps, writes, audits } = makeDeps({
+      awaitReady: async () => ({ outcome: 'unconfirmed', waitedMs: 15000 }),
+      activityStaleMs: () => 99_999
+    })
     const r = await createGatedWriter(deps)(input())
     expect(r.delivery).toBe('unconfirmed')
     const last = audits[audits.length - 1]
@@ -125,23 +134,25 @@ describe('createGatedWriter — post-write echo confirmation (honest ack)', () =
     expect(writes[writes.length - 1]).toBe('\r') // degrade-and-submit, never a swallowed Enter
   })
 
-  it('readiness ready + echo none still degrades (delivered = ready AND echoSeen)', async () => {
+  it('echo NEVER downgrades: readiness ready + echo none → still dispatched (readiness carries it)', async () => {
     const { deps, audits } = makeDeps({
       awaitReady: async () => ({ outcome: 'ready', waitedMs: 5 }),
       activityStaleMs: () => 99_999
     })
     const r = await createGatedWriter(deps)(input())
-    expect(r.delivery).toBe('unconfirmed')
-    expect(audits[audits.length - 1].detail).toContain('readiness=ready')
-    expect(audits[audits.length - 1].detail).toContain('echo=none')
+    expect(r.delivery).toBe('ready')
+    const last = audits[audits.length - 1]
+    expect(last.status).toBe('dispatched')
+    expect(last.detail).toContain('readiness=ready')
+    expect(last.detail).toContain('echo=none') // recorded honestly, but does not degrade delivery
   })
 
   it('no activityStaleMs probe wired → no echo check, delivery stays readiness-only (back-compat)', async () => {
     const { deps, audits } = makeDeps({
-      awaitReady: async () => ({ outcome: 'ready', waitedMs: 5 })
+      awaitReady: async () => ({ outcome: 'unconfirmed', waitedMs: 5 })
     })
     const r = await createGatedWriter(deps)(input())
-    expect(r.delivery).toBe('ready')
+    expect(r.delivery).toBe('unconfirmed') // no echo probe ⇒ readiness alone decides
     expect(audits[audits.length - 1].detail).not.toContain('echo=')
   })
 
