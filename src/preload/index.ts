@@ -394,6 +394,49 @@ export interface OrchestrationSyncResult {
   path?: string
 }
 
+// External MCP servers (feature: add external MCP servers). Shapes MIRROR src/main/mcpServers/types.ts
+// across the process boundary. 🔒 secret VALUES never cross: the renderer sees masked names +
+// presence; on save it sends the values the user typed ('' = keep the stored secret).
+export type McpTransport = 'http' | 'stdio'
+export interface McpMaskedSecret {
+  name: string
+  hasValue: boolean
+}
+export interface McpTestResult {
+  ok: boolean
+  at: number
+  detail?: string
+  toolCount?: number
+}
+export interface MaskedMcpServer {
+  id: string
+  name: string
+  enabled: boolean
+  transport: McpTransport
+  url?: string
+  command?: string
+  args?: string[]
+  headers?: McpMaskedSecret[]
+  env?: McpMaskedSecret[]
+  targets: OrchestrationCliId[]
+  lastTest?: McpTestResult
+}
+export interface McpServerSaveInput {
+  id?: string
+  name: string
+  enabled: boolean
+  transport: McpTransport
+  url?: string
+  headers?: { name: string; value: string }[]
+  command?: string
+  args?: string[]
+  env?: { name: string; value: string }[]
+  targets: OrchestrationCliId[]
+}
+export type McpSaveResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: 'validation' | 'encryption-unavailable'; detail?: string }
+
 // ── PREV-02: ONE shared IPC listener per OSR stream, fanned out by board id ──
 // Before: every Browser board called `ipcRenderer.on('preview:osrFrame', …)`, so N boards meant N
 // listeners that EACH ran (and id-checked) on EVERY board's frame — O(N) work per frame. Now a
@@ -827,6 +870,21 @@ const api = {
     getSpawnCap: (): Promise<number> => ipcRenderer.invoke('orchestration:getSpawnCap'),
     setSpawnCap: (cap: number): Promise<{ ok: boolean; reason?: string }> =>
       ipcRenderer.invoke('orchestration:setSpawnCap', cap)
+  },
+
+  // ── External MCP servers: register the user's OWN MCP servers, written into each selected agent
+  //    CLI's config so terminal agents can use them (feature: add external MCP servers). MAIN owns
+  //    the encrypted store + per-CLI writes + Test probe; the renderer sends/receives MASKED rows.
+  mcpServers: {
+    list: (): Promise<MaskedMcpServer[]> => ipcRenderer.invoke('mcp-servers:list'),
+    save: (input: McpServerSaveInput): Promise<McpSaveResult> =>
+      ipcRenderer.invoke('mcp-servers:save', input),
+    remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('mcp-servers:remove', id),
+    setEnabled: (id: string, on: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('mcp-servers:setEnabled', id, on),
+    test: (id: string): Promise<McpTestResult> => ipcRenderer.invoke('mcp-servers:test', id),
+    detectClis: (): Promise<Record<OrchestrationCliId, boolean>> =>
+      ipcRenderer.invoke('mcp-servers:detectClis')
   },
 
   // ── Phase 5 auto-update (electron-updater; main owns the feed/download) ──
