@@ -260,7 +260,6 @@ export function removeFileQuiet(file: string): void {
 // if present, append it otherwise, and leave every other byte (other tables, comments, formatting)
 // exactly as-is. Our block has a fixed, sub-table-free shape, so removal-by-header is unambiguous.
 
-const CODEX_HEADER_RE = /^\s*\[mcp_servers\.(?:canvas-ade|"canvas-ade")\]\s*$/
 const ANY_TABLE_HEADER_RE = /^\s*\[/
 
 /** Escape a string for a TOML basic (double-quoted) string. Tokens are URL-safe, but be defensive. */
@@ -268,27 +267,64 @@ export function tomlBasicString(s: string): string {
   return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
 }
 
-/** Our codex table block (3 lines, no trailing newline). */
-export function codexBlock(port: number, token: string): string {
+/** A TOML array of basic strings: `["a", "b"]`. */
+export function tomlStringArray(items: readonly string[]): string {
+  return '[' + items.map(tomlBasicString).join(', ') + ']'
+}
+
+/** A TOML inline table of basic-string pairs: `{ "K" = "v", … }` (empty ⇒ `{}`). */
+export function tomlInlineTable(pairs: readonly (readonly [string, string])[]): string {
+  if (pairs.length === 0) return '{}'
   return (
-    '[mcp_servers.canvas-ade]\n' +
-    `url = ${tomlBasicString(mcpUrl(port))}\n` +
-    `http_headers = { Authorization = ${tomlBasicString(bearer(token))} }`
+    '{ ' + pairs.map(([k, v]) => `${tomlBasicString(k)} = ${tomlBasicString(v)}`).join(', ') + ' }'
   )
 }
 
+/** Header matcher for a codex `[mcp_servers.<name>]` table — matches the bare OR quoted form. */
+function codexHeaderReFor(name: string): RegExp {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^\\s*\\[mcp_servers\\.(?:${esc}|"${esc}")\\]\\s*$`)
+}
+
+/** Table header for `name`, quoting it when it isn't a bare TOML key (e.g. contains a dot). */
+function codexTableHeader(name: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(name)
+    ? `[mcp_servers.${name}]`
+    : `[mcp_servers.${tomlBasicString(name)}]`
+}
+
+/** Build a codex `[mcp_servers.<name>]` table from body lines (no trailing newline). */
+export function codexTableBlock(name: string, bodyLines: readonly string[]): string {
+  return [codexTableHeader(name), ...bodyLines].join('\n')
+}
+
+/** Our own (`canvas-ade`) codex table block — the HTTP loopback shape. */
+export function codexBlock(port: number, token: string): string {
+  return codexTableBlock(SERVER_NAME, [
+    `url = ${tomlBasicString(mcpUrl(port))}`,
+    `http_headers = { Authorization = ${tomlBasicString(bearer(token))} }`
+  ])
+}
+
 /**
- * Remove our `[mcp_servers.canvas-ade]` table (its header through the line before the next table
- * header or EOF), preserving everything else. Returns the content unchanged if our table is absent.
+ * Remove the `[mcp_servers.<name>]` table (its header through the line before the next table header
+ * or EOF), preserving everything else. Returns the content unchanged if that table is absent. Our
+ * blocks are sub-table-free, so removal-by-header is unambiguous.
  */
-export function removeCodexTable(content: string): string {
+export function removeCodexTableNamed(content: string, name: string): string {
+  const re = codexHeaderReFor(name)
   const lines = content.split('\n')
-  const start = lines.findIndex((l) => CODEX_HEADER_RE.test(l))
+  const start = lines.findIndex((l) => re.test(l))
   if (start === -1) return content
   let end = start + 1
   while (end < lines.length && !ANY_TABLE_HEADER_RE.test(lines[end])) end++
   lines.splice(start, end - start)
   return lines.join('\n')
+}
+
+/** Remove our own `[mcp_servers.canvas-ade]` table. */
+export function removeCodexTable(content: string): string {
+  return removeCodexTableNamed(content, SERVER_NAME)
 }
 
 /** Whichever EOL style dominates `text` (ties/no-newlines default to bare `\n`). */
@@ -299,22 +335,31 @@ function dominantEol(text: string): '\r\n' | '\n' {
 }
 
 /**
- * Upsert our codex table: drop any prior copy of it, then append a fresh block at EOF.
+ * Upsert a codex `[mcp_servers.<name>]` table block: drop any prior copy of THAT name, then append
+ * the fresh block at EOF.
  *
- * Normalizes to LF while splicing (so the surgical line-matching in {@link removeCodexTable} is
+ * Normalizes to LF while splicing (so the surgical line-matching in {@link removeCodexTableNamed} is
  * unaffected by the file's original EOL style), then re-applies whichever EOL style the existing
  * file predominantly used — otherwise an appended LF-only block on a CRLF file leaves mixed line
  * endings behind.
  */
+export function upsertCodexTableBlock(
+  existing: string | undefined,
+  name: string,
+  block: string
+): string {
+  const raw = existing ?? ''
+  const eol = dominantEol(raw)
+  const cleaned = removeCodexTableNamed(raw.replace(/\r\n/g, '\n'), name).replace(/\s+$/, '')
+  const result = cleaned === '' ? block + '\n' : cleaned + '\n\n' + block + '\n'
+  return eol === '\r\n' ? result.replace(/\n/g, '\r\n') : result
+}
+
+/** Upsert our own (`canvas-ade`) codex table. */
 export function upsertCodexTable(
   existing: string | undefined,
   port: number,
   token: string
 ): string {
-  const raw = existing ?? ''
-  const eol = dominantEol(raw)
-  const cleaned = removeCodexTable(raw.replace(/\r\n/g, '\n')).replace(/\s+$/, '')
-  const block = codexBlock(port, token)
-  const result = cleaned === '' ? block + '\n' : cleaned + '\n\n' + block + '\n'
-  return eol === '\r\n' ? result.replace(/\n/g, '\r\n') : result
+  return upsertCodexTableBlock(existing, SERVER_NAME, codexBlock(port, token))
 }

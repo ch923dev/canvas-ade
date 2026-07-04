@@ -4,6 +4,7 @@ import { authApi } from './authApi'
 import { forwardPtyPort, terminalApi } from './terminalApi'
 import { projectSessionsApi } from './projectSessionsApi'
 import { recapApi, type RecapRefreshOutcome } from './recapApi'
+import { mcpServersApi } from './mcpServersApi'
 import { forwardVoicePort, voiceApi } from './voice'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
@@ -393,6 +394,19 @@ export interface OrchestrationSyncResult {
   detail: string
   path?: string
 }
+
+// External MCP servers (feature: add external MCP servers). The namespace + its mirror types live in
+// mcpServersApi.ts (max-lines ratchet; the recapApi.ts precedent); re-export so the renderer barrel
+// import keeps resolving them.
+export type {
+  McpCliId,
+  McpTransport,
+  McpMaskedSecret,
+  McpTestResult,
+  MaskedMcpServer,
+  McpServerSaveInput,
+  McpSaveResult
+} from './mcpServersApi'
 
 // ── PREV-02: ONE shared IPC listener per OSR stream, fanned out by board id ──
 // Before: every Browser board called `ipcRenderer.on('preview:osrFrame', …)`, so N boards meant N
@@ -828,6 +842,10 @@ const api = {
     setSpawnCap: (cap: number): Promise<{ ok: boolean; reason?: string }> =>
       ipcRenderer.invoke('orchestration:setSpawnCap', cap)
   },
+
+  // ── External MCP servers: register the user's OWN MCP servers, written into each selected agent
+  //    CLI's config so terminal agents can use them (factored to mcpServersApi.ts). ──
+  mcpServers: mcpServersApi,
 
   // ── Phase 5 auto-update (electron-updater; main owns the feed/download) ──
   update: {

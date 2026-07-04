@@ -108,6 +108,10 @@ import {
   revokeOrchestration,
   unsyncProvisioners
 } from './cliProvisioners'
+import { createMcpServersStore } from './mcpServers/mcpServersStore'
+import { registerMcpServersHandlers } from './mcpServers/mcpServersIpc'
+import { bindExternalSyncStore, makeExternalMcpSyncProvider } from './mcpServers/externalSync'
+import { probeExternalServer } from './mcpServers/mcpClientProbe'
 import {
   isTrustedTranscriptPath,
   readTranscriptTail,
@@ -930,9 +934,39 @@ app.whenReady().then(async () => {
   // endpoint + bearer rotate each app restart, so re-syncing here is what fixes the
   // stale-config-after-restart failure ("tool doesn't exist"). Errors are swallowed by pty.ts's
   // spawn-time try/catch, so a provisioning failure can never break a spawn. 🔒 token never logged.
-  setOrchestrationSyncProvider(
-    makeOrchestrationSyncProvider({ getProjectDir: getCurrentDir, mintToken: mintTerminalToken })
-  )
+  //
+  // External MCP servers (feature: add external MCP servers): a PARALLEL spawn-time writer composed
+  // into the same pty slot. It writes the user's OWN enabled external servers into the launching
+  // CLI's config — gated ONLY on enabled+targets, NOT orchestration consent (they are the user's
+  // servers, not Expanse authority). Each provider is wrapped so one failing never blocks the other,
+  // and both sit inside pty.ts's spawn try/catch. The store + dir-tracking live under `llmDataDir`
+  // (the same e2e-isolated sensitive-data dir), so a test key/config never lands in real userData.
+  const mcpServersStore = createMcpServersStore(llmDataDir, llmEncryptor)
+  bindExternalSyncStore(llmDataDir)
+  registerMcpServersHandlers(ipcMain, () => mainWindow, {
+    store: mcpServersStore,
+    probe: probeExternalServer
+  })
+  const orchestrationSync = makeOrchestrationSyncProvider({
+    getProjectDir: getCurrentDir,
+    mintToken: mintTerminalToken
+  })
+  const externalMcpSync = makeExternalMcpSyncProvider({
+    getProjectDir: getCurrentDir,
+    store: mcpServersStore
+  })
+  setOrchestrationSyncProvider((opts) => {
+    try {
+      orchestrationSync(opts)
+    } catch {
+      /* canvas-ade sync failure must never block the external write (or the spawn) */
+    }
+    try {
+      externalMcpSync(opts)
+    } catch {
+      /* external sync failure must never block the spawn */
+    }
+  })
 
   // The Sync modal's data plane (status + manual sync), frame-guarded inside the module.
   registerOrchestrationProvisionHandlers(ipcMain, () => mainWindow, getCurrentDir)
