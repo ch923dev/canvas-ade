@@ -11,7 +11,7 @@ beforeEach(() => {
   useCanvasStore.setState({ project: { dir: null, name: null, status: 'welcome' } })
 })
 
-const backButton = (): HTMLElement => screen.getByRole('button', { name: 'Settings' })
+const backButton = (): HTMLElement => screen.getByRole('button', { name: 'Back to Settings' })
 // Drilled ⇔ the detail pane is the visible half of the track. Detected via the section's
 // aria-hidden (set from `active === null`) so it is independent of any one pane's content — the
 // Voice pane, for instance, renders nothing without window.api.voice yet the panel is still drilled.
@@ -83,4 +83,14 @@ it('the close button closes outright', () => {
   render(<SettingsPanel onClose={onClose} initialSection="mcp" />)
   fireEvent.click(screen.getByLabelText('Close settings'))
   expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+it('drilled: back button is unambiguously labelled and the off-screen home grid is inert', () => {
+  render(<SettingsPanel onClose={() => {}} initialSection="mcp" />)
+  // The back button's accessible name is the spelled-out action, not the bare "Settings" heading.
+  expect(screen.getByRole('button', { name: 'Back to Settings' })).toBeTruthy()
+  // The home pane (any tile lives in it) is pulled out of the tab order + a11y tree while drilled.
+  const home = document.querySelector('[data-test^="settings-tile-"]')?.closest('section') ?? null
+  expect(home?.getAttribute('aria-hidden')).toBe('true')
+  expect(home?.hasAttribute('inert')).toBe(true)
 })

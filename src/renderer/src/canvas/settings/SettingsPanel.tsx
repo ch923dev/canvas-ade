@@ -13,6 +13,12 @@
  * Esc contract: Modal closes on Esc. When drilled into a section we intercept Esc in the CAPTURE
  * phase to go back to the home grid FIRST (and stop it reaching Modal's bubble-phase close), so one
  * Esc = up one level, matching every other drill UI. A scrim click still closes outright.
+ *
+ * Phase 3 (a11y + responsive): the off-screen half of the slide track is `inert` + `aria-hidden`
+ * (out of tab order, a11y tree, and pointer targeting — no per-tile tabIndex bookkeeping); the home
+ * and section titles are real `<h2>`s the panes point at via `aria-labelledby`; the back button
+ * carries an explicit `aria-label` so it never reads as the bare word "Settings"; and the tile grid
+ * uses `minmax(0,1fr)` so labels wrap instead of overflowing a narrow card.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { Modal } from '../Modal'
@@ -124,9 +130,19 @@ export function SettingsPanel({
           }}
         >
           {/* ── home: category grid ── */}
-          <section style={styles.pane} aria-hidden={active !== null}>
+          <section
+            style={styles.pane}
+            aria-hidden={active !== null}
+            aria-labelledby="settings-home-title"
+            // `inert` (React 19 native) pulls the off-screen pane out of the tab order, the a11y
+            // tree, AND pointer targeting in one attribute — so keyboard focus can't land on the
+            // tiles sliding away behind the detail, and no per-tile tabIndex bookkeeping is needed.
+            inert={active !== null}
+          >
             <div style={styles.homeHead}>
-              <div style={styles.homeTitle}>Settings</div>
+              <h2 id="settings-home-title" style={styles.homeTitle}>
+                Settings
+              </h2>
               <div style={styles.homeSub}>{projectName ?? 'No project open'}</div>
             </div>
             <div style={styles.homeBody}>
@@ -144,7 +160,6 @@ export function SettingsPanel({
                         }}
                         onClick={() => openSection(s.id)}
                         style={styles.tile}
-                        tabIndex={active === null ? 0 : -1}
                       >
                         <span style={styles.tileIcon}>
                           <Icon name={s.icon} size={17} />
@@ -160,20 +175,31 @@ export function SettingsPanel({
           </section>
 
           {/* ── detail: the drilled section ── */}
-          <section style={styles.pane} aria-hidden={active === null}>
+          <section
+            style={styles.pane}
+            aria-hidden={active === null}
+            aria-labelledby={activeDef ? 'settings-detail-title' : undefined}
+            inert={active === null}
+          >
             <div style={styles.detailHead}>
               <button
                 type="button"
                 ref={backRef}
+                // Visible label is the breadcrumb "‹ Settings"; the accessible name is spelled out
+                // so it never collides with the "Settings" heading a screen reader also announces.
+                aria-label="Back to Settings"
                 data-test="settings-back"
                 onClick={goHome}
                 style={styles.back}
-                tabIndex={active === null ? -1 : 0}
               >
                 <Icon name="back" size={15} />
                 Settings
               </button>
-              {activeDef && <span style={styles.detailTitle}>{activeDef.label}</span>}
+              {activeDef && (
+                <h2 id="settings-detail-title" style={styles.detailTitle}>
+                  {activeDef.label}
+                </h2>
+              )}
             </div>
             <div style={styles.detailBody} data-test="settings-detail">
               {active && <SettingsSectionBody id={active} onClose={onClose} onSignIn={onSignIn} />}
@@ -215,7 +241,7 @@ const styles: Record<string, CSSProperties> = {
 
   // home
   homeHead: { padding: '16px 18px 8px' },
-  homeTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text)' },
+  homeTitle: { margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)' },
   homeSub: {
     marginTop: 2,
     fontSize: 11.5,
@@ -234,12 +260,15 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 600,
     marginBottom: 9
   },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 },
+  // minmax(0,1fr) lets a column shrink below its content's intrinsic width, so a long tile label
+  // wraps inside the cell instead of forcing the grid to overflow the card on a narrow window.
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 },
   tile: {
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
     padding: 14,
+    minWidth: 0,
     border: '1px solid var(--border-subtle)',
     borderRadius: 'var(--r-inner)',
     background: 'var(--surface)',
@@ -282,6 +311,6 @@ const styles: Record<string, CSSProperties> = {
     padding: '4px 6px',
     borderRadius: 'var(--r-ctl)'
   },
-  detailTitle: { fontSize: 13.5, fontWeight: 600, color: 'var(--text)' },
+  detailTitle: { margin: 0, fontSize: 13.5, fontWeight: 600, color: 'var(--text)' },
   detailBody: { flex: 1, overflowY: 'auto', padding: '16px 18px', overscrollBehavior: 'contain' }
 }
