@@ -178,9 +178,22 @@ export function buildPlanningUpdateOp(
     p.dx = dx
     p.dy = dy
   }
-  if (patch.setItems !== undefined) p.setItems = buildSetItems(patch.setItems)
-  if (patch.addItems !== undefined) p.addItems = buildAddItems(patch.addItems)
-  if (patch.removeItemIds !== undefined) p.removeItemIds = buildRemoveItemIds(patch.removeItemIds)
+  // Only attach a checklist array when it carries ≥1 entry: an EXPLICIT empty array (`setItems: []`)
+  // is a no-op, and attaching it would slip past the "no applicable field" guard below and produce a
+  // confirmed/audited/undoable no-op edit with an empty confirm body. An empty array alongside a real
+  // field (e.g. `{ title, setItems: [] }`) is simply ignored, so the real field still applies.
+  if (patch.setItems !== undefined) {
+    const setItems = buildSetItems(patch.setItems)
+    if (setItems.length > 0) p.setItems = setItems
+  }
+  if (patch.addItems !== undefined) {
+    const addItems = buildAddItems(patch.addItems)
+    if (addItems.length > 0) p.addItems = addItems
+  }
+  if (patch.removeItemIds !== undefined) {
+    const removeItemIds = buildRemoveItemIds(patch.removeItemIds)
+    if (removeItemIds.length > 0) p.removeItemIds = removeItemIds
+  }
   if (Object.keys(p).length === 0) {
     throw new PlanningContentError(`patch has no field that applies to a ${kind} element`)
   }

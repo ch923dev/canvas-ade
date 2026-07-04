@@ -24,6 +24,15 @@ function newItemId(): string {
   return crypto.randomUUID()
 }
 
+/**
+ * Cumulative cap on a checklist's TOTAL item count (S6). `update_planning_element` caps each `addItems`
+ * batch at 100 transport-side, but only the RENDERER knows the checklist's live item count (the MCP board
+ * mirror truncates items to a preview), so — exactly like `add_planning_elements`' per-board
+ * `MAX_PLANNING_BOARD_ELEMENTS` cap — the running-total bound is enforced here, where the live count is
+ * authoritative. Matches the per-call/mirror item cap so an MCP-grown checklist can't sprawl unbounded.
+ */
+const MAX_CHECKLIST_ITEMS = 100
+
 export function applyPlanningEditOp(els: PlanningElement[], op: PlanningEditOp): PlanningElement[] {
   const target = els.find((e) => e.id === op.elementId)
   if (!target) throw new Error(`planning element not found: ${op.elementId}`)
@@ -70,6 +79,14 @@ function editElement(el: PlanningElement, p: PlanningEditPatch): PlanningElement
           ...items,
           ...p.addItems.map((a) => ({ id: newItemId(), label: a.label, done: a.done }))
         ]
+        // 🔒 Reject an add that grows the checklist past the cumulative cap (an already-over-cap list can
+        // still be edited/pruned — only growth is bounded). Throws → useMcpCommands acks {ok:false},
+        // nothing lands, and the agent learns the write was rejected.
+        if (items.length > MAX_CHECKLIST_ITEMS) {
+          throw new Error(
+            `checklist item cap exceeded (${items.length} > ${MAX_CHECKLIST_ITEMS}); remove items before adding more`
+          )
+        }
       }
       const n = { ...el, items }
       if (p.title !== undefined) n.title = p.title

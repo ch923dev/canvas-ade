@@ -72,6 +72,23 @@ describe('buildPlanningUpdateOp — kind-validated planning edits', () => {
     ).toThrow(PlanningContentError)
   })
 
+  it('checklist: an explicit empty array alone is a no-op → rejected (no applicable field)', () => {
+    expect(() => buildPlanningUpdateOp('c1', 'checklist', { setItems: [] })).toThrow(
+      PlanningContentError
+    )
+    expect(() => buildPlanningUpdateOp('c1', 'checklist', { addItems: [] })).toThrow(
+      PlanningContentError
+    )
+    expect(() => buildPlanningUpdateOp('c1', 'checklist', { removeItemIds: [] })).toThrow(
+      PlanningContentError
+    )
+  })
+
+  it('checklist: an empty array alongside a real field is ignored (the field still applies)', () => {
+    const op = buildPlanningUpdateOp('c1', 'checklist', { title: 'Build progress', setItems: [] })
+    expect(op.patch).toEqual({ title: 'Build progress' })
+  })
+
   it('diagram: accepts source, rejects dx', () => {
     expect(
       buildPlanningUpdateOp('d1', 'diagram', { source: 'graph TD\n A-->B' }).patch.source

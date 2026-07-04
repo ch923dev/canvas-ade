@@ -137,4 +137,50 @@ describe('applyPlanningEditOp — in-place element edits', () => {
       })
     ).toThrow(/kind mismatch/)
   })
+
+  const bigChecklist = (): PlanningElement => ({
+    id: 'c9',
+    kind: 'checklist',
+    x: 0,
+    y: 0,
+    w: 240,
+    h: 0,
+    title: 'Big',
+    items: Array.from({ length: 100 }, (_, i) => ({ id: `x${i}`, label: `${i}`, done: false }))
+  })
+
+  it('rejects an add that grows the checklist past the cumulative item cap', () => {
+    expect(() =>
+      applyPlanningEditOp([bigChecklist()], {
+        op: 'update',
+        elementId: 'c9',
+        kind: 'checklist',
+        patch: { addItems: [{ label: 'one more', done: false }] }
+      })
+    ).toThrow(/item cap exceeded/)
+  })
+
+  it('still allows editing/pruning an already-large checklist (only growth is capped)', () => {
+    // Tick an item (no add) on a 100-item list → fine.
+    const out = applyPlanningEditOp([bigChecklist()], {
+      op: 'update',
+      elementId: 'c9',
+      kind: 'checklist',
+      patch: { setItems: [{ id: 'x0', done: true }] }
+    })
+    const c = out.find((e) => e.id === 'c9')
+    if (!c || c.kind !== 'checklist') throw new Error('expected checklist')
+    expect(c.items[0].done).toBe(true)
+    expect(c.items).toHaveLength(100)
+    // Remove 1 then add 1 → net no growth → allowed.
+    const swapped = applyPlanningEditOp([bigChecklist()], {
+      op: 'update',
+      elementId: 'c9',
+      kind: 'checklist',
+      patch: { removeItemIds: ['x0'], addItems: [{ label: 'replacement', done: false }] }
+    })
+    const c2 = swapped.find((e) => e.id === 'c9')
+    if (!c2 || c2.kind !== 'checklist') throw new Error('expected checklist')
+    expect(c2.items).toHaveLength(100)
+  })
 })
