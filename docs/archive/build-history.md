@@ -1908,3 +1908,38 @@ per-slice HANDOFFs + KICKOFF deleted in this PR per doc lifecycle.
 full e2e matrix both legs on the push tree (Win 267P + 2 documented flakes rerun-green
 isolated; Linux-Docker 269P clean) · pack:dir spike win-x64 · title-stamped dev checks
 user-eyeballed at V4 ("actually great") and V5 (2026-07-04).
+
+## 2026-07-04 — PR #301: relay_prompt lands byte-complete — bracketed-paste framing + paced write + honest ack (`0952a9cd`)
+
+**Symptom:** a long `relay_prompt` kickoff (F4 lane, ~1.6 KB single line) arrived in a
+booting `claude` with its HEAD swallowed — visible text started mid-word inside
+`ACTIVE-WORK.md`, ~60 % of the head gone, tail intact — while the audit still read
+`dispatched`. Root cause: the shared dispatch write (`dispatchGate.ts`) issued the whole
+prompt as ONE raw `proc.write` into a TUI that had not yet attached its raw-mode stdin
+reader; bytes before the attach were discarded, and the readiness fast-paths
+(`ready_latched` / `ready_assumed`) returned blind mid-redraw so the write looked confirmed.
+
+**Fix (all MAIN, no MCP wire change):**
+- `ptyPasteMode.ts` (new) — tracks DECSET 2004 per session from PTY output (split-marker
+  carry, combined param lists); `pty.ts` hooks `observe()` in `proc.onData`, exposes
+  `isBracketedPasteEnabled(id)`. `ptyResize.ts` extracted to hold `pty.ts` under the
+  max-lines ratchet.
+- `dispatchGate.ts` — when 2004 is on, frame the body `\x1b[200~ … \x1b[201~` so the agent
+  ingests ONE atomic paste; write in paced ≤1024-char chunks, **surrogate-safe** (a non-BMP
+  pair is never split across two writes → no U+FFFD corruption). A failed chunk aborts
+  before the terminator (no orphan submit).
+- `terminalReadiness.ts` — latch/maturity fast-paths REQUALIFY with a current-quiet check
+  (bounded mini-wait if output is streaming) instead of returning `ready_assumed` blind.
+- Post-write **echo confirmation**, composed with OR: `dispatched` iff readiness settled OR
+  the target echoed the write; only BOTH-negative degrades to honest
+  `dispatched_unconfirmed` (`delivery:'unconfirmed'`; rc.6 surfaces the WARNING). The echo
+  poll is skipped when readiness already confirmed (no avoidable latency); `echo=` is
+  recorded only when the poll actually ran.
+
+**Verified:** `ptyPasteMode` / `dispatchGate` / `terminalReadiness` units + a byte-exact
+relay-integrity e2e (`mcp.e2e.ts`, a real bracketed-paste REPL dumps raw bytes) · Windows
+e2e 28/28 · Linux-Docker 265P (only pre-existing unrelated `file.e2e` env failures, proven
+identical on the `c58a1b39` baseline) · manual real-`claude` dev check PASS (relay collapsed
+to `[Pasted text #1]` — the `\x1b[200~…\x1b[201~` frame arrived atomically, head intact). Two
+review findings (surrogate-pair split at the chunk boundary; echo poll running when already
+ready) fixed + inline-dispositioned before merge. Squash `0952a9cd`.
