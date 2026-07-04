@@ -157,6 +157,11 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
   DELETED in the PR that merges their feature (build-history line is the residue); bug-hunt/review
   packages land under `docs/reviews/<date>-…/` — **never at the repo root** — and collapse to a dated
   summary once all findings are fixed; indexes update in the same PR that adds/removes indexed files.
+- **Version bump on every change (MUST).** Whatever we ship — feature, fix, refactor, epic — bump
+  `package.json` `version` in the SAME PR. Semver, pre-1.0: **minor** (`0.9.0`→`0.10.0`) for a new
+  board type / subsystem / epic; **patch** (`0.9.0`→`0.9.1`) for a fix / polish / small feature. Stay
+  in `0.x` — `1.0.0` is reserved for the first signed Release. Baseline set to `0.9.0` on 2026-07-05
+  (feature-complete, cert-gated; see `docs/archive/build-history.md`).
 
 ### Plan-viz first — draw every feature's plan on the canvas (Canvas ADE MCP)
 **We build Canvas ADE with Canvas ADE.** The `canvas-ade` MCP server (this repo's own product, running
