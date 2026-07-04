@@ -5,9 +5,10 @@
  * `Modal` (scrim/portal/Esc/focus-trap) at the same `zIndex={300}` + standard `--scrim` (0.5) the
  * old `SettingsModal` used — windowed over the live canvas.
  *
- * Phase 1 (this commit): navigation shell + a11y only. The detail panes are placeholders; the real
- * per-section controls are ported from `SettingsModal` in Phase 2, at which point `AppChrome` swaps
- * to this component. Until then `SettingsModal` stays the live surface, so the app is unbroken.
+ * Phase 2: each tile's detail body is a real section pane (`SettingsSectionBody` → `panes/*`), and
+ * `AppChrome` now renders THIS as the live Settings surface (the old `SettingsModal` is retired in
+ * Phase 4 once its tests move here). `initialSection` opens drilled straight into a tile (the
+ * account pill → 'account'); `onSignIn` reaches the Account pane's signed-out CTA.
  *
  * Esc contract: Modal closes on Esc. When drilled into a section we intercept Esc in the CAPTURE
  * phase to go back to the home grid FIRST (and stop it reaching Modal's bubble-phase close), so one
@@ -18,6 +19,7 @@ import { Modal } from '../Modal'
 import { Icon } from '../Icon'
 import { useCanvasStore } from '../../store/canvasStore'
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSectionId } from './settingsSections'
+import { SettingsSectionBody } from './SettingsSectionBody'
 
 function prefersReducedMotion(): boolean {
   return (
@@ -36,9 +38,13 @@ function baseName(dir: string | null): string | null {
 
 export function SettingsPanel({
   onClose,
+  onSignIn,
   initialSection = null
 }: {
   onClose: () => void
+  /** Account section's signed-out "Sign in" CTA — the parent closes Settings then opens SignInView
+   *  (two shared Modals must not stack). Optional so the panel stands alone in unit tests. */
+  onSignIn?: () => void
   /** Open drilled directly into a section (e.g. the account pill → 'account'). */
   initialSection?: SettingsSectionId | null
 }): ReactElement {
@@ -170,18 +176,7 @@ export function SettingsPanel({
               {activeDef && <span style={styles.detailTitle}>{activeDef.label}</span>}
             </div>
             <div style={styles.detailBody} data-test="settings-detail">
-              {activeDef && (
-                <>
-                  <p style={styles.detailBlurb}>{activeDef.blurb}.</p>
-                  {/* Phase 1 placeholder — Phase 2 ports the real controls from SettingsModal. */}
-                  <div style={styles.placeholder} data-test="settings-placeholder">
-                    <span style={styles.placeholderIcon}>
-                      <Icon name={activeDef.icon} size={20} />
-                    </span>
-                    <span>Controls for {activeDef.label} move here in the next build step.</span>
-                  </div>
-                </>
-              )}
+              {active && <SettingsSectionBody id={active} onClose={onClose} onSignIn={onSignIn} />}
             </div>
           </section>
         </div>
@@ -288,18 +283,5 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 'var(--r-ctl)'
   },
   detailTitle: { fontSize: 13.5, fontWeight: 600, color: 'var(--text)' },
-  detailBody: { flex: 1, overflowY: 'auto', padding: '16px 18px', overscrollBehavior: 'contain' },
-  detailBlurb: { margin: '0 0 14px', fontSize: 12, lineHeight: '18px', color: 'var(--text-2)' },
-  placeholder: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '16px 14px',
-    border: '1px dashed var(--border)',
-    borderRadius: 'var(--r-inner)',
-    background: 'var(--inset)',
-    color: 'var(--text-3)',
-    fontSize: 12
-  },
-  placeholderIcon: { flex: 'none', color: 'var(--text-2)' }
+  detailBody: { flex: 1, overflowY: 'auto', padding: '16px 18px', overscrollBehavior: 'contain' }
 }

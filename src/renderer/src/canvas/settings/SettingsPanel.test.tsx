@@ -12,7 +12,12 @@ beforeEach(() => {
 })
 
 const backButton = (): HTMLElement => screen.getByRole('button', { name: 'Settings' })
-const drilled = (): boolean => screen.queryByText(/move here in the next build step/) !== null
+// Drilled ⇔ the detail pane is the visible half of the track. Detected via the section's
+// aria-hidden (set from `active === null`) so it is independent of any one pane's content — the
+// Voice pane, for instance, renders nothing without window.api.voice yet the panel is still drilled.
+const detailSection = (): Element | null =>
+  document.querySelector('[data-test="settings-detail"]')?.closest('section') ?? null
+const drilled = (): boolean => detailSection()?.getAttribute('aria-hidden') === 'false'
 
 it('renders every category tile grouped under its heading', () => {
   render(<SettingsPanel onClose={() => {}} />)
@@ -37,12 +42,11 @@ it('renders every category tile grouped under its heading', () => {
 
 it('drills into a section on tile click and shows its detail', () => {
   render(<SettingsPanel onClose={() => {}} />)
-  fireEvent.click(screen.getByRole('button', { name: /Context · LLM/ }))
+  // Drill the MCP tile — a static read-only pane, so the shell test needs no window.api stub.
+  fireEvent.click(screen.getByRole('button', { name: /MCP Servers/ }))
   expect(drilled()).toBe(true)
-  // the drilled section's own content is what rendered (both panes co-exist in the DOM, so scope
-  // the assertion to the detail body rather than a bare getByText that also matches the tile).
   const detail = document.querySelector('[data-test="settings-detail"]')
-  expect(detail?.textContent).toContain('Context · LLM')
+  expect(detail?.textContent).toMatch(/coming in a later update/i)
 })
 
 it('back button returns to the home grid', () => {
