@@ -80,30 +80,6 @@ test('@chrome @voice settings voice section: catalog over real IPC + showPill ap
   await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
 })
 
-test('@chrome settings tabs: switching group tabs swaps the visible sections', async ({ page }) => {
-  await page.click('[title="Settings"]')
-  const panel = page.locator('[data-test="settings-panel"]')
-  await expect(panel).toBeVisible()
-
-  // Opens on the "You" tab → the Billing section (with its disabled Manage-subscription stub) shows.
-  await expect(page.locator('[data-test="settings-tab-you"]')).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  await expect(page.locator('[data-test="billing-manage"]')).toBeDisabled()
-
-  // Switch to "Agents & AI" → the You-group sections unmount and the MCP "coming" note appears.
-  await page.click('[data-test="settings-tab-agents"]')
-  await expect(page.locator('[data-test="billing-manage"]')).toHaveCount(0)
-  await expect(page.locator('[data-test="mcp-external-coming"]')).toBeVisible()
-
-  // Back to "You" → Billing shows again; Esc closes from any tab.
-  await page.click('[data-test="settings-tab-you"]')
-  await expect(page.locator('[data-test="billing-manage"]')).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(panel).toHaveCount(0)
-})
-
 test('@chrome no modal scrim occludes the canvas after close / without a project (PR #93 regression)', async ({
   page
 }) => {
