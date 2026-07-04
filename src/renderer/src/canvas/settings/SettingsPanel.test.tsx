@@ -1,4 +1,4 @@
-import { it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { it, expect, vi, beforeEach, afterEach, describe } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { SettingsPanel } from './SettingsPanel'
 import { useCanvasStore } from '../../store/canvasStore'
@@ -93,4 +93,42 @@ it('drilled: back button is unambiguously labelled and the off-screen home grid 
   const home = document.querySelector('[data-test^="settings-tile-"]')?.closest('section') ?? null
   expect(home?.getAttribute('aria-hidden')).toBe('true')
   expect(home?.hasAttribute('inert')).toBe(true)
+})
+
+// Each interactive tile drills into its REAL pane — proves the SettingsSectionBody id→pane switch
+// (the pane bodies' own behaviour is covered by panes/*.test.tsx; here we only assert the wiring).
+describe('section wiring (SettingsSectionBody)', () => {
+  const llm = {
+    status: vi.fn().mockResolvedValue({
+      provider: 'openrouter',
+      model: 'm',
+      hasKey: false,
+      encryptionAvailable: true
+    })
+  }
+  const recap = { getConsent: vi.fn().mockResolvedValue('undecided'), setConsent: vi.fn() }
+  const orchestration = {
+    getSpawnCap: vi.fn().mockResolvedValue(4),
+    setSpawnCap: vi.fn(),
+    setConsent: vi.fn()
+  }
+
+  beforeEach(() => {
+    ;(window as unknown as { api: object }).api = { llm, recap, orchestration }
+  })
+
+  it('the llm tile renders the LLM form', async () => {
+    render(<SettingsPanel onClose={() => {}} initialSection="llm" />)
+    expect(await screen.findByLabelText('Provider')).toBeTruthy()
+  })
+
+  it('the terminal tile renders the recap toggle', async () => {
+    render(<SettingsPanel onClose={() => {}} initialSection="terminal" />)
+    expect(await screen.findByLabelText(/agent recaps \(this project\)/i)).toBeTruthy()
+  })
+
+  it('the orchestration tile renders the orchestration switch', async () => {
+    render(<SettingsPanel onClose={() => {}} initialSection="orchestration" />)
+    expect(await screen.findByRole('switch', { name: /agent orchestration/i })).toBeTruthy()
+  })
 })

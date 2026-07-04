@@ -35,7 +35,7 @@ export const useAccountStore = create<AccountState>((set) => ({
   status: 'checking',
   email: undefined,
   plan: undefined,
-  // Optimistic until status resolves — mirrors SettingsModal's keyring default so we never
+  // Optimistic until status resolves — mirrors the LLM settings pane's keyring default so we never
   // flash a "no keyring" error during the brief hydrate window.
   encryptionAvailable: true,
   apply: (s) =>

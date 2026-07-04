@@ -3,25 +3,25 @@ import { evalIn } from './helpers'
 
 /**
  * Design-audit D1-B: the shared Modal primitive (scrim/portal/Esc/focus) behind
- * ConfirmModal / RecapConsentModal / SettingsModal.
+ * ConfirmModal / RecapConsentModal / SettingsPanel.
  *
  * Covers, end to end against the real renderer:
- *  - the Settings modal opens on the shared primitive with the `--scrim` token resolved
+ *  - the Settings panel opens on the shared primitive with the `--scrim` token resolved
  *    (no hardcoded rgba), initial focus lands INSIDE the dialog (A7), a REAL OS Esc closes
- *    it, and focus restores to the opener (A7). The real-input Esc matters: a deps-churned
- *    window listener is removed mid-dispatch by the canvas keybindings' synchronous store
- *    commit and silently never fires — jsdom can't see that (Modal.tsx Esc-effect comment).
+ *    it from the home grid, and focus restores to the opener (A7). The real-input Esc matters: a
+ *    deps-churned window listener is removed mid-dispatch by the canvas keybindings' synchronous
+ *    store commit and silently never fires — jsdom can't see that (Modal.tsx Esc-effect comment).
  *  - occlusion regression (PR #93 lesson — the leaked recap-consent scrim broke real-OS
  *    input across later specs): after open→close, NO scrim/dialog node survives at the
  *    canvas center, and with no project open the recap-consent scrim never mounts.
  */
 
-test('@chrome settings modal: token scrim, initial focus, Esc close, focus restore', async ({
+test('@chrome settings panel: token scrim, initial focus, Esc close, focus restore', async ({
   page
 }) => {
   await page.click('[title="Settings"]')
-  const modal = page.locator('[data-test="settings-modal"]')
-  await expect(modal).toBeVisible()
+  const panel = page.locator('[data-test="settings-panel"]')
+  await expect(panel).toBeVisible()
 
   // The scrim consumes the --scrim token (D0-3 approved value: rgba(0,0,0,0.5)) — the
   // computed style proves the var() resolved instead of a hardcoded literal drifting.
@@ -31,16 +31,19 @@ test('@chrome settings modal: token scrim, initial focus, Esc close, focus resto
   )
   expect(scrimBg).toBe('rgba(0, 0, 0, 0.5)')
 
-  // A7 initial focus: focus moved inside the dialog (first focusable = provider select).
+  // A7 initial focus: focus moved inside the dialog. The panel opens on the category grid (not a
+  // section), so the first focusable is the close button — the assertion only cares that focus is
+  // inside the card, not which control.
   const focusInDialog = await evalIn<boolean>(
     page,
-    `!!document.activeElement?.closest('[data-test="settings-modal"]')`
+    `!!document.activeElement?.closest('[data-test="settings-panel"]')`
   )
   expect(focusInDialog, 'initial focus lands inside the dialog').toBe(true)
 
-  // Real OS Esc closes (bubble-phase window listener on the shared Modal).
+  // Real OS Esc closes from the home grid (bubble-phase window listener on the shared Modal; when
+  // drilled into a section the panel's own capture-phase Esc would go back one level first).
   await page.keyboard.press('Escape')
-  await expect(modal).toHaveCount(0)
+  await expect(panel).toHaveCount(0)
 
   // A7 focus restore: back on the opener button.
   const restored = await evalIn<string | null>(
@@ -57,6 +60,8 @@ test('@chrome @voice settings voice section: catalog over real IPC + showPill ap
   await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
 
   await page.click('[title="Settings"]')
+  // Voice is now a drill-in tile — open it before asserting its controls.
+  await page.click('[data-test="settings-tile-voice"]')
   await expect(page.locator('[data-test="voice-showpill-row"]')).toBeVisible()
   // Model catalog rendered over the REAL voice:models:list IPC (no models on disk in the
   // e2e userData → both cards show Download CTAs; the default badge still renders).
@@ -72,16 +77,41 @@ test('@chrome @voice settings voice section: catalog over real IPC + showPill ap
   await page.click('[data-test="voice-showpill-toggle"]')
   await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
 
+  // Drilled into the Voice section → close outright via the close button (a single Esc would only
+  // go back to the grid).
+  await page.click('[data-test="settings-close"]')
+  await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
+})
+
+test('@chrome settings tiles: drill into a section and back returns to the grid', async ({
+  page
+}) => {
+  await page.click('[title="Settings"]')
+  const panel = page.locator('[data-test="settings-panel"]')
+  await expect(panel).toBeVisible()
+
+  // Home grid: the tiles are present and no section body has rendered yet.
+  await expect(page.locator('[data-test="settings-tile-billing"]')).toBeVisible()
+  await expect(page.locator('[data-test="billing-manage"]')).toHaveCount(0)
+
+  // Drill into Billing → its detail body renders (the Manage-subscription stub is present but
+  // disabled until the billing lane ships).
+  await page.click('[data-test="settings-tile-billing"]')
+  await expect(page.locator('[data-test="billing-manage"]')).toBeDisabled()
+
+  // Back → the section body unmounts and we are on the grid again; one Esc from here closes.
+  await page.click('[data-test="settings-back"]')
+  await expect(page.locator('[data-test="billing-manage"]')).toHaveCount(0)
   await page.keyboard.press('Escape')
-  await expect(page.locator('[data-test="settings-modal"]')).toHaveCount(0)
+  await expect(panel).toHaveCount(0)
 })
 
 test('@chrome no modal scrim occludes the canvas after close / without a project (PR #93 regression)', async ({
   page
 }) => {
-  // Open + close the Settings modal, then prove the scrim fully unmounted.
+  // Open + close the Settings panel, then prove the scrim fully unmounted.
   await page.click('[title="Settings"]')
-  await expect(page.locator('[data-test="settings-modal"]')).toBeVisible()
+  await expect(page.locator('[data-test="settings-panel"]')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-test="settings-scrim"]')).toHaveCount(0)
 
