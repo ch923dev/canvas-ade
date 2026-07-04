@@ -1,12 +1,13 @@
 /**
- * MCP Servers detail pane — the `mcp` tile. READ-ONLY by design (PLAN › Non-goals): managing
- * *external* MCP servers does not exist yet and is its own future session (memory
- * `mcp-add-server-feature`). So this pane explains what IS true today — Expanse itself is an MCP
- * server that terminal agents connect to (via Orchestration) — and flags external-server management
- * as coming, with NO fake "Add server" button. When that session ships, this pane grows the list.
+ * MCP Servers detail pane — the `mcp` section (Agents & AI group). Two parts: a read-only note that
+ * Expanse ITSELF is an MCP server terminal agents connect to (via Orchestration), and the manager
+ * for the user's OWN external MCP servers (feature: add external MCP servers) — a self-contained
+ * list + Add/Edit/Test that writes each server into the selected agent CLIs' configs. The panel's
+ * section renders the "MCP Servers" heading; this pane is just the body.
  */
 import { type ReactElement } from 'react'
 import { pane } from '../paneStyles'
+import { McpServersManager } from '../McpServersManager'
 
 export function McpPane(): ReactElement {
   return (
@@ -20,10 +21,15 @@ export function McpPane(): ReactElement {
           </div>
         </div>
       </div>
-      <div style={pane.notice} role="note" data-test="mcp-external-coming">
-        Connecting your own external MCP servers is coming in a later update. There is nothing to
-        add here yet.
+
+      <div style={pane.divider} />
+
+      <div style={pane.head}>Your servers</div>
+      <div style={pane.hint}>
+        Connect your own MCP servers for terminal agents to use. Written into each selected
+        CLI&apos;s config on launch.
       </div>
+      <McpServersManager />
     </div>
   )
 }
