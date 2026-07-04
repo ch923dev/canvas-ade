@@ -77,10 +77,54 @@ describe('createReadinessWaiter (the MCP dispatch readiness gate)', () => {
     expect(r.waitedMs).toBeGreaterThanOrEqual(5000)
   })
 
-  it('maturity fast-path: a session older than the backstop resolves ready_assumed in 0ms', async () => {
-    const { deps } = makeDeps(60_000) // booted a minute ago (e.g. a busy mid-task agent)
+  it('maturity fast-path: an old session that is CURRENTLY QUIET resolves ready_assumed in 0ms', async () => {
+    const { deps, set } = makeDeps(60_000) // booted a minute ago
+    set.stale(600) // ≥ quietMs — nothing streaming right now
     const r = await createReadinessWaiter(deps).awaitTerminalReady('t1', OPTS)
     expect(r).toEqual({ outcome: 'ready_assumed', waitedMs: 0 })
+  })
+
+  it('maturity requalify: an old session streaming output waits for quiet, then resolves ready', async () => {
+    const { deps, set } = makeDeps(60_000)
+    // stale 0 = output flowing RIGHT NOW (the F4 relay window) — must NOT return blind.
+    const p = createReadinessWaiter(deps).awaitTerminalReady('t1', OPTS)
+    await advance(300)
+    set.stale(600) // burst ended
+    await advance(200) // next poll observes the quiet
+    const r = await p
+    expect(r.outcome).toBe('ready')
+  })
+
+  it('maturity requalify: never-quiet output caps at requalifyMs under the FAST-PATH label (≤3s, not 15s)', async () => {
+    const { deps } = makeDeps(60_000) // stale stays 0 — busy streaming agent
+    const p = createReadinessWaiter(deps).awaitTerminalReady('t1', { ...OPTS, requalifyMs: 1000 })
+    await advance(1_100)
+    const r = await p
+    expect(r.outcome).toBe('ready_assumed') // fast-path label, NOT unconfirmed — no WARNING spam
+    expect(r.waitedMs).toBeGreaterThanOrEqual(1000)
+    expect(r.waitedMs).toBeLessThan(OPTS.backstopMs) // never rides the 15s boot backstop
+  })
+
+  it('latch requalify: a latched pid streaming output re-waits for quiet instead of returning blind', async () => {
+    const { deps, set } = makeDeps()
+    const waiter = createReadinessWaiter(deps)
+    const p = waiter.awaitTerminalReady('t1', OPTS)
+    await advance(1200)
+    set.stale(600)
+    await advance(200)
+    expect((await p).outcome).toBe('ready') // latch armed for pid 111
+    set.stale(0) // the agent is now mid-burst (e.g. claude redrawing)
+    const p2 = waiter.awaitTerminalReady('t1', { ...OPTS, requalifyMs: 1000 })
+    await advance(300)
+    set.stale(600) // burst ended → quiet
+    await advance(200)
+    const r2 = await p2
+    expect(r2.outcome).toBe('ready') // observed quiet → full-confidence label
+    // And a latched pid that NEVER quiets caps out under its own label:
+    set.stale(0)
+    const p3 = waiter.awaitTerminalReady('t1', { ...OPTS, requalifyMs: 1000 })
+    await advance(1_100)
+    expect((await p3).outcome).toBe('ready_latched')
   })
 
   it('latch: a second wait on the SAME process resolves ready_latched in 0ms; a new pid re-waits', async () => {

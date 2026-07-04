@@ -262,6 +262,10 @@ export function buildOrchestrator(
     confirm: (req) => registry.confirm(req),
     writeToPty: (id, text) => registry.writeToPty(id, text),
     awaitReady: registry.awaitReady?.bind(registry),
+    // Relay cut-off fix (2026-07-04): paste-framing probe + post-write echo probe. Both optional
+    // — an older registry/test keeps the raw-write, readiness-only-ack behaviour.
+    isBracketedPaste: registry.isBracketedPaste?.bind(registry),
+    activityStaleMs: registry.boardActivityStaleMs?.bind(registry),
     audit: writeAudit
   })
 

@@ -18,6 +18,8 @@ import {
 import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
+import { createPasteModeTracker } from './ptyPasteMode'
+import { isValidResize, clampSpawnDim } from './ptyResize'
 
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
 // Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
@@ -35,34 +37,6 @@ import type { TerminalRuntime } from './summaryLoop'
  * `exited` / `spawn-failed`) is pushed back to the renderer over the SAME
  * MessagePort as `{ t: 'state', … }` so the board can render its identity pill.
  */
-/**
- * Validate terminal resize dimensions before forwarding to ConPTY. Both cols
- * and rows must be positive integers in the range [1, 1000]. This guards both
- * MessagePort listener sites (spawn-time and adopt-time) — a non-integer
- * (80.5), zero, negative, or absurd value must never reach proc.resize().
- * Exported so the unit test targets the real code path used by both listeners.
- */
-export function isValidResize(cols: number, rows: number): boolean {
-  return (
-    Number.isInteger(cols) &&
-    Number.isInteger(rows) &&
-    cols > 0 &&
-    rows > 0 &&
-    cols <= 1000 &&
-    rows <= 1000
-  )
-}
-
-/**
- * BUG-023: clamp a single spawn dimension (cols or rows) to the [1, 1000] range
- * that isValidResize enforces on the resize path. Truncates fractional values
- * before clamping so the result is always an integer in [1, 1000].
- * Exported for unit testing — both spawn-time uses call this helper.
- */
-export function clampSpawnDim(value: number, fallback: number): number {
-  const v = Number.isFinite(value) ? Math.trunc(value) : fallback
-  return Math.min(Math.max(1, v), 1000)
-}
 
 /** Renderer→PTY input/resize message over a board's MessagePort. The discriminated
  * union lets the resize branch read cols/rows as plain numbers (no non-null casts);
@@ -197,6 +171,13 @@ interface ParkedLike {
 }
 
 const sessions = new Map<string, SessionLike>()
+
+/**
+ * Bracketed-paste (DECSET 2004) state per live board id — fed by the spawn-time onData listener,
+ * reset wherever a new/unknown proc binds an id (spawn, adopt, cleanup). Consumed ONLY through
+ * `isBracketedPasteEnabled` (liveness-guarded) by the MCP dispatch gate's paste framing.
+ */
+const pasteMode = createPasteModeTracker()
 
 /** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
 const parked = new Map<string, ParkedLike>()
@@ -523,6 +504,9 @@ function adopt(
   win: BrowserWindow,
   preface?: string | null
 ): { adopted: boolean; pid?: number } {
+  // An adopted proc's bracketed-paste state is UNKNOWN (its output was not observed while
+  // parked) — reset to the conservative default; the next `?2004h` repaint re-arms it.
+  pasteMode.drop(id)
   // Owner-scoped (R1): only a parked session owned by the ACTIVE project may reattach.
   return adoptCore(
     id,
@@ -678,6 +662,10 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       const live = sessions.get(opts.id)
       if (live && live.proc === proc) {
         live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
+        // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
+        // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
+        // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
+        pasteMode.observe(opts.id, d)
         try {
           live.port.postMessage({ t: 'data', d })
         } catch {
@@ -734,6 +722,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     attachPortInput(port1, proc)
 
+    // A fresh proc is binding this id (first spawn OR respawn-under-same-id): its bracketed-paste
+    // state starts unknown ⇒ reset to the conservative default (false = raw dispatch writes).
+    pasteMode.drop(opts.id)
     sessions.set(opts.id, {
       proc,
       port: port1,
@@ -880,6 +871,10 @@ export function cleanupCore(
 }
 
 function cleanup(id: string, proc?: pty.IPty): Promise<void> {
+  // Hygiene: forget the board's bracketed-paste state with its session. cleanupCore call sites
+  // that bypass this wrapper (adopt-displace, disposeAll, reap) are covered by the spawn/adopt
+  // resets + the liveness guard in isBracketedPasteEnabled — a stale entry can never be read.
+  pasteMode.drop(id)
   return cleanupCore(id, sessions, sessionDeps, proc)
 }
 
@@ -1141,6 +1136,19 @@ export function getTerminalActivityStaleMsCore(
  */
 export function getTerminalActivityStaleMs(id: string): number | undefined {
   return getTerminalActivityStaleMsCore(id, sessions, Date.now())
+}
+
+/**
+ * MAIN-internal bracketed-paste probe (relay cut-off fix): whether board `id`'s foreground app
+ * CURRENTLY has DECSET 2004 on (last toggle observed in its PTY output). The MCP dispatch gate
+ * frames its write in `\x1b[200~ … \x1b[201~` only when this is true — an agent TUI then ingests
+ * the dispatch as ONE atomic paste (the same framing a human paste gets via xterm `term.paste()`),
+ * instead of a long raw keystroke burst it can partially swallow mid-redraw. Liveness-guarded:
+ * any id without a LIVE session reports false (tracker entries can linger between cleanupCore
+ * call sites that bypass the cleanup wrapper — never let one be read). Read-only; control-plane.
+ */
+export function isBracketedPasteEnabled(id: string): boolean {
+  return sessions.has(id) && pasteMode.isEnabled(id)
 }
 
 /**

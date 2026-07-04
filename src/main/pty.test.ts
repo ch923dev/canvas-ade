@@ -14,14 +14,13 @@ import {
   getTerminalRuntimeCore,
   getTerminalActivityStaleMsCore,
   getTerminalBootInfoCore,
-  isValidResize,
-  clampSpawnDim,
   attachPortInput,
   parkProjectSessionsCore,
   disposeProjectPtysCore,
   countProjectSessionsCore,
   persistBackgroundRingTailsCore
 } from './pty'
+import { isValidResize, clampSpawnDim } from './ptyResize'
 import {
   canonicalizeShellPath,
   clearShellCache,
