@@ -22,9 +22,15 @@
 export type ReadinessOutcome =
   /** Boot-quiet observed after the floor — the REPL/prompt is up. */
   | 'ready'
-  /** This exact process (boardId+pid) was already confirmed ready by an earlier wait. */
+  /**
+   * This exact process (boardId+pid) was already confirmed ready by an earlier wait AND is
+   * currently quiet (or re-quieted within the requalify cap — see READY_REQUALIFY_MS).
+   */
   | 'ready_latched'
-  /** Session older than the backstop — boot finished long ago; readiness is about the boot window only. */
+  /**
+   * Session older than the backstop — boot finished long ago (readiness is about the boot window
+   * only) AND currently quiet (or the requalify cap elapsed — see READY_REQUALIFY_MS).
+   */
   | 'ready_assumed'
   /** Backstop elapsed (or the wait was aborted) without observing boot-quiet — delivery not guaranteed. */
   | 'unconfirmed'
@@ -48,6 +54,8 @@ export interface ReadinessOpts {
   quietMs?: number
   pollMs?: number
   backstopMs?: number
+  /** Cap on the latch/maturity requalify wait (relay cut-off fix) — see READY_REQUALIFY_MS. */
+  requalifyMs?: number
   /** Abort (confirm denied) → resolve 'unconfirmed' immediately, all timers cleared. */
   signal?: AbortSignal
 }
@@ -59,6 +67,17 @@ export const READY_QUIET_MS = 800
 export const READY_POLL_MS = 250
 /** Degrade-honestly deadline: past this we write anyway and audit `dispatched_unconfirmed`. */
 export const READY_BACKSTOP_MS = 15_000
+/**
+ * Relay cut-off fix (2026-07-04): the latch and maturity fast-paths previously returned the
+ * INSTANT they matched, with no look at the target's CURRENT output state — so a dispatch into a
+ * long-lived session whose agent was mid-boot/redraw (`ready_assumed` on the observed F4 relay)
+ * wrote straight into the burst and the TUI swallowed the head. Fast-path hits now requalify:
+ * instantly quiet (staleMs ≥ quietMs) resolves as before; output CURRENTLY flowing runs a short
+ * bounded quiet-wait capped at this value — NOT the 15s boot backstop, so a dispatch into a busy
+ * streaming agent stalls ≤3s and then proceeds under its fast-path label (the paste-framed write
+ * is safe mid-stream; this wait only narrows the mid-burst window).
+ */
+export const READY_REQUALIFY_MS = 3000
 
 export interface ReadinessWaiter {
   awaitTerminalReady(id: string, opts?: ReadinessOpts): Promise<ReadinessResult>
@@ -73,69 +92,95 @@ export function createReadinessWaiter(deps: ReadinessDeps): ReadinessWaiter {
     const quietMs = opts.quietMs ?? READY_QUIET_MS
     const pollMs = opts.pollMs ?? READY_POLL_MS
     const backstopMs = opts.backstopMs ?? READY_BACKSTOP_MS
+    const requalifyMs = opts.requalifyMs ?? READY_REQUALIFY_MS
     const started = deps.now()
+
+    /**
+     * Bounded quiet-observation loop, shared by the full boot wait and the fast-path requalify.
+     * Resolves 'ready' on activity-then-quiet (latching the observed pid); resolves `capOutcome`
+     * at `capMs` (the boot wait degrades to 'unconfirmed'; a requalify falls back to its
+     * fast-path label — the write proceeds either way, honesty rides the outcome + waitedMs).
+     */
+    const observeQuiet = (
+      initialPid: number,
+      presumeActivity: boolean,
+      capMs: number,
+      capOutcome: ReadinessOutcome
+    ): Promise<ReadinessResult> =>
+      new Promise<ReadinessResult>((resolve) => {
+        let basePid = initialPid
+        let sawActivity = presumeActivity
+        let done = false
+
+        const finish = (outcome: ReadinessOutcome): void => {
+          if (done) return
+          done = true
+          clearInterval(pollTimer)
+          clearTimeout(backstopTimer)
+          opts.signal?.removeEventListener('abort', onAbort)
+          resolve({ outcome, waitedMs: Math.max(0, deps.now() - started) })
+        }
+        const onAbort = (): void => finish('unconfirmed')
+
+        const tick = (): void => {
+          const cur = deps.bootInfo(id)
+          // Session died mid-wait → resolve now; the gate's own writeToPty failure path audits
+          // `failed` + throws exactly as today (this waiter never converts that into a hang).
+          if (!cur) return finish('no_session')
+          // Respawn under the same board id mid-wait: a NEW process is booting — restart the
+          // observation against it (fresh floor via its own ageMs, activity state reset). (A
+          // respawn during a short requalify can therefore cap out under the fast-path label —
+          // accepted: the paste-framed write is the real protection; this loop only narrows the
+          // mid-burst window.)
+          if (cur.pid !== basePid) {
+            basePid = cur.pid
+            sawActivity = false
+          }
+          if (cur.ageMs < minBootMs) return
+          const stale = deps.activityStaleMs(id)
+          if (stale === undefined) return
+          if (stale < quietMs) {
+            // Output is (still) flowing — the same "saw activity, then quiet" guard as
+            // awaitSettled: never settle on a pre-output quiet gap.
+            sawActivity = true
+            return
+          }
+          if (sawActivity) {
+            latch.set(id, basePid)
+            finish('ready')
+          }
+        }
+
+        const pollTimer = setInterval(tick, pollMs)
+        pollTimer.unref?.()
+        const backstopTimer = setTimeout(() => finish(capOutcome), capMs)
+        backstopTimer.unref?.()
+        opts.signal?.addEventListener('abort', onAbort, { once: true })
+        tick()
+      })
 
     const info = deps.bootInfo(id)
     if (!info) return Promise.resolve({ outcome: 'no_session', waitedMs: 0 })
-    if (latch.get(id) === info.pid) {
-      return Promise.resolve({ outcome: 'ready_latched', waitedMs: 0 })
-    }
-    // Maturity fast-path: readiness is about the BOOT window only. A mid-task agent streaming
-    // output would never show a quiet window — without this, every later relay into a busy
-    // board would stall for the full backstop.
-    if (info.ageMs >= backstopMs) {
-      latch.set(id, info.pid)
-      return Promise.resolve({ outcome: 'ready_assumed', waitedMs: 0 })
-    }
 
-    return new Promise<ReadinessResult>((resolve) => {
-      let basePid = info.pid
-      let sawActivity = false
-      let done = false
-
-      const finish = (outcome: ReadinessOutcome): void => {
-        if (done) return
-        done = true
-        clearInterval(pollTimer)
-        clearTimeout(backstopTimer)
-        opts.signal?.removeEventListener('abort', onAbort)
-        resolve({ outcome, waitedMs: Math.max(0, deps.now() - started) })
+    // Fast paths — latch (this exact boardId+pid already confirmed ready) and maturity
+    // (readiness is about the BOOT window only; a mid-task agent streaming output would never
+    // show a quiet window, so a session older than the backstop is assumed booted). Both now
+    // REQUALIFY against the target's CURRENT output state instead of returning blind (relay
+    // cut-off fix — see READY_REQUALIFY_MS): instantly quiet resolves as before; output flowing
+    // right now runs the short bounded quiet-wait and falls back to the fast-path label at cap.
+    const latched = latch.get(id) === info.pid
+    const mature = info.ageMs >= backstopMs
+    if (latched || mature) {
+      if (!latched) latch.set(id, info.pid)
+      const fastOutcome: ReadinessOutcome = latched ? 'ready_latched' : 'ready_assumed'
+      const stale = deps.activityStaleMs(id)
+      if (stale !== undefined && stale >= quietMs) {
+        return Promise.resolve({ outcome: fastOutcome, waitedMs: 0 })
       }
-      const onAbort = (): void => finish('unconfirmed')
+      return observeQuiet(info.pid, true, requalifyMs, fastOutcome)
+    }
 
-      const tick = (): void => {
-        const cur = deps.bootInfo(id)
-        // Session died mid-wait → resolve now; the gate's own writeToPty failure path audits
-        // `failed` + throws exactly as today (this waiter never converts that into a hang).
-        if (!cur) return finish('no_session')
-        // Respawn under the same board id mid-wait: a NEW process is booting — restart the
-        // observation against it (fresh floor via its own ageMs, activity state reset).
-        if (cur.pid !== basePid) {
-          basePid = cur.pid
-          sawActivity = false
-        }
-        if (cur.ageMs < minBootMs) return
-        const stale = deps.activityStaleMs(id)
-        if (stale === undefined) return
-        if (stale < quietMs) {
-          // Output is (still) flowing — the same "saw activity, then quiet" guard as
-          // awaitSettled: never settle on a pre-output quiet gap.
-          sawActivity = true
-          return
-        }
-        if (sawActivity) {
-          latch.set(id, basePid)
-          finish('ready')
-        }
-      }
-
-      const pollTimer = setInterval(tick, pollMs)
-      pollTimer.unref?.()
-      const backstopTimer = setTimeout(() => finish('unconfirmed'), backstopMs)
-      backstopTimer.unref?.()
-      opts.signal?.addEventListener('abort', onAbort, { once: true })
-      tick()
-    })
+    return observeQuiet(info.pid, false, backstopMs, 'unconfirmed')
   }
 
   return { awaitTerminalReady }

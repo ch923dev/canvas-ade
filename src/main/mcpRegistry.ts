@@ -265,6 +265,16 @@ export interface BoardRegistry {
    */
   boardActivityStaleMs?(id: string): number | undefined
   /**
+   * Relay cut-off fix (2026-07-04): whether terminal board `id`'s foreground app currently has
+   * bracketed paste (DECSET 2004) on. MAIN injects `pty.ts`'s `isBracketedPasteEnabled` (fed by
+   * the output-stream tracker in `ptyPasteMode.ts`). The dispatch gate frames its body write in
+   * `\x1b[200~ … \x1b[201~` only when true — an agent TUI then ingests the dispatch as ONE
+   * atomic paste instead of a raw keystroke burst it can partially swallow. Optional so a
+   * registry that does not wire it (older tests / stubs) keeps the raw-write behaviour.
+   * Read-only; control-plane only.
+   */
+  isBracketedPaste?(id: string): boolean
+  /**
    * Readiness gate (2026-07-03): resolve once terminal board `id` has finished its BOOT window
    * (floor → activity → quiet, with a degrade-honestly backstop — see `terminalReadiness.ts`),
    * so a dispatched prompt lands in a ready REPL instead of mid-boot. MAIN injects a

@@ -1,6 +1,8 @@
 import { test as base, expect } from './fixtures'
 import { evalIn, mainCall, pollEval, seed } from './helpers'
 import type { Page } from '@playwright/test'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 
 /**
  * @mcp MCP swarm-layer tier enforcement + dispatch, against the REAL running app
@@ -960,6 +962,82 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       .toBe(true)
     await closeBoardGated(page, mcp, raId)
     await closeBoardGated(page, mcp, rbId)
+  })
+
+  test('relay long-prompt INTEGRITY: a ~1.8KB relay lands byte-exact inside bracketed-paste markers (the head-cut regression)', async ({
+    page,
+    electronApp,
+    mcp
+  }, testInfo) => {
+    test.slow()
+    // THE REGRESSION THIS LOCKS OUT (2026-07-04): a long relay_prompt used to reach the PTY as
+    // ONE raw multi-KB keystroke burst; a TUI mid-boot/redraw could swallow its HEAD (observed
+    // live: a ~1.6KB lane-kickoff arriving cut mid-word at "…WORK.md before editing") while the
+    // audit still said `dispatched`. The gate now paste-frames the body (DECSET 2004 tracked
+    // MAIN-side by ptyPasteMode), writes it in paced chunks, and confirms echo before the honest
+    // ack. Ground truth here is the TARGET PROCESS'S STDIN: a scripted REPL dumps every raw byte
+    // it receives, and the spec asserts the full prompt arrived byte-exact inside one paste frame.
+    const dump = testInfo.outputPath('paste-dump.bin')
+    fs.mkdirSync(path.dirname(dump), { recursive: true })
+    const repl = path.resolve(process.cwd(), 'e2e/fixtures/pasteRepl.mjs')
+    const srcId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    expect(srcId).not.toBe('')
+    const dstId = await seed(page, 'terminal', { launchCommand: `node "${repl}" "${dump}"` })
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(dstId)})`)
+    await expect.poll(() => boardStatus(mcp.orch, dstId), { timeout: 8000 }).toBe('running')
+    // READY visible ⇒ the REPL's `?2004h` (written before it) has flowed through onData ⇒ the
+    // MAIN tracker has armed paste framing for this board.
+    await expect
+      .poll(async () => (await readTerminalText(page, dstId)) ?? '', { timeout: 10000 })
+      .toContain('PASTE_REPL_READY')
+    await evalIn(
+      page,
+      `window.__canvasE2E.addConnector(${JSON.stringify(srcId)}, ${JSON.stringify(dstId)}, 'orchestration')`
+    )
+    await expect
+      .poll(
+        async () => {
+          const cables = await mainCall<
+            Array<{ sourceId: string; targetId: string; kind: string }>
+          >(electronApp, 'mcpListConnectors')
+          return cables.some(
+            (c) => c.kind === 'orchestration' && c.sourceId === srcId && c.targetId === dstId
+          )
+        },
+        { timeout: 6000 }
+      )
+      .toBe(true)
+    // ~1.8KB single line with head+tail sentinels — the exact shape that got cut in the wild.
+    const prompt = `RELAY_HEAD_${'lorem-ipsum-0123456789-'.repeat(76)}_RELAY_TAIL`
+    const relayP = mcp.orch.call('relay_prompt', { sourceId: srcId, targetId: dstId, prompt })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await relayP)).toBe(true)
+    // Byte-exact receipt: the WHOLE prompt inside one 200~/201~ frame (no head loss, no split).
+    await expect
+      .poll(() => (fs.existsSync(dump) ? fs.readFileSync(dump, 'utf8') : ''), { timeout: 10000 })
+      .toContain(`\x1b[200~${prompt}\x1b[201~`)
+    // The submit Enter arrives AFTER the paste frame (inside it, \r would be literal content).
+    const received = fs.readFileSync(dump, 'utf8')
+    expect(received.slice(received.indexOf('\x1b[201~'))).toContain('\r')
+    // The relay is audited (a dispatched* row exists for this target). The exact status
+    // (`dispatched` vs `dispatched_unconfirmed`) depends on environmental readiness/echo timing —
+    // the deterministic status↔signal mapping is unit-covered in dispatchGate.test.ts; here the
+    // BYTE-EXACT dump above is the real integrity proof.
+    await expect
+      .poll(
+        () =>
+          evalIn<boolean>(
+            page,
+            `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
+              ` e.type === 'relay_prompt' && e.targetId === ${JSON.stringify(dstId)} &&` +
+              ` (e.status === 'dispatched' || e.status === 'dispatched_unconfirmed')))`
+          ),
+        { timeout: 4000 }
+      )
+      .toBe(true)
+    await closeBoardGated(page, mcp, srcId)
+    await closeBoardGated(page, mcp, dstId)
   })
 
   // ── Agent Orchestration v1 (P0 authority + P4 connector-aware routing) ──────────────────────

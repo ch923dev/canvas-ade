@@ -22,13 +22,51 @@ import type { DispatchStatus } from './mcpRegistry'
  * submitted. Zero under test (NODE_ENV==='test') so unit tests stay instant + deterministic.
  */
 const SUBMIT_SETTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 100
-const settleBeforeSubmit = (): Promise<void> =>
-  SUBMIT_SETTLE_MS <= 0
+
+/**
+ * 🔒 Paste-framing + paced chunking (relay cut-off fix, 2026-07-04): a long dispatch previously
+ * went to the PTY as ONE raw `proc.write` — a multi-KB synthetic-keystroke burst that an agent
+ * TUI mid-boot/redraw can PARTIALLY swallow (observed: a ~1.6KB relay landing with its head
+ * missing, tail intact, while the audit said `dispatched`). Two mitigations, both scoped to the
+ * gate's text write:
+ *  - When the target's foreground app has bracketed paste on (DECSET 2004, tracked MAIN-side by
+ *    `ptyPasteMode` and probed via `deps.isBracketedPaste`), wrap the body in `\x1b[200~ …
+ *    \x1b[201~` — the TUI then ingests it as ONE atomic paste, exactly like a human paste
+ *    through xterm's `term.paste()`. No probe / mode off ⇒ raw body (a plain shell must never
+ *    see literal marker bytes).
+ *  - Write the (framed) body in small paced chunks so the ConPTY input pipe and the TUI's
+ *    stdin reader drain between bursts instead of receiving one multi-KB slug.
+ * The payload is sanitized BEFORE framing (ESC stripped), so a dispatch can never forge its own
+ * paste markers. Gaps are zero under test to keep unit tests instant + deterministic.
+ */
+const PASTE_START = '\x1b[200~'
+const PASTE_END = '\x1b[201~'
+const WRITE_CHUNK_CHARS = 1024
+const WRITE_CHUNK_GAP_MS = process.env.NODE_ENV === 'test' ? 0 : 15
+
+/**
+ * 🔒 Echo confirmation (honest ack, part 2): after the body is written, wait (bounded) for the
+ * target to produce ANY output — a live REPL echoes/repaints on paste ingestion. Echo is
+ * INDEPENDENT, POST-write delivery evidence that COMPLEMENTS the pre-write readiness gate: a
+ * dispatch is confirmed (`dispatched`) if EITHER the boot window was observed quiet OR the target
+ * visibly reacted to the write (`delivered = ready || echoSeen`). Only when BOTH signals are
+ * negative — we wrote into a REPL whose boot never settled AND that produced nothing back — does
+ * the dispatch honestly degrade to `dispatched_unconfirmed`. This is why echo is composed with OR,
+ * not AND: it can only UPGRADE confidence (e.g. a relay into an idle-but-ready agent that readiness
+ * can't settle but that echoes the paste), never downgrade a readiness-confirmed write. Zero cap
+ * under test ⇒ a single immediate probe check, so unit tests drive both outcomes deterministically.
+ */
+const ECHO_CONFIRM_MS = process.env.NODE_ENV === 'test' ? 0 : 2000
+const ECHO_POLL_MS = 50
+
+const wait = (ms: number): Promise<void> =>
+  ms <= 0
     ? Promise.resolve()
     : new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, SUBMIT_SETTLE_MS)
+        const t = setTimeout(resolve, ms)
         t.unref?.()
       })
+const settleBeforeSubmit = (): Promise<void> => wait(SUBMIT_SETTLE_MS)
 
 export interface GatedWriteInput {
   /** Audit `type` + thrown-error prefix (e.g. 'handoff_prompt', 'interrupt'). */
@@ -82,6 +120,18 @@ export interface DispatchGateDeps {
     id: string,
     opts?: { signal?: AbortSignal }
   ): Promise<{ outcome: string; waitedMs: number }>
+  /**
+   * Whether the target's foreground app currently has bracketed paste (DECSET 2004) on — MAIN
+   * injects pty.ts's `isBracketedPasteEnabled`. Drives the paste-framing above. Optional so an
+   * older registry/test keeps today's raw-write behaviour.
+   */
+  isBracketedPaste?(id: string): boolean
+  /**
+   * Ms since the target last produced PTY output (pty.ts's `getTerminalActivityStaleMs`, the
+   * same probe the readiness waiter polls). Drives the post-write echo confirmation. Optional so
+   * an older registry/test skips the echo check (delivery stays readiness-only).
+   */
+  activityStaleMs?(id: string): number | undefined
   audit(input: Omit<AuditInput, 'status'> & { status: DispatchStatus }): Promise<void>
 }
 
@@ -90,7 +140,8 @@ export interface DispatchGateDeps {
  * returned function runs the canonical, ORDERED sequence ONCE —
  *   sanitize → issue nonce (+start readiness) → human confirm (+evict-on-deny, abort readiness)
  *   → await readiness → pre-write re-check → consume nonce (+audit-on-replay)
- *   → writeToPty (+audit-on-fail) → audit `dispatched`/`dispatched_unconfirmed`
+ *   → paste-framed chunked body write (+audit-on-fail) → echo confirm → terminator write
+ *   → audit `dispatched`/`dispatched_unconfirmed`
  * — and audits EVERY branch (BUG-019: post-sanitization entries record safeText, never raw
  * text; BUG-020: a denied/rejected nonce is evicted). The ordering must stay whole and in
  * this order — do not reorder or skip a step. Returns the realised { safeText, nonce, seq,
@@ -171,6 +222,16 @@ export function createGatedWriter(
     const readinessDetail = readiness
       ? `; readiness=${readiness.outcome} waited=${readiness.waitedMs}ms`
       : ''
+    // (readiness verdict) Resolve the pre-write delivery signal NOW: it BOTH composes into the
+    // final `delivered` (OR echo, below) AND gates the echo poll — an already-`ready` write skips
+    // the (up to ECHO_CONFIRM_MS) echo wait entirely, since echo can only UPGRADE `delivered`,
+    // never downgrade a readiness-confirmed write. No readiness probe wired ⇒ null ⇒ ready (older
+    // registries keep today's `dispatched`).
+    const ready =
+      !readiness ||
+      readiness.outcome === 'ready' ||
+      readiness.outcome === 'ready_latched' ||
+      readiness.outcome === 'ready_assumed'
 
     // (pre-write re-check) 🔒 relay's BUG-021 TOCTOU slots HERE — after confirm, before the
     // nonce is consumed / the PTY is written. A vanished authorization → evict + reject.
@@ -190,17 +251,58 @@ export function createGatedWriter(
       throw new Error(`${type}: nonce already consumed (replay rejected)`)
     }
 
-    // (write) Write the prompt TEXT and the submit TERMINATOR as TWO separate PTY writes, with a
+    // (write) Write the prompt TEXT and the submit TERMINATOR as SEPARATE PTY writes, with a
     // brief settle between them. An interactive agent TUI (Claude Code) treats a `\r` arriving in the
     // SAME stdin burst as the (multi-char, paste-like) prompt as a LITERAL newline — the prompt lands
     // in the input box UNSENT — and only submits on a `\r` delivered as its OWN discrete keystroke.
-    // A content-less write (interrupt: text '') has nothing to settle → terminator only. A false
-    // return means no live terminal session held the id — audit failed + throw on the TEXT write
-    // FIRST, so a vanished session never receives a lone orphan submit.
+    // The BODY is paste-framed when the target has DECSET 2004 on and is written in paced chunks
+    // (see the framing/chunking rationale above) — the terminator must stay OUTSIDE the paste
+    // frame (inside it, `\r` is literal paste content, not a keystroke). A content-less write
+    // (interrupt: text '') has nothing to frame/settle → terminator only. A false return means no
+    // live terminal session held the id — audit failed + throw on the BODY writes FIRST, so a
+    // vanished session never receives a lone orphan submit (a session vanishing MID-body aborts
+    // the remaining chunks + the submit the same way).
+    // echoSeen defaults FALSE (no positive post-write evidence): with the OR composition below,
+    // an absent echo probe or an empty body leaves delivery to the readiness signal alone.
+    let echoSeen = false
     if (safeText.length > 0) {
-      if (!deps.writeToPty(targetId, safeText)) {
-        await audit('failed', { detail: `pty write failed; ${seqDetail}` })
-        throw new Error(`${type}: PTY write failed (no live terminal session)`)
+      const body = deps.isBracketedPaste?.(targetId)
+        ? `${PASTE_START}${safeText}${PASTE_END}`
+        : safeText
+      // Chunk by code UNITS, but never split a surrogate pair across two writes: a lone high
+      // surrogate at a chunk boundary is UTF-8-encoded to U+FFFD independently in each write,
+      // corrupting a non-BMP char (emoji / CJK-ext / math symbol) and defeating byte-exact
+      // delivery. When the boundary lands on a high surrogate, pull it back one unit so the pair
+      // rides together into the next chunk.
+      for (let i = 0; i < body.length; ) {
+        let end = Math.min(i + WRITE_CHUNK_CHARS, body.length)
+        const lastUnit = body.charCodeAt(end - 1)
+        if (end < body.length && lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1
+        if (i > 0) await wait(WRITE_CHUNK_GAP_MS)
+        if (!deps.writeToPty(targetId, body.slice(i, end))) {
+          await audit('failed', { detail: `pty write failed; ${seqDetail}` })
+          throw new Error(`${type}: PTY write failed (no live terminal session)`)
+        }
+        i = end
+      }
+      // (echo confirm) ONLY when readiness did NOT already confirm delivery — echo can only
+      // UPGRADE `delivered`, so an already-`ready` write skips this wait and submits immediately
+      // (no avoidable ECHO_CONFIRM_MS latency on the common confirmed case). Bounded wait for the
+      // target to visibly react to the body BEFORE the submit. Output-arrived-since-write test:
+      // staleMs is now−lastActivityAt, so stale ≤ elapsed ⇔ the last output happened at/after the
+      // write began. Degrade-and-submit at the cap (the human already approved) — the ack honesty,
+      // not the submit, carries an unseen echo.
+      if (!ready && deps.activityStaleMs) {
+        const writeStart = Date.now()
+        for (;;) {
+          const stale = deps.activityStaleMs(targetId)
+          if (stale !== undefined && stale <= Date.now() - writeStart) {
+            echoSeen = true
+            break
+          }
+          if (Date.now() - writeStart >= ECHO_CONFIRM_MS) break
+          await wait(ECHO_POLL_MS)
+        }
       }
       await settleBeforeSubmit()
     }
@@ -225,14 +327,19 @@ export function createGatedWriter(
     // REPL". A wait that backstopped/aborted (outcome 'unconfirmed'/'no_session') degrades to
     // `dispatched_unconfirmed` — same write, honest label. No readiness probe wired ⇒ null ⇒
     // today's `dispatched` (older registries keep their exact behaviour).
-    const delivered =
-      !readiness ||
-      readiness.outcome === 'ready' ||
-      readiness.outcome === 'ready_latched' ||
-      readiness.outcome === 'ready_assumed'
+    // Echo confirm (2026-07-04): the target visibly reacting to the write is independent positive
+    // evidence, composed with OR — `dispatched` iff the boot settled (`ready`, resolved above) OR
+    // the target echoed; only BOTH-negative degrades to `dispatched_unconfirmed`. `echo=` is
+    // recorded ONLY when the poll actually ran (i.e. `!ready`) — a `ready` write skips the poll,
+    // so claiming `echo=none` there would be dishonest ("didn't check", not "checked, saw none").
+    const delivered = ready || echoSeen
+    const echoDetail =
+      !ready && deps.activityStaleMs && safeText.length > 0
+        ? `; echo=${echoSeen ? 'seen' : 'none'}`
+        : ''
     try {
       await audit(delivered ? 'dispatched' : 'dispatched_unconfirmed', {
-        detail: `${seqDetail}${readinessDetail}`
+        detail: `${seqDetail}${readinessDetail}${echoDetail}`
       })
     } catch (err) {
       console.error(

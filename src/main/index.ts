@@ -14,6 +14,7 @@ import {
   writeToPty,
   getTerminalRuntime,
   getTerminalActivityStaleMs,
+  isBracketedPasteEnabled,
   getTerminalBootInfo,
   getTerminalCwd,
   setRecapEnvProvider,
@@ -479,6 +480,9 @@ app.whenReady().then(async () => {
       // BUG-007: ms-since-last-PTY-output per board — the output-silence dormancy signal
       // awaitSettled (C2e) polls, since a live agent shell's status never flips off 'running'.
       boardActivityStaleMs: getTerminalActivityStaleMs,
+      // Relay cut-off fix (2026-07-04): DECSET-2004 probe — the dispatch gate paste-frames its
+      // body write only when the target's foreground app currently accepts bracketed paste.
+      isBracketedPaste: isBracketedPasteEnabled,
       // Readiness gate (2026-07-03): boot-quiet waiter so a dispatched prompt lands in a READY
       // REPL, not mid-boot (floor → activity → quiet, degrade-honestly backstop). One waiter
       // instance per server so its per-process latch spans dispatches.
@@ -567,9 +571,7 @@ app.whenReady().then(async () => {
       write: (e) => writeEntitlement(userData, e),
       clear: () => clearEntitlement(userData)
     },
-    openExternal: (url) => {
-      void shell.openExternal(url)
-    },
+    openExternal: (url) => void shell.openExternal(url),
     encryptionAvailable: () => safeStorage.isEncryptionAvailable(),
     onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
   })
