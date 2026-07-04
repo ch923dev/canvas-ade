@@ -46,6 +46,7 @@ const LOG = path.join(COORD, 'edit-log.jsonl');
 const TIP_JSON = path.join(COORD, 'integration-tip.json');
 const SIGNAL_LOG = path.join(COORD, 'merge-signal.jsonl');
 const FETCH_STAMPS = path.join(COORD, 'fetch-stamps');
+const MAIN_ROOT = path.dirname(path.dirname(COORD)); // Z:\Canvas ADE — where the authoritative .mcp.json lives
 const LOG_MAX_BYTES = 80 * 1024; // rotate when larger; keep tail
 const FETCH_THROTTLE_MS = 180 * 1000; // at most one fetch / 3 min / worktree
 
@@ -140,6 +141,65 @@ function promptNudge(cwd) {
   return [`⚠️ Base stale: integration tip ${tip.shaShort}${tip.pr ? ` (PR #${tip.pr})` : ''} ${reason} — \`git fetch origin && git rebase origin/main\` before pushing for merge.`];
 }
 
+// Canvas ADE MCP awareness + liveness for session-start. ASYNC (a TCP probe) — always calls done()
+// exactly once so the hook can never hang a session boot. Injects, into every session's context: the
+// live/down/missing status of the `canvas-ade` MCP, the tool catalog, and the MUST plan-viz ritual.
+// We build Canvas ADE *with* Canvas ADE — so the agent must know the MCP is there and use it.
+const MCP_CATALOG = 'Tools: visualize_plan · spawn_board · add_planning_elements (notes/checklist/text/arrow/Mermaid) · add_card/move_card/update_card/remove_card (kanban) · configure_board · write_result · relay_prompt · ping. All writes are human-confirmed; nothing runs code.';
+const MCP_RITUAL = 'PLAN-VIZ FIRST (MUST): before implementing ANY feature, draw its plan on the canvas — a Planning board with a checklist of what the feature needs — then keep it live as work lands (tick items / move cards / write_result). CLAUDE.md › Conventions › Plan-viz first.';
+
+function readMcpPort(p) {
+  try {
+    const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const url = j && j.mcpServers && j.mcpServers['canvas-ade'] && j.mcpServers['canvas-ade'].url;
+    const m = /https?:\/\/([\w.]+):(\d+)/.exec(url || '');
+    if (m) return { host: m[1], port: parseInt(m[2], 10) };
+  } catch { /* missing / unparseable */ }
+  return null;
+}
+
+function mcpBanner(cwd, done) {
+  let called = false;
+  const finishOnce = () => { if (!called) { called = true; done(); } };
+  const emit = (status) => {
+    try {
+      console.log('\n================ 🎨 CANVAS ADE MCP ================');
+      console.log(status);
+      console.log(MCP_CATALOG);
+      console.log(MCP_RITUAL);
+      console.log('===================================================');
+    } catch { /* never block */ }
+    finishOnce();
+  };
+  try {
+    const local = readMcpPort(path.join(cwd, '.mcp.json'));
+    const isWorktree = path.resolve(cwd).toLowerCase() !== MAIN_ROOT.toLowerCase();
+    const main = fs.existsSync(path.join(MAIN_ROOT, '.mcp.json')) ? readMcpPort(path.join(MAIN_ROOT, '.mcp.json')) : null;
+
+    if (!local) {
+      if (isWorktree && main) {
+        return emit(`⚠️ MCP config MISSING in this worktree — the canvas is unreachable. Provision + reconnect:\n  Copy-Item '${path.join(MAIN_ROOT, '.mcp.json')}' '.mcp.json'   then run  /mcp`);
+      }
+      return emit('⚠️ MCP not configured — start the Expanse app (it stamps .mcp.json with the live port+token), then run /mcp.');
+    }
+
+    const stale = main && local.port !== main.port; // worktree copy from before an app restart
+    const net = require('net');
+    const sock = net.connect({ host: local.host, port: local.port });
+    const settle = (status) => { try { sock.destroy(); } catch { /* noop */ } emit(status); };
+    sock.setTimeout(700);
+    sock.on('connect', () => settle(
+      stale
+        ? `⚠️ Expanse is up but this worktree's .mcp.json port (${local.port}) ≠ MAIN (${main.port}) — the app restarted since provisioning. Re-copy MAIN's .mcp.json + run /mcp before using the canvas.`
+        : `✅ LIVE — Canvas ADE MCP reachable at ${local.host}:${local.port}. Draw and drive the feature plan on the canvas.`));
+    sock.on('timeout', () => settle(`⚠️ MCP configured (${local.host}:${local.port}) but the Expanse app isn't responding — start Expanse to draw/track the plan on the canvas.`));
+    sock.on('error', () => settle(`⚠️ MCP configured (${local.host}:${local.port}) but the Expanse app isn't running — start Expanse to draw/track the plan on the canvas.`));
+    setTimeout(() => settle(`⚠️ MCP liveness probe timed out (${local.host}:${local.port}) — assume the canvas may be unreachable.`), 1200).unref();
+  } catch {
+    emit('ℹ️ Canvas ADE MCP: liveness check skipped (error). Tools may still be available — try `ping`.');
+  }
+}
+
 function parseArgs(argv) {
   const o = {};
   for (let i = 0; i < argv.length; i++) {
@@ -219,7 +279,20 @@ if (mode === 'session-start') {
     console.log(out.join('\n'));
     console.log('=== Read this before editing. Stay in YOUR zone in ACTIVE-WORK.md; declare cross-zone edits there first. ===');
   }
-  process.exit(0);
+
+  // Canvas ADE MCP awareness + liveness (async TCP probe). We DON'T process.exit() on completion:
+  // stdout is a pipe here, so an abrupt exit truncates the async banner write (the big board output
+  // survives only because it drained during the socket wait). Instead set exitCode and let Node drain
+  // + exit naturally once the banner has flushed and the (destroyed) socket handle is gone. A hard,
+  // unref'd backstop still force-exits if the probe ever wedges, so a boot is never blocked.
+  const hardExit = setTimeout(() => process.exit(0), 2000);
+  hardExit.unref();
+  try {
+    mcpBanner(cwd, () => { clearTimeout(hardExit); process.exitCode = 0; });
+  } catch {
+    clearTimeout(hardExit);
+    process.exit(0);
+  }
 }
 
 if (mode === 'post-merge') {
@@ -267,4 +340,7 @@ if (mode === 'post-merge') {
   process.exit(0);
 }
 
-process.exit(0);
+// Catch-all for an unknown mode. session-start is EXCLUDED: it defers its exit to the async MCP
+// liveness probe (sets process.exitCode + drains); an eager exit here would kill it before the
+// banner flushes. Every other known mode already exited inside its own block above.
+if (mode !== 'session-start') process.exit(0);

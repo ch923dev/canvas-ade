@@ -111,6 +111,7 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | Schema versioning | Two-tier (ADR 0007): `schemaVersion` (writer) + `minReaderVersion` (compat floor). Additive optional fields bump the writer only; breaking changes (new kinds/types, new DOC-LEVEL keys) bump both. Older apps open any doc whose floor ≤ their version. |
 | Project file layout | All Canvas data **isolated under `<project>/.canvas/`** (canvas.json + .bak + assets/); legacy-root read-fallback + migrate-on-open (one-way); `assetId` unchanged (location migration, **no schema bump**); assets git-ignored by default (commit opt-in); `.canvas/` hidden from the File Tree. ADR 0009. |
 | Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
+| Plan-viz first | **MANDATORY (MUST):** every feature draws its plan on the canvas (Planning board + checklist) via the `canvas-ade` MCP **before** implementation, and keeps it live as work lands (full board-driving). Mechanism agent-chosen by complexity (`visualize_plan` ↔ `spawn_board`+`add_planning_elements`). Every write human-confirmed. Decided 2026-07-04. See Conventions › *Plan-viz first*. |
 | Canvas backdrop | Per-project **screen-fixed** wallpaper layer behind RF (none / user file / bundled scene), dim+saturation, schema **v9** `background`, settings-class (never undoable). Scene ids registry-resolved at render (unknown ⇒ void+toast, preserved). ADR 0006. |
 | Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/archive/build-history.md`. |
 | Build matrix | Full: win + mac + linux × x64/arm64 (CI). Local verify = Windows x64 only here. |
@@ -156,6 +157,37 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
   DELETED in the PR that merges their feature (build-history line is the residue); bug-hunt/review
   packages land under `docs/reviews/<date>-…/` — **never at the repo root** — and collapse to a dated
   summary once all findings are fixed; indexes update in the same PR that adds/removes indexed files.
+
+### Plan-viz first — draw every feature's plan on the canvas (Canvas ADE MCP)
+**We build Canvas ADE with Canvas ADE.** The `canvas-ade` MCP server (this repo's own product, running
+in the live Expanse app) is wired into every session. **Every feature — before any implementation —
+MUST land its plan on the canvas as a Planning board with a checklist of what the feature needs**, so
+there is always a full, living visualization of the plan. This is a hard convention like *Manual dev
+check on every PR*: a hook can't block it, the discipline guarantees it.
+
+- **Draw it first.** At feature kickoff (right after the plan is agreed, alongside the *Design artifact
+  before code* step below), draw the plan on the canvas. Pick the mechanism by plan complexity:
+  - **Simple checklist / kanban** → `visualize_plan({ items, suggested: "checklist" | "kanban", title })`
+    — one call; the human is shown the plan and picks the final shape; the board is tidied into open space.
+  - **Rich multi-phase plan** → `spawn_board({ type: "planning", title })` then `add_planning_elements`
+    with `section`-labelled notes + a checklist + a Mermaid `diagram` (one column per section). Populate
+    **after** spawn, never via `spawn_board` `seed` for the checklist — the seed can silently miss
+    ("board not found"); seed the note only, add the checklist in the follow-up call.
+- **Keep it live (full board-driving).** The plan board is a mirror, not a snapshot. As work lands:
+  tick checklist items / move kanban cards (`update_card` · `move_card`), and `write_result` the board's
+  status+summary when the feature is done. You MAY spawn Terminal/Browser boards to exercise the running
+  feature. **Every MCP write is shown to the human for confirmation before it lands** — declined
+  proposals change nothing; nothing the MCP draws ever runs code.
+- **Liveness is required.** The MCP only works when the Expanse app is running and reachable — the
+  SessionStart banner reports `✅ LIVE` / `⚠️ app down` / `⚠️ config missing`. If down, start Expanse; the
+  plan-viz ritual is still MUST once it is reachable (note in the plan-board comment if you had to defer
+  the draw until the app came up). **Worktree sessions** get `.mcp.json` (gitignored — the app stamps the
+  live port+token into it) provisioned by `new-worktree.ps1`; if the banner says *config missing/stale*,
+  re-copy MAIN's `.mcp.json` and `/mcp` reconnect.
+- **Tool catalog:** `visualize_plan` · `spawn_board` · `add_planning_elements` (notes/checklist/text/
+  arrow/Mermaid) · `add_card`/`move_card`/`update_card`/`remove_card` (kanban) · `configure_board` ·
+  `write_result` · `relay_prompt` (drive a Terminal board's agent) · `ping`. Package: `@expanse-ade/mcp`
+  (app pin `0.18.0-rc.5`).
 
 ### Design artifact before code (spec/plan-driven UI work)
 Any spec or plan that adds or changes **UI/UX** MUST produce a *visible* design artifact for sign-off

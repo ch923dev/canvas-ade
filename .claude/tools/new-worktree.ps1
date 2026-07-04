@@ -46,6 +46,18 @@ if (Test-Path $localSettings) {
   Copy-Item $localSettings (Join-Path $wt '.claude\settings.local.json') -Force
 }
 
+# 3b. provision the Canvas ADE MCP into the worktree. .mcp.json is gitignored machine-runtime state
+#     (the live Expanse app stamps the current 127.0.0.1:<port> + bearer token into it), so a fresh
+#     checkout has NONE - without this the worktree session can't reach the canvas (no plan-viz, no
+#     board tools). Copy MAIN's current one. NOTE: it goes stale if the app restarts (new port) - the
+#     SessionStart coordination hook detects that and prints a re-copy + `/mcp` reconnect nudge.
+$mcpJson = Join-Path $Main '.mcp.json'
+if (Test-Path $mcpJson) {
+  Copy-Item $mcpJson (Join-Path $wt '.mcp.json') -Force
+} else {
+  Write-Host "NOTE: no .mcp.json in MAIN - start the Expanse app so it stamps one, then re-copy into $wt."
+}
+
 # 4. register on the coordination board (worktree identity = its dir name = $Name)
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 $row = "| $Name | $Branch | $Zone | active | $stamp | |"
