@@ -29,6 +29,7 @@ endif
         test test-unit test-integration test-watch \
         e2e e2e-smoke e2e-linux e2e-matrix \
         gate check rebuild \
+        pull-main pack-dir build-win build-mac build-linux release-win \
         worktree worktree-rm worktrees signal-merge
 
 ## ---- Dev / build -----------------------------------------------------------
@@ -47,6 +48,12 @@ help:
 	@echo     make format-check        prettier --check .
 	@echo     make gate                cheap gate: typecheck + lint + format-check + unit/integration
 	@echo     make check               FULL pre-merge gate: gate + e2e matrix (both legs)
+	@echo   --- Packaging ---
+	@echo     make pack-dir            build + electron-builder --dir -^> release\win-unpacked
+	@echo     make build-win           build + electron-builder --win -^> release\*.exe (unsigned)
+	@echo     make build-mac           build + electron-builder --mac
+	@echo     make build-linux         build + electron-builder --linux
+	@echo     make release-win         pull origin/main, install, typecheck, then build-win
 	@echo   --- Tests ---
 	@echo     make test                all vitest (unit + integration)
 	@echo     make test-unit           vitest unit projects
@@ -131,6 +138,36 @@ e2e-linux:
 # FULL matrix = both legs. Mandatory once per PR at the pre-merge gate.
 e2e-matrix:
 	pnpm test:e2e:matrix
+
+## ---- Packaging ---------------------------------------------------------------
+
+pack-dir:
+	pnpm pack:dir
+
+build-win:
+	pnpm build:win
+
+build-mac:
+	pnpm build:mac
+
+build-linux:
+	pnpm build:linux
+
+# Pull the latest origin/main, reinstall (rebuilds node-pty via the
+# electron-builder install-app-deps postinstall hook), typecheck, then package
+# the Windows installer. Unsigned (no cert yet — CLAUDE.md > Status). Refuses to
+# run with uncommitted TRACKED changes (untracked scratch files don't block —
+# `git checkout` doesn't touch them).
+pull-main:
+	git diff-index --quiet HEAD -- || (echo Uncommitted changes present -- commit or stash first & exit /b 1)
+	git checkout main
+	git fetch origin
+	git pull origin main
+
+release-win: pull-main
+	pnpm install
+	pnpm typecheck
+	pnpm build:win
 
 ## ---- Worktrees -------------------------------------------------------------
 
