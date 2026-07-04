@@ -170,6 +170,48 @@ describe('buildBoardSnapshot', () => {
     expect('fileRefs' in snapshot[0]).toBe(false)
   })
 
+  it('projects a planning board’s elements with ids + editable fields, dropping id-less ones (S6)', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        {
+          id: 'p1',
+          type: 'planning',
+          title: 'Plan',
+          elements: [
+            { id: 'n1', kind: 'note', text: 'Phase 1', tint: 'yellow' },
+            {
+              id: 'c1',
+              kind: 'checklist',
+              title: 'Progress',
+              items: [{ id: 'i1', label: 'a', done: true }]
+            },
+            { kind: 'note', text: 'no-id' } // no id → dropped from the projection
+          ]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(snapshot[0].planning).toEqual({
+      elements: [
+        { id: 'n1', kind: 'note', text: 'Phase 1', tint: 'yellow' },
+        {
+          id: 'c1',
+          kind: 'checklist',
+          title: 'Progress',
+          items: [{ id: 'i1', label: 'a', done: true }]
+        }
+      ]
+    })
+  })
+
+  it('omits planning for a non-planning board even with stray elements (S6)', () => {
+    const snapshot = buildBoardSnapshot(
+      [{ id: 'k1', type: 'kanban', title: 'K', elements: [{ id: 'n1', kind: 'note', text: 'x' }] }],
+      { running: {}, preview: {} }
+    )
+    expect('planning' in snapshot[0]).toBe(false)
+  })
+
   it('does not cross file context across board types: path only on file, fileRefs only on planning (S5)', () => {
     const snapshot = buildBoardSnapshot(
       [

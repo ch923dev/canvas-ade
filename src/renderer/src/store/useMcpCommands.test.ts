@@ -330,6 +330,95 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(ack.ok).toBe(false)
   })
 
+  describe('patchPlanningEdit (S6 — in-place element edit/remove)', () => {
+    const seed = (): void => {
+      applyMcpCommand({ type: 'addBoard', board: { id: 'plan-1', type: 'planning' } })
+      useCanvasStore.getState().updateBoard('plan-1', {
+        elements: [
+          {
+            id: 'c1',
+            kind: 'checklist',
+            x: 0,
+            y: 0,
+            w: 240,
+            h: 0,
+            title: 'Progress',
+            items: [{ id: 'i1', label: 'a', done: false }]
+          },
+          { id: 'n1', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'yellow', text: 'old' }
+        ]
+      } as never)
+      useCanvasStore.setState({ past: [], future: [] }) // clean history for the assertions
+    }
+    const els = (
+      id = 'plan-1'
+    ): Array<{ id: string; text?: string; items?: Array<{ id: string; done: boolean }> }> =>
+      (useCanvasStore.getState().boards.find((b) => b.id === id) as never as { elements: [] })
+        .elements
+
+    it('ticks a checklist item IN PLACE (no new element appended) and acks ok', () => {
+      seed()
+      const ack = applyMcpCommand({
+        type: 'patchPlanningEdit',
+        id: 'plan-1',
+        op: {
+          op: 'update',
+          elementId: 'c1',
+          kind: 'checklist',
+          patch: { setItems: [{ id: 'i1', done: true }] }
+        }
+      })
+      expect(ack).toEqual({ ok: true, type: 'patchPlanningEdit' })
+      expect(els()).toHaveLength(2) // NOT 3 — updated in place, never re-appended
+      expect(els().find((e) => e.id === 'c1')?.items?.[0].done).toBe(true)
+    })
+
+    it('removes an element by id', () => {
+      seed()
+      const ack = applyMcpCommand({
+        type: 'patchPlanningEdit',
+        id: 'plan-1',
+        op: { op: 'remove', elementId: 'n1' }
+      })
+      expect(ack).toEqual({ ok: true, type: 'patchPlanningEdit' })
+      expect(els().map((e) => e.id)).toEqual(['c1'])
+    })
+
+    it('is ONE undo step that reverts the edit', () => {
+      seed()
+      applyMcpCommand({
+        type: 'patchPlanningEdit',
+        id: 'plan-1',
+        op: { op: 'update', elementId: 'n1', kind: 'note', patch: { text: 'new' } }
+      })
+      expect(useCanvasStore.getState().past).toHaveLength(1)
+      expect(els().find((e) => e.id === 'n1')?.text).toBe('new')
+      useCanvasStore.getState().undo()
+      expect(els().find((e) => e.id === 'n1')?.text).toBe('old')
+    })
+
+    it('acks false for a stale/unknown element id (nothing lands)', () => {
+      seed()
+      const ack = applyMcpCommand({
+        type: 'patchPlanningEdit',
+        id: 'plan-1',
+        op: { op: 'update', elementId: 'ghost', kind: 'note', patch: { text: 'x' } }
+      })
+      expect(ack.ok).toBe(false)
+      expect(els()).toHaveLength(2)
+    })
+
+    it('acks false for a non-planning board', () => {
+      applyMcpCommand({ type: 'addBoard', board: { id: 'term-1', type: 'terminal' } })
+      const ack = applyMcpCommand({
+        type: 'patchPlanningEdit',
+        id: 'term-1',
+        op: { op: 'remove', elementId: 'x' }
+      })
+      expect(ack.ok).toBe(false)
+    })
+  })
+
   describe('patchPlanning (S2 — agent content write)', () => {
     const planning = (id = 'plan-1'): void => {
       applyMcpCommand({ type: 'addBoard', board: { id, type: 'planning' } })

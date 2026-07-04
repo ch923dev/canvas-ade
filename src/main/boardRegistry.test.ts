@@ -199,6 +199,64 @@ describe('boardRegistry', () => {
     expect(out[1].kanban?.cards).toEqual([{ id: 'c1', columnId: 'a', title: 'x' }]) // tag dropped
   })
 
+  it('keeps a planning projection: element ids+kind + editable fields, truncates long text, drops id-less (S6)', () => {
+    const longText = 'x'.repeat(700)
+    const out = sanitizeSnapshot([
+      {
+        id: 'p1',
+        type: 'planning',
+        title: 'P',
+        planning: {
+          elements: [
+            { id: 'n1', kind: 'note', text: 'Phase 1', tint: 'yellow' },
+            {
+              id: 'c1',
+              kind: 'checklist',
+              title: 'Progress',
+              items: [
+                { id: 'i1', label: 'a', done: true },
+                { id: '', label: 'no-id' } // empty item id → item dropped
+              ]
+            },
+            { id: 'big', kind: 'text', text: longText }, // long body → truncated to the preview cap
+            { kind: 'note', text: 'no-id' }, // missing element id → dropped
+            { id: 'x1' } // missing kind → dropped
+          ]
+        }
+      },
+      { id: 'p2', type: 'planning', title: 'P2', planning: 'nope' } // non-object → field dropped
+    ])
+    expect(out[0].planning?.elements).toEqual([
+      { id: 'n1', kind: 'note', text: 'Phase 1', tint: 'yellow' },
+      {
+        id: 'c1',
+        kind: 'checklist',
+        title: 'Progress',
+        items: [{ id: 'i1', label: 'a', done: true }]
+      },
+      { id: 'big', kind: 'text', text: 'x'.repeat(500) } // MAX_PLANNING_PREVIEW
+    ])
+    expect('planning' in out[1]).toBe(false)
+  })
+
+  it('count-caps planning elements (S6)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'p',
+        type: 'planning',
+        title: 'P',
+        planning: {
+          elements: Array.from({ length: 350 }, (_, i) => ({
+            id: `e${i}`,
+            kind: 'note',
+            text: `n${i}`
+          }))
+        }
+      }
+    ])
+    expect(out[0].planning?.elements).toHaveLength(300) // MAX_PLANNING_ELEMENTS
+  })
+
   it('listBoardMirror returns the last stored snapshot (empty by default)', () => {
     __setMirrorForTest([{ id: 'x', type: 'terminal', title: 'X' }])
     expect(listBoardMirror()).toEqual([{ id: 'x', type: 'terminal', title: 'X' }])

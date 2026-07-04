@@ -17,6 +17,7 @@ import {
   MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
 import { applyKanbanOps } from './kanbanMcpApply'
+import { applyPlanningEditOp } from './planningUpdateMcpApply'
 import { buildVisualizedContent, isVisualization } from './visualizeMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
@@ -242,6 +243,46 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
         }
       }
       return { ok: true, type: 'patchPlanning' }
+    }
+    case 'patchPlanningEdit': {
+      // 🔒 S6: EDIT or REMOVE one existing element on a planning board in place (the read-then-update
+      // loop that closes the append-only gap). MAIN resolved the element by id, validated the patch
+      // against its kind, and human-confirmed it; the renderer re-resolves the element + applies via the
+      // pure planningUpdateMcpApply mutators, re-validating the changed element (defense in depth) before
+      // it lands as ONE undoable edit — no re-append (the anti-duplicate path).
+      if (typeof command.id !== 'string' || command.id.length === 0) {
+        return { ok: false, error: `invalid patchPlanningEdit id: ${JSON.stringify(command.id)}` }
+      }
+      const store = useCanvasStore.getState()
+      const board = store.boards.find((b) => b.id === command.id)
+      if (!board) return { ok: false, error: `patchPlanningEdit: board not found: ${command.id}` }
+      if (board.type !== 'planning') {
+        return {
+          ok: false,
+          error: `patchPlanningEdit: board ${command.id} is not a planning board`
+        }
+      }
+      let nextElements: PlanningElement[]
+      try {
+        nextElements = applyPlanningEditOp(board.elements, command.op)
+        // Re-validate the CHANGED element (an update) before it lands — an edit can't corrupt the schema.
+        if (command.op.op === 'update') {
+          const edited = nextElements.find((e) => e.id === command.op.elementId)
+          if (edited) assertPlanningElement(edited)
+        }
+      } catch (err) {
+        return {
+          ok: false,
+          error: `patchPlanningEdit: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      // beginChange() FIRST (lazy checkpoint, like patchPlanning/patchKanban) so the agent's edit is ONE
+      // discrete undo step that chains with human edits; updateBoard filters to PATCHABLE_KEYS.planning
+      // ('elements'). No explicit grow: a taller checklist self-measures + grows the board on render, the
+      // same path a human checklist edit takes.
+      store.beginChange()
+      store.updateBoard(command.id, { elements: nextElements })
+      return { ok: true, type: 'patchPlanningEdit' }
     }
     case 'patchKanban': {
       // 🔒 P3: mutate a kanban board's cards (add/move/update/remove). MAIN already resolved +

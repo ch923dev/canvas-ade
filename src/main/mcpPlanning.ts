@@ -232,7 +232,7 @@ export function buildPlanningOps(elements: unknown): PlanningOp[] {
  * the real subsequent elements out of the scrollable confirm viewport. Both close the
  * confirm-body injection vector: the human must see the TRUE structure (ADR 0003).
  */
-function confirmField(text: string, indent: string): string {
+export function confirmField(text: string, indent: string): string {
   return text.replace(/\n{3,}/g, '\n\n').replace(/\n/g, `\n${indent}`)
 }
 

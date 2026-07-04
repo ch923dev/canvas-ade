@@ -173,11 +173,20 @@ check on every PR*: a hook can't block it, the discipline guarantees it.
     with `section`-labelled notes + a checklist + a Mermaid `diagram` (one column per section). Populate
     **after** spawn, never via `spawn_board` `seed` for the checklist — the seed can silently miss
     ("board not found"); seed the note only, add the checklist in the follow-up call.
-- **Keep it live (full board-driving).** The plan board is a mirror, not a snapshot. As work lands:
-  tick checklist items / move kanban cards (`update_card` · `move_card`), and `write_result` the board's
-  status+summary when the feature is done. You MAY spawn Terminal/Browser boards to exercise the running
-  feature. **Every MCP write is shown to the human for confirmation before it lands** — declined
-  proposals change nothing; nothing the MCP draws ever runs code.
+- **Keep it live (full board-driving) — UPDATE IN PLACE, never re-append.** The plan board is a
+  mirror, not a snapshot. As work lands, the loop is **read → update the existing element → (append only
+  what is genuinely new)**:
+  - **Planning boards:** first read `canvas://board/{id}/planning` to get each element id (and, for a
+    checklist, its item ids); then `update_planning_element` to tick/relabel checklist items, rewrite a
+    stale note, replace a diagram source, or retitle — or `remove_planning_element` to delete something
+    that no longer belongs (incl. a stray duplicate). Do **NOT** call `add_planning_elements` again to
+    re-draw a checklist/note that already exists — that is the anti-pattern that litters the board with
+    stale duplicate "Build progress" cards.
+  - **Kanban boards:** move/update cards (`move_card` · `update_card`).
+  - `write_result` the board's status+summary when the feature is done. You MAY spawn Terminal/Browser
+    boards to exercise the running feature.
+  - **Every MCP write is shown to the human for confirmation before it lands** — declined proposals
+    change nothing; nothing the MCP draws ever runs code.
 - **Liveness is required.** The MCP only works when the Expanse app is running and reachable — the
   SessionStart banner reports `✅ LIVE` / `⚠️ app down` / `⚠️ config missing`. If down, start Expanse; the
   plan-viz ritual is still MUST once it is reachable (note in the plan-board comment if you had to defer
@@ -185,9 +194,12 @@ check on every PR*: a hook can't block it, the discipline guarantees it.
   live port+token into it) provisioned by `new-worktree.ps1`; if the banner says *config missing/stale*,
   re-copy MAIN's `.mcp.json` and `/mcp` reconnect.
 - **Tool catalog:** `visualize_plan` · `spawn_board` · `add_planning_elements` (notes/checklist/text/
-  arrow/Mermaid) · `add_card`/`move_card`/`update_card`/`remove_card` (kanban) · `configure_board` ·
-  `write_result` · `relay_prompt` (drive a Terminal board's agent) · `ping`. Package: `@expanse-ade/mcp`
-  (app pin `0.18.0-rc.5`).
+  arrow/Mermaid) · **`update_planning_element` / `remove_planning_element`** (edit/delete an existing
+  planning element in place — the read-then-update loop; read `canvas://board/{id}/planning` first for
+  the ids) · `add_card`/`move_card`/`update_card`/`remove_card` (kanban) · `configure_board` (rejects a
+  RUNNING terminal) · `write_result` · `relay_prompt` (drive a Terminal board's agent) · `ping`. Read
+  resources: `canvas://boards` · `canvas://board/{id}/planning` · `canvas://board/{id}/cards`. Package:
+  `@expanse-ade/mcp` (app pin `0.18.0-rc.7` — the planning-edit tools ship in rc.7).
 
 ### Design artifact before code (spec/plan-driven UI work)
 Any spec or plan that adds or changes **UI/UX** MUST produce a *visible* design artifact for sign-off
