@@ -1,0 +1,1732 @@
+<title>Expanse Settings — 3 directions (interactive)</title>
+<style>
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --void: #0a0a0b;
+    --grid-dot: #202022;
+    --surface: #141416;
+    --surface-raised: #1a1a1d;
+    --surface-overlay: #1e1e22;
+    --inset: #0e0e10;
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --text: #ededee;
+    --text-2: #9b9ba1;
+    --text-3: #7b7b81;
+    --text-faint: #46464b;
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+    --accent-wash: rgba(79, 140, 255, 0.14);
+    --ok: #3ecf8e;
+    --warn: #e8b339;
+    --err: #f2545b;
+    --note-yellow-fill: #2a2818;
+    --note-yellow-edge: #3d3a22;
+    --note-blue-fill: #16202b;
+    --note-blue-edge: #22354a;
+    --r-board: 8px;
+    --r-inner: 6px;
+    --r-ctl: 5px;
+    --r-pill: 999px;
+    --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+    --titlebar-h: 34px;
+    --scrim-alpha: 0.2;
+    --z-canvas: 0;
+    --z-boards: 1;
+    --z-titlebar: 40;
+    --z-scrim: 100;
+    --z-panel: 101;
+    --z-hud: 200;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    font-family: var(--ui);
+    color: var(--text);
+    background: var(--void);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button {
+    font-family: inherit;
+  }
+
+  /* ============ live canvas backdrop ============ */
+  .stage {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-canvas);
+  }
+  .wallpaper {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(120% 90% at 78% 8%, rgba(62, 207, 142, 0.2), transparent 55%),
+      radial-gradient(90% 80% at 12% 92%, rgba(79, 140, 255, 0.22), transparent 55%),
+      radial-gradient(70% 60% at 50% 30%, rgba(120, 90, 200, 0.16), transparent 60%),
+      linear-gradient(180deg, #0c1018, #0a0a0b 70%);
+  }
+  .wallpaper::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 10, 11, 0.35);
+  }
+  .dots {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -11px -11px;
+    opacity: 0.9;
+  }
+  .board {
+    position: absolute;
+    border-radius: var(--r-board);
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-board);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .board-bar {
+    height: 30px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .board-bar .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex: none;
+  }
+  .board-bar .name {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+  }
+  .term {
+    width: 420px;
+    height: 240px;
+    left: 34px;
+    top: 88px;
+  }
+  .term .body {
+    flex: 1;
+    background: var(--inset);
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 17px;
+    color: var(--text-2);
+    white-space: pre-wrap;
+  }
+  .term .body .p {
+    color: var(--accent);
+  }
+  .term .body .g {
+    color: var(--ok);
+  }
+  .term .body .d {
+    color: var(--text-3);
+  }
+  .term2 {
+    width: 350px;
+    height: 180px;
+    left: 56px;
+    bottom: 36px;
+  }
+  .plan {
+    width: 330px;
+    height: 290px;
+    right: 40px;
+    top: 70px;
+  }
+  .plan .body {
+    flex: 1;
+    position: relative;
+    background: var(--surface);
+  }
+  .note {
+    position: absolute;
+    width: 130px;
+    padding: 9px 10px;
+    border-radius: var(--r-inner);
+    font-size: 11px;
+    line-height: 15px;
+    color: var(--text);
+  }
+  .note.y {
+    background: var(--note-yellow-fill);
+    border: 1px solid var(--note-yellow-edge);
+    left: 16px;
+    top: 16px;
+    transform: rotate(-2deg);
+  }
+  .note.b {
+    background: var(--note-blue-fill);
+    border: 1px solid var(--note-blue-edge);
+    right: 14px;
+    top: 38px;
+    transform: rotate(1.5deg);
+  }
+  .checklist {
+    position: absolute;
+    left: 20px;
+    bottom: 16px;
+    width: 250px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 10px;
+  }
+  .checklist .ct {
+    font-size: 11.5px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .checklist .bar {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .checklist .bar i {
+    display: block;
+    height: 100%;
+    width: 66%;
+    background: var(--accent);
+  }
+  .checklist .item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--text-2);
+    margin: 3px 0;
+  }
+  .checklist .box {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--border-strong);
+    flex: none;
+  }
+  .checklist .box.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checklist .item.done {
+    color: var(--text-3);
+    text-decoration: line-through;
+  }
+
+  .titlebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--titlebar-h);
+    z-index: var(--z-titlebar);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    background: rgba(10, 10, 11, 0.72);
+    border-bottom: 1px solid var(--border-subtle);
+    backdrop-filter: blur(6px);
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .titlebar .app {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .titlebar .app b {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .titlebar .center {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: var(--text-3);
+    font-size: 11.5px;
+    pointer-events: none;
+  }
+  .titlebar .wc {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    color: var(--text-3);
+  }
+
+  /* ============ scrim ============ */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-scrim);
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, var(--scrim-alpha));
+    transition: background 0.18s ease-out;
+  }
+
+  /* shared panel chrome */
+  .panel {
+    display: none;
+    flex-direction: column;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+    z-index: var(--z-panel);
+  }
+  body[data-mode='cmd'] .p-cmd,
+  body[data-mode='tabs'] .p-tabs,
+  body[data-mode='tiles'] .p-tiles {
+    display: flex;
+    animation: pin 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes pin {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r-ctl);
+    color: var(--text-3);
+    cursor: pointer;
+    transition: all 0.12s ease-out;
+    z-index: 2;
+  }
+  .close:hover {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border-subtle);
+  }
+
+  /* ---- shared control atoms ---- */
+  .glabel {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .pill .d {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+  }
+  .pill.ok {
+    color: var(--ok);
+    background: rgba(62, 207, 142, 0.12);
+    border: 1px solid rgba(62, 207, 142, 0.32);
+  }
+  .pill.ok .d {
+    background: var(--ok);
+  }
+  .chip {
+    font-size: 11px;
+    color: var(--text-2);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 3px 9px;
+    font-family: var(--mono);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    transition: all 0.12s ease-out;
+  }
+  .btn:hover {
+    background: var(--surface-overlay);
+    border-color: var(--border-strong);
+  }
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn.primary:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .btn.danger {
+    color: var(--err);
+    border-color: rgba(242, 84, 91, 0.4);
+    background: rgba(242, 84, 91, 0.08);
+  }
+  .btn.danger:hover {
+    background: rgba(242, 84, 91, 0.16);
+  }
+  .btn.small {
+    height: 26px;
+    font-size: 11px;
+    padding: 0 10px;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn:focus-visible,
+  .navtab:focus-visible,
+  .tile:focus-visible,
+  .crow:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-wash);
+  }
+  .inp,
+  select.inp {
+    height: 30px;
+    padding: 0 9px;
+    border-radius: var(--r-inner);
+    border: 1px solid var(--border-subtle);
+    background: var(--inset);
+    color: var(--text);
+    font-size: 12.5px;
+    font-family: var(--ui);
+    width: 100%;
+  }
+  .inp:focus-visible,
+  select.inp:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-wash);
+  }
+  .inp::placeholder {
+    color: var(--text-3);
+  }
+  .toggle {
+    position: relative;
+    width: 36px;
+    height: 21px;
+    flex: none;
+    border: none;
+    padding: 0;
+    border-radius: 999px;
+    background: var(--border-strong);
+    cursor: pointer;
+    transition: background 0.12s ease-out;
+  }
+  .toggle.on {
+    background: var(--accent);
+  }
+  .toggle .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 17px;
+    height: 17px;
+    border-radius: 999px;
+    background: #fff;
+    transition: left 0.12s ease-out;
+  }
+  .toggle.on .knob {
+    left: 17px;
+  }
+  input[type='checkbox'] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+  }
+  input[type='range'] {
+    accent-color: var(--accent);
+  }
+  .avatar {
+    width: 40px;
+    height: 40px;
+    flex: none;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    color: #fff;
+    font-size: 16px;
+    background: linear-gradient(150deg, #e0872f, #b5561e);
+  }
+
+  /* card + rows (tabs / tiles content) */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    overflow: hidden;
+  }
+  .cardrow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 14px;
+  }
+  .cardrow + .cardrow {
+    border-top: 1px solid var(--border-subtle);
+  }
+  .rowlabel {
+    flex: 1;
+    min-width: 0;
+  }
+  .rowlabel .t {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .rowlabel .s {
+    font-size: 11.5px;
+    color: var(--text-3);
+    margin-top: 2px;
+    line-height: 16px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 13px;
+  }
+  .field .lb {
+    font-size: 11px;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .field .lb .set {
+    color: var(--accent);
+  }
+  .hint {
+    font-size: 11px;
+    line-height: 15px;
+    color: var(--text-3);
+  }
+  .setrow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 12px 13px;
+    margin-bottom: 12px;
+  }
+  .setrow .txt {
+    flex: 1;
+  }
+  .setrow .txt .t {
+    font-size: 12.5px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .setrow .txt .s {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 2px;
+    line-height: 15px;
+  }
+  .idcol {
+    flex: 1;
+    min-width: 0;
+  }
+  .idcol .n {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .idcol .n b {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .idcol .meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 3px;
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+  .thumbs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 10px;
+  }
+  .thumb {
+    cursor: pointer;
+  }
+  .thumb .sw {
+    height: 54px;
+    border-radius: var(--r-inner);
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+  }
+  .thumb.sel .sw {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-wash);
+  }
+  .thumb .lbl {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 6px;
+    text-align: center;
+  }
+  .thumb.sel .lbl {
+    color: var(--text);
+  }
+  .sw.none {
+    background: var(--inset);
+    display: grid;
+    place-items: center;
+    color: var(--text-3);
+    font-size: 11px;
+  }
+  .sw.aurora {
+    background:
+      radial-gradient(80% 90% at 70% 10%, rgba(62, 207, 142, 0.5), transparent 60%),
+      radial-gradient(80% 90% at 20% 90%, rgba(79, 140, 255, 0.5), transparent 60%), #0c1018;
+  }
+  .sw.sunset {
+    background: linear-gradient(180deg, #f2795b, #b5417a 55%, #3a2350);
+  }
+  .sw.city {
+    background: linear-gradient(180deg, #16202b, #0e0e10 70%);
+  }
+  .sw.pines {
+    background: linear-gradient(180deg, #16241d, #0e0e10);
+  }
+  .sw.file {
+    background: var(--surface);
+    display: grid;
+    place-items: center;
+    color: var(--text-3);
+    border-style: dashed !important;
+  }
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0;
+  }
+  .slider label {
+    width: 82px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .slider input {
+    flex: 1;
+  }
+  .slider .val {
+    width: 36px;
+    text-align: right;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+  .checkline {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 12px;
+    color: var(--text-2);
+    margin-top: 4px;
+  }
+  .sec-desc {
+    margin: 0 0 4px;
+    max-width: 60ch;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--text-2);
+  }
+  .rule {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 15px 0;
+  }
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 18px;
+  }
+  .foot .spacer {
+    flex: 1;
+  }
+
+  /* ======================================================
+     DIRECTION 1 — COMMAND-FIRST (palette vibe)
+     ====================================================== */
+  .p-cmd {
+    width: min(600px, 93vw);
+    height: min(600px, 85vh);
+  }
+  .cmd-search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 52px;
+    flex: none;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .cmd-search svg {
+    color: var(--text-3);
+  }
+  .cmd-search input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-size: 15px;
+    font-family: var(--ui);
+  }
+  .cmd-search input::placeholder {
+    color: var(--text-3);
+  }
+  .cmd-search .kbd {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+  .cmd-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+    min-height: 0;
+  }
+  .cmd-group {
+    padding: 12px 12px 5px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .crow {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    border-radius: var(--r-ctl);
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    transition: background 0.1s ease-out;
+  }
+  .crow:hover,
+  .crow.hi {
+    background: var(--accent-wash);
+  }
+  .crow .ci {
+    width: 26px;
+    height: 26px;
+    flex: none;
+    border-radius: var(--r-inner);
+    display: grid;
+    place-items: center;
+    background: var(--surface);
+    color: var(--text-2);
+  }
+  .crow.hi .ci {
+    color: var(--accent);
+  }
+  .crow .ck {
+    flex: 1;
+    font-size: 13px;
+  }
+  .crow .ck .sub {
+    display: block;
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 1px;
+  }
+  .crow .cv {
+    font-size: 12px;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+  }
+  .crow .cv .on {
+    color: var(--ok);
+  }
+  .crow .cv svg {
+    color: var(--text-faint);
+  }
+  .cmd-foot {
+    flex: none;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .cmd-foot .k {
+    font-family: var(--mono);
+    color: var(--text-2);
+  }
+  .cmd-empty {
+    padding: 30px;
+    text-align: center;
+    color: var(--text-3);
+    font-size: 12.5px;
+  }
+
+  /* ======================================================
+     DIRECTION 2 — TOP TABS, single column
+     ====================================================== */
+  .p-tabs {
+    width: min(720px, 93vw);
+    height: min(520px, 82vh);
+  }
+  .tabs-head {
+    flex: none;
+    padding: 15px 18px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .tabs-title {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 12px;
+  }
+  .tabs-title .ic {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--r-inner);
+    display: grid;
+    place-items: center;
+    background: var(--accent-wash);
+    color: var(--accent);
+  }
+  .tabs-title b {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .tabstrip {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabstrip::-webkit-scrollbar {
+    display: none;
+  }
+  .navtab {
+    position: relative;
+    border: none;
+    background: transparent;
+    color: var(--text-3);
+    font-size: 12.5px;
+    padding: 8px 12px 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.12s ease-out;
+  }
+  .navtab:hover {
+    color: var(--text-2);
+  }
+  .navtab.active {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .navtab.active::after {
+    content: '';
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 0;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 2px 2px 0 0;
+  }
+  .tabs-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px;
+    min-height: 0;
+  }
+
+  /* ======================================================
+     DIRECTION 3 — TILE LAUNCHER -> drill-in
+     ====================================================== */
+  .p-tiles {
+    width: min(660px, 93vw);
+    height: min(560px, 82vh);
+    position: relative;
+  }
+  .tiles-track {
+    display: flex;
+    width: 200%;
+    height: 100%;
+    transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .p-tiles[data-drill] .tiles-track {
+    transform: translateX(-50%);
+  }
+  .tiles-home,
+  .tiles-detail {
+    width: 50%;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .tiles-home-head {
+    flex: none;
+    padding: 16px 18px 8px;
+  }
+  .tiles-home-head b {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .tiles-home-head .s {
+    font-size: 11.5px;
+    color: var(--text-3);
+    margin-top: 2px;
+  }
+  .tiles-grid {
+    flex: 1;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    padding: 14px 18px 20px;
+    align-content: start;
+  }
+  .tile {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    background: var(--surface);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.12s ease-out;
+  }
+  .tile:hover {
+    background: var(--surface-overlay);
+    border-color: var(--border);
+    transform: translateY(-1px);
+  }
+  .tile .ti {
+    width: 30px;
+    height: 30px;
+    border-radius: var(--r-inner);
+    display: grid;
+    place-items: center;
+    background: var(--accent-wash);
+    color: var(--accent);
+  }
+  .tile .tl {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .tile .ts {
+    font-size: 10.5px;
+    color: var(--text-3);
+    line-height: 14px;
+  }
+  .tiles-detail-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .backbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    font-size: 12.5px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--r-ctl);
+  }
+  .backbtn:hover {
+    color: var(--text);
+    background: var(--surface);
+  }
+  .tiles-detail-head b {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .tiles-detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px;
+    min-height: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 9px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  /* ============ HUD ============ */
+  .hud {
+    position: fixed;
+    z-index: var(--z-hud);
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+    background: rgba(20, 20, 22, 0.92);
+    border: 1px solid var(--border);
+    border-radius: var(--r-pill);
+    padding: 7px 10px 7px 16px;
+    box-shadow: var(--shadow-pop);
+    backdrop-filter: blur(8px);
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+  .hud .grp {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hud .seg {
+    display: flex;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-pill);
+    overflow: hidden;
+  }
+  .hud .seg button {
+    border: none;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 11.5px;
+    padding: 5px 13px;
+    cursor: pointer;
+    transition: all 0.12s ease-out;
+  }
+  .hud .seg button.on {
+    background: var(--accent);
+    color: #fff;
+  }
+  .hud .lbl {
+    color: var(--text-3);
+  }
+  .hud .sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel,
+    .tiles-track {
+      animation: none !important;
+      transition: none !important;
+    }
+    * {
+      transition-duration: 0.001s !important;
+    }
+  }
+</style>
+
+<!-- ============ canvas backdrop ============ -->
+<div class="stage" aria-hidden="true">
+  <div class="wallpaper"></div>
+  <div class="dots"></div>
+  <div class="board term">
+    <div class="board-bar">
+      <span class="dot" style="background: var(--ok)"></span
+      ><span class="name">claude · ~/expanse</span>
+    </div>
+    <div class="body">
+      <span class="d">$ </span><span class="p">claude</span>
+      <span class="d">◆ Working in</span> src/renderer/canvas <span class="g">✓</span> read
+      SettingsModal.tsx <span class="d">(744)</span>
+      <span class="d">◇ Trying 3 settings shapes…</span>
+      <span class="p">▌</span>
+    </div>
+  </div>
+  <div class="board term2">
+    <div class="board-bar">
+      <span class="dot" style="background: var(--warn)"></span><span class="name">pnpm · dev</span>
+    </div>
+    <div class="body">
+      <span class="d">VITE v7.0 ready in 412 ms</span>
+      <span class="g">➜</span> http://localhost:5173 <span class="d">➜ renderer HMR ok</span>
+    </div>
+  </div>
+  <div class="board plan">
+    <div class="board-bar">
+      <span class="dot" style="background: var(--accent)"></span
+      ><span class="name">Planning · settings</span>
+    </div>
+    <div class="body">
+      <div class="note y">Not the sidebar clone. Something ours.</div>
+      <div class="note b">Windowed · light scrim · boards read through.</div>
+      <div class="checklist">
+        <div class="ct">Direction checklist</div>
+        <div class="bar"><i></i></div>
+        <div class="item done"><span class="box on"></span>Command-first</div>
+        <div class="item done"><span class="box on"></span>Top tabs</div>
+        <div class="item"><span class="box"></span>Tile launcher</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="titlebar" aria-hidden="true">
+  <div class="app">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--accent)"
+      stroke-width="2"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      <path d="M3 9h18M9 21V9" /></svg
+    ><b>Expanse</b>
+  </div>
+  <div class="center">expanse — Settings</div>
+  <div class="wc"><span>&#8211;</span><span>&#9723;</span><span>&#10005;</span></div>
+</div>
+
+<!-- ============ scrim hosts all three panels (one shown per mode) ============ -->
+<div class="scrim" id="scrim">
+  <!-- D1 COMMAND -->
+  <div
+    class="panel p-cmd"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings (command)"
+    onclick="event.stopPropagation()"
+  >
+    <div class="cmd-search">
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.3-4.3" />
+      </svg>
+      <input
+        id="cmdq"
+        type="text"
+        placeholder="Search settings…"
+        aria-label="Search settings"
+        autocomplete="off"
+      />
+      <span class="kbd">esc</span>
+    </div>
+    <div class="cmd-list" id="cmdlist"></div>
+    <div class="cmd-foot">
+      <span><span class="k">↑↓</span> navigate</span><span><span class="k">↵</span> open</span
+      ><span><span class="k">esc</span> close</span>
+    </div>
+  </div>
+
+  <!-- D2 TABS -->
+  <div
+    class="panel p-tabs"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings (tabs)"
+    onclick="event.stopPropagation()"
+  >
+    <button class="close" aria-label="Close" onclick="closeP()">
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
+    <div class="tabs-head">
+      <div class="tabs-title"><span class="ic" id="tabIc"></span><b id="tabTitle">Account</b></div>
+      <div class="tabstrip" id="tabstrip"></div>
+    </div>
+    <div class="tabs-body" id="tabsbody"></div>
+  </div>
+
+  <!-- D3 TILES -->
+  <div
+    class="panel p-tiles"
+    id="ptiles"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings (tiles)"
+    onclick="event.stopPropagation()"
+  >
+    <button class="close" aria-label="Close" onclick="closeP()">
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
+    <div class="tiles-track">
+      <div class="tiles-home">
+        <div class="tiles-home-head">
+          <b>Settings</b>
+          <div class="s">expanse · choose a category</div>
+        </div>
+        <div class="tiles-grid" id="tilesgrid"></div>
+      </div>
+      <div class="tiles-detail">
+        <div class="tiles-detail-head">
+          <button class="backbtn" onclick="undrill()">
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="m15 18-6-6 6-6" /></svg
+            >Settings
+          </button>
+          <b id="detailTitle"></b>
+        </div>
+        <div class="tiles-detail-body" id="detailbody"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div class="hud">
+  <div class="grp">
+    <span class="lbl">Style</span>
+    <div class="seg" id="styleSeg">
+      <button data-m="cmd" class="on">Command</button><button data-m="tabs">Top tabs</button
+      ><button data-m="tiles">Tiles</button>
+    </div>
+  </div>
+  <span class="sep"></span>
+  <div class="grp">
+    <span class="lbl">Scrim</span>
+    <div class="seg" id="scrimSeg">
+      <button data-a="0">None</button><button data-a="0.2" class="on">Light</button
+      ><button data-a="0.5">Standard</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const IC = {
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/>',
+    card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+    image:
+      '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+    term: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+    cpu: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>',
+    orch: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M6 8.5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3M12 13.5v2"/>',
+    mcp: '<path d="M9 2v6M15 2v6M8 8h8v3a4 4 0 0 1-8 0zM12 15v7"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+    chev: '<path d="m9 18 6-6-6-6"/>'
+  }
+  const svg = (p, s = 16, sw = 1.8) =>
+    `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}">${p}</svg>`
+
+  // ---- section model (real Expanse settings, mapped once, rendered into all 3 shapes) ----
+  const SECTIONS = [
+    {
+      id: 'account',
+      label: 'Account',
+      icon: IC.user,
+      group: 'You',
+      desc: 'Your profile and current session. Model keys live in Context · LLM; wallpaper lives in Appearance.',
+      rows: [
+        { c: 'profile' },
+        { c: 'value', k: 'Account ID', chip: 'local-only' },
+        { c: 'group', k: 'Session' },
+        { c: 'value', k: 'Current device', val: 'Expanse Desktop · Windows', pill: 'This session' },
+        { c: 'signout', k: 'Sign out', sub: 'End your session on this device.' }
+      ]
+    },
+    {
+      id: 'billing',
+      label: 'Billing',
+      icon: IC.card,
+      group: 'You',
+      desc: 'Plan, credits, and payment methods.',
+      rows: [
+        { c: 'value', k: 'Current plan', val: 'Free · bring your own key', chip: 'FREE' },
+        {
+          c: 'action',
+          k: 'Expanse Pro',
+          sub: 'Synced settings across machines, hosted context brain.',
+          btn: 'Upgrade',
+          disabled: true,
+          primary: true
+        }
+      ]
+    },
+    {
+      id: 'appearance',
+      label: 'Appearance',
+      icon: IC.image,
+      group: 'Application',
+      desc: 'Wallpaper, dimming, and canvas backdrop for this project. Stays fixed behind your boards.',
+      rows: [
+        { c: 'wallpaper', k: 'Wallpaper' },
+        { c: 'slider', k: 'Dim', val: 35 },
+        { c: 'slider', k: 'Saturation', val: 80 },
+        { c: 'check', k: 'Screen-fixed', sub: 'Wallpaper stays put as you pan & zoom', on: true }
+      ]
+    },
+    {
+      id: 'terminal',
+      label: 'Terminal',
+      icon: IC.term,
+      group: 'Application',
+      desc: 'Shell and agent behavior for Terminal boards.',
+      rows: [
+        {
+          c: 'toggle',
+          k: 'Agent recaps (this project)',
+          on: true,
+          sub: 'Flip a terminal to a recap of what its agent is doing. Reads the transcript locally; only a scrubbed slice is sent to your LLM.'
+        },
+        {
+          c: 'select',
+          k: 'Default shell',
+          opts: ['PowerShell (pwsh)', 'Windows PowerShell', 'Command Prompt']
+        }
+      ]
+    },
+    {
+      id: 'voice',
+      label: 'Voice',
+      icon: IC.mic,
+      group: 'Application',
+      desc: 'Local-first dictation for Terminal boards. Audio is transcribed on this machine.',
+      rows: [
+        {
+          c: 'toggle',
+          k: 'Enable dictation',
+          on: true,
+          sub: 'Show the voice pill on Terminal boards.'
+        },
+        { c: 'input', k: 'Push-to-talk hotkey', val: 'Hold ⌥ Space', ro: true }
+      ]
+    },
+    {
+      id: 'llm',
+      label: 'Context · LLM',
+      icon: IC.cpu,
+      group: 'Agents & AI',
+      desc: 'The local brain that summarizes agent sessions and powers recaps. Your key is stored encrypted and never read back.',
+      rows: [
+        { c: 'select', k: 'Provider', opts: ['OpenRouter', 'OpenAI', 'Anthropic', 'Local'] },
+        { c: 'input', k: 'Model', val: 'anthropic/claude-haiku-4.5' },
+        { c: 'password', k: 'API key', set: true },
+        { c: 'input', k: 'Max LLM calls / day', val: '200', hint: '12 of 200 used today.' }
+      ]
+    },
+    {
+      id: 'orch',
+      label: 'Orchestration',
+      icon: IC.orch,
+      group: 'Agents & AI',
+      desc: 'Let terminal agents drive this canvas along your cables — spawning boards, moving cards, relaying prompts.',
+      rows: [
+        {
+          c: 'toggle',
+          k: 'Agent orchestration',
+          on: true,
+          sub: 'Drive this canvas from terminal agents, along your cables.'
+        },
+        {
+          c: 'input',
+          k: 'Max concurrent workers',
+          val: '4',
+          hint: 'Hard cap on boards spawned at once. 1–16 · default 4.'
+        }
+      ]
+    },
+    {
+      id: 'mcp',
+      label: 'MCP Servers',
+      icon: IC.mcp,
+      group: 'Agents & AI',
+      desc: 'Model Context Protocol servers this project exposes to connected agents.',
+      rows: [
+        {
+          c: 'mcp',
+          k: 'canvas-ade',
+          val: '0.18.0-rc.5',
+          sub: 'Canvas tools — spawn boards, cards, relay prompts.'
+        },
+        { c: 'mcp', k: 'context7', sub: 'Live library documentation lookup.' },
+        { c: 'action', k: '', btn: '+ Add server' }
+      ]
+    },
+    {
+      id: 'about',
+      label: 'About',
+      icon: IC.info,
+      group: 'System',
+      desc: 'Version and updates.',
+      rows: [
+        { c: 'value', k: 'Version', chip: 'Expanse 0.9.0 (dev)' },
+        { c: 'action', k: 'Updates', sub: "You're on the latest build.", btn: 'Check for updates' }
+      ]
+    }
+  ]
+
+  // ---------- shared full-control renderer (tabs + tiles detail) ----------
+  function profileCard() {
+    return `<div class="glabel">Profile</div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="cardrow">
+          <div class="avatar">U</div>
+          <div class="idcol"><div class="n"><b>User</b><span class="pill ok"><span class="d"></span>Active</span></div>
+            <div class="meta">${svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>', 13)} No email set</div></div>
+          <button class="btn small">Edit profile</button>
+        </div>
+      </div>`
+  }
+  function fullRow(r) {
+    switch (r.c) {
+      case 'profile':
+        return profileCard()
+      case 'group':
+        return `<div class="glabel" style="margin:18px 0 9px">${r.k}</div>`
+      case 'value':
+        return `<div class="card" style="margin-bottom:10px"><div class="cardrow"><div class="rowlabel"><div class="t">${r.k}${r.pill ? ` <span class="pill ok" style="margin-left:4px"><span class="d"></span>${r.pill}</span>` : ''}</div>${r.val ? `<div class="s">${r.val}</div>` : ''}</div>${r.chip ? `<span class="chip">${r.chip}</span>` : ''}</div></div>`
+      case 'signout':
+        return `<div class="card"><div class="cardrow"><div class="rowlabel"><div class="t">${r.k}</div><div class="s">${r.sub}</div></div><button class="btn danger">${svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>', 14)}Sign out</button></div></div>`
+      case 'action':
+        return `<div class="setrow">${r.k ? `<div class="txt"><div class="t">${r.k}</div>${r.sub ? `<div class="s">${r.sub}</div>` : ''}</div>` : '<div style="flex:1"></div>'}<button class="btn small ${r.primary ? 'primary' : ''}" ${r.disabled ? 'disabled title="Ships in Phase 2"' : ''}>${r.btn}</button></div>`
+      case 'toggle':
+        return `<div class="setrow"><div class="txt"><div class="t">${r.k}</div>${r.sub ? `<div class="s">${r.sub}</div>` : ''}</div><button class="toggle ${r.on ? 'on' : ''}" aria-label="${r.k}"><span class="knob"></span></button></div>`
+      case 'select':
+        return `<div class="field"><span class="lb">${r.k}</span><select class="inp">${r.opts.map((o) => `<option>${o}</option>`).join('')}</select></div>`
+      case 'input':
+        return `<div class="field"><span class="lb">${r.k}</span><input class="inp" value="${r.val || ''}" ${r.ro ? 'readonly' : ''}>${r.hint ? `<span class="hint">${r.hint}</span>` : ''}</div>`
+      case 'password':
+        return `<div class="field"><span class="lb">API key ${r.set ? '<span class="set">· set</span>' : ''}</span><input class="inp" type="password" placeholder="•••••••• (leave blank to keep)"></div>`
+      case 'slider':
+        return `<div class="slider"><label>${r.k}</label><input type="range" min="0" max="100" value="${r.val}" aria-label="${r.k}"><span class="val">${r.val}%</span></div>`
+      case 'check':
+        return `<label class="checkline"><input type="checkbox" ${r.on ? 'checked' : ''}> ${r.k} <span style="color:var(--text-3)">— ${r.sub}</span></label>`
+      case 'wallpaper':
+        return `<div class="glabel" style="margin-bottom:9px">Wallpaper</div><div class="thumbs">
+        <div class="thumb"><div class="sw none">None</div><div class="lbl">None</div></div>
+        <div class="thumb sel"><div class="sw aurora"></div><div class="lbl">Aurora Night</div></div>
+        <div class="thumb"><div class="sw sunset"></div><div class="lbl">Sunset Ocean</div></div>
+        <div class="thumb"><div class="sw city"></div><div class="lbl">City Lights</div></div>
+        <div class="thumb"><div class="sw pines"></div><div class="lbl">Misty Pines</div></div>
+        <div class="thumb"><div class="sw file">＋</div><div class="lbl">Choose file…</div></div></div><div class="glabel" style="margin:20px 0 4px">Adjust</div>`
+      case 'mcp':
+        return `<div class="card" style="margin-bottom:10px"><div class="cardrow"><div class="rowlabel"><div class="t">${r.k}${r.val ? ` <span class="chip" style="margin-left:6px">${r.val}</span>` : ''}</div><div class="s">${r.sub}</div></div><span class="pill ok"><span class="d"></span>Connected</span></div></div>`
+    }
+    return ''
+  }
+  function sectionBody(sec) {
+    // llm/orch get a Save footer (matches the real form); others just render rows
+    let html =
+      `<p class="sec-desc">${sec.desc}</p><div class="rule"></div>` + sec.rows.map(fullRow).join('')
+    if (sec.id === 'llm')
+      html += `<div class="foot"><span class="spacer"></span><button class="btn">Cancel</button><button class="btn primary">Save</button></div>`
+    return html
+  }
+
+  // ---------- D1 command list ----------
+  function cmdValue(r) {
+    switch (r.c) {
+      case 'profile':
+        return '<span class="cv">User · Active</span>'
+      case 'value':
+        return `<span class="cv">${r.chip || r.val || ''}</span>`
+      case 'signout':
+        return `<span class="cv">⎋</span>`
+      case 'toggle':
+        return `<span class="cv"><span class="${r.on ? 'on' : ''}">${r.on ? 'On' : 'Off'}</span></span>`
+      case 'select':
+        return `<span class="cv">${r.opts[0]} ${svg(IC.chev, 12, 2)}</span>`
+      case 'input':
+        return `<span class="cv">${r.val || ''} ${svg(IC.chev, 12, 2)}</span>`
+      case 'password':
+        return `<span class="cv"><span class="on">•••• · set</span></span>`
+      case 'slider':
+        return `<span class="cv">${r.val}%</span>`
+      case 'check':
+        return `<span class="cv"><span class="${r.on ? 'on' : ''}">${r.on ? 'On' : 'Off'}</span></span>`
+      case 'wallpaper':
+        return `<span class="cv">Aurora Night ${svg(IC.chev, 12, 2)}</span>`
+      case 'mcp':
+        return `<span class="cv"><span class="on">Connected</span></span>`
+      case 'action':
+        return `<span class="cv">${svg(IC.chev, 12, 2)}</span>`
+      default:
+        return ''
+    }
+  }
+  function cmdLabel(r, sec) {
+    if (r.c === 'profile') return 'Profile'
+    if (r.c === 'wallpaper') return 'Wallpaper'
+    if (r.c === 'mcp') return r.k
+    if (r.c === 'action') return r.k || r.btn
+    return r.k || sec.label
+  }
+  function buildCmd() {
+    const list = document.getElementById('cmdlist')
+    let html = ''
+    for (const sec of SECTIONS) {
+      const rows = sec.rows.filter((r) => r.c !== 'group')
+      html += `<div class="cmd-group" data-g="${sec.label}">${sec.label}</div>`
+      for (const r of rows) {
+        const lab = cmdLabel(r, sec)
+        const search = (sec.label + ' ' + sec.group + ' ' + lab).toLowerCase()
+        html += `<button class="crow" data-search="${search}">
+          <span class="ci">${svg(sec.icon, 15)}</span>
+          <span class="ck">${lab}</span>${cmdValue(r)}</button>`
+      }
+    }
+    list.innerHTML = html
+    filterCmd('')
+  }
+  function filterCmd(q) {
+    q = q.trim().toLowerCase()
+    const list = document.getElementById('cmdlist')
+    let anyVisible = false
+    list.querySelectorAll('.crow').forEach((el) => {
+      const show = !q || el.dataset.search.includes(q)
+      el.style.display = show ? '' : 'none'
+      if (show) anyVisible = true
+    })
+    // hide group header if all its rows hidden
+    list.querySelectorAll('.cmd-group').forEach((g) => {
+      let n = g.nextElementSibling,
+        vis = false
+      while (n && !n.classList.contains('cmd-group')) {
+        if (n.style.display !== 'none') vis = true
+        n = n.nextElementSibling
+      }
+      g.style.display = vis ? '' : 'none'
+    })
+    let empty = list.querySelector('.cmd-empty')
+    if (!anyVisible) {
+      if (!empty) {
+        empty = document.createElement('div')
+        empty.className = 'cmd-empty'
+        list.appendChild(empty)
+      }
+      empty.textContent = `No settings match “${q}”.`
+    } else if (empty) {
+      empty.remove()
+    }
+    highlightFirst()
+  }
+  function highlightFirst() {
+    const rows = [...document.querySelectorAll('#cmdlist .crow')].filter(
+      (r) => r.style.display !== 'none'
+    )
+    document.querySelectorAll('#cmdlist .crow.hi').forEach((r) => r.classList.remove('hi'))
+    if (rows[0]) rows[0].classList.add('hi')
+  }
+
+  // ---------- D2 tabs ----------
+  let activeTab = 'account'
+  function buildTabs() {
+    const strip = document.getElementById('tabstrip')
+    strip.innerHTML = SECTIONS.map(
+      (s) =>
+        `<button class="navtab ${s.id === activeTab ? 'active' : ''}" data-id="${s.id}">${s.label}</button>`
+    ).join('')
+    renderTab(activeTab)
+  }
+  function renderTab(id) {
+    activeTab = id
+    const sec = SECTIONS.find((s) => s.id === id)
+    document
+      .querySelectorAll('#tabstrip .navtab')
+      .forEach((t) => t.classList.toggle('active', t.dataset.id === id))
+    document.getElementById('tabTitle').textContent = sec.label
+    document.getElementById('tabIc').innerHTML = svg(sec.icon, 15)
+    const body = document.getElementById('tabsbody')
+    body.innerHTML = sectionBody(sec)
+    body.scrollTop = 0
+  }
+
+  // ---------- D3 tiles ----------
+  function buildTiles() {
+    document.getElementById('tilesgrid').innerHTML = SECTIONS.map(
+      (s) =>
+        `<button class="tile" data-id="${s.id}"><span class="ti">${svg(s.icon, 17)}</span><span class="tl">${s.label}</span><span class="ts">${s.group}</span></button>`
+    ).join('')
+  }
+  function drill(id) {
+    const sec = SECTIONS.find((s) => s.id === id)
+    document.getElementById('detailTitle').textContent = sec.label
+    const body = document.getElementById('detailbody')
+    body.innerHTML = sectionBody(sec)
+    body.scrollTop = 0
+    document.getElementById('ptiles').setAttribute('data-drill', '')
+  }
+  window.undrill = () => document.getElementById('ptiles').removeAttribute('data-drill')
+
+  // ---------- wiring ----------
+  buildCmd()
+  buildTabs()
+  buildTiles()
+
+  document.getElementById('cmdq').addEventListener('input', (e) => filterCmd(e.target.value))
+  document.getElementById('tabstrip').addEventListener('click', (e) => {
+    const t = e.target.closest('.navtab')
+    if (t) renderTab(t.dataset.id)
+  })
+  document.getElementById('tilesgrid').addEventListener('click', (e) => {
+    const t = e.target.closest('.tile')
+    if (t) drill(t.dataset.id)
+  })
+
+  // generic interactivity (toggles, thumbs, sliders) — event delegation on scrim
+  document.getElementById('scrim').addEventListener('click', (e) => {
+    const tg = e.target.closest('.toggle')
+    if (tg) {
+      tg.classList.toggle('on')
+    }
+    const th = e.target.closest('.thumb')
+    if (th) {
+      th.parentElement.querySelectorAll('.thumb').forEach((x) => x.classList.remove('sel'))
+      th.classList.add('sel')
+    }
+  })
+  document.getElementById('scrim').addEventListener('input', (e) => {
+    if (e.target.matches('.slider input')) {
+      e.target.parentElement.querySelector('.val').textContent = e.target.value + '%'
+    }
+  })
+
+  // style + scrim segmented controls
+  document.getElementById('styleSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button')
+    if (!b) return
+    document.querySelectorAll('#styleSeg button').forEach((x) => x.classList.toggle('on', x === b))
+    document.body.dataset.mode = b.dataset.m
+    if (b.dataset.m === 'cmd') setTimeout(() => document.getElementById('cmdq').focus(), 30)
+  })
+  document.getElementById('scrimSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button')
+    if (!b) return
+    document.querySelectorAll('#scrimSeg button').forEach((x) => x.classList.toggle('on', x === b))
+    document.documentElement.style.setProperty('--scrim-alpha', b.dataset.a)
+  })
+
+  // close / reopen (keeps mock inspectable)
+  window.closeP = () => (document.getElementById('scrim').style.display = 'none')
+  document.getElementById('scrim').addEventListener('click', (e) => {
+    if (e.target.id === 'scrim') closeP()
+  })
+  document.addEventListener('keydown', (e) => {
+    const scrim = document.getElementById('scrim')
+    if (e.key === 'Escape') {
+      if (
+        document.getElementById('ptiles').hasAttribute('data-drill') &&
+        document.body.dataset.mode === 'tiles'
+      )
+        undrill()
+      else closeP()
+    }
+    if (e.key === 'Enter' && scrim.style.display === 'none') {
+      scrim.style.display = 'grid'
+    }
+  })
+
+  // init
+  document.body.dataset.mode = 'cmd'
+  setTimeout(() => document.getElementById('cmdq').focus(), 60)
+</script>
