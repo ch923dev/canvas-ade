@@ -1,41 +1,38 @@
 /**
- * SettingsPanel — the windowed **tile-launcher** settings surface (design-sign-off 2026-07-04,
- * `docs/specs/2026-07-04-settings-tiles/PLAN.md`). Opens to a grid of category tiles; clicking a
- * tile slides to that section's detail pane with a `‹ Settings` back chevron. Rides the shared
- * `Modal` (scrim/portal/Esc/focus-trap) at the same `zIndex={300}` + standard `--scrim` (0.5) the
- * old `SettingsModal` used — windowed over the live canvas.
+ * SettingsPanel — the windowed Settings surface (design sign-off 2026-07-04). A row of **top group
+ * tabs** (You · Application · Agents & AI · System); the active tab's panel stacks that group's
+ * sections, each under its own heading. Rides the shared `Modal` (scrim/portal/Esc/focus-trap) at
+ * `zIndex={300}` + the standard `--scrim` (0.5) — windowed over the live canvas.
  *
- * Phase 2: each tile's detail body is a real section pane (`SettingsSectionBody` → `panes/*`), and
- * `AppChrome` now renders THIS as the live Settings surface (the old `SettingsModal` is retired in
- * Phase 4 once its tests move here). `initialSection` opens drilled straight into a tile (the
- * account pill → 'account'); `onSignIn` reaches the Account pane's signed-out CTA.
+ * History: this replaced an earlier tile-launcher → drill-in shell (rejected on a live dev check —
+ * the drill felt clunky). The section panes themselves (`SettingsSectionBody` → `panes/*`) are
+ * unchanged; only the shell swapped a grid+slide for a flat tab bar. `AppChrome` renders this as the
+ * live Settings surface; `initialSection` opens the tab that OWNS that section (the account pill →
+ * the "You" tab); `onSignIn` reaches the Account pane's signed-out CTA.
  *
- * Esc contract: Modal closes on Esc. When drilled into a section we intercept Esc in the CAPTURE
- * phase to go back to the home grid FIRST (and stop it reaching Modal's bubble-phase close), so one
- * Esc = up one level, matching every other drill UI. A scrim click still closes outright.
- *
- * Phase 3 (a11y + responsive): the off-screen half of the slide track is `inert` + `aria-hidden`
- * (out of tab order, a11y tree, and pointer targeting — no per-tile tabIndex bookkeeping); the home
- * and section titles are real `<h2>`s the panes point at via `aria-labelledby`; the back button
- * carries an explicit `aria-label` so it never reads as the bare word "Settings"; and the tile grid
- * uses `minmax(0,1fr)` so labels wrap instead of overflowing a narrow card.
+ * Keyboard/a11y: a real `tablist` — ArrowLeft/ArrowRight roves between tabs (roving tabindex), the
+ * active tab is the only tab in the Tab order, and each tab controls its `tabpanel`. Esc closes
+ * (Modal's bubble-phase listener — there is no nesting to unwind). A scrim click closes too.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import {
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement
+} from 'react'
 import { Modal } from '../Modal'
 import { Icon } from '../Icon'
 import { useCanvasStore } from '../../store/canvasStore'
-import { SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSectionId } from './settingsSections'
+import {
+  SETTINGS_GROUPS,
+  groupIdForSection,
+  type SettingsGroupId,
+  type SettingsSectionId
+} from './settingsSections'
 import { SettingsSectionBody } from './SettingsSectionBody'
 
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  )
-}
-
-/** Last path segment of a project dir, for the home subtitle. */
+/** Last path segment of a project dir, for the header subtitle. */
 function baseName(dir: string | null): string | null {
   if (!dir) return null
   const parts = dir.split(/[\\/]/).filter(Boolean)
@@ -51,67 +48,58 @@ export function SettingsPanel({
   /** Account section's signed-out "Sign in" CTA — the parent closes Settings then opens SignInView
    *  (two shared Modals must not stack). Optional so the panel stands alone in unit tests. */
   onSignIn?: () => void
-  /** Open drilled directly into a section (e.g. the account pill → 'account'). */
+  /** Open on the tab that owns this section (e.g. the account pill → the "You" tab via 'account'). */
   initialSection?: SettingsSectionId | null
 }): ReactElement {
-  const [active, setActive] = useState<SettingsSectionId | null>(initialSection)
   const projectName = useCanvasStore((s) => baseName(s.project.dir))
-  const reduce = prefersReducedMotion()
+  const [activeGroup, setActiveGroup] = useState<SettingsGroupId>(
+    initialSection ? groupIdForSection(initialSection) : SETTINGS_GROUPS[0].id
+  )
 
-  // Focus targets: the tile that opened a section (restore on back) + the detail's back button
-  // (receive focus on drill). `activeRef` keeps the once-registered capture Esc listener reading the
-  // live section without deps-churning it off mid-dispatch (the Modal.tsx lesson).
-  const activeRef = useRef(active)
-  const tileRefs = useRef(new Map<SettingsSectionId, HTMLButtonElement | null>())
-  const backRef = useRef<HTMLButtonElement>(null)
-  // Sync the ref AFTER commit — never write a ref during render (react-hooks/refs).
-  useEffect(() => {
-    activeRef.current = active
-  })
+  // Roving-tabindex refs so ArrowLeft/Right can move focus with the selection; `activeTabRef` is the
+  // Modal's initial-focus target so opening Settings lands on the current tab, not the close button.
+  const tabRefs = useRef(new Map<SettingsGroupId, HTMLButtonElement | null>())
+  // Typed as HTMLElement to match Modal's `initialFocusRef` param exactly (a button IS an element).
+  const activeTabRef = useRef<HTMLElement | null>(null)
 
-  const goHome = (): void => {
-    const from = activeRef.current
-    setActive(null)
-    // Restore focus to the originating tile (next paint — it re-mounts with the home pane).
-    if (from) requestAnimationFrame(() => tileRefs.current.get(from)?.focus())
+  const selectAt = (index: number): void => {
+    const next = SETTINGS_GROUPS[(index + SETTINGS_GROUPS.length) % SETTINGS_GROUPS.length]
+    setActiveGroup(next.id)
+    requestAnimationFrame(() => tabRefs.current.get(next.id)?.focus())
   }
-  const openSection = (id: SettingsSectionId): void => setActive(id)
-
-  // Esc → up one level when drilled (capture phase, registered once — beats Modal's bubble close).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || activeRef.current === null) return
+  const onTabKey = (e: ReactKeyboardEvent, index: number): void => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
-      e.stopImmediatePropagation()
-      goHome()
+      selectAt(index + 1)
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      selectAt(index - 1)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      selectAt(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      selectAt(SETTINGS_GROUPS.length - 1)
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  }
 
-  // Move focus to the back button when a section opens (skip on initial mount-into-a-section, where
-  // Modal's own initial-focus already lands inside the card).
-  const didMount = useRef(false)
-  useEffect(() => {
-    if (!didMount.current) {
-      didMount.current = true
-      return
-    }
-    if (active) backRef.current?.focus()
-  }, [active])
-
-  const activeDef = active ? SETTINGS_SECTIONS[active] : null
+  const group = SETTINGS_GROUPS.find((g) => g.id === activeGroup) ?? SETTINGS_GROUPS[0]
 
   return (
     <Modal
       label="Settings"
       onClose={onClose}
       zIndex={300}
+      initialFocusRef={activeTabRef}
       scrimProps={{ 'data-test': 'settings-scrim' }}
       cardProps={{ 'data-test': 'settings-panel' }}
       cardStyle={styles.card}
     >
-      <div style={styles.viewport}>
+      <div style={styles.header}>
+        <div>
+          <h2 style={styles.title}>Settings</h2>
+          <div style={styles.sub}>{projectName ?? 'No project open'}</div>
+        </div>
         <button
           type="button"
           aria-label="Close settings"
@@ -121,91 +109,52 @@ export function SettingsPanel({
         >
           <Icon name="x" size={15} />
         </button>
+      </div>
 
-        <div
-          style={{
-            ...styles.track,
-            transform: active ? 'translateX(-50%)' : 'translateX(0)',
-            transition: reduce ? 'none' : 'transform 0.26s cubic-bezier(0.22,1,0.36,1)'
-          }}
-        >
-          {/* ── home: category grid ── */}
-          <section
-            style={styles.pane}
-            aria-hidden={active !== null}
-            aria-labelledby="settings-home-title"
-            // `inert` (React 19 native) pulls the off-screen pane out of the tab order, the a11y
-            // tree, AND pointer targeting in one attribute — so keyboard focus can't land on the
-            // tiles sliding away behind the detail, and no per-tile tabIndex bookkeeping is needed.
-            inert={active !== null}
-          >
-            <div style={styles.homeHead}>
-              <h2 id="settings-home-title" style={styles.homeTitle}>
-                Settings
-              </h2>
-              <div style={styles.homeSub}>{projectName ?? 'No project open'}</div>
-            </div>
-            <div style={styles.homeBody}>
-              {SETTINGS_GROUPS.map((group) => (
-                <div key={group.label} style={styles.group}>
-                  <div style={styles.groupLabel}>{group.label}</div>
-                  <div style={styles.grid}>
-                    {group.sections.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        data-test={`settings-tile-${s.id}`}
-                        ref={(el) => {
-                          tileRefs.current.set(s.id, el)
-                        }}
-                        onClick={() => openSection(s.id)}
-                        style={styles.tile}
-                      >
-                        <span style={styles.tileIcon}>
-                          <Icon name={s.icon} size={17} />
-                        </span>
-                        <span style={styles.tileLabel}>{s.label}</span>
-                        <span style={styles.tileBlurb}>{s.blurb}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+      <div role="tablist" aria-label="Settings sections" style={styles.tabs}>
+        {SETTINGS_GROUPS.map((g, i) => {
+          const selected = g.id === activeGroup
+          return (
+            <button
+              key={g.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${g.id}`}
+              aria-selected={selected}
+              aria-controls={`settings-tabpanel-${g.id}`}
+              tabIndex={selected ? 0 : -1}
+              data-test={`settings-tab-${g.id}`}
+              ref={(el) => {
+                tabRefs.current.set(g.id, el)
+                if (selected) activeTabRef.current = el
+              }}
+              onClick={() => setActiveGroup(g.id)}
+              onKeyDown={(e) => onTabKey(e, i)}
+              style={{ ...styles.tab, ...(selected ? styles.tabActive : null) }}
+            >
+              {g.label}
+            </button>
+          )
+        })}
+      </div>
 
-          {/* ── detail: the drilled section ── */}
+      <div
+        role="tabpanel"
+        id={`settings-tabpanel-${group.id}`}
+        aria-labelledby={`settings-tab-${group.id}`}
+        data-test="settings-tabpanel"
+        style={styles.body}
+      >
+        {group.sections.map((s, i) => (
           <section
-            style={styles.pane}
-            aria-hidden={active === null}
-            aria-labelledby={activeDef ? 'settings-detail-title' : undefined}
-            inert={active === null}
+            key={s.id}
+            data-test={`settings-section-${s.id}`}
+            style={{ ...styles.sectionBlock, ...(i > 0 ? styles.sectionDivided : null) }}
           >
-            <div style={styles.detailHead}>
-              <button
-                type="button"
-                ref={backRef}
-                // Visible label is the breadcrumb "‹ Settings"; the accessible name is spelled out
-                // so it never collides with the "Settings" heading a screen reader also announces.
-                aria-label="Back to Settings"
-                data-test="settings-back"
-                onClick={goHome}
-                style={styles.back}
-              >
-                <Icon name="back" size={15} />
-                Settings
-              </button>
-              {activeDef && (
-                <h2 id="settings-detail-title" style={styles.detailTitle}>
-                  {activeDef.label}
-                </h2>
-              )}
-            </div>
-            <div style={styles.detailBody} data-test="settings-detail">
-              {active && <SettingsSectionBody id={active} onClose={onClose} onSignIn={onSignIn} />}
-            </div>
+            <h3 style={styles.sectionHead}>{s.label}</h3>
+            <SettingsSectionBody id={s.id} onClose={onClose} onSignIn={onSignIn} />
           </section>
-        </div>
+        ))}
       </div>
     </Modal>
   )
@@ -220,12 +169,27 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     flexDirection: 'column'
   },
-  viewport: { position: 'relative', flex: 1, display: 'flex', overflow: 'hidden' },
+
+  // header
+  header: {
+    position: 'relative',
+    flex: 'none',
+    padding: '15px 18px 11px'
+  },
+  title: { margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)' },
+  sub: {
+    marginTop: 2,
+    fontSize: 11.5,
+    color: 'var(--text-3)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    maxWidth: 'calc(100% - 30px)'
+  },
   close: {
     position: 'absolute',
     top: 12,
     right: 12,
-    zIndex: 2,
     width: 26,
     height: 26,
     display: 'grid',
@@ -236,81 +200,42 @@ const styles: Record<string, CSSProperties> = {
     color: 'var(--text-3)',
     cursor: 'pointer'
   },
-  track: { flex: 1, display: 'flex', width: '200%', minHeight: 0 },
-  pane: { flex: '0 0 50%', display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 },
 
-  // home
-  homeHead: { padding: '16px 18px 8px' },
-  homeTitle: { margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)' },
-  homeSub: {
-    marginTop: 2,
-    fontSize: 11.5,
-    color: 'var(--text-3)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  },
-  homeBody: { flex: 1, overflowY: 'auto', padding: '6px 18px 20px', overscrollBehavior: 'contain' },
-  group: { marginTop: 12 },
-  groupLabel: {
-    fontSize: 10,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    color: 'var(--text-3)',
-    fontWeight: 600,
-    marginBottom: 9
-  },
-  // minmax(0,1fr) lets a column shrink below its content's intrinsic width, so a long tile label
-  // wraps inside the cell instead of forcing the grid to overflow the card on a narrow window.
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 },
-  tile: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    padding: 14,
-    minWidth: 0,
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--r-inner)',
-    background: 'var(--surface)',
-    color: 'var(--text)',
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontFamily: 'var(--ui)'
-  },
-  tileIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 'var(--r-inner)',
-    display: 'grid',
-    placeItems: 'center',
-    background: 'var(--accent-wash)',
-    color: 'var(--accent)'
-  },
-  tileLabel: { fontSize: 12.5, fontWeight: 500, color: 'var(--text)' },
-  tileBlurb: { fontSize: 10.5, lineHeight: '14px', color: 'var(--text-3)' },
-
-  // detail
-  detailHead: {
+  // tab strip
+  tabs: {
     flex: 'none',
     display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '14px 16px',
+    gap: 2,
+    padding: '0 12px',
     borderBottom: '1px solid var(--border-subtle)'
   },
-  back: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 5,
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--text-2)',
+  tab: {
+    padding: '9px 11px',
     fontSize: 12.5,
     fontFamily: 'var(--ui)',
+    fontWeight: 500,
+    color: 'var(--text-3)',
+    background: 'transparent',
+    border: 'none',
+    // -1 bottom margin overlaps the strip's bottom border so the active underline sits on top of it.
+    borderBottom: '2px solid transparent',
+    marginBottom: -1,
     cursor: 'pointer',
-    padding: '4px 6px',
-    borderRadius: 'var(--r-ctl)'
+    whiteSpace: 'nowrap'
   },
-  detailTitle: { margin: 0, fontSize: 13.5, fontWeight: 600, color: 'var(--text)' },
-  detailBody: { flex: 1, overflowY: 'auto', padding: '16px 18px', overscrollBehavior: 'contain' }
+  tabActive: { color: 'var(--text)', borderBottomColor: 'var(--accent)' },
+
+  // active group's panel
+  body: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '16px 18px 20px',
+    overscrollBehavior: 'contain',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16
+  },
+  sectionBlock: { display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 },
+  sectionDivided: { borderTop: '1px solid var(--border-subtle)', paddingTop: 16 },
+  sectionHead: { margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text)' }
 }

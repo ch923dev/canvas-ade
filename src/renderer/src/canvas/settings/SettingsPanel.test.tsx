@@ -1,4 +1,4 @@
-import { it, expect, vi, beforeEach, afterEach, describe } from 'vitest'
+import { it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { SettingsPanel } from './SettingsPanel'
 import { useCanvasStore } from '../../store/canvasStore'
@@ -9,126 +9,91 @@ afterEach(cleanup)
 beforeEach(() => {
   vi.clearAllMocks()
   useCanvasStore.setState({ project: { dir: null, name: null, status: 'welcome' } })
-})
-
-const backButton = (): HTMLElement => screen.getByRole('button', { name: 'Back to Settings' })
-// Drilled ⇔ the detail pane is the visible half of the track. Detected via the section's
-// aria-hidden (set from `active === null`) so it is independent of any one pane's content — the
-// Voice pane, for instance, renders nothing without window.api.voice yet the panel is still drilled.
-const detailSection = (): Element | null =>
-  document.querySelector('[data-test="settings-detail"]')?.closest('section') ?? null
-const drilled = (): boolean => detailSection()?.getAttribute('aria-hidden') === 'false'
-
-it('renders every category tile grouped under its heading', () => {
-  render(<SettingsPanel onClose={() => {}} />)
-  for (const label of [
-    'Account',
-    'Billing',
-    'Appearance',
-    'Terminal',
-    'Voice',
-    'Context · LLM',
-    'Orchestration',
-    'MCP Servers',
-    'About'
-  ]) {
-    expect(screen.getByRole('button', { name: new RegExp(label) })).toBeTruthy()
+  // A minimal window.api so every tab's panes mount without throwing (LLM/recap/orchestration read
+  // it on mount). Pane behaviour itself is covered by panes/*.test.tsx — here we test the shell.
+  ;(window as unknown as { api: object }).api = {
+    llm: {
+      status: vi.fn().mockResolvedValue({
+        provider: 'openrouter',
+        model: 'm',
+        hasKey: false,
+        encryptionAvailable: true
+      })
+    },
+    recap: { getConsent: vi.fn().mockResolvedValue('undecided'), setConsent: vi.fn() },
+    orchestration: {
+      getSpawnCap: vi.fn().mockResolvedValue(4),
+      setSpawnCap: vi.fn(),
+      setConsent: vi.fn()
+    }
   }
-  for (const group of ['You', 'Application', 'Agents & AI', 'System']) {
-    expect(screen.getByText(group)).toBeTruthy()
+})
+
+const tab = (name: string): HTMLElement => screen.getByRole('tab', { name })
+const sectionShown = (id: string): boolean =>
+  document.querySelector(`[data-test="settings-section-${id}"]`) !== null
+
+it('renders the four group tabs with "You" active by default', () => {
+  render(<SettingsPanel onClose={() => {}} />)
+  for (const label of ['You', 'Application', 'Agents & AI', 'System']) {
+    expect(tab(label)).toBeTruthy()
   }
-  expect(drilled()).toBe(false)
+  expect(tab('You').getAttribute('aria-selected')).toBe('true')
+  // The "You" group's sections show; another group's do not.
+  expect(sectionShown('account')).toBe(true)
+  expect(sectionShown('billing')).toBe(true)
+  expect(sectionShown('appearance')).toBe(false)
 })
 
-it('drills into a section on tile click and shows its detail', () => {
+it('switches the shown sections when another tab is clicked', () => {
   render(<SettingsPanel onClose={() => {}} />)
-  // Drill the MCP tile — a static read-only pane, so the shell test needs no window.api stub.
-  fireEvent.click(screen.getByRole('button', { name: /MCP Servers/ }))
-  expect(drilled()).toBe(true)
-  const detail = document.querySelector('[data-test="settings-detail"]')
-  expect(detail?.textContent).toMatch(/coming in a later update/i)
+  fireEvent.click(tab('Application'))
+  expect(tab('Application').getAttribute('aria-selected')).toBe('true')
+  expect(sectionShown('appearance')).toBe(true)
+  expect(sectionShown('terminal')).toBe(true)
+  expect(sectionShown('voice')).toBe(true)
+  expect(sectionShown('account')).toBe(false)
 })
 
-it('back button returns to the home grid', () => {
+it('opens on the tab that owns initialSection', () => {
+  render(<SettingsPanel onClose={() => {}} initialSection="llm" />)
+  expect(tab('Agents & AI').getAttribute('aria-selected')).toBe('true')
+  expect(sectionShown('llm')).toBe(true)
+})
+
+it('ArrowRight moves the selection to the next tab (roving tablist)', () => {
   render(<SettingsPanel onClose={() => {}} />)
-  fireEvent.click(screen.getByRole('button', { name: /Appearance/ }))
-  expect(drilled()).toBe(true)
-  fireEvent.click(backButton())
-  expect(drilled()).toBe(false)
+  const you = tab('You')
+  you.focus()
+  fireEvent.keyDown(you, { key: 'ArrowRight' })
+  expect(tab('Application').getAttribute('aria-selected')).toBe('true')
+  expect(tab('You').getAttribute('aria-selected')).toBe('false')
 })
 
-it('opens drilled when initialSection is given', () => {
-  render(<SettingsPanel onClose={() => {}} initialSection="account" />)
-  expect(drilled()).toBe(true)
-})
-
-it('Esc goes up one level when drilled (does not close)', () => {
-  const onClose = vi.fn()
-  render(<SettingsPanel onClose={onClose} initialSection="voice" />)
-  expect(drilled()).toBe(true)
-  fireEvent.keyDown(window, { key: 'Escape' })
-  expect(drilled()).toBe(false)
-  expect(onClose).not.toHaveBeenCalled()
-})
-
-it('Esc closes when already at the home grid', () => {
+it('Esc closes the panel', () => {
   const onClose = vi.fn()
   render(<SettingsPanel onClose={onClose} />)
   fireEvent.keyDown(window, { key: 'Escape' })
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
-it('the close button closes outright', () => {
+it('the close button closes the panel', () => {
   const onClose = vi.fn()
-  render(<SettingsPanel onClose={onClose} initialSection="mcp" />)
+  render(<SettingsPanel onClose={onClose} />)
   fireEvent.click(screen.getByLabelText('Close settings'))
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
-it('drilled: back button is unambiguously labelled and the off-screen home grid is inert', () => {
-  render(<SettingsPanel onClose={() => {}} initialSection="mcp" />)
-  // The back button's accessible name is the spelled-out action, not the bare "Settings" heading.
-  expect(screen.getByRole('button', { name: 'Back to Settings' })).toBeTruthy()
-  // The home pane (any tile lives in it) is pulled out of the tab order + a11y tree while drilled.
-  const home = document.querySelector('[data-test^="settings-tile-"]')?.closest('section') ?? null
-  expect(home?.getAttribute('aria-hidden')).toBe('true')
-  expect(home?.hasAttribute('inert')).toBe(true)
+// Each section mounts its REAL pane inside the tab panel — proves the SettingsSectionBody id→pane
+// switch (pane bodies' own behaviour is covered by panes/*.test.tsx).
+it('the Agents & AI tab renders the LLM form and the orchestration switch', async () => {
+  render(<SettingsPanel onClose={() => {}} initialSection="llm" />)
+  expect(await screen.findByLabelText('Provider')).toBeTruthy()
+  expect(await screen.findByRole('switch', { name: /agent orchestration/i })).toBeTruthy()
 })
 
-// Each interactive tile drills into its REAL pane — proves the SettingsSectionBody id→pane switch
-// (the pane bodies' own behaviour is covered by panes/*.test.tsx; here we only assert the wiring).
-describe('section wiring (SettingsSectionBody)', () => {
-  const llm = {
-    status: vi.fn().mockResolvedValue({
-      provider: 'openrouter',
-      model: 'm',
-      hasKey: false,
-      encryptionAvailable: true
-    })
-  }
-  const recap = { getConsent: vi.fn().mockResolvedValue('undecided'), setConsent: vi.fn() }
-  const orchestration = {
-    getSpawnCap: vi.fn().mockResolvedValue(4),
-    setSpawnCap: vi.fn(),
-    setConsent: vi.fn()
-  }
-
-  beforeEach(() => {
-    ;(window as unknown as { api: object }).api = { llm, recap, orchestration }
-  })
-
-  it('the llm tile renders the LLM form', async () => {
-    render(<SettingsPanel onClose={() => {}} initialSection="llm" />)
-    expect(await screen.findByLabelText('Provider')).toBeTruthy()
-  })
-
-  it('the terminal tile renders the recap toggle', async () => {
-    render(<SettingsPanel onClose={() => {}} initialSection="terminal" />)
-    expect(await screen.findByLabelText(/agent recaps \(this project\)/i)).toBeTruthy()
-  })
-
-  it('the orchestration tile renders the orchestration switch', async () => {
-    render(<SettingsPanel onClose={() => {}} initialSection="orchestration" />)
-    expect(await screen.findByRole('switch', { name: /agent orchestration/i })).toBeTruthy()
-  })
+it('the Application tab renders the recap toggle', async () => {
+  render(<SettingsPanel onClose={() => {}} />)
+  fireEvent.click(tab('Application'))
+  expect(await screen.findByLabelText(/agent recaps \(this project\)/i)).toBeTruthy()
 })

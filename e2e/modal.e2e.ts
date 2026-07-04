@@ -31,17 +31,16 @@ test('@chrome settings panel: token scrim, initial focus, Esc close, focus resto
   )
   expect(scrimBg).toBe('rgba(0, 0, 0, 0.5)')
 
-  // A7 initial focus: focus moved inside the dialog. The panel opens on the category grid (not a
-  // section), so the first focusable is the close button — the assertion only cares that focus is
-  // inside the card, not which control.
+  // A7 initial focus: focus moved inside the dialog — the panel focuses the active group tab on
+  // open. The assertion only cares that focus is inside the card, not which control.
   const focusInDialog = await evalIn<boolean>(
     page,
     `!!document.activeElement?.closest('[data-test="settings-panel"]')`
   )
   expect(focusInDialog, 'initial focus lands inside the dialog').toBe(true)
 
-  // Real OS Esc closes from the home grid (bubble-phase window listener on the shared Modal; when
-  // drilled into a section the panel's own capture-phase Esc would go back one level first).
+  // Real OS Esc closes (bubble-phase window listener on the shared Modal — flat tabs, nothing to
+  // unwind first).
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
 
@@ -60,8 +59,8 @@ test('@chrome @voice settings voice section: catalog over real IPC + showPill ap
   await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
 
   await page.click('[title="Settings"]')
-  // Voice is now a drill-in tile — open it before asserting its controls.
-  await page.click('[data-test="settings-tile-voice"]')
+  // Voice lives under the "Application" group tab — select it before asserting its controls.
+  await page.click('[data-test="settings-tab-application"]')
   await expect(page.locator('[data-test="voice-showpill-row"]')).toBeVisible()
   // Model catalog rendered over the REAL voice:models:list IPC (no models on disk in the
   // e2e userData → both cards show Download CTAs; the default badge still renders).
@@ -77,31 +76,30 @@ test('@chrome @voice settings voice section: catalog over real IPC + showPill ap
   await page.click('[data-test="voice-showpill-toggle"]')
   await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
 
-  // Drilled into the Voice section → close outright via the close button (a single Esc would only
-  // go back to the grid).
-  await page.click('[data-test="settings-close"]')
+  await page.keyboard.press('Escape')
   await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
 })
 
-test('@chrome settings tiles: drill into a section and back returns to the grid', async ({
-  page
-}) => {
+test('@chrome settings tabs: switching group tabs swaps the visible sections', async ({ page }) => {
   await page.click('[title="Settings"]')
   const panel = page.locator('[data-test="settings-panel"]')
   await expect(panel).toBeVisible()
 
-  // Home grid: the tiles are present and no section body has rendered yet.
-  await expect(page.locator('[data-test="settings-tile-billing"]')).toBeVisible()
-  await expect(page.locator('[data-test="billing-manage"]')).toHaveCount(0)
-
-  // Drill into Billing → its detail body renders (the Manage-subscription stub is present but
-  // disabled until the billing lane ships).
-  await page.click('[data-test="settings-tile-billing"]')
+  // Opens on the "You" tab → the Billing section (with its disabled Manage-subscription stub) shows.
+  await expect(page.locator('[data-test="settings-tab-you"]')).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   await expect(page.locator('[data-test="billing-manage"]')).toBeDisabled()
 
-  // Back → the section body unmounts and we are on the grid again; one Esc from here closes.
-  await page.click('[data-test="settings-back"]')
+  // Switch to "Agents & AI" → the You-group sections unmount and the MCP "coming" note appears.
+  await page.click('[data-test="settings-tab-agents"]')
   await expect(page.locator('[data-test="billing-manage"]')).toHaveCount(0)
+  await expect(page.locator('[data-test="mcp-external-coming"]')).toBeVisible()
+
+  // Back to "You" → Billing shows again; Esc closes from any tab.
+  await page.click('[data-test="settings-tab-you"]')
+  await expect(page.locator('[data-test="billing-manage"]')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
 })

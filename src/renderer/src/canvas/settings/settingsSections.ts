@@ -1,11 +1,11 @@
 /**
- * Settings tile-launcher registry — the single source of truth for the settings panel's
- * categories, their grouping, tile icon, and one-line blurb. `SettingsPanel` renders the home
- * grid from `SETTINGS_GROUPS` and looks a section up by id from `SETTINGS_SECTIONS` when drilled.
+ * Settings section registry — the single source of truth for the panel's sections and their
+ * grouping. `SettingsPanel` renders one top tab per group from `SETTINGS_GROUPS` and stacks that
+ * group's sections in the active tab's panel.
  *
- * Scope: maps to EXISTING settings only (design-sign-off 2026-07-04, `docs/specs/2026-07-04-
- * settings-tiles/PLAN.md`). The MCP tile is read-only until the separate "add external MCP
- * server" session ships (memory `mcp-add-server-feature`) — no "Add server" affordance here.
+ * Scope: maps to EXISTING settings only (design-sign-off 2026-07-04). The MCP section is read-only
+ * until the separate "add external MCP server" session ships (memory `mcp-add-server-feature`) —
+ * no "Add server" affordance here.
  */
 import type { IconName } from '../Icon'
 
@@ -24,17 +24,22 @@ export interface SettingsSectionDef {
   id: SettingsSectionId
   label: string
   icon: IconName
-  /** One-line description shown on the tile and above the section detail. */
+  /** One-line description of the section (metadata; not rendered by the current tab shell). */
   blurb: string
 }
 
+/** The four top-level tab ids (one per group). Stable keys for the tab strip + `data-test`s. */
+export type SettingsGroupId = 'you' | 'application' | 'agents' | 'system'
+
 export interface SettingsGroup {
+  id: SettingsGroupId
   label: string
   sections: SettingsSectionDef[]
 }
 
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
+    id: 'you',
     label: 'You',
     sections: [
       { id: 'account', label: 'Account', icon: 'user', blurb: 'Profile and current session' },
@@ -42,6 +47,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     ]
   },
   {
+    id: 'application',
     label: 'Application',
     sections: [
       {
@@ -55,6 +61,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     ]
   },
   {
+    id: 'agents',
     label: 'Agents & AI',
     sections: [
       { id: 'llm', label: 'Context · LLM', icon: 'cpu', blurb: 'The local context brain' },
@@ -68,12 +75,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     ]
   },
   {
+    id: 'system',
     label: 'System',
     sections: [{ id: 'about', label: 'About', icon: 'info', blurb: 'Version and updates' }]
   }
 ]
 
-/** Flat id → definition lookup (drill target resolution). */
-export const SETTINGS_SECTIONS: Record<SettingsSectionId, SettingsSectionDef> = Object.fromEntries(
-  SETTINGS_GROUPS.flatMap((g) => g.sections).map((s) => [s.id, s])
-) as Record<SettingsSectionId, SettingsSectionDef>
+/** Which group tab owns a section — used to open the right tab from `initialSection`. */
+export function groupIdForSection(section: SettingsSectionId): SettingsGroupId {
+  const group = SETTINGS_GROUPS.find((g) => g.sections.some((s) => s.id === section))
+  return group ? group.id : SETTINGS_GROUPS[0].id
+}

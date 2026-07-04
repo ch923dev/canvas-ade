@@ -38,9 +38,10 @@ export function SettingsSectionBody({
     case 'terminal':
       return <TerminalPane />
     case 'voice':
-      // SettingsVoiceSection renders its own leading divider + "Voice dictation" head, and renders
-      // nothing at all when window.api.voice is absent (non-electron test runtimes).
-      return <SettingsVoiceSection />
+      // `embedded` suppresses SettingsVoiceSection's own divider + "Voice dictation" head (the tab
+      // panel already renders a "Voice" section heading). Renders nothing at all when
+      // window.api.voice is absent (non-electron test runtimes).
+      return <SettingsVoiceSection embedded />
     case 'llm':
       return <LlmPane />
     case 'orchestration':

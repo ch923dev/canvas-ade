@@ -76,7 +76,8 @@ test.describe('@chrome accounts (Phase 1)', () => {
     await expect(pill).toBeVisible()
     await expect(pill).toContainText('PRO')
 
-    // Clicking the avatar opens Settings drilled straight into the Account section (initialSection).
+    // Clicking the avatar opens Settings on the "You" tab (initialSection='account'), so the Account
+    // section is visible without any extra navigation.
     await pill.click()
     await expect(page.locator('[data-test="settings-panel"]')).toBeVisible()
     const row = page.locator('[data-test="account-row"]')
@@ -91,9 +92,8 @@ test.describe('@chrome accounts (Phase 1)', () => {
     await expect(page.locator('[data-test="account-cta"]')).toBeVisible()
     await expect(page.locator('[data-test="account-row"]')).toHaveCount(0)
 
-    // Close Settings (drilled → use the close button; a single Esc would only return to the grid) →
-    // the chrome pill is back to the signed-out "Sign in".
-    await page.click('[data-test="settings-close"]')
+    // Close Settings (Esc closes from any tab) → the chrome pill is back to the signed-out "Sign in".
+    await page.keyboard.press('Escape')
     await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
     await expect(page.locator('[data-test="account-signin"]')).toBeVisible()
   })
@@ -103,13 +103,13 @@ test.describe('@chrome accounts (Phase 1)', () => {
   }) => {
     await setStatus(page, { isLoggedIn: false, encryptionAvailable: true })
 
-    // Open Settings via the gear → the category grid; drill into Account → the signed-out CTA card.
+    // Open Settings via the gear → the "You" tab is active, so the Account section (signed-out CTA)
+    // shows without any extra navigation.
     await page.locator('button[title="Settings"]').click()
     await expect(page.locator('[data-test="settings-panel"]')).toBeVisible()
-    await page.click('[data-test="settings-tile-account"]')
     await expect(page.locator('[data-test="account-cta"]')).toBeVisible()
     await expect(page.locator('[data-test="account-cta-signin"]')).toBeVisible()
-    await page.click('[data-test="settings-close"]')
+    await page.keyboard.press('Escape')
     await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
 
     // No system keyring (safeStorage off) → the SignInView shows the hard-block notice and offers
