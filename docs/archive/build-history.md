@@ -1943,3 +1943,30 @@ identical on the `c58a1b39` baseline) · manual real-`claude` dev check PASS (re
 to `[Pasted text #1]` — the `\x1b[200~…\x1b[201~` frame arrived atomically, head intact). Two
 review findings (surrogate-pair split at the chunk boundary; echo poll running when already
 ready) fixed + inline-dispositioned before merge. Squash `0952a9cd`.
+
+## 2026-07-05 — PR #303: Settings redesign — top group-tabs panel (retires SettingsModal) (`da9e0fe9`)
+
+Reshaped Settings from the single-column `SettingsModal` into a windowed panel with **top group
+tabs** (You · Application · Agents & AI · System); the active tab stacks that group's sections under
+headings, on the shared `Modal` (scrim 0.5, z300). The section panes (`settings/panes/*` +
+`SettingsSectionBody` + `settingsSections.ts` registry) are ports of the old sections with their
+guards preserved verbatim (BUG-007/029/031/065); `SettingsModal.tsx` + its two suites are retired,
+coverage moved to per-pane unit tests. `AppChrome` renders the panel; `initialSection` opens the
+owning tab (the account pill → **You**). `SettingsPanel` is a WAI-ARIA `tablist` (roving tabindex,
+Arrow/Home/End, `aria-selected`/`-controls`; Esc closes via Modal's bubble listener). `BackdropPicker`
+gained an additive `menuZIndex` so the Appearance popover paints above the modal; `SettingsVoiceSection`
+gained `embedded` to suppress its own head under the tab's "Voice" heading.
+
+Built first as a tile-launcher → drill-in shell (Phases 1–4: shell → pane port → a11y → test
+migration + `SettingsModal` retirement), then **replaced after a live dev check rejected the drill** —
+the flat tabs are simpler (no slide track, drill/back focus, or `inert` bookkeeping). The section
+panes were untouched across the pivot, so the whole port + the migrated pane tests survived.
+
+**Verified:** unit 4595/4595 (sanitized env); Windows e2e green (the 3 failures in the full run were
+unrelated `@mcp`/`@terminal` PTY specs, confirmed flakes that retry-pass); Linux-Docker 266P / 5F + 1
+flaky — all `file.e2e`, the known pre-existing Docker-env fails, branch-independent. Manual dev check
+PASS. Two review findings (a stale per-slice spec still present; a duplicate group-tab e2e already
+covered at the unit tier) fixed + inline-dispositioned before merge. Squash `da9e0fe9`.
+
+> ⚠️ Follow-on: the in-flight **mcp-add-server** lane (PR #304) mounted its UI into the now-deleted
+> `SettingsModal` — it must rebase and re-home onto `SettingsPanel`/`SettingsSectionBody`.
