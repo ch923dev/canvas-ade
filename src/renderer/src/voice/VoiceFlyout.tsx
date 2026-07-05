@@ -13,7 +13,7 @@
  * `autoSendOnFinal` stays hard-false — no code path here submits without a user gesture.
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { useVoiceStore, joinFinal } from '../store/voiceStore'
+import { useVoiceStore, joinFinal, pushHistory } from '../store/voiceStore'
 import { useCanvasStore } from '../store/canvasStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { getTerminalInput } from '../canvas/boards/terminal/terminalInputRegistry'
@@ -29,6 +29,8 @@ const FLIP_BELOW_Y = 280
 export const SUBMIT_SETTLE_MS = 150
 /** ~6 rows of 17px mono line-height before the transcript scrolls (SubmitWell pattern). */
 const MAX_INPUT_PX = 112
+/** How many recent prompts the flyout shows inline; the full ring lives in Settings › Voice. */
+const RECENT_VISIBLE = 8
 
 interface DlState {
   receivedBytes: number
@@ -56,6 +58,14 @@ export async function injectTranscript(targetId: string, submit: boolean): Promi
   s.clearTranscript()
   s.setFlyoutOpen(false)
   if (submit) {
+    // Record the SENT prompt in the durable history ring — Insert never records (a paste is
+    // not a submitted prompt). Optimistic mirror update + persist; MAIN repairs/caps and
+    // echoes voice:config:changed, which re-syncs the mirror across the flyout AND Settings.
+    const next = pushHistory(s.recent, text)
+    if (next !== s.recent) {
+      s.setRecent(next)
+      void window.api?.voice?.config.set({ promptHistory: next }).catch(() => {})
+    }
     window.setTimeout(() => {
       // Re-check at fire time — the PTY may have died during the settle.
       if (useTerminalRuntimeStore.getState().running[targetId]) {
@@ -77,6 +87,7 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const engineError = useVoiceStore((s) => s.engineError)
   const setDraft = useVoiceStore((s) => s.setDraft)
   const setFlyoutOpen = useVoiceStore((s) => s.setFlyoutOpen)
+  const recent = useVoiceStore((s) => s.recent)
   // Target = the selected TERMINAL board (primitive selectors — no fresh-object churn).
   const targetId = useCanvasStore((s) => {
     const b = s.boards.find((x) => x.id === s.selectedId)
@@ -93,6 +104,9 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const [modelMeta, setModelMeta] = useState<{ id: string; label: string; mb: number } | null>(null)
   const [dl, setDl] = useState<DlState | null>(null)
   const [dlError, setDlError] = useState<string | null>(null)
+  // Recent (prompt history) — collapsed by default; opens on click. Shows a slice of the
+  // durable ring inline; the full list lives in Settings › Voice.
+  const [recentOpen, setRecentOpen] = useState(false)
 
   const denied = micSilent || micStatus === 'denied'
   const showError = !denied && engineError
@@ -160,6 +174,21 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
     } else {
       setDlError(r.error ?? 'download failed')
     }
+  }
+
+  // Reuse a past prompt: drop it into the composer and focus so the user can edit/Send at once.
+  const reuseRecent = (text: string): void => {
+    setDraft(text)
+    requestAnimationFrame(() => taRef.current?.focus())
+  }
+  const copyRecent = (text: string): void => {
+    void navigator.clipboard?.writeText(text).catch(() => {})
+  }
+  // Bridge to the full history in Settings › Voice. VoicePill mounts in App — a sibling of
+  // AppChrome, which owns the Settings panel — so a decoupled window event carries the intent.
+  const openVoiceSettings = (): void => {
+    window.dispatchEvent(new CustomEvent('expanse:open-settings', { detail: { section: 'voice' } }))
+    setFlyoutOpen(false)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -346,6 +375,89 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
               </div>
             </div>
           ) : null}
+          {recent.length > 0 && (
+            <div className={`vf-recent${recentOpen ? ' open' : ''}`} data-test="voice-recent">
+              <button
+                type="button"
+                className="vf-recent-hd"
+                aria-expanded={recentOpen}
+                data-test="voice-recent-toggle"
+                onClick={() => setRecentOpen((o) => !o)}
+              >
+                <span className="vf-chev" aria-hidden>
+                  <svg width="9" height="9" viewBox="0 0 10 10">
+                    <path
+                      d="M3 1.5 L7 5 L3 8.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span className="vf-recent-lbl">Recent</span>
+                <span className="vf-recent-count">({recent.length})</span>
+                {recent.length > RECENT_VISIBLE && (
+                  <span className="vf-recent-more">+{recent.length - RECENT_VISIBLE} more</span>
+                )}
+              </button>
+              {recentOpen && (
+                <>
+                  <div className="vf-recent-list" data-test="voice-recent-list">
+                    {recent.slice(0, RECENT_VISIBLE).map((text, i) => (
+                      <div key={i} className="vf-recent-row">
+                        <button
+                          type="button"
+                          className="vf-recent-reuse"
+                          data-test="voice-recent-reuse"
+                          title={`Reuse: ${text}`}
+                          onClick={() => reuseRecent(text)}
+                        >
+                          {text}
+                        </button>
+                        <button
+                          type="button"
+                          className="vf-recent-copy"
+                          aria-label="Copy prompt"
+                          title="Copy"
+                          onClick={() => copyRecent(text)}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+                            <rect
+                              x="5.5"
+                              y="5.5"
+                              width="8"
+                              height="8"
+                              rx="1.6"
+                              stroke="currentColor"
+                              strokeWidth="1.3"
+                            />
+                            <path
+                              d="M3.5 10.5 H2.8 A1.3 1.3 0 0 1 1.5 9.2 V2.8 A1.3 1.3 0 0 1 2.8 1.5 H9.2 A1.3 1.3 0 0 1 10.5 2.8 V3.5"
+                              stroke="currentColor"
+                              strokeWidth="1.3"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="vf-recent-foot">
+                    <span>click a prompt to reuse</span>
+                    <button
+                      type="button"
+                      className="vf-recent-all"
+                      data-test="voice-recent-all"
+                      onClick={openVoiceSettings}
+                    >
+                      See all in Settings →
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

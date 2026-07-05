@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  MAX_PROMPT_HISTORY,
   readVoiceConfig,
   repairVoiceConfig,
   writeVoiceConfig,
@@ -19,7 +20,8 @@ const DEFAULTS: VoiceConfig = {
   autoSendOnFinal: false,
   cloudProvider: undefined,
   showPill: true,
-  pillPosition: undefined
+  pillPosition: undefined,
+  promptHistory: []
 }
 
 describe('voiceConfig (V4 full SPEC §5 shape)', () => {
@@ -58,7 +60,8 @@ describe('voiceConfig (V4 full SPEC §5 shape)', () => {
       autoSendOnFinal: false,
       cloudProvider: 'someday',
       showPill: false,
-      pillPosition: { x: 12, y: 34 }
+      pillPosition: { x: 12, y: 34 },
+      promptHistory: ['deploy the site', 'run the tests']
     }
     writeVoiceConfig(dir, cfg)
     expect(readVoiceConfig(dir)).toEqual(cfg)
@@ -116,5 +119,34 @@ describe('voiceConfig (V4 full SPEC §5 shape)', () => {
   it("accepts 'cloud' as a persisted engine value (greyed in UI, never honored)", () => {
     expect(repairVoiceConfig({ engine: 'cloud' }).engine).toBe('cloud')
     expect(repairVoiceConfig({ engine: 'sherpa-onnx' }).engine).toBe('sherpa-onnx')
+  })
+})
+
+describe('voiceConfig — prompt-history ring', () => {
+  it('defaults to an empty history and repairs a non-array to []', () => {
+    expect(repairVoiceConfig({}).promptHistory).toEqual([])
+    expect(repairVoiceConfig({ promptHistory: 'nope' }).promptHistory).toEqual([])
+    expect(repairVoiceConfig({ promptHistory: null }).promptHistory).toEqual([])
+  })
+
+  it('keeps newest-first order and trims each entry', () => {
+    expect(
+      repairVoiceConfig({ promptHistory: ['  build the app  ', 'run tests'] }).promptHistory
+    ).toEqual(['build the app', 'run tests'])
+  })
+
+  it('drops empty and non-string entries', () => {
+    expect(
+      repairVoiceConfig({ promptHistory: ['keep', '', '   ', 7, null, { x: 1 }, 'also'] })
+        .promptHistory
+    ).toEqual(['keep', 'also'])
+  })
+
+  it('hard-caps to MAX_PROMPT_HISTORY, keeping the newest (front of the list)', () => {
+    const big = Array.from({ length: MAX_PROMPT_HISTORY + 50 }, (_, i) => `p${i}`)
+    const out = repairVoiceConfig({ promptHistory: big }).promptHistory
+    expect(out).toHaveLength(MAX_PROMPT_HISTORY)
+    expect(out[0]).toBe('p0')
+    expect(out[MAX_PROMPT_HISTORY - 1]).toBe(`p${MAX_PROMPT_HISTORY - 1}`)
   })
 })

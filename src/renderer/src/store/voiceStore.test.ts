@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { joinFinal, useVoiceStore, SILENCE_RMS } from './voiceStore'
+import {
+  joinFinal,
+  useVoiceStore,
+  SILENCE_RMS,
+  pushHistory,
+  PROMPT_HISTORY_CAP
+} from './voiceStore'
 
 const initial = {
   capturing: false,
@@ -140,5 +146,41 @@ describe('voiceStore', () => {
     useVoiceStore.getState().setActiveBoard('b1')
     expect(useVoiceStore.getState().micSilent).toBe(true)
     expect(useVoiceStore.getState().activeBoardId).toBe('b1')
+  })
+
+  it('setRecent replaces the mirror; identity no-op on the same reference', () => {
+    const list = ['a prompt']
+    useVoiceStore.getState().setRecent(list)
+    expect(useVoiceStore.getState().recent).toBe(list)
+    const before = useVoiceStore.getState()
+    useVoiceStore.getState().setRecent(list) // same ref → no new state object
+    expect(useVoiceStore.getState()).toBe(before)
+  })
+})
+
+describe('pushHistory — prompt-history ring reducer', () => {
+  it('prepends newest-first and trims each entry', () => {
+    expect(pushHistory([], '  hello  ')).toEqual(['hello'])
+    expect(pushHistory(['a'], 'b')).toEqual(['b', 'a'])
+  })
+
+  it('ignores an empty prompt (same reference back)', () => {
+    const list = ['a']
+    expect(pushHistory(list, '   ')).toBe(list)
+    expect(pushHistory(list, '')).toBe(list)
+  })
+
+  it('skips a consecutive duplicate but allows a non-consecutive repeat', () => {
+    const list = ['same', 'other']
+    expect(pushHistory(list, 'same')).toBe(list) // no-op, same ref
+    expect(pushHistory(list, 'other')).toEqual(['other', 'same', 'other'])
+  })
+
+  it('caps to PROMPT_HISTORY_CAP, dropping the oldest', () => {
+    const full = Array.from({ length: PROMPT_HISTORY_CAP }, (_, i) => `p${i}`)
+    const out = pushHistory(full, 'newest')
+    expect(out).toHaveLength(PROMPT_HISTORY_CAP)
+    expect(out[0]).toBe('newest')
+    expect(out.at(-1)).toBe(`p${PROMPT_HISTORY_CAP - 2}`) // the oldest fell off the tail
   })
 })

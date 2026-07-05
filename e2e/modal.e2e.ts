@@ -59,8 +59,8 @@ test('@chrome @voice settings voice section: catalog over real IPC + showPill ap
   await expect(page.locator('[data-test="voice-pill"]')).toBeVisible()
 
   await page.click('[title="Settings"]')
-  // Voice lives under the "Application" group tab — select it before asserting its controls.
-  await page.click('[data-test="settings-tab-application"]')
+  // Voice is now its own top-level group tab — select it before asserting its controls.
+  await page.click('[data-test="settings-tab-voice"]')
   await expect(page.locator('[data-test="voice-showpill-row"]')).toBeVisible()
   // Model catalog rendered over the REAL voice:models:list IPC (no models on disk in the
   // e2e userData → both cards show Download CTAs; the default badge still renders).
