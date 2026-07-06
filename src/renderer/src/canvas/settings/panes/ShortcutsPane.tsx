@@ -8,6 +8,7 @@
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import type { HotkeyConfig } from '../../../../../preload'
 import { pane } from '../paneStyles'
+import { chordFromEvent, pretty } from './accelerator'
 
 // Local default mirroring main `hotkeyConfig.DEFAULT_HOTKEYS` — the pre-load UI state only
 // (the persisted value replaces it on mount).
@@ -15,50 +16,6 @@ const DEFAULTS: HotkeyConfig = {
   enabled: true,
   next: 'CommandOrControl+Alt+]',
   prev: 'CommandOrControl+Alt+['
-}
-
-const NAMED: Record<string, string> = {
-  ArrowUp: 'Up',
-  ArrowDown: 'Down',
-  ArrowLeft: 'Left',
-  ArrowRight: 'Right',
-  ' ': 'Space',
-  Enter: 'Enter',
-  Tab: 'Tab',
-  Backspace: 'Backspace',
-  Delete: 'Delete',
-  Home: 'Home',
-  End: 'End',
-  PageUp: 'PageUp',
-  PageDown: 'PageDown'
-}
-
-/** The non-modifier key of an Electron accelerator, or null for a lone modifier / unusable key. */
-function accelKey(e: KeyboardEvent): string | null {
-  if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return null
-  if (NAMED[e.key]) return NAMED[e.key]
-  if (/^F\d{1,2}$/.test(e.key)) return e.key
-  if (e.key.length === 1) return e.key.toUpperCase()
-  return null
-}
-
-/** Build an Electron accelerator from a keydown, or null if it lacks a strong modifier. */
-function chordFromEvent(e: KeyboardEvent): string | null {
-  const key = accelKey(e)
-  if (!key) return null
-  // A bare (or Shift-only) global chord would hijack that key system-wide — require Ctrl/Alt/Meta.
-  if (!e.ctrlKey && !e.altKey && !e.metaKey) return null
-  const mods: string[] = []
-  if (e.ctrlKey) mods.push('CommandOrControl')
-  if (e.altKey) mods.push('Alt')
-  if (e.shiftKey) mods.push('Shift')
-  if (e.metaKey) mods.push('Super')
-  return [...mods, key].join('+')
-}
-
-/** Human-friendly rendering of an accelerator string for the chip. */
-function pretty(accel: string): string {
-  return accel.replace('CommandOrControl', 'Ctrl/⌘').replace('Super', '⌘').split('+').join(' + ')
 }
 
 export function ShortcutsPane(): ReactElement | null {
@@ -114,6 +71,15 @@ export function ShortcutsPane(): ReactElement | null {
       }
       const chord = chordFromEvent(e)
       if (!chord) return // ignore lone modifiers / no-modifier presses; keep listening
+      // Reject a chord that collides with the OTHER direction: globalShortcut can't hold two
+      // handlers on one accelerator, so only one would bind and the other would silently do
+      // nothing. Surface it instead (reviewer PR #309).
+      const other = recording === 'next' ? cfg.prev : cfg.next
+      if (chord === other) {
+        setRecording(null)
+        setError('Next and Previous must use different chords.')
+        return
+      }
       setRecording(null)
       void applyCfg({ ...cfg, [recording]: chord })
     }

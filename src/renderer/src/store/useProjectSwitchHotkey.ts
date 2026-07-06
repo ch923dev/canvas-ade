@@ -11,11 +11,16 @@
  */
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
+import { useAccountStore } from './accountStore'
 import { performProjectSwitch } from './projectSwitch'
 import { showToast } from './toastStore'
 import { toastLockedSwitch } from '../canvas/projectSessionsShared'
 
 async function cycleProject(dir: 1 | -1): Promise<void> {
+  // The forced sign-in overlay (__REQUIRE_ACCOUNT__ + signed-out) is a locked gate meant to block
+  // ALL interaction until sign-in; a global OS hotkey — the one vector that bypasses renderer
+  // focus — must NOT switch projects behind it (reviewer PR #309). No-op while that gate is up.
+  if (__REQUIRE_ACCOUNT__ && useAccountStore.getState().status === 'signed-out') return
   const recents = await window.api.project.recents().catch(() => [])
   if (recents.length === 0) {
     showToast({ id: 'hotkey-no-project', kind: 'info', message: 'No recent projects to switch to' })
