@@ -3,9 +3,10 @@
  * grouping. `SettingsPanel` renders one top tab per group from `SETTINGS_GROUPS` and stacks that
  * group's sections in the active tab's panel.
  *
- * Scope: maps to EXISTING settings only (design-sign-off 2026-07-04). The MCP section is read-only
- * until the separate "add external MCP server" session ships (memory `mcp-add-server-feature`) —
- * no "Add server" affordance here.
+ * Scope: EXISTING settings, plus the **Project** group (2026-07-06) — one home for every control
+ * scoped to the open project (Keep in background · Appearance · Agents), gated on an open project.
+ * The MCP section is read-only until the separate "add external MCP server" session ships (memory
+ * `mcp-add-server-feature`) — no "Add server" affordance here.
  */
 import type { IconName } from '../Icon'
 
@@ -18,6 +19,9 @@ export type SettingsSectionId =
   | 'llm'
   | 'orchestration'
   | 'mcp'
+  | 'project-sessions'
+  | 'project-appearance'
+  | 'project-agents'
   | 'about'
 
 export interface SettingsSectionDef {
@@ -29,7 +33,7 @@ export interface SettingsSectionDef {
 }
 
 /** The top-level tab ids (one per group). Stable keys for the tab strip + `data-test`s. */
-export type SettingsGroupId = 'you' | 'application' | 'agents' | 'voice' | 'system'
+export type SettingsGroupId = 'you' | 'application' | 'agents' | 'voice' | 'project' | 'system'
 
 export interface SettingsGroup {
   id: SettingsGroupId
@@ -78,6 +82,30 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     label: 'Voice',
     sections: [
       { id: 'voice', label: 'Voice', icon: 'mic', blurb: 'Local-first dictation & history' }
+    ]
+  },
+  {
+    id: 'project',
+    label: 'Project',
+    sections: [
+      {
+        id: 'project-sessions',
+        label: 'Sessions',
+        icon: 'activity',
+        blurb: 'Keep this project alive in the background'
+      },
+      {
+        id: 'project-appearance',
+        label: 'Appearance',
+        icon: 'wallpaper',
+        blurb: 'Wallpaper and canvas backdrop'
+      },
+      {
+        id: 'project-agents',
+        label: 'Agents',
+        icon: 'connector',
+        blurb: 'Agent orchestration for this project'
+      }
     ]
   },
   {

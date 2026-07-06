@@ -18,6 +18,9 @@ import { LlmPane } from './panes/LlmPane'
 import { OrchestrationPane } from './panes/OrchestrationPane'
 import { McpPane } from './panes/McpPane'
 import { AboutPane } from './panes/AboutPane'
+import { ProjectSessionsPane } from './panes/ProjectSessionsPane'
+import { ProjectAppearancePane } from './panes/ProjectAppearancePane'
+import { ProjectAgentsPane } from './panes/ProjectAgentsPane'
 
 export function SettingsSectionBody({
   id,
@@ -48,6 +51,14 @@ export function SettingsSectionBody({
       return <OrchestrationPane onClose={onClose} />
     case 'mcp':
       return <McpPane />
+    case 'project-sessions':
+      return <ProjectSessionsPane />
+    case 'project-appearance':
+      // Same per-project backdrop, but rendered INLINE (BackdropControls) instead of the toolbar's
+      // floating picker menu — the popover overflowed the Settings modal horizontally.
+      return <ProjectAppearancePane />
+    case 'project-agents':
+      return <ProjectAgentsPane onClose={onClose} />
     case 'about':
       return <AboutPane />
   }

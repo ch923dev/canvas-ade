@@ -25,6 +25,11 @@ beforeEach(() => {
       getSpawnCap: vi.fn().mockResolvedValue(4),
       setSpawnCap: vi.fn(),
       setConsent: vi.fn()
+    },
+    project: {
+      keepForeverDirs: vi.fn().mockResolvedValue([]),
+      setKeepPolicy: vi.fn().mockResolvedValue(true),
+      forgetKeepPolicy: vi.fn().mockResolvedValue(true)
     }
   }
 })
@@ -35,7 +40,7 @@ const sectionShown = (id: string): boolean =>
 
 it('renders the group tabs with "You" active by default', () => {
   render(<SettingsPanel onClose={() => {}} />)
-  for (const label of ['You', 'Application', 'Agents & AI', 'Voice', 'System']) {
+  for (const label of ['You', 'Application', 'Agents & AI', 'Voice', 'Project', 'System']) {
     expect(tab(label)).toBeTruthy()
   }
   expect(tab('You').getAttribute('aria-selected')).toBe('true')
@@ -104,4 +109,19 @@ it('the Application tab renders the recap toggle', async () => {
   render(<SettingsPanel onClose={() => {}} />)
   fireEvent.click(tab('Application'))
   expect(await screen.findByLabelText(/agent recaps \(this project\)/i)).toBeTruthy()
+})
+
+it('the Project tab renders the keep-in-background switch when a project is open', async () => {
+  useCanvasStore.setState({ project: { dir: 'C:/p', name: 'p', status: 'open' } })
+  render(<SettingsPanel onClose={() => {}} />)
+  fireEvent.click(tab('Project'))
+  expect(tab('Project').getAttribute('aria-selected')).toBe('true')
+  expect(await screen.findByRole('switch', { name: 'Keep in background' })).toBeTruthy()
+})
+
+it('the Project tab shows the empty state with no project open', () => {
+  // beforeEach leaves project.dir null → the gated panes render the shared empty state.
+  render(<SettingsPanel onClose={() => {}} />)
+  fireEvent.click(tab('Project'))
+  expect(document.querySelector('[data-test="settings-no-project"]')).not.toBeNull()
 })
