@@ -76,19 +76,29 @@ describe('ConfirmModal (integration)', () => {
     expect(reply).toHaveBeenCalledWith({ approved: false })
   })
 
-  it('Esc and a backdrop pointerdown both deny (fail-safe direction)', () => {
+  it('Esc denies (fail-safe direction)', () => {
     stubOnConfirm()
     render(<ConfirmModal />)
 
     const escReply = pushRequest({ title: 'A', body: 'a' })
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(escReply).toHaveBeenCalledWith({ approved: false })
+  })
 
-    // The shared Modal closes on the scrim's pointerdown (a click's down half) — pointerdown
-    // only, so a queue advance can't be double-fired by the down+click pair of one gesture.
-    const backdropReply = pushRequest({ title: 'B', body: 'b' })
+  it('a backdrop pointerdown is INERT — no approve, no deny (scrimClose={false})', () => {
+    stubOnConfirm()
+    render(<ConfirmModal />)
+
+    // 🔒 Click-outside must not decide a dangerous dispatch: the scrim pointerdown neither
+    // approves nor denies, and the modal stays up so the human still answers via a button.
+    const reply = pushRequest({ title: 'B', body: 'b' })
     fireEvent.pointerDown(screen.getByTestId('confirm-backdrop'))
-    expect(backdropReply).toHaveBeenCalledWith({ approved: false })
+    expect(reply).not.toHaveBeenCalled()
+    expect(screen.getByTestId('confirm-modal')).toBeTruthy()
+
+    // The explicit Deny still answers it.
+    fireEvent.click(screen.getByTestId('confirm-deny'))
+    expect(reply).toHaveBeenCalledWith({ approved: false })
   })
 
   it('queues FIFO so two dispatches cannot share one modal; answering the head advances', () => {

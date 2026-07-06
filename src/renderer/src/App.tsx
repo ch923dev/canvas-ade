@@ -3,6 +3,7 @@ import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
+import BatchConfirmModal from './canvas/BatchConfirmModal'
 import AskOnSwitchModal from './canvas/AskOnSwitchModal'
 import ProjectDock from './canvas/ProjectDock'
 import SwitchTransitionOverlay from './canvas/SwitchTransitionOverlay'
@@ -128,6 +129,9 @@ function App(): React.ReactElement {
           dictation needs an open canvas (terminal targets), so they gate on it too. */}
       {status === 'open' && <VoicePill />}
       <ConfirmModal />
+      {/* relay_prompts: the per-row BATCH confirm gate — app-level beside ConfirmModal, its own
+          FIFO queue on the mcp:confirm:batch channel. Same click-outside-inert / Esc-denies contract. */}
+      <BatchConfirmModal />
       {/* Phase 4 (bg sessions): app-level like ConfirmModal — the ask-on-switch decision is
           awaited mid-switch-pipeline and must not depend on any project-scoped surface. */}
       <AskOnSwitchModal />

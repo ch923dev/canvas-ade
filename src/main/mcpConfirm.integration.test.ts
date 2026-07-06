@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { BrowserWindow, IpcMain } from 'electron'
-import { requestConfirm, type ConfirmRequest } from './mcpConfirm'
+import {
+  requestConfirm,
+  requestConfirmBatch,
+  type ConfirmBatchRequest,
+  type ConfirmRequest
+} from './mcpConfirm'
 
 const REQ: ConfirmRequest = { title: 'Dispatch', body: 'Run "echo hi" in board X?' }
 
@@ -251,5 +256,111 @@ describe('requestConfirm', () => {
     } as unknown as BrowserWindow
     const { bus } = fakeBus()
     await expect(requestConfirm(bus, () => win, REQ)).resolves.toEqual({ approved: false })
+  })
+})
+
+const BATCH: ConfirmBatchRequest = {
+  title: 'Relay 3 prompts',
+  items: [
+    { label: 'A → B', body: 'npm run build' },
+    { label: 'A → C', body: 'npm test' },
+    { label: 'A → D', body: 'rm -rf dist' }
+  ]
+}
+const DENY3 = { decisions: [{ approved: false }, { approved: false }, { approved: false }] }
+
+/** A fake main window whose `webContents.send` records the batch payload posted. */
+function fakeBatchWin(mainFrame: object): {
+  win: BrowserWindow
+  sent: Array<{ channel: string; payload: { request: ConfirmBatchRequest; replyChannel: string } }>
+} {
+  const sent: Array<{
+    channel: string
+    payload: { request: ConfirmBatchRequest; replyChannel: string }
+  }> = []
+  const win = {
+    isDestroyed: () => false,
+    webContents: {
+      mainFrame,
+      isDestroyed: () => false,
+      once: () => {},
+      removeListener: () => {},
+      send: (channel: string, payload: { request: ConfirmBatchRequest; replyChannel: string }) =>
+        sent.push({ channel, payload })
+    }
+  } as unknown as BrowserWindow
+  return { win, sent }
+}
+
+describe('requestConfirmBatch', () => {
+  it('posts to mcp:confirm:batch and resolves the per-row decisions', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeBatchWin(mainFrame)
+    const { bus, reply, channel } = fakeBus()
+
+    const p = requestConfirmBatch(bus, () => win, BATCH)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].channel).toBe('mcp:confirm:batch')
+    expect(sent[0].payload.request).toEqual(BATCH)
+    expect(sent[0].payload.replyChannel).toBe(channel())
+
+    reply(
+      { senderFrame: mainFrame },
+      { decisions: [{ approved: true }, { approved: false }, { approved: true }] }
+    )
+    await expect(p).resolves.toEqual({
+      decisions: [{ approved: true }, { approved: false }, { approved: true }]
+    })
+  })
+
+  it('🔒 fail-closed: a SHORT reply denies the missing rows (approved only where explicit)', async () => {
+    const mainFrame = { name: 'main' }
+    const { win } = fakeBatchWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const p = requestConfirmBatch(bus, () => win, BATCH)
+    reply({ senderFrame: mainFrame }, { decisions: [{ approved: true }] }) // only row 0
+    await expect(p).resolves.toEqual({
+      decisions: [{ approved: true }, { approved: false }, { approved: false }]
+    })
+  })
+
+  it('🔒 fail-closed: a malformed (non-array) reply denies EVERY row', async () => {
+    const mainFrame = { name: 'main' }
+    const { win } = fakeBatchWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const p = requestConfirmBatch(bus, () => win, BATCH)
+    reply({ senderFrame: mainFrame }, { decisions: 'nope' })
+    await expect(p).resolves.toEqual(DENY3)
+  })
+
+  it('🔒 fail-closed: a row whose `approved` is not strictly true is denied', async () => {
+    const mainFrame = { name: 'main' }
+    const { win } = fakeBatchWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const p = requestConfirmBatch(bus, () => win, BATCH)
+    reply(
+      { senderFrame: mainFrame },
+      { decisions: [{ approved: 'yes' }, { approved: 1 }, { approved: true }] }
+    )
+    await expect(p).resolves.toEqual({
+      decisions: [{ approved: false }, { approved: false }, { approved: true }]
+    })
+  })
+
+  it('🔒 denies every row when the window is gone — no send', async () => {
+    const { bus } = fakeBus()
+    await expect(requestConfirmBatch(bus, () => null, BATCH)).resolves.toEqual(DENY3)
+  })
+
+  it('🔒 ignores a foreign-frame reply; the safety timeout then denies every row', async () => {
+    const mainFrame = { name: 'main' }
+    const { win } = fakeBatchWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const p = requestConfirmBatch(bus, () => win, BATCH, { timeoutMs: 30 })
+    reply(
+      { senderFrame: { name: 'evil' } },
+      { decisions: [{ approved: true }, { approved: true }, { approved: true }] }
+    )
+    await expect(p).resolves.toEqual(DENY3)
   })
 })

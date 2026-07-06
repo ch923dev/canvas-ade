@@ -9,10 +9,12 @@ import { Modal } from './Modal'
  * approve as a deny (fail-closed, see `mcpConfirm.ts`).
  *
  * Requests queue (FIFO) so two dispatches can't race a single modal; the head shows,
- * and answering advances to the next. Esc / a backdrop pointerdown denies (both routed
- * through the shared Modal's onClose). `confirmGate` marks the scrim with
- * `[data-confirm-active]` so the full-view capture-phase Esc listener in
- * useCanvasKeybindings yields Esc to this modal — it must DENY first (BUG-005).
+ * and answering advances to the next. Esc DENIES (routed through the shared Modal's
+ * onClose); a backdrop pointerdown is INERT (`scrimClose={false}`) — a dangerous
+ * dispatch decision must be an explicit Approve/Deny click, never an accidental
+ * click-outside. `confirmGate` marks the scrim with `[data-confirm-active]` so the
+ * full-view capture-phase Esc listener in useCanvasKeybindings yields Esc to this
+ * modal — it must DENY first (BUG-005).
  */
 
 /** P5: an optional layout chooser attached to a request (mirrors main `ConfirmChoices`). */
@@ -69,8 +71,11 @@ export default function ConfirmModal(): React.ReactElement | null {
   return (
     <Modal
       label={current.title}
-      // Esc and the backdrop both DENY (fail-safe direction).
+      // Esc DENIES (fail-safe direction). The backdrop is inert — see scrimClose below.
       onClose={() => answer(false)}
+      // 🔒 Click-outside must NOT decide a dangerous dispatch. Only the explicit Deny/Approve
+      // buttons (or the Esc deny) answer the gate; a stray backdrop click is a no-op.
+      scrimClose={false}
       zIndex={10000}
       confirmGate
       scrimProps={{ 'data-testid': 'confirm-backdrop' }}

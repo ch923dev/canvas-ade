@@ -198,3 +198,59 @@ describe('createGatedWriter — post-write echo confirmation (honest ack, OR-com
     expect(audits.map((a) => a.status)).toEqual(['denied'])
   })
 })
+
+describe('createGatedWriter — confirmOverride (relay_prompts batch seam)', () => {
+  function spyDeps(): {
+    deps: DispatchGateDeps
+    writes: string[]
+    audits: string[]
+    state: { confirmCalls: number }
+  } {
+    const state = { confirmCalls: 0 }
+    const writes: string[] = []
+    const audits: string[] = []
+    const deps: DispatchGateDeps = {
+      guard: createDispatchGuard(),
+      confirm: async () => {
+        state.confirmCalls += 1
+        return { approved: true }
+      },
+      writeToPty: (_id, text) => {
+        writes.push(text)
+        return true
+      },
+      audit: async (i) => {
+        audits.push(i.status)
+      }
+    }
+    return { deps, writes, audits, state }
+  }
+
+  it('an approving override writes WITHOUT calling the per-item confirm modal', async () => {
+    const { deps, writes, audits, state } = spyDeps()
+    const r = await createGatedWriter(deps)(
+      input({ confirmOverride: async () => ({ approved: true }) })
+    )
+    // The batch modal already decided this row → the gate does NOT raise a per-item confirm.
+    expect(state.confirmCalls).toBe(0)
+    expect(writes).toEqual(['hello world', '\r'])
+    expect(audits[audits.length - 1]).toBe('dispatched')
+    expect(r.delivery).toBe('ready')
+  })
+
+  it('a denying override fails closed: no write, nonce evicted, audit denied, still no per-item confirm', async () => {
+    const { deps, writes, audits, state } = spyDeps()
+    await expect(
+      createGatedWriter(deps)(input({ confirmOverride: async () => ({ approved: false }) }))
+    ).rejects.toThrow(/denied/)
+    expect(state.confirmCalls).toBe(0)
+    expect(writes).toEqual([])
+    expect(audits).toEqual(['denied'])
+  })
+
+  it('with no override the per-item confirm modal still runs (unchanged single-dispatch path)', async () => {
+    const { deps, state } = spyDeps()
+    await createGatedWriter(deps)(input())
+    expect(state.confirmCalls).toBe(1)
+  })
+})

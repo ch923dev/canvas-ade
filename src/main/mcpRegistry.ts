@@ -1,6 +1,11 @@
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
-import type { ConfirmDecision, ConfirmRequest } from './mcpConfirm'
+import type {
+  ConfirmBatchDecision,
+  ConfirmBatchRequest,
+  ConfirmDecision,
+  ConfirmRequest
+} from './mcpConfirm'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
@@ -77,6 +82,28 @@ export interface OrchestratorOpts {
   onBoardClosed?: (boardId: string) => void
 }
 
+/** One dispatch in a `relay_prompts` batch — the same {source, target, text} triple as a single relay. */
+export interface RelayItem {
+  sourceId: string
+  targetId: string
+  text: string
+}
+
+/**
+ * Per-item outcome of a `relay_prompts` batch (positionally 1:1 with the input items). `status`:
+ * `'relayed'` = human-approved + written; `'denied'` = the human declined that row; `'rejected'` =
+ * a validation/cable failure never confirmed (bad payload, no `source → target` cable, or not
+ * terminal → terminal). `delivery` rides back on `'relayed'` (the same honest-ack verdict as
+ * `relayPrompt`); `detail` is a short reason on `denied`/`rejected`.
+ */
+export interface RelayResult {
+  sourceId: string
+  targetId: string
+  status: 'relayed' | 'denied' | 'rejected'
+  delivery?: 'ready' | 'unconfirmed'
+  detail?: string
+}
+
 /**
  * The adapter + awaitSettled (extras beyond the package contract), PLUS
  * app-side NARROWING of two methods the package `Orchestrator` now declares as of ≥0.15.0 (W1-G):
@@ -117,6 +144,16 @@ export type LifecycleOrchestrator = Omit<
     targetId: string,
     text: string
   ): Promise<{ delivery: 'ready' | 'unconfirmed' }>
+  /**
+   * 🔒 BATCH agent-to-agent relay (relay_prompts) — dispatch several {@link RelayItem}s behind ONE
+   * per-row human-confirm modal. Each item is validated + gated INDEPENDENTLY (its own directed-cable
+   * check, single-use nonce, audit row) exactly like {@link LifecycleOrchestrator.relayPrompt}; the
+   * batch shares only the confirm. App-local (NOT yet on the installed package `Orchestrator` — no
+   * Omit needed; matches the concrete `relayPrompts` on `@expanse-ade/mcp` 0.18.0-rc.8 at integration,
+   * same discipline as the card / planning-edit methods). Resolves a per-item {@link RelayResult}
+   * array, positionally 1:1 with `items`.
+   */
+  relayPrompts(items: RelayItem[]): Promise<RelayResult[]>
   /**
    * Assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
    * NARROWS the package's `describeApp(): Promise<unknown>` to the concrete `AppModel` (the package
@@ -382,6 +419,16 @@ export interface BoardRegistry {
    * re-validates it against the offered set — see `ConfirmChoices`).
    */
   confirm(req: ConfirmRequest): Promise<ConfirmDecision>
+  /**
+   * 🔒 Block on a mandatory per-row BATCH human confirm (relay_prompts). MAIN injects
+   * `requestConfirmBatch` (fail-closed everywhere — a gone window / foreign or malformed reply /
+   * timeout denies every row); resolves per-row `{ approved }` positionally 1:1 with the request
+   * items. ONE modal answers MANY dispatches, but each row is still gated + audited independently.
+   * Optional so existing registry stubs keep compiling (the `gitDiff?` / `awaitReady?` idiom); a
+   * registry that does not wire it makes `relayPrompts` FAIL-CLOSED — every row denied. Production
+   * (index.ts) always wires it.
+   */
+  confirmBatch?(req: ConfirmBatchRequest): Promise<ConfirmBatchDecision>
   /**
    * 🔒 Append one dispatch audit entry (T4.1). MAIN injects `getAuditLog().append`.
    * Every dispatch attempt — rejected / denied / failed / completed — is recorded with

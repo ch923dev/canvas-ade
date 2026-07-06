@@ -52,6 +52,14 @@ export interface ModalProps {
    * opposed to a transient busy state. `onClose` is never called from Esc/scrim while set.
    */
   blocking?: boolean
+  /**
+   * Whether a scrim (backdrop) pointerdown calls `onClose`. Default `true` (a normal modal
+   * dismisses on click-outside). Set `false` to make click-outside INERT — the decision must
+   * come from an explicit control, not an accidental backdrop click. Independent of Esc: Esc
+   * still calls `onClose` (unless a lock — `closeDisabled`/`blocking` — is set), so ConfirmModal
+   * keeps its fail-closed Esc deny (BUG-005) while the backdrop no longer decides anything.
+   */
+  scrimClose?: boolean
   /** Stacking order of the scrim — each call site keeps its established layer. */
   zIndex: number
   /**
@@ -76,6 +84,7 @@ export function Modal({
   onClose,
   closeDisabled = false,
   blocking = false,
+  scrimClose = true,
   zIndex,
   confirmGate = false,
   initialFocusRef,
@@ -156,7 +165,10 @@ export function Modal({
       {...scrimProps}
       {...(confirmGate ? { 'data-confirm-active': '' } : {})}
       onPointerDown={() => {
-        if (!locked) onClose()
+        // A backdrop click closes only when scrim-close is enabled AND neither lock is set
+        // (`closeDisabled` busy / `blocking` permanent). With `scrimClose={false}` (ConfirmModal)
+        // an outside click is INERT — no approve, no deny.
+        if (!locked && scrimClose) onClose()
       }}
       style={{
         position: 'fixed',

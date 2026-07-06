@@ -227,3 +227,29 @@ describe('preload api → mcp.onConfirm single-subscriber gate (BUG-029)', () =>
     expect(confirmCalls()).toHaveLength(2)
   })
 })
+
+// 🔒 The BATCH confirm channel (relay_prompts) gets the SAME BUG-029 single-subscriber gate on
+// its own 'mcp:confirm:batch' channel — no second in-frame script may race the BatchConfirmModal.
+describe('preload api → mcp.onConfirmBatch single-subscriber gate (relay_prompts)', () => {
+  const batchCalls = (): unknown[][] => h.on.mock.calls.filter((c) => c[0] === 'mcp:confirm:batch')
+
+  it('wires the underlying IPC listener only once, even across multiple onConfirmBatch calls', () => {
+    api.mcp.onConfirmBatch(() => {})
+    expect(batchCalls()).toHaveLength(1)
+    api.mcp.onConfirmBatch(() => {}) // no-op: an active subscriber already holds the channel
+    expect(batchCalls()).toHaveLength(1)
+  })
+
+  it('forwards the batch request and a reply fn to the FIRST handler only', () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    api.mcp.onConfirmBatch(first)
+    api.mcp.onConfirmBatch(second) // no-op
+    const listener = batchCalls()[0][1] as (e: unknown, msg: unknown) => void
+    listener({}, { request: { title: 'Relay 2 prompts', items: [] }, replyChannel: 'ch' })
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(first.mock.calls[0][0]).toEqual({ title: 'Relay 2 prompts', items: [] })
+    expect(typeof first.mock.calls[0][1]).toBe('function') // the reply fn
+    expect(second).not.toHaveBeenCalled()
+  })
+})

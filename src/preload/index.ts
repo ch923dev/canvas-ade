@@ -24,6 +24,15 @@ export interface ConfirmRequest {
 /** The modal's reply to a confirm request; P5 adds the optional chooser `choice`. */
 type ConfirmDecisionMsg = { approved: boolean; choice?: string }
 
+/** A per-row BATCH confirm request surfaced to the modal (mirrors main `ConfirmBatchRequest`). */
+export interface ConfirmBatchRequest {
+  title: string
+  items: Array<{ label: string; body: string }>
+}
+
+/** The batch modal's reply — per-row decisions, positionally 1:1 with `request.items`. */
+type ConfirmBatchDecisionMsg = { decisions: Array<{ approved: boolean }> }
+
 /** One MCP dispatch audit entry surfaced to the viewer (mirrors main `AuditEntry`, T4.1). */
 export interface AuditEntry {
   seq: number
@@ -952,6 +961,28 @@ const api = {
       }
       ipcRenderer.on('mcp:confirm', listener)
       return () => ipcRenderer.removeListener('mcp:confirm', listener)
+    },
+
+    // 🔒 Per-row BATCH human-confirm gate (relay_prompts): MAIN posts ONE request carrying N rows;
+    // the renderer shows ONE modal and replies the human's per-row decisions on MAIN's unique reply
+    // channel. Same BUG-029 single-subscriber gate as onConfirm — at most one listener may ever be
+    // wired to 'mcp:confirm:batch', so no second in-frame script can race the real BatchConfirmModal
+    // to auto-approve. Returns an unsubscribe fn; MAIN owns the decision (it blocks the tool on it).
+    onConfirmBatch: (
+      handler: (
+        request: ConfirmBatchRequest,
+        reply: (decision: ConfirmBatchDecisionMsg) => void
+      ) => void
+    ): (() => void) => {
+      if (ipcRenderer.listenerCount('mcp:confirm:batch') > 0) return () => {}
+      const listener = (
+        _e: IpcRendererEvent,
+        msg: { request: ConfirmBatchRequest; replyChannel: string }
+      ): void => {
+        handler(msg.request, (decision) => ipcRenderer.send(msg.replyChannel, decision))
+      }
+      ipcRenderer.on('mcp:confirm:batch', listener)
+      return () => ipcRenderer.removeListener('mcp:confirm:batch', listener)
     },
 
     // ── Phase C / C1 · renderer → MAIN orchestrator drive (the Command board's face) ──

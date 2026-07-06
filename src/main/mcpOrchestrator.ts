@@ -11,6 +11,7 @@ import type {
 import type { AuditInput } from './auditLog'
 import { createDispatchGuard } from './dispatchGuard'
 import { createGatedWriter } from './dispatchGate'
+import { createRelayBatchMethod } from './mcpRelayBatch'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
@@ -43,7 +44,9 @@ export type {
   ConnectorMirrorEntry,
   DispatchStatus,
   LifecycleOrchestrator,
-  OrchestratorOpts
+  OrchestratorOpts,
+  RelayItem,
+  RelayResult
 } from './mcpRegistry'
 
 /**
@@ -279,6 +282,18 @@ export function buildOrchestrator(
     // — an older registry/test keeps the raw-write, readiness-only-ack behaviour.
     isBracketedPaste: registry.isBracketedPaste?.bind(registry),
     activityStaleMs: registry.boardActivityStaleMs?.bind(registry),
+    audit: writeAudit
+  })
+
+  // 🔒 relay_prompts (batch) — validate each item → ONE per-row confirm modal → each valid row through
+  // the shared write gate INDEPENDENTLY (own nonce/TOCTOU/audit) via the gate's confirmOverride seam.
+  // Extracted into ./mcpRelayBatch (max-lines doctrine, like the kanban/planning-edit gates); spread
+  // into the returned object below.
+  const relayBatchMethods = createRelayBatchMethod({
+    listBoards: () => registry.listBoards(),
+    listConnectors: () => registry.listConnectors(),
+    confirmBatch: registry.confirmBatch ? (req) => registry.confirmBatch!(req) : undefined,
+    runGatedWrite,
     audit: writeAudit
   })
 
@@ -909,6 +924,7 @@ export function buildOrchestrator(
       })
       return { delivery }
     },
+    ...relayBatchMethods,
     async interrupt(boardId: BoardId): Promise<void> {
       // 🔒 interrupt (T4.5): the content-less sibling — the SAME shared write gate, but it
       // writes a raw Ctrl-C (\x03, NO carriage return) and carries no prompt (sanitization

@@ -102,6 +102,18 @@ export interface GatedWriteInput {
    * the human already approved); honesty moves to the audit + the returned `delivery`.
    */
   awaitReadiness?: boolean
+  /**
+   * 🔒 Batch confirm seam (relay_prompts): supply the confirm DECISION from an outer per-row
+   * batch modal instead of raising this dispatch's own single-item confirm. The confirm STEP is
+   * still unskippable — the gate always awaits a decision here — but its SOURCE becomes the batch
+   * modal (still MAIN-owned, still fail-closed: anything but `approved: true` denies). Everything
+   * else is unchanged (evict-on-deny, the TOCTOU re-check, per-item nonce + audit), so a batched
+   * dispatch stays exactly one sanitized command line with its own independent gate run — the
+   * batch only lets ONE human gesture answer MANY dispatches. When absent, `deps.confirm` (the
+   * per-item modal) runs as before. The gate does NOT read `confirmTitle`/`confirmBody` in this
+   * mode (the batch modal already rendered the row) — pass placeholders.
+   */
+  confirmOverride?: () => Promise<{ approved: boolean }>
 }
 
 export interface GatedWriteResult {
@@ -201,10 +213,14 @@ export function createGatedWriter(
 
     // (confirm) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
     // carries the RESOLVED target + the EXACT (sanitized) payload the human is authorizing.
-    const { approved } = await deps.confirm({
-      title: d.confirmTitle,
-      body: d.confirmBody(safeText)
-    })
+    // A `confirmOverride` (relay_prompts batch) supplies the decision from the outer per-row
+    // modal instead — the step is still awaited + fail-closed, only its SOURCE differs.
+    const { approved } = d.confirmOverride
+      ? await d.confirmOverride()
+      : await deps.confirm({
+          title: d.confirmTitle,
+          body: d.confirmBody(safeText)
+        })
     if (!approved) {
       // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak it into
       // the guard's outstanding set forever (BUG-020). consume() deletes it. Abort the readiness

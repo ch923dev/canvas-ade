@@ -58,6 +58,35 @@ export interface ConfirmDecision {
   choice?: string
 }
 
+/** One row in a BATCH confirm (relay_prompts) — a short label + the EXACT (sanitized) command shown. */
+export interface ConfirmBatchItem {
+  /** Row heading (e.g. the resolved `source → target` route). */
+  label: string
+  /** The exact sanitized command the human is authorizing for this row. */
+  body: string
+}
+
+/**
+ * 🔒 A BATCH confirm request (relay_prompts) — several {@link ConfirmBatchItem} rows shown in ONE
+ * modal so the human approves per row in a single gesture. The decision authority stays MAIN's
+ * trusted UI; every row is still an independent dispatch gated separately behind this one modal.
+ */
+export interface ConfirmBatchRequest {
+  /** Short modal title (e.g. "Relay 3 prompts"). */
+  title: string
+  /** The rows to review (bounded by the caller). */
+  items: ConfirmBatchItem[]
+}
+
+/**
+ * 🔒 The per-row batch decision — `decisions` is POSITIONALLY 1:1 with the request items. Fail-closed:
+ * any row not explicitly approved (a missing/garbage/short reply) reads `{ approved: false }`, so a
+ * malformed reply can never approve a write.
+ */
+export interface ConfirmBatchDecision {
+  decisions: Array<{ approved: boolean }>
+}
+
 /**
  * Backstop wall-clock timeout for a confirm decision (BUG-010). A human is allowed to
  * take time, but a FROZEN renderer (UI deadlock, hung event loop, modal that never
@@ -143,6 +172,84 @@ export function requestConfirm(
       wc.send('mcp:confirm', { request, replyChannel })
     } catch {
       finish(DENIED) // couldn't even show the modal → deny
+    }
+  })
+}
+
+/** Fail-closed default for a batch of N rows: every row denied (used on every degenerate path). */
+function allDenied(n: number): ConfirmBatchDecision {
+  return { decisions: Array.from({ length: n }, () => ({ approved: false })) }
+}
+
+/**
+ * 🔒 Normalize a renderer batch reply to EXACTLY `n` positional decisions, fail-closed: a row is
+ * approved ONLY when the reply carries an explicit `approved === true` at that index. A missing,
+ * short, over-long, or non-array reply collapses to all-denied for the affected rows — a malformed
+ * reply can never approve a dispatch.
+ */
+function normalizeBatch(decision: unknown, n: number): ConfirmBatchDecision {
+  const arr =
+    decision !== null &&
+    typeof decision === 'object' &&
+    Array.isArray((decision as { decisions?: unknown }).decisions)
+      ? (decision as { decisions: unknown[] }).decisions
+      : []
+  return {
+    decisions: Array.from({ length: n }, (_, i) => ({
+      approved: (arr[i] as { approved?: unknown } | undefined)?.approved === true
+    }))
+  }
+}
+
+/**
+ * 🔒 BATCH sibling of {@link requestConfirm} (relay_prompts): post ONE request carrying N rows,
+ * show ONE per-row modal, and resolve the human's per-row decisions. Same injected-bus,
+ * frame-guarded, never-throws shape — and the SAME fail-closed discipline: a gone/destroyed
+ * window, a send failure, a foreign-frame reply, a malformed reply, or the safety timeout all
+ * resolve to ALL rows denied. The only path to `approved: true` for a row is a genuine main-frame
+ * reply carrying an explicit `approved === true` at that row's index.
+ */
+export function requestConfirmBatch(
+  bus: Pick<IpcMain, 'on' | 'removeListener'>,
+  getWin: () => BrowserWindow | null,
+  request: ConfirmBatchRequest,
+  opts: { timeoutMs?: number } = {}
+): Promise<ConfirmBatchDecision> {
+  const n = request.items.length
+  const win = getWin()
+  const wc = win?.webContents
+  if (!win || win.isDestroyed() || !wc || wc.isDestroyed()) {
+    return Promise.resolve(allDenied(n)) // no UI to confirm against → deny every row
+  }
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  return new Promise<ConfirmBatchDecision>((resolve) => {
+    const replyChannel = `mcp:confirm:batch:reply:${randomUUID()}`
+    let done = false
+    const finish = (decision: ConfirmBatchDecision): void => {
+      if (done) return
+      done = true
+      bus.removeListener(replyChannel, onReply)
+      wc.removeListener('destroyed', onGone)
+      wc.removeListener('render-process-gone', onGone)
+      if (timer) clearTimeout(timer)
+      resolve(decision)
+    }
+    const onGone = (): void => finish(allDenied(n))
+    const onReply = (e: IpcMainEvent, decision: unknown): void => {
+      if (isForeignSender(e, getWin)) return // a foreign frame can't decide — ignore
+      finish(normalizeBatch(decision, n))
+    }
+    const timer =
+      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? setTimeout(() => finish(allDenied(n)), timeoutMs)
+        : null
+    bus.on(replyChannel, onReply)
+    wc.once('destroyed', onGone)
+    wc.once('render-process-gone', onGone)
+    try {
+      wc.send('mcp:confirm:batch', { request, replyChannel })
+    } catch {
+      finish(allDenied(n)) // couldn't even show the modal → deny every row
     }
   })
 }

@@ -81,7 +81,7 @@ import { sendMcpCommand } from './mcpCommand'
 import { registerOrchestratorIpc, forwardBoardStatus } from './mcpOrchestratorIpc'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
-import { requestConfirm } from './mcpConfirm'
+import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
 import { registerTerminalHandlers } from './terminalIpc'
@@ -513,6 +513,8 @@ app.whenReady().then(async () => {
       gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
       // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
       confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
+      // The per-row BATCH human-confirm gate (relay_prompts) — fail-closed; ONE modal, N rows.
+      confirmBatch: (req) => requestConfirmBatch(ipcMain, () => mainWindow, req),
       // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
       // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
       audit: (e) =>

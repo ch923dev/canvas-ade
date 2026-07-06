@@ -82,6 +82,27 @@ describe('Modal (shared primitive, design-audit D1-B)', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('scrimClose={false} makes a scrim pointerdown INERT while Esc still closes', () => {
+    const onClose = vi.fn()
+    render(
+      <Modal
+        label="T"
+        onClose={onClose}
+        zIndex={1}
+        scrimClose={false}
+        scrimProps={{ 'data-testid': 'scrim' }}
+      >
+        <button>b</button>
+      </Modal>
+    )
+    // Click-outside does nothing...
+    fireEvent.pointerDown(screen.getByTestId('scrim'))
+    expect(onClose).not.toHaveBeenCalled()
+    // ...but the keyboard escape path is untouched (ConfirmModal keeps its Esc deny).
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('idle scrim cursor is default (BUG-007(5) contract carried over from SettingsModal)', () => {
     render(
       <Modal label="T" onClose={noop} zIndex={1} scrimProps={{ 'data-testid': 'scrim' }}>
