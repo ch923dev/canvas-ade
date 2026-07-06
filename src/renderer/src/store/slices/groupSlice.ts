@@ -14,16 +14,20 @@ import type { CanvasState } from '../canvasStore'
 import type { SetCanvasState, GetCanvasState, SliceDeps } from './sliceTypes'
 
 /**
- * Strip `boardId` from every group's membership. Returns a NEW groups array on change, or
- * `null` when the board belongs to no group — null lets callers keep the EXISTING groups ref
- * (`prune(...) ?? s.groups`), which trackedChange's same-ref no-op path depends on. Shared by
- * canvasStore.removeBoard (the delete sweep) and groupSlice.removeBoardFromAllGroups.
+ * Strip `boardId` from every group's membership, then DROP any group left with zero members
+ * (empty groups never persist — deleting a group's last board deletes the group too). Returns a
+ * NEW groups array on change, or `null` when the board belongs to no group — null lets callers
+ * keep the EXISTING groups ref (`prune(...) ?? s.groups`), which trackedChange's same-ref no-op
+ * path depends on. Shared by canvasStore.removeBoard (the delete sweep) and
+ * groupSlice.removeBoardFromAllGroups.
  */
 export function pruneBoardFromGroups(groups: NamedGroup[], boardId: string): NamedGroup[] | null {
   if (!groups.some((g) => g.boardIds.includes(boardId))) return null
-  return groups.map((g) =>
-    g.boardIds.includes(boardId) ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) } : g
-  )
+  return groups
+    .map((g) =>
+      g.boardIds.includes(boardId) ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) } : g
+    )
+    .filter((g) => g.boardIds.length > 0)
 }
 
 export function createGroupSlice(
@@ -119,15 +123,14 @@ export function createGroupSlice(
       set((s) => {
         const g = s.groups.find((x) => x.id === id)
         if (!g || !g.boardIds.includes(boardId)) return s
-        return trackedChange(
-          s,
-          {
-            groups: s.groups.map((x) =>
-              x.id === id ? { ...x, boardIds: x.boardIds.filter((b) => b !== boardId) } : x
-            )
-          },
-          { reflectPresent: false }
-        )
+        const nextIds = g.boardIds.filter((b) => b !== boardId)
+        // Removing the LAST member empties the group → drop it entirely (empty groups never
+        // persist). Otherwise rewrite just this group's membership. One tracked step either way.
+        const groups =
+          nextIds.length === 0
+            ? s.groups.filter((x) => x.id !== id)
+            : s.groups.map((x) => (x.id === id ? { ...x, boardIds: nextIds } : x))
+        return trackedChange(s, { groups }, { reflectPresent: false })
       }),
     removeBoardFromAllGroups: (boardId) =>
       set((s) => {

@@ -1424,9 +1424,19 @@ describe('fromObject — groups validation + reconciliation', () => {
     expect(doc.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: ['b1'] }])
   })
 
-  it('keeps a group whose boards were all pruned (named-empty survives)', () => {
+  it('drops a group whose boards were all pruned (empty groups never persist)', () => {
     const doc = fromObject(base([{ id: 'g1', name: 'Auth', boardIds: ['ghost'] }]))
-    expect(doc.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: [] }])
+    expect(doc.groups).toEqual([])
+  })
+
+  it('drops an already-empty group on load, keeps a group that still has a member', () => {
+    const doc = fromObject(
+      base([
+        { id: 'g1', name: 'Empty', boardIds: [] },
+        { id: 'g2', name: 'Auth', boardIds: ['b1'] }
+      ])
+    )
+    expect(doc.groups).toEqual([{ id: 'g2', name: 'Auth', boardIds: ['b1'] }])
   })
 
   it('throws on a malformed group (non-string-array boardIds)', () => {

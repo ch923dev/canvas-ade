@@ -215,6 +215,34 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
     expect(afterC.x !== beforeC.x || afterC.y !== beforeC.y).toBe(true)
   })
 
+  test('deleting a group last board auto-deletes the empty group (box tab gone)', async ({
+    page
+  }) => {
+    // Two boards in one group; delete them one at a time and watch the group survive → vanish.
+    const ids = await evalIn<[string, string]>(
+      page,
+      `(() => {
+        const t = window.__canvasE2E
+        const a = t.seedBoard('planning'), b = t.seedBoard('planning')
+        t.addGroup('Auth', [a, b])
+        return [a, b]
+      })()`
+    )
+    await expect(page.locator('.group-box-tab')).toHaveCount(1)
+
+    // Delete the FIRST board → group keeps its remaining member and its box tab.
+    await evalIn(page, `window.__canvasE2E.deleteBoard(${JSON.stringify(ids[0])})`)
+    expect(
+      await pollEval(page, `window.__canvasE2E.getGroups()[0]?.boardIds.length === 1`, 2000)
+    ).toBe(true)
+    await expect(page.locator('.group-box-tab')).toHaveCount(1)
+
+    // Delete the LAST board → the now-empty group is dropped entirely (no named-empty husk).
+    await evalIn(page, `window.__canvasE2E.deleteBoard(${JSON.stringify(ids[1])})`)
+    expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 0`, 2000)).toBe(true)
+    await expect(page.locator('.group-box-tab')).toHaveCount(0)
+  })
+
   // NOTE: the drag-ONTO-box trigger (onNodeDrag hit-test → onNodeDragStop absorb) has no e2e:
   // XYFlow's node drag (d3-drag, pointer-capture) does not engage from either e2e input seam
   // (MAIN `sendInputEvent` or CDP `page.mouse`) in the _electron harness — a real-input drag of

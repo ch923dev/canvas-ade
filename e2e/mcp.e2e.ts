@@ -584,7 +584,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // The worker is DENIED server-side (the specific tool-not-found isError — orchestrator-only).
     const workerSpawn = await mcp.worker.call('spawn_group', { name: 'nope' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_group')).toBe(true)
-    // Restore the baseline (close both members; the now-empty group is cleared by the next reset()).
+    // Restore the baseline (close both members; closing the LAST one auto-deletes the empty group).
     await closeBoardGated(page, mcp, ids.terminalId as string)
     await closeBoardGated(page, mcp, ids.planningId as string)
   })
