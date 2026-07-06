@@ -2051,3 +2051,34 @@ documented File-board Docker gap). Fixed a `modal.e2e.ts` regression (voice-sett
 Application tab → now `settings-tab-voice`). Manual dev-check PASSED (user sign-off). claude-review: **clean
 single pass, 0 critical / 0 warning**, 2 non-blocking nits accepted-no-change (duplicated `200` main↔renderer;
 history rows key off index). Version `0.9.0` → `0.9.1`. Squash `98fd23f9`.
+
+## 2026-07-06 — PR #306: auto-delete a named group when its last board is removed (`db6df045`)
+
+Empty named groups no longer persist as invisible husks. **Reverses** the prior *"named-empty groups
+survive so the user does not lose the name"* rule (`reconcileGroups`) — a group with zero resolvable
+members rendered no box (`computeGroupBoxes` filters it) yet lingered in state. Now a group is dropped the
+moment it loses its last board.
+
+**Fix — cull empties at every path that can empty a group, preserving the undo/ref-stability contracts
+(`trackedChange` no-op, `reflectPresent:false`):**
+- `pruneBoardFromGroups` (shared by `removeBoard`'s delete-sweep + `removeBoardFromAllGroups`) filters out
+  groups left with zero members after the strip; keeps the `null` ref-stable no-op when the board is in no
+  group.
+- `removeBoardFromGroup` drops the group when its last member goes — one tracked step, so a single undo
+  restores board + group.
+- `reconcileGroups` (project load) drops empty groups on open instead of preserving named-empty (cleans
+  legacy saves). **No schema bump** — read-time reconciliation, stored shape unchanged.
+
+Deleting a board that is a group's sole member removes the board **and** its now-empty group in ONE undo
+step; undo restores both. Safe: no empty-by-design group exists (`groupSelection` requires ≥2 boards,
+`spawnGroup` always seeds a terminal).
+
+**Verified:** typecheck · lint (0 errors) · format clean; full unit suite green — added empty-cull cases to
+`groupSlice` / `canvasStore` / `boardSchema`, flipped the 2 named-empty-survives assertions, and updated
+`useBoardActions` group-membership tests to keep a live member (CI's full suite caught those 2 stale
+assertions the local 3-file run missed). New `groups.e2e` test deletes a group's last board and asserts the
+box tab disappears. Pre-push full matrix = only the **5 pre-existing `file.e2e` Linux-Docker env failures**
+(Windows-green, group-unrelated) + known flakes. **Manual dev-check PASSED** (real `_electron` drive:
+title-stamped build, canvas renders, group appears → survives 1 delete → auto-deletes on last delete;
+screenshots on the PR). claude-review + CodeQL + analyze + check all green. Version `0.9.1` → `0.9.2`.
+Squash `db6df045`.
