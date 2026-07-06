@@ -89,10 +89,17 @@ export function createGlobalHotkey(deps: GlobalHotkeyDeps): GlobalHotkeyControll
 }
 
 /**
- * One-call wiring for MAIN: build the controller, do the initial registration (pushing any bind
- * failures to the renderer), and register the Settings get/set IPC (re-registering on every save).
- * Returns the controller so the caller can `dispose()` it on shutdown. Keeps index.ts under the
- * max-lines ratchet — the whole hotkey concern lives here.
+ * One-call wiring for MAIN: build the controller, do the initial registration, and register the
+ * Settings get/set IPC (re-registering on every save). Returns the controller so the caller can
+ * `dispose()` it on shutdown. Keeps index.ts under the max-lines ratchet — the whole hotkey
+ * concern lives here.
+ *
+ * The startup registration runs inside `whenReady` BEFORE the window exists, so a cold-start bind
+ * failure can't be PUSHED to a renderer that isn't up yet (getWin() → null). Instead we remember
+ * the last apply's failures and let the renderer PULL them on mount (`hotkey:failures`) — race-free
+ * and it covers the very reproducible "second dev instance, default accelerators already claimed"
+ * case. The Settings re-register path surfaces its own failures synchronously via `hotkey.set()`'s
+ * return value, so no push is needed there either.
  */
 export function wireGlobalHotkey(
   ipc: IpcMain,
@@ -100,15 +107,17 @@ export function wireGlobalHotkey(
   userDataDir: string
 ): GlobalHotkeyController {
   const controller = createGlobalHotkey({ getWin, loadConfig: () => readHotkeyConfig(userDataDir) })
-  const applyHotkeys = (): { failed: string[] } => {
+  let lastFailed: string[] = []
+  const apply = (): { failed: string[] } => {
     const result = controller.apply()
-    if (result.failed.length > 0) {
-      const wc = getWin()?.webContents
-      if (wc && !wc.isDestroyed()) wc.send('hotkey:registerFailed', result.failed)
-    }
+    lastFailed = result.failed
     return result
   }
-  applyHotkeys()
-  registerHotkeyHandlers(ipc, getWin, { userDataDir, reapply: applyHotkeys })
+  apply()
+  registerHotkeyHandlers(ipc, getWin, {
+    userDataDir,
+    reapply: apply,
+    lastFailures: () => lastFailed
+  })
   return controller
 }

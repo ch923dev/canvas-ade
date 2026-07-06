@@ -50,21 +50,24 @@ export function useProjectSwitchHotkey(): void {
   useEffect(() => {
     // Guarded for non-electron test runtimes (window.api absent), like the App's recap effect.
     const onCycle = window.api?.project?.onCycleProject
-    const onFail = window.api?.hotkey?.onRegisterFailed
     const unsubs: Array<() => void> = []
     if (onCycle) unsubs.push(onCycle((d) => void cycleProject(d)))
-    if (onFail) {
-      unsubs.push(
-        onFail((accels) =>
+    // PULL startup bind failures now that the renderer is mounted+listening: the accelerators are
+    // registered in MAIN before the window exists, so a cold-start conflict (e.g. a second dev
+    // instance already holding the default chords) can't be pushed — we ask for it once here.
+    void window.api?.hotkey
+      ?.failures?.()
+      .then((accels) => {
+        if (accels && accels.length > 0) {
           showToast({
             id: 'hotkey-register-failed',
             kind: 'error',
             sticky: true,
             message: `Couldn't bind the project-switch hotkey (${accels.join(', ')} already in use). Rebind it in Settings › Shortcuts.`
           })
-        )
-      )
-    }
+        }
+      })
+      .catch(() => undefined)
     return () => unsubs.forEach((u) => u())
   }, [])
 }

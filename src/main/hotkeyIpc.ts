@@ -18,6 +18,9 @@ export interface HotkeyIpcDeps {
   userDataDir: string
   /** Re-register from the freshly written config; returns the accelerators that failed to bind. */
   reapply(): { failed: string[] }
+  /** Accelerators from the LAST registration (incl. the pre-window startup one) that failed to
+   *  bind — pulled by the renderer on mount to surface a cold-start conflict the push path can't. */
+  lastFailures(): string[]
 }
 
 /** Coerce a renderer-supplied payload into a valid config (never trust the wire shape). */
@@ -42,6 +45,13 @@ export function registerHotkeyHandlers(
   ipc.handle('hotkey:get', (e): HotkeyConfig | null => {
     if (guard(e)) return null
     return readHotkeyConfig(deps.userDataDir)
+  })
+
+  // Pulled by the renderer on mount: the last registration's bind failures (the startup apply runs
+  // before any window, so those can't be pushed — the renderer asks once it is listening).
+  ipc.handle('hotkey:failures', (e): string[] => {
+    if (guard(e)) return []
+    return deps.lastFailures()
   })
 
   ipc.handle('hotkey:set', (e, raw: unknown): { ok: boolean; failed: string[] } => {

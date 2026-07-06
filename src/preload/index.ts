@@ -739,12 +739,9 @@ const api = {
     /** Persist + re-register. `failed` lists accelerators that couldn't bind (already in use). */
     set: (cfg: HotkeyConfig): Promise<{ ok: boolean; failed: string[] }> =>
       ipcRenderer.invoke('hotkey:set', cfg),
-    /** MAIN pushes this when a (re)registration can't bind an accelerator — surface a warning. */
-    onRegisterFailed: (handler: (accels: string[]) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, accels: string[]): void => handler(accels)
-      ipcRenderer.on('hotkey:registerFailed', listener)
-      return () => ipcRenderer.removeListener('hotkey:registerFailed', listener)
-    }
+    /** Accelerators from the last registration (incl. the pre-window startup one) that couldn't
+     *  bind. Pulled on mount to surface a cold-start conflict the push path can't reach. */
+    failures: (): Promise<string[]> => ipcRenderer.invoke('hotkey:failures')
   },
   // ── Phase 3 / W4 assets — write pasted/dropped bytes, read them back as bytes ──
   asset: {
