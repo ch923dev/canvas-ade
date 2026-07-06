@@ -1,15 +1,19 @@
 name: production
 
-# Production: when a GitHub Release is published. Validates, packages the full
-# matrix, and publishes the build assets to that Release (electron-builder
-# --publish always). Still unsigned until Phase 5.
+# Production: when a GitHub Release is published. Validates, packages + signs the full
+# matrix, and emits the signed installers + feed files (latest*.yml + *.blockmap) as
+# workflow ARTIFACTS. It does NOT upload to the GitHub Release: the update feed's
+# electron-builder `publish` provider is `generic` (Cloudflare R2), which is READ-ONLY — it
+# cannot push assets (electron-builder.yml). The feed UPLOAD is a separate, out-of-band step
+# (scripts/release.mjs assembles release/feed/ and rclone-copies it to R2); see
+# docs/contributing/releasing.md. Builds stay unsigned until the signing secrets exist.
 on:
   release:
     types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: write # upload assets to the Release
+  contents: read # build + sign only; the feed is published to R2 out-of-band, not to the Release
 
 jobs:
   check:
@@ -32,11 +36,12 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # Full per-OS / per-arch packaging matrix → published to the Release.
-  # Only a genuine 'Release published' event may publish (--publish always). A
-  # workflow_dispatch run still exercises `check` (validate/typecheck/test/build)
-  # but MUST NOT reach the signed-publish pipeline from an arbitrary ref — that
-  # would bypass the Release checkpoint (see docs/contributing/releasing.md).
+  # Full per-OS / per-arch packaging + signing matrix. The signed installers + feed files are
+  # emitted as workflow artifacts (the generic/R2 feed provider is read-only, so electron-builder
+  # cannot publish them — the R2 upload is scripts/release.mjs's job, out-of-band). Only a genuine
+  # 'Release published' event runs this; a workflow_dispatch run still exercises `check` but MUST
+  # NOT reach the signed pipeline from an arbitrary ref — that would bypass the Release checkpoint
+  # (see docs/contributing/releasing.md).
   publish:
     needs: check
     if: github.event_name == 'release'
@@ -68,8 +73,8 @@ jobs:
       - run: corepack enable
       - name: Install (rebuilds node-pty against Electron ABI)
         run: pnpm install --frozen-lockfile
-      - name: Package & publish to Release
-        run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish always
+      - name: Package + sign (no publish — the generic/R2 feed provider is read-only)
+        run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish never
         env:
           # ── Phase 5 code signing (STAGED) ──────────────────────────────────────────
           # Every value below comes from a repo secret/variable. When a secret is unset,
@@ -98,4 +103,21 @@ jobs:
           # auto-update an unsigned build over a feed). Bakes __ENABLE_AUTO_UPDATE__=true
           # into the main bundle (electron.vite.config.ts define).
           ENABLE_AUTO_UPDATE: ${{ vars.AUTO_UPDATE == '1' && '1' || '' }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Emit ONLY the files the R2 feed serves — installers, blockmaps, and the latest*.yml
+      # electron-updater manifests — as a per-job artifact. This is what replaces the old
+      # (broken) `--publish always` upload: scripts/release.mjs assembles release/feed/ from
+      # exactly these files and rclone-copies them to R2 (docs/contributing/releasing.md).
+      - name: Upload signed installers + feed files
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-${{ matrix.os }}
+          path: |
+            release/latest*.yml
+            release/*.blockmap
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+          if-no-files-found: warn
+          retention-days: 7

@@ -13,7 +13,7 @@ for the decision record.
 |---|---|---|---|
 | `pr.yml` | PR | `check` only (typecheck · lint · format · unit + SCA audit). No packaging. | — |
 | `staging.yml` | push to `main` | `check` → full matrix package → **unsigned** Actions artifacts (7-day). | No (by design) |
-| `production.yml` | a **GitHub Release is published** | `check` → full matrix package → **sign + notarize (if secrets present)** → upload assets + `latest.yml` to the Release. | Yes, when secrets exist |
+| `production.yml` | a **GitHub Release is published** | `check` → full matrix package → **sign + notarize (if secrets present)** → emit the signed installers + `latest*.yml` + `*.blockmap` as **workflow artifacts** (`feed-<os>`). It does **not** upload to the Release — the feed provider is `generic`/R2 (read-only), so the R2 publish is a separate step. | Yes, when secrets exist |
 
 The matrix is win + mac + linux × x64/arm64 (one native job per OS/arch where the toolchain
 can't cross-compile native modules). node-pty is rebuilt against the Electron ABI per job.
@@ -23,10 +23,19 @@ can't cross-compile native modules). node-pty is rebuilt against the Electron AB
 1. **Bump the version** in `package.json` (semver; auto-update compares versions, so it must
    increase monotonically). Commit on a branch and merge via the normal gate.
 2. **Tag + publish a GitHub Release** for that version (e.g. `v0.2.0`). Publishing the Release
-   fires `production.yml`, which builds the full matrix and uploads the installers + `latest.yml`
-   to that Release.
-3. If signing secrets are configured (below), the uploaded assets are signed/notarized and
-   `latest.yml` (the electron-updater feed manifest) points at them.
+   fires `production.yml`, which builds + signs the full matrix and emits the signed installers +
+   `latest*.yml` + `*.blockmap` as per-OS **workflow artifacts** (`feed-<os>`). It does **not**
+   upload to the Release — the feed's electron-builder `publish` provider is `generic` (R2), which
+   is read-only (see `electron-builder.yml`).
+3. **Publish the feed to R2.** The signed artifacts from step 2 are the feed's payload: assemble
+   them into `release/feed/` (installers + `*.blockmap` + `latest*.yml`), add `updates.json`
+   (`pnpm feed:gen`), and `rclone copy` to the R2 bucket — the mechanics `scripts/release.mjs`
+   automates for a local build (`pnpm release:win|mac|linux`, `R2_REMOTE=…` to actually upload; see
+   *Update levels + the R2 feed* below). electron-updater then reads `latest*.yml` + `updates.json`
+   over the HTTPS feed. If signing secrets are configured (below), those artifacts are
+   signed/notarized. **Follow-up:** wiring the R2 `rclone` upload directly into `production.yml`
+   (R2 credentials as secrets) is not yet done — today the feed publish from the CI artifacts is a
+   manual step.
 
 Local one-offs (no publish): `pnpm build:win | build:mac | build:linux`, or `pnpm pack:dir`
 for a fast unpacked `release/win-unpacked/` (no installer). These never upload.

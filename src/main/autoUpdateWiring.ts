@@ -15,16 +15,28 @@ import { coerceUpdateMeta, type UpdaterLike, type UpdateMeta } from './autoUpdat
 export const updateFeedBase = (): string =>
   (process.env.CANVAS_UPDATE_FEED ?? 'https://updates.expanse.app').replace(/\/+$/, '')
 
+/** Hard ceiling on the meta fetch. `runCheck` awaits getMeta() BEFORE `checkForUpdates()`
+ *  (the call that emits `checking-for-update`), so an un-bounded fetch against a slow/hung
+ *  feed would leave the renderer's "Checking…" spinner stuck for minutes (undici's default
+ *  timeouts are minutes, not seconds). Bounding it makes a slow feed degrade to the SAME
+ *  fail-open path as an unreachable one. */
+const META_FETCH_TIMEOUT_MS = 8000
+
 /**
  * Fetch updates.json each check. Any failure resolves null → the flow fails OPEN (a plain
  * optional update, never a spurious forced block). A 404 (no manifest published yet) is
- * treated the same as unreachable. The payload is run through `coerceUpdateMeta` — a real
- * runtime schema check, NOT a bare `as UpdateMeta` assertion — so a malformed/corrupted
- * manifest (e.g. a non-string `minSupported`) can never reach `cmpVersion` and crash main;
- * bad fields degrade to no-floor/no-tiers, preserving the fail-OPEN guarantee (ADR 0012).
+ * treated the same as unreachable, and so is a SLOW feed: the fetch is bounded by an
+ * `AbortSignal.timeout` so a hung connection aborts (→ null) instead of stalling the check
+ * indefinitely. The payload is run through `coerceUpdateMeta` — a real runtime schema check,
+ * NOT a bare `as UpdateMeta` assertion — so a malformed/corrupted manifest (e.g. a non-string
+ * `minSupported`) can never reach `cmpVersion` and crash main; bad fields degrade to
+ * no-floor/no-tiers, preserving the fail-OPEN guarantee (ADR 0012).
  */
 export async function fetchUpdateMeta(): Promise<UpdateMeta | null> {
-  const res = await fetch(`${updateFeedBase()}/updates.json`, { cache: 'no-store' })
+  const res = await fetch(`${updateFeedBase()}/updates.json`, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(META_FETCH_TIMEOUT_MS)
+  })
   if (!res.ok) return null
   return coerceUpdateMeta(await res.json())
 }
