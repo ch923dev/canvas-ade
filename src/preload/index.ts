@@ -4,6 +4,7 @@ import { authApi } from './authApi'
 import { forwardPtyPort, terminalApi } from './terminalApi'
 import { projectSessionsApi } from './projectSessionsApi'
 import { recapApi, type RecapRefreshOutcome } from './recapApi'
+import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
 import { forwardVoicePort, voiceApi } from './voice'
@@ -823,6 +824,9 @@ const api = {
 
   // ── Terminal-recap T12: consent + learned/updated pushes (factored to recapApi.ts) ──
   recap: recapApi,
+
+  // ── Desktop notifications: MAIN → renderer lifecycle pushes (factored to notifyApi.ts) ──
+  notify: notifyApi,
 
   // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
   // The one-time "Enable agent orchestration?" grant (the mock's Step 1). Separate from recap

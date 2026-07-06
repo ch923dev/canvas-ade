@@ -120,6 +120,7 @@ import {
 } from './agentTranscript'
 import { createGetAgentMilestones, persistedTranscriptPath } from './agentMilestones'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
+import { registerLifecycleNotifications } from './lifecycleNotifications'
 import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
@@ -1002,6 +1003,13 @@ app.whenReady().then(async () => {
     const wc = win.webContents
     if (!wc.isDestroyed()) wc.send('recap:learned', patches)
   })
+
+  // ── Desktop notifications: agent lifecycle → OS notification + in-app toast ───────────
+  // The recap hook now also fires on Stop / SubagentStop / Notification (RECAP_HOOK_EVENTS), each
+  // appended to the SAME session map; registerLifecycleNotifications watches it for NEW lines and
+  // raises a native OS notification + an in-app toast (skips history at init — no boot replay; it
+  // self-disposes on before-quit).
+  registerLifecycleNotifications({ mapPath: recapMapPath, getWin: () => mainWindow })
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this
