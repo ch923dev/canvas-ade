@@ -2020,3 +2020,34 @@ unmatched id → false `{ok:true}`, now **throws** `unknown checklist item` like
 > **Live-activation owed (user-run, local):** on MAIN `git pull && pnpm install` (pulls rc.7 into the
 > shared `node_modules` — heavy native rebuild, affects all worktrees) + **restart Expanse** → the tools
 > go live. Until then the drift guard keeps the app compiling against installed rc.6.
+
+## 2026-07-06 — PR #305: voice prompt history — flyout Recent + Settings Voice own-tab (`98fd23f9`)
+
+Every **Sent** voice prompt is now remembered and re-usable — two surfaces over one store, **no new
+IPC**. A bounded ring `promptHistory: string[]` (cap `MAX_PROMPT_HISTORY = 200`) rides the existing
+`voiceConfig` (userData, atomic write; `repairVoiceConfig` trims/caps/drops-non-strings on read) —
+durable *config*, not session state, so the voice SPEC §2 (zero schema impact) stays intact. History
+records on **Send only** (`VoiceFlyout.injectTranscript` → `pushHistory`: trim + consecutive-dedupe +
+cap); Insert never records (a paste isn't a prompt).
+
+**Flyout surface:** a collapsible **Recent** section (top 8) — click a row to reuse it into the draft,
+hover to copy, "See all in Settings" fires a `window` CustomEvent `expanse:open-settings {section:'voice'}`
+caught by `AppChrome` (VoicePill mounts in App, a sibling of AppChrome). **Settings surface:** Voice is
+**promoted to its own top-level group tab** (`settingsSections.ts`), with a Prompt-history subsection in
+`SettingsVoiceSection` — full list, copy, per-item delete, Clear all, "n of 200" count. Both surfaces stay
+in sync: an edit round-trips `config.set` → MAIN echoes `voice:config:changed` → VoicePill `applyConfig`
+→ `setRecent` hydrates the store mirror (`recent: string[]`).
+
+**Dev-check finding folded in:** the **pill click now OPENS the flyout** (`toggleVoice` sets `flyoutOpen`
+on activate) — previously the flyout only appeared once a transcript arrived, so you couldn't see or reuse
+history without dictating. Covered by `voiceSession.test.ts`.
+
+**Verified:** typecheck · lint · format clean; full unit suite green (~91 new tests: voiceConfig ring,
+pushHistory, VoiceFlyout records-on-Send/reuse, SettingsVoiceSection delete/clear, SettingsPanel voice-tab,
+voiceSession). **Full pre-merge e2e matrix run both legs** — Windows all green (3 env flakes recovered on
+rerun: menuShell/osrCropSupersample/projectBackground); Linux Docker green except the **5 pre-existing
+`file.e2e` Linux-Docker env failures** (Windows-green, voice-unrelated, present on plain main — the
+documented File-board Docker gap). Fixed a `modal.e2e.ts` regression (voice-settings nav clicked the retired
+Application tab → now `settings-tab-voice`). Manual dev-check PASSED (user sign-off). claude-review: **clean
+single pass, 0 critical / 0 warning**, 2 non-blocking nits accepted-no-change (duplicated `200` main↔renderer;
+history rows key off index). Version `0.9.0` → `0.9.1`. Squash `98fd23f9`.
