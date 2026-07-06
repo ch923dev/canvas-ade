@@ -38,6 +38,7 @@ import {
 } from './previewOsrBackground'
 import { createProjectSessions } from './projectSessions'
 import { registerProjectSessionsHandlers } from './projectSessionsIpc'
+import { wireGlobalHotkey } from './globalHotkey'
 import { registerProjectThumbHandlers } from './projectThumbs'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
@@ -817,6 +818,10 @@ app.whenReady().then(async () => {
     disposeProjectPtys,
     disposeProjectOsr
   })
+  // Global project-switch hotkey (OS-wide accelerators → foreground + cycle). All wiring +
+  // Settings IPC lives in globalHotkey.ts; register-fail is surfaced, never swallowed. Electron
+  // auto-unregisters global shortcuts on quit, so there is no shutdown() teardown to thread here.
+  wireGlobalHotkey(ipcMain, () => mainWindow, userData)
   // Phase 4b: project-dock thumbnails — capture keyed to the MAIN-resolved active dir, cached
   // in userData/project-thumbs (app cache, never the project folder), served only for the
   // session set (active + registry residents).

@@ -14,6 +14,7 @@ import { AccountPane } from './panes/AccountPane'
 import { BillingPane } from './panes/BillingPane'
 import { AppearancePane } from './panes/AppearancePane'
 import { TerminalPane } from './panes/TerminalPane'
+import { ShortcutsPane } from './panes/ShortcutsPane'
 import { LlmPane } from './panes/LlmPane'
 import { OrchestrationPane } from './panes/OrchestrationPane'
 import { McpPane } from './panes/McpPane'
@@ -40,6 +41,8 @@ export function SettingsSectionBody({
       return <AppearancePane />
     case 'terminal':
       return <TerminalPane />
+    case 'shortcuts':
+      return <ShortcutsPane />
     case 'voice':
       // `embedded` suppresses SettingsVoiceSection's own divider + "Voice dictation" head (the tab
       // panel already renders a "Voice" section heading). Renders nothing at all when

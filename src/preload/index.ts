@@ -720,6 +720,30 @@ const api = {
       }
       ipcRenderer.on('project:flush', listener)
       return () => ipcRenderer.removeListener('project:flush', listener)
+    },
+    /**
+     * Global project-switch hotkey (globalHotkey.ts): MAIN foregrounds the window then sends the
+     * cycle DIRECTION (1 = next / -1 = prev). The renderer owns the ordered recents ring + the
+     * performProjectSwitch pipeline. Returns an unsubscribe fn.
+     */
+    onCycleProject: (handler: (dir: 1 | -1) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, dir: 1 | -1): void => handler(dir)
+      ipcRenderer.on('project:cycleHotkey', listener)
+      return () => ipcRenderer.removeListener('project:cycleHotkey', listener)
+    }
+  },
+  // ── Global project-switch hotkey settings (Settings › Shortcuts) ──
+  hotkey: {
+    /** Read the persisted accelerators. Null only from a foreign frame (guarded in MAIN). */
+    get: (): Promise<HotkeyConfig | null> => ipcRenderer.invoke('hotkey:get'),
+    /** Persist + re-register. `failed` lists accelerators that couldn't bind (already in use). */
+    set: (cfg: HotkeyConfig): Promise<{ ok: boolean; failed: string[] }> =>
+      ipcRenderer.invoke('hotkey:set', cfg),
+    /** MAIN pushes this when a (re)registration can't bind an accelerator — surface a warning. */
+    onRegisterFailed: (handler: (accels: string[]) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, accels: string[]): void => handler(accels)
+      ipcRenderer.on('hotkey:registerFailed', listener)
+      return () => ipcRenderer.removeListener('hotkey:registerFailed', listener)
     }
   },
   // ── Phase 3 / W4 assets — write pasted/dropped bytes, read them back as bytes ──
@@ -994,6 +1018,14 @@ if (process.contextIsolated) {
 } else {
   // Fallback when contextIsolation is somehow off (should never happen).
   ;(window as unknown as Record<string, unknown>).api = api
+}
+
+/** Mirrors main `hotkeyConfig.HotkeyConfig` (duplicated across the bundle boundary, like
+ *  projectSessionsApi's interfaces). Electron Accelerator strings for the two switch chords. */
+export interface HotkeyConfig {
+  enabled: boolean
+  next: string
+  prev: string
 }
 
 export type CanvasApi = typeof api

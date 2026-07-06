@@ -15,6 +15,7 @@ export type SettingsSectionId =
   | 'billing'
   | 'appearance'
   | 'terminal'
+  | 'shortcuts'
   | 'voice'
   | 'llm'
   | 'orchestration'
@@ -60,7 +61,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         icon: 'wallpaper',
         blurb: 'Wallpaper and canvas backdrop'
       },
-      { id: 'terminal', label: 'Terminal', icon: 'agent-shell', blurb: 'Shell and agent behavior' }
+      { id: 'terminal', label: 'Terminal', icon: 'agent-shell', blurb: 'Shell and agent behavior' },
+      {
+        id: 'shortcuts',
+        label: 'Shortcuts',
+        icon: 'refresh',
+        blurb: 'Global project-switch hotkey'
+      }
     ]
   },
   {

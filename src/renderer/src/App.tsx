@@ -17,6 +17,7 @@ import { useAccountStore, useAccountSync } from './store/accountStore'
 import { useUpdateStatusSync } from './store/useUpdateStatusSync'
 import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
+import { useProjectSwitchHotkey } from './store/useProjectSwitchHotkey'
 import { useVoiceCapture } from './voice/useVoiceCapture'
 import { VoicePill } from './voice/VoicePill'
 import { isE2E } from './smoke/e2eRegistry'
@@ -29,6 +30,9 @@ import { isE2E } from './smoke/e2eRegistry'
 function App(): React.ReactElement {
   useRendererSmoke()
   useAutosave()
+  // Global project-switch hotkey (renderer half): drives performProjectSwitch off MAIN's OS-wide
+  // accelerator. Mounted here so it survives a switch (ProjectSwitcher unmounts mid-'loading').
+  useProjectSwitchHotkey()
   useMcpPublish()
   useMcpCommands()
   // Phase 5 auto-update: pipe MAIN's update status into the store that feeds the persistent
