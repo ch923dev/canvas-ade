@@ -2082,3 +2082,36 @@ box tab disappears. Pre-push full matrix = only the **5 pre-existing `file.e2e` 
 title-stamped build, canvas renders, group appears → survives 1 delete → auto-deletes on last delete;
 screenshots on the PR). claude-review + CodeQL + analyze + check all green. Version `0.9.1` → `0.9.2`.
 Squash `db6df045`.
+
+## 2026-07-06 — PR #309: global project-switch hotkey — OS-wide accelerators cycle projects (`62921377`)
+
+An OS-wide hotkey that cycles between projects, registered in MAIN via `globalShortcut` (the "background
+service") so it fires even when Expanse is unfocused or minimized. On fire, MAIN foregrounds the window
+(restore/show/focus) and forwards a cycle DIRECTION to the renderer, which walks the recents ring (the same
+MRU list the ProjectSwitcher shows) and drives the shared `performProjectSwitch` pipeline; `project.open`
+transparently foregrounds a backgrounded resident or cold-opens a recent, so one call covers both. Default
+`Ctrl/⌘+Alt+]` (next) / `[` (prev); rebindable in **Settings › Application › Shortcuts** (enable toggle,
+per-chord Record, in-use warning).
+
+**Shape:**
+- MAIN: `globalHotkey.ts` (register/foreground/forward + `wireGlobalHotkey`), `hotkeyConfig.ts` (userData
+  persistence, mirrors `llmConfig`), `hotkeyIpc.ts` (frame-guarded get/set + re-register). Electron
+  auto-unregisters global shortcuts on quit.
+- Bridge: preload `project.onCycleProject` + `hotkey.{get,set,failures}`.
+- Renderer: `useProjectSwitchHotkey` (mounted at the App root so it survives a switch — ProjectSwitcher
+  unmounts on `loading`) + the Shortcuts settings pane; accel-capture helpers in `accelerator.ts`.
+
+**Review fixes (2 incremental rounds, 6 findings, all fixed + inline-dispositioned):** sign-in-gate the
+hotkey (`__REQUIRE_ACCOUNT__ && signed-out` no-ops the cycle — the one interaction vector that bypasses
+renderer focus); a recorded chord maps physical Ctrl → literal `Control`, not `CommandOrControl` (which
+resolves to Cmd on macOS → recorded ≠ fired); reject `next === prev` in the pane; **cold-start bind
+failures surfaced via a PULL** (`hotkey:failures`, fetched on mount) instead of a pre-`createWindow` push
+that dropped against a null window — the reproducible second-dev-instance case; unit tests (`hotkeyConfig`
++ `accelerator`, 17).
+
+**Verified:** typecheck · lint (0 errors) · format clean; unit suite green (+17). Interactive `_electron`
+check (accelerators bind in MAIN, `hotkey.failures()` pull, set→re-register loop flips the OS binding).
+**Manual dev-check PASSED** (title-stamped build; Shortcuts pane + cycle-while-minimized; user sign-off).
+Full pre-push e2e matrix (Windows + Linux Docker) 273 passed every round. claude-review: 2 incremental
+rounds, all warnings fixed + inline-dispositioned, final round clean. Rebased through #307 then #310.
+Version `0.10.4` → `0.10.5`. Squash `62921377`.
