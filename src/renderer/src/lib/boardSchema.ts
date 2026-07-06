@@ -1059,18 +1059,18 @@ function assertGroup(g: unknown): void {
  * Reconcile a migrated doc's groups: validates each group, then prunes dangling
  * boardIds (pointing at boards that no longer exist) AND de-duplicates — `boardIds`
  * is set-semantic (a board either belongs or it doesn't), matching the store's
- * `addBoardsToGroup` write-path dedup. Named-empty groups survive — a group whose
- * boards were all deleted is kept so the user does not lose the name. Missing `groups`
- * field (pre-migration or stripped) defaults to `[]`.
+ * `addBoardsToGroup` write-path dedup. Any group left with ZERO members is dropped —
+ * empty groups never persist (a group whose boards were all deleted is gone, matching
+ * the live delete-sweep in pruneBoardFromGroups; reverses the old named-empty-survives
+ * rule). Missing `groups` field (pre-migration or stripped) defaults to `[]`.
  */
 function reconcileGroups(doc: CanvasDoc): NamedGroup[] {
   const raw = Array.isArray(doc.groups) ? doc.groups : []
   raw.forEach(assertGroup)
   const ids = new Set(doc.boards.map((b) => b.id))
-  return (raw as NamedGroup[]).map((g) => ({
-    ...g,
-    boardIds: [...new Set(g.boardIds.filter((bid) => ids.has(bid)))]
-  }))
+  return (raw as NamedGroup[])
+    .map((g) => ({ ...g, boardIds: [...new Set(g.boardIds.filter((bid) => ids.has(bid)))] }))
+    .filter((g) => g.boardIds.length > 0)
 }
 
 /**

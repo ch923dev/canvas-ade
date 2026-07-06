@@ -1702,6 +1702,14 @@ describe('group CRUD', () => {
     expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b2'])
   })
 
+  it('removeBoardFromGroup on the LAST member deletes the group; undo restores it in one step', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
+    useCanvasStore.getState().removeBoardFromGroup(id, 'b1')
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)).toBeUndefined()
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b1'])
+  })
+
   it('each CRUD op is one undo step', () => {
     const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
     useCanvasStore.getState().renameGroup(id, 'API')
@@ -1847,7 +1855,27 @@ describe('group CRUD', () => {
 })
 
 describe('removeBoard sweeps groups', () => {
-  it('removeBoard removes the deleted id from every group in one undo step', () => {
+  it('removeBoard strips the deleted id from a group that keeps other members (one undo step)', () => {
+    useCanvasStore.setState({
+      boards: [],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    const a = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    const b = useCanvasStore.getState().addBoard('terminal', { x: 400, y: 0 })
+    const gid = useCanvasStore.getState().addGroup('Auth', [a, b])
+    useCanvasStore.getState().removeBoard(a)
+    // Group survives (still has b); only the deleted id is swept out.
+    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([b])
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([a, b])
+  })
+
+  it('removeBoard deleting a group LAST member deletes the group too; undo restores both', () => {
     useCanvasStore.setState({
       boards: [],
       connectors: [],
@@ -1860,8 +1888,11 @@ describe('removeBoard sweeps groups', () => {
     const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
     const gid = useCanvasStore.getState().addGroup('Auth', [id])
     useCanvasStore.getState().removeBoard(id)
-    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([])
+    // Sole member gone → the empty group is dropped, not kept as a named-empty husk.
+    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)).toBeUndefined()
+    // The board delete + group drop are ONE step → a single undo restores the board and the group.
     useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().boards.some((x) => x.id === id)).toBe(true)
     expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([id])
   })
 

@@ -425,6 +425,22 @@ describe('createGroupSlice — removeBoardFromGroup', () => {
     expect(opts.reflectPresent).toBe(false)
     expect(next.groups[0].boardIds).toEqual(['b2'])
   })
+
+  it('removing the LAST member drops the group entirely (empty groups never persist)', () => {
+    state = makeState([], [group('g0', 'Auth', ['b1']), group('g1', 'API', ['b2'])])
+    const slice = makeSlice()
+    slice.removeBoardFromGroup('g0', 'b1')
+
+    expect(trackedChangeSpy).toHaveBeenCalledTimes(1)
+    const [, next, opts] = trackedChangeSpy.mock.calls[0] as [
+      CanvasState,
+      { groups: NamedGroup[] },
+      { reflectPresent: boolean }
+    ]
+    expect(opts.reflectPresent).toBe(false)
+    // g0 emptied → gone; the untouched g1 remains.
+    expect(next.groups.map((g) => g.id)).toEqual(['g1'])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -485,6 +501,21 @@ describe('createGroupSlice — removeBoardFromAllGroups', () => {
     // The group that DID NOT contain b1 should be the exact same object (ref stable)
     expect(next.groups.find((g) => g.id === 'g2')).toBe(unchanged)
   })
+
+  it('a group left empty by the removal is dropped; groups keeping a member survive', () => {
+    state = makeState([], [group('g1', 'Auth', ['b1']), group('g2', 'API', ['b1', 'b3'])])
+    const slice = makeSlice()
+    slice.removeBoardFromAllGroups('b1')
+
+    const [, next] = trackedChangeSpy.mock.calls[0] as [
+      CanvasState,
+      { groups: NamedGroup[] },
+      unknown
+    ]
+    // g1 (sole member b1) emptied → dropped; g2 still has b3 → survives.
+    expect(next.groups.map((g) => g.id)).toEqual(['g2'])
+    expect(next.groups[0].boardIds).toEqual(['b3'])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -531,5 +562,15 @@ describe('pruneBoardFromGroups', () => {
     // original group object and array must be unchanged
     expect(groups).toHaveLength(1)
     expect(groups[0].boardIds).toEqual(['b1', 'b2'])
+  })
+
+  it('board is the group SOLE member → that group is dropped from the returned array', () => {
+    const g1 = group('g1', 'Auth', ['b1'])
+    const g2 = group('g2', 'API', ['b1', 'b3'])
+    const result = pruneBoardFromGroups([g1, g2], 'b1')
+    expect(result).not.toBeNull()
+    // g1 emptied → culled; g2 keeps b3.
+    expect(result!.map((g) => g.id)).toEqual(['g2'])
+    expect(result!.find((g) => g.id === 'g2')?.boardIds).toEqual(['b3'])
   })
 })
