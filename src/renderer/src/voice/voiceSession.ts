@@ -35,6 +35,14 @@ export async function stopVoice(): Promise<void> {
 
 /** Quick-press semantics (pill click / hotkey tap): flip the mic. */
 export function toggleVoice(): void {
-  if (useVoiceStore.getState().capturing) void stopVoice()
-  else void startVoice()
+  const s = useVoiceStore.getState()
+  if (s.capturing) {
+    void stopVoice()
+  } else {
+    // Open the flyout on activation so the panel (listening composer + Recent history) is
+    // visible immediately — you get instant feedback the mic armed, and can review/reuse a
+    // past prompt without waiting for a first transcript to arrive.
+    s.setFlyoutOpen(true)
+    void startVoice()
+  }
 }

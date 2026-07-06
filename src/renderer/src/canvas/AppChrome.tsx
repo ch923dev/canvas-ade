@@ -69,6 +69,18 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       cancelled = true
     }
   }, [projectDir])
+  // Open Settings at a specific section from anywhere — the voice flyout's "See all in
+  // Settings" fires this to land on the Voice tab. A decoupled window event because the
+  // trigger (VoicePill) mounts in App, a sibling of this chrome that owns the panel state.
+  useEffect(() => {
+    const onOpen = (e: Event): void => {
+      const section = (e as CustomEvent<{ section?: SettingsSectionId }>).detail?.section ?? null
+      setSettingsSection(section)
+      setShowSettings(true)
+    }
+    window.addEventListener('expanse:open-settings', onOpen)
+    return () => window.removeEventListener('expanse:open-settings', onOpen)
+  }, [])
   return (
     <>
       <ProjectSwitcher />

@@ -275,3 +275,247 @@
   height: 100%;
   background: var(--accent);
 }
+
+/* ── Recent (prompt history) — collapsible reuse list under the composer ── */
+.vf-recent {
+  border-top: 1px solid var(--border-subtle);
+}
+.vf-recent-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  border: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.vf-recent-hd:hover,
+.vf-recent-hd:focus-visible {
+  color: var(--text-2);
+}
+.vf-chev {
+  display: inline-flex;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+.vf-recent.open .vf-chev {
+  transform: rotate(90deg);
+  color: var(--text-3);
+}
+.vf-recent-lbl {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.vf-recent-count {
+  color: var(--text-faint);
+}
+.vf-recent-more {
+  margin-left: auto;
+  font-size: 9.5px;
+  color: var(--text-faint);
+}
+.vf-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 6px 4px;
+  max-height: 156px;
+  overflow-y: auto;
+}
+.vf-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--r-ctl);
+}
+.vf-recent-row:hover {
+  background: var(--inset);
+}
+.vf-recent-reuse {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 5px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vf-recent-row:hover .vf-recent-reuse,
+.vf-recent-reuse:focus-visible {
+  color: var(--text);
+}
+.vf-recent-copy {
+  flex: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-faint);
+  padding: 3px;
+  line-height: 0;
+  border-radius: 4px;
+  opacity: 0;
+  display: inline-flex;
+}
+.vf-recent-row:hover .vf-recent-copy,
+.vf-recent-copy:focus-visible {
+  opacity: 1;
+}
+.vf-recent-copy:hover,
+.vf-recent-copy:focus-visible {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+.vf-recent-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.vf-recent-all {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+  padding: 1px 2px;
+}
+.vf-recent-all:hover,
+.vf-recent-all:focus-visible {
+  color: var(--text-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .vf-chev {
+    transition: none;
+  }
+}
+
+/* ── Settings › Voice: prompt-history subsection (full ring — copy · delete · clear all) ── */
+.vh-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 13px;
+  margin-top: 2px;
+}
+.vh-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.vh-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.vh-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.vh-clear {
+  margin-left: auto;
+  font-family: var(--ui);
+  font-size: 11px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.vh-clear:hover,
+.vh-clear:focus-visible {
+  color: var(--err);
+  border-color: rgba(242, 84, 91, 0.4);
+}
+.vh-sub {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--text-3);
+  margin-top: -4px;
+}
+.vh-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+  background: var(--inset);
+  overflow: hidden;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.vh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.vh-row:last-child {
+  border-bottom: 0;
+}
+.vh-row:hover {
+  background: var(--surface);
+}
+.vh-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vh-row:hover .vh-text {
+  color: var(--text);
+}
+.vh-act {
+  flex: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-faint);
+  padding: 3px;
+  line-height: 0;
+  border-radius: 4px;
+  display: inline-flex;
+}
+.vh-act:hover,
+.vh-act:focus-visible {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+.vh-del:hover,
+.vh-del:focus-visible {
+  color: var(--err);
+}
+.vh-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-inner);
+}

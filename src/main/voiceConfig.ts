@@ -12,6 +12,11 @@ import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 import { DEFAULT_VOICE_MODEL_ID } from './voiceModels'
 
+/** Cap on the persisted voice prompt-history ring. The flyout surfaces a small Recent slice; the
+ *  Settings › Voice pane shows the full list up to this bound. Repair enforces it no matter what a
+ *  writer sends, so a runaway array on disk can never grow the file unbounded. */
+export const MAX_PROMPT_HISTORY = 200
+
 export interface VoiceConfig {
   /** 'cloud' persists for forward-compat but is greyed "coming soon" in v1 — no code
    *  path honors it (sessions always run the local sherpa host). */
@@ -36,6 +41,12 @@ export interface VoiceConfig {
   showPill: boolean
   /** Screen-fixed px (viewport-clamped again on restore — displays change between runs). */
   pillPosition?: { x: number; y: number }
+  /** Voice prompt history — the prompts the user SENT via dictation, newest first, capped at
+   *  MAX_PROMPT_HISTORY. The flyout shows a Recent slice for one-click reuse; Settings › Voice
+   *  shows the whole list to browse/copy/delete. Durable *config* in userData (never a project
+   *  file) — SPEC §2 still holds: ephemeral session state (draft/partial) is never serialized;
+   *  this is the record of what the user chose to send, not in-flight recognition state. */
+  promptHistory: string[]
 }
 
 function fileFor(userDataDir: string): string {
@@ -48,7 +59,8 @@ function defaults(): VoiceConfig {
     modelId: DEFAULT_VOICE_MODEL_ID,
     language: 'auto',
     autoSendOnFinal: false,
-    showPill: true
+    showPill: true,
+    promptHistory: []
   }
 }
 
@@ -72,6 +84,15 @@ export function repairVoiceConfig(p: unknown): VoiceConfig {
     Number.isFinite(pos.y)
       ? { x: pos.x, y: pos.y }
       : undefined
+  // Prompt history: keep only non-empty strings, trim each, and hard-cap to the ring bound —
+  // any non-array / malformed value on disk repairs to an empty list.
+  const promptHistory = Array.isArray(o.promptHistory)
+    ? o.promptHistory
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0)
+        .slice(0, MAX_PROMPT_HISTORY)
+    : []
   return {
     engine: o.engine === 'cloud' ? 'cloud' : 'sherpa-onnx',
     modelId: optStr(o.modelId) ?? d.modelId,
@@ -82,7 +103,8 @@ export function repairVoiceConfig(p: unknown): VoiceConfig {
     autoSendOnFinal: false,
     cloudProvider: optStr(o.cloudProvider),
     showPill: typeof o.showPill === 'boolean' ? o.showPill : true,
-    pillPosition
+    pillPosition,
+    promptHistory
   }
 }
 

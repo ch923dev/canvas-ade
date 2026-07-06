@@ -33,9 +33,9 @@ const tab = (name: string): HTMLElement => screen.getByRole('tab', { name })
 const sectionShown = (id: string): boolean =>
   document.querySelector(`[data-test="settings-section-${id}"]`) !== null
 
-it('renders the four group tabs with "You" active by default', () => {
+it('renders the group tabs with "You" active by default', () => {
   render(<SettingsPanel onClose={() => {}} />)
-  for (const label of ['You', 'Application', 'Agents & AI', 'System']) {
+  for (const label of ['You', 'Application', 'Agents & AI', 'Voice', 'System']) {
     expect(tab(label)).toBeTruthy()
   }
   expect(tab('You').getAttribute('aria-selected')).toBe('true')
@@ -51,8 +51,16 @@ it('switches the shown sections when another tab is clicked', () => {
   expect(tab('Application').getAttribute('aria-selected')).toBe('true')
   expect(sectionShown('appearance')).toBe(true)
   expect(sectionShown('terminal')).toBe(true)
-  expect(sectionShown('voice')).toBe(true)
+  expect(sectionShown('voice')).toBe(false) // voice is now its own top-level tab
   expect(sectionShown('account')).toBe(false)
+})
+
+it('the Voice tab is its own top-level group and shows the voice section', () => {
+  render(<SettingsPanel onClose={() => {}} />)
+  fireEvent.click(tab('Voice'))
+  expect(tab('Voice').getAttribute('aria-selected')).toBe('true')
+  expect(sectionShown('voice')).toBe(true)
+  expect(sectionShown('terminal')).toBe(false)
 })
 
 it('opens on the tab that owns initialSection', () => {

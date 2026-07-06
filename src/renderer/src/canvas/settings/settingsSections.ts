@@ -28,8 +28,8 @@ export interface SettingsSectionDef {
   blurb: string
 }
 
-/** The four top-level tab ids (one per group). Stable keys for the tab strip + `data-test`s. */
-export type SettingsGroupId = 'you' | 'application' | 'agents' | 'system'
+/** The top-level tab ids (one per group). Stable keys for the tab strip + `data-test`s. */
+export type SettingsGroupId = 'you' | 'application' | 'agents' | 'voice' | 'system'
 
 export interface SettingsGroup {
   id: SettingsGroupId
@@ -56,8 +56,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         icon: 'wallpaper',
         blurb: 'Wallpaper and canvas backdrop'
       },
-      { id: 'terminal', label: 'Terminal', icon: 'agent-shell', blurb: 'Shell and agent behavior' },
-      { id: 'voice', label: 'Voice', icon: 'mic', blurb: 'Local-first dictation' }
+      { id: 'terminal', label: 'Terminal', icon: 'agent-shell', blurb: 'Shell and agent behavior' }
     ]
   },
   {
@@ -72,6 +71,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         blurb: 'Drive this canvas from agents'
       },
       { id: 'mcp', label: 'MCP Servers', icon: 'plug', blurb: 'Model Context Protocol servers' }
+    ]
+  },
+  {
+    id: 'voice',
+    label: 'Voice',
+    sections: [
+      { id: 'voice', label: 'Voice', icon: 'mic', blurb: 'Local-first dictation & history' }
     ]
   },
   {

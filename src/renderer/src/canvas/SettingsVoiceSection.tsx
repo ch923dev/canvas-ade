@@ -14,6 +14,7 @@ import type {
   VoiceModelListEntry
 } from '../../../preload/voice'
 import { codeToToken, defaultHotkey, hotkeyLabel, parseHotkey } from '../voice/hotkey'
+import { PROMPT_HISTORY_CAP } from '../store/voiceStore'
 
 const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
@@ -171,6 +172,21 @@ export function SettingsVoiceSection({
       })
       .catch(() => setError('Could not delete the model.'))
       .finally(refreshModels)
+  }
+
+  // The durable ring, guarded — the IPC boundary is untyped; repair guarantees an array, but a
+  // partial payload (or a hand-built test mock) must never crash the pane on `.length`.
+  const history = cfg?.promptHistory ?? []
+  const copyPrompt = (text: string): void => {
+    void navigator.clipboard?.writeText(text).catch(() => {})
+  }
+  // Delete/clear reuse setField — MAIN repairs + echoes voice:config:changed, so the flyout's
+  // Recent mirror re-syncs the moment a prompt is removed here (one store, two surfaces).
+  const deletePrompt = (idx: number): void => {
+    setField({ promptHistory: history.filter((_, i) => i !== idx) })
+  }
+  const clearPrompts = (): void => {
+    setField({ promptHistory: [] })
   }
 
   const onHotkeyKeyDown = (e: React.KeyboardEvent): void => {
@@ -405,6 +421,86 @@ export function SettingsVoiceSection({
             ? 'Esc cancels · must include Ctrl, Alt or Cmd/Win + a key.'
             : 'Click the field, then press a combination. Tap toggles · hold is push-to-talk.'}
         </span>
+      </div>
+
+      <div className="vh-sec" data-test="voice-history">
+        <div className="vh-hd">
+          <span className="vh-title">Prompt history</span>
+          {history.length > 0 && (
+            <>
+              <span className="vh-count" data-test="voice-history-count">
+                {history.length} of {PROMPT_HISTORY_CAP} kept
+              </span>
+              <button
+                type="button"
+                className="vh-clear"
+                data-test="voice-history-clear"
+                onClick={clearPrompts}
+              >
+                Clear all
+              </button>
+            </>
+          )}
+        </div>
+        <span className="vh-sub">
+          Voice prompts you&rsquo;ve sent to a terminal, newest first. Stored on this device only.
+        </span>
+        {history.length === 0 ? (
+          <div className="vh-empty" data-test="voice-history-empty">
+            No voice prompts yet &mdash; dictate one and press Send.
+          </div>
+        ) : (
+          <div className="vh-list" data-test="voice-history-list">
+            {history.map((text, i) => (
+              <div key={i} className="vh-row">
+                <span className="vh-text" title={text}>
+                  {text}
+                </span>
+                <button
+                  type="button"
+                  className="vh-act"
+                  aria-label="Copy prompt"
+                  title="Copy"
+                  onClick={() => copyPrompt(text)}
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+                    <rect
+                      x="5.5"
+                      y="5.5"
+                      width="8"
+                      height="8"
+                      rx="1.6"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                    />
+                    <path
+                      d="M3.5 10.5 H2.8 A1.3 1.3 0 0 1 1.5 9.2 V2.8 A1.3 1.3 0 0 1 2.8 1.5 H9.2 A1.3 1.3 0 0 1 10.5 2.8 V3.5"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="vh-act vh-del"
+                  aria-label="Remove prompt"
+                  title="Remove"
+                  data-test="voice-history-delete"
+                  onClick={() => deletePrompt(i)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {error && (

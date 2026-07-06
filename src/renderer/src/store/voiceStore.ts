@@ -26,6 +26,22 @@ export function joinFinal(draft: string, text: string): string {
   return /\s$/.test(draft) ? draft + seg : draft + ' ' + seg
 }
 
+/** Renderer-side cap on the prompt-history ring, mirroring MAX_PROMPT_HISTORY in
+ *  main/voiceConfig.ts (the renderer can't import from MAIN). Slicing here keeps the
+ *  config.set payload bounded; MAIN's repair enforces the same cap authoritatively. */
+export const PROMPT_HISTORY_CAP = 200
+
+/** Prepend a just-sent prompt to the history ring: trim, drop empties, skip a consecutive
+ *  duplicate (re-sending the same prompt back-to-back never stacks), cap to `cap`. Pure — it
+ *  is the reducer for BOTH the optimistic store update and the config.set payload, so the two
+ *  can never diverge. Returns the SAME reference when nothing changes (cheap no-op guard). */
+export function pushHistory(list: string[], text: string, cap = PROMPT_HISTORY_CAP): string[] {
+  const t = text.trim()
+  if (!t) return list
+  if (list[0] === t) return list
+  return [t, ...list].slice(0, cap)
+}
+
 interface VoiceState {
   /** True while the mic capture pipeline is live (worklet wired, frames flowing). */
   capturing: boolean
@@ -77,6 +93,11 @@ interface VoiceState {
   /** Download CTA completion flips 'absent' → 'ready' without another start(). */
   setModelStatus: (s: 'ready' | 'absent' | 'unknown') => void
   setEngineError: (on: boolean) => void
+  /** Sent-prompt history mirror (newest first) — hydrated from voiceConfig at pill mount and
+   *  re-synced on voice:config:changed. Render cache only; the source of truth is the durable
+   *  userData/voice-config.json ring (never a project file, never session-serialized). */
+  recent: string[]
+  setRecent: (list: string[]) => void
 }
 
 export const useVoiceStore = create<VoiceState>((set) => ({
@@ -141,5 +162,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   clearTranscript: () => set({ draft: '', partial: '' }),
   setFlyoutOpen: (open) => set((s) => (s.flyoutOpen === open ? s : { flyoutOpen: open })),
   setModelStatus: (modelStatus) => set({ modelStatus }),
-  setEngineError: (on) => set((s) => (s.engineError === on ? s : { engineError: on }))
+  setEngineError: (on) => set((s) => (s.engineError === on ? s : { engineError: on })),
+  recent: [],
+  setRecent: (recent) => set((s) => (s.recent === recent ? s : { recent }))
 }))

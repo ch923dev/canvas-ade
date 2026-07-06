@@ -260,3 +260,66 @@ describe('VoiceFlyout — engine error state (V5, SPEC §3)', () => {
     expect(screen.queryByTestId('voice-flyout-error')).toBeNull()
   })
 })
+
+describe('VoiceFlyout — Recent (prompt history)', () => {
+  it('records the sent prompt on Send (never on Insert)', async () => {
+    const set = vi.fn().mockResolvedValue({ ok: true })
+    ;(window as never as { api: unknown }).api = { voice: { config: { set } } }
+    const entry = seedTarget()
+    useVoiceStore.setState({ draft: 'remember this prompt', recent: [] })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    fireEvent.click(screen.getByTitle(/Paste \+ submit/))
+    await act(async () => {})
+    expect(entry.paste).toHaveBeenCalledWith('remember this prompt')
+    expect(useVoiceStore.getState().recent).toEqual(['remember this prompt'])
+    expect(set).toHaveBeenCalledWith({ promptHistory: ['remember this prompt'] })
+    delete (window as never as { api?: unknown }).api
+  })
+
+  it('Insert does not record into history', async () => {
+    const set = vi.fn().mockResolvedValue({ ok: true })
+    ;(window as never as { api: unknown }).api = { voice: { config: { set } } }
+    seedTarget()
+    useVoiceStore.setState({ draft: 'do not record', recent: [] })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    fireEvent.click(screen.getByTitle(/without submitting/))
+    await act(async () => {})
+    expect(useVoiceStore.getState().recent).toEqual([])
+    expect(set).not.toHaveBeenCalled()
+    delete (window as never as { api?: unknown }).api
+  })
+
+  it('lists recent prompts (collapsed until toggled); clicking one loads it into the draft', () => {
+    seedTarget()
+    useVoiceStore.setState({ draft: '', recent: ['first prompt', 'second prompt'] })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    expect(screen.getByTestId('voice-recent')).toBeTruthy()
+    expect(screen.queryByTestId('voice-recent-list')).toBeNull() // collapsed by default
+    fireEvent.click(screen.getByTestId('voice-recent-toggle'))
+    const rows = screen.getAllByTestId('voice-recent-reuse')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toBe('first prompt')
+    fireEvent.click(rows[0])
+    expect(useVoiceStore.getState().draft).toBe('first prompt')
+  })
+
+  it('renders no Recent section with an empty history', () => {
+    seedTarget()
+    useVoiceStore.setState({ draft: 'x', recent: [] })
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    expect(screen.queryByTestId('voice-recent')).toBeNull()
+  })
+
+  it('"See all in Settings" dispatches the open-settings event for the Voice tab', () => {
+    seedTarget()
+    useVoiceStore.setState({ recent: ['x'] })
+    const onOpen = vi.fn()
+    window.addEventListener('expanse:open-settings', onOpen as EventListener)
+    render(<VoiceFlyout anchor={ANCHOR} />)
+    fireEvent.click(screen.getByTestId('voice-recent-toggle'))
+    fireEvent.click(screen.getByTestId('voice-recent-all'))
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect((onOpen.mock.calls[0][0] as CustomEvent).detail).toEqual({ section: 'voice' })
+    window.removeEventListener('expanse:open-settings', onOpen as EventListener)
+  })
+})

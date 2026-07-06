@@ -36,6 +36,9 @@ export interface VoiceConfigView {
   cloudProvider?: string
   showPill: boolean
   pillPosition?: { x: number; y: number }
+  /** Sent voice prompts, newest first, capped (MAX_PROMPT_HISTORY in main). The flyout reads a
+   *  Recent slice; Settings › Voice reads the whole list. A set() patch replaces it wholesale. */
+  promptHistory: string[]
 }
 
 /** V5 engine-failure push (SPEC §3 `error` state). 'restarted' = MAIN transparently

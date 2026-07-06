@@ -76,7 +76,8 @@ beforeEach(() => {
     modelId: KROKO.id,
     language: 'auto',
     autoSendOnFinal: false,
-    showPill: true
+    showPill: true,
+    promptHistory: []
   })
   configSet.mockResolvedValue({ ok: true })
   modelsList.mockResolvedValue([KROKO, ZIP])
@@ -235,5 +236,36 @@ describe('SettingsVoiceSection', () => {
     expect(configSet).toHaveBeenCalledWith({ hotkey: '' })
     await act(async () => {})
     expect(field.textContent).toBe('CtrlShiftM') // back to the platform default
+  })
+})
+
+describe('SettingsVoiceSection — prompt history', () => {
+  it('shows the empty state when there is no history', async () => {
+    await mount()
+    expect(byTest('voice-history-empty')).toBeTruthy()
+    expect(byTest('voice-history-list')).toBeNull()
+    expect(byTest('voice-history-clear')).toBeNull() // no Clear-all with an empty ring
+  })
+
+  it('lists prompts with a count; delete removes one; Clear all empties the ring', async () => {
+    configGet.mockResolvedValue({
+      engine: 'sherpa-onnx',
+      modelId: KROKO.id,
+      language: 'auto',
+      autoSendOnFinal: false,
+      showPill: true,
+      promptHistory: ['build the app', 'run the tests']
+    })
+    await mount()
+    expect(byTest('voice-history-count')!.textContent).toMatch(/2 of 200 kept/)
+    expect(document.querySelectorAll('[data-test="voice-history-list"] .vh-row')).toHaveLength(2)
+
+    // Delete the first row → persists the remainder (MAIN echoes → flyout mirror re-syncs).
+    fireEvent.click(document.querySelectorAll('[data-test="voice-history-delete"]')[0])
+    expect(configSet).toHaveBeenCalledWith({ promptHistory: ['run the tests'] })
+
+    // Clear all → empty array.
+    fireEvent.click(byTest('voice-history-clear')!)
+    expect(configSet).toHaveBeenCalledWith({ promptHistory: [] })
   })
 })

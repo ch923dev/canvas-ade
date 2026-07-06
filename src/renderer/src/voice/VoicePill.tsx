@@ -87,10 +87,17 @@ export function VoicePill(): ReactElement | null {
   const chordRef = useRef<HotkeyChord>(DEFAULT_CHORD)
   const [chordLabel, setChordLabel] = useState(() => hotkeyLabel(DEFAULT_CHORD, IS_MAC))
 
-  const applyConfig = (cfg: { showPill: boolean; hotkey?: string }): void => {
+  const applyConfig = (cfg: {
+    showPill: boolean
+    hotkey?: string
+    promptHistory?: string[]
+  }): void => {
     setShowPill(cfg.showPill)
     chordRef.current = resolveHotkey(cfg.hotkey)
     setChordLabel(hotkeyLabel(chordRef.current, IS_MAC))
+    // Hydrate the prompt-history mirror from config at mount and keep it live: a Send from the
+    // flyout OR a delete/clear in Settings both round-trip through voice:config:changed → here.
+    useVoiceStore.getState().setRecent(cfg.promptHistory ?? [])
   }
 
   // Restore config once: position (re-clamped — displays change between runs) + show
