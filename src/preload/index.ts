@@ -446,9 +446,12 @@ function ensureOsrNetListener(): void {
 
 // ── Phase 5 auto-update — MIRRORS main `UpdateStatus` (src/main/autoUpdate.ts). The
 // process boundary means no shared import; keep the two in lockstep, same as PtyState. ──
+/** The two non-blocking loudness levels an available update can carry (mirrors main). */
+export type UpdateTier = 'optional' | 'recommended'
 export type UpdateStatus =
   | { state: 'checking' }
-  | { state: 'available'; version: string }
+  | { state: 'available'; version: string; tier: UpdateTier }
+  | { state: 'mandatory'; version: string }
   | { state: 'none' }
   | { state: 'downloading'; percent: number }
   | { state: 'ready'; version: string }
@@ -860,7 +863,13 @@ const api = {
       ipcRenderer.on('update:status', handler)
       return () => ipcRenderer.removeListener('update:status', handler)
     },
-    /** Install the downloaded update + relaunch — fired from the "ready" update toast. */
+    /** Manually re-check the feed (the Settings "Check for updates" button). Reports
+     *  availability via onStatus; never starts a download (autoDownload is off in main). */
+    check: (): Promise<boolean> => ipcRenderer.invoke('update:check'),
+    /** Start downloading the available update (the Settings "Download update" button /
+     *  toast action). Progress + completion arrive via onStatus. */
+    download: (): Promise<boolean> => ipcRenderer.invoke('update:download'),
+    /** Install the downloaded update + relaunch — fired from the "ready" state. */
     install: (): Promise<boolean> => ipcRenderer.invoke('update:install')
   },
 

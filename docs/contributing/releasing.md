@@ -13,7 +13,7 @@ for the decision record.
 |---|---|---|---|
 | `pr.yml` | PR | `check` only (typecheck · lint · format · unit + SCA audit). No packaging. | — |
 | `staging.yml` | push to `main` | `check` → full matrix package → **unsigned** Actions artifacts (7-day). | No (by design) |
-| `production.yml` | a **GitHub Release is published** | `check` → full matrix package → **sign + notarize (if secrets present)** → upload assets + `latest.yml` to the Release. | Yes, when secrets exist |
+| `production.yml` | a **GitHub Release is published** | `check` → full matrix package → **sign + notarize (if secrets present)** → emit the signed installers + `latest*.yml` + `*.blockmap` as **workflow artifacts** (`feed-<os>`). It does **not** upload to the Release — the feed provider is `generic`/R2 (read-only), so the R2 publish is a separate step. | Yes, when secrets exist |
 
 The matrix is win + mac + linux × x64/arm64 (one native job per OS/arch where the toolchain
 can't cross-compile native modules). node-pty is rebuilt against the Electron ABI per job.
@@ -23,10 +23,19 @@ can't cross-compile native modules). node-pty is rebuilt against the Electron AB
 1. **Bump the version** in `package.json` (semver; auto-update compares versions, so it must
    increase monotonically). Commit on a branch and merge via the normal gate.
 2. **Tag + publish a GitHub Release** for that version (e.g. `v0.2.0`). Publishing the Release
-   fires `production.yml`, which builds the full matrix and uploads the installers + `latest.yml`
-   to that Release.
-3. If signing secrets are configured (below), the uploaded assets are signed/notarized and
-   `latest.yml` (the electron-updater feed manifest) points at them.
+   fires `production.yml`, which builds + signs the full matrix and emits the signed installers +
+   `latest*.yml` + `*.blockmap` as per-OS **workflow artifacts** (`feed-<os>`). It does **not**
+   upload to the Release — the feed's electron-builder `publish` provider is `generic` (R2), which
+   is read-only (see `electron-builder.yml`).
+3. **Publish the feed to R2.** The signed artifacts from step 2 are the feed's payload: assemble
+   them into `release/feed/` (installers + `*.blockmap` + `latest*.yml`), add `updates.json`
+   (`pnpm feed:gen`), and `rclone copy` to the R2 bucket — the mechanics `scripts/release.mjs`
+   automates for a local build (`pnpm release:win|mac|linux`, `R2_REMOTE=…` to actually upload; see
+   *Update levels + the R2 feed* below). electron-updater then reads `latest*.yml` + `updates.json`
+   over the HTTPS feed. If signing secrets are configured (below), those artifacts are
+   signed/notarized. **Follow-up:** wiring the R2 `rclone` upload directly into `production.yml`
+   (R2 credentials as secrets) is not yet done — today the feed publish from the CI artifacts is a
+   manual step.
 
 Local one-offs (no publish): `pnpm build:win | build:mac | build:linux`, or `pnpm pack:dir`
 for a fast unpacked `release/win-unpacked/` (no installer). These never upload.
@@ -150,3 +159,73 @@ require('./node_modules/ajv/package.json').version)"` must print `4.x 8.x`. Also
 and confirm an autosave succeeds. The e2e suite runs the **unpacked** build and cannot catch a
 packaged-only fault. If a future dep adds another prod-vs-dev version split, electron-builder prints
 `dependency not found on disk: [...]` during `pack:dir` — pin each listed package the same way.
+
+---
+
+## Update levels + the R2 feed (ADR 0012)
+
+Auto-update ships **three tiers** — **optional** (quiet toast), **recommended** (top banner),
+**mandatory** (blocking modal). The tier is set by a side-channel `updates.json` on the feed, next to
+`latest.yml`. electron-updater serves the version; `updates.json` decides how loud we get. All of this
+still rides on the ADR 0008 gate — an unsigned build wires no updater and shows nothing.
+
+### The tier manifest (`updates.json`)
+
+Source of truth: **`build/updates.json`** (committed). `scripts/gen-updates-json.mjs` stamps `latest`
+from `package.json`, validates the semver keys, and writes the published copy:
+
+```jsonc
+// build/updates.json
+{
+  "minSupported": "0.9.0",              // running version < this  → FORCED (blocking modal)
+  "tiers": { "0.11.0": "recommended" }  // this version            → banner. absent → optional
+}
+```
+
+- **To force the fleet off a bad build:** raise `minSupported` to the bad-version + 1. Anyone below is
+  forced on next launch; anyone at/above is untouched. This is the kill-switch — no new binary needed,
+  just re-publish `updates.json`.
+- **To make a release louder (not blocking):** add `"x.y.z": "recommended"`.
+- **Fail-open:** if `updates.json` is unreachable, the app **never forces** and defaults to optional —
+  a feed blip can't lock anyone out.
+
+### Feed hosting — Cloudflare R2 (one-time setup)
+
+1. Cloudflare → **R2** → create bucket `expanse-updates`.
+2. Bucket → **Settings → Public access → Custom domain** → `updates.expanse.app` (point DNS at it).
+   `electron-builder.yml` `publish.url` already targets `https://updates.expanse.app/`.
+3. Create an **R2 API token** (S3-compatible). Configure an `rclone` remote once per release machine:
+   `rclone config` → new remote, type **s3**, provider **Cloudflare**, endpoint
+   `https://<accountid>.r2.cloudflarestorage.com`, key/secret from the token. Name it `r2`.
+
+> Swapping R2 → GCS/S3 later is a one-line `publish.url` change (the app reads a plain HTTPS URL).
+
+### Cutting a release
+
+```
+pnpm release:win        # builds with the gate ON, packages --publish never, stages release/feed/,
+                        # generates updates.json — then PRINTS the upload command (nothing uploads)
+R2_REMOTE=r2:expanse-updates pnpm release:win   # …and actually rclone-copies release/feed/ to R2
+```
+
+`release/feed/` holds exactly the served files: `latest*.yml` + installer(s) + `*.blockmap` +
+`updates.json`. mac/linux legs: `pnpm release:mac` / `pnpm release:linux` (built in CI for the full
+matrix; signing is orthogonal — the production workflow signs).
+
+### Local end-to-end test (no certs, no cloud)
+
+Prove the whole flow — including force — on `127.0.0.1`:
+
+1. Serve a feed dir locally: `npx http-server ./local-feed -a 127.0.0.1 -p 8090`. Put a **higher**
+   version's `latest.yml` + installer + `.blockmap` + an `updates.json` in it.
+2. Build the app with the gate on (`ENABLE_AUTO_UPDATE=1`) and install it.
+3. Patch the installed `…/resources/app-update.yml` → `provider: generic`, `url: http://127.0.0.1:8090/`.
+4. Launch with `CANVAS_UPDATE_FEED=http://127.0.0.1:8090` so `getMeta` hits the same origin, e.g.
+   `set CANVAS_UPDATE_FEED=http://127.0.0.1:8090 && "…\Expanse.exe"`.
+5. Exercise each tier by editing the served `updates.json`:
+   - `tiers: {}` → **optional** toast · `tiers: {"<latest>":"recommended"}` → **banner** ·
+     `minSupported` above the installed version → **blocking modal**.
+
+Use **`127.0.0.1`, not `localhost`** — `localhost` resolves to IPv6 `::1`, and http-server binds IPv4
+only (a "couldn't reach the server" red herring). Fully quit every `Expanse.exe` between runs (the
+single-instance lock re-focuses the old process and won't re-read the patched config).

@@ -23,6 +23,7 @@ import {
 } from 'react'
 import { Modal } from '../Modal'
 import { Icon } from '../Icon'
+import { UpdateBadgeDot } from '../UpdateBadgeDot'
 import { useCanvasStore } from '../../store/canvasStore'
 import {
   SETTINGS_GROUPS,
@@ -133,6 +134,13 @@ export function SettingsPanel({
               style={{ ...styles.tab, ...(selected ? styles.tabActive : null) }}
             >
               {g.label}
+              {/* Phase 5: the group holding About carries the update badge so it's findable
+                  from the top-level tabs (the About section header dots the section itself). */}
+              {g.id === 'system' && (
+                <UpdateBadgeDot
+                  style={{ display: 'inline-block', marginLeft: 6, verticalAlign: 'middle' }}
+                />
+              )}
             </button>
           )
         })}
@@ -151,7 +159,14 @@ export function SettingsPanel({
             data-test={`settings-section-${s.id}`}
             style={{ ...styles.sectionBlock, ...(i > 0 ? styles.sectionDivided : null) }}
           >
-            <h3 style={styles.sectionHead}>{s.label}</h3>
+            <h3 style={styles.sectionHead}>
+              {s.label}
+              {s.id === 'about' && (
+                <UpdateBadgeDot
+                  style={{ display: 'inline-block', marginLeft: 6, verticalAlign: 'middle' }}
+                />
+              )}
+            </h3>
             <SettingsSectionBody id={s.id} onClose={onClose} onSignIn={onSignIn} />
           </section>
         ))}

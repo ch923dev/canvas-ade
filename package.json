@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.9.3",
+  "version": "0.10.3",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -39,6 +39,10 @@
     "postinstall": "electron-builder install-app-deps",
     "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks')}catch(e){process.stderr.write('[prepare] WARNING: git config core.hooksPath .githooks failed (' + e.message + '). Pre-commit and pre-push hooks may not be active.\\n')}\"",
     "pack:dir": "electron-vite build && electron-builder --dir",
+    "feed:gen": "node scripts/gen-updates-json.mjs",
+    "release:win": "node scripts/release.mjs --win",
+    "release:mac": "node scripts/release.mjs --mac",
+    "release:linux": "node scripts/release.mjs --linux",
     "build:win": "electron-vite build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux"
