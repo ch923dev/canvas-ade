@@ -11,16 +11,7 @@
  */
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { pane } from '../paneStyles'
-
-/** Mirrors preload `UpdateStatus` (kept local — no shared import across the process boundary). */
-type UpdateStatus =
-  | { state: 'checking' }
-  | { state: 'available'; version: string; tier: 'optional' | 'recommended' }
-  | { state: 'mandatory'; version: string }
-  | { state: 'none' }
-  | { state: 'downloading'; percent: number }
-  | { state: 'ready'; version: string }
-  | { state: 'error'; message: string }
+import type { UpdateStatus } from '../../../store/updateStore'
 
 const dotBase: CSSProperties = { width: 8, height: 8, borderRadius: 999, flex: 'none' }
 

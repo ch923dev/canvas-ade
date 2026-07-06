@@ -15,6 +15,7 @@ import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
 import { SettingsPanel } from './settings/SettingsPanel'
+import { UpdateBadgeDot } from './UpdateBadgeDot'
 import type { SettingsSectionId } from './settings/settingsSections'
 import { BackdropPicker } from './BackdropPicker'
 import { ProjectSwitcher } from './ProjectSwitcher'
@@ -172,9 +173,16 @@ function CameraCluster({
         <BackdropPicker />
         <span style={styles.divider} />
         {/* Phase 1 accounts: the account pill sits immediately before the Settings gear
-            (DESIGN.md › Surface 1). Signed-out → SignInView; signed-in → Settings/Account. */}
-        <AccountPill onSignIn={onSignIn} onAccount={onAccount} />
-        <ToolBtn name="settings" title="Settings" onClick={onSettings} />
+            (DESIGN.md › Surface 1). Signed-out → SignInView; signed-in → Settings/Account.
+            Both carry the persistent update badge (Phase 5): a corner dot when an update waits. */}
+        <span style={{ position: 'relative', display: 'inline-flex' }}>
+          <AccountPill onSignIn={onSignIn} onAccount={onAccount} />
+          <UpdateBadgeDot style={{ position: 'absolute', top: -1, right: -1 }} />
+        </span>
+        <span style={{ position: 'relative', display: 'inline-flex' }}>
+          <ToolBtn name="settings" title="Settings" onClick={onSettings} />
+          <UpdateBadgeDot style={{ position: 'absolute', top: 0, right: 0 }} />
+        </span>
       </div>
     </div>
   )

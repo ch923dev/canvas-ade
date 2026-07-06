@@ -1,15 +1,17 @@
 /**
  * Auto-update surfaces (MANUAL model, three tiers). One subscriber to main's update status
- * (`window.api.update.onStatus`) that routes the flow to exactly ONE surface by tier:
+ * (`window.api.update.onStatus`) that routes the flow to at most ONE transient surface by tier:
  *
- *   • optional     → a quiet, dismissable toast (bottom-right, via the shared toastStore).
+ *   • optional     → NO transient surface. The persistent Settings badge (updateStore →
+ *                    UpdateBadgeDot on the gear / About tile / account pill) is its only prompt.
  *   • recommended  → a persistent top banner (dismissable per session).
  *   • mandatory    → a BLOCKING modal the user cannot dismiss until they update.
  *
- * The tier is LATCHED: once main reports `mandatory` (or `recommended`) for a version, the
- * later `downloading`/`ready`/`error` events — which carry no tier — stay attributed to that
- * surface, so the banner/modal drives the whole download → restart flow. A forced latch never
- * downgrades. Settings ▸ About is the separate always-available surface (AboutPane).
+ * (The badge shows for EVERY tier — see updateStore; this file only adds the louder banner/modal
+ * for the two higher tiers.) The tier is LATCHED: once main reports `mandatory` (or `recommended`)
+ * for a version, the later `downloading`/`ready`/`error` events — which carry no tier — stay
+ * attributed to that surface, so the banner/modal drives the whole download → restart flow. A
+ * forced latch never downgrades. Settings ▸ About is the separate always-available surface.
  *
  * No-op when `window.api.update` is absent (older preload) or the gate is off in main
  * (unsigned/dev builds emit no status events at all).
@@ -17,20 +19,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { Modal } from './Modal'
-import { showToast, dismissToast } from '../store/toastStore'
-
-/** Mirrors preload `UpdateStatus` (kept local — no shared import across the process boundary). */
-type UpdateStatus =
-  | { state: 'checking' }
-  | { state: 'available'; version: string; tier: 'optional' | 'recommended' }
-  | { state: 'mandatory'; version: string }
-  | { state: 'none' }
-  | { state: 'downloading'; percent: number }
-  | { state: 'ready'; version: string }
-  | { state: 'error'; message: string }
+import type { UpdateStatus } from '../store/updateStore'
 
 type Channel = 'none' | 'optional' | 'recommended' | 'forced'
-const TOAST_ID = 'app-update'
 
 const download = (): void => void window.api.update.download()
 const install = (): void => void window.api.update.install()
@@ -79,10 +70,8 @@ export function UpdateSurfaces(): ReactElement | null {
         setChannel(next)
         setDismissed(false) // a fresh channel re-shows the banner
       }
-      // The optional tier is the only one surfaced as a toast; every other channel owns its
-      // own chrome, so clear any stray toast when we're not optional.
-      if (channelRef.current === 'optional') routeOptionalToast(s)
-      else dismissToast(TOAST_ID)
+      // Optional shows NO transient surface — the persistent Settings badge (updateStore) is its
+      // only prompt. Recommended → banner, mandatory → modal (rendered below).
     })
   }, [])
 
@@ -90,43 +79,6 @@ export function UpdateSurfaces(): ReactElement | null {
   if (channel === 'recommended' && !dismissed)
     return <UpdateBanner status={status} version={version} onDismiss={() => setDismissed(true)} />
   return null
-}
-
-/** Optional tier → the quiet toast (bottom-right). Mirrors the shipped manual-update flow. */
-function routeOptionalToast(s: UpdateStatus): void {
-  switch (s.state) {
-    case 'available':
-      showToast({
-        id: TOAST_ID,
-        kind: 'info',
-        sticky: true,
-        message: `Update ${s.version} available`,
-        action: { label: 'Download', run: download }
-      })
-      break
-    case 'downloading':
-      showToast({
-        id: TOAST_ID,
-        kind: 'info',
-        sticky: true,
-        message: `Downloading update… ${s.percent}%`
-      })
-      break
-    case 'ready':
-      showToast({
-        id: TOAST_ID,
-        kind: 'ok',
-        sticky: true,
-        message: `Update ${s.version} ready`,
-        action: { label: 'Restart', run: install }
-      })
-      break
-    case 'error':
-      // A failed background check shouldn't nag — clear it (still visible in Settings ▸ About).
-      dismissToast(TOAST_ID)
-      break
-    // 'checking' / 'none' → nothing to show.
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

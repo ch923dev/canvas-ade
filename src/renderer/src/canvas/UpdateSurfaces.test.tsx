@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, act, cleanup } from '@testing-library/react'
 import { UpdateSurfaces } from './UpdateSurfaces'
-import { useToastStore } from '../store/toastStore'
 
 /** Mirrors the status shape UpdateSurfaces consumes (main `UpdateStatus`). */
 type Status =
@@ -22,7 +21,6 @@ beforeEach(() => {
   handler = null
   download.mockClear()
   install.mockClear()
-  useToastStore.setState({ toasts: [] })
   ;(window as unknown as { api: unknown }).api = {
     update: {
       onStatus: (h: (s: Status) => void) => {
@@ -39,37 +37,31 @@ beforeEach(() => {
 })
 
 const fire = (s: Status): void => act(() => handler!(s))
-const toasts = (): ReturnType<typeof useToastStore.getState>['toasts'] =>
-  useToastStore.getState().toasts
 /** The update buttons follow the app's `data-test` convention (AboutPane), not `data-testid`. */
 const byTest = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-test="${id}"]`)
 
 describe('UpdateSurfaces — tier routing', () => {
-  it('optional → quiet toast, no banner/modal', () => {
+  it('optional → NO transient surface (the persistent badge is its only prompt)', () => {
     render(<UpdateSurfaces />)
     fire({ state: 'available', version: '1.0.0', tier: 'optional' })
-    expect(toasts()).toHaveLength(1)
-    expect(toasts()[0].message).toBe('Update 1.0.0 available')
     expect(screen.queryByTestId('update-banner')).toBeNull()
     expect(screen.queryByTestId('force-update-modal')).toBeNull()
   })
 
-  it('recommended → banner, and NO toast', () => {
+  it('recommended → banner', () => {
     render(<UpdateSurfaces />)
     fire({ state: 'available', version: '2.0.0', tier: 'recommended' })
     expect(screen.getByTestId('update-banner')).toBeTruthy()
     expect(screen.getByText(/Update 2\.0\.0 available/)).toBeTruthy()
-    expect(toasts()).toHaveLength(0)
     expect(screen.queryByTestId('force-update-modal')).toBeNull()
   })
 
-  it('mandatory → blocking modal, no toast/banner', () => {
+  it('mandatory → blocking modal, no banner', () => {
     render(<UpdateSurfaces />)
     fire({ state: 'mandatory', version: '3.0.0' })
     expect(screen.getByTestId('force-update-modal')).toBeTruthy()
     expect(screen.getByText(/Update to 3\.0\.0 to keep using Expanse/)).toBeTruthy()
-    expect(toasts()).toHaveLength(0)
     expect(screen.queryByTestId('update-banner')).toBeNull()
   })
 

@@ -14,6 +14,7 @@ import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
 import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
 import { useAccountStore, useAccountSync } from './store/accountStore'
+import { useUpdateStatusSync } from './store/useUpdateStatusSync'
 import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
 import { useVoiceCapture } from './voice/useVoiceCapture'
@@ -30,6 +31,9 @@ function App(): React.ReactElement {
   useAutosave()
   useMcpPublish()
   useMcpCommands()
+  // Phase 5 auto-update: pipe MAIN's update status into the store that feeds the persistent
+  // Settings badge (gear / About tile / account pill) + the tier surfaces.
+  useUpdateStatusSync()
   // Phase 1 accounts: hydrate the account store at boot + subscribe to MAIN's auth:statusChanged.
   useAccountSync()
   // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
