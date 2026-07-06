@@ -129,6 +129,7 @@ export type LifecycleOrchestrator = Omit<
   | 'visualizePlan'
   | 'dispatchPrompt'
   | 'relayPrompt'
+  | 'relayPrompts'
 > & {
   /**
    * Honest-ack WIDENING of the package's `dispatchPrompt/relayPrompt(): Promise<void>` (same
@@ -148,10 +149,11 @@ export type LifecycleOrchestrator = Omit<
    * 🔒 BATCH agent-to-agent relay (relay_prompts) — dispatch several {@link RelayItem}s behind ONE
    * per-row human-confirm modal. Each item is validated + gated INDEPENDENTLY (its own directed-cable
    * check, single-use nonce, audit row) exactly like {@link LifecycleOrchestrator.relayPrompt}; the
-   * batch shares only the confirm. App-local (NOT yet on the installed package `Orchestrator` — no
-   * Omit needed; matches the concrete `relayPrompts` on `@expanse-ade/mcp` 0.18.0-rc.8 at integration,
-   * same discipline as the card / planning-edit methods). Resolves a per-item {@link RelayResult}
-   * array, positionally 1:1 with `items`.
+   * batch shares only the confirm. Omit-and-redeclared with the app-local {@link RelayItem}/
+   * {@link RelayResult} (structurally equal to the package's) — Omitting `relayPrompts` from the base
+   * is a harmless no-op on a package predating it (≤ rc.7) and matches the concrete method on
+   * `@expanse-ade/mcp` 0.18.0-rc.8, same discipline as the card / planning-edit methods. Resolves a
+   * per-item {@link RelayResult} array, positionally 1:1 with `items`.
    */
   relayPrompts(items: RelayItem[]): Promise<RelayResult[]>
   /**

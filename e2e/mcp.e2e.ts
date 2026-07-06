@@ -739,6 +739,104 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await closeBoardGated(page, mcp, id) // restore the baseline (approve the close)
   })
 
+  test('relay_prompts BATCH: ONE per-row modal; approve some / deny some; only approved rows write; worker denied', async ({
+    page,
+    electronApp,
+    mcp
+  }) => {
+    test.slow() // spawns 3 terminals + a real per-row batch-confirm round-trip
+    // 🔒 Part A end-to-end (the whole cross-process chain: tool → orchestrator.relayPrompts →
+    // requestConfirmBatch → BatchConfirmModal → per-item gate → PTY write). Two dispatches in ONE
+    // modal; the human approves row 0 and denies row 1 → only the approved target's PTY is written.
+    expect(mcp.worker.tools).not.toContain('relay_prompts')
+
+    const aId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    const bId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    const cId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    expect(aId).not.toBe('')
+    expect(bId).not.toBe('')
+    expect(cId).not.toBe('')
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(bId)})`)
+    await expect.poll(() => boardStatus(mcp.orch, bId), { timeout: 8000 }).toBe('running')
+    await expect.poll(() => boardStatus(mcp.orch, cId), { timeout: 8000 }).toBe('running')
+
+    // Draw the orchestration cables A->B and A->C (the routes), wait for the MAIN mirror to carry both.
+    await evalIn(
+      page,
+      `window.__canvasE2E.addConnector(${JSON.stringify(aId)}, ${JSON.stringify(bId)}, 'orchestration')`
+    )
+    await evalIn(
+      page,
+      `window.__canvasE2E.addConnector(${JSON.stringify(aId)}, ${JSON.stringify(cId)}, 'orchestration')`
+    )
+    await expect
+      .poll(
+        async () => {
+          const cables = await mainCall<
+            Array<{ sourceId: string; targetId: string; kind: string }>
+          >(electronApp, 'mcpListConnectors')
+          return cables.filter(
+            (c) =>
+              c.kind === 'orchestration' &&
+              c.sourceId === aId &&
+              (c.targetId === bId || c.targetId === cId)
+          ).length
+        },
+        { timeout: 6000 }
+      )
+      .toBe(2)
+
+    const SB = 'CANVAS_BATCH_OK_B'
+    const SC = 'CANVAS_BATCH_DENY_C'
+    const batchP = mcp.orch.call('relay_prompts', {
+      items: [
+        { sourceId: aId, targetId: bId, prompt: `echo ${SB}` },
+        { sourceId: aId, targetId: cId, prompt: `echo ${SC}` }
+      ]
+    })
+
+    // ONE batch modal carries BOTH rows.
+    const BMODAL = `!!document.querySelector('[data-testid="batch-confirm-modal"]')`
+    expect(await pollEval(page, BMODAL, 8000)).toBe(true)
+    expect(
+      await evalIn<number>(
+        page,
+        `document.querySelectorAll('[data-testid^="batch-confirm-row-"]').length`
+      )
+    ).toBe(2)
+
+    // Untick row 1 (deny the A->C dispatch), then Approve → row 0 relayed, row 1 denied.
+    await evalIn(
+      page,
+      `(() => { const r = document.querySelector('[data-testid="batch-confirm-row-1"]'); if (r) r.click(); return !!r })()`
+    )
+    await evalIn(
+      page,
+      `(() => { const b = document.querySelector('[data-testid="batch-confirm-approve"]'); if (b) b.click(); return !!b })()`
+    )
+
+    const text = okText(await batchP)
+    expect(text).toMatch(/relayed 1\/2/)
+
+    // B (approved) received + ran the command; C (denied) did NOT.
+    await expect
+      .poll(
+        async () => {
+          const txt = await readTerminalText(page, bId)
+          return typeof txt === 'string' && txt.includes(SB)
+        },
+        { timeout: 10000 }
+      )
+      .toBe(true)
+    await page.waitForTimeout(1500) // give any (wrongful) write to C a chance to appear
+    const cText = await readTerminalText(page, cId)
+    expect(typeof cText === 'string' && cText.includes(SC)).toBe(false)
+
+    await closeBoardGated(page, mcp, aId)
+    await closeBoardGated(page, mcp, bId)
+    await closeBoardGated(page, mcp, cId)
+  })
+
   test('SECURITY: the orchestrator spawn cap rejects beyond the limit (nothing auto-spawns unbounded)', async ({
     page,
     mcp
