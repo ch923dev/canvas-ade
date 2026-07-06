@@ -101,13 +101,42 @@ export interface AutoUpdateDeps {
 }
 
 /**
+ * Coerce a raw (network-fetched) `updates.json` payload into a TRUSTED `UpdateMeta`, dropping
+ * any field whose shape is wrong. This is the runtime schema check that `fetchUpdateMeta`'s
+ * `as UpdateMeta` assertion lacks: without it, a hand-edited manifest that drops the quotes
+ * (`"minSupported": 0.9`) or ships a malformed `tiers` would reach `cmpVersion` as a non-string
+ * and throw a `TypeError` synchronously inside the `update-available` handler — crashing main
+ * (unhandled rejection under Node 22's throw-default), the OPPOSITE of ADR 0012's fail-OPEN
+ * guarantee. Fails OPEN: a non-object, or fields of the wrong type, degrade to no-floor /
+ * no-tiers (a plain optional update) rather than a value that could force or crash.
+ */
+export function coerceUpdateMeta(raw: unknown): UpdateMeta | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const src = raw as Record<string, unknown>
+  const meta: UpdateMeta = {}
+  // Only a STRING floor is honoured — a numeric/absent one means "no floor" (never forced).
+  if (typeof src.minSupported === 'string') meta.minSupported = src.minSupported
+  // Keep only well-formed version→tier entries; anything else is silently dropped to optional.
+  if (typeof src.tiers === 'object' && src.tiers !== null) {
+    const tiers: Record<string, UpdateTier> = {}
+    for (const [version, tier] of Object.entries(src.tiers as Record<string, unknown>)) {
+      if (tier === 'recommended' || tier === 'optional') tiers[version] = tier
+    }
+    meta.tiers = tiers
+  }
+  return meta
+}
+
+/**
  * Compare two dotted numeric versions (our 0.x.y scheme). Any pre-release suffix (`-beta.1`)
  * is ignored — the floor is expressed in release versions. Returns -1 / 0 / 1. Kept local
- * (no semver import) so this module stays runtime-free of electron-updater's deps.
+ * (no semver import) so this module stays runtime-free of electron-updater's deps. `String(v)`
+ * is a root-level crash guard: even if a non-string floor slips past validation, this never
+ * throws (a garbage floor parses to 0.0.0 → never forces — still fails OPEN).
  */
 export function cmpVersion(a: string, b: string): number {
   const parse = (v: string): number[] =>
-    v
+    String(v)
       .split('-')[0]
       .split('.')
       .map((n) => Number(n) || 0)
@@ -147,7 +176,11 @@ export async function initAutoUpdate(deps: AutoUpdateDeps): Promise<void> {
   // ONLY force trigger; it fails OPEN (no meta / no floor → never mandatory).
   const classify = (version: string): UpdateStatus => {
     const floor = meta?.minSupported
-    if (floor && cmpVersion(currentVersion, floor) < 0) return { state: 'mandatory', version }
+    // typeof-string guard (not just truthiness): a malformed manifest could carry a non-string
+    // floor; passing that to cmpVersion below must never throw in this SYNC handler. Belt to
+    // coerceUpdateMeta's suspenders — this holds for ANY getMeta impl, not just fetchUpdateMeta.
+    if (typeof floor === 'string' && cmpVersion(currentVersion, floor) < 0)
+      return { state: 'mandatory', version }
     const tier: UpdateTier = meta?.tiers?.[version] === 'recommended' ? 'recommended' : 'optional'
     return { state: 'available', version, tier }
   }

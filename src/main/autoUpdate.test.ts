@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   initAutoUpdate,
   cmpVersion,
+  coerceUpdateMeta,
   type UpdaterLike,
   type UpdateStatus,
   type UpdateMeta
@@ -70,6 +71,40 @@ describe('cmpVersion — dotted numeric compare (0.x.y scheme)', () => {
     expect(cmpVersion('1.2.3', '1.2.3')).toBe(0)
     expect(cmpVersion('0.9.4', '0.9.4-beta.2')).toBe(0) // suffix stripped
     expect(cmpVersion('0.9', '0.9.1')).toBe(-1) // missing patch treated as 0
+  })
+
+  it('never throws on a non-string arg — a malformed floor parses to 0.0.0, never forces', () => {
+    // A hand-edited manifest could drop the quotes: `"minSupported": 0.9`. Before the String()
+    // root guard this threw `(0.9).split is not a function` inside the sync update handler.
+    expect(() => cmpVersion('1.0.0', 0.9 as unknown as string)).not.toThrow()
+    expect(cmpVersion('1.0.0', 0.9 as unknown as string)).toBe(1) // 1.0.0 > garbage(→0.0.0)
+    expect(() => cmpVersion('1.0.0', null as unknown as string)).not.toThrow()
+  })
+})
+
+describe('coerceUpdateMeta — runtime schema check on the fetched manifest (fails OPEN)', () => {
+  it('passes a well-formed manifest through intact', () => {
+    expect(
+      coerceUpdateMeta({ minSupported: '0.10.0', tiers: { '0.11.0': 'recommended' } })
+    ).toEqual({ minSupported: '0.10.0', tiers: { '0.11.0': 'recommended' } })
+  })
+
+  it('drops a non-string minSupported (the crash vector) → no floor', () => {
+    // `"minSupported": 0.9` (quotes dropped by a hand edit) must NOT survive to cmpVersion.
+    const meta = coerceUpdateMeta({ minSupported: 0.9 })!
+    expect(meta.minSupported).toBeUndefined()
+  })
+
+  it('keeps only valid version→tier entries, dropping malformed ones', () => {
+    expect(
+      coerceUpdateMeta({ tiers: { '1.0.0': 'recommended', '2.0.0': 'bogus', '3.0.0': 5 } })
+    ).toEqual({ tiers: { '1.0.0': 'recommended' } })
+  })
+
+  it('returns null for a non-object payload (array / string / number / null)', () => {
+    expect(coerceUpdateMeta(null)).toBeNull()
+    expect(coerceUpdateMeta('nope')).toBeNull()
+    expect(coerceUpdateMeta(42)).toBeNull()
   })
 })
 
@@ -198,6 +233,18 @@ describe('initAutoUpdate — wired (signed production build)', () => {
     })
     updater.fire('update-available', { version: '0.11.0' })
     expect(sent).toEqual([{ state: 'available', version: '0.11.0', tier: 'optional' }])
+  })
+
+  it('fails OPEN on a MALFORMED (not merely unreachable) manifest — never throws or forces', async () => {
+    // A corrupted/hand-edited manifest with a non-string floor. The `update-available` handler
+    // is SYNC and electron-updater invokes it inside its own async flow, so a throw here would
+    // surface as an unhandled rejection and crash main (Node 22 throw-default). It must not.
+    const { updater, sent } = await setup({
+      currentVersion: '0.0.1',
+      meta: { minSupported: 0.9, tiers: 'nope' } as unknown as UpdateMeta
+    })
+    expect(() => updater.fire('update-available', { version: '9.9.9' })).not.toThrow()
+    expect(sent).toEqual([{ state: 'available', version: '9.9.9', tier: 'optional' }])
   })
 
   it('fails OPEN when the tier manifest is unreachable — never a spurious force', async () => {

@@ -5,7 +5,7 @@
  * autoUpdate.ts itself stays dependency-injected + electron-updater-free for unit tests; these
  * concretions are only ever invoked once the gate is open (signed + packaged).
  */
-import type { UpdaterLike, UpdateMeta } from './autoUpdate'
+import { coerceUpdateMeta, type UpdaterLike, type UpdateMeta } from './autoUpdate'
 
 /**
  * Feed base for the side-channel tier manifest (`updates.json`) — a sibling of the
@@ -18,12 +18,15 @@ export const updateFeedBase = (): string =>
 /**
  * Fetch updates.json each check. Any failure resolves null → the flow fails OPEN (a plain
  * optional update, never a spurious forced block). A 404 (no manifest published yet) is
- * treated the same as unreachable.
+ * treated the same as unreachable. The payload is run through `coerceUpdateMeta` — a real
+ * runtime schema check, NOT a bare `as UpdateMeta` assertion — so a malformed/corrupted
+ * manifest (e.g. a non-string `minSupported`) can never reach `cmpVersion` and crash main;
+ * bad fields degrade to no-floor/no-tiers, preserving the fail-OPEN guarantee (ADR 0012).
  */
 export async function fetchUpdateMeta(): Promise<UpdateMeta | null> {
   const res = await fetch(`${updateFeedBase()}/updates.json`, { cache: 'no-store' })
   if (!res.ok) return null
-  return (await res.json()) as UpdateMeta
+  return coerceUpdateMeta(await res.json())
 }
 
 /**
