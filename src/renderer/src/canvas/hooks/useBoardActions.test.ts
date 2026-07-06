@@ -135,8 +135,11 @@ describe('GROUP-05/06 — group membership actions', () => {
   it('GROUP-06: removeFromGroup removes the board from ONE group only', () => {
     const st = useCanvasStore.getState()
     const a = st.addBoard('planning', { x: 0, y: 0 })
-    const g1 = useCanvasStore.getState().addGroup('G1', [a])
-    const g2 = useCanvasStore.getState().addGroup('G2', [a])
+    // A keep-alive member `b` in both groups so neither empties out (an emptied group is
+    // auto-deleted) — this test is about WHICH group loses `a`, not the empty-cull.
+    const b = st.addBoard('planning', { x: 500, y: 0 })
+    const g1 = useCanvasStore.getState().addGroup('G1', [a, b])
+    const g2 = useCanvasStore.getState().addGroup('G2', [a, b])
     const { result } = renderHook(() => useBoardActions(makeDeps()))
 
     result.current.removeFromGroup(a, g1)
@@ -149,8 +152,11 @@ describe('GROUP-05/06 — group membership actions', () => {
   it('GROUP-06: removeFromAllGroups removes the board from every group', () => {
     const st = useCanvasStore.getState()
     const a = st.addBoard('planning', { x: 0, y: 0 })
-    const g1 = useCanvasStore.getState().addGroup('G1', [a])
-    const g2 = useCanvasStore.getState().addGroup('G2', [a])
+    // Keep-alive member `b` so both groups survive the removal (else an emptied group would
+    // be auto-deleted and `.find` would be undefined) — asserting `a` left EVERY group.
+    const b = st.addBoard('planning', { x: 500, y: 0 })
+    const g1 = useCanvasStore.getState().addGroup('G1', [a, b])
+    const g2 = useCanvasStore.getState().addGroup('G2', [a, b])
     const { result } = renderHook(() => useBoardActions(makeDeps()))
 
     result.current.removeFromAllGroups(a)
