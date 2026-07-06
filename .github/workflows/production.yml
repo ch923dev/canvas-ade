@@ -109,7 +109,7 @@ jobs:
       # (broken) `--publish always` upload: scripts/release.mjs assembles release/feed/ from
       # exactly these files and rclone-copies them to R2 (docs/contributing/releasing.md).
       - name: Upload signed installers + feed files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: feed-${{ matrix.os }}
           path: |
