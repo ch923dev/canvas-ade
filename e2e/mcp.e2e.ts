@@ -706,6 +706,39 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(deniedToolNotFound(workerClose, 'close_board')).toBe(true)
   })
 
+  test('@core inert scrim: a backdrop pointerdown does NOT dismiss the confirm gate; Esc still denies', async ({
+    page,
+    mcp
+  }) => {
+    test.slow() // a real confirm-modal round-trip
+    // 🔒 Part B (relay_prompts UX): click-outside a human-confirm gate must do NOTHING — a
+    // dangerous dispatch decision must come from an explicit Deny/Approve (or the Esc deny),
+    // never an accidental backdrop click. Esc keeps its documented fail-closed deny (BUG-005).
+    const id = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    expect(id).not.toBe('')
+    await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
+
+    // Pop a real confirm gate (close_board blocks on the human confirm over the wire).
+    const closeP = mcp.orch.call('close_board', { id })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+
+    // Click OUTSIDE the card — a pointerdown on the scrim itself. With scrimClose={false} this is
+    // INERT: no reply is sent, the modal stays up, and the board is untouched.
+    const BACKDROP_DOWN =
+      `(() => { const s = document.querySelector('[data-testid="confirm-backdrop"]'); ` +
+      `if (!s) return false; s.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); return true })()`
+    expect(await evalIn(page, BACKDROP_DOWN)).toBe(true)
+    await page.waitForTimeout(400) // give any (wrongful) dismissal a chance to fire
+    expect(await evalIn(page, MODAL)).toBe(true) // still up — click-outside did nothing
+    expect(await boardOnCanvas(page, id)).toBe(true) // nothing decided → board untouched
+
+    // Esc STILL denies (fail-safe) → the close call rejects and the board stays.
+    await page.keyboard.press('Escape')
+    expect(rejected(await closeP)).toBe(true)
+    expect(await boardOnCanvas(page, id)).toBe(true)
+    await closeBoardGated(page, mcp, id) // restore the baseline (approve the close)
+  })
+
   test('SECURITY: the orchestrator spawn cap rejects beyond the limit (nothing auto-spawns unbounded)', async ({
     page,
     mcp
