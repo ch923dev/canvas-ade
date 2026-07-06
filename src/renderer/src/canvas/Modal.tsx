@@ -46,6 +46,12 @@ export interface ModalProps {
   onClose: () => void
   /** Busy lock: blocks Esc + scrim close and shows a wait cursor (BUG-007(5)). */
   closeDisabled?: boolean
+  /**
+   * Permanent block: like `closeDisabled` (no Esc, no scrim close) but the default cursor —
+   * for a modal the user is NOT meant to dismiss at all (the mandatory-update gate), as
+   * opposed to a transient busy state. `onClose` is never called from Esc/scrim while set.
+   */
+  blocking?: boolean
   /** Stacking order of the scrim — each call site keeps its established layer. */
   zIndex: number
   /**
@@ -69,6 +75,7 @@ export function Modal({
   label,
   onClose,
   closeDisabled = false,
+  blocking = false,
   zIndex,
   confirmGate = false,
   initialFocusRef,
@@ -78,6 +85,9 @@ export function Modal({
   children
 }: ModalProps): ReactElement {
   const cardRef = useRef<HTMLDivElement>(null)
+  // Either lock suppresses Esc + scrim close; `blocking` keeps the default cursor (a
+  // permanent gate, not a transient busy state).
+  const locked = closeDisabled || blocking
 
   // A7: initial focus on mount, restore on unmount. Mount-only — the queue-advancing
   // ConfirmModal keeps one mounted Modal across requests and must not re-steal focus.
@@ -101,14 +111,14 @@ export function Modal({
   // mid-dispatch — the DOM skips a listener removed during dispatch, so a real OS Esc never
   // reached a deps-churned listener (caught by modal.e2e.ts; invisible to jsdom tests).
   const onCloseRef = useRef(onClose)
-  const closeDisabledRef = useRef(closeDisabled)
+  const lockedRef = useRef(locked)
   useEffect(() => {
     onCloseRef.current = onClose
-    closeDisabledRef.current = closeDisabled
+    lockedRef.current = locked
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || closeDisabledRef.current) return
+      if (e.key !== 'Escape' || lockedRef.current) return
       e.preventDefault()
       onCloseRef.current()
     }
@@ -146,7 +156,7 @@ export function Modal({
       {...scrimProps}
       {...(confirmGate ? { 'data-confirm-active': '' } : {})}
       onPointerDown={() => {
-        if (!closeDisabled) onClose()
+        if (!locked) onClose()
       }}
       style={{
         position: 'fixed',

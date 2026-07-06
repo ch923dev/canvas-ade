@@ -1,0 +1,5 @@
+{
+  "_comment": "SOURCE tier manifest for the update feed. scripts/gen-updates-json.mjs stamps `latest` from package.json and publishes this to <feed>/updates.json. Main fetches it each check (src/main/autoUpdate.ts › getMeta) to pick the tier. See docs/contributing/releasing.md › Update levels.",
+  "minSupported": "0.9.0",
+  "tiers": {}
+}

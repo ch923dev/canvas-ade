@@ -1,51 +1,124 @@
 /**
- * About detail pane — the `about` tile (System group). Product identity + the auto-update surface.
+ * About detail pane — the `about` tile (System group). Product identity + the manual-update surface.
  * Auto-update (electron-updater) is Phase-5 + compiler-gated (`__ENABLE_AUTO_UPDATE__`): in an
- * unsigned/dev build MAIN wires no updater and `onStatus` never fires, so the pane shows the neutral
- * "updates are automatic" line. In a packaged build the same subscription (used by `useUpdateToasts`)
- * drives a live status line + a Restart button when an update is downloaded and ready.
+ * unsigned/dev build MAIN wires no updater and `onStatus` never fires, so the pane rests on the
+ * neutral "check for updates" state (the button is a no-op there — no handler is registered).
  *
- * No fabricated version number: the app exposes a version string only inside an update event
- * (`available`/`ready`), so we show it when we have it and stay silent otherwise.
+ * MANUAL model: the app only CHECKS on launch. When an update exists this pane shows it and the
+ * user drives the rest — Download, then Restart & install. Nothing downloads or installs on its own.
+ * The version string is only known from an update event (`available`/`ready`), so it is shown when
+ * we have it and never fabricated.
  */
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { pane } from '../paneStyles'
 
 /** Mirrors preload `UpdateStatus` (kept local — no shared import across the process boundary). */
 type UpdateStatus =
   | { state: 'checking' }
-  | { state: 'available'; version: string }
+  | { state: 'available'; version: string; tier: 'optional' | 'recommended' }
+  | { state: 'mandatory'; version: string }
   | { state: 'none' }
   | { state: 'downloading'; percent: number }
   | { state: 'ready'; version: string }
   | { state: 'error'; message: string }
 
-function statusLine(s: UpdateStatus | null): string {
-  if (!s) return 'Updates install automatically in the background.'
-  switch (s.state) {
-    case 'checking':
-      return 'Checking for updates…'
-    case 'available':
-      return `Downloading update ${s.version}…`
-    case 'downloading':
-      return `Downloading update… ${s.percent}%`
-    case 'ready':
-      return `Update ${s.version} is ready.`
-    case 'none':
-      return 'You’re on the latest version.'
-    case 'error':
-      return 'Updates install automatically in the background.'
-  }
-}
+const dotBase: CSSProperties = { width: 8, height: 8, borderRadius: 999, flex: 'none' }
 
 export function AboutPane(): ReactElement {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
+  // The available/ready version, kept across the download (download-progress carries no version).
+  const [version, setVersion] = useState('')
 
   useEffect(() => {
     const update = window.api?.update
     if (!update) return
-    return update.onStatus((s) => setStatus(s))
+    return update.onStatus((s) => {
+      setStatus(s)
+      if (s.state === 'available' || s.state === 'ready' || s.state === 'mandatory')
+        setVersion(s.version)
+    })
   }, [])
+
+  const check = (): void => {
+    setStatus({ state: 'checking' })
+    void window.api.update.check().catch(() => setStatus({ state: 'error', message: '' }))
+  }
+  const download = (): void => void window.api.update.download()
+  const install = (): void => void window.api.update.install()
+
+  // Derive the row's dot / title / sub / action from the current state.
+  let dot: ReactElement | null = null
+  let title = 'Updates'
+  let sub = 'Check for a newer version.'
+  let action: ReactElement | null = (
+    <button className="ca-btn-ghost" data-test="about-update-check" onClick={check}>
+      Check for updates
+    </button>
+  )
+
+  switch (status?.state) {
+    case 'checking':
+      sub = 'Checking for updates…'
+      action = (
+        <button className="ca-btn-ghost" data-test="about-update-check" disabled>
+          Checking…
+        </button>
+      )
+      break
+    case 'available': {
+      // Recommended reads louder (accent dot + filled primary); optional is calm (neutral
+      // dot + ghost). The mandatory tier never reaches here — it is its own state below.
+      const recommended = status.tier === 'recommended'
+      dot = (
+        <span style={{ ...dotBase, background: recommended ? 'var(--accent)' : 'var(--text-2)' }} />
+      )
+      title = `Update ${version} available`
+      sub = recommended ? 'Recommended · new features and fixes.' : 'Optional · ready to download.'
+      action = (
+        <button
+          className={recommended ? 'ca-btn-primary' : 'ca-btn-ghost'}
+          data-test="about-update-download"
+          onClick={download}
+        >
+          Download update
+        </button>
+      )
+      break
+    }
+    case 'mandatory':
+      dot = <span style={{ ...dotBase, background: 'var(--warn)' }} />
+      title = `Update required — ${version}`
+      sub = 'This version is no longer supported.'
+      action = (
+        <button className="ca-btn-primary" data-test="about-update-download" onClick={download}>
+          Download update
+        </button>
+      )
+      break
+    case 'downloading':
+      dot = <span style={{ ...dotBase, background: 'var(--accent)' }} />
+      title = 'Downloading update…'
+      sub = `${status.percent}%`
+      action = null
+      break
+    case 'ready':
+      dot = <span style={{ ...dotBase, background: 'var(--ok)' }} />
+      title = `Update ${version} ready`
+      sub = 'Installs on restart — your work is saved first.'
+      action = (
+        <button className="ca-btn-primary" data-test="about-update-install" onClick={install}>
+          Restart &amp; install
+        </button>
+      )
+      break
+    case 'error':
+      sub = 'Couldn’t reach the update server.'
+      break
+    case 'none':
+      sub = 'You’re on the latest version.'
+      break
+    // null (no event yet) → the neutral default above.
+  }
 
   return (
     <div style={pane.section}>
@@ -57,21 +130,37 @@ export function AboutPane(): ReactElement {
       </div>
 
       <div style={pane.setrow} data-test="about-updates-row">
-        <div style={{ flex: 1 }}>
-          <div style={pane.rowTitle}>Updates</div>
-          <div style={pane.rowSub} data-test="about-update-status">
-            {statusLine(status)}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...pane.rowTitle, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {dot}
+            <span>{title}</span>
           </div>
+          <div style={pane.rowSub} data-test="about-update-status">
+            {sub}
+          </div>
+          {status?.state === 'downloading' && (
+            <div
+              style={{
+                marginTop: 6,
+                height: 4,
+                borderRadius: 999,
+                background: 'var(--inset)',
+                overflow: 'hidden'
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${status.percent}%`,
+                  background: 'var(--accent)',
+                  borderRadius: 999,
+                  transition: 'width 0.3s ease-out'
+                }}
+              />
+            </div>
+          )}
         </div>
-        {status?.state === 'ready' && (
-          <button
-            className="ca-btn-primary"
-            data-test="about-update-install"
-            onClick={() => void window.api.update.install()}
-          >
-            Restart to update
-          </button>
-        )}
+        {action}
       </div>
     </div>
   )

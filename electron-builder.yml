@@ -102,21 +102,25 @@ linux:
     - target: AppImage
   category: Development
 
-# Update feed + release upload target (Phase 5). The GitHub provider does two things:
-# (1) lets `electron-builder --publish always` upload assets to the published Release
-#     (the production workflow). The previous `publish: null` SILENTLY NULLIFIED that
-#     CLI flag, so the release job went green while uploading zero assets (the
-#     bug-hunt finding at this line); and
-# (2) bakes app-update.yml into the app so electron-updater can read the HTTPS feed.
+# Update feed (Phase 5 · levels). The `generic` provider bakes app-update.yml into the app
+# so electron-updater reads the HTTPS feed at `url` (latest.yml + installer + blockmap). The
+# tier metadata (`updates.json`) is a SIBLING of this feed, fetched separately by main (see
+# src/main/autoUpdate.ts › getMeta), NOT part of electron-updater.
 #
-# SECURITY INVARIANT (audit `electron-updater-unsigned-latent`): configuring the feed
-# here does NOT by itself enable auto-update. The autoUpdater.checkForUpdates call
-# (src/main/autoUpdate.ts) is fenced behind the __ENABLE_AUTO_UPDATE__ build constant,
-# which is true ONLY when the production CI build sets ENABLE_AUTO_UPDATE=1 — and that
-# is set ONLY when code-signing secrets are present. An unsigned build therefore never
-# pulls an update over the feed (the remote-code-execution vector this invariant
-# guards). Do NOT flip the gate on for unsigned builds.
+# UPLOAD is decoupled: the generic provider is READ-ONLY (it can't push assets), so
+# `scripts/release.mjs` uploads the built artifacts + updates.json to the R2 bucket behind
+# `url` via rclone. `electron-builder --publish never` is used — publishing is the script's job.
+#
+# Local update test: point BOTH this `url` and the installed app-update.yml at the same host,
+# and set `CANVAS_UPDATE_FEED` to it so getMeta hits the same origin (docs/contributing/releasing.md).
+#
+# SECURITY INVARIANT (audit `electron-updater-unsigned-latent`): configuring the feed here does
+# NOT by itself enable auto-update. The autoUpdater.checkForUpdates call (src/main/autoUpdate.ts)
+# is fenced behind the __ENABLE_AUTO_UPDATE__ build constant, true ONLY when the production CI
+# build sets ENABLE_AUTO_UPDATE=1 — and that is set ONLY when code-signing secrets are present.
+# An unsigned build therefore never pulls an update over the feed (the remote-code-execution
+# vector this invariant guards). Do NOT flip the gate on for unsigned builds.
 publish:
-  provider: github
-  owner: ch923dev
-  repo: canvas-ade
+  provider: generic
+  url: https://updates.expanse.app/
+  channel: latest

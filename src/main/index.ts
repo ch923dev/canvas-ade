@@ -123,7 +123,8 @@ import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
-import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
+import { initAutoUpdate } from './autoUpdate'
+import { fetchUpdateMeta, resolveUpdater } from './autoUpdateWiring'
 import { createDeepLinkRouter } from './deepLinkBoot'
 import { createAuthTokenStore } from './authTokenStore'
 import { readSession, writeSession, clearSession } from './authSession'
@@ -1014,27 +1015,21 @@ app.whenReady().then(async () => {
   if (mainWindow)
     installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth, recapReEnsure)
 
-  // Phase 5 auto-update (gated). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
-  // electron.vite.config.ts); in a signed production build it checks the GitHub feed,
-  // auto-downloads, and surfaces an "update ready — Restart" toast in the renderer.
-  // electron-updater is loaded via a DYNAMIC import inside getUpdater so it (and its
-  // transitive deps, e.g. semver) are only required when the gate is open — an unsigned
-  // build never imports it, so a missing/unpacked updater dep can't crash boot.
+  // Phase 5 auto-update (gated · tiered). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
+  // electron.vite.config.ts); in a signed production build it checks the feed on launch and
+  // surfaces the right tier — optional toast / recommended banner / mandatory blocking modal
+  // (updates.json via getMeta). The concrete wiring (dynamic electron-updater import + the meta
+  // fetch) lives in autoUpdateWiring.ts so this file stays a thin caller. A rejection here means
+  // the gate was open (signed build) but init failed — a packaging defect; log it, never let it
+  // become an unhandled rejection that crashes main under Node 22's throw-on-rejection default.
   initAutoUpdate({
     enabled: __ENABLE_AUTO_UPDATE__,
     isPackaged: app.isPackaged,
     ipc: ipcMain,
     getWin: () => mainWindow,
-    getUpdater: async () => {
-      // The real electron-updater autoUpdater satisfies UpdaterLike at runtime; the
-      // double-cast is the deliberate boundary between our minimal interface and its
-      // richly-overloaded per-event types (so autoUpdate.ts stays test-injectable).
-      const mod = await import('electron-updater')
-      return mod.autoUpdater as unknown as UpdaterLike
-    }
-    // A rejection here means the gate was open (signed build) but updater init/import
-    // failed — a packaging defect. Log it; never let it become an unhandled rejection
-    // that crashes main under Node 22's --unhandled-rejections=throw default.
+    currentVersion: app.getVersion(),
+    getMeta: fetchUpdateMeta,
+    getUpdater: resolveUpdater
   }).catch((err) => console.error('[auto-update] init failed', err))
 
   if (SMOKE && mainWindow) {

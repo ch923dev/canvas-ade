@@ -68,6 +68,7 @@
   --accent-wash: rgba(79, 140, 255, 0.14);
   --ok: #3ecf8e;
   --warn: #e8b339;
+  --warn-wash: rgba(232, 179, 57, 0.12);
   --err: #f2545b;
 
   /* §2 Overlay + one-off chrome colors (design-audit D0-3) */

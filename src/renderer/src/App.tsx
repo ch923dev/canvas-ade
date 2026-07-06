@@ -8,7 +8,7 @@ import ProjectDock from './canvas/ProjectDock'
 import SwitchTransitionOverlay from './canvas/SwitchTransitionOverlay'
 import { useSwitchTransitionStore } from './store/switchTransitionStore'
 import { ToastIsland } from './canvas/Toast'
-import { useUpdateToasts } from './canvas/useUpdateToasts'
+import { UpdateSurfaces } from './canvas/UpdateSurfaces'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
@@ -30,7 +30,6 @@ function App(): React.ReactElement {
   useAutosave()
   useMcpPublish()
   useMcpCommands()
-  useUpdateToasts()
   // Phase 1 accounts: hydrate the account store at boot + subscribe to MAIN's auth:statusChanged.
   useAccountSync()
   // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
@@ -131,6 +130,10 @@ function App(): React.ReactElement {
           screen too (a failed final flush aborts the switch — its toast must outlive
           whatever surface raised it). */}
       <ToastIsland />
+      {/* Phase 5 auto-update: the tiered update surfaces (optional toast / recommended banner /
+          mandatory blocking modal). App-level + self-gating on main's update status — a no-op in
+          unsigned/dev builds (no updater is wired, so no status events fire). */}
+      <UpdateSurfaces />
       {/* Phase 1 accounts: the forced sign-in gate. `__REQUIRE_ACCOUNT__` is a build-time
           constant that DEFAULTS OFF (electron.vite.config.ts renderer define) — so this whole
           branch is dead-code-eliminated in normal builds and Phase 1 behaves exactly like today.
