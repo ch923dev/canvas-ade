@@ -224,3 +224,33 @@
 .bd-seg-btn:disabled {
   cursor: default;
 }
+
+/* Inline backdrop controls — Settings › Project › Appearance renders <BackdropControls> WITHOUT the
+   popover, so the wide gallery flows in the pane (the menu overflowed the modal horizontally). A soft
+   inset panel (bg --surface) so the transparent rows/tiles keep a visible --surface-overlay hover. */
+.bd-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+}
+.bd-inline .bd-row {
+  min-width: 0; /* drop the popover's 220px floor so a narrow pane never scrolls sideways */
+  border-radius: var(--r-ctl);
+}
+/* The gallery is the one control that WANTS the extra inline width — fill it as a tidy tile wall. */
+.bd-inline .bd-gallery {
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+}
+/* …but the sliders + grid segment are compact controls, not full-pane lines. Cap the slider track
+   and let the segment hug its labels (left-aligned) so nothing reads as stretched at inline width. */
+.bd-inline .bd-slider {
+  max-width: 440px;
+}
+.bd-inline .bd-seg {
+  display: inline-grid;
+  grid-template-columns: repeat(4, minmax(64px, auto));
+}
