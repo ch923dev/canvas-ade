@@ -53,6 +53,35 @@ export function parseLifecycleLine(raw: string): LifecycleSignal | null {
   return { boardId: d.boardId, event, cwd: typeof d.cwd === 'string' ? d.cwd : '' }
 }
 
+/**
+ * Notification title copy for a lifecycle event, folding in the agent name when known (SPEC Phase 4
+ * › Copy). `done` reads "Task done — claude"; `needs-input`/`error` read as the agent doing the
+ * thing ("claude needs your input"). An unknown agent (generic-PTY board with no `agentKind`)
+ * falls back to the literal word "agent".
+ */
+export function lifecycleTitle(event: LifecycleEvent, agent?: string): string {
+  const a = agent && agent.trim() ? agent.trim() : 'agent'
+  switch (event) {
+    case 'done':
+      return `Task done — ${a}`
+    case 'needs-input':
+      return `${a} needs your input`
+    case 'error':
+      return `${a} hit an error`
+  }
+}
+
+/**
+ * Notification body copy — `<board title> · <detail>` (SPEC Phase 4 › Copy). Either part may be
+ * absent (a board missing from the mirror, or the generic-PTY path with no resolved cwd); the
+ * present parts join on " · ", and an empty result falls back to a click hint so the notification is
+ * never bodyless.
+ */
+export function lifecycleBody(boardTitle?: string, detail?: string): string {
+  const parts = [boardTitle, detail].map((s) => (s ?? '').trim()).filter(Boolean)
+  return parts.length ? parts.join(' · ') : 'Click to open the board'
+}
+
 /** Number of complete (newline-terminated or final) JSONL rows in the text. */
 function countLines(text: string): number {
   if (!text) return 0

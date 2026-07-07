@@ -727,6 +727,14 @@ const api = {
      *  bind. Pulled on mount to surface a cold-start conflict the push path can't reach. */
     failures: (): Promise<string[]> => ipcRenderer.invoke('hotkey:failures')
   },
+  // ── Desktop-notification preferences (Settings › Notifications) ──
+  notifications: {
+    /** Read the persisted prefs. Null only from a foreign frame (guarded in MAIN). */
+    get: (): Promise<NotificationsConfig | null> => ipcRenderer.invoke('notifications:get'),
+    /** Persist the prefs (sanitized in MAIN). The delivery gate reads them fresh per event. */
+    set: (cfg: NotificationsConfig): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('notifications:set', cfg)
+  },
   // ── Phase 3 / W4 assets — write pasted/dropped bytes, read them back as bytes ──
   asset: {
     write: (bytes: Uint8Array, ext: string): Promise<{ assetId: string } | { error: string }> =>
@@ -910,6 +918,16 @@ export interface HotkeyConfig {
   enabled: boolean
   next: string
   prev: string
+}
+
+/** Mirrors main `notificationsConfig.NotificationsConfig` (duplicated across the bundle boundary).
+ *  Master switch + per-event toggles + the OS-only "only when unfocused" suppression. */
+export interface NotificationsConfig {
+  enabled: boolean
+  onDone: boolean
+  onInput: boolean
+  onError: boolean
+  onlyWhenUnfocused: boolean
 }
 
 export type CanvasApi = typeof api

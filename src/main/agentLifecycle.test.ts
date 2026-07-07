@@ -3,8 +3,36 @@ import {
   classifyHookEvent,
   parseLifecycleLine,
   createLifecycleScanner,
+  lifecycleTitle,
+  lifecycleBody,
   type LifecycleSignal
 } from './agentLifecycle'
+
+describe('lifecycleTitle', () => {
+  it('folds the agent name into each event phrase', () => {
+    expect(lifecycleTitle('done', 'claude')).toBe('Task done — claude')
+    expect(lifecycleTitle('needs-input', 'claude')).toBe('claude needs your input')
+    expect(lifecycleTitle('error', 'claude')).toBe('claude hit an error')
+  })
+  it('falls back to "agent" when the agent is unknown/blank', () => {
+    expect(lifecycleTitle('done')).toBe('Task done — agent')
+    expect(lifecycleTitle('needs-input', '  ')).toBe('agent needs your input')
+  })
+})
+
+describe('lifecycleBody', () => {
+  it('joins board title and detail on " · "', () => {
+    expect(lifecycleBody('Backend', 'my-app')).toBe('Backend · my-app')
+  })
+  it('keeps whichever part is present', () => {
+    expect(lifecycleBody('Backend', '')).toBe('Backend')
+    expect(lifecycleBody(undefined, 'my-app')).toBe('my-app')
+  })
+  it('falls back to a click hint when both parts are empty', () => {
+    expect(lifecycleBody()).toBe('Click to open the board')
+    expect(lifecycleBody('', '  ')).toBe('Click to open the board')
+  })
+})
 
 describe('classifyHookEvent', () => {
   it('maps Stop and SubagentStop to done', () => {

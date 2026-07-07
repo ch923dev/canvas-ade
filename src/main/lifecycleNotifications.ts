@@ -4,25 +4,44 @@
  * node env where a runtime `electron` import would throw), and to keep index.ts under the
  * max-lines ratchet — the recapHealth.ts precedent.
  *
- * On each NEW agent-lifecycle line (done / needs-input / error), raise a native OS notification
- * (fires regardless of window focus; per-event + monitorActivity gating land in a later phase) and
- * push an in-app toast to the renderer. The OS notification's click focuses the window and pans to
- * the board (notify:focusBoard).
+ * On each NEW agent-lifecycle line (done / needs-input / error), pass it through the single {@link
+ * gateNotification} decision (master + per-event setting → onlyWhenUnfocused → the board's
+ * `monitorActivity`), then raise a native OS notification (unless the OS layer is suppressed while
+ * focused) and push an in-app toast + on-canvas attention mark to the renderer. The OS
+ * notification's click focuses the window and pans to the board (notify:focusBoard).
  */
-import { app, Notification, type BrowserWindow } from 'electron'
+import { app, ipcMain, Notification, type BrowserWindow } from 'electron'
 import { basename } from 'node:path'
-import { createLifecycleNotifier, type LifecycleEvent } from './agentLifecycle'
+import {
+  createLifecycleNotifier,
+  lifecycleBody,
+  lifecycleTitle,
+  type LifecycleEvent
+} from './agentLifecycle'
+import {
+  gateNotification,
+  readNotificationsConfig,
+  registerNotificationsHandlers,
+  type NotificationsConfig
+} from './notificationsConfig'
+import { setPtyLifecycleEmitter } from './pty'
+import { listBoardMirror } from './boardRegistry'
 
-const NOTIFY_TITLE: Record<LifecycleEvent, string> = {
-  done: 'Task done',
-  'needs-input': 'Needs your input',
-  error: 'Agent error'
+/** The board facts the gate + copy need — projected from the MAIN board mirror by id. */
+export interface LifecycleBoard {
+  title?: string
+  agentKind?: string
+  monitorActivity?: boolean
 }
 
 export interface LifecycleNotificationsDeps {
   /** Absolute path to the app-owned session-map JSONL (the recap hook appends to it). */
   mapPath: string
   getWin: () => BrowserWindow | null
+  /** Read the CURRENT notification prefs at fire time (fresh on every event — never cached). */
+  getConfig: () => NotificationsConfig
+  /** Look up a board's title/agentKind/monitorActivity by id (from the MAIN mirror); may be absent. */
+  getBoard: (boardId: string) => LifecycleBoard | undefined
   /** Test seam: default raises a real Electron Notification. */
   notify?: (opts: { title: string; body: string; onClick: () => void }) => void
 }
@@ -66,23 +85,41 @@ export function registerLifecycleNotifications(
 ): LifecycleNotificationsHandle {
   const raise = deps.notify ?? defaultOsNotify
   const deliver = ({ boardId, event, cwd }: DeliverableSignal): void => {
-    const where = cwd ? basename(cwd) : ''
-    raise({
-      title: NOTIFY_TITLE[event],
-      body: where ? `${where} — click to open the board` : 'Click to open the board',
-      onClick: () => {
-        const win = deps.getWin()
-        if (!win || win.isDestroyed()) return
-        if (win.isMinimized()) win.restore()
-        win.show()
-        win.focus()
-        const wc = win.webContents
-        if (!wc.isDestroyed()) wc.send('notify:focusBoard', { boardId })
-      }
+    // Gate first: board opt-out → master → per-event → onlyWhenUnfocused (the ONE decision point).
+    const board = deps.getBoard(boardId)
+    const focusWin = deps.getWin()
+    const windowFocused = !!focusWin && !focusWin.isDestroyed() && focusWin.isFocused()
+    const decision = gateNotification({
+      event,
+      config: deps.getConfig(),
+      windowFocused,
+      // Absent monitorActivity ⇒ monitored (opt-out, not opt-in); only an explicit `false` silences.
+      monitored: board?.monitorActivity !== false
     })
-    // In-app toast + attention — guarded window deref: this can fire from a debounced fs.watch
-    // timer (Claude path) or the idle-scan interval (PTY path), so the window can be destroyed by
-    // then (mirror the recap:learned isDestroyed() discipline, BUG-001).
+    if (!decision.deliver) return
+
+    // OS layer — suppressed only when `onlyWhenUnfocused` is on and the window is focused.
+    if (decision.os) {
+      const where = cwd ? basename(cwd) : ''
+      raise({
+        title: lifecycleTitle(event, board?.agentKind),
+        body: lifecycleBody(board?.title, where),
+        onClick: () => {
+          const win = deps.getWin()
+          if (!win || win.isDestroyed()) return
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
+          const wc = win.webContents
+          if (!wc.isDestroyed()) wc.send('notify:focusBoard', { boardId })
+        }
+      })
+    }
+
+    // In-app toast + on-canvas attention — always fire when the event passes the gate (even when the
+    // OS layer is suppressed while focused: on-canvas is what disambiguates WHICH board). Guarded
+    // window deref: this can fire from a debounced fs.watch timer (Claude path) or the idle-scan
+    // interval (PTY path), so the window can be destroyed by then (mirror recap:learned, BUG-001).
     const win = deps.getWin()
     if (!win || win.isDestroyed()) return
     const wc = win.webContents
@@ -91,4 +128,31 @@ export function registerLifecycleNotifications(
   const dispose = createLifecycleNotifier({ mapPath: deps.mapPath, onEvent: deliver })
   app.once('before-quit', dispose)
   return { dispose, deliver }
+}
+
+/**
+ * One-call wiring for the whole desktop-notifications delivery layer, so index.ts (already at its
+ * max-lines ratchet) adds a single statement rather than the IPC + config-read + board-projection +
+ * pty-emitter plumbing (the recapHealth.ts extraction precedent). Self-imports the app-singleton
+ * dependencies (`ipcMain`, the `listBoardMirror` snapshot); the caller passes only the values it
+ * owns — the window getter, the session-map path, and the REAL userData dir (never a project
+ * folder). Registers the `notifications:*` IPC, starts the Claude-path watcher wired to the gate,
+ * routes the generic-PTY path into the SAME `deliver`, and self-disposes on before-quit.
+ */
+export function wireLifecycleNotifications(
+  getWin: () => BrowserWindow | null,
+  mapPath: string,
+  userDataDir: string
+): LifecycleNotificationsHandle {
+  registerNotificationsHandlers(ipcMain, getWin, userDataDir)
+  const handle = registerLifecycleNotifications({
+    mapPath,
+    getWin,
+    // Fresh read per event (settings change rarely; events are infrequent — no cache to invalidate).
+    getConfig: () => readNotificationsConfig(userDataDir),
+    // Project the board mirror by id for the gate (monitorActivity) + copy (title / agentKind).
+    getBoard: (id) => listBoardMirror().find((b) => b.id === id)
+  })
+  setPtyLifecycleEmitter(handle.deliver)
+  return handle
 }
