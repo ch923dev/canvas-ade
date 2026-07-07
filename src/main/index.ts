@@ -24,7 +24,8 @@ import {
   countProjectSessions,
   reapUndoParks,
   persistBackgroundRingTails,
-  backgroundParkedBoardIds
+  backgroundParkedBoardIds,
+  setPtyLifecycleEmitter
 } from './pty'
 import { appendTerminalSnapshot } from './terminalSnapshot'
 import { boardGitDiff } from './gitDiff'
@@ -1000,8 +1001,7 @@ app.whenReady().then(async () => {
     // guard isDestroyed() BEFORE dereferencing .webContents (mirrors flushRenderer).
     const win = mainWindow
     if (!win || win.isDestroyed()) return
-    const wc = win.webContents
-    if (!wc.isDestroyed()) wc.send('recap:learned', patches)
+    if (!win.webContents.isDestroyed()) win.webContents.send('recap:learned', patches)
   })
 
   // ── Desktop notifications: agent lifecycle → OS notification + in-app toast ───────────
@@ -1009,7 +1009,11 @@ app.whenReady().then(async () => {
   // appended to the SAME session map; registerLifecycleNotifications watches it for NEW lines and
   // raises a native OS notification + an in-app toast (skips history at init — no boot replay; it
   // self-disposes on before-quit).
-  registerLifecycleNotifications({ mapPath: recapMapPath, getWin: () => mainWindow })
+  const notify = registerLifecycleNotifications({ mapPath: recapMapPath, getWin: () => mainWindow })
+  // P3 generic-PTY detection path: route pty.ts's exit (done/error) + idle-at-prompt (needs-input)
+  // signals into the SAME `deliver` the Claude hook path uses — one delivery site, shared gating +
+  // copy. Wiring the emitter also starts the idle scan; both dispose with the app.
+  setPtyLifecycleEmitter(notify.deliver)
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this

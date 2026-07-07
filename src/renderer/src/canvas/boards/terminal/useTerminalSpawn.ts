@@ -367,6 +367,15 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     fontSizeRef.current = board.fontSize
   }, [board.fontSize])
 
+  // Desktop-notifications P3: the board's monitorActivity opt-out, forwarded on every spawn so MAIN
+  // can silence this session's generic-PTY lifecycle notifications. Read via a ref (like fontSizeRef)
+  // so a mid-session flip never becomes a spawn dep — it takes effect on the next (re)spawn, matching
+  // the other spawn-time board fields; a live flip still reaches MAIN through the board mirror.
+  const monitorActivityRef = useRef<boolean | undefined>(board.monitorActivity)
+  useEffect(() => {
+    monitorActivityRef.current = board.monitorActivity
+  }, [board.monitorActivity])
+
   // board.themeId / board.fontFamilyId for the spawn closure's INITIAL xterm construction, read via
   // refs so a change is NEVER a spawn dep — the theme/font apply LIVE in the host (TerminalBoard's
   // live-apply effects) without respawning the PTY (mirrors fontSizeRef / scrollbackRef). Lane B.
@@ -616,7 +625,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         cwd,
         launchCommand,
         cols: term.cols,
-        rows: term.rows
+        rows: term.rows,
+        monitorActivity: monitorActivityRef.current
       })
       .then((res) => {
         if (termRef.current !== term || respawnGenerationRef.current !== generation) return
@@ -905,7 +915,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           cwd,
           launchCommand,
           cols: term.cols,
-          rows: term.rows
+          rows: term.rows,
+          monitorActivity: monitorActivityRef.current
         })
         .then((res) => {
           // Guard: if the effect was torn down and a new term was created before this

@@ -34,6 +34,9 @@ export interface SpawnTerminalOpts {
   rows?: number
   /** Free-text agentic CLI written as the first PTY line (e.g. `claude`). */
   launchCommand?: string
+  /** Desktop-notifications P3: the board's `monitorActivity` opt-out (schema v10). `false` silences
+   *  this session's generic-PTY lifecycle notifications (exit done/error + idle needs-input). */
+  monitorActivity?: boolean
 }
 
 /** Result of `pty:spawn`: on failure `pid` is -1 and `state` is `spawn-failed`. */
