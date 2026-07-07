@@ -138,6 +138,12 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     purpose: 'Relay a prompt board->board over an orchestration connector (gated).',
     tier: 'orchestrator'
   },
+  {
+    name: 'relay_prompts',
+    purpose:
+      'Relay N prompts board->board in one batch over orchestration connectors (per-row human-confirm gated).',
+    tier: 'orchestrator'
+  },
   { name: 'interrupt', purpose: 'Send Ctrl-C to a terminal board (gated).', tier: 'orchestrator' },
   {
     name: 'add_planning_elements',
