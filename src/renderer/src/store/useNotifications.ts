@@ -1,15 +1,19 @@
 import { useEffect } from 'react'
+import { useAttentionStore } from './attentionStore'
 import { useCanvasStore } from './canvasStore'
 import { showToast } from './toastStore'
 
 /**
  * Desktop notifications (renderer side). Subscribes to MAIN's agent-lifecycle pushes:
- *  - `notify:lifecycle` → an in-app toast (with a Focus action that pans to the board).
+ *  - `notify:lifecycle` → an in-app toast (with a Focus action that pans to the board) + the
+ *    board's unseen-attention mark (P2 — the on-canvas ring/badge via attentionStore).
  *  - `notify:focusBoard` → the user clicked the OS notification: pan + select the board.
  *
  * Focus reuses the existing `pendingFocusId` intent (a Canvas effect consumes it → camera-fit +
- * dim) plus `selectBoard`, so no new store machinery. Guarded for non-electron test/smoke renders
- * (window.api absent); the effect returns the disposers.
+ * dim) plus `selectBoard`, so no new store machinery. Attention is "unseen" state: selecting a
+ * board (any path — click, focus action, OS-notification click) clears its mark via the
+ * canvasStore subscription below. Guarded for non-electron test/smoke renders (window.api
+ * absent); the effect returns the disposers.
  */
 const TOAST: Record<
   'done' | 'needs-input' | 'error',
@@ -31,6 +35,7 @@ export function useNotifications(): void {
     }
 
     const offLifecycle = api.onLifecycle(({ boardId, event }) => {
+      useAttentionStore.getState().setAttention(boardId, event)
       const board = useCanvasStore.getState().boards.find((b) => b.id === boardId)
       const name = board?.title?.trim() || 'Agent'
       const spec = TOAST[event]
@@ -43,9 +48,19 @@ export function useNotifications(): void {
     })
     const offFocus = api.onFocusBoard(({ boardId }) => focus(boardId))
 
+    // Attention is unseen-state: selecting a board (click, marquee, focus action, OS click —
+    // they all land in `selectedIds`) means the user saw it → drop its mark. clearAttention
+    // no-ops without a state change when the board carries none, so this per-change loop is
+    // render-cheap.
+    const offSelect = useCanvasStore.subscribe((s) => {
+      const { byId, clearAttention } = useAttentionStore.getState()
+      for (const id of s.selectedIds) if (byId[id]) clearAttention(id)
+    })
+
     return () => {
       offLifecycle()
       offFocus()
+      offSelect()
     }
   }, [])
 }

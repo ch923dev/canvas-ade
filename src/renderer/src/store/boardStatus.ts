@@ -13,6 +13,7 @@
  * M8 (permission detection), when MAIN gains the signals to detect them.
  */
 import type { PreviewStatus } from './previewStore'
+import type { AttentionKind } from './attentionStore'
 import type { BoardStatus } from '../canvas/BoardFrame'
 
 /** The coarse status buckets an agent (and the canvas chrome) sees per board. */
@@ -30,6 +31,8 @@ export interface BoardStatusSignals {
   terminalRunning?: boolean
   /** From `previewStore.byId[id].status` — a browser's load lifecycle. */
   preview?: PreviewStatus
+  /** From `attentionStore.byId[id]` — an unseen agent-lifecycle event (desktop-notifications P2). */
+  attention?: AttentionKind
 }
 
 /**
@@ -37,6 +40,13 @@ export interface BoardStatusSignals {
  * (forward) board type is treated as `static` — it has no known liveness signal.
  */
 export function boardStatusBucket(type: string, signals: BoardStatusSignals): BoardStatusBucket {
+  // Desktop-notifications P2: an unseen "find me" attention state outranks the liveness-derived
+  // bucket — a Claude Notification fires while the PTY is still `running`, and the whole point is
+  // that the board reads warn/err until the user looks at it. `done`-unseen keeps the normal
+  // derivation (DESIGN.md gives it a badge, not a bucket change). This is what activates the
+  // reserved `awaiting-review` bucket (T1.3) and feeds the MAIN status differ → `canvas://attention`.
+  if (signals.attention === 'needs-input') return 'awaiting-review'
+  if (signals.attention === 'error') return 'failed'
   switch (type) {
     case 'terminal':
       return signals.terminalRunning ? 'running' : 'idle'
@@ -88,6 +98,9 @@ export function bucketToPill(bucket: BoardStatusBucket): BoardStatus | null {
 export interface BoardStatusRuntime {
   running: Record<string, boolean>
   preview: Record<string, { status: PreviewStatus }>
+  /** Unseen agent-attention per board (desktop-notifications P2). Optional so pre-existing
+   *  callers/tests without the slice snapshot byte-identical to before. */
+  attention?: Record<string, AttentionKind>
 }
 
 /**
@@ -397,7 +410,8 @@ export function buildBoardSnapshot(
       title: b.title,
       status: boardStatusBucket(b.type, {
         terminalRunning: runtime.running[b.id],
-        preview: runtime.preview[b.id]?.status
+        preview: runtime.preview[b.id]?.status,
+        attention: runtime.attention?.[b.id]
       }),
       ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
       ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),

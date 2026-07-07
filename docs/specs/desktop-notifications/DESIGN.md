@@ -15,7 +15,7 @@ The point: distinguish "an agent is *working*" (calm, ignore) from "an agent *wa
 |---|---|---|---|---|
 | running | `--ok` | normal border | — | calm spinner sliver only |
 | **needs-input** | `--warn` | `--warn` ring (3px `--warn-wash`) | "● needs you" | slow attention pulse |
-| done (unseen) | `--ok` | normal | "✓ done" | none (steady) |
+| done (unseen) | `--ok` | `--ok` ring (steady) | "✓ done" | none (steady) — ring added on user ask 2026-07-07 |
 | **error / focus** | `--err` | `--err` ring | "! error" | none (steady ring) |
 
 - Maps to existing `boardStatus` buckets: `needs-input → awaiting-review`, `error → failed` (both already

@@ -31,6 +31,7 @@ import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
+import { BoardAttention } from './BoardAttention'
 import { BoardFrame } from './BoardFrame'
 import { useLingeringPresence } from './hooks/useLingeringPresence'
 
@@ -353,6 +354,10 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
       {showCard && (
         <LodBoardCard board={board} selected={selected} dimmed={dimmed} cardActive={cardActive} />
       )}
+      {/* Unseen-attention ring/badge (desktop-notifications P2) — node-level so it overlays
+          both the full-detail chrome and the LOD card with no per-type wiring. Rendered last
+          (above the card) and pointer-events:none; returns null when the board carries none. */}
+      <BoardAttention boardId={board.id} />
       {showDetail && createPortal(subtree, contentHost)}
     </>
   )
