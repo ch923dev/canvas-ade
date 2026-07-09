@@ -13,6 +13,7 @@ import { useCanvasStore } from '../../../store/canvasStore'
 import { makeImage, fitImageSize, IMAGE_MAX } from './elements'
 import { hasClipboard } from './elementClipboard'
 import { showToast } from '../../../store/toastStore'
+import { saveErrorMessage } from '../../../lib/saveError'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -57,7 +58,8 @@ export function usePlanningImageIO(deps: PlanningImageIODeps): {
         showToast({
           id: `image-write-failed-${board.id}`,
           kind: 'error',
-          message: 'Could not add image — check the project folder and disk space'
+          // C3: errno-mapped; a non-errno failure (no project / bad ext) → neutral generic.
+          message: saveErrorMessage(res.code, 'Could not add image')
         })
         return
       }

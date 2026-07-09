@@ -45,6 +45,49 @@
   }
 }
 
+/* §9/§7.1: terminal "working" braille spinner. Pure CSS (zero JS) — C2: the old 80ms
+   setInterval bumped React state on the 823-line TerminalBoard node, reconciling the whole
+   node 12.5×/sec while any shell was "running" (an idle prompt counts). `content` is
+   non-interpolable, so step-start flips the discrete glyph AT each keyframe offset — 10
+   frames over 1.2s = 120ms/frame (slower than the old 80ms, per the audit). Reduced motion
+   holds the base glyph (base.css nulls the animation). */
+.ca-spinner-glyph::before {
+  content: '⠋';
+  animation: ca-braille 1.2s step-start infinite;
+}
+@keyframes ca-braille {
+  0% {
+    content: '⠋';
+  }
+  10% {
+    content: '⠙';
+  }
+  20% {
+    content: '⠹';
+  }
+  30% {
+    content: '⠸';
+  }
+  40% {
+    content: '⠼';
+  }
+  50% {
+    content: '⠴';
+  }
+  60% {
+    content: '⠦';
+  }
+  70% {
+    content: '⠧';
+  }
+  80% {
+    content: '⠇';
+  }
+  90% {
+    content: '⠏';
+  }
+}
+
 .ca-pulse {
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
   animation: ca-pulse 1.8s ease-out infinite;
