@@ -1,0 +1,69 @@
+/* Desktop-notifications P2 — the on-canvas unseen-attention overlay (BoardAttention.tsx,
+   DESIGN.md Surface 1). One overlay per board node, above content + LOD card; colour is
+   keyed on data-kind via the --attn-c/--attn-wash custom props so the ring/badge rules stay
+   single-sourced. The needs-input pulse is the "wants you" beacon — slower + softer than the
+   ca-pulse running halo, and reduced-motion gated in base.css (ring + badge persist). */
+.ca-attn {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.ca-attn[data-kind='needs-input'] {
+  --attn-c: var(--warn);
+  --attn-wash: var(--warn-wash);
+}
+.ca-attn[data-kind='error'] {
+  --attn-c: var(--err);
+  --attn-wash: var(--err-wash);
+}
+.ca-attn[data-kind='done'] {
+  --attn-c: var(--ok);
+  --attn-wash: var(--ok-wash);
+}
+
+/* The attention ring: a 1.5px status-colour edge (the select-ring weight, §6) plus a 3px
+   wash halo. Sits on the board's own radius so it hugs the frame. */
+.ca-attn-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-board);
+  box-shadow:
+    0 0 0 1.5px var(--attn-c),
+    0 0 0 4.5px var(--attn-wash);
+}
+.ca-attn[data-kind='needs-input'] .ca-attn-ring {
+  animation: ca-attn-pulse 2.4s ease-out infinite;
+}
+@keyframes ca-attn-pulse {
+  0% {
+    box-shadow:
+      0 0 0 1.5px var(--attn-c),
+      0 0 0 3px color-mix(in srgb, var(--attn-c) 35%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow:
+      0 0 0 1.5px var(--attn-c),
+      0 0 0 10px transparent;
+  }
+}
+
+/* The badge: a mono micro chip riding the board's top-right edge, status-tinted on the
+   raised surface so it reads over both the frame and the canvas behind it. */
+.ca-attn-badge {
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  font-weight: var(--fw-micro);
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  border: 1px solid var(--attn-c);
+  color: var(--attn-c);
+  white-space: nowrap;
+}

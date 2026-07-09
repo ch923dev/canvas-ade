@@ -49,6 +49,23 @@ describe('boardStatusBucket', () => {
     expect(boardStatusBucket('planning', {})).toBe('static')
     expect(boardStatusBucket('whatever-future', {})).toBe('static')
   })
+
+  it('unseen attention outranks liveness: needs-input → awaiting-review, error → failed (P2)', () => {
+    // A Claude Notification fires while the PTY is still running — attention must win.
+    expect(boardStatusBucket('terminal', { terminalRunning: true, attention: 'needs-input' })).toBe(
+      'awaiting-review'
+    )
+    expect(boardStatusBucket('terminal', { terminalRunning: true, attention: 'error' })).toBe(
+      'failed'
+    )
+  })
+
+  it('done-unseen keeps the liveness derivation (badge-only per DESIGN.md)', () => {
+    expect(boardStatusBucket('terminal', { terminalRunning: true, attention: 'done' })).toBe(
+      'running'
+    )
+    expect(boardStatusBucket('terminal', { attention: 'done' })).toBe('idle')
+  })
 })
 
 describe('buildBoardSnapshot', () => {
@@ -77,6 +94,18 @@ describe('buildBoardSnapshot', () => {
       preview: {}
     })
     expect(snapshot[0].status).toBe('idle')
+  })
+
+  it('threads per-board attention into the bucket (P2 — the canvas://attention feed)', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        { id: 't1', type: 'terminal', title: 'A' },
+        { id: 't2', type: 'terminal', title: 'B' }
+      ],
+      { running: { t1: true, t2: true }, preview: {}, attention: { t1: 'needs-input' } }
+    )
+    expect(snapshot[0].status).toBe('awaiting-review')
+    expect(snapshot[1].status).toBe('running')
   })
 
   it('forwards v10 agentKind + monitorActivity only when present (Phase B)', () => {
