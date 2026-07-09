@@ -53,14 +53,20 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
       await mainCall(electronApp, 'notifyDeliver', id, c.event)
 
       // (1) In-app toast surfaced through the REAL deliver → notify:lifecycle IPC → useNotifications.
-      const toastOk = await pollEval(
-        page,
-        `window.__canvasE2E.notifyToasts().some((t) => t.message.includes(${JSON.stringify(
-          c.verb
-        )}) && t.kind === ${JSON.stringify(c.toastKind)})`,
-        5000
-      )
-      expect(toastOk, `toast for ${c.event}`).toBe(true)
+      // Read the toast array to Node and match here — never interpolate the verb/kind INTO an
+      // in-page eval string (keeps the value off the code-construction path; CodeQL js/bad-code-sanitization).
+      await expect
+        .poll(
+          async () =>
+            (
+              await evalIn<Array<{ message: string; kind: string }>>(
+                page,
+                'window.__canvasE2E.notifyToasts()'
+              )
+            ).some((t) => t.message.includes(c.verb) && t.kind === c.toastKind),
+          { timeout: 5000, message: `toast for ${c.event}` }
+        )
+        .toBe(true)
 
       // (2) The on-canvas attention overlay rendered on THIS board with the right kind (→ colour).
       const ringOk = await pollEval(page, `${ring(id)} === ${JSON.stringify(c.event)}`, 5000)
