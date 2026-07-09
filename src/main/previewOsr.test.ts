@@ -90,25 +90,34 @@ describe('sanitizeOsrSize', () => {
       supersample: 1
     })
   })
-  it('hard-caps supersample at 4 (above the renderer M1 cap) and floors at 1', () => {
-    expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 99 }).supersample).toBe(4)
+  it('L7: hard-caps supersample at 2 (the renderer OSR_MAX_SUPERSAMPLE contract) and floors at 1', () => {
+    expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 99 }).supersample).toBe(2)
+    // A directly-driven S=4 (the old ceiling) is now clamped to 2 — halves the worst-case surface.
+    expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 4 }).supersample).toBe(2)
     expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 0.2 }).supersample).toBe(1)
     // Infinity is non-finite → falls back to 1 (the finite guard fires before the clamp).
     expect(
       sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: Infinity }).supersample
     ).toBe(1)
   })
-  it('hard-caps each logical dimension at 4096px (GPU texture sanity, even at S=4)', () => {
+  it('L7: hard-caps each logical dimension at 3840px (the uhd preset ceiling)', () => {
     const s = sanitizeOsrSize({ logicalW: 99999, logicalH: 8000, supersample: 2 })
-    expect(s.logicalW).toBe(4096)
-    expect(s.logicalH).toBe(4096)
-  })
-  it('passes the 4K (uhd) preset 3840×2160 through under the 4096 cap (v15)', () => {
-    const s = sanitizeOsrSize({ logicalW: 3840, logicalH: 2160, supersample: 2 })
     expect(s.logicalW).toBe(3840)
-    expect(s.logicalH).toBe(2160)
+    expect(s.logicalH).toBe(3840)
+  })
+  it('L7 plan-correction: the qhd (2560×1440) + uhd (3840×2160) wide presets pass unclamped', () => {
+    // STRUCTURAL_PLAN §4.3 said "logical ≤1280" — that MISSED these; clamping to 1280 would break
+    // their reflow. The real ceiling is uhd 3840. Both must round-trip unchanged.
+    expect(sanitizeOsrSize({ logicalW: 2560, logicalH: 1440, supersample: 2 })).toEqual({
+      logicalW: 2560,
+      logicalH: 1440,
+      supersample: 2
+    })
+    const uhd = sanitizeOsrSize({ logicalW: 3840, logicalH: 2160, supersample: 2 })
+    expect(uhd.logicalW).toBe(3840)
+    expect(uhd.logicalH).toBe(2160)
     // physical = logical · S = 3840·2 = 7680 ≤ the ~16384 GPU texture limit.
-    expect(s.logicalW * s.supersample).toBeLessThanOrEqual(16384)
+    expect(uhd.logicalW * uhd.supersample).toBeLessThanOrEqual(16384)
   })
 })
 
