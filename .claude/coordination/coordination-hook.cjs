@@ -40,13 +40,27 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const COORD = 'Z:\\Canvas ADE\\.claude\\coordination';
+// Shared state lives in the MAIN repo's .claude/coordination — resolved from git so it works
+// from main OR any worktree and survives a repo move/rename (a hardcoded absolute path broke
+// silently when the repo moved off Z:\Canvas ADE). Every worktree checkout carries its own copy
+// of this script, so __dirname is per-branch; only the git common dir points at MAIN for all.
+const COORD = (() => {
+  try {
+    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd: __dirname,
+      encoding: 'utf8'
+    }).trim();
+    return path.join(path.dirname(common), '.claude', 'coordination');
+  } catch {
+    return __dirname; // git unavailable — correct only in the MAIN checkout; consumers all no-op safely
+  }
+})();
 const MANIFEST = path.join(COORD, 'ACTIVE-WORK.md');
 const LOG = path.join(COORD, 'edit-log.jsonl');
 const TIP_JSON = path.join(COORD, 'integration-tip.json');
 const SIGNAL_LOG = path.join(COORD, 'merge-signal.jsonl');
 const FETCH_STAMPS = path.join(COORD, 'fetch-stamps');
-const MAIN_ROOT = path.dirname(path.dirname(COORD)); // Z:\Canvas ADE — where the authoritative .mcp.json lives
+const MAIN_ROOT = path.dirname(path.dirname(COORD)); // MAIN repo root — where the authoritative .mcp.json lives
 const LOG_MAX_BYTES = 80 * 1024; // rotate when larger; keep tail
 const FETCH_THROTTLE_MS = 180 * 1000; // at most one fetch / 3 min / worktree
 
