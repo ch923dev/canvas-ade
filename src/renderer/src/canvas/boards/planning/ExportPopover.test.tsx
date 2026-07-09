@@ -82,8 +82,15 @@ describe('ExportPopover — SVG export wires buildExport → export.save', () =>
 })
 
 describe('ExportPopover — failure feedback routes to the toast channel (D1-A)', () => {
-  it('a write failure raises an error toast (fixed copy, raw OS error kept off-screen)', async () => {
-    const save = vi.fn(async () => ({ ok: false, canceled: false, error: 'EACCES: /tmp/x.svg' }))
+  it('a write failure raises an errno-mapped error toast (raw OS error kept off-screen)', async () => {
+    // C3: MAIN propagates the write errno as `code`; the toast copy is mapped from it
+    // (EACCES → "the file is locked … or permission was denied"), not a fixed string.
+    const save = vi.fn(async () => ({
+      ok: false,
+      canceled: false,
+      code: 'EACCES',
+      error: 'EACCES: /tmp/x.svg'
+    }))
     ;(window as unknown as { api: unknown }).api = { export: { save } }
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<ExportPopover board={board()} />)
@@ -95,8 +102,10 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
     expect(toasts).toHaveLength(1)
     expect(toasts[0].id).toBe('export-failed-b1') // board-keyed: repeats replace in place
     expect(toasts[0].kind).toBe('error')
-    expect(toasts[0].message).toBe('Export failed — check file permissions and disk space')
-    // The raw OS error also lands on the console side-channel (kept off the fixed-copy toast).
+    expect(toasts[0].message).toBe(
+      'Export failed — the file is locked (antivirus or another program) or permission was denied.'
+    )
+    // The raw OS error also lands on the console side-channel (kept off the mapped-copy toast).
     expect(errSpy).toHaveBeenCalled()
     expect(errSpy.mock.calls.flat().join(' ')).toContain('EACCES')
   })
