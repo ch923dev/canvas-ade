@@ -120,6 +120,7 @@ import {
 } from './agentTranscript'
 import { createGetAgentMilestones, persistedTranscriptPath } from './agentMilestones'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
+import { wireLifecycleNotifications } from './lifecycleNotifications'
 import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
@@ -990,18 +991,22 @@ app.whenReady().then(async () => {
     // Task 11 (Slice B): register each learned transcript path with the mtime watcher so
     // writes to the file auto-debounce into a summaryLoop.onIntent call. track() is idempotent
     // for already-watched boards (it disposes + re-arms), so re-reads of the map are safe.
-    for (const [boardId, entry] of m.entries()) {
-      recapWatcher?.track(boardId, entry.transcriptPath)
-    }
+    for (const [boardId, entry] of m.entries()) recapWatcher?.track(boardId, entry.transcriptPath)
     // BUG-001: this onChange runs inside agentRecapMap's bare debounce setTimeout, so a
     // throw escapes to uncaughtException -> crashShutdown(1). Optional chaining does NOT
     // stop the .webContents getter from THROWING on a destroyed-but-non-null window, so
     // guard isDestroyed() BEFORE dereferencing .webContents (mirrors flushRenderer).
     const win = mainWindow
     if (!win || win.isDestroyed()) return
-    const wc = win.webContents
-    if (!wc.isDestroyed()) wc.send('recap:learned', patches)
+    if (!win.webContents.isDestroyed()) win.webContents.send('recap:learned', patches)
   })
+
+  // ── Desktop notifications: agent lifecycle → OS notification + in-app toast + on-canvas ────
+  // The recap hook fires on Stop / Notification (RECAP_HOOK_EVENTS), each appended to
+  // the SAME session map. wireLifecycleNotifications registers the notifications:* IPC, watches that
+  // map for NEW lines (skips history at init — no boot replay), gates + delivers each event, and
+  // routes the generic-PTY path into the same delivery site. Self-disposes on before-quit.
+  wireLifecycleNotifications(() => mainWindow, recapMapPath, userData)
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this

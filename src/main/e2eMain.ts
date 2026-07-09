@@ -34,6 +34,9 @@ import {
   disposeAllPtys
 } from './pty'
 import { setVoiceStubEnabled } from './voiceEngineStub'
+import { createLifecycleDeliver, type LifecycleBoard } from './lifecycleNotifications'
+import { DEFAULT_NOTIFICATIONS, type NotificationsConfig } from './notificationsConfig'
+import type { LifecycleEvent } from './agentLifecycle'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
 import { readBoardResult, recordBoardResult } from './boardResults'
@@ -282,6 +285,80 @@ export interface E2EMain {
    * spec files — a launch-env gate could not be per-spec). Always flip back off in the spec.
    */
   voiceStubSet(on: boolean): void
+  /**
+   * Desktop-notifications P5: drive a normalized lifecycle signal through the REAL MAIN delivery
+   * pipeline (`createLifecycleDeliver` — the SAME gate + `notify:lifecycle` IPC push production
+   * uses), routed to a self-contained e2e instance whose config / board-facts / focus are
+   * test-controlled and whose OS-notification layer is a recording SPY (never a real Notification).
+   * The renderer then surfaces the toast + on-canvas attention exactly as in production.
+   */
+  notifyDeliver(boardId: string, event: LifecycleEvent): void
+  /** P5: patch the e2e notify prefs the gate reads (master + per-event + onlyWhenUnfocused). */
+  notifyConfigure(patch: Partial<NotificationsConfig>): void
+  /** P5: set a board's facts the gate + copy read (monitorActivity opt-out / title / agentKind). */
+  notifySetBoard(boardId: string, facts: LifecycleBoard): void
+  /** P5: force the window-focused input to the gate (true/false), or null to read the real window. */
+  notifySetFocused(focused: boolean | null): void
+  /** P5: the OS-notification SPY's recorded calls — asserts whether the OS layer fired/was skipped. */
+  notifyOsCalls(): Array<{ title: string; body: string }>
+  /** P5: reset the e2e notify seam (config→defaults, clear board facts + OS-spy, focus→real). */
+  notifyReset(): void
+}
+
+/**
+ * Desktop-notifications P5 e2e seam. A self-contained instance of the REAL delivery pipeline
+ * (`createLifecycleDeliver`) with fully injected, test-controlled deps: an in-memory config +
+ * board-facts map + forced-focus override, and an OS-notify SPY that records calls instead of
+ * raising a real `Notification`. Lets the e2e drive a lifecycle event INTO MAIN's `deliver` and
+ * assert the toast + on-canvas attention it pushes to the renderer AND whether the OS layer was
+ * raised — deterministically, with no real OS notification and no 60s idle wait.
+ */
+interface NotifyProbe {
+  deliver: (boardId: string, event: LifecycleEvent) => void
+  configure: (patch: Partial<NotificationsConfig>) => void
+  setBoard: (boardId: string, facts: LifecycleBoard) => void
+  setFocused: (focused: boolean | null) => void
+  osCalls: () => Array<{ title: string; body: string }>
+  reset: () => void
+}
+
+function createNotifyProbe(win: BrowserWindow): NotifyProbe {
+  const state = {
+    config: { ...DEFAULT_NOTIFICATIONS } as NotificationsConfig,
+    boards: new Map<string, LifecycleBoard>(),
+    forcedFocus: null as boolean | null,
+    osCalls: [] as Array<{ title: string; body: string }>
+  }
+  // The SAME deliver production runs — only the deps are test-controlled. `raise` records instead
+  // of raising a real Notification; `isWindowFocused` honours the forced override when set.
+  const deliver = createLifecycleDeliver({
+    getWin: () => win,
+    getConfig: () => state.config,
+    getBoard: (id) => state.boards.get(id),
+    raise: (opts) => {
+      state.osCalls.push({ title: opts.title, body: opts.body })
+    },
+    isWindowFocused: (w) => (state.forcedFocus === null ? w.isFocused() : state.forcedFocus)
+  })
+  return {
+    deliver: (boardId, event) => deliver({ boardId, event }),
+    configure: (patch) => {
+      state.config = { ...state.config, ...patch }
+    },
+    setBoard: (boardId, facts) => {
+      state.boards.set(boardId, facts)
+    },
+    setFocused: (focused) => {
+      state.forcedFocus = focused
+    },
+    osCalls: () => [...state.osCalls],
+    reset: () => {
+      state.config = { ...DEFAULT_NOTIFICATIONS }
+      state.boards.clear()
+      state.forcedFocus = null
+      state.osCalls.length = 0
+    }
+  }
 }
 
 /**
@@ -366,6 +443,7 @@ export function installE2EMain(
   recapReEnsure: () => void
 ): void {
   if (!__ENABLE_E2E_MAIN__ || !process.env.CANVAS_E2E) return
+  const notifyProbe = createNotifyProbe(win)
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
     writeTerminal: debugWriteTerminal,
@@ -583,6 +661,24 @@ export function installE2EMain(
     },
     voiceStubSet(on) {
       setVoiceStubEnabled(on)
+    },
+    notifyDeliver(boardId, event) {
+      notifyProbe.deliver(boardId, event)
+    },
+    notifyConfigure(patch) {
+      notifyProbe.configure(patch)
+    },
+    notifySetBoard(boardId, facts) {
+      notifyProbe.setBoard(boardId, facts)
+    },
+    notifySetFocused(focused) {
+      notifyProbe.setFocused(focused)
+    },
+    notifyOsCalls() {
+      return notifyProbe.osCalls()
+    },
+    notifyReset() {
+      notifyProbe.reset()
     },
     recordRecapSession(boardId, transcriptPath) {
       const mapPath = join(app.getPath('userData'), 'recap', 'session-map.jsonl')

@@ -16,6 +16,7 @@ export type SettingsSectionId =
   | 'appearance'
   | 'terminal'
   | 'shortcuts'
+  | 'notifications'
   | 'voice'
   | 'llm'
   | 'orchestration'
@@ -67,6 +68,12 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         label: 'Shortcuts',
         icon: 'refresh',
         blurb: 'Global project-switch hotkey'
+      },
+      {
+        id: 'notifications',
+        label: 'Notifications',
+        icon: 'bell',
+        blurb: 'Agent-lifecycle desktop notifications'
       }
     ]
   },

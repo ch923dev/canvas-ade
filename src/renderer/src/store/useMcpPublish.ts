@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
 import { useTerminalRuntimeStore } from './terminalRuntimeStore'
 import { usePreviewStore } from './previewStore'
+import { useAttentionStore } from './attentionStore'
 import { buildBoardSnapshot } from './boardStatus'
 
 /** Warn once if the preload bridge is missing in Electron (vs silently in tests). */
@@ -34,6 +35,10 @@ export function useMcpPublish(): void {
   // browser load/fail) re-publishes even when the durable `boards` array is unchanged.
   const running = useTerminalRuntimeStore((s) => s.running)
   const previewById = usePreviewStore((s) => s.byId)
+  // Desktop-notifications P2: unseen attention shifts a board's bucket (needs-input →
+  // awaiting-review, error → failed), so a set/clear must re-publish — MAIN's status differ
+  // is what raises/settles the `canvas://attention` queue entry.
+  const attention = useAttentionStore((s) => s.byId)
   useEffect(() => {
     const publish = window.api?.mcp?.publishBoards
     if (!publish) {
@@ -48,11 +53,11 @@ export function useMcpPublish(): void {
     }
     const t = setTimeout(() => {
       publish({
-        boards: buildBoardSnapshot(boards, { running, preview: previewById }),
+        boards: buildBoardSnapshot(boards, { running, preview: previewById, attention }),
         connectors,
         groups
       })
     }, 150)
     return () => clearTimeout(t)
-  }, [boards, connectors, groups, running, previewById])
+  }, [boards, connectors, groups, running, previewById, attention])
 }

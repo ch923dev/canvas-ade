@@ -21,6 +21,7 @@ import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
+import { useAttentionStore } from '../../store/attentionStore'
 import { useCanvasStore } from '../../store/canvasStore'
 import {
   classifyPushTargets,
@@ -409,7 +410,15 @@ export function TerminalBoard({
   // TERM-01: an elapsed run timer (mm:ss) appended to the running pill — statusFor
   // already renders the optional `timer` arg as a ` · ${timer}` suffix.
   const runTimer = useRunTimer(running)
-  const status = statusFor(state, identity, runTimer)
+  // Desktop-notifications P2: unseen attention re-tints the pill DOT to warn/err (the DESIGN.md
+  // Surface-1 dot column) — the label stays the runtime truth (running/idle/exited); the node-level
+  // ring/badge overlay carries the wording. The warn/err dot also disarms BoardFrame's --ok glyph
+  // pulse, so the attention pulse is the only one lit.
+  const attention = useAttentionStore((s) => s.byId[board.id])
+  const attnDot =
+    attention === 'needs-input' ? 'var(--warn)' : attention === 'error' ? 'var(--err)' : null
+  const baseStatus = statusFor(state, identity, runTimer)
+  const status = attnDot ? { ...baseStatus, dot: attnDot } : baseStatus
   // Prefix the running label with the spinner glyph (the §7.1 "working" indicator).
   const displayStatus = running
     ? { ...status, label: `${brailleFrame(spinnerFrame)} ${status.label}` }
