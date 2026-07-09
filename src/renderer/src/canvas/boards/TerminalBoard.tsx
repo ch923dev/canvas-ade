@@ -19,8 +19,7 @@ import { createPortal } from 'react-dom'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalState'
-import { prefersReducedMotion } from '../../lib/motion'
+import { agentIdentity, isRunning, statusFor } from './terminalState'
 import { useCanvasStore } from '../../store/canvasStore'
 import {
   classifyPushTargets,
@@ -397,23 +396,13 @@ export function TerminalBoard({
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
-  // §9/§7.1 braille spinner: advance one frame every 80ms while running. Reduced
-  // motion holds it on a static glyph (no interval → frame stays put).
-  const [spinnerFrame, setSpinnerFrame] = useState(0)
-  useEffect(() => {
-    if (!running || prefersReducedMotion()) return
-    const id = setInterval(() => setSpinnerFrame((f) => f + 1), 80)
-    return () => clearInterval(id)
-  }, [running])
-
   // TERM-01: an elapsed run timer (mm:ss) appended to the running pill — statusFor
   // already renders the optional `timer` arg as a ` · ${timer}` suffix.
   const runTimer = useRunTimer(running)
   const status = statusFor(state, identity, runTimer)
-  // Prefix the running label with the spinner glyph (the §7.1 "working" indicator).
-  const displayStatus = running
-    ? { ...status, label: `${brailleFrame(spinnerFrame)} ${status.label}` }
-    : status
+  // C2: the §7.1 "working" braille spinner is now a pure-CSS ::before in BoardFrame (gated on
+  // `running`) — it no longer bumps component state on this 823-line node every 80ms, so an
+  // idle-but-running terminal stops reconciling the whole node 12.5×/sec.
 
   // TERM-06: send Ctrl-C + a brief confirmation (⏹ button pulse + "interrupt sent" chip).
   const { interruptSent, interrupt } = useInterruptFeedback(portRef)
@@ -580,7 +569,7 @@ export function TerminalBoard({
         dimmed={dimmed}
         running={running}
         spawning={state === 'spawning'}
-        status={displayStatus}
+        status={status}
         contentBg={themeBg}
         onFull={onFull}
         onDuplicate={onDuplicate}

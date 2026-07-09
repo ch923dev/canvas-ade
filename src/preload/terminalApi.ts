@@ -11,8 +11,9 @@ export const terminalApi = {
   saveOutput: (args: {
     text: string
     suggestedName: string
-  }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
-    ipcRenderer.invoke('terminal:saveOutput', args),
+  }): Promise<
+    { ok: true; path: string } | { ok: false; canceled?: boolean; error?: string; code?: string }
+  > => ipcRenderer.invoke('terminal:saveOutput', args),
   // ── S3: persist/restore the live buffer across restart (per-board .canvas/terminal/ sidecar) ──
   /**
    * Write the serialized ANSI buffer to the board's sidecar. False on no-project / bad id / fs error.

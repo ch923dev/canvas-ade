@@ -72,7 +72,8 @@ describe('registerProjectHandlers (T4)', () => {
     registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
     const result = await cap.invoke('project:save', { schemaVersion: 2, boards: [] })
-    expect(result).toBe(false)
+    // C3: a non-error rejection returns { ok:false } with NO errno.
+    expect(result).toEqual({ ok: false })
     expect(store.writeProject).not.toHaveBeenCalled()
   })
 
@@ -84,19 +85,25 @@ describe('registerProjectHandlers (T4)', () => {
 
     const doc = { schemaVersion: 2, boards: [] }
     const result = await cap.invoke('project:save', doc)
-    expect(result).toBe(true)
+    expect(result).toEqual({ ok: true })
     expect(store.writeProject).toHaveBeenCalledWith('/proj', doc)
   })
 
-  it('project:save returns false (no crash) when writeProject throws (SAVE-1)', async () => {
+  it('project:save returns { ok:false, code } (no crash) when writeProject throws (SAVE-1/C3)', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
-    store.writeProject.mockRejectedValue(new Error('ENOSPC: disk full'))
+    // C3: an errno-bearing failure — the handler must propagate `err.code`, not swallow it.
+    store.writeProject.mockRejectedValue(
+      Object.assign(new Error('ENOSPC: disk full'), { code: 'ENOSPC' })
+    )
     const cap = createIpcCapture()
     registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
     // The handler must catch the I/O error and report failure to the renderer,
     // not let the rejection escape (which the renderer floats silently).
-    await expect(cap.invoke('project:save', { schemaVersion: 2, boards: [] })).resolves.toBe(false)
+    await expect(cap.invoke('project:save', { schemaVersion: 2, boards: [] })).resolves.toEqual({
+      ok: false,
+      code: 'ENOSPC'
+    })
   })
 
   it('project:current sets currentDir only on ok', async () => {
@@ -288,7 +295,7 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
       schemaVersion: 2,
       boards: []
     })
-    expect(result).toBe(false)
+    expect(result).toEqual({ ok: false })
     expect(store.writeProject).not.toHaveBeenCalled()
   })
 
@@ -372,7 +379,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
 
     const doc = { schemaVersion: 4, viewport: null, boards: [] }
     const ok = await cap.invoke('project:save', doc)
-    expect(ok).toBe(true)
+    expect(ok).toEqual({ ok: true })
     expect(observe).toHaveBeenCalledWith(doc)
   })
 
@@ -389,7 +396,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     const cap = harness(engine)
 
     const ok = await cap.invoke('project:save', { schemaVersion: 4, viewport: null, boards: [] })
-    expect(ok).toBe(true) // save still succeeds despite the detector throwing
+    expect(ok).toEqual({ ok: true }) // save still succeeds despite the detector throwing
   })
 
   it('resets THEN baselines the engine with the loaded doc when a project is opened (switch)', async () => {

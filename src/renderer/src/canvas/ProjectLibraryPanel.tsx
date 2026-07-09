@@ -9,7 +9,7 @@
  * a single `<ProjectLibraryPanel />`. Reads the filesystem via the MAIN-confined `api.library`
  * (list/reveal/open) — no schema, nothing serialized.
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { Icon } from './Icon'
 import { FILEREF_MIME } from './fileTreeData'
 import { useLibraryStore } from '../store/libraryStore'
@@ -27,7 +27,7 @@ function formatBytes(n: number): string {
   return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`
 }
 
-export function ProjectLibraryPanel(): ReactElement {
+function ProjectLibraryPanelImpl(): ReactElement {
   // Open state lives in the store (not useState) so the e2e reset() can close it between specs —
   // a panel left open leaked across specs and occluded a later @preview click target.
   const open = useLibraryStore((s) => s.open)
@@ -186,3 +186,8 @@ export function ProjectLibraryPanel(): ReactElement {
     </>
   )
 }
+
+// H8: memoized. It takes NO props and drives its own store subscriptions, so memo fully insulates
+// it from CanvasInner's per-drag-frame / per-keystroke re-renders (it re-renders only when its own
+// libraryStore/canvasStore slices change).
+export const ProjectLibraryPanel = memo(ProjectLibraryPanelImpl)

@@ -33,7 +33,7 @@ beforeEach(() => {
       thumbs: vi.fn().mockResolvedValue({}),
       closeBackground: vi.fn().mockResolvedValue(true),
       forgetKeepPolicy: vi.fn().mockResolvedValue(true),
-      save: vi.fn().mockResolvedValue(true),
+      save: vi.fn().mockResolvedValue({ ok: true }), // C3: { ok, code? } shape
       open: vi.fn().mockResolvedValue({ ok: false, error: 'stub-open' }),
       background: vi.fn().mockResolvedValue({ ok: true, terminals: 1, previews: 0 }),
       closeActive: vi.fn().mockResolvedValue(true),

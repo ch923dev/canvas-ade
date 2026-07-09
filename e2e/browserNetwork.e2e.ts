@@ -17,11 +17,21 @@ const runtimeStatus = (id: string, status: string) =>
  *  inspector switch, then DESELECT so the left-docked Inspector can't occlude clicks on the
  *  panel itself (the board is fitView'd across the whole window). The panel's own chrome
  *  (Close X, dock toggle, tabs) is unchanged. */
-async function openNet(page: Page, id: string): Promise<void> {
+async function openNet(page: Page, id: string, opts: { reload?: boolean } = {}): Promise<void> {
   await selectForInspector(page, id)
   await openInspectorSection(page, 'Developer')
   await page.getByRole('switch', { name: 'Network inspector' }).click()
   await deselectInspector(page)
+  // H6: network capture is LAZY now — it arms only when this panel subscribes (the switch click
+  // above → Network.enable), matching real DevTools ("open the panel, then reload to record"). The
+  // page already loaded before the panel opened, so reload WITH the panel open to capture a fresh
+  // document load + any ?xhr/?big/?find subresources — giving the assertions below real captured rows.
+  // A caller that immediately injects SYNTHETIC rows via seedOsrNet (a reopen replay) passes
+  // { reload: false } — the reload's clear-on-nav would otherwise race the seed and blank the list.
+  if (opts.reload !== false) {
+    await evalIn(page, `window.api.reloadOsrPreview(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+  }
 }
 
 /**
@@ -275,9 +285,9 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await page.getByRole('button', { name: 'Close inspector' }).click()
     await expect(page.locator('.bb-net')).toHaveCount(0)
 
-    // Reopen. Re-subscribe replays MAIN's few real rows (async), so poll-reseed 1000 to win that
-    // race and recreate the many-rows condition the stale scrollTop would mis-window.
-    await openNet(page, id)
+    // Reopen. This path re-seeds synthetic rows via seedOsrNet, so skip openNet's reload (its
+    // clear-on-nav would race the seed); re-subscribe alone recreates the many-rows condition.
+    await openNet(page, id, { reload: false })
     await expect
       .poll(
         async () => {
