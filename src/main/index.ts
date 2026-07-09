@@ -77,10 +77,11 @@ import {
   registerBoardRegistryHandler,
   subscribeBoardStatus
 } from './boardRegistry'
+import { startMcpCommandRouting } from './mcpRoutingBoot'
 import { sendMcpCommand } from './mcpCommand'
 import { registerOrchestratorIpc, forwardBoardStatus } from './mcpOrchestratorIpc'
 import { createAuditLog } from './auditLog'
-import { registerAuditHandler, getAuditLog } from './auditIpc'
+import { registerAuditHandler, appendAuditEntry } from './auditIpc'
 import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
@@ -476,6 +477,9 @@ app.whenReady().then(async () => {
   // `?? Promise.resolve()` short-circuit), leaving an invisible gap in the forensic trail.
   // Append-only JSONL under userData (NEVER the project folder — must outlive any project).
   registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: userData }))
+  // Cross-project routing (2026-07-09): human-confirmed commands targeting a NON-active project
+  // queue in a userData sidecar and deliver when that project is next foregrounded (mcpRoutingBoot).
+  const mcpRouting = startMcpCommandRouting({ userData, bus: ipcMain, getWin: () => mainWindow })
   mcp = await startMcpServer(
     {
       listBoards: listBoardMirror,
@@ -517,21 +521,15 @@ app.whenReady().then(async () => {
       // The per-row BATCH human-confirm gate (relay_prompts) — fail-closed; ONE modal, N rows.
       confirmBatch: (req) => requestConfirmBatch(ipcMain, () => mainWindow, req),
       // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
-      // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
-      audit: (e) =>
-        getAuditLog()
-          ?.append(e)
-          .then(() => {})
-          .catch((err: unknown) => {
-            // A failed audit write is a forensic gap — surface it in the log even if a future
-            // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
-            // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
-            console.error('[mcp-audit] append failed', err)
-            throw err
-          }) ?? Promise.resolve(),
+      // (registerAuditHandler — BUG-025); appendAuditEntry resolves it lazily at dispatch time
+      // and surfaces-then-rethrows a failed write (forensic gap — see auditIpc.ts).
+      audit: appendAuditEntry,
       // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
       // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
-      recordResult: (id, result) => recordBoardResult(id, result)
+      recordResult: (id, result) => recordBoardResult(id, result),
+      // Cross-project routing (2026-07-09): the visualize gate resolves a caller's OWN project
+      // (token-derived board → mint-time dir) and queues a confirmed board for a non-active one.
+      ...mcpRouting
     },
     {
       // The runaway-swarm spawn cap is user-configurable (orchestration-config.json in userData).

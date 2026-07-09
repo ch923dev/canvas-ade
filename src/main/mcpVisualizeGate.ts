@@ -42,9 +42,30 @@ export interface VisualizeGateDeps {
     status: DispatchStatus
     detail?: string
   }) => Promise<void>
+  /**
+   * Cross-project routing (2026-07-09), all three injected together or not at all (an unwired
+   * gate keeps today's active-canvas behaviour): resolve the ACTIVE project + the CALLER'S own
+   * project (from its token-derived `sourceBoardId`), and queue a confirmed command for a
+   * non-active project — delivered via `sendCommand` when that project is next foregrounded.
+   */
+  currentProjectDir?: () => string | null
+  boardProjectDir?: (boardId: string) => string | null
+  enqueueProjectCommand?: (dir: string, command: McpCommand) => boolean
 }
 
 type VisualizeMethod = Pick<LifecycleOrchestrator, 'visualizePlan'>
+
+/** Last path segment as a display name — separator-agnostic (Windows + POSIX), mirroring the
+ *  renderer's `basenameOf` (node's `path.basename` would mis-split a foreign-platform dir,
+ *  e.g. a Windows queue path replayed by the Linux unit leg). */
+function projectDisplayName(dir: string): string {
+  return (
+    dir
+      .replace(/[/\\]+$/, '')
+      .split(/[/\\]/)
+      .pop() || dir
+  )
+}
 
 export function createVisualizeMethod(deps: VisualizeGateDeps): VisualizeMethod {
   return {
@@ -84,9 +105,31 @@ export function createVisualizeMethod(deps: VisualizeGateDeps): VisualizeMethod 
       const suggested = resolveVisualization(spec.suggested)
       boardId = randomUUID()
 
+      // (2b) Cross-project routing: resolve the CALLER'S own project from its token-derived
+      // sourceBoardId (unforgeable — the package tool sets it from SessionCtx, never client
+      // input). A caller whose project is NOT the active one must land its board on ITS OWN
+      // canvas — via the pending-command queue — never on whichever project is foregrounded.
+      // All-or-nothing on the three optional deps; an unwired gate keeps the legacy behaviour.
+      const routable =
+        deps.currentProjectDir !== undefined &&
+        deps.boardProjectDir !== undefined &&
+        deps.enqueueProjectCommand !== undefined
+      const callerDir =
+        routable && spec.sourceBoardId !== undefined
+          ? (deps.boardProjectDir?.(spec.sourceBoardId) ?? null)
+          : null
+
       // (3) Mandatory human confirm — the UPGRADED gate: the body shows the FULL plan, the chooser
       // offers the four shapes with the suggestion preselected. MAIN owns the decision, fail-closed.
-      const body = renderVisualizeConfirmBody(plan, suggested)
+      // A cross-project call says so IN the confirm body: the human approves a board on the CALLER'S
+      // (backgrounded) canvas, not the one on screen.
+      const crossAtConfirm = callerDir !== null && deps.currentProjectDir?.() !== callerDir
+      const body =
+        renderVisualizeConfirmBody(plan, suggested) +
+        (crossAtConfirm
+          ? `\n\nTarget project: ${projectDisplayName(callerDir)} (in the background) — the board will be ` +
+            `created on that project's canvas when it is next opened, not on the current one.`
+          : '')
       const { approved, choice } = await deps.confirm({
         title: `Visualize a ${plan.items.length}-item plan`,
         body,
@@ -111,15 +154,34 @@ export function createVisualizeMethod(deps: VisualizeGateDeps): VisualizeMethod 
         ? (choice as Visualization)
         : suggested
 
-      // (5) Apply via the command channel — the renderer builds the fully-populated board + tidies it
-      // into open space as one undoable edit, re-validating as defense in depth. False ack → audit + throw.
-      const ack = await deps.sendCommand({
+      const command: McpCommand = {
         type: 'visualizePlan',
         id: boardId,
         visualization,
         ...(plan.title !== undefined ? { title: plan.title } : {}),
         items: plan.items
-      })
+      }
+
+      // (5a) Cross-project apply: RE-resolve the active project AFTER the (long) human confirm —
+      // a switch during the modal must not misroute — and queue the command for the caller's
+      // project instead of drawing on the foregrounded canvas. Delivery rides the same
+      // sendCommand path when that project is next opened; the agent learns via `queuedFor`.
+      if (callerDir !== null && deps.currentProjectDir?.() !== callerDir) {
+        const queued = deps.enqueueProjectCommand?.(callerDir, command) === true
+        if (!queued) {
+          await audit('failed', { prompt: body, detail: `queue full for ${callerDir}` })
+          throw new Error(`${auditType} failed: the target project's pending-command queue is full`)
+        }
+        await audit('applied', {
+          prompt: body,
+          detail: `queued for ${callerDir}; ${visualization}; ${plan.items.length} items`
+        })
+        return { id: boardId, queuedFor: projectDisplayName(callerDir) }
+      }
+
+      // (5) Apply via the command channel — the renderer builds the fully-populated board + tidies it
+      // into open space as one undoable edit, re-validating as defense in depth. False ack → audit + throw.
+      const ack = await deps.sendCommand(command)
       if (!ack.ok) {
         await audit('failed', { prompt: body, detail: `apply failed: ${ack.error}` })
         throw new Error(`${auditType} failed: ${ack.error}`)
