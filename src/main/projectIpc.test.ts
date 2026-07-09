@@ -348,11 +348,12 @@ describe('project:save expectedDir guard (BUG-009)', () => {
 
     const doc = { schemaVersion: 8, viewport: null, boards: [], connectors: [] }
     // The B-flavored save that lost the switch race must be rejected, leaving C intact.
-    expect(await handlers.get('project:save')!(synthetic, doc, projB)).toBe(false)
+    // C3: a cross-project rejection returns { ok:false } with NO errno (not a write failure).
+    expect(await handlers.get('project:save')!(synthetic, doc, projB)).toEqual({ ok: false })
     expect(readFileSync(join(projC, '.canvas', 'canvas.json'), 'utf8')).toBe(seeded)
     // A matching expectedDir saves; an omitted one keeps back-compat.
-    expect(await handlers.get('project:save')!(synthetic, doc, projC)).toBe(true)
-    expect(await handlers.get('project:save')!(synthetic, doc)).toBe(true)
+    expect(await handlers.get('project:save')!(synthetic, doc, projC)).toEqual({ ok: true })
+    expect(await handlers.get('project:save')!(synthetic, doc)).toEqual({ ok: true })
   })
 })
 

@@ -15,7 +15,7 @@ let save: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   vi.useFakeTimers()
-  save = vi.fn(async () => true)
+  save = vi.fn(async () => ({ ok: true })) // C3: project.save now returns { ok, code? }
   ;(window as unknown as { api: unknown }).api = {
     project: { save, onFlush: vi.fn(() => () => {}) }
   }
