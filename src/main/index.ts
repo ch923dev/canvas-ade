@@ -8,15 +8,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
   registerPtyHandlers,
   disposeAllPtys,
-  listPtySessions,
-  readPtyOutput,
-  drainPty,
-  writeToPty,
   getTerminalRuntime,
-  getTerminalActivityStaleMs,
-  isBracketedPasteEnabled,
   getTerminalBootInfo,
-  getTerminalCwd,
   setRecapEnvProvider,
   setOrchestrationSyncProvider,
   parkProjectSessions,
@@ -27,8 +20,6 @@ import {
   backgroundParkedBoardIds
 } from './pty'
 import { appendTerminalSnapshot } from './terminalSnapshot'
-import { boardGitDiff } from './gitDiff'
-import { createReadinessWaiter } from './terminalReadiness'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import {
   backgroundProjectOsr,
@@ -42,8 +33,7 @@ import { wireGlobalHotkey } from './globalHotkey'
 import { registerProjectThumbHandlers } from './projectThumbs'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
-import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
-import { readProjectMemory, readBoardSummary } from './boardMemory'
+import { pruneBoardResults } from './boardResults'
 import {
   buildMainWindowWebPreferences,
   windowOpenDecision,
@@ -68,20 +58,17 @@ import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
 import { performGuardedQuit, makeCrashHandler, performWindowCloseCleanup } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
-import { startMcpServer, type RunningMcp } from './mcp'
-import { readOrchestrationConfig, registerSpawnCapHandlers } from './orchestrationConfig'
+import type { RunningMcp } from './mcp'
+import { createMcpBoot } from './mcpBoot'
+import { registerSpawnCapHandlers } from './orchestrationConfig'
 import {
   listBoardMirror,
-  listConnectors,
-  listGroups,
   registerBoardRegistryHandler,
   subscribeBoardStatus
 } from './boardRegistry'
-import { sendMcpCommand } from './mcpCommand'
 import { registerOrchestratorIpc, forwardBoardStatus } from './mcpOrchestratorIpc'
 import { createAuditLog } from './auditLog'
-import { registerAuditHandler, getAuditLog } from './auditIpc'
-import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
+import { registerAuditHandler } from './auditIpc'
 import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
 import { registerTerminalHandlers } from './terminalIpc'
@@ -101,7 +88,7 @@ import { registerRecapHealthIpc, createFocusReEnsure, selectTranscriptClocks } f
 import { registerRecapHandlers, readConsent } from './recapConsent'
 import { registerOrchestrationHandlers } from './orchestrationConsent'
 import { registerOrchestrationProvisionHandlers } from './orchestrationProvision'
-import { mintTerminalToken } from './orchestration/seam'
+import { mintTerminalToken, isOrchestrationEnabled } from './orchestration/seam'
 import {
   bindProvisionedDirStore,
   loadPersistedProvisionedDirs,
@@ -137,6 +124,10 @@ import { AUTH_CONFIG } from './authConfig'
 // Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
 // production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
 declare const __ENABLE_AUTO_UPDATE__: boolean
+// Build-time e2e-seam gate (electron.vite.config.ts `define`), mirrored from e2eMain.ts. M11:
+// installE2EMain captures the `mcp` VALUE, so under the e2e seam we must eager-start the lazy MCP
+// server before that call — gated on the SAME (compile ∧ runtime) predicate e2eMain uses.
+declare const __ENABLE_E2E_MAIN__: boolean
 
 let mainWindow: BrowserWindow | null = null
 // Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
@@ -150,6 +141,9 @@ const deepLinks = createDeepLinkRouter(() => mainWindow)
 // license GET per hour of app runtime.
 const ENTITLEMENT_TTL_MS = 60 * 60 * 1000
 let localServer: LocalServer | null = null
+// M11: the resolved lazy MCP server (or null). Written by ensureMcp()'s publish callback (createMcpBoot
+// owns the memoization latch); read by the () => mcp getters below. Eager boot-time start removed so the
+// ESM @expanse-ade/mcp import + Express/SDK heap are paid only on first orchestration use.
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
 let stopRecapWatch: (() => void) | null = null
@@ -475,70 +469,17 @@ app.whenReady().then(async () => {
   // `?? Promise.resolve()` short-circuit), leaving an invisible gap in the forensic trail.
   // Append-only JSONL under userData (NEVER the project folder — must outlive any project).
   registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: userData }))
-  mcp = await startMcpServer(
-    {
-      listBoards: listBoardMirror,
-      // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
-      listConnectors,
-      // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
-      listGroups,
-      listSessions: listPtySessions,
-      // BUG-007: ms-since-last-PTY-output per board — the output-silence dormancy signal
-      // awaitSettled (C2e) polls, since a live agent shell's status never flips off 'running'.
-      boardActivityStaleMs: getTerminalActivityStaleMs,
-      // Relay cut-off fix (2026-07-04): DECSET-2004 probe — the dispatch gate paste-frames its
-      // body write only when the target's foreground app currently accepts bracketed paste.
-      isBracketedPaste: isBracketedPasteEnabled,
-      // Readiness gate (2026-07-03): boot-quiet waiter so a dispatched prompt lands in a READY
-      // REPL, not mid-boot (floor → activity → quiet, degrade-honestly backstop). One waiter
-      // instance per server so its per-process latch spans dispatches.
-      awaitReady: createReadinessWaiter({
-        bootInfo: getTerminalBootInfo,
-        activityStaleMs: getTerminalActivityStaleMs,
-        now: Date.now
-      }).awaitTerminalReady,
-      subscribeStatus: subscribeBoardStatus,
-      readOutput: readPtyOutput,
-      readResult: readBoardResult,
-      readMemory: readProjectMemory,
-      readSummary: readBoardSummary,
-      // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
-      sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
-      // Graceful PTY drain before an MCP close_board removes the board (T3.2).
-      drainPty: (id) => drainPty(id),
-      // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
-      // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
-      writeToPty: (id, text) => writeToPty(id, text),
-      // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
-      gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
-      // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
-      confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
-      // The per-row BATCH human-confirm gate (relay_prompts) — fail-closed; ONE modal, N rows.
-      confirmBatch: (req) => requestConfirmBatch(ipcMain, () => mainWindow, req),
-      // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
-      // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
-      audit: (e) =>
-        getAuditLog()
-          ?.append(e)
-          .then(() => {})
-          .catch((err: unknown) => {
-            // A failed audit write is a forensic gap — surface it in the log even if a future
-            // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
-            // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
-            console.error('[mcp-audit] append failed', err)
-            throw err
-          }) ?? Promise.resolve(),
-      // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
-      // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
-      recordResult: (id, result) => recordBoardResult(id, result)
-    },
-    {
-      // The runaway-swarm spawn cap is user-configurable (orchestration-config.json in userData).
-      // Pass a getter read FRESH per spawn check so a Settings change to the cap applies live —
-      // no MAIN restart, no orchestrator rebuild. Unset/absent config ⇒ MCP_SPAWN_CAP (4).
-      cap: () => readOrchestrationConfig(userData).spawnCap
+  // M11: lazy-start the in-app MCP loopback server (registry assembly + memoized ensureMcp live in
+  // mcpBoot.ts) — the ESM @expanse-ade/mcp import + Express/SDK heap + loopback bind are paid only on
+  // the FIRST orchestration use, not at boot. `publish` writes the resolved server into `mcp` so the
+  // () => mcp getters below observe it.
+  const ensureMcp = createMcpBoot({
+    getWin: () => mainWindow,
+    userData,
+    publish: (m) => {
+      mcp = m
     }
-  )
+  })
   // Phase C / C1: the renderer → MAIN orchestrator drive (Command board). Frame-guarded
   // handle() channels (spawnGroup/dispatchPrompt/interrupt) + the per-board status push that
   // advances the kanban. `() => mcp` is null until the loopback server is up (or if it failed
@@ -779,6 +720,15 @@ app.whenReady().then(async () => {
           mapPath: recapMapPath
         })
       }
+      // M11: a project consented in a PRIOR session never fires the ENABLE onChange this run, so
+      // warm the loopback MCP server when opening an already-orchestration-consented project —
+      // before the user spawns a consented terminal (whose spawn-time provisioner mints against the
+      // live server). Memoized ⇒ a no-op after the first open. Mirrors the recap re-ensure just above.
+      if (isOrchestrationEnabled(dir)) {
+        void ensureMcp().catch((err) =>
+          console.error('[mcp] lazy start on project open failed', err)
+        )
+      }
     },
     // Terminal recap: prune transcript watchers to the live board set on every save/open/switch,
     // so a deleted terminal (or a switched-away project's boards) doesn't leak its fs.watch handle
@@ -932,6 +882,12 @@ app.whenReady().then(async () => {
         // zeroed (no window where an on-disk token outlives the in-memory one it mirrors). Best-
         // effort + fire-and-forget: onChange returns synchronously and a locked file never blocks it.
         void revokeOrchestration(projectPath, unsyncProvisioners, () => mcp?.revokeAllConnected())
+      } else {
+        // M11: first ENABLE this session → lazy-start the loopback MCP server NOW, before the user's
+        // next terminal spawn (a separate, seconds-later gesture), so the spawn-time provisioner's
+        // mintTerminalToken finds a live minter instead of throwing (its throw is swallowed → the
+        // agent's .mcp.json would silently miss until a later spawn). Memoized ⇒ no-op if already up.
+        void ensureMcp().catch((err) => console.error('[mcp] lazy start on enable failed', err))
       }
     }
   )
@@ -1019,8 +975,14 @@ app.whenReady().then(async () => {
   // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
   // `onSettle` deterministically (it is created above in this same setup scope).
   // F4: recapReEnsure rides along so a spec can drive the heal without a real OS focus event.
-  if (mainWindow)
+  if (mainWindow) {
+    // M11: installE2EMain captures the `mcp` VALUE (not the () => mcp getter), so under the e2e seam
+    // a lazily-null mcp would strand the mcp.e2e.ts tier smoke (mcpInfo/gitDiff/spawnGroupNow/…).
+    // Match e2eMain's exact gate (__ENABLE_E2E_MAIN__ ∧ CANVAS_E2E) and eager-start so the seam
+    // captures the live server. Production never enters here (either half of the gate is false).
+    if (__ENABLE_E2E_MAIN__ && process.env.CANVAS_E2E) await ensureMcp()
     installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth, recapReEnsure)
+  }
 
   // Phase 5 auto-update (gated · tiered). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
   // electron.vite.config.ts); in a signed production build it checks the feed on launch and
