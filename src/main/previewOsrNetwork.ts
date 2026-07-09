@@ -476,6 +476,17 @@ export function armOsrNetwork(wc: WebContents): void {
   })
 }
 
+/**
+ * H6: stop capture (`Network.disable`). Called on panel UNSUBSCRIBE so an inspector-less board
+ * streams no request/response/WS traffic to MAIN. The 'message' listener stays attached (re-arm is
+ * cheap + idempotent); worker auto-attach is left alone (workers emit ~nothing without
+ * `Network.enable`). Fire-and-forget like `armOsrNetwork`.
+ */
+export function disarmOsrNetwork(wc: WebContents): void {
+  if (!wc.debugger.isAttached()) return
+  netCdp(wc, 'Network.disable')
+}
+
 export interface OsrNetworkDeps {
   state: OsrNetState
   /** Ferry a coalesced batch to the renderer (ensureOsr injects the board id + channel). */
@@ -495,7 +506,10 @@ export function attachOsrNetwork(wc: WebContents, deps: OsrNetworkDeps): void {
     handleNetMessage(wc, state, emit, method, params ?? {}, sessionId)
   })
 
-  armOsrNetwork(wc)
+  // H6: capture is LAZY now. Only the 'message' listener is attached here — `Network.enable`
+  // (+ worker auto-attach) is deferred to the first panel subscribe (registerOsrNetworkIpc). An
+  // inspector-less board therefore streams ZERO request/response/WS frames to MAIN; with capture
+  // off the listener simply never fires. (Was: `armOsrNetwork(wc)` unconditionally at attach.)
 }
 
 /**
@@ -517,15 +531,20 @@ export function wireOsrNetwork(
   // silently stops after the first page; a same-document nav (fragment / pushState) is left alone.
   wc.on('did-start-navigation', (details: NavDetails) => {
     if (!isMainFramePageNav(details)) return
-    armOsrNetwork(wc) // re-enable across the (possibly cross-process) navigation
+    // H6: re-enable across the (possibly cross-process) navigation ONLY while a panel is capturing —
+    // with no subscriber capture stays off, so a navigating inspector-less board costs nothing.
+    if (state.subscribed) armOsrNetwork(wc)
     // Defer the clear/boundary to the new main-document request (loaderId-aware): the new doc + its
     // redirect chain survive, in-flight old requests drop (or are kept + marked under Preserve log),
     // and an activation (no document request) never wipes the log.
     state.pendingNav = true
   })
   // Belt-and-suspenders: re-arm once the new document has committed too (catches the post-load flood
-  // of XHR/fetch on SPA-heavy sites where the document request itself raced the re-enable).
-  wc.on('did-finish-load', () => armOsrNetwork(wc))
+  // of XHR/fetch on SPA-heavy sites where the document request itself raced the re-enable) — again
+  // only while a panel is subscribed (H6).
+  wc.on('did-finish-load', () => {
+    if (state.subscribed) armOsrNetwork(wc)
+  })
 }
 
 /** The Electron `did-start-navigation` details object (the fields we read). */
@@ -804,6 +823,9 @@ export function registerOsrNetworkIpc(
     const e = getEntry(id)
     if (!e) return false
     e.net.subscribed = true
+    // H6: a panel is now listening → turn capture ON (was always-on at board wire time). Real
+    // DevTools likewise only shows traffic once opened; the replay below is empty until requests flow.
+    armOsrNetwork(e.osrWin.webContents)
     emit(id, snapshotNet(e.net)) // replay the current ring buffer once
     return true
   })
@@ -813,6 +835,7 @@ export function registerOsrNetworkIpc(
     if (!e) return false
     e.net.subscribed = false
     stopNetFlush(e.net) // panel closed → zero further IPC
+    disarmOsrNetwork(e.osrWin.webContents) // H6: and zero further CDP capture on MAIN
     return true
   })
   ipcMain.handle('preview:osrNetClear', (ev, id: string) => {
