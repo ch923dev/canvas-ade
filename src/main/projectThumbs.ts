@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
@@ -148,7 +149,9 @@ export function registerProjectThumbHandlers(
       })
       const outDir = deps.thumbsDir()
       mkdirSync(outDir, { recursive: true })
-      writeFileSync(join(outDir, `${dirHash(dir)}.png`), half.toPNG())
+      // Async write (perf audit M5): this handler sits on the switch-critical path — a sync
+      // multi-hundred-KB PNG write blocked MAIN mid-switch. Cosmetic cache; no atomicity/fsync.
+      await writeFile(join(outDir, `${dirHash(dir)}.png`), half.toPNG())
       return true
     } catch {
       return false // env-flaky capture / disk failure — the placeholder path, not an error
