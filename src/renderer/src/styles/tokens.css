@@ -71,9 +71,10 @@
   --warn-wash: rgba(232, 179, 57, 0.12);
   --err: #f2545b;
   /* Status washes (desktop-notifications P2: the board attention ring halo) — the
-     --accent-wash recipe (14% alpha) applied to the status hues. */
+     --accent-wash recipe (14% alpha) applied to the status hues. `warn` deliberately
+     reuses the existing --warn-wash above (NOT redeclared here — a second --warn-wash
+     would override that token app-wide, e.g. UpdateSurfaces' warning banner). */
   --ok-wash: rgba(62, 207, 142, 0.14);
-  --warn-wash: rgba(232, 179, 57, 0.14);
   --err-wash: rgba(242, 84, 91, 0.14);
 
   /* §2 Overlay + one-off chrome colors (design-audit D0-3) */
