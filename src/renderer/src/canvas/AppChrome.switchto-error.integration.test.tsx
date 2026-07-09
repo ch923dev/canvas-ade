@@ -15,8 +15,8 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     project: {
       recents: vi.fn().mockResolvedValue([]),
-      // current flush succeeds, so the switch proceeds to dispose + load
-      save: vi.fn().mockResolvedValue(true),
+      // current flush succeeds, so the switch proceeds to dispose + load (C3: { ok } shape)
+      save: vi.fn().mockResolvedValue({ ok: true }),
       // the failing leg under test: a disk error in MAIN createProject rejects the IPC
       create: vi.fn().mockRejectedValue(new Error('EACCES: permission denied')),
       // disposeLiveResources may touch these — keep them harmless no-ops
