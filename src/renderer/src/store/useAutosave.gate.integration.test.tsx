@@ -12,12 +12,14 @@ import { useSaveStatusStore } from './saveStatusStore'
 // demoted the board under it).
 
 let save: ReturnType<typeof vi.fn>
+let saveSession: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   vi.useFakeTimers()
   save = vi.fn(async () => ({ ok: true })) // C3: project.save now returns { ok, code? }
+  saveSession = vi.fn(async () => true) // M1: the session-sidecar write path (boolean contract)
   ;(window as unknown as { api: unknown }).api = {
-    project: { save, onFlush: vi.fn(() => () => {}) }
+    project: { save, saveSession, onFlush: vi.fn(() => () => {}) }
   }
   useSaveStatusStore.getState().clearSaveFailure()
   useCanvasStore.setState({
@@ -72,7 +74,7 @@ describe('useAutosave — dir-less project gate', () => {
 // These prove the wiring (subscription → schedule → save) the pure hasSavableChange
 // unit tests cannot — they were the untested gap that hid the bug.
 describe('useAutosave — settings-class persistence triggers', () => {
-  it('a backdrop-only change autosaves with no board/camera edit (v9 regression)', async () => {
+  it('M1: a backdrop-only change writes the SESSION sidecar, not the full canvas.json', async () => {
     useCanvasStore.setState({ project: { dir: 'C:/p', name: 'p', status: 'open' } })
     renderHook(() => useAutosave())
     act(() => {
@@ -82,7 +84,37 @@ describe('useAutosave — settings-class persistence triggers', () => {
       vi.advanceTimersByTime(2000)
       await Promise.resolve()
     })
+    // background is settings-class → the cheap sidecar write, NOT the whole board-tree save.
+    expect(saveSession).toHaveBeenCalledTimes(1)
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('M1: a camera-pan-only change writes the SESSION sidecar, not the full canvas.json', async () => {
+    useCanvasStore.setState({ project: { dir: 'C:/p', name: 'p', status: 'open' } })
+    renderHook(() => useAutosave())
+    act(() => {
+      useCanvasStore.getState().setViewport({ x: 42, y: -99, zoom: 1.5 })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+    })
+    expect(saveSession).toHaveBeenCalledTimes(1)
+    expect(save).not.toHaveBeenCalled() // the win: a pan no longer rewrites the whole board tree
+  })
+
+  it('M1: a board edit writes the full canvas.json, not the session sidecar', async () => {
+    useCanvasStore.setState({ project: { dir: 'C:/p', name: 'p', status: 'open' } })
+    renderHook(() => useAutosave())
+    act(() => {
+      useCanvasStore.getState().addBoard('planning', { x: 100, y: 100 })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+    })
     expect(save).toHaveBeenCalledTimes(1)
+    expect(saveSession).not.toHaveBeenCalled()
   })
 
   it('a group-only change autosaves with no board/camera edit (v6 regression)', async () => {

@@ -680,6 +680,12 @@ const api = {
       expectedDir === undefined
         ? ipcRenderer.invoke('project:save', doc)
         : ipcRenderer.invoke('project:save', doc, expectedDir),
+    // M1: write ONLY the camera/backdrop session sidecar (.canvas/session.json). Same optional
+    // expectedDir dir-pin as save() — guards a session write racing a project switch.
+    saveSession: (session: unknown, expectedDir?: string): Promise<boolean> =>
+      expectedDir === undefined
+        ? ipcRenderer.invoke('project:saveSession', session)
+        : ipcRenderer.invoke('project:saveSession', session, expectedDir),
     recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
     // Both are LIST-ONLY mutations (never touch the project folder) and return the
     // fresh list so the caller can re-render without a second recents() round-trip.

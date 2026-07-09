@@ -14,6 +14,8 @@ import {
   readProject,
   readBak,
   writeProject,
+  writeSession,
+  readSession,
   rotateBakAtomic,
   createProject,
   migrateProjectLayout,
@@ -577,5 +579,33 @@ describe('W4 assets pipeline', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('writeSession / readSession (M1 session sidecar)', () => {
+  it('round-trips a session and reads null when absent or corrupt', async () => {
+    expect(readSession(dir)).toBeNull() // absent → null
+    const session = { viewport: { x: 5, y: 6, zoom: 2 }, background: { kind: 'none' } }
+    await writeSession(dir, session)
+    expect(existsSync(join(dir, '.canvas', 'session.json'))).toBe(true)
+    expect(readSession(dir)).toEqual(session)
+    // Corrupt sidecar → null (advisory; the load falls back to the inline canvas.json copy).
+    writeFileSync(join(dir, '.canvas', 'session.json'), '{ not json', 'utf8')
+    expect(readSession(dir)).toBeNull()
+  })
+
+  it('writes the sidecar WITHOUT touching canvas.json (a pan no longer rewrites the board tree)', async () => {
+    await writeProject(dir, { schemaVersion: MAIN_SCHEMA_VERSION, boards: [] })
+    const canvasBefore = readFileSync(join(dir, '.canvas', 'canvas.json'), 'utf8')
+    await writeSession(dir, { viewport: { x: 1, y: 1, zoom: 1 } })
+    expect(readFileSync(join(dir, '.canvas', 'canvas.json'), 'utf8')).toBe(canvasBefore)
+  })
+
+  it('readProject carries the sidecar in its result payload', async () => {
+    await writeProject(dir, { schemaVersion: MAIN_SCHEMA_VERSION, boards: [] })
+    await writeSession(dir, { viewport: { x: 9, y: 9, zoom: 3 } })
+    const r = readProject(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.session).toEqual({ viewport: { x: 9, y: 9, zoom: 3 } })
   })
 })

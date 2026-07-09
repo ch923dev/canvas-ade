@@ -76,6 +76,38 @@ describe('SwitchTransitionOverlay (Phase 4c)', () => {
     expect(useCanvasStore.getState().project.status).toBe('error')
   })
 
+  it('M1: writes the outgoing session sidecar (saveSession) authoritatively on switch', async () => {
+    // Regression: the doc save persists the inline viewport/background, but session.json WINS on
+    // the next load (applyLoadedDoc). cancelActiveAutosave() drops the pending sessionSaver, so the
+    // switch must write the sidecar itself — else a camera/backdrop change made right before the
+    // switch is silently reverted on reopen (the stale session.json overrides the fresh inline copy).
+    const saveSession = vi.fn().mockResolvedValue(true)
+    ;(window as unknown as { api: { project: Record<string, unknown> } }).api.project.saveSession =
+      saveSession
+    useCanvasStore.setState({
+      project: { dir: 'C:\\work\\alpha', name: 'alpha', status: 'open' },
+      viewport: { x: 12, y: 34, zoom: 2 },
+      background: {
+        kind: 'scene',
+        scene: 'blossom-river',
+        dim: 0.4,
+        saturation: 0.9,
+        gridDots: false
+      }
+    })
+    // Load resolves to an error — the switch still reaches saveSession (which runs BEFORE the load),
+    // so the assertion holds without needing a full successful open.
+    const load = (): Promise<unknown> => Promise.resolve({ ok: false, error: 'stop here' })
+    await performProjectSwitch(load, { keepBackground: false, incomingName: 'beta' })
+    expect(saveSession).toHaveBeenCalledWith(
+      {
+        viewport: { x: 12, y: 34, zoom: 2 },
+        background: expect.objectContaining({ scene: 'blossom-river' })
+      },
+      'C:\\work\\alpha'
+    )
+  })
+
   it('reduced motion skips the dock peek entirely', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
     render(<SwitchTransitionOverlay />)

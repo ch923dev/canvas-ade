@@ -12,6 +12,7 @@ import {
   readProject,
   readBak,
   writeProject,
+  writeSession,
   createProject,
   migrateProjectLayout,
   getCurrentDir,
@@ -390,6 +391,28 @@ export function registerProjectHandlers(
         // lock/permission/read-only failure. An envelope-invalid throw is a plain Error with no
         // `.code` → the renderer maps `undefined` to a neutral generic message (never "disk space").
         return { ok: false, code: (err as NodeJS.ErrnoException)?.code }
+      }
+    }
+  )
+
+  // M1: write the camera/backdrop session sidecar (.canvas/session.json) — split from project:save
+  // so a bare pan/zoom rewrites a few hundred bytes, not the whole board tree. Same BUG-009 dir-pin
+  // as project:save (a session write racing a switch must not cross-write another project's sidecar).
+  // Advisory: a `false` here is non-fatal (the inline canvas.json copy is the fallback), but reported
+  // so the renderer can log it.
+  ipcMain.handle(
+    'project:saveSession',
+    async (e, session: unknown, expectedDir?: unknown): Promise<boolean> => {
+      if (guard(e)) return false
+      const dir = getCurrentDir()
+      if (!dir) return false
+      if (typeof expectedDir === 'string' && expectedDir !== dir) return false
+      try {
+        await writeSession(dir, session)
+        return true
+      } catch (err) {
+        console.error('project:saveSession failed', err)
+        return false
       }
     }
   )
