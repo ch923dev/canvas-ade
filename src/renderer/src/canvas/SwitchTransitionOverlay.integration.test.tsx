@@ -22,7 +22,7 @@ const ARM = {
 beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     project: {
-      save: vi.fn().mockResolvedValue(true),
+      save: vi.fn().mockResolvedValue({ ok: true }), // C3: { ok, code? } shape
       captureThumb: vi.fn().mockResolvedValue(true),
       thumb: vi.fn().mockResolvedValue(null),
       closeActive: vi.fn().mockResolvedValue(true)

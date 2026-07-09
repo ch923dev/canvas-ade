@@ -515,12 +515,28 @@ describe('registerOsrNetworkIpc', () => {
     registerOsrNetworkIpc(ipcMain, getWin, () => entry, emit)
     return { call: (ch: string, ev: unknown, args?: unknown) => handlers.get(ch)!(ev, args), emit }
   }
-  function entryWith(body: Record<string, unknown>): OsrNetEntry {
+  function entryWith(
+    body: Record<string, unknown>,
+    onCmd?: (method: string, sessionId?: string) => void
+  ): OsrNetEntry {
     const net = createNetState()
     ringPushRecord(net, { requestId: 'r1', url: 'u', method: 'GET', type: 'fetch', startTs: 0 })
     return {
       net,
-      osrWin: { webContents: { debugger: { sendCommand: async () => body } } as never }
+      osrWin: {
+        webContents: {
+          // H6: subscribe/unsubscribe now arm/disarm CDP capture — the mock debugger must answer
+          // isAttached() and record the command (+ its sessionId, to tell root from worker sessions)
+          // so the lazy-capture tests can assert them.
+          debugger: {
+            isAttached: () => true,
+            sendCommand: async (method: string, _params?: unknown, sessionId?: string) => {
+              onCmd?.(method, sessionId)
+              return body
+            }
+          }
+        } as never
+      }
     }
   }
 
@@ -544,6 +560,35 @@ describe('registerOsrNetworkIpc', () => {
     const { call } = setup(e)
     expect(call('preview:osrNetUnsubscribe', allow, 'b')).toBe(true)
     expect(e.net.subscribed).toBe(false)
+  })
+  it('subscribe enables CDP capture; unsubscribe disables it (H6 lazy capture)', () => {
+    const cmds: string[] = []
+    const e = entryWith({}, (m) => cmds.push(m))
+    const { call } = setup(e)
+    call('preview:osrNetSubscribe', allow, 'b')
+    expect(cmds).toContain('Network.enable') // capture armed only on subscribe
+    cmds.length = 0
+    call('preview:osrNetUnsubscribe', allow, 'b')
+    expect(cmds).toContain('Network.disable') // and disabled on unsubscribe
+  })
+  it('arm/disarm also (re)enable + disable ATTACHED WORKER sessions (H6 review follow-up)', () => {
+    // A page with a service/bundler worker attaches a child session; disarm must silence it too, or
+    // the worker keeps streaming Network events to MAIN after the panel closes.
+    const cmds: Array<{ method: string; sid?: string }> = []
+    const e = entryWith({}, (method, sid) => cmds.push({ method, sid }))
+    e.net.childSessions.add('worker-sid-1')
+    const { call } = setup(e)
+
+    call('preview:osrNetSubscribe', allow, 'b')
+    // Root Network.enable (no sid) AND the tracked worker session (sid) are both enabled.
+    expect(cmds).toContainEqual({ method: 'Network.enable', sid: undefined })
+    expect(cmds).toContainEqual({ method: 'Network.enable', sid: 'worker-sid-1' })
+
+    cmds.length = 0
+    call('preview:osrNetUnsubscribe', allow, 'b')
+    // Both the root and the worker session are disabled on unsubscribe.
+    expect(cmds).toContainEqual({ method: 'Network.disable', sid: undefined })
+    expect(cmds).toContainEqual({ method: 'Network.disable', sid: 'worker-sid-1' })
   })
   it('setPreserve flips the flag (strict boolean)', () => {
     const e = entryWith({})

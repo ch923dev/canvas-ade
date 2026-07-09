@@ -13,8 +13,9 @@ import { registerOsrNetInferenceIpc } from './previewOsrLineage'
  *
  * Trust boundary: every captured string is page-controlled, so it is CAPPED here in MAIN before it is
  * ever buffered (URL/header/WS payload). Bodies are NOT buffered — they are fetched lazily + capped on
- * user request (S5). Capture is always-on for a live board into a bounded ring buffer; deltas only
- * cross to the renderer while a panel is subscribed (set in S2) — closed inspector ⇒ zero IPC.
+ * user request (S5). H6: capture is LAZY — `Network.enable` is armed only while a renderer panel is
+ * subscribed (root + every worker session), and disabled on unsubscribe — so a closed inspector ⇒
+ * zero CDP capture AND zero IPC. Deltas cross to the renderer only while subscribed (set in S2).
  */
 
 /* ── Caps (the trust boundary) + ring sizes ──────────────────────────────────────────────────── */
@@ -459,7 +460,7 @@ function netCdp(
  * and cheap — called on attach AND on every crash-ready (defensive; the debugger survives a crash so
  * a re-enable is belt-and-suspenders, not required — fact #2).
  */
-export function armOsrNetwork(wc: WebContents): void {
+export function armOsrNetwork(wc: WebContents, state: OsrNetState): void {
   if (!wc.debugger.isAttached()) return
   // Generous CDP-side buffer caps; our own BODY_CAP on the lazy fetch is the real bound (fact #4).
   netCdp(wc, 'Network.enable', {
@@ -474,6 +475,27 @@ export function armOsrNetwork(wc: WebContents): void {
     waitForDebuggerOnStart: false,
     flatten: true
   })
+  // H6: re-enable Network on every ALREADY-attached worker session too. `Target.attachedToTarget`
+  // won't re-fire for them, so a re-subscribe (or a worker that attached while unsubscribed, tracked
+  // but left disabled) would otherwise stay silent. Idempotent per session.
+  for (const sid of state.childSessions) {
+    netCdp(wc, 'Network.enable', { maxTotalBufferSize: 10_000_000 }, sid)
+  }
+}
+
+/**
+ * H6: stop capture. Called on panel UNSUBSCRIBE so an inspector-less board streams no
+ * request/response/WS traffic to MAIN. Disables the root session AND every attached worker/
+ * service-worker child session — a page with a service/bundler worker would otherwise keep
+ * streaming Network events from that worker after the panel closes (root disable alone doesn't
+ * silence child sessions; `Target.setAutoAttach` stays armed but its child `Network.enable` is
+ * subscribe-gated in the handler). The 'message' listener + tracked child ids stay put so a re-arm
+ * is cheap. Fire-and-forget like `armOsrNetwork`.
+ */
+export function disarmOsrNetwork(wc: WebContents, state: OsrNetState): void {
+  if (!wc.debugger.isAttached()) return
+  netCdp(wc, 'Network.disable')
+  for (const sid of state.childSessions) netCdp(wc, 'Network.disable', {}, sid)
 }
 
 export interface OsrNetworkDeps {
@@ -495,7 +517,10 @@ export function attachOsrNetwork(wc: WebContents, deps: OsrNetworkDeps): void {
     handleNetMessage(wc, state, emit, method, params ?? {}, sessionId)
   })
 
-  armOsrNetwork(wc)
+  // H6: capture is LAZY now. Only the 'message' listener is attached here — `Network.enable`
+  // (+ worker auto-attach) is deferred to the first panel subscribe (registerOsrNetworkIpc). An
+  // inspector-less board therefore streams ZERO request/response/WS frames to MAIN; with capture
+  // off the listener simply never fires. (Was: `armOsrNetwork(wc)` unconditionally at attach.)
 }
 
 /**
@@ -517,15 +542,20 @@ export function wireOsrNetwork(
   // silently stops after the first page; a same-document nav (fragment / pushState) is left alone.
   wc.on('did-start-navigation', (details: NavDetails) => {
     if (!isMainFramePageNav(details)) return
-    armOsrNetwork(wc) // re-enable across the (possibly cross-process) navigation
+    // H6: re-enable across the (possibly cross-process) navigation ONLY while a panel is capturing —
+    // with no subscriber capture stays off, so a navigating inspector-less board costs nothing.
+    if (state.subscribed) armOsrNetwork(wc, state)
     // Defer the clear/boundary to the new main-document request (loaderId-aware): the new doc + its
     // redirect chain survive, in-flight old requests drop (or are kept + marked under Preserve log),
     // and an activation (no document request) never wipes the log.
     state.pendingNav = true
   })
   // Belt-and-suspenders: re-arm once the new document has committed too (catches the post-load flood
-  // of XHR/fetch on SPA-heavy sites where the document request itself raced the re-enable).
-  wc.on('did-finish-load', () => armOsrNetwork(wc))
+  // of XHR/fetch on SPA-heavy sites where the document request itself raced the re-enable) — again
+  // only while a panel is subscribed (H6).
+  wc.on('did-finish-load', () => {
+    if (state.subscribed) armOsrNetwork(wc, state)
+  })
 }
 
 /** The Electron `did-start-navigation` details object (the fields we read). */
@@ -698,11 +728,15 @@ function handleNetMessage(
       break
     }
     case 'Target.attachedToTarget': {
-      // A worker target attached (flat mode). Enable Network on its session; tag future events.
+      // A worker target attached (flat mode). Track it always, but enable Network on its session
+      // ONLY while a panel is subscribed (H6) — else a worker attaching on a frozen/inspector-less
+      // board would stream Network events to MAIN, the exact idle cost this fix removes. A later
+      // subscribe re-arms every tracked child (see armOsrNetwork).
       const childSid = typeof params.sessionId === 'string' ? params.sessionId : ''
       if (childSid) {
         state.childSessions.add(childSid)
-        netCdp(wc, 'Network.enable', { maxTotalBufferSize: 10_000_000 }, childSid)
+        if (state.subscribed)
+          netCdp(wc, 'Network.enable', { maxTotalBufferSize: 10_000_000 }, childSid)
       }
       break
     }
@@ -804,6 +838,9 @@ export function registerOsrNetworkIpc(
     const e = getEntry(id)
     if (!e) return false
     e.net.subscribed = true
+    // H6: a panel is now listening → turn capture ON (was always-on at board wire time). Real
+    // DevTools likewise only shows traffic once opened; the replay below is empty until requests flow.
+    armOsrNetwork(e.osrWin.webContents, e.net)
     emit(id, snapshotNet(e.net)) // replay the current ring buffer once
     return true
   })
@@ -813,6 +850,7 @@ export function registerOsrNetworkIpc(
     if (!e) return false
     e.net.subscribed = false
     stopNetFlush(e.net) // panel closed → zero further IPC
+    disarmOsrNetwork(e.osrWin.webContents, e.net) // H6: and zero further CDP capture on MAIN (root + workers)
     return true
   })
   ipcMain.handle('preview:osrNetClear', (ev, id: string) => {

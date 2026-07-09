@@ -35,7 +35,23 @@ export interface FileWatcher {
   close(): Promise<void>
 }
 
-const IGNORED_SEGMENTS = new Set(['.git', 'node_modules'])
+// H3: never watch the app's OWN write dir (`.canvas/` — canvas.json + .bak + memory + snapshots,
+// all written ~1×/s: watching it is a write→watch→IPC feedback loop, and it's hidden from the File
+// Tree anyway so there is zero functional loss) nor heavy dependency/build-output dirs (an open-time
+// recursive readdir+stat storm on a large repo). Ignoring `.canvas` also cuts the atomic-write temp/
+// rename contention behind the C3 false-`EPERM` "disk space" reports.
+const IGNORED_SEGMENTS = new Set([
+  '.git',
+  'node_modules',
+  '.canvas',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  'target',
+  'venv',
+  '.worktrees'
+])
 const IGNORED_BASENAMES = new Set(['canvas.json.bak'])
 
 /**
