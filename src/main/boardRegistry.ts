@@ -214,6 +214,10 @@ let groupMirror: GroupMirror[] = []
 /** Listeners notified on each per-board status change (M5 event-driven attention). */
 const statusListeners = new Set<(change: BoardStatusChange) => void>()
 
+/** Listeners notified after EVERY applied snapshot (cross-project routing, 2026-07-09): the
+ *  pending-command drainer wakes on these — a publish is proof the renderer store settled. */
+const snapshotListeners = new Set<() => void>()
+
 function emitStatus(change: BoardStatusChange): void {
   for (const cb of statusListeners) {
     try {
@@ -236,6 +240,24 @@ function applySnapshot(
   connectorMirror = nextConnectors
   groupMirror = nextGroups
   for (const c of changes) emitStatus(c)
+  for (const cb of snapshotListeners) {
+    try {
+      cb()
+    } catch {
+      // 🔒 Isolate a throwing listener so one bad subscriber can't break the push fan-out.
+    }
+  }
+}
+
+/**
+ * Subscribe to applied snapshots (cross-project routing). Fires AFTER the mirror is replaced and
+ * the status diffs are emitted, once per renderer publish. Returns an unsubscribe fn.
+ */
+export function subscribeBoardSnapshot(listener: () => void): () => void {
+  snapshotListeners.add(listener)
+  return () => {
+    snapshotListeners.delete(listener)
+  }
 }
 
 /**
@@ -264,6 +286,11 @@ export function __applySnapshotForTest(
 /** Test seam — clear all status listeners between tests (unit tests only). */
 export function __clearStatusListenersForTest(): void {
   statusListeners.clear()
+}
+
+/** Test seam — clear all snapshot listeners between tests (unit tests only). */
+export function __clearSnapshotListenersForTest(): void {
+  snapshotListeners.clear()
 }
 
 /** Bound the snapshot so a forged/oversized push on mcp:boards can't grow MAIN memory. */

@@ -246,12 +246,20 @@ export type LifecycleOrchestrator = Omit<
    * board id. Host-local inline types (the installed package predates `VisualizePlanSpec`); Omitting it
    * from the base is a harmless no-op on 0.17.0 and matches the concrete method on 0.18.0-rc.3 — same
    * discipline as `describeLayout` / the card methods.
+   *
+   * Cross-project routing (0.18.1): `sourceBoardId` is a CONNECTED-tier caller's own token-derived
+   * board id (the spawn_board auto-cable discipline — never client input, unforgeable). When it
+   * resolves to a NON-active project, the confirmed board is QUEUED for that project (delivered on
+   * its next open) instead of drawn onto the foregrounded canvas, and `queuedFor` resolves with the
+   * target project's display name so the tool can tell the agent. Absent field / unknown board /
+   * active-project caller ⇒ today's live-create path, `queuedFor` absent.
    */
   visualizePlan(spec: {
     items: Array<{ title: string; status?: string; tag?: string; assignee?: string; note?: string }>
     suggested?: 'kanban' | 'grid' | 'checklist' | 'columns'
     title?: string
-  }): Promise<{ id: string }>
+    sourceBoardId?: string
+  }): Promise<{ id: string; queuedFor?: string }>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
@@ -452,6 +460,24 @@ export interface BoardRegistry {
    * Optional so a registry/test that does not wire it keeps the "unavailable" behaviour.
    */
   gitDiff?(id: string): Promise<string>
+  /**
+   * Cross-project routing (2026-07-09): the ACTIVE project dir (null = no project open). MAIN
+   * injects `projectStore.getCurrentDir`. Optional so existing registry stubs keep compiling —
+   * an unwired registry disables routing (visualize_plan keeps today's active-canvas behaviour).
+   */
+  currentProjectDir?(): string | null
+  /**
+   * Cross-project routing: the project dir that owned `boardId` when its connected token was
+   * minted (null = unknown). MAIN injects `mcpBoardProjects.boardProjectDir`.
+   */
+  boardProjectDir?(boardId: string): string | null
+  /**
+   * Cross-project routing: queue a HUMAN-CONFIRMED command for a non-active project — delivered
+   * through the same `sendCommand` path when that project is next foregrounded. False =
+   * cap-rejected (the caller surfaces the failure to the agent). MAIN injects the
+   * `mcpPendingCommands` store's `enqueue`.
+   */
+  enqueueProjectCommand?(dir: string, command: McpCommand): boolean
 }
 
 /**

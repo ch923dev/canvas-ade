@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useCanvasStore } from './canvasStore'
 import { applyMcpCommand } from './useMcpCommands'
 
@@ -970,5 +970,29 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     const ack = applyMcpCommand({ type: 'tidyBoards' })
     expect(ack).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
+})
+
+describe('applyMcpCommand while a project switch is mid-load (cross-project routing, 2026-07-09)', () => {
+  afterEach(() => {
+    // Restore the suite default so later describes see the pre-project 'welcome' state.
+    useCanvasStore.setState((s) => ({ project: { ...s.project, status: 'welcome' } }))
+  })
+
+  it("fails every WRITE with 'project-loading' — the store is about to be replaced by applyOpenResult", () => {
+    useCanvasStore.setState((s) => ({ project: { ...s.project, status: 'loading' } }))
+    const ack = applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    expect(ack).toEqual({ ok: false, error: 'project-loading' })
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('ping stays a pure health check during load', () => {
+    useCanvasStore.setState((s) => ({ project: { ...s.project, status: 'loading' } }))
+    expect(applyMcpCommand({ type: 'ping' })).toEqual({ ok: true, type: 'ping' })
+  })
+
+  it("the default pre-project 'welcome' state keeps applying commands (unit/e2e boot behaviour)", () => {
+    const ack = applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    expect(ack).toEqual({ ok: true, type: 'addBoard' })
   })
 })

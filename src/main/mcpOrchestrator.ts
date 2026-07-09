@@ -651,7 +651,18 @@ export function buildOrchestrator(
     ...createVisualizeMethod({
       confirm: (req) => registry.confirm(req),
       sendCommand: (cmd) => registry.sendCommand(cmd),
-      audit: writeAudit
+      audit: writeAudit,
+      // Cross-project routing (2026-07-09): forwarded only when the registry wires them (index.ts
+      // does; test stubs that don't keep the legacy active-canvas behaviour).
+      ...(registry.currentProjectDir !== undefined
+        ? { currentProjectDir: registry.currentProjectDir }
+        : {}),
+      ...(registry.boardProjectDir !== undefined
+        ? { boardProjectDir: registry.boardProjectDir }
+        : {}),
+      ...(registry.enqueueProjectCommand !== undefined
+        ? { enqueueProjectCommand: registry.enqueueProjectCommand }
+        : {})
     }),
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
       // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +

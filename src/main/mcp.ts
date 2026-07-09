@@ -3,6 +3,7 @@ import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import { getCurrentDir } from './projectStore'
+import { recordBoardProject } from './mcpBoardProjects'
 import {
   isOrchestrationEnabled,
   __setTerminalTokenMinter,
@@ -216,6 +217,11 @@ export async function startMcpServer(
     const mintConnectedToken = (boardId: string): TerminalToken => {
       const token = mintBoardToken(tokens, { boardId, tier: 'connected' }).token
       connected.track(boardId, token)
+      // Cross-project routing (2026-07-09): remember which project owned this board at mint —
+      // the board belongs to the ACTIVE project (the spawn-time provisioner runs there). The
+      // visualize gate resolves a caller's own project from this so a backgrounded project's
+      // agent routes its board to its own canvas. Re-mints refresh; a null dir records nothing.
+      recordBoardProject(boardId, getCurrentDir())
       return { token, tier: 'connected', port: server.port }
     }
     __setTerminalTokenMinter(mintConnectedToken)
