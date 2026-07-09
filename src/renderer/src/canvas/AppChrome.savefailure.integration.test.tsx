@@ -11,7 +11,7 @@ import { useToastStore } from '../store/toastStore'
 let save: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
-  save = vi.fn(async () => true)
+  save = vi.fn(async () => ({ ok: true })) // C3: project.save now returns { ok, code? }
   ;(window as unknown as { api: unknown }).api = {
     project: { recents: vi.fn().mockResolvedValue([]), save }
   }
@@ -60,8 +60,8 @@ describe('ProjectSwitcher — save failure routes to a sticky toast (D1-A, repla
     })
   })
 
-  it('a failed Retry (save returns false) refreshes the toast message in place', async () => {
-    save.mockResolvedValue(false)
+  it('a failed Retry (save returns { ok:false }) refreshes the toast message in place', async () => {
+    save.mockResolvedValue({ ok: false, code: 'ENOSPC' }) // C3: a real disk-full errno
     render(<ProjectSwitcher />)
     act(() => {
       useSaveStatusStore.getState().setSaveFailure('Could not save project')
@@ -71,7 +71,7 @@ describe('ProjectSwitcher — save failure routes to a sticky toast (D1-A, repla
       failureToast()?.action?.run()
     })
     await waitFor(() =>
-      expect(failureToast()?.message).toBe('Save failed again — check disk space and permissions')
+      expect(failureToast()?.message).toBe('Save failed again — the disk is full.')
     )
     // Still exactly one keyed toast — replaced, not stacked.
     expect(useToastStore.getState().toasts.filter((t) => t.id === 'save-failure')).toHaveLength(1)

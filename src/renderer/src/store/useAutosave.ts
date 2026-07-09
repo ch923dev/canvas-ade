@@ -7,6 +7,7 @@ import { useEffect } from 'react'
 import { useCanvasStore, type CanvasState } from './canvasStore'
 import { useSaveStatusStore } from './saveStatusStore'
 import { flushAllTerminalSnapshots } from './terminalSnapshotRegistry'
+import { saveErrorMessage } from '../lib/saveError'
 
 type ProjectStatus = 'welcome' | 'loading' | 'open' | 'error'
 
@@ -136,6 +137,10 @@ export function cancelActiveAutosave(): void {
 /** React hook: arms autosave against the canvas store + window lifecycle. */
 export function useAutosave(): void {
   useEffect(() => {
+    // C3: carry the write errno from a failed save to onError WITHOUT changing the engine's
+    // boolean `save` contract. Reset at the start of each attempt so a later throw (which has no
+    // code) can't reuse a stale one.
+    let lastFailCode: string | undefined
     const saver = createAutosaver({
       // BUG-009: pass the project dir this doc belongs to, so MAIN can reject the write
       // if a project switch raced the save (currentDir would point at the new project).
@@ -147,9 +152,15 @@ export function useAutosave(): void {
         const s = useCanvasStore.getState()
         const status = useSaveStatusStore.getState()
         status.markSaving()
-        const ok = await window.api.project.save(s.toObject(), s.project.dir ?? undefined)
-        if (ok) status.markSaved()
-        return ok
+        lastFailCode = undefined
+        const res = await window.api.project.save(s.toObject(), s.project.dir ?? undefined)
+        if (res.ok) {
+          status.markSaved()
+          return true
+        }
+        // C3: stash the errno; the engine calls onError below (for a `false` result) which maps it.
+        lastFailCode = res.code
+        return false
       },
       // The `project` slice is added in a later task; read it defensively so the hook
       // compiles + no-ops (status 'welcome' → gate closed) until that slice exists.
@@ -172,12 +183,12 @@ export function useAutosave(): void {
       onError: (e) => {
         // eslint-disable-next-line no-console
         console.error('autosave failed', e)
-        // Fixed user-facing string: raw messages here are internal ('autosave:
-        // project:save returned false') or OS-technical (ENOSPC), and the toast's
-        // alert region reads them aloud. The console line keeps the detail.
+        // C3: map the write errno (stashed in `save` above) to accurate copy — only a real
+        // ENOSPC says "disk full"; a lock/permission/read-only failure no longer masquerades
+        // as one. A throw (no code) → neutral generic. The console line keeps the raw detail.
         useSaveStatusStore
           .getState()
-          .setSaveFailure('Auto-save failed — check disk space and permissions')
+          .setSaveFailure(saveErrorMessage(lastFailCode, 'Auto-save failed'))
       }
     })
 
