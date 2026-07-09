@@ -23,8 +23,10 @@ import {
   backgroundProjectOsr,
   foregroundProjectOsr,
   disposeProjectOsr,
-  countProjectOsr
+  countProjectOsr,
+  trimOsrToBudget
 } from './previewOsrBackground'
+import { GLOBAL_OSR_MAX } from './previewOsr'
 import { getCurrentDir } from './projectStore'
 
 // Keep at most MAX_BACKGROUND projects resident (PTYs parked + OSR frozen); backgrounding past it
@@ -33,6 +35,11 @@ import { getCurrentDir } from './projectStore'
 const MAX_BACKGROUND = 3
 const BG_IDLE_TTL_MS = 10 * 60_000
 const BG_SWEEP_INTERVAL_MS = 60_000
+// H4: the TOTAL offscreen-renderer budget enforced on every project switch/foreground (C1 caps
+// background PROJECTS; this caps resident RENDERERS — the many-Browser-boards-in-one-resident case
+// C1 can't see). Defaults to the existence ceiling (a no-op for full-RAM power users); the Low-RAM
+// PR lowers it (≈3–4) so the 8 frozen ~150 MB renderers shed on switch — coupled to MAX_BACKGROUND.
+const OSR_TRIM_BUDGET = GLOBAL_OSR_MAX
 
 // Phase 4: the persisted forever-keep list (the dialog's opt-in checkbox) — app/machine preference
 // in userData, NEVER the project folder. Read lazily by the registry (first policy access is
@@ -45,7 +52,15 @@ export const projectSessions: ProjectSessions = createProjectSessions({
   disposePtys: disposeProjectPtys,
   countPtys: countProjectSessions,
   backgroundOsr: backgroundProjectOsr,
-  foregroundOsr: foregroundProjectOsr,
+  // H4: foreground the incoming project's windows, THEN trim resident background renderers to the
+  // budget. On a switch the outgoing project is already backgrounded (backgroundLiveResources runs
+  // before project:open), so this sheds its excess frozen renderers at the switch — not only when
+  // the next Browser board somewhere triggers ensureOsr. Foreground/active windows are never evicted.
+  foregroundOsr: (dir) => {
+    const n = foregroundProjectOsr(dir)
+    trimOsrToBudget(OSR_TRIM_BUDGET)
+    return n
+  },
   disposeOsr: disposeProjectOsr,
   countOsr: countProjectOsr,
   now: () => Date.now(),

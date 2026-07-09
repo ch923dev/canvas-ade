@@ -346,6 +346,25 @@ describe('pickOsrEvictions (GLOBAL_OSR_MAX existence budget)', () => {
     ]
     expect(pickOsrEvictions(entries, 8)).toEqual(['unstamped'])
   })
+
+  // H4: the standalone-trim contract that trimOsrToBudget relies on. ensureOsr calls
+  // pickOsrEvictions(entries, max) to make room for ONE NEW window → need = len - max + 1. A
+  // standalone trim (trimOsrToBudget) creates NO window, so it must pass max + 1 to reach EXACTLY
+  // `max` (need = len - max), not over-evict by one. This pins that arithmetic + the max=1 trap.
+  it('STANDALONE trim to budget N evicts len-N when called with N+1 (the +1 off-by-one)', () => {
+    const five: Array<[string, { backgrounded: boolean; backgroundedAt?: number }]> = Array.from(
+      { length: 5 },
+      (_, i) => [`b${i}`, bg(i)]
+    )
+    // Trim 5 background windows to budget 3 → evict the 2 oldest. trimOsrToBudget passes 3+1=4.
+    expect(pickOsrEvictions(five, 4)).toEqual(['b0', 'b1'])
+    // The TRAP: passing the budget directly (3) evicts 3 → over-trims to 2.
+    expect(pickOsrEvictions(five, 3)).toEqual(['b0', 'b1', 'b2'])
+    // Low-RAM budget 1: the standalone trim passes 1+1=2 → evict 4, KEEP one …
+    expect(pickOsrEvictions(five, 2)).toEqual(['b0', 'b1', 'b2', 'b3'])
+    // … whereas passing 1 directly would evict ALL five (the max=1 catastrophe the +1 avoids).
+    expect(pickOsrEvictions(five, 1)).toEqual(['b0', 'b1', 'b2', 'b3', 'b4'])
+  })
 })
 
 // Background project sessions (Phase 3): the switch-back synthetic re-emit. Without it a
