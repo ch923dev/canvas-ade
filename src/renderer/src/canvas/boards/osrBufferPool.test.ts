@@ -80,4 +80,19 @@ describe('createBufferPool (M6 OSR blit buffer pool)', () => {
     expect(pool.take(40)).toBe(hot) // hot survived the eviction
     expect(pool.take(50)).not.toBe(other) // the stale (LRU) size was the one dropped
   })
+
+  it('when the incoming size IS the LRU bucket, skips it and evicts a YOUNGER bucket (no bail)', () => {
+    // Regression (H5 re-review): eviction must skip the size it is adding to and keep evicting the
+    // next-oldest bucket — not break out and drop a buffer that a younger, evictable bucket fits.
+    const pool = createBufferPool(3, 100)
+    const s1 = new ArrayBuffer(40) // size 40 becomes the OLDEST (LRU) key
+    const other = new ArrayBuffer(50) // size 50 is younger
+    pool.give(s1) // retained 40
+    pool.give(other) // retained 90
+    const s2 = new ArrayBuffer(40) // give size 40 again: the LRU key (40) == the incoming size
+    pool.give(s2) // 90 + 40 > 100 → must skip the 40 bucket, evict the younger 50, then retain s2
+    expect(pool.take(50)).not.toBe(other) // the younger, evictable bucket was dropped to make room
+    expect(pool.take(40)).toBe(s2) // the incoming size was retained (LIFO)…
+    expect(pool.take(40)).toBe(s1) // …and its earlier buffer survived too — the give did NOT bail
+  })
 })

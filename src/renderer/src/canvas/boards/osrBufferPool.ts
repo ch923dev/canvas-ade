@@ -56,15 +56,19 @@ export function createBufferPool(perSize = 3, maxBytes = 64 * 1024 * 1024): Buff
       if (size > maxBytes) return // a single buffer larger than the whole budget is never retained
       const bucket = free.get(size) ?? []
       if (bucket.length >= perSize) return // per-size depth cap — drop
-      // Evict whole LRU buckets (oldest size first) until this buffer fits the byte budget. Never
-      // evict the size we're adding to — it is about to become most-recently-used.
-      while (retained + size > maxBytes) {
-        const lru = free.keys().next().value
-        if (lru === undefined || lru === size) break
-        for (const b of free.get(lru)!) retained -= b.byteLength
-        free.delete(lru)
+      // Evict LRU size buckets (oldest first) until this buffer fits the byte budget. SKIP the size
+      // we're adding to (never evict our own about-to-be-MRU bucket) and keep going — so when the
+      // incoming size is itself the LRU, an evictable YOUNGER bucket still makes room instead of the
+      // give bailing and dropping a buffer that would have fit.
+      if (retained + size > maxBytes) {
+        for (const key of [...free.keys()]) {
+          if (retained + size <= maxBytes) break
+          if (key === size) continue
+          for (const b of free.get(key)!) retained -= b.byteLength
+          free.delete(key)
+        }
       }
-      if (retained + size > maxBytes) return // only the current bucket remains and it still won't fit
+      if (retained + size > maxBytes) return // no evictable room even after all other buckets — drop
       bucket.push(buffer)
       retained += size
       touch(size, bucket)
