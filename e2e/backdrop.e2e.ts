@@ -55,11 +55,12 @@ test.describe('@chrome canvas backdrop (S4)', () => {
 
       // Flush through the REAL save IPC (the autosave path's own call — deterministic,
       // no 1s-debounce wait). expectedDir guards against racing a project switch.
-      const saved = await evalIn<boolean>(
+      const saved = await evalIn<{ ok: boolean }>(
         page,
         `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
       )
-      expect(saved, 'project:save accepted the doc').toBe(true)
+      // C3: project.save now returns { ok, code? } (was a bare boolean).
+      expect(saved.ok, 'project:save accepted the doc').toBe(true)
 
       // Wipe the live store so the backdrop can ONLY come back from disk.
       await evalIn(page, 'window.__canvasE2E.reset()')

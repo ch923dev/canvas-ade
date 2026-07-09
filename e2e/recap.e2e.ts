@@ -260,11 +260,12 @@ test('@terminal stale recap + no LLM key: refresh surfaces the why-note', async 
     )
     expect(opened.status, 'fresh temp project opens clean').toBe('open')
     const id = await seed(page, 'terminal', { launchCommand: 'claude', agentTranscriptPath: 'x' })
-    const saved = await evalIn<boolean>(
+    const saved = await evalIn<{ ok: boolean }>(
       page,
       `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
     )
-    expect(saved, 'seeded board flushed to canvas.json').toBe(true)
+    // C3: project.save now returns { ok, code? } (was a bare boolean).
+    expect(saved.ok, 'seeded board flushed to canvas.json').toBe(true)
     const stale = mkNarrative()
     stale.asOf = Date.now() - 10 * 60_000 // trails the live PTY activity by ~10m -> stale
     const wrote = await mainCall<boolean>(electronApp, 'writeRecapJson', id, stale)
@@ -328,11 +329,12 @@ test('@terminal manual refresh regenerates the narrative in place (mock LLM)', a
     )
     expect(opened.status, 'fresh temp project opens clean').toBe('open')
     const id = await seed(page, 'terminal', { launchCommand: 'claude' })
-    const saved = await evalIn<boolean>(
+    const saved = await evalIn<{ ok: boolean }>(
       page,
       `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
     )
-    expect(saved, 'seeded board flushed to canvas.json').toBe(true)
+    // C3: project.save now returns { ok, code? } (was a bare boolean).
+    expect(saved.ok, 'seeded board flushed to canvas.json').toBe(true)
     await mainCall(electronApp, 'recordRecapSession', id, transcript)
 
     // wait for the learned map entry to land (same poll as the facts spec)
