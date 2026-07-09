@@ -174,29 +174,34 @@ function mkPaintWin() {
   const startPainting = vi.fn<() => void>()
   const stopPainting = vi.fn<() => void>()
   const invalidate = vi.fn<() => void>()
-  const win = { webContents: { startPainting, stopPainting, invalidate } }
-  return { win, startPainting, stopPainting, invalidate }
+  const setBackgroundThrottling = vi.fn<(allowed: boolean) => void>()
+  const win = {
+    webContents: { startPainting, stopPainting, invalidate, setBackgroundThrottling }
+  }
+  return { win, startPainting, stopPainting, invalidate, setBackgroundThrottling }
 }
 
 describe('applyOsrPaint', () => {
-  it('freezes (true→false): stopPainting, no invalidate, state cleared', () => {
-    const { win, startPainting, stopPainting, invalidate } = mkPaintWin()
+  it('freezes (true→false): stopPainting + throttle on, no invalidate, state cleared', () => {
+    const { win, startPainting, stopPainting, invalidate, setBackgroundThrottling } = mkPaintWin()
     const state = { painting: true }
     applyOsrPaint(win, state, false)
     expect(stopPainting).toHaveBeenCalledTimes(1)
     expect(startPainting).not.toHaveBeenCalled()
     expect(invalidate).not.toHaveBeenCalled()
     expect(state.painting).toBe(false)
+    expect(setBackgroundThrottling).toHaveBeenCalledWith(true) // H7: frozen ⇒ throttle page JS
   })
 
-  it('resumes (false→true): startPainting + invalidate (no stale pre-freeze frame), state set', () => {
-    const { win, startPainting, stopPainting, invalidate } = mkPaintWin()
+  it('resumes (false→true): startPainting + invalidate + throttle off (no stale frame), state set', () => {
+    const { win, startPainting, stopPainting, invalidate, setBackgroundThrottling } = mkPaintWin()
     const state = { painting: false }
     applyOsrPaint(win, state, true)
     expect(startPainting).toHaveBeenCalledTimes(1)
     expect(invalidate).toHaveBeenCalledTimes(1)
     expect(stopPainting).not.toHaveBeenCalled()
     expect(state.painting).toBe(true)
+    expect(setBackgroundThrottling).toHaveBeenCalledWith(false) // H7: on-screen ⇒ un-throttle
   })
 
   it('is idempotent — a redundant set to the current state is a no-op', () => {

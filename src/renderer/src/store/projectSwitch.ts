@@ -139,7 +139,10 @@ export async function performProjectSwitch(
       useCanvasStore.getState().toObject(),
       outgoingDir ?? undefined
     )
-    if (saved === false) {
+    // C3: project:save now returns `{ ok, code? }` (was a bare boolean). The switch-abort copy is
+    // deliberately about the aborted switch, not the fs cause, so it stays as-is (never said "disk
+    // space") — the errno only matters where the message claims a cause (autosave / retry).
+    if (!saved.ok) {
       // eslint-disable-next-line no-console
       console.error('project switch: final flush failed; aborting switch to avoid data loss')
       // D0-8: the abort must be VISIBLE — raise the save-failure chip, not console-only.

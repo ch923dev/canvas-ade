@@ -5,7 +5,7 @@
  * is the no-cost reopen context. T-M4: renders cached Tier-2 prose (the `prose` prop,
  * heading-stripped) when present, else the Tier-1 lines.
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { CanvasDigest } from '../lib/digest'
 import { stripHeading } from '../lib/digest'
 import { PROSE_CLAMP_CHARS, digestStatusTone, type DigestRefreshResult } from '../lib/digestPanel'
@@ -33,7 +33,7 @@ export interface DigestPanelProps {
   onClose: () => void
 }
 
-export function DigestPanel({
+function DigestPanelImpl({
   digest,
   prose,
   onRefresh,
@@ -223,3 +223,10 @@ export function DigestPanel({
     </>
   )
 }
+
+// H8: memoized. CanvasInner re-renders on every board-drag frame + planning keystroke (it
+// subscribes to the whole `boards` array); this stops the panel reconciling on re-renders whose
+// props are unchanged. NOTE its `digest`/`prose` DO change identity when `boards` changes (they are
+// derived `[boards, connectors]` — see M8), so during an actual drag the memo is a partial win;
+// full drag insulation is M8 (gate/position-strip the digest), out of scope for this pass.
+export const DigestPanel = memo(DigestPanelImpl)
