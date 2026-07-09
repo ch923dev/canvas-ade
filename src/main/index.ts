@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync, existsSync, readFileSync } from 'fs'
+import { writeFileSync, mkdtempSync, existsSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -12,22 +12,18 @@ import {
   getTerminalBootInfo,
   setRecapEnvProvider,
   setOrchestrationSyncProvider,
-  parkProjectSessions,
   disposeProjectPtys,
-  countProjectSessions,
-  reapUndoParks,
   persistBackgroundRingTails,
   backgroundParkedBoardIds
 } from './pty'
 import { appendTerminalSnapshot } from './terminalSnapshot'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
+import { disposeProjectOsr } from './previewOsrBackground'
 import {
-  backgroundProjectOsr,
-  foregroundProjectOsr,
-  disposeProjectOsr,
-  countProjectOsr
-} from './previewOsrBackground'
-import { createProjectSessions } from './projectSessions'
+  projectSessions,
+  startBackgroundIdleSweep,
+  stopBackgroundIdleSweep
+} from './backgroundSessions'
 import { registerProjectSessionsHandlers } from './projectSessionsIpc'
 import { wireGlobalHotkey } from './globalHotkey'
 import { registerProjectThumbHandlers } from './projectThumbs'
@@ -154,29 +150,10 @@ let fileWatcher: FileWatcher | null = null
 // PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
 // when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
 let resultSynth: ResultSynthesizer | null = null
-// Background project sessions (Phase 1): the backgrounded-project registry, wired over the real
-// pty/previewOsr project-scoped resource functions. App-run lifetime only — quit's disposeAll*
-// kills background resources too, so the registry is never persisted or drained at shutdown.
-// Phase 4: the persisted forever-keep list (the dialog's opt-in checkbox) — app/machine
-// preference in userData, NEVER the project folder. Read lazily by the registry (first policy
-// access is post-ready); a missing/corrupt file reads as [].
-const foreverKeepFile = (): string => join(app.getPath('userData'), 'background-keep.json')
-const projectSessions = createProjectSessions({
-  reapUndoParks,
-  parkPtys: parkProjectSessions,
-  disposePtys: disposeProjectPtys,
-  countPtys: countProjectSessions,
-  backgroundOsr: backgroundProjectOsr,
-  foregroundOsr: foregroundProjectOsr,
-  disposeOsr: disposeProjectOsr,
-  countOsr: countProjectOsr,
-  now: () => Date.now(),
-  loadForeverKeeps: () => {
-    const parsed: unknown = JSON.parse(readFileSync(foreverKeepFile(), 'utf8'))
-    return Array.isArray(parsed) ? parsed.filter((d): d is string => typeof d === 'string') : []
-  },
-  saveForeverKeeps: (dirs) => writeFileSync(foreverKeepFile(), JSON.stringify(dirs), 'utf8')
-})
+// Background project sessions (Phase 1 + C1 cap/TTL): the backgrounded-project registry + its
+// idle sweep live in backgroundSessions.ts (extracted for the max-lines ratchet; every dep is a
+// module import). App-run lifetime only — quit's disposeAll* kills background resources too, so the
+// registry is never persisted or drained at shutdown.
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
@@ -959,6 +936,10 @@ app.whenReady().then(async () => {
     if (!wc.isDestroyed()) wc.send('recap:learned', patches)
   })
 
+  // C1: arm the background-session idle-TTL sweep (skipped under the headless self-test); it reaps
+  // idle residents via the scoped ring-flush-then-dispose close. Torn down in shutdown().
+  if (!SMOKE) startBackgroundIdleSweep()
+
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this
   // logs the typed no-provider result (graceful degrade), proving the path end-to-end.
@@ -1044,6 +1025,8 @@ function shutdown(): Promise<void> {
   // (this fn is shared by before-quit + the crash sinks) is a no-op.
   stopRecapWatch?.()
   stopRecapWatch = null
+  // C1: stop the background-session idle sweep so it can't fire after teardown.
+  stopBackgroundIdleSweep()
   // Terminal recap (Task 11 — Slice B): dispose the mtime watcher (clears all fs.watch handles
   // and pending debounce timers) so nothing fires post-teardown.
   recapWatcher?.dispose()

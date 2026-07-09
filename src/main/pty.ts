@@ -520,16 +520,19 @@ function adopt(
 }
 
 /**
- * Phase 5 (quit/darwin-close continuity): append every BACKGROUND park's post-watermark
- * ring tail to its owning project's sidecar, so output produced while backgrounded
- * survives an app quit the renderer flush can't see (the flush serializes only the ACTIVE
- * project's mounted xterms). `append` is injected (terminalSnapshot.appendTerminalSnapshot)
- * to keep this module fs-free; callers run it BEFORE the rings die in disposeAllPtys.
+ * Phase 5 (quit continuity) + C1 (close-one continuity): append BACKGROUND parks' post-watermark
+ * ring tails to their owning project's snapshot sidecar, so output produced while backgrounded
+ * survives a teardown the renderer flush can't see (it serializes only the ACTIVE project's mounted
+ * xterms). `append` is injected (terminalSnapshot.appendTerminalSnapshot) to keep this module
+ * fs-free. `dir` — when given (C1: closing ONE background project via disposeProjectPtys, which does
+ * NOT flush tails), flush ONLY that project's parks; omit it (quit) to flush ALL. Run BEFORE the
+ * rings die in disposeAllPtys / disposeProjectPtys.
  */
 export function persistBackgroundRingTails(
-  append: (projectDir: string, boardId: string, text: string) => void
+  append: (projectDir: string, boardId: string, text: string) => void,
+  dir?: string | null
 ): void {
-  persistBackgroundRingTailsCore(parked, append)
+  persistBackgroundRingTailsCore(parked, append, dir)
 }
 
 /**
@@ -545,19 +548,22 @@ export function backgroundParkedBoardIds(): Set<string> {
   return ids
 }
 
-/** Pure core of the above (module map injected) so the walk is unit-testable. */
+/** Pure core (module map injected) so the walk is unit-testable. `dir`, when defined, scopes the
+ *  flush to that one project (C1 close-one); undefined flushes every background park (quit). */
 export function persistBackgroundRingTailsCore(
   parkedMap: Map<string, ParkedLike>,
-  append: (projectDir: string, boardId: string, text: string) => void
+  append: (projectDir: string, boardId: string, text: string) => void,
+  dir?: string | null
 ): void {
   for (const [id, p] of parkedMap) {
-    if (p.kind !== 'background' || !p.owningDir) continue
+    if (p.kind !== 'background' || !p.owningDir || (dir !== undefined && p.owningDir !== dir))
+      continue
     const tail = readRingSince(p.buf, p.watermark ?? 0)
     if (!tail) continue
     try {
       append(p.owningDir, id, tail)
     } catch {
-      /* best-effort — one board's failed append must not block the quit drain */
+      /* best-effort — one board's failed append must not block the drain */
     }
   }
 }
