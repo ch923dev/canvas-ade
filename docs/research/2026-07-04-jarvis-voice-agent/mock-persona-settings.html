@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock: Settings · Voice · Persona</title>
+<style>
+  /* Tokens: faithful copy of src/renderer/src/styles/tokens.css (DESIGN.md §2-4). */
+  @font-face {
+    font-family: 'Geist';
+    src: url('../../../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('../../../src/renderer/src/assets/fonts/GeistMono-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --void: #0a0a0b; --surface: #141416; --surface-raised: #1a1a1d; --surface-overlay: #1e1e22; --inset: #0e0e10;
+    --border-subtle: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+    --text: #ededee; --text-2: #9b9ba1; --text-3: #7b7b81; --text-faint: #46464b;
+    --accent: #4f8cff; --accent-hover: #6ea0ff; --accent-wash: rgba(79,140,255,0.14);
+    --ok: #3ecf8e; --warn: #e8b339; --err: #f2545b;
+    --r-board: 8px; --r-inner: 6px; --r-ctl: 5px; --r-pill: 999px;
+    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,0.7);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: var(--ui); background: var(--void); color: var(--text);
+    min-height: 100vh; padding: 36px; display: flex; justify-content: center; align-items: flex-start;
+  }
+  /* Settings modal shell (matches the Settings surface class) */
+  .settings {
+    width: 620px; background: var(--surface-raised); border: 1px solid var(--border);
+    border-radius: var(--r-board); box-shadow: var(--shadow-pop); overflow: hidden;
+  }
+  .set-hd { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
+  .set-crumb { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+  .set-crumb b { color: var(--text); font-weight: 500; }
+  .set-x { margin-left: auto; border: 0; background: transparent; color: var(--text-3); font-size: 13px; cursor: pointer; }
+  .set-body { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+
+  .sec { display: flex; flex-direction: column; gap: 8px; }
+  .sec + .sec { border-top: 1px solid var(--border-subtle); padding-top: 15px; }
+  .sec-title { font-size: 13px; font-weight: 600; color: var(--text); }
+  .sec-sub { font-size: 11px; line-height: 15px; color: var(--text-3); margin-top: -4px; }
+
+  .frow { display: flex; align-items: center; gap: 10px; }
+  .flabel { width: 128px; flex: none; font-size: 12px; font-weight: 500; color: var(--text-2); }
+  .fhint { font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+
+  .input, .select {
+    font-family: var(--ui); font-size: 12px; color: var(--text);
+    background: var(--inset); border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl); padding: 5px 9px; outline: none;
+  }
+  .input:focus-visible, .select:focus-visible { border-color: rgba(79,140,255,0.45); }
+  .input.name { width: 180px; }
+  .select { min-width: 210px; appearance: none; }
+  .selwrap { position: relative; display: inline-flex; }
+  .selwrap::after { content: '▾'; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--text-3); pointer-events: none; }
+
+  .btn {
+    font-family: var(--ui); font-size: 11px; border-radius: var(--r-ctl); padding: 4px 10px;
+    cursor: pointer; white-space: nowrap; background: transparent;
+    border: 1px solid var(--border-subtle); color: var(--text-3);
+  }
+  .btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .btn.primary { color: var(--accent-hover); border-color: rgba(79,140,255,0.45); background: var(--accent-wash); }
+  .btn.danger:hover { color: var(--err); border-color: rgba(242,84,91,0.4); }
+
+  /* Tone preset cards: radio grid, 1-line preview quote each */
+  .tones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tone {
+    display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer;
+    background: var(--inset); border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner); padding: 9px 11px;
+  }
+  .tone:hover { border-color: var(--border-strong); }
+  .tone.on { border-color: rgba(79,140,255,0.45); background: var(--accent-wash); }
+  .tone-hd { display: flex; align-items: center; gap: 6px; }
+  .tone-dot { width: 6px; height: 6px; border-radius: 999px; border: 1px solid var(--border-strong); flex: none; }
+  .tone.on .tone-dot { background: var(--accent); border-color: var(--accent); }
+  .tone-name { font-size: 12px; font-weight: 500; color: var(--text); }
+  .tone-quote { font-size: 11px; line-height: 15px; color: var(--text-3); font-style: italic; }
+  .tone.custom textarea {
+    font-family: var(--ui); font-size: 11px; line-height: 15px; color: var(--text-2);
+    background: transparent; border: 1px dashed var(--border-subtle); border-radius: var(--r-ctl);
+    padding: 4px 6px; resize: none; outline: none; margin-top: 2px;
+  }
+
+  /* Voice picker row + rate + verbosity */
+  .seg { display: inline-flex; background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); overflow: hidden; }
+  .seg button {
+    font-family: var(--ui); font-size: 11px; padding: 4px 10px; border: 0; cursor: pointer;
+    background: transparent; color: var(--text-3);
+  }
+  .seg button.on { background: var(--accent-wash); color: var(--accent-hover); }
+  .rate { display: inline-flex; align-items: center; gap: 8px; }
+  .rate input[type=range] { width: 120px; accent-color: var(--accent); }
+  .rate .val { font-family: var(--mono); font-size: 10.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .play {
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .voicemeta { font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+
+  /* Key row */
+  .keyrow { display: flex; align-items: center; gap: 8px; background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-inner); padding: 8px 11px; }
+  .keymask { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); flex: 1; }
+  .keyok { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--ok); }
+  .keyok i { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
+
+  .foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border-subtle); font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+  <div class="settings">
+    <div class="set-hd">
+      <span class="set-crumb">Settings · Voice · <b>Persona</b></span>
+      <button class="set-x">✕</button>
+    </div>
+    <div class="set-body">
+
+      <div class="sec">
+        <div class="sec-title">Persona</div>
+        <div class="sec-sub">Who answers when you talk to Expanse. Name and tone shape every spoken reply.</div>
+        <div class="frow">
+          <span class="flabel">Name</span>
+          <input class="input name" value="Jarvis">
+          <span class="fhint">used in prompt + island label</span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-title">Tone</div>
+        <div class="tones">
+          <div class="tone on">
+            <span class="tone-hd"><span class="tone-dot"></span><span class="tone-name">Butler, dry wit</span></span>
+            <span class="tone-quote">“The tests pass, sir. I contained my astonishment.”</span>
+          </div>
+          <div class="tone">
+            <span class="tone-hd"><span class="tone-dot"></span><span class="tone-name">Mission control</span></span>
+            <span class="tone-quote">“Spawn confirmed. Two boards running. Standing by.”</span>
+          </div>
+          <div class="tone">
+            <span class="tone-hd"><span class="tone-dot"></span><span class="tone-name">Pair programmer</span></span>
+            <span class="tone-quote">“Okay so the auth test is the flaky one, want me to rerun it?”</span>
+          </div>
+          <div class="tone custom">
+            <span class="tone-hd"><span class="tone-dot"></span><span class="tone-name">Custom</span></span>
+            <textarea rows="2" placeholder="Describe the tone in your own words…" disabled></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-title">Voice</div>
+        <div class="frow">
+          <span class="flabel">Voice</span>
+          <span class="selwrap"><select class="select"><option>Kokoro · af_sky (en, warm)</option></select></span>
+          <button class="btn play">▸ Preview</button>
+        </div>
+        <div class="frow">
+          <span class="flabel"></span>
+          <span class="voicemeta">kokoro fp16 · 310 MB · local, downloads on first use · fallback: piper en_US medium</span>
+        </div>
+        <div class="frow">
+          <span class="flabel">Speaking rate</span>
+          <span class="rate"><input type="range" min="80" max="130" value="105"><span class="val">1.05×</span></span>
+        </div>
+        <div class="frow">
+          <span class="flabel">Verbosity</span>
+          <span class="seg"><button class="on">Concise</button><button>Normal</button><button>Narrative</button></span>
+          <span class="fhint">concise = lead with the answer, one breath per sentence</span>
+        </div>
+        <div class="frow">
+          <span class="flabel">Announcements</span>
+          <span class="seg"><button>All events</button><button class="on">Attention only</button><button>Chips only</button></span>
+          <span class="fhint">what Jarvis speaks from agent-lifecycle events</span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-title">Brain</div>
+        <div class="frow">
+          <span class="flabel">Model</span>
+          <span class="selwrap"><select class="select"><option>claude-opus-4-8 (default)</option></select></span>
+          <span class="fhint">haiku-4-5 = fast conversation mode</span>
+        </div>
+        <div class="frow">
+          <span class="flabel">History</span>
+          <span class="seg"><button class="on">Per project</button><button>Session only</button><button>Off</button></span>
+          <button class="btn" style="color:var(--text-3)">Clear</button>
+          <span class="fhint">.canvas/memory/jarvis/ · local</span>
+        </div>
+        <div class="frow" style="align-items:flex-start">
+          <span class="flabel" style="padding-top:8px">API key</span>
+          <span style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <span class="keyrow">
+              <span class="keymask">sk-ant-····················A4Qx</span>
+              <span class="keyok"><i></i>valid</span>
+              <button class="btn">Replace</button>
+              <button class="btn danger">Clear</button>
+            </span>
+            <span class="fhint">encrypted via safeStorage, main process only; the renderer never sees it</span>
+          </span>
+        </div>
+      </div>
+
+    </div>
+    <div class="foot">
+      <span>local-first: speech-to-text and speech both run on this machine</span>
+      <span style="margin-left:auto">only replies use the Claude API</span>
+    </div>
+  </div>
+</body>
+</html>
