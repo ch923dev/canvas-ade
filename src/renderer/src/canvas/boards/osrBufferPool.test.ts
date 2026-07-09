@@ -51,4 +51,33 @@ describe('createBufferPool (M6 OSR blit buffer pool)', () => {
     expect(pool.take(8).byteLength).toBe(8)
     expect(pool.take(8).byteLength).toBe(8) // still allocates — a drained pool degrades, never fails
   })
+
+  it('bounds TOTAL retained bytes across DISTINCT sizes (LRU-evicts the least-recently-used size)', () => {
+    // The bug this guards (H5 review): keyed by exact byte length, a churn of distinct dirty-rect
+    // sizes would add a new PERMANENT key each, growing retained memory monotonically. The byte
+    // budget caps it — the oldest size bucket is evicted to make room.
+    const pool = createBufferPool(3, 100) // 100-byte total budget
+    const a = new ArrayBuffer(40)
+    const b = new ArrayBuffer(50)
+    const c = new ArrayBuffer(30)
+    pool.give(a) // retained 40
+    pool.give(b) // retained 90
+    pool.give(c) // 90 + 30 > 100 → evict oldest size (40, a's bucket) → 50, then add c → 80
+    expect(pool.take(40)).not.toBe(a) // the size-40 bucket was LRU-evicted → fresh alloc
+    expect(pool.take(50)).toBe(b) // the survivors are still pooled
+    expect(pool.take(30)).toBe(c)
+  })
+
+  it('never evicts the HOT size — take re-touches it to most-recently-used', () => {
+    const pool = createBufferPool(3, 100)
+    const hot = new ArrayBuffer(40)
+    const other = new ArrayBuffer(50)
+    pool.give(hot) // {40} retained 40
+    pool.give(other) // {40,50} retained 90
+    expect(pool.take(40)).toBe(hot) // use the hot size (empties its bucket)…
+    pool.give(hot) // …and return it → size 40 is now most-recently-used, 50 is the LRU
+    pool.give(new ArrayBuffer(30)) // 90 + 30 > 100 → evicts the LRU (50/other), NOT the hot 40
+    expect(pool.take(40)).toBe(hot) // hot survived the eviction
+    expect(pool.take(50)).not.toBe(other) // the stale (LRU) size was the one dropped
+  })
 })
