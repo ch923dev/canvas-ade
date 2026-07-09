@@ -9,5 +9,5 @@ export interface RecentProject {
   lastOpenedAt: number
 }
 export type ProjectResult =
-  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }
   | { ok: false; error: string }

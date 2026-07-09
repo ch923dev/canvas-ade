@@ -30,7 +30,7 @@ const IGNORE_PRIVATE = '*\n!canvas.json\n'
  * volatile state (the audit log, the terminal staging dir, the terminal snapshots, and the
  * parse-fail backup).
  */
-const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\n'
+const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\nsession.json\n'
 
 /** Old (pre-0009) ignore bodies, recognized + remapped to the new ones on migrate-on-open. */
 const LEGACY_IGNORE_PRIVATE = '*'
@@ -38,6 +38,9 @@ const LEGACY_IGNORE_COMMITTED = 'audit/'
 /** Pre-S3 committed body (no `terminal/`) — remapped to the current one so an already-opted-in
  *  project starts ignoring the new snapshot sidecars on its next open. */
 const LEGACY_IGNORE_COMMITTED_V2 = 'audit/\ntmp/\ncanvas.json.bak'
+/** M1: pre-session-sidecar committed body (no `session.json`) — remapped so an opted-in project
+ *  starts ignoring the machine-local camera/backdrop sidecar on its next open. */
+const LEGACY_IGNORE_COMMITTED_V3 = 'audit/\ntmp/\nterminal/\ncanvas.json.bak'
 
 /** Board ids are nanoid-style; reject anything else (and over-long) to keep writes inside memory/.
  *  MCP-07: the regex + length cap now live in the shared `safeId` module so this and boardMemory.ts
@@ -205,7 +208,11 @@ export function upgradeProjectGitignore(projectDir: string): void {
     if (raw === undefined) return // absent → ensureScaffold writes the new private when scaffolding
     const body = raw.trim()
     if (body === LEGACY_IGNORE_PRIVATE) writeFileAtomic.sync(file, IGNORE_PRIVATE, 'utf8')
-    else if (body === LEGACY_IGNORE_COMMITTED || body === LEGACY_IGNORE_COMMITTED_V2)
+    else if (
+      body === LEGACY_IGNORE_COMMITTED ||
+      body === LEGACY_IGNORE_COMMITTED_V2 ||
+      body === LEGACY_IGNORE_COMMITTED_V3
+    )
       writeFileAtomic.sync(file, IGNORE_COMMITTED, 'utf8')
     // else: already the new format, or user-customised → leave as-is.
   } catch (err) {

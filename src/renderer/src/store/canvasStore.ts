@@ -28,6 +28,7 @@ import {
   DEFAULT_BACKGROUND_SATURATION,
   SCHEMA_VERSION
 } from '../lib/boardSchema'
+import { reconcileSession, type CanvasSession } from '../lib/sessionSidecar'
 import { showToast } from './toastStore'
 import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
@@ -58,7 +59,7 @@ export interface ProjectState {
 }
 /** Result of a project open/create IPC call (mirrors preload `ProjectResult`). */
 export type OpenResult =
-  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }
   | { ok: false; error: string }
 /**
  * A recent-project entry (mirrors preload `RecentProject`). Re-declared here so
@@ -527,7 +528,8 @@ function markRestoredIdle(boards: Board[]): void {
 function applyLoadedDoc(
   set: SetCanvasState,
   d: ReturnType<typeof fromObject>,
-  project?: ProjectState
+  project?: ProjectState,
+  session?: CanvasSession
 ): void {
   pendingCheckpoints = []
   markRestoredIdle(d.boards)
@@ -535,8 +537,11 @@ function applyLoadedDoc(
     boards: d.boards,
     connectors: d.connectors,
     groups: d.groups ?? [],
-    viewport: d.viewport,
-    background: d.background ?? null,
+    // M1: the session sidecar (already validated via reconcileSession) WINS over the inline
+    // canvas.json copy when present; a missing/invalid sidecar field falls back to the inline value
+    // (fromObject already validated it) → fitView / no backdrop, never a blocked load.
+    viewport: session?.viewport ?? d.viewport,
+    background: session?.background ?? d.background ?? null,
     selectedId: null,
     selectedIds: [],
     past: [],
@@ -1184,6 +1189,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
       return
     }
+    // M1: reconcile the session sidecar ONCE (per-dir → same for the primary + the .bak recovery)
+    // and build the project descriptor once; both apply sites below reuse them.
+    const session: CanvasSession = reconcileSession(r.session)
+    const openProject: ProjectState = { dir: r.dir, name: r.name, status: 'open' }
     // Guard the deep-validation throw: MAIN validated only the envelope, so an
     // envelope-valid but deep-corrupt doc (or one with a too-new schemaVersion) throws
     // out of fromObject here. Route it to status:'error' (carrying the message) and leave
@@ -1204,7 +1213,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         try {
           const d2 = fromObject(bak.doc)
           noticeIfNewerDoc(d2)
-          applyLoadedDoc(set, d2, { dir: r.dir, name: r.name, status: 'open' })
+          applyLoadedDoc(set, d2, openProject, session)
           return
         } catch (bakErr) {
           // .bak is also deep-corrupt → fall through to the error path below (carrying the
@@ -1219,7 +1228,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return
     }
     noticeIfNewerDoc(d)
-    applyLoadedDoc(set, d, { dir: r.dir, name: r.name, status: 'open' })
+    applyLoadedDoc(set, d, openProject, session)
   }
 }))
 

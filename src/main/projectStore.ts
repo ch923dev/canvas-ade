@@ -29,6 +29,7 @@ import { scaffoldProjectMemory, upgradeProjectGitignore } from './canvasMemory'
 const CANVAS_DIR = '.canvas'
 const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
+const SESSION = 'session.json' // M1: viewport + backdrop sidecar (settings-class, git-ignored)
 const ASSETS = 'assets'
 const DOWNLOADS = 'downloads'
 
@@ -38,6 +39,7 @@ const DOWNLOADS = 'downloads'
 const canvasRoot = (dir: string): string => join(dir, CANVAS_DIR)
 const primaryPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS)
 const bakPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS_BAK)
+const sessionPath = (dir: string): string => join(dir, CANVAS_DIR, SESSION)
 // Exported (Project Library + OSR downloads relocation): the `.canvas/assets` blob store and the
 // `.canvas/downloads` folder that OSR Browser-board downloads now save into (ADR 0009).
 export const assetsDirOf = (dir: string): string => join(dir, CANVAS_DIR, ASSETS)
@@ -71,7 +73,7 @@ export const SCHEMA_VERSION = 18
 export const MIN_READER_VERSION = 17
 
 export type ProjectResult =
-  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }
   | { ok: false; error: string }
 
 let currentDir: string | null = null
@@ -115,9 +117,11 @@ function tryParse(file: string): unknown | undefined {
  */
 export function readProject(dir: string): ProjectResult {
   const primary = tryParse(primaryPath(dir)) ?? tryParse(legacyPrimary(dir))
-  if (primary !== undefined) return { ok: true, dir, name: projectName(dir), doc: primary }
+  if (primary !== undefined)
+    return { ok: true, dir, name: projectName(dir), doc: primary, session: readSession(dir) }
   const backup = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
-  if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
+  if (backup !== undefined)
+    return { ok: true, dir, name: projectName(dir), doc: backup, session: readSession(dir) }
   return { ok: false, error: `No readable canvas.json in ${dir}` }
 }
 
@@ -130,8 +134,42 @@ export function readProject(dir: string): ProjectResult {
  */
 export function readBak(dir: string): ProjectResult {
   const backup = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
-  if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
+  if (backup !== undefined)
+    return { ok: true, dir, name: projectName(dir), doc: backup, session: readSession(dir) }
   return { ok: false, error: `No readable canvas.json.bak in ${dir}` }
+}
+
+/**
+ * M1: read the raw session sidecar (`.canvas/session.json` — camera viewport + backdrop), or null
+ * when absent/unparseable. Deliberately NOT deep-validated here: the RENDERER runs it through
+ * `boardSchema.reconcileSession` (the same guards `fromObject` uses) before it may override the
+ * inline canvas.json values, so a parseable-but-invalid sidecar can never win. A miss → null → the
+ * load falls back to the doc's inline viewport/background (fitView / no backdrop).
+ */
+export function readSession(dir: string): unknown {
+  const f = sessionPath(dir)
+  if (!existsSync(f)) return null
+  try {
+    return JSON.parse(readFileSync(f, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * M1: write the session sidecar. Split OUT of canvas.json so a bare camera pan / backdrop tweak
+ * rewrites a few hundred bytes instead of the whole board tree (+ its .bak rotation). `fsync:false`:
+ * disposable settings-class data (the inline copy in canvas.json is the fallback), so skipping the
+ * fsync is the documented perf trade — a lost sidecar degrades to fitView / no backdrop, never data
+ * loss. Its own temp file (never shared with the canvas.json write) so the two atomic writes never
+ * collide.
+ */
+export async function writeSession(dir: string, session: unknown): Promise<void> {
+  mkdirSync(canvasRoot(dir), { recursive: true })
+  await writeFileAtomic(sessionPath(dir), JSON.stringify(session), {
+    encoding: 'utf8',
+    fsync: false
+  })
 }
 
 /**

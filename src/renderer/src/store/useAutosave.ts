@@ -36,17 +36,48 @@ export interface Autosaver {
  * (that ephemeral state must never reach canvas.json). The drift-guard unit test pins
  * this set to toObject's output so the next persisted field cannot re-open the gap.
  */
-export const SAVED_KEYS = ['boards', 'connectors', 'viewport', 'groups', 'background'] as const
+// M1: the persisted set is split by WRITE COST. A DOC edit (boards/connectors/groups) rewrites the
+// whole canvas.json (+ its .bak rotation); a SESSION edit (camera viewport / backdrop) writes only
+// the tiny `.canvas/session.json` sidecar. The doc save still writes viewport/background INLINE
+// (toObject includes them), so the inline copy stays a forward-compatible fallback for old readers.
+export const DOC_KEYS = ['boards', 'connectors', 'groups'] as const
+export const SESSION_KEYS = ['viewport', 'background'] as const
+/** The full persisted set — the drift-guard test pins THIS (its union) to toObject's output, so a
+ *  new persisted field must land in one subset or the other, never neither. */
+export const SAVED_KEYS = [...DOC_KEYS, ...SESSION_KEYS] as const
 
-/**
- * True when any persisted slice changed by reference. Store updates are immutable, so a
- * changed slice always carries a NEW ref — a cheap identity check, no deep compare.
- */
+/** True when a slice in `keys` changed by reference (immutable store updates ⇒ a changed slice
+ *  always carries a NEW ref — a cheap identity check, no deep compare). */
+function someChanged(
+  keys: readonly (typeof SAVED_KEYS)[number][],
+  prev: Pick<CanvasState, (typeof SAVED_KEYS)[number]>,
+  next: Pick<CanvasState, (typeof SAVED_KEYS)[number]>
+): boolean {
+  return keys.some((k) => prev[k] !== next[k])
+}
+
+/** A board-tree edit → the full canvas.json save. */
+export function hasDocChange(
+  prev: Pick<CanvasState, (typeof SAVED_KEYS)[number]>,
+  next: Pick<CanvasState, (typeof SAVED_KEYS)[number]>
+): boolean {
+  return someChanged(DOC_KEYS, prev, next)
+}
+
+/** A camera/backdrop-only edit → the cheap session-sidecar save. */
+export function hasSessionChange(
+  prev: Pick<CanvasState, (typeof SAVED_KEYS)[number]>,
+  next: Pick<CanvasState, (typeof SAVED_KEYS)[number]>
+): boolean {
+  return someChanged(SESSION_KEYS, prev, next)
+}
+
+/** True when ANY persisted slice changed (kept for external callers). */
 export function hasSavableChange(
   prev: Pick<CanvasState, (typeof SAVED_KEYS)[number]>,
   next: Pick<CanvasState, (typeof SAVED_KEYS)[number]>
 ): boolean {
-  return SAVED_KEYS.some((k) => prev[k] !== next[k])
+  return someChanged(SAVED_KEYS, prev, next)
 }
 
 /** Pure debounce+gate engine (no React) — unit-tested directly. */
@@ -136,13 +167,22 @@ export function cancelActiveAutosave(): void {
 /** React hook: arms autosave against the canvas store + window lifecycle. */
 export function useAutosave(): void {
   useEffect(() => {
+    // Shared save gate (both savers): only save while a dir-bearing project is 'open'. The `project`
+    // slice is read defensively (compiles/no-ops as 'welcome' if absent); a dir-less "open" (the e2e
+    // boot — production always opens with a dir) has nowhere to save, so 'welcome' keeps the gate
+    // closed instead of attempting a write MAIN fails (which once raised a phantom sticky toast).
+    const getStatus = (): ProjectStatus => {
+      const p = (
+        useCanvasStore.getState() as { project?: { status?: ProjectStatus; dir?: string | null } }
+      ).project
+      if (p?.dir == null) return 'welcome'
+      return p.status ?? 'welcome'
+    }
+    // The AUTHORITATIVE full-doc saver: rewrites the whole canvas.json (incl inline viewport/
+    // background — the forward-compat copy). BUG-009: pass the project dir so MAIN rejects a write
+    // that raced a switch. PERSIST-03: drive the save lifecycle. SAVE-1: a failure routes through
+    // onError → the sticky save-failure toast so a failing disk is never silent.
     const saver = createAutosaver({
-      // BUG-009: pass the project dir this doc belongs to, so MAIN can reject the write
-      // if a project switch raced the save (currentDir would point at the new project).
-      // PERSIST-03: drive the save lifecycle — mark 'saving' for the write window, then
-      // 'saved' on success (which also clears any standing failure, dismissing the sticky
-      // toast). The surface tracks the CURRENT disk health, not a sticky history; a
-      // failure routes through onError below (→ 'error').
       save: async () => {
         const s = useCanvasStore.getState()
         const status = useSaveStatusStore.getState()
@@ -151,33 +191,33 @@ export function useAutosave(): void {
         if (ok) status.markSaved()
         return ok
       },
-      // The `project` slice is added in a later task; read it defensively so the hook
-      // compiles + no-ops (status 'welcome' → gate closed) until that slice exists.
-      // A dir-less "open" project (the e2e harness boot — production always opens with
-      // a dir) has nowhere to save to: report 'welcome' so the gate stays closed instead
-      // of attempting a write MAIN fails (that raised a phantom sticky save-failure
-      // toast over every e2e run once D1-A made the failure surface an occluding island).
-      getStatus: () => {
-        const p = (
-          useCanvasStore.getState() as {
-            project?: { status?: ProjectStatus; dir?: string | null }
-          }
-        ).project
-        if (p?.dir == null) return 'welcome'
-        return p.status ?? 'welcome'
-      },
-      // SAVE-1: a swallowed autosave failure means silent data loss. Log it AND publish
-      // the failure — AppChrome's bridge routes it to a sticky save-failure toast with
-      // a Retry action (D1-A, replaces the D0-8 chip).
+      getStatus,
       onError: (e) => {
         // eslint-disable-next-line no-console
         console.error('autosave failed', e)
-        // Fixed user-facing string: raw messages here are internal ('autosave:
-        // project:save returned false') or OS-technical (ENOSPC), and the toast's
+        // Fixed user-facing string: raw messages here are internal / OS-technical and the toast's
         // alert region reads them aloud. The console line keeps the detail.
         useSaveStatusStore
           .getState()
           .setSaveFailure('Auto-save failed — check disk space and permissions')
+      }
+    })
+    // M1: the SESSION-sidecar saver — a camera pan / backdrop change writes ONLY .canvas/session.json
+    // (a few hundred bytes) instead of the whole board tree + its .bak rotation. Advisory: a failed
+    // sidecar write is non-fatal (the inline canvas.json copy is the fallback), so it does NOT raise
+    // the sticky save-failure toast the doc saver does — a console line only.
+    const sessionSaver = createAutosaver({
+      save: () => {
+        const s = useCanvasStore.getState()
+        return window.api.project.saveSession(
+          { viewport: s.viewport, background: s.background },
+          s.project.dir ?? undefined
+        )
+      },
+      getStatus,
+      onError: (e) => {
+        // eslint-disable-next-line no-console
+        console.error('session autosave failed (advisory — inline canvas.json is the fallback)', e)
       }
     })
 
@@ -188,10 +228,17 @@ export function useAutosave(): void {
     // silently fails to schedule a save. zustand hands the previous state as the 2nd
     // listener arg, so there is no manual prev-tracking to drift out of sync.
     const unsub = useCanvasStore.subscribe((s, prev) => {
-      if (hasSavableChange(prev, s)) saver.schedule()
+      // M1: route each change to the cheaper write — a board-tree edit rewrites canvas.json; a
+      // camera/backdrop-only edit writes just the sidecar. Both can fire if a single update touched
+      // both (e.g. a board move that also nudged the camera).
+      if (hasDocChange(prev, s)) saver.schedule()
+      if (hasSessionChange(prev, s)) sessionSaver.schedule()
     })
 
-    const onBlur = (): void => void saver.flush()
+    const onBlur = (): void => {
+      void saver.flush()
+      void sessionSaver.flush()
+    }
     // S3: on window close AND the main-driven before-quit flush, persist every terminal's scrollback
     // alongside the canvas. Folded into THESE awaited handlers (not a second `project:flush`
     // subscriber) on purpose: main resolves the quit on the FIRST reply, so a separate subscriber's
@@ -206,6 +253,7 @@ export function useAutosave(): void {
     // the default async writer so a large scrollback buffer never stalls MAIN during normal use.
     const onUnload = (): void => {
       void saver.flush()
+      void sessionSaver.flush() // M1: the camera/backdrop sidecar flushes on the same durable moments
       // R2 dir-pin: quit-time flushes carry the project they belong to (background sessions
       // make a cross-project late-write race real; MAIN rejects a mismatched dir).
       void flushAllTerminalSnapshots({
@@ -224,6 +272,7 @@ export function useAutosave(): void {
     const offFlush = window.api.project.onFlush(() =>
       Promise.all([
         saver.flush(),
+        sessionSaver.flush(), // M1: the sidecar is current before app.exit(0), like canvas.json
         flushAllTerminalSnapshots({
           sync: true,
           expectedDir: useCanvasStore.getState().project.dir ?? undefined
@@ -231,12 +280,23 @@ export function useAutosave(): void {
       ]).then(() => undefined)
     )
 
-    // PERSIST-B: publish this instance so a project switch can cancel its pending timer.
-    setActiveAutosaver(saver)
+    // PERSIST-B: publish a combined disposer so a project switch cancels BOTH pending debounced
+    // timers (a leftover session timer would otherwise fire after the switch and write the new
+    // project's camera into the wrong dir — MAIN's dir-pin rejects it, but cancel avoids the churn).
+    setActiveAutosaver({
+      schedule: () => saver.schedule(),
+      flush: () => Promise.all([saver.flush(), sessionSaver.flush()]).then(() => undefined),
+      cancel: () => {
+        saver.cancel()
+        sessionSaver.cancel()
+      }
+    })
 
     return () => {
       void saver.flush()
+      void sessionSaver.flush()
       saver.cancel()
+      sessionSaver.cancel()
       setActiveAutosaver(null)
       unsub()
       offFlush()
