@@ -28,7 +28,8 @@ export interface TerminalSaveArgs {
 }
 export type TerminalSaveResult =
   | { ok: true; path: string }
-  | { ok: false; canceled?: boolean; error?: string }
+  // C3: `code` carries the write errno (ENOSPC vs a lock/permission failure) for renderer copy.
+  | { ok: false; canceled?: boolean; error?: string; code?: string }
 
 export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWindow | null): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
@@ -56,7 +57,11 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
         await writeFileAtomic(res.filePath, typeof args?.text === 'string' ? args.text : '')
         return { ok: true, path: res.filePath }
       } catch (err) {
-        return { ok: false, error: String((err as Error)?.message ?? err) }
+        return {
+          ok: false,
+          error: String((err as Error)?.message ?? err),
+          code: (err as NodeJS.ErrnoException)?.code
+        }
       }
     }
   )

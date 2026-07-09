@@ -4,7 +4,7 @@
  * All sit on `--surface-raised` with the popover shadow. Camera controls drive
  * React Flow via `useReactFlow`; the dock adds store boards centered in view.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { useReactFlow, useStore } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import type { BoardType } from '../lib/boardSchema'
@@ -39,7 +39,7 @@ export interface AppChromeProps {
   onFocusGroup: () => void
 }
 
-export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElement {
+function AppChromeImpl({ onTidy, onFocusGroup }: AppChromeProps): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
   // Which tile the Settings panel opens on: null = the category grid (the gear); 'account' = drilled
   // straight into Account (the account pill / avatar). Reset on each open.
@@ -639,3 +639,10 @@ const styles: Record<string, CSSProperties> = {
   tidyGrid: { display: 'flex', flexWrap: 'wrap', gap: 4 },
   tidyLabel: { fontSize: 10.5, lineHeight: '12px', textAlign: 'center' }
 }
+
+// H8: memoized. CanvasInner subscribes to the whole `boards` array, so it re-renders on every
+// board-drag frame (~60fps) and every planning keystroke; AppChrome's props (onTidy/onFocusGroup)
+// are stable useCallbacks, so memo stops the ENTIRE chrome fan-out — switcher, camera cluster, dock,
+// board inspector, file tree — from reconciling on those frames (the biggest single drag/typing
+// lever). Its own store subscriptions still re-render it when its real inputs change.
+export const AppChrome = memo(AppChromeImpl)

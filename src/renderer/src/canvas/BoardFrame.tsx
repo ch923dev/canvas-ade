@@ -813,6 +813,12 @@ export function BoardFrame({
                 flex: 'none'
               }}
             >
+              {/* C2: the §7.1 "working" braille spinner is a pure-CSS ::before now (see
+                  motion.css) — it no longer ticks React state on the parent node. aria-hidden:
+                  SrBoardStatus carries the announced text (the glyph is stripped there). */}
+              {running && (
+                <span className="ca-spinner-glyph" aria-hidden="true" style={{ marginRight: 4 }} />
+              )}
               {status.label}
             </span>
           )}

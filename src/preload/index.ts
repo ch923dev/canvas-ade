@@ -676,7 +676,13 @@ const api = {
     // BUG-009: optional expectedDir — when supplied, MAIN rejects the write unless it
     // still matches the current open dir (guards autosave racing a project switch).
     // Forwarded only when present so dir-less call sites keep their exact IPC shape.
-    save: (doc: unknown, expectedDir?: string): Promise<boolean> =>
+    // C3: returns `{ ok:false, code }` (Node write errno) on a write failure, `{ ok:false }` with no
+    // code on a non-error rejection (foreign sender / no project / cross-project race). The renderer
+    // maps `code` → accurate copy (saveError.ts) instead of always saying "check disk space".
+    save: (
+      doc: unknown,
+      expectedDir?: string
+    ): Promise<{ ok: true } | { ok: false; code?: string }> =>
       expectedDir === undefined
         ? ipcRenderer.invoke('project:save', doc)
         : ipcRenderer.invoke('project:save', doc, expectedDir),
@@ -737,7 +743,10 @@ const api = {
   },
   // ── Phase 3 / W4 assets — write pasted/dropped bytes, read them back as bytes ──
   asset: {
-    write: (bytes: Uint8Array, ext: string): Promise<{ assetId: string } | { error: string }> =>
+    write: (
+      bytes: Uint8Array,
+      ext: string
+    ): Promise<{ assetId: string } | { error: string; code?: string }> =>
       ipcRenderer.invoke('asset:write', { bytes, ext }),
     read: (assetId: string): Promise<Uint8Array | null> => ipcRenderer.invoke('asset:read', assetId)
   },
@@ -798,8 +807,9 @@ const api = {
       bytes: Uint8Array
       ext: 'png' | 'svg'
       defaultName: string
-    }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
-      ipcRenderer.invoke('export:save', args)
+    }): Promise<
+      { ok: true; path: string } | { ok: false; canceled?: boolean; error?: string; code?: string }
+    > => ipcRenderer.invoke('export:save', args)
   },
   // ── Phase 5 · S1: save the live terminal buffer to a user-chosen .txt (MAIN dialog + atomic write) ──
   // ── Phase 5 · S1 save-output + S3 snapshot persist/restore (factored to terminalApi.ts) ──

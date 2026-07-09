@@ -16,8 +16,8 @@ let saveSession: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   vi.useFakeTimers()
-  save = vi.fn(async () => true)
-  saveSession = vi.fn(async () => true) // M1: the session-sidecar write path
+  save = vi.fn(async () => ({ ok: true })) // C3: project.save now returns { ok, code? }
+  saveSession = vi.fn(async () => true) // M1: the session-sidecar write path (boolean contract)
   ;(window as unknown as { api: unknown }).api = {
     project: { save, saveSession, onFlush: vi.fn(() => () => {}) }
   }

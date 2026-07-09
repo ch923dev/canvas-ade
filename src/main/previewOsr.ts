@@ -230,7 +230,14 @@ export interface OsrFramePayload {
 /** Minimal hidden-window surface `applyOsrPaint` drives — so paint-gating is unit-testable
  *  without a real Electron `BrowserWindow`. A `BrowserWindow` satisfies it structurally. */
 interface OsrPaintTarget {
-  webContents: { startPainting(): void; stopPainting(): void; invalidate(): void }
+  webContents: {
+    startPainting(): void
+    stopPainting(): void
+    invalidate(): void
+    /** H7: throttle page JS/timers/sockets while paint-frozen. Optional so the paint unit test's
+     *  minimal mock need not stub it; a real Electron `BrowserWindow` always has it. */
+    setBackgroundThrottling?(allowed: boolean): void
+  }
 }
 /** The mutable paint state `applyOsrPaint` reads/writes (the live `OsrEntry` satisfies it). */
 interface OsrPaintState {
@@ -254,6 +261,13 @@ export function applyOsrPaint(win: OsrPaintTarget, state: OsrPaintState, on: boo
     } else {
       win.webContents.stopPainting()
     }
+    // H7: `stopPainting` freezes only the COMPOSITOR — these windows are built with
+    // `backgroundThrottling:false`, so a frozen off-screen board's setInterval/fetch/WebSocket keep
+    // burning CPU full-speed (the audit's "unthrottled off-screen JS"). Gate throttling on paint:
+    // frozen ⇒ throttle, resume ⇒ un-throttle. Composes with applyOsrBackground (project switch),
+    // which sets the SAME knob to `true` right after calling applyOsrPaint(false) on background — a
+    // redundant same-value set, harmless — so a backgrounded window is never left un-throttled.
+    win.webContents.setBackgroundThrottling?.(!on)
   } catch {
     /* window gone / not OSR-capable */
   }

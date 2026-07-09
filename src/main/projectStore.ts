@@ -200,18 +200,30 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // new primary is durable. Rotating first destroyed the last-good .bak in the T5
   // recovery flow (the prior primary is envelope-valid but deep-corrupt there): a crash
   // or write failure between the rotation and the primary write left BOTH files corrupt.
+  //
+  // H2: read the prior ONCE. The old code ran `tryParse(primary)` (readFileSync + JSON.parse of
+  // the WHOLE prior doc) purely as a gate, then a SECOND `readFileSync` for the bytes — two full
+  // reads + a parse per autosave. Read the bytes once and gate on THOSE: only an envelope-valid
+  // prior is worth rotating (backing up a corrupt/foreign primary would poison the recovery path,
+  // exactly the `tryParse` gate's intent — `isEnvelope(JSON.parse(...))` reproduces it).
   let prior: Buffer | undefined
-  if (tryParse(primary) !== undefined) {
-    try {
-      prior = readFileSync(primary)
-    } catch {
-      /* a missing/locked prior file must not block the new write */
-    }
+  try {
+    const bytes = readFileSync(primary)
+    if (isEnvelope(JSON.parse(bytes.toString('utf8')))) prior = bytes
+  } catch {
+    /* missing / locked / unparseable prior — skip the rotation, keep the last-good .bak */
   }
   await writeFileAtomic(primary, JSON.stringify(doc, null, 2), 'utf8')
   if (prior !== undefined) {
     try {
-      writeFileAtomic.sync(bakPath(dir), prior)
+      // H1: async (was `writeFileAtomic.sync`). The sync rotation blocked Electron's single main
+      // thread on EVERY ~1s autosave — which also services PTY control IPC, preview frame relays,
+      // and the MCP/local servers — and bought nothing: the primary above is already fsync-durable
+      // via its own await, and the .bak holds the last-good PRIOR doc, so even a mid-write exit
+      // leaves a valid recovery floor. The quit flush is fully awaited end-to-end (flushChannel →
+      // renderer saver.flush → project:save IPC → this await), so the .bak also lands before the
+      // hard app.exit(0). Order (primary durable THEN .bak) and every guard are unchanged.
+      await writeFileAtomic(bakPath(dir), prior)
     } catch {
       /* a locked .bak must not fail the (already durable) save */
     }

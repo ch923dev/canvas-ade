@@ -139,7 +139,10 @@ export async function performProjectSwitch(
       useCanvasStore.getState().toObject(),
       outgoingDir ?? undefined
     )
-    if (saved === false) {
+    // C3: project:save now returns `{ ok, code? }` (was a bare boolean). The switch-abort copy is
+    // deliberately about the aborted switch, not the fs cause, so it stays as-is (never said "disk
+    // space") — the errno only matters where the message claims a cause (autosave / retry).
+    if (!saved.ok) {
       // eslint-disable-next-line no-console
       console.error('project switch: final flush failed; aborting switch to avoid data loss')
       // D0-8: the abort must be VISIBLE — raise the save-failure chip, not console-only.
@@ -147,6 +150,30 @@ export async function performProjectSwitch(
         .getState()
         .setSaveFailure('Project could not be saved — switch cancelled to avoid losing edits')
       return 'save-failed'
+    }
+    // M1: write the session sidecar authoritatively too. The doc save above persists the inline
+    // viewport/background, but session.json is what WINS on the next load (applyLoadedDoc merges
+    // `session?.viewport ?? d.viewport`). cancelActiveAutosave() just dropped the pending debounced
+    // sessionSaver, so without this a camera pan / backdrop pick made right before the switch lands
+    // in canvas.json yet the STALE session.json overrides it on reopen — a silent revert. Advisory
+    // (a failure is non-fatal — the fresh inline copy is the fallback), so it never aborts the switch;
+    // the common no-failure path keeps the sidecar in lock-step with the authoritative doc write.
+    const outgoingState = useCanvasStore.getState()
+    // Promise.resolve().then(...) so a torn/partial preload (saveSession absent) degrades through
+    // .catch instead of throwing synchronously — the established switch-pipeline contract.
+    const sessionSaved = await Promise.resolve()
+      .then(() =>
+        window.api.project.saveSession(
+          { viewport: outgoingState.viewport, background: outgoingState.background },
+          outgoingDir ?? undefined
+        )
+      )
+      .catch(() => false)
+    if (!sessionSaved) {
+      // eslint-disable-next-line no-console
+      console.error(
+        'project switch: session sidecar flush failed (advisory — inline canvas.json is the fallback)'
+      )
     }
     // D0-8 symmetry: the flush SUCCEEDED — mark saved (which clears any standing failure)
     // now, or the global store carries the old project's stale message into the new one

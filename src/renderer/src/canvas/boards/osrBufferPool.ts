@@ -14,28 +14,64 @@
  * frames share a size (`dirty == full` — the full-repaint / continuous-motion case this targets);
  * varying dirty rects simply miss and allocate. `take` allocates-on-empty, so a lost or dropped
  * buffer is self-healing (the pool never blocks / stalls the pipeline).
+ *
+ * Bounded retention (H5 review): keying by exact byte length means a long session that streams many
+ * DISTINCT dirty-rect sizes (continuous zoom settles, preset switches, varying dirty-rect geometry)
+ * would otherwise add a new PERMANENT map key per size — each retaining up to `perSize` buffers of
+ * tens of MB — so retained memory would grow monotonically, the opposite of the GC-pressure win.
+ * `maxBytes` caps TOTAL retained bytes across all buckets: a `give` first LRU-evicts the
+ * least-recently-used size bucket(s) until the incoming buffer fits, and both `take` and `give`
+ * re-touch their size so the HOT (actively streamed) size is never the eviction victim.
  */
 export interface BufferPool {
   /** An ArrayBuffer of exactly `byteLength` — reused from the free-list when available, else fresh. */
   take(byteLength: number): ArrayBuffer
-  /** Return a buffer for reuse. Dropped (left to GC) once its size bucket is at capacity. */
+  /** Return a buffer for reuse. Dropped (left to GC) at the per-size cap or the total-byte budget. */
   give(buffer: ArrayBuffer): void
 }
 
-export function createBufferPool(perSize = 3): BufferPool {
+export function createBufferPool(perSize = 3, maxBytes = 64 * 1024 * 1024): BufferPool {
+  // Map insertion order == LRU order: take/give re-insert the touched size so it becomes
+  // most-recently-used; eviction drops `free.keys().next()` (the least-recently-used size).
   const free = new Map<number, ArrayBuffer[]>()
+  let retained = 0
+
+  const touch = (key: number, bucket: ArrayBuffer[]): void => {
+    free.delete(key)
+    free.set(key, bucket)
+  }
+
   return {
     take(byteLength) {
-      const reused = free.get(byteLength)?.pop()
-      return reused ?? new ArrayBuffer(byteLength)
+      const bucket = free.get(byteLength)
+      const reused = bucket?.pop()
+      if (!reused) return new ArrayBuffer(byteLength)
+      retained -= reused.byteLength
+      if (bucket!.length) touch(byteLength, bucket!)
+      else free.delete(byteLength)
+      return reused
     },
     give(buffer) {
-      const bucket = free.get(buffer.byteLength) ?? []
-      if (bucket.length < perSize) {
-        bucket.push(buffer)
-        free.set(buffer.byteLength, bucket)
+      const size = buffer.byteLength
+      if (size > maxBytes) return // a single buffer larger than the whole budget is never retained
+      const bucket = free.get(size) ?? []
+      if (bucket.length >= perSize) return // per-size depth cap — drop
+      // Evict LRU size buckets (oldest first) until this buffer fits the byte budget. SKIP the size
+      // we're adding to (never evict our own about-to-be-MRU bucket) and keep going — so when the
+      // incoming size is itself the LRU, an evictable YOUNGER bucket still makes room instead of the
+      // give bailing and dropping a buffer that would have fit.
+      if (retained + size > maxBytes) {
+        for (const key of [...free.keys()]) {
+          if (retained + size <= maxBytes) break
+          if (key === size) continue
+          for (const b of free.get(key)!) retained -= b.byteLength
+          free.delete(key)
+        }
       }
-      // else drop — bounds memory when frame sizes churn (each held buffer is up to ~16 MB)
+      if (retained + size > maxBytes) return // no evictable room even after all other buckets — drop
+      bucket.push(buffer)
+      retained += size
+      touch(size, bucket)
     }
   }
 }

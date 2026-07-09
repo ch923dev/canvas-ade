@@ -9,6 +9,7 @@
 // "terminal input is trusted-user-only" invariant is untouched.
 import type { Terminal } from '@xterm/xterm'
 import { showToast } from '../../../store/toastStore'
+import { saveErrorMessage } from '../../../lib/saveError'
 
 /**
  * The minimal slice of xterm's active buffer the serializer needs — so the unit test can
@@ -85,7 +86,8 @@ export async function runTerminalSave(
         id,
         kind: 'error',
         sticky: true,
-        message: 'Save failed — check file permissions and disk space'
+        // C3: errno-mapped — a lock/permission failure no longer reads as "disk space".
+        message: saveErrorMessage(res.code, 'Save failed')
       })
     }
     return res
