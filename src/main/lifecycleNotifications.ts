@@ -73,22 +73,39 @@ export interface LifecycleNotificationsHandle {
   deliver: (sig: DeliverableSignal) => void
 }
 
+/** The injected dependencies of the ONE delivery function ({@link createLifecycleDeliver}). */
+export interface LifecycleDeliverDeps {
+  getWin: () => BrowserWindow | null
+  /** Read the CURRENT notification prefs at fire time. */
+  getConfig: () => NotificationsConfig
+  /** Look up a board's title/agentKind/monitorActivity by id; may be absent. */
+  getBoard: (boardId: string) => LifecycleBoard | undefined
+  /** Raise the OS-notification layer. Default is a real Electron Notification; the e2e seam passes a
+   *  recording spy so a headless run asserts the OS decision WITHOUT a real Notification. */
+  raise: (opts: { title: string; body: string; onClick: () => void }) => void
+  /** Test seam: override the window-focused read (default reads the real `win.isFocused()`), so the
+   *  `onlyWhenUnfocused` branch is drivable deterministically (real OS focus is flaky under xvfb). */
+  isWindowFocused?: (win: BrowserWindow) => boolean
+}
+
 /**
- * Wire the lifecycle watcher to OS notifications + in-app toasts. Returns a {@link
- * LifecycleNotificationsHandle} (disposer + the shared `deliver`) AND self-disposes on
- * `before-quit` — index.ts centralizes most teardown, but this app-lifetime watcher is `persistent:
- * false` (never keeps the process alive) and self-manages so index.ts stays under its max-lines
- * ratchet (no module-scope disposer var needed there).
+ * Build the ONE delivery function (SPEC Phase 2/3): gate a normalized lifecycle signal, then raise
+ * the OS layer (unless suppressed while focused) and push the in-app toast + on-canvas attention to
+ * the renderer over `notify:lifecycle`. Extracted as a factory so BOTH the production wiring and the
+ * e2e seam drive the SAME gate + IPC push — the e2e never re-implements delivery; it only injects
+ * test deps (config / board facts / focus + an OS-notify spy).
  */
-export function registerLifecycleNotifications(
-  deps: LifecycleNotificationsDeps
-): LifecycleNotificationsHandle {
-  const raise = deps.notify ?? defaultOsNotify
-  const deliver = ({ boardId, event, cwd }: DeliverableSignal): void => {
+export function createLifecycleDeliver(
+  deps: LifecycleDeliverDeps
+): (sig: DeliverableSignal) => void {
+  return ({ boardId, event, cwd }: DeliverableSignal): void => {
     // Gate first: board opt-out → master → per-event → onlyWhenUnfocused (the ONE decision point).
     const board = deps.getBoard(boardId)
     const focusWin = deps.getWin()
-    const windowFocused = !!focusWin && !focusWin.isDestroyed() && focusWin.isFocused()
+    const windowFocused =
+      !!focusWin &&
+      !focusWin.isDestroyed() &&
+      (deps.isWindowFocused ? deps.isWindowFocused(focusWin) : focusWin.isFocused())
     const decision = gateNotification({
       event,
       config: deps.getConfig(),
@@ -101,7 +118,7 @@ export function registerLifecycleNotifications(
     // OS layer — suppressed only when `onlyWhenUnfocused` is on and the window is focused.
     if (decision.os) {
       const where = cwd ? basename(cwd) : ''
-      raise({
+      deps.raise({
         title: lifecycleTitle(event, board?.agentKind),
         body: lifecycleBody(board?.title, where),
         onClick: () => {
@@ -125,6 +142,24 @@ export function registerLifecycleNotifications(
     const wc = win.webContents
     if (!wc.isDestroyed()) wc.send('notify:lifecycle', { boardId, event })
   }
+}
+
+/**
+ * Wire the lifecycle watcher to OS notifications + in-app toasts. Returns a {@link
+ * LifecycleNotificationsHandle} (disposer + the shared `deliver`) AND self-disposes on
+ * `before-quit` — index.ts centralizes most teardown, but this app-lifetime watcher is `persistent:
+ * false` (never keeps the process alive) and self-manages so index.ts stays under its max-lines
+ * ratchet (no module-scope disposer var needed there).
+ */
+export function registerLifecycleNotifications(
+  deps: LifecycleNotificationsDeps
+): LifecycleNotificationsHandle {
+  const deliver = createLifecycleDeliver({
+    getWin: deps.getWin,
+    getConfig: deps.getConfig,
+    getBoard: deps.getBoard,
+    raise: deps.notify ?? defaultOsNotify
+  })
   const dispose = createLifecycleNotifier({ mapPath: deps.mapPath, onEvent: deliver })
   app.once('before-quit', dispose)
   return { dispose, deliver }

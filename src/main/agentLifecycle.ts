@@ -1,15 +1,19 @@
 /**
  * Agent-lifecycle desktop notifications — Phase 1 (Claude path).
  *
- * The recap hook (recordSession.js) now also registers for Stop / SubagentStop / Notification
- * (see RECAP_HOOK_EVENTS in agentRecapMap.ts) and appends one JSONL line per fired event to the
+ * The recap hook (recordSession.js) now also registers for Stop / Notification (see
+ * RECAP_HOOK_EVENTS in agentRecapMap.ts) and appends one JSONL line per fired event to the
  * app-owned session map. This module watches that file for NEW lifecycle lines and emits a
  * normalized event, so MAIN can raise a desktop notification when an agent finishes or needs input.
  *
+ * `SubagentStop` is deliberately NOT a lifecycle event: it fires per Task-tool subagent completion
+ * mid-run (the main agent is still working), so mapping it to `done` would raise a premature
+ * "Task done" while the task isn't done. Only the main-agent `Stop` counts as done.
+ *
  * It reads the RAW appended lines — NOT readRecapMap's collapsed last-write-wins map — because
  * every event matters (readRecapMap keeps one entry per board, for resume). A (boardId, event)
- * burst (Stop + SubagentStop fire together) is deduped into one emit. History already in the file
- * at init is skipped: only lines appended during this app run notify, never a replay on boot.
+ * burst (e.g. two rapid turn-end Stops) is deduped into one emit. History already in the file at
+ * init is skipped: only lines appended during this app run notify, never a replay on boot.
  */
 import { existsSync, readFileSync, mkdirSync, watch } from 'node:fs'
 import { basename, dirname } from 'node:path'
@@ -20,7 +24,6 @@ export type LifecycleEvent = 'done' | 'needs-input' | 'error'
 export function classifyHookEvent(hookEvent: string): LifecycleEvent | null {
   switch (hookEvent) {
     case 'Stop':
-    case 'SubagentStop':
       return 'done'
     case 'Notification':
       return 'needs-input'
@@ -108,7 +111,7 @@ export interface LifecycleScanner {
  * The first `scan` call BASELINES to the file's current line count — pre-existing history never
  * emits (no boot replay). A shrink (the consent-decline prune rewrites the file smaller)
  * re-baselines rather than replaying. A (boardId, event) pair repeating within `dedupeMs` of its
- * last emit is collapsed (Stop + SubagentStop fire together).
+ * last emit is collapsed (e.g. two rapid turn-end Stops for one board).
  */
 export function createLifecycleScanner(dedupeMs = 2000): LifecycleScanner {
   let seen: number | null = null // null until the first scan primes the baseline

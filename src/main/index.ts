@@ -1002,7 +1002,7 @@ app.whenReady().then(async () => {
   })
 
   // ── Desktop notifications: agent lifecycle → OS notification + in-app toast + on-canvas ────
-  // The recap hook fires on Stop / SubagentStop / Notification (RECAP_HOOK_EVENTS), each appended to
+  // The recap hook fires on Stop / Notification (RECAP_HOOK_EVENTS), each appended to
   // the SAME session map. wireLifecycleNotifications registers the notifications:* IPC, watches that
   // map for NEW lines (skips history at init — no boot replay), gates + delivers each event, and
   // routes the generic-PTY path into the same delivery site. Self-disposes on before-quit.

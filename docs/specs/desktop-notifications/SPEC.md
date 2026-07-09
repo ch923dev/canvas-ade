@@ -27,10 +27,13 @@ type LifecycleEvent = 'done' | 'needs-input' | 'error'
 
 | Source | done | needs-input | error |
 |---|---|---|---|
-| **Claude hooks** | `Stop`, `SubagentStop` | `Notification` (permission / idle-waiting) | `Stop` after a failed run¹ |
+| **Claude hooks** | `Stop` (main-agent turn end) | `Notification` (permission / idle-waiting) | — (none)¹ |
 | **Generic PTY** | process `exited` (code 0) | idle-at-prompt heuristic → reserved `awaiting-input` state | `exited` (code ≠ 0) / `spawn-failed` |
 
-¹ Claude has no dedicated failure hook; error is inferred from a non-clean session end + generic PTY exit code.
+¹ Claude has no dedicated failure hook, so a failed Claude run reads as `done` — **accepted** (best-effort;
+the generic-PTY exit code is the only reliable Claude-agnostic error signal). `SubagentStop` is
+deliberately NOT mapped: it fires per Task-tool subagent mid-run (main agent still working), so treating
+it as `done` would raise a premature "Task done". Only the main-agent `Stop` counts.
 
 ## Architecture
 
@@ -57,8 +60,8 @@ copy live in exactly one place.
   auto-covered by the installer + the health check with no other change there.
 
 Changes:
-- **`agentRecapMap.ts`** — extend `RECAP_HOOK_EVENTS` with `'Stop'`, `'SubagentStop'`, `'Notification'`.
-  That is the whole Claude registration change.
+- **`agentRecapMap.ts`** — extend `RECAP_HOOK_EVENTS` with `'Stop'`, `'Notification'` (NOT
+  `'SubagentStop'` — see the event-model footnote). That is the whole Claude registration change.
 - **`src/main/hooks/recordSession.js`** — **no change**: it already records `hookEvent:
   d.hook_event_name` and tolerates the Notification hook's leaner stdin (missing fields default to '').
 - **`src/main/pty.ts`** — generic path. On process exit, classify done/error by exit code. Add an
@@ -68,16 +71,16 @@ Changes:
 
 > **Shared-file note:** the Claude events append to the SAME recap map file the resume feature reads.
 > That is additive — `readRecapMap` keys on `transcriptExists`/`sessionId`, not event type — but the
-> notification watcher must read the RAW appended lines (filter `hookEvent ∈ {Stop, SubagentStop,
-> Notification}`), not the collapsed last-write-wins map. Confirm resume semantics stay intact.
+> notification watcher must read the RAW appended lines (filter `hookEvent ∈ {Stop, Notification}`),
+> not the collapsed last-write-wins map. Confirm resume semantics stay intact.
 
 ## Phase 2 — Route (MAIN)
 
 - **`src/main/agentLifecycle.ts`** (new) — the single `notifyLifecycle(boardId, event, detail)` entry.
   - **Claude path:** watch the recap map file (`fs.watch`, reusing `agentRecapMap.ts` read) for newly
-    appended lines whose `hookEvent ∈ {Stop, SubagentStop, Notification}`; map to a `LifecycleEvent`.
+    appended lines whose `hookEvent ∈ {Stop, Notification}`; map to a `LifecycleEvent`.
   - **Generic path:** `pty.ts` calls in directly on exit / idle.
-  - **Dedupe** by `(boardId, event)` within a short window (e.g. 2s) so a Stop+SubagentStop burst or a
+  - **Dedupe** by `(boardId, event)` within a short window (e.g. 2s) so a rapid double-Stop burst or a
     repeated idle heuristic fires once.
   - **Gate:** master setting → per-event setting → `onlyWhenUnfocused` (skip OS layer if the window is
     focused and the flag is on) → the board's `monitorActivity` (false ⇒ silent).

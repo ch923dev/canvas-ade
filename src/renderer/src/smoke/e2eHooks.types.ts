@@ -383,6 +383,16 @@ export interface CanvasE2E {
     plan?: 'free' | 'pro'
     encryptionAvailable: boolean
   }) => void
+  /**
+   * desktop-notifications P5 — the live in-app toast queue (message/kind/sticky). Asserts a
+   * lifecycle event's toast surfaced through the REAL MAIN deliver → `notify:lifecycle` IPC path.
+   */
+  notifyToasts: () => Array<{ message: string; kind: 'error' | 'ok' | 'info'; sticky: boolean }>
+  /** desktop-notifications P5 — a board's unseen-attention kind from attentionStore, or null. */
+  attentionKind: (id: string) => 'done' | 'needs-input' | 'error' | null
+  /** desktop-notifications P5 — the on-canvas attention ring's `data-kind` rendered in the board
+   *  node DOM (proves the BoardAttention overlay mounted on-canvas), or null. */
+  attentionRingKind: (id: string) => 'done' | 'needs-input' | 'error' | null
 }
 
 declare global {

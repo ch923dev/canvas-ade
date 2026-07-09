@@ -87,18 +87,19 @@ type SettingsCfg = { hooks?: Partial<Record<string, HookBlock[]>> } & Record<str
  * UserPromptSubmit is the workhorse — it fires with {session_id, transcript_path} on every
  * prompt, exactly when the transcript is (about to be) real.
  *
- * Stop / SubagentStop / Notification (desktop-notifications) add the agent-lifecycle signals:
- * the SAME recordSession.js line records `hookEvent`, and agentLifecycle.ts watches the map for
- * these to raise a desktop notification (task done / needs input). Adding events here means a
- * pre-notifications settings.local.json reads as not-installed (isRecapHookInstalled requires
- * EVERY event) and self-heals to the full set on the next focus/open re-ensure — by design.
+ * Stop / Notification (desktop-notifications) add the agent-lifecycle signals: the SAME
+ * recordSession.js line records `hookEvent`, and agentLifecycle.ts watches the map for these to
+ * raise a desktop notification (task done / needs input). `SubagentStop` is deliberately NOT
+ * registered — it fires per Task-tool subagent mid-run, which would raise a premature "done".
+ * Adding events here means a pre-notifications settings.local.json reads as not-installed
+ * (isRecapHookInstalled requires EVERY event) and self-heals to the full set on the next
+ * focus/open re-ensure — by design.
  */
 export const RECAP_HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
   'SessionEnd',
   'Stop',
-  'SubagentStop',
   'Notification'
 ] as const
 

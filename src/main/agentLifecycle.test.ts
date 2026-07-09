@@ -35,12 +35,14 @@ describe('lifecycleBody', () => {
 })
 
 describe('classifyHookEvent', () => {
-  it('maps Stop and SubagentStop to done', () => {
+  it('maps Stop to done', () => {
     expect(classifyHookEvent('Stop')).toBe('done')
-    expect(classifyHookEvent('SubagentStop')).toBe('done')
   })
   it('maps Notification to needs-input', () => {
     expect(classifyHookEvent('Notification')).toBe('needs-input')
+  })
+  it('does NOT treat SubagentStop as a lifecycle event (mid-run subagent, not task done)', () => {
+    expect(classifyHookEvent('SubagentStop')).toBeNull()
   })
   it('returns null for non-lifecycle events', () => {
     expect(classifyHookEvent('SessionStart')).toBeNull()
@@ -92,10 +94,8 @@ describe('createLifecycleScanner', () => {
   it('dedupes a (boardId, event) burst within the window', () => {
     const s = createLifecycleScanner(2000)
     s.scan('', 0)
-    // Stop + SubagentStop for the same board arrive together → one emit.
-    const burst = `${JSON.stringify({ boardId: 'b1', hookEvent: 'Stop', cwd: '/p' })}\n${JSON.stringify(
-      { boardId: 'b1', hookEvent: 'SubagentStop', cwd: '/p' }
-    )}\n`
+    // Two rapid turn-end Stops for the same board arrive together → one emit.
+    const burst = `${stop('b1')}\n${stop('b1')}\n`
     expect(s.scan(burst, 100)).toEqual([{ boardId: 'b1', event: 'done', cwd: '/p' }])
   })
 
