@@ -1422,3 +1422,28 @@ describe('persistBackgroundRingTailsCore (quit continuity)', () => {
     expect(appended).toEqual(['two'])
   })
 })
+
+// C1: the `dir` arg scopes the flush — closing ONE background project flushes ONLY its parked tails.
+describe('persistBackgroundRingTailsCore with a dir (C1 close-one-project continuity)', () => {
+  const mkBg = (text: string, dir: string): any => {
+    const buf = createRing(1024)
+    const watermark = buf.written
+    pushRing(buf, text)
+    return { proc: makeProc(1).proc, buf, kind: 'background', owningDir: dir, watermark }
+  }
+
+  it("flushes only the target dir's tails; another resident's are left for its own close/quit", () => {
+    const parked = new Map<string, any>([
+      ['a', mkBg('tail-a', 'C:/projA')],
+      ['b', mkBg('tail-b', 'C:/projB')]
+    ])
+    const appended: Array<[string, string, string]> = []
+    persistBackgroundRingTailsCore(
+      parked,
+      (dir, id, text) => appended.push([dir, id, text]),
+      'C:/projA'
+    )
+    // Scoped: projB (another resident) is untouched — the dispose-all-vs-scoped discipline.
+    expect(appended).toEqual([['C:/projA', 'a', 'tail-a']])
+  })
+})

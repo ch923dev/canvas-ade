@@ -44,6 +44,22 @@ export interface ProjectSessionDeps {
   /** Clock (injectable for tests). */
   now(): number
   /**
+   * C1: max background projects to keep resident. A GETTER (not a constant) so Low-RAM mode can
+   * lower it live without rebuilding the registry (index.ts wires the config read; default 3).
+   * Backgrounding past this auto-closes the LONGEST-backgrounded resident.
+   */
+  maxBackground(): number
+  /** C1: idle TTL (ms) for a background park — a resident idle (backgrounded, never switched
+   *  back to) longer than this is reaped by the sweep. A getter so Low-RAM can shorten it live. */
+  idleTtlMs(): number
+  /**
+   * C1: flush `dir`'s background terminal ring tails to their snapshot sidecar BEFORE its
+   * sessions are disposed (pty.persistProjectRingTails). disposeProjectPtys does NOT flush tails
+   * and the renderer flush covers only the ACTIVE project's xterms, so without this a cap/TTL/
+   * manual close of a BACKGROUNDED project silently loses its parked terminals' post-park output.
+   */
+  persistRingTails(dir: string): void
+  /**
    * Phase 4: the persisted forever-keep dirs (the dialog's opt-in checkbox). Lives in
    * userData — app/machine preference, NEVER the project folder (canvas.json is git-shared).
    * Injectable so tests need no fs; index.ts wires a JSON file. Load errors → [].
@@ -53,8 +69,22 @@ export interface ProjectSessionDeps {
 }
 
 export interface ProjectSessions {
-  /** Park + freeze everything `dir` owns and register it as backgrounded. */
-  backgroundProject(dir: string): Promise<{ terminals: number; previews: number }>
+  /**
+   * Park + freeze everything `dir` owns and register it as backgrounded. C1: enforces the
+   * `maxBackground` cap AFTER registering — auto-closing the longest-backgrounded OTHER
+   * resident(s) via the scoped close. `evicted` is the dirs auto-closed (usually [] or one) so
+   * the caller can toast "closed X to free memory".
+   */
+  backgroundProject(
+    dir: string
+  ): Promise<{ terminals: number; previews: number; evicted: string[] }>
+  /**
+   * C1: reap background projects idle (backgrounded, never switched back to) longer than the
+   * TTL. `protectedDirs` — the ACTIVE project + any pending switch target — are never reaped.
+   * Returns the dirs closed. Safe on an interval; a no-op when nothing is stale. Uses the SAME
+   * scoped close (ring-tail flush → disposeOsr → disposePtys) so no resident's output is lost.
+   */
+  reapIdle(protectedDirs: Iterable<string>): Promise<string[]>
   /**
    * Un-register `dir` and un-throttle its previews. Called on EVERY project open (idempotent
    * no-op for a never-backgrounded dir) so a switch-back clears the backgrounded flag before
@@ -118,6 +148,54 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
     return hadSession || hadForever
   }
 
+  // C1: the ONE scoped close, shared by the manual close, the cap eviction, and the TTL reap.
+  // Registry-guarded (never disposes an unregistered dir) and dir-scoped (disposeOsr/disposePtys
+  // touch only `dir` — closing project B can never reap resident project A). Flushes the ring
+  // tails BEFORE disposePtys so a backgrounded project's parked terminal output is never lost.
+  // `resetPolicy`: a MANUAL close IS the single policy-reset gesture (forget any keep, so the next
+  // open+switch asks again); a cap/TTL AUTO-evict is INVOLUNTARY, so it PRESERVES the keep policy
+  // — the project re-keeps silently on the next switch-back (plan §2.5).
+  const closeBg = async (dir: string, resetPolicy: boolean): Promise<boolean> => {
+    if (!registry.has(dir)) return false
+    registry.delete(dir)
+    if (resetPolicy) forgetPolicy(dir)
+    deps.persistRingTails(dir) // data-loss fix — BEFORE dispose (disposePtys does not flush tails)
+    deps.disposeOsr(dir)
+    await deps.disposePtys(dir)
+    return true
+  }
+
+  // C1: the longest-backgrounded resident (smallest backgroundedAt), excluding `exclude` (the
+  // just-backgrounded dir — never evict the one the user just switched away from). Mirrors
+  // previewOsr.pickOsrEvictions' oldest-first ordering so H4's OSR trim and C1 agree.
+  const pickLongestBackgrounded = (exclude: string): string | null => {
+    let oldest: string | null = null
+    let oldestAt = Infinity
+    for (const [dir, r] of registry) {
+      if (dir === exclude) continue
+      if (r.backgroundedAt < oldestAt) {
+        oldestAt = r.backgroundedAt
+        oldest = dir
+      }
+    }
+    return oldest
+  }
+
+  // C1: after a background push the resident set over the budget, close the longest-backgrounded
+  // OTHER resident(s). Loops so a live cap DROP (Low-RAM lowering maxBackground while several are
+  // resident) collapses in one call; never evicts `justAddedDir` (pickLongestBackgrounded excludes
+  // it), so the just-kept project always survives even at cap 1.
+  const enforceCap = async (justAddedDir: string): Promise<string[]> => {
+    const evicted: string[] = []
+    const max = Math.max(1, deps.maxBackground())
+    while (registry.size > max) {
+      const victim = pickLongestBackgrounded(justAddedDir)
+      if (!victim) break
+      if (await closeBg(victim, false)) evicted.push(victim) // involuntary — preserve keep policy
+    }
+    return evicted
+  }
+
   return {
     async backgroundProject(dir) {
       // R5 preamble: deleted boards' undo-parks die NOW (their undo rail dies with the switch's
@@ -126,7 +204,10 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
       const terminals = deps.parkPtys(dir)
       const previews = deps.backgroundOsr(dir)
       registry.set(dir, { name: basename(dir), backgroundedAt: deps.now() })
-      return { terminals, previews }
+      // C1: enforce the cap AFTER registering `dir` (so it counts + is protected from its own
+      // eviction). Auto-closes the longest-backgrounded OTHER resident(s) via the scoped close.
+      const evicted = await enforceCap(dir)
+      return { terminals, previews, evicted }
     },
 
     foregroundProject(dir) {
@@ -134,13 +215,25 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
       deps.foregroundOsr(dir)
     },
 
-    async closeBackgroundProject(dir) {
-      if (!registry.has(dir)) return false
-      registry.delete(dir)
-      forgetPolicy(dir) // closing IS the policy reset — the next open+switch asks again
-      deps.disposeOsr(dir)
-      await deps.disposePtys(dir)
-      return true
+    closeBackgroundProject(dir) {
+      return closeBg(dir, true) // manual close resets the keep policy
+    },
+
+    async reapIdle(protectedDirs) {
+      const guarded = new Set(protectedDirs)
+      const ttl = deps.idleTtlMs()
+      const now = deps.now()
+      // Snapshot the stale set first (closeBg mutates the registry mid-iteration). "Idle" = time
+      // since backgrounded with no switch-back (foregroundProject deletes the entry, so
+      // backgroundedAt IS the idle clock).
+      const stale = [...registry.entries()]
+        .filter(([dir, r]) => !guarded.has(dir) && now - r.backgroundedAt > ttl)
+        .map(([dir]) => dir)
+      const closed: string[] = []
+      for (const dir of stale) {
+        if (await closeBg(dir, false)) closed.push(dir) // involuntary — preserve keep policy
+      }
+      return closed
     },
 
     isBackgroundProject(dir) {
