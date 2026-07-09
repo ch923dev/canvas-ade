@@ -2115,3 +2115,36 @@ check (accelerators bind in MAIN, `hotkey.failures()` pull, set→re-register lo
 Full pre-push e2e matrix (Windows + Linux Docker) 273 passed every round. claude-review: 2 incremental
 rounds, all warnings fixed + inline-dispositioned, final round clean. Rebased through #307 then #310.
 Version `0.10.4` → `0.10.5`. Squash `62921377`.
+
+## 2026-07-10 — PR #321: MCP cross-project routing — background visualize_plan queues for its own project (`685a6abe`)
+
+Fixes a cross-project data-bleed: with two projects open, a backgrounded project's agent calling
+`visualize_plan` drew (and autosaved) its plan board onto whichever project was FOREGROUNDED. Root
+cause: the MCP server is a process singleton, the renderer holds only the active project's
+canvasStore, and `McpCommand` carried no project identity.
+
+**Shape:**
+- Package side (`@expanse-ade/mcp` 0.18.1, canvas-ade-mcp PR #9 `ce86b68`): connected-tier calls pass
+  the token-derived `SessionCtx.boardId` as `VisualizePlanSpec.sourceBoardId` (unforgeable — no
+  client-supplied project field); `visualizePlan` returns `{ id, queuedFor? }`.
+- MAIN: `mcpBoardProjects.ts` (boardId → mint-time project dir, recorded at `mintConnectedToken`,
+  500-cap evict-oldest) · `mcpPendingCommands.ts` (per-project pending-command queue persisted
+  atomically in userData + snapshot-driven single-flight drainer with per-send dir re-check and 2s
+  requeue backstop) · `mcpRoutingBoot.ts` (index.ts wiring) · `boardRegistry.subscribeBoardSnapshot`.
+  `mcpVisualizeGate.ts` resolves the caller's dir pre-confirm, names the target project in the
+  confirm body when cross-project, RE-resolves the active dir post-approve (switch-mid-modal can't
+  misroute), and queues instead of sending when the caller's project is backgrounded.
+- Renderer: `useMcpCommands.ts` rejects non-ping commands while `project.status === 'loading'`
+  (ack `project-loading` → drainer requeues) — closes the mid-switch apply window.
+- Also carries perf-audit **M5**: `projectThumbs.ts` thumbnail PNG write made async
+  (`writeFileSync` → `await writeFile`) on the switch-critical `project:captureThumb` path.
+
+**Verified:** cheap trio green; unit +113 (routing map/store/drainer/gate + renderer guard);
+@mcp e2e 31/31 against the installed 0.18.1; full e2e matrix (Windows + Linux Docker) green ×3 —
+pre-pin, post-pin, and re-paid on the merged tree after resolving the PR #314 conflict (version →
+`0.11.1`, `index.ts` auto-merge: notifications + routing wiring coexist). claude-review FULL round
+clean — 0 critical / 0 warning / 0 inline (2 non-blocking nits). **Manual dev check: SKIPPED — merged
+on the user's explicit instruction** (live app session occupied the shared dev environment); the
+two-project switch-back scenario remains to be exercised post-merge. Activation: MAIN
+`pnpm install` (picks up the 0.18.1 pin) + app restart. Version `0.11.0` → `0.11.1`.
+Squash `685a6abe`.
