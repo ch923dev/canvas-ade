@@ -36,18 +36,33 @@ export interface OsrSizeState {
 }
 
 /**
- * Clamp/round a renderer-supplied size to a safe, finite render surface. Defense-in-depth:
- * the renderer computes these (clamped to S≤2), but MAIN must never `setContentSize` to a
- * garbage / non-finite / absurd value if the channel is driven directly. Hard-caps S at 4
- * and each logical dimension at 4096px (a sane max render surface — keeps physical = logical·S
- * within GPU texture limits even at S=4).
+ * L7 (H5): the renderer's ACTUAL ceiling — `OSR_MAX_SUPERSAMPLE = 2` (osrSizing.ts), and the widest
+ * viewport preset is uhd 3840×2160 (`VIEWPORT_PRESETS`: mobile/tablet/desktop/qhd 2560/uhd 3840). So
+ * MAIN clamps logical to 3840 and S to 2. Value-duplicated here on purpose: MAIN is a separate
+ * process and must independently enforce the contract without importing the renderer lib. A future
+ * Low-RAM supersample=1 is still ≤ this cap, so it passes.
+ *
+ * ⚠️ NOTE (plan-correction): STRUCTURAL_PLAN §4.3 said "logical ≤1280"; that MISSED the qhd/uhd wide
+ * presets — clamping to 1280 would have broken their reflow + rendered a wrong-size surface. The real
+ * trust-boundary risk was only the SUPERSAMPLE (S≤4 → a 16384·4 surface if the channel is driven
+ * directly); tightening S to 2 fixes it. Logical stays at the true 3840 preset ceiling.
+ */
+export const OSR_MAX_LOGICAL = 3840
+export const OSR_MAX_SUPERSAMPLE_CLAMP = 2
+
+/**
+ * Clamp/round a renderer-supplied size to a safe, finite render surface. Defense-in-depth: the
+ * renderer computes these (clamped to S≤2 / preset logical ≤3840), but MAIN must never
+ * `setContentSize` to a garbage / non-finite / absurd value if the channel is driven directly.
+ * L7: tightened S from ≤4 to ≤2 (the real contract) — physical = logical·S ≤ 7680px, within the
+ * ~16384 GPU texture limit; the old S≤4 allowed up to a 16384-wide surface.
  */
 export function sanitizeOsrSize(args: OsrSizeRequest): OsrSizeRequest {
   const pos = (n: number, fallback: number): number => (Number.isFinite(n) && n > 0 ? n : fallback)
   return {
-    logicalW: Math.min(4096, Math.round(pos(args.logicalW, OSR_WIDTH))),
-    logicalH: Math.min(4096, Math.round(pos(args.logicalH, OSR_HEIGHT))),
-    supersample: Math.max(1, Math.min(4, pos(args.supersample, 1)))
+    logicalW: Math.min(OSR_MAX_LOGICAL, Math.round(pos(args.logicalW, OSR_WIDTH))),
+    logicalH: Math.min(OSR_MAX_LOGICAL, Math.round(pos(args.logicalH, OSR_HEIGHT))),
+    supersample: Math.max(1, Math.min(OSR_MAX_SUPERSAMPLE_CLAMP, pos(args.supersample, 1)))
   }
 }
 
