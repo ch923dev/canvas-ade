@@ -15,6 +15,7 @@ import {
   type OutputPage,
   type OutputRing
 } from './ptyOutput'
+import { createChunkBatcher, ownedPort } from './ptyDataBatch'
 import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
@@ -675,6 +676,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const { port1, port2 } = new MessageChannelMain()
 
     const buf = createRing(RING_CAP_BYTES)
+    // M9: batch chunks landing in the same tick into one postMessage (ptyDataBatch.ts) instead of
+    // one per chunk. Same lookup-at-fire-time + identity guard as the direct post it replaces.
+    const dataBatch = createChunkBatcher(() => ownedPort(sessions.get(opts.id), proc))
     proc.onData((d) => {
       pushRing(buf, d) // PERF-06: amortised O(chunk), no per-chunk O(cap) copy
       // Forward to the current live port (looked up at fire time, so it follows an
@@ -683,21 +687,17 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // ~1s after kill() (node-pty's flush window), and without this check those
       // late bytes would bleed into a freshly-restarted session under the same id.
       const live = sessions.get(opts.id)
-      if (live && live.proc === proc) {
-        live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
-        ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
-        // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
-        // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
-        // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
-        pasteMode.observe(opts.id, d)
-        try {
-          live.port.postMessage({ t: 'data', d })
-        } catch {
-          /* port closed */
-        }
-      }
+      if (!live || live.proc !== proc) return
+      live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
+      ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
+      // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
+      // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
+      // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
+      pasteMode.observe(opts.id, d)
+      dataBatch.push(d)
     })
     proc.onExit(({ exitCode }) => {
+      dataBatch.flushNow() // M9: any buffered chunk must reach the renderer before state/exit below
       // Post lifecycle to the CURRENT live port (looked up at fire time) the same
       // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
       // is told when its process exits. Posting to the captured spawn-time `port1`
