@@ -670,6 +670,52 @@ describe('createMcpLifecycle.spawnBoard — prompt/cwd (spawn-time launchCommand
     expect('launchCommand' in sent[0]).toBe(false)
     expect('cwd' in sent[0]).toBe(false)
   })
+
+  // H3 (Lane H): browser-only spawn-time url — validated as genuine http(s) at the trust
+  // boundary, rejected on a non-browser type BEFORE any side effect (the prompt/cwd discipline).
+  describe('url (H3 — browser initial page)', () => {
+    it('forwards a trimmed http(s) url onto the addBoard envelope for a BROWSER', async () => {
+      const { registry, sent } = recordingReg()
+      await makeLife(registry).spawnBoard({ type: 'browser', url: '  http://localhost:3000/  ' })
+      expect((sent[0] as { url?: string }).url).toBe('http://localhost:3000/')
+    })
+
+    it('rejects a url on a non-browser board BEFORE any side effect', async () => {
+      const { registry, sent } = recordingReg()
+      await expect(
+        makeLife(registry).spawnBoard({ type: 'terminal', url: 'http://localhost:3000/' })
+      ).rejects.toThrow(/browser/i)
+      expect(sent).toHaveLength(0)
+    })
+
+    it('rejects a non-http(s) scheme — the parser resolves the REAL scheme, not a prefix match', async () => {
+      const { registry, sent } = recordingReg()
+      const life = makeLife(registry)
+      for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'ftp://x/', 'not a url']) {
+        await expect(life.spawnBoard({ type: 'browser', url })).rejects.toThrow()
+      }
+      expect(sent).toHaveLength(0)
+    })
+
+    it('a rejected url burns no cap slot (validate precedes the reservation)', async () => {
+      const { registry } = recordingReg()
+      const life = makeLife(registry, 1)
+      await expect(life.spawnBoard({ type: 'browser', url: 'file:///x' })).rejects.toThrow()
+      await expect(life.spawnBoard({ type: 'browser' })).resolves.toHaveProperty('id')
+    })
+
+    it('treats a whitespace-only url as absent (no reject on a non-browser type)', async () => {
+      const { registry, sent } = recordingReg()
+      await makeLife(registry).spawnBoard({ type: 'terminal', url: '   ' })
+      expect('url' in sent[0]).toBe(false)
+    })
+
+    it('omits the url key when none is supplied (back-compat envelope)', async () => {
+      const { registry, sent } = recordingReg()
+      await makeLife(registry).spawnBoard({ type: 'browser' })
+      expect('url' in sent[0]).toBe(false)
+    })
+  })
 })
 
 describe('createMcpLifecycle.spawnBoard — sourceBoardId auto-cable (rc.6)', () => {

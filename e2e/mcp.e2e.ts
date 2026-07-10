@@ -589,6 +589,87 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await closeBoardGated(page, mcp, ids.planningId as string)
   })
 
+  // ── H1: focus_viewport (Jarvis Lane H) — camera loopback, content-less + un-gated ────────────
+  test('H1: focus_viewport moves the camera to a board / a group / fit-all with NO confirm gate; both targets + unknown id rejected; a worker is denied', async ({
+    page,
+    mcp
+  }) => {
+    // focus_viewport is orchestrator-only (D5 — a worker must not yank the camera out from under
+    // the user) and content-less, so — like tidy/spawn_group — it drives the camera WITHOUT a
+    // human confirm: every accepted call below resolves with no modal driving (a gated call would
+    // hang on the modal until the SDK timeout and fail the spec).
+    expect(mcp.orch.tools).toContain('focus_viewport')
+    expect(mcp.worker.tools).not.toContain('focus_viewport')
+
+    const readVp = () =>
+      evalIn<{ x: number; y: number; zoom: number }>(page, `window.__canvasE2E.getViewport()`)
+    // Shove the camera far off the content so a focus verb produces an unambiguous delta.
+    const panAway = async () => {
+      await evalIn(page, `window.__canvasE2E.panBy(4000, 4000)`)
+      return readVp()
+    }
+    const cameraMovedFrom = (away: { x: number; y: number }) =>
+      expect
+        .poll(
+          async () => {
+            const vp = await readVp()
+            return vp.x !== away.x || vp.y !== away.y
+          },
+          { timeout: 6000 }
+        )
+        .toBe(true)
+
+    // Target board (planning — no PTY boot).
+    const spawn = await mcp.orch.call('spawn_board', { type: 'planning', title: 'focus target' })
+    const boardId = okText(spawn)
+    expect(boardId).not.toBe('')
+    await expect.poll(() => boardOnCanvas(page, boardId), { timeout: 6000 }).toBe(true)
+
+    // (1) boardId → the camera lands on the board.
+    let away = await panAway()
+    const focusBoard = await mcp.orch.call('focus_viewport', { boardId })
+    expect(JSON.parse(okText(focusBoard))).toMatchObject({ focused: 'board', id: boardId })
+    await cameraMovedFrom(away)
+
+    // (2) no target → fit-all.
+    away = await panAway()
+    const fitAll = await mcp.orch.call('focus_viewport', {})
+    expect(JSON.parse(okText(fitAll))).toMatchObject({ focused: 'all' })
+    await cameraMovedFrom(away)
+
+    // (3) groupId → the camera fits a spawn_group feature zone.
+    const grp = await mcp.orch.call('spawn_group', { name: 'focus-zone', planning: true })
+    const ids = JSON.parse(okText(grp) || '{}') as {
+      groupId?: string
+      terminalId?: string
+      planningId?: string
+    }
+    expect(ids.groupId).toBeTruthy()
+    away = await panAway()
+    const focusGroup = await mcp.orch.call('focus_viewport', { groupId: ids.groupId })
+    expect(JSON.parse(okText(focusGroup))).toMatchObject({ focused: 'group', id: ids.groupId })
+    await cameraMovedFrom(away)
+
+    // (4) both targets in one call: rejected AT THE WIRE (before any dispatch) — ambiguous.
+    const both = await mcp.orch.call('focus_viewport', { boardId, groupId: ids.groupId })
+    expect(rejected(both)).toBe(true)
+
+    // (5) unknown board id: the renderer applier's live-store validation fails the ack.
+    const missing = await mcp.orch.call('focus_viewport', {
+      boardId: '00000000-0000-4000-8000-000000000000'
+    })
+    expect(rejected(missing)).toBe(true)
+
+    // (6) worker: DENIED server-side (the specific tool-not-found isError — orchestrator-only).
+    const workerFocus = await mcp.worker.call('focus_viewport', { boardId })
+    expect(deniedToolNotFound(workerFocus, 'focus_viewport')).toBe(true)
+
+    // Restore the baseline.
+    await closeBoardGated(page, mcp, boardId)
+    await closeBoardGated(page, mcp, ids.terminalId as string)
+    await closeBoardGated(page, mcp, ids.planningId as string)
+  })
+
   test('spawn_board prompt/cwd: the prompt lands as the launchCommand AND runs as the first PTY line; non-terminal rejected', async ({
     page,
     mcp

@@ -222,12 +222,29 @@ export interface PlanItem {
  *   (never resizes/creates/deletes a board); `tidyBoards` is ALREADY one undoable `trackedChange` step
  *   that no-ops when nothing moved, so the renderer applier calls it directly (no `beginChange`
  *   wrapper). The applier re-validates `mode` (defense in depth) and reports the moved count on the ack.
+ * - `focusCamera` (H1 / Lane H) moves the USER'S VIEWPORT — fit the camera to one board (`boardId`),
+ *   one Named Group (`groupId`), or the whole canvas (neither). Viewport-only + content-less (no
+ *   board is created, moved, resized, or deleted; the camera is ephemeral session state, the canvas
+ *   doc is untouched), so it is un-gated like `tidyBoards`. At most ONE of boardId/groupId (MAIN
+ *   validates; the applier re-validates). The applier resolves the target against the LIVE store
+ *   (unknown id ⇒ {ok:false}) and hands the fit to `cameraRequestStore` — the applier is React-free;
+ *   the React Flow camera instance lives inside the provider (`useCameraFocusRequests` consumes it).
+ *   `board.url` on `addBoard` (H3) is BROWSER-ONLY: the initial page the new board loads instead of
+ *   the default. MAIN validated http(s) + clamped; the applier re-validates shape + type (the
+ *   launchCommand/cwd discipline) and lands it via PATCHABLE_KEYS.browser.
  */
 export type McpCommand =
   | { type: 'ping' }
   | {
       type: 'addBoard'
-      board: { id: string; type: string; title?: string; launchCommand?: string; cwd?: string }
+      board: {
+        id: string
+        type: string
+        title?: string
+        launchCommand?: string
+        cwd?: string
+        url?: string
+      }
       connector?: { sourceId: string }
     }
   | { type: 'removeBoard'; id: string }
@@ -258,6 +275,7 @@ export type McpCommand =
       }
     }
   | { type: 'tidyBoards'; mode?: 'smart' | 'by-type' | 'grid' }
+  | { type: 'focusCamera'; boardId?: string; groupId?: string }
 
 /**
  * The renderer's reply to a McpCommand. `type` echoes the handled command. The optional `moved` (P2)

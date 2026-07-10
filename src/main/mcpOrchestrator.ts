@@ -24,6 +24,7 @@ import { createBoardCardsMethod } from './mcpBoardCards'
 import { createBoardPlanningMethod } from './mcpBoardPlanning'
 import { createPlanningEditMethods } from './mcpPlanningEditGate'
 import { createTidyMethod } from './mcpTidy'
+import { createFocusMethod } from './mcpFocus'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -374,6 +375,10 @@ export function buildOrchestrator(
     // in ./mcpTidy + spread here to keep this file under the max-lines gate. UN-GATED + content-less
     // (reposition-only, one host-undo reversible — the spawn_group precedent): no cap/mint/confirm/audit.
     ...createTidyMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
+    // 🔒 H1 focus_viewport — fit the USER'S CAMERA to a board / group / the whole canvas. Built in
+    // ./mcpFocus + spread here (the tidy extract-on-touch pattern). UN-GATED + viewport-only (the
+    // camera is ephemeral session state; reversible by scrolling): no cap/mint/confirm/audit.
+    ...createFocusMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.

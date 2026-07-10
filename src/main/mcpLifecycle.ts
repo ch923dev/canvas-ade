@@ -29,6 +29,34 @@ const SPAWN_GROUP_MAX_NAME = 80
 const SPAWN_LAUNCH_MAX = 400
 
 /**
+ * Cap on a spawn-time browser `url` (H3 / Lane H) — mirrors the package's SPAWN_BOARD_MAX_URL
+ * (2048, the practical browser URL ceiling). The url is loaded by the preview, never executed;
+ * validated as genuine http(s) here (the trust boundary) even though the wire schema already did.
+ */
+const SPAWN_URL_MAX = 2048
+
+/**
+ * 🔒 Validate an agent-supplied browser url → a bounded, genuine http(s) URL string, or throw.
+ * `new URL` rejects malformed input; the protocol allowlist rejects file:/javascript:/etc. even
+ * when disguised (the parser resolves the real scheme, not a prefix match). The HOST re-validates
+ * even though the package wire schema already enforced this — both layers must agree independently
+ * (the write_result C3 discipline).
+ */
+const validateSpawnUrl = (raw: string): string => {
+  const clamped = raw.trim().slice(0, SPAWN_URL_MAX)
+  let parsed: URL
+  try {
+    parsed = new URL(clamped)
+  } catch {
+    throw new Error('spawn_board: url is not a valid URL')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('spawn_board: url must be http(s)')
+  }
+  return clamped
+}
+
+/**
  * Sanitize an agent-supplied spawn-time launchCommand → a single PTY-safe line, trimmed + clamped.
  * 🔒 F5: routes through the centralized `sanitizeDispatchText` (strips C0/DEL/C1; REJECTS embedded
  * CR/LF via DispatchPayloadError, which propagates — a multiline command is rejected to the caller,
@@ -90,6 +118,13 @@ export interface McpLifecycle {
     /** Agent-chosen board title (2b); host sanitizes + clamps. Absent/empty ⇒ per-type default. */
     title?: string
     /**
+     * BROWSER-ONLY (H3): the initial page the new browser board loads instead of the default.
+     * Validated here as genuine http(s) + clamped (the trust boundary); rejected on a non-browser
+     * type BEFORE any board is created (the prompt/cwd discipline). Loaded by the preview, never
+     * executed.
+     */
+    url?: string
+    /**
      * Auto-cable (rc.6): the CONNECTED-tier caller's token-derived board id (the package tool
      * passes ctx.boardId — never client input). When the spawn is a terminal AND this resolves
      * to a live terminal, the addBoard command also carries a `connector` request so the
@@ -134,6 +169,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     prompt?: string
     cwd?: string
     title?: string
+    url?: string
     sourceBoardId?: string
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
@@ -161,6 +197,14 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if ((hasPrompt || hasCwd) && input.type !== 'terminal') {
       throw new Error('spawn_board: prompt/cwd are only valid for a terminal board')
     }
+    // H3: url is BROWSER-ONLY — same pre-side-effect mismatch discipline as prompt/cwd. Validate
+    // as genuine http(s) here (the trust boundary) BEFORE the cap reservation, so a rejected url
+    // burns no slot and creates no orphan board.
+    const hasUrl = typeof input.url === 'string' && input.url.trim().length > 0
+    if (hasUrl && input.type !== 'browser') {
+      throw new Error('spawn_board: url is only valid for a browser board')
+    }
+    const url = hasUrl ? validateSpawnUrl(input.url!) : undefined
     // Sanitize the prompt with the SAME spawn-time launchCommand rule as spawnGroup (one line,
     // control-char-free, ≤400); DispatchPayloadError (embedded CR/LF) propagates — reject, never
     // flatten. This also runs BEFORE the cap reservation, so a rejected prompt burns no slot.
@@ -199,7 +243,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           type: input.type,
           ...(title ? { title } : {}),
           ...(launchCommand ? { launchCommand } : {}),
-          ...(cwd ? { cwd } : {})
+          ...(cwd ? { cwd } : {}),
+          ...(url ? { url } : {})
         },
         ...(wantCable ? { connector: { sourceId: input.sourceBoardId! } } : {})
       })

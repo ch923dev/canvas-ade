@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock: Jarvis island rev 2 (top-right dock · neural core · notifications)</title>
+<style>
+  /* Tokens: faithful copy of src/renderer/src/styles/tokens.css (DESIGN.md §2-4). */
+  @font-face {
+    font-family: 'Geist';
+    src: url('../../../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('../../../src/renderer/src/assets/fonts/GeistMono-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --void: #0a0a0b; --grid-dot: #202022;
+    --surface: #141416; --surface-raised: #1a1a1d; --surface-overlay: #1e1e22; --inset: #0e0e10;
+    --border-subtle: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+    --text: #ededee; --text-2: #9b9ba1; --text-3: #7b7b81; --text-faint: #46464b;
+    --accent: #4f8cff; --accent-hover: #6ea0ff; --accent-wash: rgba(79,140,255,0.14);
+    --ok: #3ecf8e; --warn: #e8b339; --err: #f2545b;
+    --r-board: 8px; --r-inner: 6px; --r-ctl: 5px; --r-pill: 999px;
+    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,0.7);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: var(--ui); background: var(--void); color: var(--text);
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 24px 24px; min-height: 100vh; padding: 36px 44px 44px;
+  }
+  .page-hd { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+  .page-sub { font-size: 11px; color: var(--text-faint); margin-bottom: 28px; max-width: 660px; line-height: 15px; }
+  .lane { display: flex; flex-direction: column; gap: 26px; }
+  .row { display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap; }
+  .spec { display: flex; flex-direction: column; gap: 7px; }
+  .spec-lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .spec-note { font-size: 10.5px; color: var(--text-faint); max-width: 230px; line-height: 14px; }
+
+  /* ── app frame (placement demo: docked top-right) ── */
+  .app {
+    border: 1px solid var(--border); border-radius: var(--r-board); overflow: hidden;
+    background: var(--void); box-shadow: var(--shadow-pop); width: 680px; max-width: 100%;
+  }
+  .app-tb {
+    height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border-subtle);
+  }
+  .app-dots { display: flex; gap: 5px; }
+  .app-dots i { width: 9px; height: 9px; border-radius: 999px; background: var(--surface-overlay); border: 1px solid var(--border-subtle); }
+  .app-title { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); margin: 0 auto; }
+  .app-canvas {
+    position: relative; height: 330px;
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .ghost-board {
+    position: absolute; border: 1px solid var(--border-subtle); border-radius: var(--r-board);
+    background: rgba(20,20,22,0.72);
+  }
+  .ghost-board .gb-hd {
+    height: 22px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center;
+    padding: 0 8px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-faint); gap: 5px;
+  }
+  .gb-dot { width: 5px; height: 5px; border-radius: 999px; background: var(--ok); }
+  .anchor { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+  /* ── Jarvis island: VoicePill family, persona mode, neural core ── */
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; height: 34px;
+    padding: 0 12px 0 7px; background: var(--surface-overlay);
+    border: 1px solid var(--border); border-radius: var(--r-pill);
+    box-shadow: var(--shadow-pop); user-select: none; width: max-content;
+  }
+  .grip { display: flex; flex-direction: column; gap: 2px; padding: 0 1px; }
+  .grip i { display: block; width: 2px; height: 2px; border-radius: 1px; background: var(--text-faint); }
+  .core { width: 22px; height: 22px; flex: none; position: relative; }
+  .core canvas { width: 22px; height: 22px; display: block; }
+  .core .badge {
+    position: absolute; top: -3px; right: -3px; min-width: 12px; height: 12px; padding: 0 3px;
+    border-radius: 999px; background: var(--warn); color: #0a0a0b;
+    font-family: var(--mono); font-size: 8px; font-weight: 600; line-height: 12px; text-align: center;
+  }
+  .state { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .cap {
+    display: flex; align-items: center; gap: 2.5px; height: 20px; padding: 0 8px;
+    background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-pill);
+  }
+  .cap i { display: block; width: 2.5px; height: 16px; border-radius: 1px; background: var(--text-faint); transform: scaleY(0.25); transform-origin: center; }
+  .glyph { color: var(--text-2); display: inline-flex; flex: none; }
+  .glyph svg { display: block; }
+  .st-listening .cap { border-color: rgba(79,140,255,0.45); }
+  .st-listening .cap i, .st-speaking .cap i { background: var(--accent); }
+  .st-listening .state, .st-speaking .state { color: var(--accent-hover); }
+  .st-listening .cap i { animation: bars 900ms ease-in-out infinite; }
+  .st-listening .cap i:nth-child(2) { animation-delay: 120ms; } .st-listening .cap i:nth-child(3) { animation-delay: 240ms; }
+  .st-listening .cap i:nth-child(4) { animation-delay: 60ms; }  .st-listening .cap i:nth-child(5) { animation-delay: 300ms; }
+  @keyframes bars { 0%,100% { transform: scaleY(0.25); } 50% { transform: scaleY(0.9); } }
+  .dots { display: flex; gap: 3px; padding: 0 2px; }
+  .dots i { width: 3px; height: 3px; border-radius: 999px; background: var(--text-2); animation: think 1.1s ease-in-out infinite; }
+  .dots i:nth-child(2) { animation-delay: 160ms; } .dots i:nth-child(3) { animation-delay: 320ms; }
+  @keyframes think { 0%,100% { opacity: 0.25; } 40% { opacity: 1; } }
+  .st-speaking .cap i { animation: speak 640ms ease-in-out infinite; }
+  .st-speaking .cap i:nth-child(odd) { animation-delay: 320ms; }
+  @keyframes speak { 0%,100% { transform: scaleY(0.45); } 50% { transform: scaleY(0.8); } }
+  .tool { font-family: var(--mono); font-size: 10.5px; color: var(--text-2); }
+  @media (prefers-reduced-motion: reduce) {
+    .cap i, .dots i, .caret { animation: none !important; }
+  }
+
+  /* ── notification chips (agent-lifecycle feed) ── */
+  .notif {
+    display: flex; align-items: flex-start; gap: 8px; width: 290px; max-width: 100%;
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--r-inner);
+    box-shadow: var(--shadow-pop); padding: 8px 10px; cursor: pointer; text-align: left;
+  }
+  .notif:hover { border-color: var(--border-strong); }
+  .nf-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; margin-top: 4px; }
+  .nf-dot.ok { background: var(--ok); } .nf-dot.warn { background: var(--warn); } .nf-dot.err { background: var(--err); }
+  .nf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .nf-board { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+  .nf-msg { font-size: 11.5px; line-height: 15px; color: var(--text); }
+  .nf-sub { font-family: var(--mono); font-size: 9px; color: var(--text-faint); }
+  .nf-focus {
+    flex: none; font-family: var(--mono); font-size: 9px; color: var(--text-3);
+    border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); padding: 2px 6px;
+    align-self: center;
+  }
+  .notif:hover .nf-focus { color: var(--accent-hover); border-color: rgba(79,140,255,0.45); }
+  .spoken {
+    display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-2);
+    font-style: italic; max-width: 300px; line-height: 16px;
+  }
+  .spoken i { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); flex: none; }
+
+  /* ── confirm chip ── */
+  .cchip {
+    display: flex; align-items: center; gap: 8px; width: max-content; max-width: 430px;
+    margin-top: 8px; padding: 7px 8px 7px 11px;
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--r-inner);
+    box-shadow: var(--shadow-pop);
+  }
+  .cc-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--warn); flex: none; }
+  .cc-text { font-size: 11.5px; line-height: 15px; color: var(--text-2); }
+  .cc-text b { color: var(--text); font-weight: 500; }
+  .cc-id { font-family: var(--mono); font-size: 9px; color: var(--text-faint); margin-top: 2px; }
+  .btn {
+    font-family: var(--ui); font-size: 11px; border-radius: var(--r-ctl); padding: 3px 9px;
+    cursor: pointer; white-space: nowrap; background: transparent;
+    border: 1px solid var(--border-subtle); color: var(--text-3); flex: none;
+  }
+  .btn:hover, .btn:focus-visible { color: var(--text); border-color: var(--border-strong); outline: none; }
+  .btn.primary { color: var(--accent-hover); border-color: rgba(79,140,255,0.45); background: var(--accent-wash); }
+
+  /* ── transcript tail ── */
+  .tail {
+    width: 400px; max-width: 100%; background: var(--surface-raised); border: 1px solid var(--border);
+    border-radius: var(--r-inner); box-shadow: var(--shadow-pop); overflow: hidden;
+  }
+  .tl-hd { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--border-subtle); }
+  .tl-name { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .tl-meta { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+  .tl-live { margin-left: auto; display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--accent-hover); }
+  .tl-live i { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
+  .tl-body { padding: 9px 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .tl-you { font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-3); }
+  .tl-you b { color: var(--text-2); font-weight: 450; }
+  .tl-reply { font-size: 12.5px; line-height: 19px; color: var(--text); }
+  .caret { display: inline-block; width: 1px; height: 13px; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: think 1s steps(2) infinite; }
+  .tl-ft { display: flex; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border-subtle); font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+  .tl-ft b { color: var(--text-3); font-weight: 450; }
+
+  /* ── conversation history view (tail expanded, D4′) ── */
+  .hist-body { max-height: 268px; overflow-y: auto; padding: 9px 10px 10px; display: flex; flex-direction: column; gap: 9px; }
+  .hist-chip {
+    align-self: center; font-family: var(--mono); font-size: 9px; color: var(--text-faint);
+    border: 1px dashed var(--border-subtle); border-radius: var(--r-pill); padding: 2px 8px;
+  }
+  .hist-sep { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .hist-sep::before, .hist-sep::after { content: ''; flex: 1; border-top: 1px solid var(--border-subtle); }
+  .turn-you { font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-3); }
+  .turn-you b { color: var(--text-2); font-weight: 450; }
+  .turn-j { font-size: 12px; line-height: 18px; color: var(--text); }
+  .turn-t { font-family: var(--mono); font-size: 8.5px; color: var(--text-faint); margin-left: 6px; }
+  .turn-act { font-family: var(--mono); font-size: 9.5px; color: var(--text-3); padding: 3px 8px; background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); width: max-content; }
+</style>
+</head>
+<body>
+  <div class="page-hd">MOCK · JARVIS ISLAND · REV 2 · docs/research/2026-07-04-jarvis-voice-agent · tokens per DESIGN.md §2-4</div>
+  <div class="page-sub">Rev 2 (2026-07-10): docks top-right by default (still draggable), the static monogram becomes a
+  canvas-drawn neural core (orbiting dots + beating nucleus, per-state tempo/color, accent only for audio or an armed
+  tool), and the island carries the agent-lifecycle notification feed: chips, optional spoken announce, click-to-focus.</div>
+
+  <div class="lane">
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">A · placement: docked top-right, in context</div>
+        <div class="app">
+          <div class="app-tb">
+            <span class="app-dots"><i></i><i></i><i></i></span>
+            <span class="app-title">expanse — canvas ade</span>
+          </div>
+          <div class="app-canvas">
+            <div class="ghost-board" style="left:24px; top:26px; width:200px; height:130px"><div class="gb-hd"><span class="gb-dot"></span>terminal · auth api</div></div>
+            <div class="ghost-board" style="left:250px; top:70px; width:170px; height:110px"><div class="gb-hd"><span class="gb-dot" style="background:var(--warn)"></span>terminal · tests</div></div>
+            <div class="ghost-board" style="left:60px; top:186px; width:230px; height:110px"><div class="gb-hd"><span class="gb-dot" style="background:var(--text-faint)"></span>planning · jarvis epic</div></div>
+            <div class="anchor">
+              <div class="pill st-listening">
+                <span class="grip"><i></i><i></i><i></i></span>
+                <span class="core"><canvas data-core="listening"></canvas><span class="badge">1</span></span>
+                <span class="glyph"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+                <span class="cap"><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="state">listening</span>
+              </div>
+              <button class="notif">
+                <span class="nf-dot warn"></span>
+                <span class="nf-main">
+                  <span class="nf-board">terminal · tests</span>
+                  <span class="nf-msg">Agent needs your attention: 2 failing specs</span>
+                  <span class="nf-sub">18s ago · via agent-lifecycle events</span>
+                </span>
+                <span class="nf-focus">focus ↵</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="spec-note" style="max-width:660px">Top-right is the free status eye-line: panels and file tree own the
+        left edge, toast and minimap islands own the bottom. Badge on the core counts unread chips.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">B1 · idle</div>
+        <div class="pill">
+          <span class="grip"><i></i><i></i><i></i></span>
+          <span class="core"><canvas data-core="idle"></canvas></span>
+          <span class="cap"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="state">idle</span>
+        </div>
+        <div class="spec-note">Resting heartbeat, neutral dots, slow orbit. Alive, not busy.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">B2 · listening</div>
+        <div class="pill st-listening">
+          <span class="grip"><i></i><i></i><i></i></span>
+          <span class="core"><canvas data-core="listening"></canvas></span>
+          <span class="cap"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="state">listening</span>
+        </div>
+        <div class="spec-note">Nucleus goes accent, swells with input level; bars mirror RMS.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">B3 · thinking</div>
+        <div class="pill">
+          <span class="grip"><i></i><i></i><i></i></span>
+          <span class="core"><canvas data-core="thinking"></canvas></span>
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="state">thinking</span>
+        </div>
+        <div class="spec-note">Orbit spins up, nucleus quiet, neutral color: working, nothing audible.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">B4 · speaking</div>
+        <div class="pill st-speaking">
+          <span class="grip"><i></i><i></i><i></i></span>
+          <span class="core"><canvas data-core="speaking"></canvas></span>
+          <span class="cap"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="state">speaking</span>
+        </div>
+        <div class="spec-note">Fast accent pulse in speech rhythm; dots ripple outward on each beat.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">B5 · acting</div>
+        <div class="pill">
+          <span class="grip"><i></i><i></i><i></i></span>
+          <span class="core"><canvas data-core="acting"></canvas></span>
+          <span class="tool">spawn_board</span>
+          <span class="state">acting</span>
+        </div>
+        <div class="spec-note">Accent arc sweeps the outer ring while the tool runs; target board halos on the canvas.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">C · notifications through jarvis (3 event classes)</div>
+        <button class="notif">
+          <span class="nf-dot ok"></span>
+          <span class="nf-main">
+            <span class="nf-board">terminal · auth api</span>
+            <span class="nf-msg">Agent finished: 14 files changed, tests green</span>
+            <span class="nf-sub">just now</span>
+          </span>
+          <span class="nf-focus">focus ↵</span>
+        </button>
+        <button class="notif">
+          <span class="nf-dot warn"></span>
+          <span class="nf-main">
+            <span class="nf-board">terminal · tests</span>
+            <span class="nf-msg">Agent needs your attention: 2 failing specs</span>
+            <span class="nf-sub">18s ago</span>
+          </span>
+          <span class="nf-focus">focus ↵</span>
+        </button>
+        <button class="notif">
+          <span class="nf-dot err"></span>
+          <span class="nf-main">
+            <span class="nf-board">terminal · migration</span>
+            <span class="nf-msg">Agent failed: exit 1, see last 40 lines</span>
+            <span class="nf-sub">2m ago</span>
+          </span>
+          <span class="nf-focus">focus ↵</span>
+        </button>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">C2 · spoken announce (configurable)</div>
+        <div class="spoken"><i></i>“Sir, the auth terminal has finished. Fourteen files changed, tests green.”</div>
+        <div class="spec-note" style="margin-top:6px; max-width:300px">Announce policy in Settings: all events,
+        attention-and-failures only, or chips-only. Announcements queue behind an active conversation turn.
+        “Take me there” after an announce calls focus_viewport on the board; clicking a chip does the same.
+        OS notifications still fire when the window is unfocused.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">D1 · confirm gate (mutating tool)</div>
+        <div class="pill">
+          <span class="grip"><i></i><i></i><i></i></span>
+          <span class="core"><canvas data-core="idle"></canvas></span>
+          <span class="cap"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="state">confirm</span>
+        </div>
+        <div class="cchip">
+          <span class="cc-dot"></span>
+          <span>
+            <div class="cc-text">Spawn a <b>terminal</b> running <b>claude</b> in the auth zone?</div>
+            <div class="cc-id">action a7f2 · say “yes” or “no”, or click</div>
+          </span>
+          <button class="btn primary">Confirm</button>
+          <button class="btn">Dismiss</button>
+        </div>
+        <div class="spec-note" style="margin-top:6px">Warn dot = pending mutation. Spoken “yes” answers THIS bound action id,
+        so a stale yes can never authorize a newer action. Read/focus/tidy tools skip the chip entirely.</div>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">D2 · transcript tail (while speaking)</div>
+        <div class="tail">
+          <div class="tl-hd">
+            <span class="tl-name">Jarvis</span>
+            <span class="tl-meta">butler · kokoro af_sky</span>
+            <span class="tl-live"><i></i>speaking</span>
+          </div>
+          <div class="tl-body">
+            <div class="tl-you"><b>You</b> · focus the auth terminal and tidy the rest</div>
+            <div class="tl-reply">Focused the auth terminal, sir. The remaining nine boards are now tidied by type. The canvas is, dare I say, presentable<span class="caret"></span></div>
+          </div>
+          <div class="tl-ft"><span><b>speak</b> to interrupt</span><span><b>esc</b> dismiss</span><span style="margin-left:auto">grounded in tool results</span></div>
+        </div>
+        <div class="spec-note" style="margin-top:6px">Flyout chrome reuse. Reply text streams while TTS speaks it; barge-in truncates at the spoken point.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">E · conversation history (D4′ · tail expanded)</div>
+        <div class="tail" style="width:430px">
+          <div class="tl-hd">
+            <span class="tl-name">Jarvis</span>
+            <span class="tl-meta">butler · this project</span>
+            <span class="tl-live" style="color:var(--text-3)"><i style="background:var(--text-faint)"></i>history</span>
+          </div>
+          <div class="hist-body">
+            <span class="hist-chip">earlier · 14 turns summarized into context</span>
+            <div class="hist-sep">yesterday</div>
+            <div>
+              <div class="turn-you"><b>You</b> · spawn a terminal for the migration work<span class="turn-t">17:42</span></div>
+              <div class="turn-act">spawn_board · terminal “migration” · confirmed a3d1</div>
+              <div class="turn-j">Done. Migration terminal is up, bottom left, running claude.</div>
+            </div>
+            <div>
+              <div class="turn-you"><b>You</b> · how did the auth tests end up?<span class="turn-t">18:03</span></div>
+              <div class="turn-j">Fourteen passed, none skipped. The flaky socket spec held this time.</div>
+            </div>
+            <div class="hist-sep">today</div>
+            <div>
+              <div class="turn-you"><b>You</b> · where were we with the migration?<span class="turn-t">09:12</span></div>
+              <div class="turn-j">Yesterday you spawned the migration terminal and the auth suite went green. The migration agent is idle since 18:20, awaiting the schema decision, sir.</div>
+            </div>
+            <div>
+              <div class="turn-you"><b>You</b> · focus the auth terminal and tidy the rest<span class="turn-t">09:14</span></div>
+              <div class="turn-j">Focused the auth terminal. The remaining nine boards are now tidied by type. The canvas is, dare I say, presentable<span class="caret"></span></div>
+            </div>
+          </div>
+          <div class="tl-ft"><span><b>history</b> per project</span><span><b>.canvas/memory</b> · local only</span><span style="margin-left:auto"><b>clear</b> in settings</span></div>
+        </div>
+      </div>
+      <div class="spec">
+        <div class="spec-lbl">E2 · what persistence buys</div>
+        <div class="spec-note" style="max-width:300px; font-size:11px; line-height:15px; color:var(--text-3)">
+        Rolling multi-turn history per project; tool actions inline in the flow. Older turns compress into a
+        rolling summary (chip above) so the prompt stays small. Set to “per project”, the log persists under
+        .canvas/memory/jarvis/ and restores on relaunch: “what did we discuss yesterday” just works.
+        Consent-gated like the recap subsystem, git-ignored by default, persona block stays prompt-cached.</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* Neural core: nucleus with a heartbeat inside two rings of orbiting dots.
+   One renderer, five state tunings. Token hexes only, crisp dots, no glow. */
+(function () {
+  const NEUTRAL = '#7b7b81', FAINT = '#46464b', ACCENT = '#4f8cff', BRIGHT = '#6ea0ff';
+  const MODES = {
+    idle:      { orbit: 0.25, dot: FAINT,   dotHi: NEUTRAL, nuc: NEUTRAL, beat: 'heart', depth: 0.18, period: 1.6 },
+    listening: { orbit: 0.45, dot: NEUTRAL, dotHi: ACCENT,  nuc: ACCENT,  beat: 'react', depth: 0.5,  period: 1.0 },
+    thinking:  { orbit: 2.2,  dot: NEUTRAL, dotHi: '#c8c8cc', nuc: FAINT, beat: 'still', depth: 0.06, period: 1.0 },
+    speaking:  { orbit: 0.6,  dot: NEUTRAL, dotHi: ACCENT,  nuc: BRIGHT,  beat: 'pulse', depth: 0.32, period: 0.42 },
+    acting:    { orbit: 1.2,  dot: NEUTRAL, dotHi: ACCENT,  nuc: NEUTRAL, beat: 'heart', depth: 0.12, period: 1.2, arc: true },
+  };
+  const gauss = (x, m, s) => Math.exp(-((x - m) * (x - m)) / (2 * s * s));
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  document.querySelectorAll('canvas[data-core]').forEach((cv) => {
+    const m = MODES[cv.dataset.core] || MODES.idle;
+    const D = 44; cv.width = D; cv.height = D;
+    const ctx = cv.getContext('2d'), C = D / 2;
+    const dots = [];
+    for (let i = 0; i < 6; i++) dots.push({ r: 16, a: (i / 6) * Math.PI * 2, ph: i * 1.7, s: 1 });
+    for (let i = 0; i < 4; i++) dots.push({ r: 10, a: (i / 4) * Math.PI * 2 + 0.6, ph: i * 2.3, s: -1.4 });
+
+    function nucleusScale(t) {
+      if (m.beat === 'heart') { const p = (t % m.period);
+        return 1 + m.depth * (gauss(p, 0.10, 0.055) + 0.55 * gauss(p, 0.32, 0.06)); }
+      if (m.beat === 'pulse') return 1 + m.depth * (0.5 + 0.5 * Math.sin(t / m.period * Math.PI * 2));
+      if (m.beat === 'react') return 1 + m.depth * Math.max(0,
+        0.45 * Math.sin(t * 5.1) + 0.35 * Math.sin(t * 8.7 + 1.4) + 0.2 * Math.sin(t * 2.3 + 0.5));
+      return 1;
+    }
+    function frame(ms) {
+      const t = ms / 1000;
+      ctx.clearRect(0, 0, D, D);
+      const ns = nucleusScale(t);
+      dots.forEach((d) => {
+        const a = d.a + t * m.orbit * d.s;
+        const tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 1.8 + d.ph));
+        const rr = d.r + (m.beat === 'pulse' ? (ns - 1) * 6 : 0);
+        ctx.globalAlpha = tw;
+        ctx.fillStyle = tw > 0.8 ? m.dotHi : m.dot;
+        ctx.beginPath();
+        ctx.arc(C + Math.cos(a) * rr, C + Math.sin(a) * rr, 1.6, 0, 7);
+        ctx.fill();
+      });
+      if (m.arc) {
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+        const a0 = t * 2.4;
+        ctx.beginPath(); ctx.arc(C, C, 16, a0, a0 + 1.5); ctx.stroke();
+      }
+      ctx.globalAlpha = 1; ctx.fillStyle = m.nuc;
+      ctx.beginPath(); ctx.arc(C, C, 3.4 * ns, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.35; ctx.strokeStyle = m.nuc; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(C, C, 5.6 * ns, 0, 7); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (!reduced) requestAnimationFrame(frame);
+    }
+    frame(performance.now());
+  });
+})();
+</script>
+</body>
+</html>

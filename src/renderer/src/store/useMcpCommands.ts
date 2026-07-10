@@ -19,6 +19,7 @@ import {
 import { applyKanbanOps } from './kanbanMcpApply'
 import { applyPlanningEditOp } from './planningUpdateMcpApply'
 import { buildVisualizedContent, isVisualization } from './visualizeMcpApply'
+import { requestCameraFocus } from './cameraRequestStore'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /**
@@ -61,7 +62,7 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type, title, launchCommand, cwd } = command.board
+      const { id, type, title, launchCommand, cwd, url } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
@@ -78,6 +79,18 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       }
       if ((launchCommand !== undefined || cwd !== undefined) && type !== 'terminal') {
         return { ok: false, error: 'addBoard: launchCommand/cwd are terminal-only' }
+      }
+      // url is BROWSER-ONLY (H3 — the spawn_board url path). MAIN already validated genuine
+      // http(s) + clamped; re-validate shape + type + a cheap protocol prefix here (defense in
+      // depth, the launchCommand/cwd discipline) so a forged payload can't land a non-http url.
+      if (url !== undefined && typeof url !== 'string') {
+        return { ok: false, error: 'invalid addBoard url' }
+      }
+      if (url !== undefined && type !== 'browser') {
+        return { ok: false, error: 'addBoard: url is browser-only' }
+      }
+      if (url !== undefined && !/^https?:\/\//.test(url)) {
+        return { ok: false, error: 'addBoard: url must be http(s)' }
       }
       // Auto-cable request (rc.6): shape + terminal-only re-validation BEFORE any side effect
       // (a malformed request must not leave a cable-less board behind an { ok: false } ack).
@@ -108,10 +121,12 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // whole configured board (the fields never split the history). Kept out of `canvasStore.
       // addBoard` on purpose — MCP-only behavior stays in the MCP applier (file-size doctrine:
       // canvasStore is pinned).
-      if (launchCommand !== undefined || cwd !== undefined) {
+      if (launchCommand !== undefined || cwd !== undefined || url !== undefined) {
         store.updateBoard(id, {
           ...(launchCommand ? { launchCommand } : {}),
-          ...(cwd ? { cwd } : {})
+          ...(cwd ? { cwd } : {}),
+          // PATCHABLE_KEYS.browser carries 'url' — the preview boots on it at first mount (H3).
+          ...(url ? { url } : {})
         })
       }
       // 🔒 Auto-cable (rc.6): MAIN asks for a directed ORCHESTRATION connector spawner → spawned
@@ -389,6 +404,45 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
         if (prev && (prev.x !== b.x || prev.y !== b.y)) moved++
       }
       return { ok: true, type: 'tidyBoards', moved }
+    }
+    case 'focusCamera': {
+      // 🔒 H1: move the USER'S VIEWPORT to a board / group / the whole canvas. Viewport-only +
+      // content-less (the canvas doc is untouched — the camera is ephemeral session state), so no
+      // beginChange/undo involvement at all. Re-validate the target (defense in depth, mirroring
+      // tidyBoards) and resolve it against the LIVE store — an unknown id acks {ok:false} so the
+      // agent learns the target is gone instead of the camera silently not moving. The fit itself
+      // executes in the provider (useCameraFocusRequests) — this applier is React-free.
+      const { boardId, groupId } = command
+      if (
+        (boardId !== undefined && (typeof boardId !== 'string' || boardId.length === 0)) ||
+        (groupId !== undefined && (typeof groupId !== 'string' || groupId.length === 0))
+      ) {
+        return { ok: false, error: 'focusCamera: invalid target id' }
+      }
+      if (boardId !== undefined && groupId !== undefined) {
+        return { ok: false, error: 'focusCamera: pass at most one of boardId / groupId' }
+      }
+      const store = useCanvasStore.getState()
+      if (boardId !== undefined) {
+        if (!store.boards.some((b) => b.id === boardId)) {
+          return { ok: false, error: `focusCamera: board not found: ${boardId}` }
+        }
+        requestCameraFocus({ kind: 'board', id: boardId })
+      } else if (groupId !== undefined) {
+        const group = store.groups.find((g) => g.id === groupId)
+        if (!group) return { ok: false, error: `focusCamera: group not found: ${groupId}` }
+        if (group.boardIds.length === 0) {
+          // Defensive: empty groups auto-prune, but a fit over zero members would no-op silently —
+          // tell the agent instead.
+          return { ok: false, error: `focusCamera: group has no members: ${groupId}` }
+        }
+        requestCameraFocus({ kind: 'group', id: groupId })
+      } else {
+        // Neither target ⇒ fit ALL boards (the palette's fitAll). An empty canvas still acks ok —
+        // fitView no-ops gracefully; there is nothing misleading about "focused: all" on nothing.
+        requestCameraFocus({ kind: 'all' })
+      }
+      return { ok: true, type: 'focusCamera' }
     }
     case 'visualizePlan': {
       // 🔒 P5: CREATE a new board from a sanitized plan in the shape the human PICKED in the confirm

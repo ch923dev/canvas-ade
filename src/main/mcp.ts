@@ -110,9 +110,11 @@ export interface RunningMcp {
   /**
    * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
    * preview wiring) via the orchestrator. Exposed here for the CANVAS_E2E
-   * `__canvasE2EMain.spawnGroupNow` seam; the agent-facing `spawn_group` MCP tool is a deferred
-   * follow-up (PR-5c) — the package registers no `spawn_group` tool, so it is not yet wire-reachable
-   * (unlike `git_diff`/PR-2b, whose tool the pinned package now DOES register — see `gitDiff` above).
+   * `__canvasE2EMain.spawnGroupNow` seam. WIRE-REACHABLE since the ≥0.18.0 pin (H4 / Lane H doc
+   * fix — the "package registers no spawn_group tool" note was stale): the package registers
+   * `spawn_group` at the ORCHESTRATOR tier (`registerSpawnGroup`), routing here through
+   * `orchestrator.spawnGroup`, whose `launchCommand` is sanitized as an exec vector in
+   * `mcpLifecycle.spawnGroup` (`sanitizeLaunch` — the PR-5c gating requirement, already paid).
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   /**
