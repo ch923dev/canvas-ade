@@ -380,6 +380,9 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     const doc = { schemaVersion: 4, viewport: null, boards: [] }
     const ok = await cap.invoke('project:save', doc)
     expect(ok).toEqual({ ok: true })
+    // M3: observe() is now deferred via setImmediate so it runs off the save's critical path —
+    // await one tick for it to fire before asserting.
+    await new Promise((resolve) => setImmediate(resolve))
     expect(observe).toHaveBeenCalledWith(doc)
   })
 

@@ -378,12 +378,18 @@ export function registerProjectHandlers(
       // instead of silently swallowed.
       try {
         await writeProject(dir, doc)
-        try {
-          memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
-          onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
-        } catch (err) {
-          console.warn('[memoryEngine] observe failed (non-fatal)', err)
-        }
+        // M3: defer off the save's critical path. memoryEngine.observe does a per-board
+        // JSON.stringify fingerprint — a 3rd full-tree pass on top of the write above — and the
+        // renderer only needs the { ok: true } below, not this bookkeeping. setImmediate runs it
+        // right after the IPC response ships instead of before it, at negligible (~1 tick) staleness.
+        setImmediate(() => {
+          try {
+            memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
+            onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
+          } catch (err) {
+            console.warn('[memoryEngine] observe failed (non-fatal)', err)
+          }
+        })
         return { ok: true }
       } catch (err) {
         console.error('project:save failed', err)
