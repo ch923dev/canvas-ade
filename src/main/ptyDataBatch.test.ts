@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createChunkBatcher, ownedPort } from './ptyDataBatch'
+import { createChunkBatcher, drainBatch, ownedPort } from './ptyDataBatch'
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
@@ -84,5 +84,30 @@ describe('ownedPort (identity guard)', () => {
 
   it('returns undefined when there is no live session at all', () => {
     expect(ownedPort(undefined, {})).toBeUndefined()
+  })
+})
+
+describe('drainBatch (M9 — teardown-side drain)', () => {
+  it('synchronously flushes the pending batch via the carried flushData hook', () => {
+    const postMessage = vi.fn()
+    const batcher = createChunkBatcher(() => ({ postMessage }))
+    batcher.push('last words')
+    drainBatch({ flushData: () => batcher.flushNow() })
+    expect(postMessage).toHaveBeenCalledTimes(1)
+    expect(postMessage).toHaveBeenCalledWith({ t: 'data', d: 'last words' })
+  })
+
+  it('no-ops on a session without the hook (mock/legacy shapes)', () => {
+    expect(() => drainBatch({})).not.toThrow()
+  })
+
+  it('swallows a throwing flush — teardown must proceed', () => {
+    expect(() =>
+      drainBatch({
+        flushData: () => {
+          throw new Error('port closed')
+        }
+      })
+    ).not.toThrow()
   })
 })

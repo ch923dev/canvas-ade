@@ -3,7 +3,7 @@
  * Pure file I/O keyed by an explicit userDataDir + caller-supplied timestamp, so it's
  * fully testable without Electron's `app`. MRU-ordered, capped, prunes dead folders.
  */
-import { mkdirSync, readFileSync, existsSync } from 'fs'
+import { mkdirSync, readFileSync, statSync } from 'fs'
 import { access } from 'fs/promises'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
@@ -55,11 +55,27 @@ function pathExists(p: string): Promise<boolean> {
 /**
  * L3: the parsed+shaped list, cached per userDataDir so project:open/create/reopen (each calling
  * listRecents, incl. the isUnderApprovedRoot gate) don't re-read + re-parse the file on every call.
- * Every write in this module goes through `touchRecent`/`removeRecent`/`clearRecents`, and each of
- * those overwrites this cache with the exact list it just persisted — so the cache can never observe
- * a write this process didn't just make itself.
+ * Validated against the file's mtime+size on every read (statSync is ~µs vs read+parse), so a
+ * write by ANOTHER process sharing this userData dir (dev builds skip requestSingleInstanceLock)
+ * or a manual edit is picked up instead of being clobbered by our next write. Writes in this
+ * module refresh the entry via cacheWritten with the list they just persisted.
  */
-const storedCache = new Map<string, RecentProject[]>()
+interface StoredCacheEntry {
+  mtimeMs: number
+  size: number
+  list: RecentProject[]
+}
+const storedCache = new Map<string, StoredCacheEntry>()
+
+/** Refresh the cache with the list a write just persisted, keyed to the file's new stat. */
+function cacheWritten(userDataDir: string, list: RecentProject[]): void {
+  try {
+    const s = statSync(fileFor(userDataDir))
+    storedCache.set(userDataDir, { mtimeMs: s.mtimeMs, size: s.size, list })
+  } catch {
+    storedCache.delete(userDataDir)
+  }
+}
 
 function shapeRecents(raw: unknown): RecentProject[] {
   return (Array.isArray(raw) ? (raw as RecentProject[]) : []).filter(
@@ -79,13 +95,16 @@ function shapeRecents(raw: unknown): RecentProject[] {
  * permanently deleted from the MRU file by the next touch.
  */
 function readStoredRecents(userDataDir: string): RecentProject[] {
-  const cached = storedCache.get(userDataDir)
-  if (cached) return cached
   const file = fileFor(userDataDir)
-  if (!existsSync(file)) {
-    storedCache.set(userDataDir, [])
+  let stat: ReturnType<typeof statSync>
+  try {
+    stat = statSync(file)
+  } catch {
+    storedCache.delete(userDataDir) // no file (or unreadable): nothing to cache against
     return []
   }
+  const cached = storedCache.get(userDataDir)
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.list
   let shaped: RecentProject[]
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as { projects?: unknown }
@@ -93,7 +112,7 @@ function readStoredRecents(userDataDir: string): RecentProject[] {
   } catch {
     return [] // parse failure: don't cache — a fixed-up file on a later read should be seen
   }
-  storedCache.set(userDataDir, shaped)
+  storedCache.set(userDataDir, { mtimeMs: stat.mtimeMs, size: stat.size, list: shaped })
   return shaped
 }
 
@@ -127,7 +146,7 @@ export async function touchRecent(
   // making listRecents silently return [] (BUG-L5). write-file-atomic stages to a
   // temp file + rename, so a crash mid-write leaves the prior good file intact.
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
-  storedCache.set(userDataDir, next) // L3: this write IS the new cached truth — no re-read needed
+  cacheWritten(userDataDir, next) // L3: this write IS the new cached truth — no re-read needed
 }
 
 /**
@@ -142,12 +161,12 @@ export async function removeRecent(userDataDir: string, path: string): Promise<v
   if (next.length === stored.length) return
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
-  storedCache.set(userDataDir, next) // L3
+  cacheWritten(userDataDir, next) // L3
 }
 
 /** Wipe the stored list entirely. LIST-ONLY: project folders on disk are untouched. */
 export async function clearRecents(userDataDir: string): Promise<void> {
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: [] }, null, 2), 'utf8')
-  storedCache.set(userDataDir, []) // L3
+  cacheWritten(userDataDir, []) // L3
 }

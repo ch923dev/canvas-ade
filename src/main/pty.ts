@@ -15,7 +15,7 @@ import {
   type OutputPage,
   type OutputRing
 } from './ptyOutput'
-import { createChunkBatcher, ownedPort } from './ptyDataBatch'
+import { createChunkBatcher, drainBatch, ownedPort } from './ptyDataBatch'
 import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
@@ -142,6 +142,10 @@ interface SessionLike {
   spawnedAt: number
   /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
   exitCode?: number
+  /** M9: drain the pending onData micro-batch (ptyDataBatch) synchronously. Called by cleanupCore/
+   *  parkCore BEFORE the map delete + port close so a same-tick buffered chunk still reaches the
+   *  renderer (the per-chunk post it replaced was synchronous). Idempotent — empty batch no-ops. */
+  flushData?: () => void
   /**
    * Desktop-notifications P3: the board's `monitorActivity` opt-out, captured at spawn. Absent ⇒
    * monitored (read as `monitored !== false`). `false` silences this session's generic-PTY exit
@@ -196,6 +200,9 @@ interface ParkedLike {
    *  post-watermark tail (readRingSince) after re-writing the snapshot — full scrollback,
    *  no duplication, no 256KB ceiling. Undo parks ignore it (full-ring replay as ever). */
   watermark?: number
+  /** M9: the session's micro-batch drain, carried across park→adopt so the adopted session's
+   *  eventual cleanup can still flush a same-tick buffered chunk (see SessionLike.flushData). */
+  flushData?: () => void
 }
 
 const sessions = new Map<string, SessionLike>()
@@ -345,6 +352,8 @@ export function parkCore(
 ): void {
   const s = sessionsMap.get(id)
   if (!s) return
+  // M9: drain while the session is still in the map (the flush resolves its target through it).
+  drainBatch(s)
   sessionsMap.delete(id)
   try {
     s.port.close()
@@ -369,7 +378,8 @@ export function parkCore(
     // add hundreds of ms) belongs to the post-snapshot tail, not below the watermark.
     // Undo parks (nothing was flushed at delete) keep the park-time value; it is unused.
     watermark:
-      kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written
+      kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written,
+    flushData: s.flushData // M9: survives the round-trip for the adopted session's cleanup
   })
 }
 
@@ -429,7 +439,8 @@ export function adoptCore(
     // switch-back-and-away) records watermark = live `written`, and the bytes between the
     // snapshot and that point land in neither the preface nor the tail. A later real
     // flush overwrites it; undo parks carry nothing (their watermark is never read).
-    flushWatermark: p.kind === 'background' ? p.watermark : undefined
+    flushWatermark: p.kind === 'background' ? p.watermark : undefined,
+    flushData: p.flushData // M9: restore the micro-batch drain for this session's cleanup
   })
   transferPort(port2)
 
@@ -771,7 +782,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // a board's cwd override can point anywhere. null = no project open (e2e boot).
       projectDir: getCurrentDir(),
       // P3: capture the board's monitorActivity opt-out for the generic-PTY lifecycle emits.
-      monitored: opts.monitorActivity !== false
+      monitored: opts.monitorActivity !== false,
+      // M9: let cleanupCore drain the micro-batch before it deletes the entry / closes the port.
+      flushData: () => dataBatch.flushNow()
     })
     boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
@@ -873,6 +886,9 @@ export function cleanupCore(
   const s = sessionsMap.get(id)
   if (!s) return Promise.resolve()
   if (isStaleExit(s.proc, proc)) return Promise.resolve()
+  // M9: drain the pending micro-batch while the session is still in the map and its port is
+  // open — otherwise output buffered this tick is dropped on kill/restart/reap.
+  drainBatch(s)
   sessionsMap.delete(id)
   // PR-2: drop this board's gitDiff cwd when its session is torn down, so the map doesn't
   // accrete entries for the session lifetime (it otherwise only drained on project switch).

@@ -60,3 +60,20 @@ export function createChunkBatcher(getLive: () => LiveDataTarget | undefined): C
     }
   }
 }
+
+/**
+ * Teardown-side drain: synchronously flush a session's pending micro-batch via the `flushData`
+ * hook it carries (absent on mocks/legacy shapes ⇒ no-op). Called by cleanupCore/parkCore BEFORE
+ * the map delete + port close, so a chunk buffered in the same tick as a kill/restart/reap/park
+ * still reaches the renderer — the per-chunk post this module replaced was synchronous and never
+ * lost that final output. Emptying the buffer also stops a stray scheduled flush from
+ * double-posting after a later adopt() replays the ring (which already holds these bytes).
+ * Swallows: a drain must never block teardown.
+ */
+export function drainBatch(s: { flushData?: () => void }): void {
+  try {
+    s.flushData?.()
+  } catch {
+    /* port closed / already torn down */
+  }
+}

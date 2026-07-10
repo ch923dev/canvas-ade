@@ -209,11 +209,11 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   let prior: Buffer | undefined
   try {
     const bytes = readFileSync(primary)
-    const parsed = JSON.parse(bytes.toString('utf8'))
-    // L1: reuse this parse (already required for the envelope gate) to re-serialize the .bak
-    // COMPACT rather than copying the pretty-printed primary bytes verbatim — ~1.3-2x fewer bytes
-    // written/rotated for a file nobody diffs (recovery-only), at zero extra parse cost.
-    if (isEnvelope(parsed)) prior = Buffer.from(JSON.stringify(parsed))
+    // L1 (declined): re-serializing the parse compact (`JSON.stringify(parsed)`) would shrink the
+    // .bak ~1.3-2x, but that stringify is synchronous main-thread CPU on EVERY autosave, while the
+    // byte savings ride the already-async H1 rotation below — the opposite of the H1/H2 goal of
+    // shrinking the save-time main-thread stall. Keep the prior bytes verbatim.
+    if (isEnvelope(JSON.parse(bytes.toString('utf8')))) prior = bytes
   } catch {
     /* missing / locked / unparseable prior — skip the rotation, keep the last-good .bak */
   }

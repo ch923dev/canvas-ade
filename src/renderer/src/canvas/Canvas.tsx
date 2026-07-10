@@ -280,17 +280,17 @@ function CanvasInner(): ReactElement {
   // Tier-1 digest: a pure function of the persisted boards (DigestDoc = the doc minus the
   // camera). It does NOT read the camera `viewport`, so a pan/zoom must not recompute it
   // (CANVAS-01: subscribing to `s.viewport` here re-rendered CanvasInner every camera frame).
-  // M8: gate buildDigest (O(boards×elements)) on digestOpen — reuse the last digest via STATE
-  // (not a ref: refs can't be read during render) while closed. `setLastDigest` mirrors the
-  // "adjust state during render" pattern above (digestProjectKey/digestOpen): safe, terminates
-  // once digest === lastDigest.
+  // M8: gate buildDigest (O(boards×elements)) on digestOpen — the memo yields null while
+  // closed and DigestPanel falls back to the last computed digest (STATE, not a ref: refs
+  // can't be read during render). `setLastDigest` mirrors the "adjust state during render"
+  // pattern above (digestProjectKey/digestOpen); it terminates because lastDigest is NOT a
+  // memo dep, so the adjust re-render returns the same memoized object and the guard closes.
   const [lastDigest, setLastDigest] = useState(EMPTY_DIGEST)
   const digest = useMemo(
-    () =>
-      digestOpen ? buildDigest({ schemaVersion: SCHEMA_VERSION, boards, connectors }) : lastDigest,
-    [boards, connectors, digestOpen, lastDigest]
+    () => (digestOpen ? buildDigest({ schemaVersion: SCHEMA_VERSION, boards, connectors }) : null),
+    [boards, connectors, digestOpen]
   )
-  if (digestOpen && digest !== lastDigest) setLastDigest(digest)
+  if (digest !== null && digest !== lastDigest) setLastDigest(digest)
 
   // T-M4 / T-F4: the reopen DigestPanel's cached Tier-2 prose + manual ⟳ refresh (incl. MCP-04
   // "why a refresh produced nothing"). Extracted to a hook to keep this file under the max-lines gate.
@@ -1005,7 +1005,7 @@ function CanvasInner(): ReactElement {
           )}
           <AppChrome onTidy={tidyAndFit} onFocusGroup={focusGroup} />
           <DigestPanel
-            digest={digest}
+            digest={digest ?? lastDigest}
             prose={prose}
             onRefresh={refreshBoardProse}
             open={digestOpen}
