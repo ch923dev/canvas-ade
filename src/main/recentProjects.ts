@@ -53,6 +53,25 @@ function pathExists(p: string): Promise<boolean> {
 }
 
 /**
+ * L3: the parsed+shaped list, cached per userDataDir so project:open/create/reopen (each calling
+ * listRecents, incl. the isUnderApprovedRoot gate) don't re-read + re-parse the file on every call.
+ * Every write in this module goes through `touchRecent`/`removeRecent`/`clearRecents`, and each of
+ * those overwrites this cache with the exact list it just persisted — so the cache can never observe
+ * a write this process didn't just make itself.
+ */
+const storedCache = new Map<string, RecentProject[]>()
+
+function shapeRecents(raw: unknown): RecentProject[] {
+  return (Array.isArray(raw) ? (raw as RecentProject[]) : []).filter(
+    (r) =>
+      r &&
+      typeof r.path === 'string' &&
+      typeof r.name === 'string' &&
+      typeof r.lastOpenedAt === 'number'
+  )
+}
+
+/**
  * Read + shape-validate the stored list WITHOUT any existence filtering.
  * BUG-044: this is the persistence-side read — touchRecent must build its written list
  * from the raw stored entries, because the pathExists timeout in listRecents is a
@@ -60,22 +79,22 @@ function pathExists(p: string): Promise<boolean> {
  * permanently deleted from the MRU file by the next touch.
  */
 function readStoredRecents(userDataDir: string): RecentProject[] {
+  const cached = storedCache.get(userDataDir)
+  if (cached) return cached
   const file = fileFor(userDataDir)
-  if (!existsSync(file)) return []
-  let raw: RecentProject[]
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { projects?: unknown }
-    raw = Array.isArray(parsed.projects) ? (parsed.projects as RecentProject[]) : []
-  } catch {
+  if (!existsSync(file)) {
+    storedCache.set(userDataDir, [])
     return []
   }
-  return raw.filter(
-    (r) =>
-      r &&
-      typeof r.path === 'string' &&
-      typeof r.name === 'string' &&
-      typeof r.lastOpenedAt === 'number'
-  )
+  let shaped: RecentProject[]
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { projects?: unknown }
+    shaped = shapeRecents(parsed.projects)
+  } catch {
+    return [] // parse failure: don't cache — a fixed-up file on a later read should be seen
+  }
+  storedCache.set(userDataDir, shaped)
+  return shaped
 }
 
 /**
@@ -108,6 +127,7 @@ export async function touchRecent(
   // making listRecents silently return [] (BUG-L5). write-file-atomic stages to a
   // temp file + rename, so a crash mid-write leaves the prior good file intact.
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
+  storedCache.set(userDataDir, next) // L3: this write IS the new cached truth — no re-read needed
 }
 
 /**
@@ -122,10 +142,12 @@ export async function removeRecent(userDataDir: string, path: string): Promise<v
   if (next.length === stored.length) return
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
+  storedCache.set(userDataDir, next) // L3
 }
 
 /** Wipe the stored list entirely. LIST-ONLY: project folders on disk are untouched. */
 export async function clearRecents(userDataDir: string): Promise<void> {
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: [] }, null, 2), 'utf8')
+  storedCache.set(userDataDir, []) // L3
 }
