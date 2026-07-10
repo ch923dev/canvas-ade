@@ -2192,3 +2192,34 @@ err · 4902 units · build clean · boot smoke green · MCP e2e 33/33 · switch/
 mergeStateStatus CLEAN / MERGEABLE at merge. User eyeball PASS (surfaced the by-design
 empty-project-not-in-dock behavior → `recents-in-dock` follow-up filed on the coordination board).
 Version `0.11.1` → `0.12.0`. Squash `16695cf6`.
+
+## 2026-07-11 — PR #328: Jarvis Lane H — focus_viewport camera loopback + spawn_board url (`87813673`)
+
+The two voice-independent MCP helper tools from the Jarvis epic (Lane H, parallel to J1–J3), shipped
+across both repos: `@expanse-ade/mcp` 0.19.0 (canvas-ade-mcp PR #10, squash `e02a4b8e`, published
+via tag `v0.19.0` → OIDC) + the desktop seams and the pin bump.
+
+- **H1 `focus_viewport`** (orchestrator-tier, un-gated, content-less — the tidy_canvas class): a new
+  `focusCamera` McpCommand from `mcpFocus.ts` rides the existing command pipeline to a renderer
+  applier that publishes into an ephemeral `cameraRequestStore` (scene/session split — never
+  serialized); `useCameraFocusRequests` in `Canvas.tsx` drives the existing `focusBoardById` /
+  `fitGroup` / `fitView` verbs. boardId | groupId | fit-all; both-set rejected at the wire AND in
+  MAIN; unknown id fails the ack via live-store validation; no undo step.
+- **H3 `spawn_board` `url`** (browser boards only): http(s)-allowlist via real `new URL().protocol`
+  resolution, double-validated MAIN + renderer, non-browser `url` rejected BEFORE the cap slot is
+  reserved; landing via `updateBoard`.
+- **H4** `spawn_group` stale "deferred PR-5c" doc comment fixed (wired since the 0.18.x pin). H2 tidy
+  exposure is free with the D5 orchestrator-token decision — no code.
+- **F25 catch:** the 0.19.0 pin registering `focus_viewport` tripped the `APP_TOOLS` drift guard
+  exactly as designed → catalog entry added (`e59f90e`).
+
+**Verified:** pkg 272/272 · desktop unit 4940P (pathSafe ×2 = documented worktree-junction
+environmental) · @mcp e2e 35/35 on the installed 0.19.0 · a NEW `focus_viewport` live-loopback e2e
+spec (board/group/fit-all camera delta, un-gated, both-set + unknown-id + worker-tier denial —
+previously the only tool with no e2e) → suite 36/36 · full e2e matrix green both legs TWICE (pre-pin
+gate and re-paid on the merged tree: Win 279P + menuShell/osrCropSupersample rerun-green isolated ·
+Linux-Docker 280P exit-0) · live exercise against the title-stamped dev instance over loopback
+(url board landed rendering example.com; `javascript:` + non-browser url rejected at the wire;
+focus_viewport correctly invisible to a connected-tier token per D5). claude-review clean ×2 (full +
+incremental): 0 critical / 0 warning / 0 inline. User eyeball PASS. Version `0.11.1` → `0.12.0` →
+re-bumped `0.13.0` (collision: #327 took 0.12.0 on main first). Squash `87813673`.
