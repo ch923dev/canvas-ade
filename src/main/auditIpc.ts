@@ -1,6 +1,6 @@
 import type { IpcMain, BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import type { AuditEntry, AuditLog } from './auditLog'
+import type { AuditEntry, AuditInput, AuditLog } from './auditLog'
 import { MAX_READ_LIMIT } from './auditLog'
 
 /**
@@ -20,6 +20,25 @@ let registered: AuditLog | null = null
 /** The wired audit log (set by {@link registerAuditHandler}); null before app boot. */
 export function getAuditLog(): AuditLog | null {
   return registered
+}
+
+/**
+ * The registry `audit` sink (extracted from index.ts's startMcpServer literal, max-lines ratchet):
+ * append through the LIVE log — resolved lazily so the closure reads it at dispatch time. A failed
+ * audit write is a forensic gap — surface it in the log even if a future non-awaiting caller
+ * forgets to handle the rejection, then RE-THROW so today's awaiting callers (the mcpOrchestrator
+ * dispatch paths) still see it and can react. Pre-boot (no wired log) resolves as a no-op.
+ */
+export function appendAuditEntry(e: AuditInput): Promise<void> {
+  return (
+    getAuditLog()
+      ?.append(e)
+      .then(() => {})
+      .catch((err: unknown) => {
+        console.error('[mcp-audit] append failed', err)
+        throw err
+      }) ?? Promise.resolve()
+  )
 }
 
 export function registerAuditHandler(

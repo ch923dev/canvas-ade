@@ -39,6 +39,7 @@ import { disposeLiveResources } from '../store/disposeLiveResources'
 import { performProjectSwitch } from '../store/projectSwitch'
 import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useToastStore } from '../store/toastStore'
+import { useAttentionStore } from '../store/attentionStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
@@ -250,7 +251,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       if (!board) return null
       return boardStatusBucket(board.type, {
         terminalRunning: useTerminalRuntimeStore.getState().running[id],
-        preview: usePreviewStore.getState().byId[id]?.status
+        preview: usePreviewStore.getState().byId[id]?.status,
+        // Include the unseen-attention override so the e2e pill assertion matches production
+        // buildBoardSnapshot (needs-input → awaiting-review, error → failed).
+        attention: useAttentionStore.getState().byId[id]
       })
     },
     bucketPillDot(bucket) {
@@ -743,6 +747,20 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setAuthStatus(status) {
       useAccountStore.getState().apply(status)
+    },
+    notifyToasts() {
+      return useToastStore
+        .getState()
+        .toasts.map((t) => ({ message: t.message, kind: t.kind, sticky: t.sticky }))
+    },
+    attentionKind(id) {
+      return useAttentionStore.getState().byId[id] ?? null
+    },
+    attentionRingKind(id) {
+      // The on-canvas BoardAttention overlay's data-kind, read off the live node DOM — proves the
+      // ring/badge actually rendered on the board (not just that the store was set).
+      const el = document.querySelector(`.react-flow__node[data-id="${id}"] .ca-attn`)
+      return (el?.getAttribute('data-kind') ?? null) as 'done' | 'needs-input' | 'error' | null
     }
   }
   window.__canvasE2E = api

@@ -49,6 +49,14 @@ const SPAWN_ANCHOR = { x: 120, y: 120 } as const
  * defense in depth keeps a malformed spec from forging an off-type board.
  */
 export function applyMcpCommand(command: McpCommand): McpCommandAck {
+  // Cross-project routing (2026-07-09): while a project switch is mid-load the store is about to
+  // be REPLACED by applyOpenResult — a write applied now would be silently wiped with no trace.
+  // Fail the ack instead so MAIN's pending-command drainer re-queues and retries on the next
+  // snapshot. Only the transitional 'loading' is unsafe ('welcome' keeps the pre-project/e2e/unit
+  // behaviour); ping stays a pure health check.
+  if (command.type !== 'ping' && useCanvasStore.getState().project.status === 'loading') {
+    return { ok: false, error: 'project-loading' }
+  }
   switch (command.type) {
     case 'ping':
       return { ok: true, type: 'ping' }

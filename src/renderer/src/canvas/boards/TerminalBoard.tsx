@@ -20,6 +20,7 @@ import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, isRunning, statusFor } from './terminalState'
+import { useAttentionStore } from '../../store/attentionStore'
 import { useCanvasStore } from '../../store/canvasStore'
 import {
   classifyPushTargets,
@@ -399,10 +400,19 @@ export function TerminalBoard({
   // TERM-01: an elapsed run timer (mm:ss) appended to the running pill — statusFor
   // already renders the optional `timer` arg as a ` · ${timer}` suffix.
   const runTimer = useRunTimer(running)
-  const status = statusFor(state, identity, runTimer)
-  // C2: the §7.1 "working" braille spinner is now a pure-CSS ::before in BoardFrame (gated on
-  // `running`) — it no longer bumps component state on this 823-line node every 80ms, so an
-  // idle-but-running terminal stops reconciling the whole node 12.5×/sec.
+  // Desktop-notifications P2 (#314): unseen attention re-tints the pill DOT to warn/err (the
+  // DESIGN.md Surface-1 dot column) — the label stays the runtime truth (running/idle/exited); the
+  // node-level ring/badge overlay carries the wording. The warn/err dot also disarms BoardFrame's
+  // --ok glyph pulse, so the attention pulse is the only one lit.
+  const attention = useAttentionStore((s) => s.byId[board.id])
+  const attnDot =
+    attention === 'needs-input' ? 'var(--warn)' : attention === 'error' ? 'var(--err)' : null
+  const baseStatus = statusFor(state, identity, runTimer)
+  // C2: the §7.1 "working" braille spinner is a pure-CSS ::before in BoardFrame (gated on `running`)
+  // — it no longer bumps component state on this node every 80ms (12.5×/sec). So there is NO JS
+  // spinner-glyph label prefix here (that reintroduced exactly the churn C2 removed); the attention
+  // dot is the only status override, and the CSS ::before renders the spinner.
+  const status = attnDot ? { ...baseStatus, dot: attnDot } : baseStatus
 
   // TERM-06: send Ctrl-C + a brief confirmation (⏹ button pulse + "interrupt sent" chip).
   const { interruptSent, interrupt } = useInterruptFeedback(portRef)

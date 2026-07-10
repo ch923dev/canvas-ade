@@ -36,7 +36,7 @@ import { readProjectMemory, readBoardSummary } from './boardMemory'
 import { readOrchestrationConfig } from './orchestrationConfig'
 import { listBoardMirror, listConnectors, listGroups, subscribeBoardStatus } from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
-import { getAuditLog } from './auditIpc'
+import { appendAuditEntry } from './auditIpc'
 import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
 
 export interface McpBootDeps {
@@ -46,6 +46,15 @@ export interface McpBootDeps {
   userData: string
   /** Publish the resolved server into index.ts's `mcp` variable (read by the () => mcp getters). */
   publish: (m: RunningMcp | null) => void
+  /**
+   * #321 cross-project routing slice (armed eagerly in index.ts): the currentProjectDir /
+   * boardProjectDir resolvers + enqueueProjectCommand, spread into the registry so a confirmed
+   * visualize_plan targeting a NON-active project queues for its next foreground.
+   */
+  mcpRouting: Pick<
+    BoardRegistry,
+    'currentProjectDir' | 'boardProjectDir' | 'enqueueProjectCommand'
+  >
 }
 
 /**
@@ -53,7 +62,7 @@ export interface McpBootDeps {
  * verbatim what index.ts passed to `startMcpServer` before M11 — no behavioural change, only its home.
  */
 export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | null> {
-  const { getWin, userData, publish } = deps
+  const { getWin, userData, publish, mcpRouting } = deps
   const registry: BoardRegistry = {
     listBoards: listBoardMirror,
     // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
@@ -93,22 +102,16 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     confirm: (req) => requestConfirm(ipcMain, getWin, req),
     // The per-row BATCH human-confirm gate (relay_prompts) — fail-closed; ONE modal, N rows.
     confirmBatch: (req) => requestConfirmBatch(ipcMain, getWin, req),
-    // Append to the append-only dispatch audit trail (T4.1). Read lazily so the closure resolves the
-    // log at dispatch time.
-    audit: (e) =>
-      getAuditLog()
-        ?.append(e)
-        .then(() => {})
-        .catch((err: unknown) => {
-          // A failed audit write is a forensic gap — surface it in the log even if a future
-          // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's awaiting
-          // callers (the mcpOrchestrator dispatch paths) still see it and can react.
-          console.error('[mcp-audit] append failed', err)
-          throw err
-        }) ?? Promise.resolve(),
+    // Append to the append-only dispatch audit trail (T4.1). appendAuditEntry resolves the log
+    // lazily at dispatch time and surfaces-then-rethrows a failed write (forensic gap — auditIpc.ts).
+    audit: appendAuditEntry,
     // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured result →
     // canvas://board/{id}/result. Bound to the caller's token board by the tool.
-    recordResult: (id, result) => recordBoardResult(id, result)
+    recordResult: (id, result) => recordBoardResult(id, result),
+    // #321 cross-project routing: the visualize gate resolves a caller's OWN project (token-derived
+    // board → mint-time dir) and queues a confirmed board for a non-active one. Armed eagerly in
+    // index.ts; spread in here so the (lazy) startMcpServer registry carries it.
+    ...mcpRouting
   }
   const opts = {
     // The runaway-swarm spawn cap is user-configurable (orchestration-config.json in userData). Read

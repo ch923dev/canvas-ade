@@ -19,6 +19,7 @@ import { useUpdateStatusSync } from './store/useUpdateStatusSync'
 import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
 import { useProjectSwitchHotkey } from './store/useProjectSwitchHotkey'
+import { useNotifications } from './store/useNotifications'
 import { useVoiceCapture } from './voice/useVoiceCapture'
 import { VoicePill } from './voice/VoicePill'
 import { isE2E } from './smoke/e2eRegistry'
@@ -44,6 +45,9 @@ function App(): React.ReactElement {
   // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
   // voice:session:start is the start signal (see useVoiceCapture).
   useVoiceCapture()
+  // Desktop notifications: MAIN pushes agent-lifecycle events (done / needs-input / error) → an
+  // in-app toast + focus-on-click. The native OS notification is raised in MAIN.
+  useNotifications()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)

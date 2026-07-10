@@ -4,6 +4,7 @@ import { authApi } from './authApi'
 import { forwardPtyPort, terminalApi } from './terminalApi'
 import { projectSessionsApi } from './projectSessionsApi'
 import { recapApi, type RecapRefreshOutcome } from './recapApi'
+import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
 import { forwardVoicePort, voiceApi } from './voice'
@@ -33,6 +34,9 @@ export interface SpawnTerminalOpts {
   rows?: number
   /** Free-text agentic CLI written as the first PTY line (e.g. `claude`). */
   launchCommand?: string
+  /** Desktop-notifications P3: the board's `monitorActivity` opt-out (schema v10). `false` silences
+   *  this session's generic-PTY lifecycle notifications (exit done/error + idle needs-input). */
+  monitorActivity?: boolean
 }
 
 /** Result of `pty:spawn`: on failure `pid` is -1 and `state` is `spawn-failed`. */
@@ -741,6 +745,14 @@ const api = {
      *  bind. Pulled on mount to surface a cold-start conflict the push path can't reach. */
     failures: (): Promise<string[]> => ipcRenderer.invoke('hotkey:failures')
   },
+  // ── Desktop-notification preferences (Settings › Notifications) ──
+  notifications: {
+    /** Read the persisted prefs. Null only from a foreign frame (guarded in MAIN). */
+    get: (): Promise<NotificationsConfig | null> => ipcRenderer.invoke('notifications:get'),
+    /** Persist the prefs (sanitized in MAIN). The delivery gate reads them fresh per event. */
+    set: (cfg: NotificationsConfig): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('notifications:set', cfg)
+  },
   // ── Phase 3 / W4 assets — write pasted/dropped bytes, read them back as bytes ──
   asset: {
     write: (
@@ -846,6 +858,9 @@ const api = {
   // ── Terminal-recap T12: consent + learned/updated pushes (factored to recapApi.ts) ──
   recap: recapApi,
 
+  // ── Desktop notifications: MAIN → renderer lifecycle pushes (factored to notifyApi.ts) ──
+  notify: notifyApi,
+
   // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
   // The one-time "Enable agent orchestration?" grant (the mock's Step 1). Separate from recap
   // consent (separate userData store). getConsent drives the once-per-project first-init prompt
@@ -925,6 +940,16 @@ export interface HotkeyConfig {
   enabled: boolean
   next: string
   prev: string
+}
+
+/** Mirrors main `notificationsConfig.NotificationsConfig` (duplicated across the bundle boundary).
+ *  Master switch + per-event toggles + the OS-only "only when unfocused" suppression. */
+export interface NotificationsConfig {
+  enabled: boolean
+  onDone: boolean
+  onInput: boolean
+  onError: boolean
+  onlyWhenUnfocused: boolean
 }
 
 export type CanvasApi = typeof api

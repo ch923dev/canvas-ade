@@ -20,11 +20,18 @@ import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
 import { createPasteModeTracker } from './ptyPasteMode'
 import { isValidResize, clampSpawnDim } from './ptyResize'
+import type { PtyLifecycleEmitter } from './ptyLifecycle'
+import * as ptyLC from './ptyLifecycleMonitor'
+import * as residue from './ptyExitResidue'
 
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
 // Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
 // guaranteed to match what createSummaryLoop expects.
 import type { TerminalRuntime } from './summaryLoop'
+
+// Re-export the exit-residue read surface so terminalIpc's `./pty` import path stays stable after
+// the store moved to ./ptyExitResidue (extracted for the max-lines ratchet).
+export { takeExitResidue, type ExitResidue } from './ptyExitResidue'
 
 /**
  * Terminal data plane lives on a MessagePort (binary-ish, high-volume PTY
@@ -81,6 +88,12 @@ export interface SpawnOpts {
   rows?: number
   /** Free-text agentic CLI to launch as the first PTY line (e.g. `claude`). */
   launchCommand?: string
+  /**
+   * Desktop-notifications P3 opt-out: the board's `monitorActivity` flag (schema v10). `false`
+   * silences BOTH generic-PTY lifecycle signals for this session — the exit → done/error notify
+   * and the idle-at-prompt → needs-input heuristic. Absent ⇒ monitored (opt-out, not opt-in).
+   */
+  monitorActivity?: boolean
 }
 
 /** Lifecycle state pushed to the renderer over the data plane (2.1). */
@@ -128,6 +141,20 @@ interface SessionLike {
   spawnedAt: number
   /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
   exitCode?: number
+  /**
+   * Desktop-notifications P3: the board's `monitorActivity` opt-out, captured at spawn. Absent ⇒
+   * monitored (read as `monitored !== false`). `false` silences this session's generic-PTY exit
+   * + idle lifecycle emits. Not threaded through park/adopt — an adopted (undo-of-delete) session
+   * defaults to monitored, which is the conservative choice for that rare path.
+   */
+  monitored?: boolean
+  /**
+   * Desktop-notifications P3: the idle-at-prompt heuristic has flagged this LIVE session as
+   * awaiting input (an `awaiting-input` state was posted + a `needs-input` signal emitted). Set by
+   * the idle monitor, cleared on the next PTY output (which re-posts `running`) so a fresh idle
+   * period can fire again. Live-session-only; never parked.
+   */
+  awaitingInput?: boolean
   /**
    * Background sessions: the project dir that OWNS this session, captured from
    * projectStore.getCurrentDir() at spawn time — NOT from opts.cwd (a board's cwd override can
@@ -182,51 +209,9 @@ const pasteMode = createPasteModeTracker()
 /** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
 const parked = new Map<string, ParkedLike>()
 
-/**
- * Background sessions (R6): what a background-parked proc left behind when it exited on its
- * own — the ring tail + exit code, keyed `(owningDir, boardId)`. Without this the parked-exit
- * path silently destroys the evidence (often the error that killed the agent), and a
- * switch-back shows a stale snapshot with no explanation. Consume-on-read (Phase-5 UX);
- * bounded; cleared per-project on close and wholesale on quit. Undo-parked exits keep
- * today's silent-drop (a deleted board's process, not a running terminal).
- */
-export interface ExitResidue {
-  output: string
-  exitCode: number
-  exitedAt: number
-}
-const exitResidue = new Map<string, ExitResidue>()
-const EXIT_RESIDUE_CAP = 32
-
-/** Compound residue key — bare board ids collide across cloned projects (R1). NUL join
- *  mirrors the summaryLoop precedent. */
-function residueKey(dir: string | null, id: string): string {
-  return `${dir ?? ''}\u0000${id}`
-}
-
-function recordExitResidue(dir: string | null, id: string, r: ExitResidue): void {
-  if (exitResidue.size >= EXIT_RESIDUE_CAP) {
-    // Drop the oldest entry (Map preserves insertion order) — bounded, self-draining.
-    const oldest = exitResidue.keys().next().value
-    if (oldest !== undefined) exitResidue.delete(oldest)
-  }
-  exitResidue.set(residueKey(dir, id), r)
-}
-
-/** Consume (read + delete) the ACTIVE project's exit residue for a board, if any. */
-export function takeExitResidue(id: string): ExitResidue | undefined {
-  const key = residueKey(getCurrentDir(), id)
-  const r = exitResidue.get(key)
-  if (r) exitResidue.delete(key)
-  return r
-}
-
-function clearExitResidueForProject(dir: string | null): void {
-  const prefix = `${dir ?? ''}\u0000`
-  for (const key of [...exitResidue.keys()]) {
-    if (key.startsWith(prefix)) exitResidue.delete(key)
-  }
-}
+// Background-session exit residue (R6) lives in ./ptyExitResidue (extracted for the max-lines
+// ratchet, imported as `residue` up top). `takeExitResidue`/`ExitResidue` are re-exported there so
+// terminalIpc's `./pty` import stays stable; pty.ts only records + clears it (onExit / dispose).
 
 /**
  * PR-2: resolved spawn cwd per board id, for the read-only gitDiff (getTerminalCwd → gitDiff.ts).
@@ -274,6 +259,35 @@ let orchestrationSyncProvider: OrchestrationSyncProvider | undefined
 /** index.ts wires the policy (consent + mint + provisioner) here; pty.ts stays decoupled. */
 export function setOrchestrationSyncProvider(fn: OrchestrationSyncProvider | undefined): void {
   orchestrationSyncProvider = fn
+}
+
+/**
+ * Desktop-notifications P3: the generic-PTY lifecycle sink. `pty.ts` calls it on a natural process
+ * exit (done/error) and on the idle-at-prompt heuristic (needs-input); index.ts wires it to the
+ * single MAIN notifier (`registerLifecycleNotifications().deliver`) so the generic path shares the
+ * exact OS-notification + toast + attention delivery the Claude hook path uses. Undefined ⇒ no
+ * generic-PTY notifications (e2e / tests / a build with the notifier unwired), which also disables
+ * the idle monitor's scan entirely.
+ */
+let lifecycleEmitter: PtyLifecycleEmitter | undefined
+let stopIdleMonitor: (() => void) | null = null
+/**
+ * Wire the generic-PTY lifecycle sink (desktop-notifications P3). Wiring an emitter ALSO starts the
+ * idle-at-prompt monitor over the live `sessions` (via ptyLifecycleMonitor, session access injected
+ * so that module never touches these private maps); passing `undefined` unwires + stops it. The
+ * onExit / spawn-failed sites read `lifecycleEmitter` directly. index.ts routes this to the single
+ * MAIN notifier so the generic path shares the Claude hook path's delivery.
+ */
+export function setPtyLifecycleEmitter(fn: PtyLifecycleEmitter | undefined): void {
+  lifecycleEmitter = fn
+  stopIdleMonitor?.()
+  stopIdleMonitor = fn
+    ? ptyLC.startIdleMonitor(
+        () => sessions,
+        (id) => boardCwds.get(id),
+        fn
+      )
+    : null
 }
 
 /** A freshly minted port pair (real `MessageChannelMain` or a test double). */
@@ -652,6 +666,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     } catch (err) {
       // No live session was registered, so report the failure straight back.
       const message = err instanceof Error ? err.message : String(err)
+      // Desktop-notifications P3: surface a synchronous spawn failure as an error notification
+      // (spec table: spawn-failed → error). No session yet, so gate on the raw opt-out.
+      ptyLC.emitPtyError(lifecycleEmitter, opts.id, opts.monitorActivity, spawnCwd)
       return { id: opts.id, shell, pid: -1, state: 'spawn-failed' as PtyState, error: message }
     }
 
@@ -668,6 +685,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       const live = sessions.get(opts.id)
       if (live && live.proc === proc) {
         live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
+        ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
         // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
         // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
         // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
@@ -696,6 +714,17 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
           live.exitCode = exitCode // T-F1: record the code while the session briefly survives
           live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
           live.port.postMessage({ t: 'exit', code: exitCode })
+          // Desktop-notifications P3: a NATURAL process exit (agent finished / errored). This
+          // identity-guarded block is reached ONLY when the live session still owns this proc — it
+          // is skipped for an explicit pty:kill / restart / reap (cleanup deletes the session
+          // BEFORE onExit fires), so board deletes and restarts never raise a spurious "done".
+          ptyLC.emitPtyExit(
+            lifecycleEmitter,
+            opts.id,
+            exitCode,
+            live.monitored,
+            boardCwds.get(opts.id)
+          )
         }
       } catch {
         /* port already closed by a newer session */
@@ -712,7 +741,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         if (p.timer) clearTimeout(p.timer)
         parked.delete(opts.id)
         if (p.kind === 'background') {
-          recordExitResidue(p.owningDir ?? null, opts.id, {
+          residue.recordExitResidue(p.owningDir ?? null, opts.id, {
             // Phase 5 splice: the residue is the POST-PARK tail only — the switch-back
             // restore re-writes the sidecar snapshot first, then appends this, so the
             // user sees pre-park scrollback + exactly what the agent said before dying.
@@ -740,7 +769,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       spawnedAt: Date.now(), // readiness gate: ages the boot window for getTerminalBootInfo
       // Background sessions: tag the OWNING project (the one open at spawn), not opts.cwd —
       // a board's cwd override can point anywhere. null = no project open (e2e boot).
-      projectDir: getCurrentDir()
+      projectDir: getCurrentDir(),
+      // P3: capture the board's monitorActivity opt-out for the generic-PTY lifecycle emits.
+      monitored: opts.monitorActivity !== false
     })
     boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
@@ -970,7 +1001,7 @@ function killTree(proc: pty.IPty): Promise<void> {
  */
 export function disposeAllPtys(): Promise<void> {
   boardCwds.clear() // PR-2: drop all gitDiff cwd entries on project switch
-  exitResidue.clear() // quit/e2e-reset: nothing will ever consume them
+  residue.clearAllExitResidue() // quit/e2e-reset: nothing will ever consume them
   return disposeAllPtysCore(sessions, parked, sessionDeps)
 }
 
@@ -1050,7 +1081,7 @@ export function disposeProjectPtysCore(
 
 /** Kill every session (live + parked) owned by `dir` — the "Close project" path. */
 export function disposeProjectPtys(dir: string | null): Promise<void> {
-  clearExitResidueForProject(dir) // a closed project's residue is unreachable — drop it
+  residue.clearExitResidueForProject(dir) // a closed project's residue is unreachable — drop it
   // FIND-009 discipline: parked reaps forget their gitDiff cwd per-id (cleanupCore already
   // deletes the live ones) — no wholesale boardCwds.clear() here, other projects keep theirs.
   return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, (id) => boardCwds.delete(id))

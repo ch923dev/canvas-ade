@@ -44,6 +44,7 @@ export type IconName =
   | 'plug'
   | 'mic'
   | 'info'
+  | 'bell'
   | 'globe'
   | 'external'
   | 'camera'
@@ -119,6 +120,7 @@ const PATHS: Record<IconName, string> = {
   plug: 'M9 3v5M15 3v5M7.5 8h9v3a4.5 4.5 0 0 1-9 0zM12 15.5V21',
   mic: 'M12 4a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3M6 11a6 6 0 0 0 12 0M12 17v4',
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 11v5M12 8h.01',
+  bell: 'M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 0 0 4 0',
   wallpaper: 'M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4M15.5 9h.01',
   globe:
     'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18',
