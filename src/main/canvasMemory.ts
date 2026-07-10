@@ -121,9 +121,15 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     },
     writeBoard(id, md) {
       if (!safeBoardId(id)) return false
+      // M4: skip the write entirely when the rendered content is byte-identical to what's already
+      // on disk — a summarize/recap loop can re-run with no meaningful change, and a no-op write
+      // still costs a full atomic temp+rename(+fsync). A cheap read-compare avoids that for free.
+      if (readMd(paths.board(id)) === md) return true
       try {
         mkdirSync(memoryDir, { recursive: true })
-        writeFileAtomic.sync(paths.board(id), md, 'utf8')
+        // M2: regenerable content — a lost write degrades to stale/absent memory, never data loss
+        // (the source of truth is canvas.json). fsync is the expensive part on Windows; skip it.
+        writeFileAtomic.sync(paths.board(id), md, { encoding: 'utf8', fsync: false })
         return true
       } catch (err) {
         console.warn('[canvasMemory] writeBoard failed (non-fatal)', err)
@@ -131,17 +137,21 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
       }
     },
     writeIndex(md) {
+      // M4: same unchanged-content skip as writeBoard.
+      if (readMd(paths.index) === md) return
       try {
         mkdirSync(memoryDir, { recursive: true })
-        writeFileAtomic.sync(paths.index, md, 'utf8')
+        writeFileAtomic.sync(paths.index, md, { encoding: 'utf8', fsync: false }) // M2
       } catch (err) {
         console.warn('[canvasMemory] writeIndex failed (non-fatal)', err)
       }
     },
     writeProject(md) {
+      // M4: same unchanged-content skip as writeBoard.
+      if (readMd(paths.project) === md) return
       try {
         mkdirSync(memoryDir, { recursive: true })
-        writeFileAtomic.sync(paths.project, md, 'utf8')
+        writeFileAtomic.sync(paths.project, md, { encoding: 'utf8', fsync: false }) // M2
       } catch (err) {
         console.warn('[canvasMemory] writeProject failed (non-fatal)', err)
       }
@@ -152,9 +162,11 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     },
     writeBoardRecap(id, data) {
       if (!safeBoardId(id)) return false
+      const json = JSON.stringify(data)
+      if (readMd(paths.boardRecap(id)) === json) return true // M4
       try {
         mkdirSync(memoryDir, { recursive: true })
-        writeFileAtomic.sync(paths.boardRecap(id), JSON.stringify(data), 'utf8')
+        writeFileAtomic.sync(paths.boardRecap(id), json, { encoding: 'utf8', fsync: false }) // M2
         return true
       } catch (err) {
         console.warn('[canvasMemory] writeBoardRecap failed (non-fatal)', err)

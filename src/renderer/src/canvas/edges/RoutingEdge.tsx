@@ -10,10 +10,11 @@
  * `floatingPath`, so it reroutes for free as boards move (no separate SVG layer to camera-sync). No
  * affordances (not selectable / deletable — it is not a persisted connector).
  */
+import { memo } from 'react'
 import { BaseEdge, useInternalNode, type EdgeProps } from '@xyflow/react'
 import { floatingPath } from './floatingPath'
 
-export function RoutingEdge({
+function RoutingEdgeImpl({
   id,
   source,
   target,
@@ -42,3 +43,16 @@ export function RoutingEdge({
     />
   )
 }
+
+/** M10: same rationale as PreviewEdge — compare `data.phase` (a primitive) instead of the fresh
+ *  wrapper object `routingEdges` allocates every recompute. */
+export const RoutingEdge = memo(
+  RoutingEdgeImpl,
+  (prev, next) =>
+    prev.id === next.id &&
+    prev.source === next.source &&
+    prev.target === next.target &&
+    prev.markerEnd === next.markerEnd &&
+    (prev.data as { phase?: string } | undefined)?.phase ===
+      (next.data as { phase?: string } | undefined)?.phase
+)

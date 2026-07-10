@@ -29,7 +29,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import type { BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
-import { inspectorEligible, inspectorRevealed } from './boardInspectorReveal'
+import { MIN_ZOOM, inspectorRevealed } from './boardInspectorReveal'
 import { readHiddenPref, writeHiddenPref } from './inspector/hiddenPref'
 import { useInspectorSlotStore } from './inspector/inspectorSlotStore'
 import { InspectorAction } from './inspector/primitives'
@@ -56,7 +56,10 @@ export function BoardInspector(): ReactElement | null {
     const id = s.selectedIds.length === 1 ? s.selectedIds[0] : null
     return id ? (s.boards.find((b) => b.id === id) ?? null) : null
   })
-  const zoom = useCanvasStore((s) => s.viewport?.zoom ?? 1)
+  // L4: subscribe to the ELIGIBILITY BOOLEAN, not the raw continuous zoom — a pinch/scroll gesture
+  // changes `zoom` on every camera frame, which re-rendered this panel just as often even though
+  // eligibility (`zoom >= MIN_ZOOM`) only flips at one threshold crossing.
+  const zoomEligible = useCanvasStore((s) => (s.viewport?.zoom ?? 1) >= MIN_ZOOM)
 
   // P5-8: the user's sticky hide (lazy init so the e2e key-removal reset takes effect on the
   // next mount). Hidden wins over eligibility; the left-edge tab is the retrieve affordance.
@@ -66,7 +69,9 @@ export function BoardInspector(): ReactElement | null {
     setHidden(next)
   }, [])
 
-  const eligible = inspectorEligible(board ? 1 : 0, zoom)
+  // Equivalent to inspectorEligible(board ? 1 : 0, zoom): `board` is non-null exactly when
+  // selectedCount === 1 (see the selector above), so this reduces to the same predicate.
+  const eligible = board !== null && zoomEligible
   const revealed = inspectorRevealed(eligible, hidden)
 
   // Publish which board owns the content slot (the single eligible one) so that board can portal

@@ -8,10 +8,11 @@
  * paints under it; endpoints land on board borders (HTML chrome), and native views
  * detach→snapshot during motion, so the arrow shows while dragging. Accepted.
  */
+import { memo } from 'react'
 import { BaseEdge, useInternalNode, type EdgeProps } from '@xyflow/react'
 import { floatingPath } from './floatingPath'
 
-export function PreviewEdge({
+function PreviewEdgeImpl({
   id,
   source,
   target,
@@ -41,3 +42,21 @@ export function PreviewEdge({
     />
   )
 }
+
+/**
+ * M10: `buildCanvasEdges` rebuilds the edge array (and a fresh `data`/`style` wrapper object) every
+ * time boards/connectors change — including every board-drag frame — so a bare `React.memo`'s
+ * default shallow-prop compare would still see "new" `data`/`style` references and re-render anyway.
+ * Compare the fields that actually drive this component's output instead of the wrapper identity
+ * (`markerEnd` is a module-level constant in canvasEdges.ts, so `===` is meaningful there too).
+ */
+export const PreviewEdge = memo(
+  PreviewEdgeImpl,
+  (prev, next) =>
+    prev.id === next.id &&
+    prev.source === next.source &&
+    prev.target === next.target &&
+    prev.markerEnd === next.markerEnd &&
+    (prev.data as { stale?: boolean } | undefined)?.stale ===
+      (next.data as { stale?: boolean } | undefined)?.stale
+)

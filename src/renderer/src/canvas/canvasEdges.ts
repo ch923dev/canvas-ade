@@ -26,6 +26,37 @@ export interface BuildCanvasEdgesArgs {
   onRemoveConnector: (id: string) => void
 }
 
+/**
+ * M10: module-level marker constants — REUSED (not allocated) per render, so `markerEnd` is
+ * reference-stable across `buildCanvasEdges` calls for an edge whose selection state hasn't
+ * flipped. A fresh `{...}` literal every call would defeat the edge components' React.memo below
+ * even though the marker's actual shape never changes.
+ */
+const PREVIEW_MARKER = {
+  type: MarkerType.ArrowClosed,
+  color: 'var(--accent)',
+  width: 16,
+  height: 16
+}
+const ROUTING_MARKER = {
+  type: MarkerType.ArrowClosed,
+  color: 'var(--accent)',
+  width: 14,
+  height: 14
+}
+const ORCH_MARKER_SELECTED = {
+  type: MarkerType.ArrowClosed,
+  color: 'var(--connector-selected)',
+  width: 16,
+  height: 16
+}
+const ORCH_MARKER_DEFAULT = {
+  type: MarkerType.ArrowClosed,
+  color: 'var(--connector)',
+  width: 16,
+  height: 16
+}
+
 export function buildCanvasEdges({
   boards,
   runningIds,
@@ -36,24 +67,22 @@ export function buildCanvasEdges({
 }: BuildCanvasEdgesArgs): Edge[] {
   const preview = previewEdges(boards, runningIds).map((e) => ({
     ...e,
-    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--accent)', width: 16, height: 16 }
+    markerEnd: PREVIEW_MARKER
   }))
   const orchestration = orchestrationEdges(connectors, boards).map((e) => ({
     ...e,
     selected: e.id === selectedConnectorId,
-    data: { onDelete: () => onRemoveConnector(e.id) },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: e.id === selectedConnectorId ? 'var(--connector-selected)' : 'var(--connector)',
-      width: 16,
-      height: 16
-    }
+    // M10: no per-edge closure — `onRemoveConnector` (a Zustand action) is already reference-stable,
+    // so passing it through untouched + the plain connectorId lets OrchestrationEdge's memo
+    // comparator detect "no real change" instead of always seeing a fresh `() => …` wrapper.
+    data: { connectorId: e.id, onRemoveConnector },
+    markerEnd: e.id === selectedConnectorId ? ORCH_MARKER_SELECTED : ORCH_MARKER_DEFAULT
   }))
   // Routing overlay: command board → each in-flight worker member. Transient (never persisted) →
   // vanishes automatically when a task settles or its card is cleared.
   const routing = routingEdges(commandTasks, boards).map((e) => ({
     ...e,
-    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--accent)', width: 14, height: 14 }
+    markerEnd: ROUTING_MARKER
   }))
   return [...preview, ...orchestration, ...routing]
 }
