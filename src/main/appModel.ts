@@ -114,6 +114,11 @@ export const APP_TOOLS: readonly AppModelTool[] = [
   },
   { name: 'tidy_canvas', purpose: 'Reposition-pack all boards; un-gated.', tier: 'orchestrator' },
   {
+    name: 'focus_viewport',
+    purpose: "Move the user's camera to a board / a Named Group / fit-all; un-gated.",
+    tier: 'orchestrator'
+  },
+  {
     name: 'close_board',
     purpose: 'Remove a board (human-confirm gated; graceful PTY drain first).',
     tier: 'orchestrator'
