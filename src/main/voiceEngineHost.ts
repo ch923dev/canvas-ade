@@ -50,6 +50,7 @@
 import { Worker, isMainThread, parentPort as nodeWorkerPort, workerData } from 'worker_threads'
 import type { MessagePort as NodeMessagePort } from 'worker_threads'
 import type { VoiceModelPaths } from './voiceModels'
+import type { TtsModelPaths } from './voiceTtsModels'
 
 export interface SpikeResult {
   t: 'spike:result'
@@ -59,6 +60,8 @@ export interface SpikeResult {
   resolvedPath?: string
   /** V5: whether the decoder worker_thread ALSO loaded the addon (the async-init context). */
   workerOk?: boolean
+  /** J1: whether the addon exposes OfflineTts in this layout (the TTS engine seam). */
+  ttsOk?: boolean
   error?: string
 }
 
@@ -163,9 +166,26 @@ export function createFrameProcessor(
   }
 }
 
+/**
+ * Structural slice of sherpa's OfflineTts (J1). `generateAsync` streams sentence chunks
+ * via onProgress on a background thread; returning 0/false from onProgress CANCELS the
+ * remaining synthesis — the J2 barge-in flush hook.
+ */
+export interface OfflineTtsLike {
+  sampleRate: number
+  numSpeakers: number
+  generateAsync(req: {
+    text: string
+    sid: number
+    speed: number
+    onProgress?: (samples: Float32Array, progress: number) => number | boolean
+  }): Promise<{ samples: Float32Array; sampleRate: number }>
+}
+
 interface SherpaModule {
   OnlineRecognizer: new (config: unknown) => RecognizerLike
   Vad: new (config: unknown, bufferSizeInSeconds: number) => VadLike
+  OfflineTts: { createAsync(config: unknown): Promise<OfflineTtsLike> }
   version: string
 }
 
@@ -180,7 +200,8 @@ function loadAddon(): { mod: SherpaModule | null; result: Omit<SpikeResult, 't'>
       result: {
         ok: typeof mod?.OnlineRecognizer === 'function',
         version: String(mod?.version ?? 'unknown'),
-        resolvedPath: require.resolve('sherpa-onnx-node')
+        resolvedPath: require.resolve('sherpa-onnx-node'),
+        ttsOk: typeof mod?.OfflineTts === 'function'
       }
     }
   } catch (err) {
@@ -228,6 +249,36 @@ export function buildVadConfig(vadModelPath: string): unknown {
     numThreads: 1,
     provider: 'cpu',
     debug: 0
+  }
+}
+
+/**
+ * OfflineTts config (J1). Thread counts are spike-derived (scripts/tts-spike.mjs run
+ * 2026-07-10 on target hardware): Kokoro fp32 needs 4 threads for sub-second first audio
+ * (t1 is RTF>1 — unusable); Piper is ~10× realtime already at 2. NEVER int8 on CPU (D2 —
+ * int8 is SLOWER than fp32 here). `maxNumSentences: 1` synthesizes sentence-by-sentence,
+ * which is what makes generateAsync's onProgress a chunk stream (the J2 playback/barge-in
+ * seam) instead of one blob at the end.
+ */
+export function buildTtsConfig(model: TtsModelPaths): unknown {
+  const engine =
+    model.engine === 'kokoro'
+      ? {
+          kokoro: {
+            model: model.model,
+            voices: model.voices ?? '',
+            tokens: model.tokens,
+            dataDir: model.dataDir
+          },
+          numThreads: 4
+        }
+      : {
+          vits: { model: model.model, tokens: model.tokens, dataDir: model.dataDir },
+          numThreads: 2
+        }
+  return {
+    model: { ...engine, provider: 'cpu', debug: 0 },
+    maxNumSentences: 1
   }
 }
 
@@ -484,6 +535,7 @@ if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
       version: hostAddon.version,
       resolvedPath: hostAddon.resolvedPath,
       workerOk: w.ok,
+      ttsOk: hostAddon.ttsOk,
       error: hostAddon.error ?? w.error
     } satisfies SpikeResult)
   })

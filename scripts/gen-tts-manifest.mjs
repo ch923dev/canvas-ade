@@ -1,0 +1,135 @@
+/**
+ * Jarvis J1 — TTS manifest generator (authoring tool, run manually; output is committed).
+ *
+ * Emits `src/main/voiceTtsManifest.json`: the pinned per-file manifest for the TTS model
+ * catalog (`voiceTtsModels.ts`), same integrity design as the STT catalog (voiceModels.ts):
+ * immutable HF revision URLs + sha256 + byte size per file.
+ *
+ * Why generated: TTS models need `espeak-ng-data/` — ~355 small files. Hand-authoring the
+ * STT way doesn't scale, and the HF tree API only publishes sha256 for LFS files (small
+ * files carry a git sha1 oid), so this script DOWNLOADS every non-LFS file from the pinned
+ * revision and hashes it locally. LFS files take the published lfs.oid (= sha256) directly.
+ * ~19 MB one-time authoring download; rerun only to change models/revisions.
+ *
+ * espeak-ng-data is emitted ONCE as a shared component (pinned to the Kokoro repo) — the
+ * sherpa-onnx release archives ship byte-identical copies for both models, verified here by
+ * size cross-check against the Piper repo tree.
+ *
+ * Usage: node scripts/gen-tts-manifest.mjs
+ */
+import { createHash } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const KOKORO_REPO = 'csukuangfj/kokoro-en-v0_19'
+const KOKORO_REV = '92805c485745946a0d945562d3aba19e7cbb2104'
+const PIPER_REPO = 'csukuangfj/vits-piper-en_US-lessac-medium'
+const PIPER_REV = '83f7470750b36549037551ef7007fa3b4b8697e0'
+
+const OUT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'src',
+  'main',
+  'voiceTtsManifest.json'
+)
+
+async function hfTree(repo, rev) {
+  const files = []
+  let url = `https://huggingface.co/api/models/${repo}/tree/${rev}?recursive=true`
+  // The tree API paginates via Link headers on big repos; both of ours fit one page, but
+  // follow rel="next" anyway so a future model swap doesn't silently truncate.
+  while (url) {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HF tree ${repo}@${rev}: HTTP ${res.status}`)
+    files.push(...(await res.json()))
+    const link = res.headers.get('link')
+    url = link?.match(/<([^>]+)>;\s*rel="next"/)?.[1] ?? null
+  }
+  return files.filter((e) => e.type === 'file')
+}
+
+async function sha256FromHf(repo, rev, path) {
+  const res = await fetch(`https://huggingface.co/${repo}/resolve/${rev}/${path}`)
+  if (!res.ok) throw new Error(`fetch ${path}: HTTP ${res.status}`)
+  const hash = createHash('sha256')
+  let bytes = 0
+  for await (const chunk of res.body) {
+    hash.update(chunk)
+    bytes += chunk.byteLength
+  }
+  return { sha256: hash.digest('hex'), bytes }
+}
+
+/** Manifest entry for one repo path: lfs.oid when published, else download + hash. */
+async function entry(repo, rev, treeEntry) {
+  const { path } = treeEntry
+  if (treeEntry.lfs?.oid) {
+    return { path, sha256: treeEntry.lfs.oid, bytes: treeEntry.lfs.size ?? treeEntry.size }
+  }
+  const { sha256, bytes } = await sha256FromHf(repo, rev, path)
+  if (bytes !== treeEntry.size) {
+    throw new Error(`${path}: downloaded ${bytes}B != tree-listed ${treeEntry.size}B`)
+  }
+  console.log(`  hashed ${path} (${bytes}B)`)
+  return { path, sha256, bytes }
+}
+
+async function component(repo, rev, paths) {
+  const tree = await hfTree(repo, rev)
+  const byPath = new Map(tree.map((e) => [e.path, e]))
+  const files = []
+  for (const p of paths) {
+    const e = byPath.get(p)
+    if (!e) throw new Error(`${repo}@${rev}: ${p} not in tree`)
+    files.push(await entry(repo, rev, e))
+  }
+  return {
+    baseUrl: `https://huggingface.co/${repo}/resolve/${rev}`,
+    totalBytes: files.reduce((s, f) => s + f.bytes, 0),
+    files
+  }
+}
+
+console.log('kokoro model files…')
+const kokoroTree = await hfTree(KOKORO_REPO, KOKORO_REV)
+const espeakPaths = kokoroTree
+  .filter((e) => e.path.startsWith('espeak-ng-data/'))
+  .map((e) => e.path)
+const kokoro = await component(KOKORO_REPO, KOKORO_REV, ['model.onnx', 'voices.bin', 'tokens.txt'])
+
+console.log(`espeak-ng-data (${espeakPaths.length} files, shared component)…`)
+const espeak = await component(KOKORO_REPO, KOKORO_REV, espeakPaths)
+
+// Cross-check: the Piper repo must ship a same-shaped espeak-ng-data (same file set +
+// sizes) so one shared component can serve both engines.
+const piperTree = await hfTree(PIPER_REPO, PIPER_REV)
+const piperEspeak = new Map(
+  piperTree.filter((e) => e.path.startsWith('espeak-ng-data/')).map((e) => [e.path, e.size])
+)
+for (const f of espeak.files) {
+  if (piperEspeak.get(f.path) !== f.bytes) {
+    throw new Error(`espeak divergence between repos at ${f.path} — shared component unsafe`)
+  }
+}
+console.log('espeak cross-check vs piper repo: OK')
+
+console.log('piper model files…')
+const piper = await component(PIPER_REPO, PIPER_REV, ['en_US-lessac-medium.onnx', 'tokens.txt'])
+
+writeFileSync(
+  OUT,
+  JSON.stringify(
+    {
+      _comment:
+        'GENERATED by scripts/gen-tts-manifest.mjs — do not hand-edit. Pinned HF revisions; sha256 = LFS oid or authored-time hash of the pinned content.',
+      espeak,
+      kokoro,
+      piper
+    },
+    null,
+    2
+  ) + '\n'
+)
+console.log(`wrote ${OUT}`)
