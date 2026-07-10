@@ -382,7 +382,12 @@ export function registerProjectHandlers(
         // JSON.stringify fingerprint — a 3rd full-tree pass on top of the write above — and the
         // renderer only needs the { ok: true } below, not this bookkeeping. setImmediate runs it
         // right after the IPC response ships instead of before it, at negligible (~1 tick) staleness.
+        // Review fix: re-assert the BUG-009 invariant (line ~371) INSIDE the deferred tick —
+        // save-then-switch is the normal projectSwitch flow, and project:open resets/observes the
+        // NEW doc between this save's response and this callback; observing the OLD doc after
+        // that reset would corrupt the engine's fingerprints and prune the new project's watchers.
         setImmediate(() => {
+          if (getCurrentDir() !== dir) return // stale: project switched before this tick fired
           try {
             memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
             onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
