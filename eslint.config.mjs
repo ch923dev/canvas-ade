@@ -302,7 +302,9 @@ export default tseslint.config(
     // so an interloping beginChange() can't swallow another gesture's checkpoint. Neither can be
     // extracted to a sibling without exposing that private state. Pinned at the post-fix count;
     // ratchet DOWNWARD when the store is next split. See docs/contributing/file-size-doctrine.md.
-    rules: { 'max-lines': ['error', { max: 720, skipBlankLines: true, skipComments: true }] }
+    // 720→725 (M1): the session-sidecar merge threads through applyLoadedDoc + applyOpenResult (the
+    // doc-apply choke points that must live here, beside the load-epoch/pendingCheckpoint machinery).
+    rules: { 'max-lines': ['error', { max: 725, skipBlankLines: true, skipComments: true }] }
   },
 
   // Disable all formatting rules that would conflict with Prettier. MUST be last.

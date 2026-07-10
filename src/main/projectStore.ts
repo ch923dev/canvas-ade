@@ -29,6 +29,7 @@ import { scaffoldProjectMemory, upgradeProjectGitignore } from './canvasMemory'
 const CANVAS_DIR = '.canvas'
 const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
+const SESSION = 'session.json' // M1: viewport + backdrop sidecar (settings-class, git-ignored)
 const ASSETS = 'assets'
 const DOWNLOADS = 'downloads'
 
@@ -38,6 +39,7 @@ const DOWNLOADS = 'downloads'
 const canvasRoot = (dir: string): string => join(dir, CANVAS_DIR)
 const primaryPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS)
 const bakPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS_BAK)
+const sessionPath = (dir: string): string => join(dir, CANVAS_DIR, SESSION)
 // Exported (Project Library + OSR downloads relocation): the `.canvas/assets` blob store and the
 // `.canvas/downloads` folder that OSR Browser-board downloads now save into (ADR 0009).
 export const assetsDirOf = (dir: string): string => join(dir, CANVAS_DIR, ASSETS)
@@ -71,7 +73,7 @@ export const SCHEMA_VERSION = 18
 export const MIN_READER_VERSION = 17
 
 export type ProjectResult =
-  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }
   | { ok: false; error: string }
 
 let currentDir: string | null = null
@@ -115,9 +117,11 @@ function tryParse(file: string): unknown | undefined {
  */
 export function readProject(dir: string): ProjectResult {
   const primary = tryParse(primaryPath(dir)) ?? tryParse(legacyPrimary(dir))
-  if (primary !== undefined) return { ok: true, dir, name: projectName(dir), doc: primary }
+  if (primary !== undefined)
+    return { ok: true, dir, name: projectName(dir), doc: primary, session: readSession(dir) }
   const backup = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
-  if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
+  if (backup !== undefined)
+    return { ok: true, dir, name: projectName(dir), doc: backup, session: readSession(dir) }
   return { ok: false, error: `No readable canvas.json in ${dir}` }
 }
 
@@ -130,8 +134,42 @@ export function readProject(dir: string): ProjectResult {
  */
 export function readBak(dir: string): ProjectResult {
   const backup = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
-  if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
+  if (backup !== undefined)
+    return { ok: true, dir, name: projectName(dir), doc: backup, session: readSession(dir) }
   return { ok: false, error: `No readable canvas.json.bak in ${dir}` }
+}
+
+/**
+ * M1: read the raw session sidecar (`.canvas/session.json` — camera viewport + backdrop), or null
+ * when absent/unparseable. Deliberately NOT deep-validated here: the RENDERER runs it through
+ * `boardSchema.reconcileSession` (the same guards `fromObject` uses) before it may override the
+ * inline canvas.json values, so a parseable-but-invalid sidecar can never win. A miss → null → the
+ * load falls back to the doc's inline viewport/background (fitView / no backdrop).
+ */
+export function readSession(dir: string): unknown {
+  const f = sessionPath(dir)
+  if (!existsSync(f)) return null
+  try {
+    return JSON.parse(readFileSync(f, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * M1: write the session sidecar. Split OUT of canvas.json so a bare camera pan / backdrop tweak
+ * rewrites a few hundred bytes instead of the whole board tree (+ its .bak rotation). `fsync:false`:
+ * disposable settings-class data (the inline copy in canvas.json is the fallback), so skipping the
+ * fsync is the documented perf trade — a lost sidecar degrades to fitView / no backdrop, never data
+ * loss. Its own temp file (never shared with the canvas.json write) so the two atomic writes never
+ * collide.
+ */
+export async function writeSession(dir: string, session: unknown): Promise<void> {
+  mkdirSync(canvasRoot(dir), { recursive: true })
+  await writeFileAtomic(sessionPath(dir), JSON.stringify(session), {
+    encoding: 'utf8',
+    fsync: false
+  })
 }
 
 /**
@@ -162,18 +200,30 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // new primary is durable. Rotating first destroyed the last-good .bak in the T5
   // recovery flow (the prior primary is envelope-valid but deep-corrupt there): a crash
   // or write failure between the rotation and the primary write left BOTH files corrupt.
+  //
+  // H2: read the prior ONCE. The old code ran `tryParse(primary)` (readFileSync + JSON.parse of
+  // the WHOLE prior doc) purely as a gate, then a SECOND `readFileSync` for the bytes — two full
+  // reads + a parse per autosave. Read the bytes once and gate on THOSE: only an envelope-valid
+  // prior is worth rotating (backing up a corrupt/foreign primary would poison the recovery path,
+  // exactly the `tryParse` gate's intent — `isEnvelope(JSON.parse(...))` reproduces it).
   let prior: Buffer | undefined
-  if (tryParse(primary) !== undefined) {
-    try {
-      prior = readFileSync(primary)
-    } catch {
-      /* a missing/locked prior file must not block the new write */
-    }
+  try {
+    const bytes = readFileSync(primary)
+    if (isEnvelope(JSON.parse(bytes.toString('utf8')))) prior = bytes
+  } catch {
+    /* missing / locked / unparseable prior — skip the rotation, keep the last-good .bak */
   }
   await writeFileAtomic(primary, JSON.stringify(doc, null, 2), 'utf8')
   if (prior !== undefined) {
     try {
-      writeFileAtomic.sync(bakPath(dir), prior)
+      // H1: async (was `writeFileAtomic.sync`). The sync rotation blocked Electron's single main
+      // thread on EVERY ~1s autosave — which also services PTY control IPC, preview frame relays,
+      // and the MCP/local servers — and bought nothing: the primary above is already fsync-durable
+      // via its own await, and the .bak holds the last-good PRIOR doc, so even a mid-write exit
+      // leaves a valid recovery floor. The quit flush is fully awaited end-to-end (flushChannel →
+      // renderer saver.flush → project:save IPC → this await), so the .bak also lands before the
+      // hard app.exit(0). Order (primary durable THEN .bak) and every guard are unchanged.
+      await writeFileAtomic(bakPath(dir), prior)
     } catch {
       /* a locked .bak must not fail the (already durable) save */
     }

@@ -17,6 +17,7 @@
  * the main window's `script-src 'self'` CSP as a same-origin module worker.
  */
 import { bgraToRgba } from '../../lib/bgraToRgba'
+import { createBufferPool } from './osrBufferPool'
 
 interface SwizzleRequest {
   gen: number
@@ -24,20 +25,35 @@ interface SwizzleRequest {
   dirty: { x: number; y: number; width: number; height: number }
   full: { width: number; height: number }
 }
+/** M6: the renderer hands a swizzled RGBA buffer back after putImageData, for pooled reuse. */
+interface ReturnBuffer {
+  returnBuffer: ArrayBuffer
+}
 
 // `postMessage` is typed as Window.postMessage under the dom lib; in a worker it is the
 // DedicatedWorkerGlobalScope overload (message, transfer). Cast to that shape for the transfer list.
 const post = postMessage as (message: unknown, transfer: Transferable[]) => void
 
-addEventListener('message', (e: MessageEvent<SwizzleRequest>) => {
+// M6: reuse RGBA output buffers instead of allocating a fresh ~16 MB one per frame. The renderer
+// returns each buffer post-putImageData (see useOffscreenPreview); allocate-on-empty keeps a lost
+// one from ever stalling the pipeline.
+const pool = createBufferPool(3)
+
+addEventListener('message', (e: MessageEvent<SwizzleRequest | ReturnBuffer>) => {
   // This is a DEDICATED worker: messages can only originate from the renderer that spawned it
   // (same-origin by construction — `e.origin` is "" for worker messages, so an origin check is
   // inapplicable). Validate the message SHAPE instead, so a malformed post is dropped rather than
   // throwing in the swizzle below (defense-in-depth; the only real sender posts the typed request).
   const msg = e.data
-  if (!msg || !(msg.buffer instanceof ArrayBuffer)) return
+  if (msg && 'returnBuffer' in msg && msg.returnBuffer instanceof ArrayBuffer) {
+    pool.give(msg.returnBuffer) // recycle the RGBA buffer the renderer just finished blitting
+    return
+  }
+  if (!msg || !('buffer' in msg) || !(msg.buffer instanceof ArrayBuffer)) return
   const { gen, buffer, dirty, full } = msg
-  // Fresh RGBA output (off the main thread); the transferred BGRA input is GC'd here.
-  const rgba = bgraToRgba(new Uint8Array(buffer))
+  const src = new Uint8Array(buffer)
+  // Swizzle into a pooled RGBA out buffer of the EXACT src size (ImageData needs width·height·4);
+  // the transferred BGRA input is GC'd here (inputs come fresh from IPC per frame — not pooled).
+  const rgba = bgraToRgba(src, new Uint8ClampedArray(pool.take(src.length)))
   post({ gen, buffer: rgba.buffer, dirty, full }, [rgba.buffer])
 })

@@ -18,7 +18,8 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
     disposePtys: [],
     backgroundOsr: [],
     foregroundOsr: [],
-    disposeOsr: []
+    disposeOsr: [],
+    persistRingTails: []
   }
   const persisted: { dirs: string[] } = { dirs: [] }
   const deps: ProjectSessionDeps = {
@@ -46,6 +47,13 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
     },
     countOsr: () => 1,
     now: () => 1_000,
+    // C1 defaults: a generous cap (single-background tests evict nothing) + a far-future TTL
+    // (never reaps unless a test overrides now/idleTtlMs). persistRingTails records the flush order.
+    maxBackground: () => 3,
+    idleTtlMs: () => 10 * 60_000,
+    persistRingTails: (dir) => {
+      calls.persistRingTails.push(dir)
+    },
     loadForeverKeeps: () => persisted.dirs,
     saveForeverKeeps: (dirs) => {
       persisted.dirs = dirs
@@ -62,7 +70,7 @@ describe('createProjectSessions (Phase 1 registry)', () => {
 
     const res = await ps.backgroundProject('C:/work/alpha')
 
-    expect(res).toEqual({ terminals: 2, previews: 1 })
+    expect(res).toEqual({ terminals: 2, previews: 1, evicted: [] })
     // R5: deleted boards' undo-parks die BEFORE the background park (their undo rail dies
     // with the switch's store replace).
     expect(calls.reapUndoParks).toEqual(['C:/work/alpha'])
@@ -81,7 +89,8 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     const ps = createProjectSessions(deps)
     await expect(ps.backgroundProject('C:/work/alpha')).resolves.toEqual({
       terminals: 2,
-      previews: 1
+      previews: 1,
+      evicted: []
     })
     expect(calls.parkPtys).toEqual(['C:/work/alpha'])
   })
@@ -225,5 +234,128 @@ describe('switch keep policy (Phase 4)', () => {
     const { deps } = makeDeps()
     const ps = createProjectSessions(deps)
     expect(ps.liveCounts(A)).toEqual({ terminals: 2, previews: 1 })
+  })
+})
+
+describe('createProjectSessions — C1 cap + idle TTL', () => {
+  // A mutable clock so each background gets a distinct backgroundedAt (identifies the oldest).
+  // `now` is applied LAST so it always wins over any override the test passes.
+  function clockDeps(overrides: Partial<ProjectSessionDeps> = {}): ReturnType<typeof makeDeps> & {
+    tick: (ms?: number) => void
+    setTime: (v: number) => void
+  } {
+    let t = 0
+    const base = makeDeps({ ...overrides, now: () => t })
+    return {
+      ...base,
+      tick: (ms = 1000) => {
+        t += ms
+      },
+      setTime: (v) => {
+        t = v
+      }
+    }
+  }
+
+  it('cap eviction closes the LONGEST-backgrounded when the budget is exceeded', async () => {
+    const { deps, calls, tick } = clockDeps({ maxBackground: () => 2 })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a')
+    tick()
+    await ps.backgroundProject('/b')
+    tick()
+    const res = await ps.backgroundProject('/c') // size 3 > cap 2 → evict the oldest (/a)
+
+    expect(res.evicted).toEqual(['/a'])
+    expect(ps.isBackgroundProject('/a')).toBe(false)
+    expect(ps.isBackgroundProject('/b')).toBe(true)
+    expect(ps.isBackgroundProject('/c')).toBe(true)
+    expect(ps.backgroundCount()).toBe(2)
+    // Scoped: ONLY /a's resources were disposed — the dispose-all-vs-scoped hazard. B/C untouched.
+    expect(calls.disposePtys).toEqual(['/a'])
+    expect(calls.disposeOsr).toEqual(['/a'])
+  })
+
+  it('never evicts the just-backgrounded dir (keeps the one the user switched away from)', async () => {
+    const { deps, calls, tick } = clockDeps({ maxBackground: () => 1 })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a')
+    tick()
+    const res = await ps.backgroundProject('/b') // cap 1, size 2 → evict /a, keep the just-added /b
+
+    expect(res.evicted).toEqual(['/a'])
+    expect(ps.isBackgroundProject('/b')).toBe(true)
+    expect(calls.disposePtys).toEqual(['/a'])
+  })
+
+  it('a live cap DROP (Low-RAM) collapses the resident set in one background call', async () => {
+    let cap = 3
+    const { deps, tick } = clockDeps({ maxBackground: () => cap })
+    const ps = createProjectSessions(deps)
+    for (const d of ['/a', '/b', '/c']) {
+      await ps.backgroundProject(d)
+      tick()
+    }
+    expect(ps.backgroundCount()).toBe(3)
+
+    cap = 1 // Low-RAM lowered the cap live
+    const res = await ps.backgroundProject('/d') // must collapse to 1 (the just-added /d)
+    expect(res.evicted).toEqual(['/a', '/b', '/c'])
+    expect(ps.backgroundCount()).toBe(1)
+    expect(ps.isBackgroundProject('/d')).toBe(true)
+  })
+
+  it('closeBg flushes ring tails BEFORE disposing PTYs (the data-loss fix)', async () => {
+    const order: string[] = []
+    const { deps } = clockDeps({
+      persistRingTails: (dir) => order.push(`flush:${dir}`),
+      disposePtys: async (dir) => {
+        order.push(`dispose:${dir}`)
+      }
+    })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a')
+    await ps.closeBackgroundProject('/a')
+    expect(order).toEqual(['flush:/a', 'dispose:/a'])
+  })
+
+  it('reapIdle closes residents past the TTL, protecting the active + fresh ones', async () => {
+    const { deps, calls, setTime } = clockDeps({ idleTtlMs: () => 1000 })
+    const ps = createProjectSessions(deps)
+    setTime(0)
+    await ps.backgroundProject('/old') // backgroundedAt 0
+    setTime(500)
+    await ps.backgroundProject('/active') // 500 — past TTL at reap time but PROTECTED
+    setTime(2000)
+    await ps.backgroundProject('/fresh') // 2000 — under TTL
+
+    const closed = await ps.reapIdle(['/active']) // now=2000, TTL=1000
+    expect(closed).toEqual(['/old']) // age 2000 > 1000
+    expect(ps.isBackgroundProject('/old')).toBe(false)
+    expect(ps.isBackgroundProject('/active')).toBe(true) // protected despite age 1500 > 1000
+    expect(ps.isBackgroundProject('/fresh')).toBe(true) // age 0, under TTL
+    expect(calls.disposePtys).toEqual(['/old'])
+    expect(calls.persistRingTails).toEqual(['/old']) // reap flushes tails too — no lost output
+  })
+
+  it('an auto-evict PRESERVES a forever-keep (re-keeps next switch); manual close forgets it', async () => {
+    const { deps, tick } = clockDeps({
+      maxBackground: () => 1,
+      loadForeverKeeps: () => ['/kept']
+    })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/kept')
+    tick()
+    const res = await ps.backgroundProject('/new') // cap 1 → /kept auto-evicted despite forever flag
+
+    expect(res.evicted).toEqual(['/kept'])
+    expect(ps.isBackgroundProject('/kept')).toBe(false)
+    // Involuntary eviction is NOT a policy reset — the forever flag survives so it re-keeps.
+    expect(ps.keepForeverDirs()).toContain('/kept')
+
+    // A MANUAL close, by contrast, IS the reset gesture.
+    await ps.backgroundProject('/kept')
+    await ps.closeBackgroundProject('/kept')
+    expect(ps.keepForeverDirs()).not.toContain('/kept')
   })
 })

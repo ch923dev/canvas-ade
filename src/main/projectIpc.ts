@@ -12,6 +12,7 @@ import {
   readProject,
   readBak,
   writeProject,
+  writeSession,
   createProject,
   migrateProjectLayout,
   getCurrentDir,
@@ -33,6 +34,14 @@ import {
 } from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 import type { RefreshOutcome } from './summaryLoop'
+
+/**
+ * C3: the result of `project:save`. Replaces the old bare `boolean` so a write failure can carry
+ * the real errno (`err.code`) to the renderer, which maps it to accurate copy (`saveError.ts`).
+ * A non-error rejection (foreign sender / no project / cross-project race) returns `{ ok:false }`
+ * with NO `code` — distinguishable from a genuine write errno, so it never says "disk space".
+ */
+export type SaveResult = { ok: true } | { ok: false; code?: string }
 
 /**
  * True when a renderer-supplied project dir must be REJECTED before any fs touch
@@ -345,10 +354,14 @@ export function registerProjectHandlers(
 
   ipcMain.handle(
     'project:save',
-    async (e, doc: unknown, expectedDir?: unknown): Promise<boolean> => {
-      if (guard(e)) return false
+    async (e, doc: unknown, expectedDir?: unknown): Promise<SaveResult> => {
+      // C3: the NON-ERROR rejections (foreign sender, no project open, cross-project race)
+      // return a bare `{ ok: false }` with NO code — they are not write failures, so the
+      // renderer must not attribute them to disk/permissions. Only a genuine write throw
+      // carries an errno (below).
+      if (guard(e)) return { ok: false }
       const dir = getCurrentDir()
-      if (!dir) return false
+      if (!dir) return { ok: false }
       // BUG-009: the doc carries no dir association, so a save raced against a project
       // switch would silently write project B's canvas into project C's canvas.json
       // (currentDir is set synchronously at each open's start). Callers that know their
@@ -357,12 +370,12 @@ export function registerProjectHandlers(
       // call sites without the arg keep working.
       if (typeof expectedDir === 'string' && expectedDir !== dir) {
         console.warn('[project:save] rejected: doc is for', expectedDir, 'but current dir is', dir)
-        return false
+        return { ok: false }
       }
       // SAVE-1: a write failure (disk full, permission denied, envelope-invalid doc)
       // must report failure to the renderer, not reject opaquely. The renderer's
-      // autosaver surfaces a `false`/rejection via its onError hook so a failing disk
-      // is visible instead of silently swallowed.
+      // autosaver surfaces a failure via its onError hook so a failing disk is visible
+      // instead of silently swallowed.
       try {
         await writeProject(dir, doc)
         try {
@@ -371,9 +384,34 @@ export function registerProjectHandlers(
         } catch (err) {
           console.warn('[memoryEngine] observe failed (non-fatal)', err)
         }
-        return true
+        return { ok: true }
       } catch (err) {
         console.error('project:save failed', err)
+        // C3: propagate the real errno so the renderer can tell disk-full (ENOSPC) apart from a
+        // lock/permission/read-only failure. An envelope-invalid throw is a plain Error with no
+        // `.code` → the renderer maps `undefined` to a neutral generic message (never "disk space").
+        return { ok: false, code: (err as NodeJS.ErrnoException)?.code }
+      }
+    }
+  )
+
+  // M1: write the camera/backdrop session sidecar (.canvas/session.json) — split from project:save
+  // so a bare pan/zoom rewrites a few hundred bytes, not the whole board tree. Same BUG-009 dir-pin
+  // as project:save (a session write racing a switch must not cross-write another project's sidecar).
+  // Advisory: a `false` here is non-fatal (the inline canvas.json copy is the fallback), but reported
+  // so the renderer can log it.
+  ipcMain.handle(
+    'project:saveSession',
+    async (e, session: unknown, expectedDir?: unknown): Promise<boolean> => {
+      if (guard(e)) return false
+      const dir = getCurrentDir()
+      if (!dir) return false
+      if (typeof expectedDir === 'string' && expectedDir !== dir) return false
+      try {
+        await writeSession(dir, session)
+        return true
+      } catch (err) {
+        console.error('project:saveSession failed', err)
         return false
       }
     }
@@ -475,14 +513,18 @@ export function registerProjectHandlers(
     async (
       e,
       args: { bytes: Uint8Array; ext: string }
-    ): Promise<{ assetId: string } | { error: string }> => {
+    ): Promise<{ assetId: string } | { error: string; code?: string }> => {
       if (guard(e)) return { error: 'forbidden' }
       const dir = getCurrentDir()
       if (!dir) return { error: 'no project open' }
       try {
         return await writeAsset(dir, args.bytes, args.ext)
       } catch (err) {
-        return { error: String((err as Error)?.message ?? err) }
+        // C3: carry the errno (disk-full vs lock/permission) alongside the raw message.
+        return {
+          error: String((err as Error)?.message ?? err),
+          code: (err as NodeJS.ErrnoException)?.code
+        }
       }
     }
   )
@@ -542,7 +584,9 @@ export function registerProjectHandlers(
     async (
       e,
       args: { bytes: Uint8Array; ext: 'png' | 'svg'; defaultName: string }
-    ): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> => {
+    ): Promise<
+      { ok: true; path: string } | { ok: false; canceled?: boolean; error?: string; code?: string }
+    > => {
       if (guard(e)) return { ok: false, error: 'forbidden' }
       const win = getWin()
       const ext = args.ext === 'png' ? 'png' : 'svg'
@@ -557,7 +601,12 @@ export function registerProjectHandlers(
         await writeFileAtomic(res.filePath, Buffer.from(args.bytes))
         return { ok: true, path: res.filePath }
       } catch (err) {
-        return { ok: false, error: String((err as Error)?.message ?? err) }
+        // C3: carry the errno so the renderer distinguishes ENOSPC from a lock/permission failure.
+        return {
+          ok: false,
+          error: String((err as Error)?.message ?? err),
+          code: (err as NodeJS.ErrnoException)?.code
+        }
       }
     }
   )

@@ -2,6 +2,7 @@ import {
   applyOsrPaint,
   disposeOsr,
   getOsrEntries,
+  pickOsrEvictions,
   sweepPendingForProject,
   type OsrEntry
 } from './previewOsr'
@@ -104,6 +105,25 @@ export function foregroundProjectOsr(dir: string | null): number {
     e.backgroundedAt = undefined // a foreground entry is never an eviction candidate
   }
   return n
+}
+
+/**
+ * H4: shed excess BACKGROUND offscreen renderers down to `max` TOTAL windows, on a project
+ * switch/foreground (NOT only at new-window creation, which is all `ensureOsr` covered — so up to
+ * GLOBAL_OSR_MAX frozen ~150 MB Chromium renderers used to linger after switching to a browser-less
+ * project). Only backgrounded entries are eligible (a foreground/active window is never evicted);
+ * each evicted board keeps its frozen last frame + "paused" badge and revives on re-open. Returns
+ * the evicted ids.
+ *
+ * ⚠️ Off-by-one: `pickOsrEvictions(entries, n)` computes `need = len - n + 1` — the `+1` makes room
+ * for the ONE window `ensureOsr` is about to create. A standalone trim creates none, so it passes
+ * `max + 1` to get `need = len - max` (trim to exactly `max`). Passing `max` would over-evict by one
+ * — and at the Low-RAM `max = 1` it would evict EVERY background window. See the pinning test.
+ */
+export function trimOsrToBudget(max: number): string[] {
+  const victims = pickOsrEvictions(getOsrEntries(), max + 1)
+  for (const id of victims) disposeOsr(id)
+  return victims
 }
 
 /** Destroy every offscreen window owned by `dir` — the "Close project" path. Scoped: closing

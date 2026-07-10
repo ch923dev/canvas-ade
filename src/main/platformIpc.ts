@@ -11,6 +11,7 @@ import type { BrowserWindow, IpcMain } from 'electron'
 import { release } from 'os'
 import { isForeignSender } from './ipcGuard'
 import { computeE2ESurfaceEnabled } from './windowSecurity'
+import { isLowRam } from './lowRamConfig'
 
 /** Parse the Windows build from an `os.release()` string ("10.0.22631" → 22631). Null if unparseable. */
 export function winBuildFromRelease(rel: string): number | null {
@@ -41,5 +42,11 @@ export function registerPlatformIpc(ipcMain: IpcMain, getWin: () => BrowserWindo
       return
     }
     e.returnValue = computeE2ESurfaceEnabled()
+  })
+
+  // Low-RAM (AUDIT §5): same SYNC-at-load pattern. Low-RAM is a boot decision (os.totalmem), so the
+  // renderer reads it ONCE and caps OSR_MAX_SUPERSAMPLE at 1× (osrSizing.setLowRamMode). Frame-guarded.
+  ipcMain.on('platform:lowRam', (e) => {
+    e.returnValue = isForeignSender(e, getWin) ? false : isLowRam()
   })
 }

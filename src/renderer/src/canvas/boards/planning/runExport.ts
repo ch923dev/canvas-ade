@@ -6,6 +6,7 @@
  */
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
 import { showToast } from '../../../store/toastStore'
+import { saveErrorMessage } from '../../../lib/saveError'
 
 export async function runBoardExport(
   board: PlanningBoardData,
@@ -33,9 +34,8 @@ export async function runBoardExport(
       showToast({
         id: `export-failed-${board.id}`,
         kind: 'error',
-        message: res.error
-          ? 'Export failed — check file permissions and disk space'
-          : 'Export failed'
+        // C3: errno-mapped when a write actually failed; a code-less failure → neutral generic.
+        message: res.error ? saveErrorMessage(res.code, 'Export failed') : 'Export failed'
       })
     }
   } catch (err) {

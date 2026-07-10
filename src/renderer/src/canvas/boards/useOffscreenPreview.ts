@@ -60,10 +60,18 @@ export function useOffscreenPreview(
     workerRef.current = worker
     worker.onmessage = (e: MessageEvent<OsrSwizzleResponse>): void => {
       const { gen, buffer, dirty, full } = e.data
-      if (gen !== genRef.current) return // posted before a clear → drop (canvas was wiped since)
+      // M6: return the RGBA buffer to the worker's pool on EVERY exit path. The early drops below
+      // (stale gen · no canvas/ctx · a non-full frame on a size change) fire on exactly the churn
+      // that bumps `gen` (url change / fail / crash / unmount / evict), so returning ONLY after
+      // putImageData would bleed the free-list dry. putImageData copies synchronously, so the buffer
+      // is free the instant it returns; the transfer neuters our handle (we never read it after).
+      const recycle = (): void => {
+        workerRef.current?.postMessage({ returnBuffer: buffer }, [buffer])
+      }
+      if (gen !== genRef.current) return recycle() // posted before a clear → drop (canvas wiped since)
       const cv = canvasRef.current
       const ctx = cv?.getContext('2d')
-      if (!cv || !ctx) return
+      if (!cv || !ctx) return recycle()
       // OS-3 Phase 2 (2C) — dirty-rect aware. A full repaint reports dirty == the whole frame; a
       // partial paint covers only the changed sub-rect.
       const isFull =
@@ -72,7 +80,7 @@ export function useOffscreenPreview(
       // frame can't fill a freshly-cleared canvas, so only adopt a new size on a FULL frame — MAIN
       // guarantees the first frame after any resize is full (invalidate()).
       if (cv.width !== full.width || cv.height !== full.height) {
-        if (!isFull) return
+        if (!isFull) return recycle()
         cv.width = full.width
         cv.height = full.height
       }
@@ -83,6 +91,7 @@ export function useOffscreenPreview(
         dirty.x,
         dirty.y
       )
+      recycle()
     }
     return () => {
       workerRef.current = null
