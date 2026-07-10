@@ -224,4 +224,29 @@ describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
     const spawnedEnv = spawnSpy.mock.calls[0][2].env as Record<string, string>
     expect(spawnedEnv['CANVAS_RECAP_BOARD']).toBeUndefined()
   })
+
+  describe('terminal-copy fix: baseline spawn env', () => {
+    it('every spawn carries FORCE_HYPERLINK=1 + CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1', async () => {
+      const { registerPtyHandlers } = await import('./pty')
+      const { ipcMain, invoke } = buildIpc()
+      registerPtyHandlers(ipcMain, makeGetWin())
+
+      await invoke('pty:spawn', { id: 'b5' })
+      const spawnedEnv = spawnSpy.mock.calls[0][2].env as Record<string, string>
+      expect(spawnedEnv['FORCE_HYPERLINK']).toBe('1')
+      expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBe('1')
+    })
+
+    it('the recap-env provider is merged LAST and can override the baseline', async () => {
+      const { setRecapEnvProvider, registerPtyHandlers } = await import('./pty')
+      setRecapEnvProvider(() => ({ CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '0' }))
+      const { ipcMain, invoke } = buildIpc()
+      registerPtyHandlers(ipcMain, makeGetWin())
+
+      await invoke('pty:spawn', { id: 'b6' })
+      const spawnedEnv = spawnSpy.mock.calls[0][2].env as Record<string, string>
+      expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBe('0')
+      expect(spawnedEnv['FORCE_HYPERLINK']).toBe('1')
+    })
+  })
 })

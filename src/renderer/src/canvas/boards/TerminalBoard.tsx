@@ -171,7 +171,8 @@ export function TerminalBoard({
     counterScale,
     findOpen,
     findApi,
-    openFind
+    openFind,
+    selectionFallback
   } = useTerminalSpawn({
     board,
     projectDir,
@@ -517,7 +518,11 @@ export function TerminalBoard({
         x: e.clientX,
         y: e.clientY,
         entries: buildTerminalMenuEntries({
-          hasSel: term.hasSelection(),
+          // Terminal-copy fix: the snapshot fallback keeps Copy enabled (and working) when a
+          // streaming agent's mouse-tracking toggle wiped the live selection just before the
+          // right-click — the case where the user selected text specifically to copy it.
+          hasSel: term.hasSelection() || selectionFallback() !== '',
+          selectionFallback,
           boardId: board.id,
           effectiveFont,
           minFont: MIN_TERMINAL_FONT,
@@ -528,7 +533,7 @@ export function TerminalBoard({
         })
       })
     },
-    [termRef, board.id, effectiveFont, nudgeFont, resetFont]
+    [termRef, selectionFallback, board.id, effectiveFont, nudgeFont, resetFont]
   )
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
