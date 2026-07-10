@@ -61,7 +61,13 @@ import {
   appendTerminalInput
 } from '../../../smoke/e2eRegistry'
 import { handleTerminalKey, TERMINAL_NEWLINE } from './terminalKeymap'
-import { cacheSnapshot, clearSnapshot, emptySnapshot, readSnapshot } from './selectionSnapshot'
+import {
+  cacheSnapshot,
+  clearSnapshot,
+  copyWithFallback,
+  emptySnapshot,
+  readSnapshot
+} from './selectionSnapshot'
 import { registerTerminalInput, unregisterTerminalInput } from './terminalInputRegistry'
 import { isIdleOnMount, clearIdleOnMount } from '../../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
@@ -832,8 +838,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     //    agent's mouse-tracking toggles wipe the live one) — else falls through to xterm's
     //    SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there. The highlight is
     //    cleared only after MAIN verifies the clipboard write landed (readback in clipboardIpc);
-    //    on failure it stays as the "not copied" signal. The snapshot is consumed one-shot so
-    //    the NEXT Ctrl+C is SIGINT again (same cadence as today's copy-then-clear).
+    //    on failure it stays as the "not copied" signal. The snapshot is likewise consumed only
+    //    on a VERIFIED write (one-shot: the NEXT Ctrl+C is SIGINT again, same cadence as the old
+    //    copy-then-clear) — consuming it before the async result would strand a failed
+    //    snapshot-fallback copy with nothing left to retry, so the user's second Ctrl+C would
+    //    fall through to SIGINT (review fix, PR #332).
     //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
     //    multiline content gets bracketed-paste markers.
     term.attachCustomKeyEventHandler((e) =>
@@ -846,15 +855,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         },
         {
           newline: () => sendInput(TERMINAL_NEWLINE),
-          copySelection: () => {
-            const sel = term.getSelection() || readSnapshot(snapRef.current, performance.now())
-            if (!sel) return false
-            clearSnapshot(snapRef.current)
-            void window.api.clipboard.writeText(sel).then((ok) => {
-              if (ok && termRef.current === term) term.clearSelection()
-            })
-            return true
-          },
+          copySelection: () =>
+            copyWithFallback({
+              live: term.getSelection(),
+              cell: snapRef.current,
+              now: performance.now(),
+              write: (t) => window.api.clipboard.writeText(t),
+              clearHighlight: () => {
+                if (termRef.current === term) term.clearSelection()
+              }
+            }),
           paste: () => void pasteIntoTerminal(term, board.id, () => termRef.current === term),
           fontStep: (d) => fontStepRef.current(d),
           fontReset: () => fontResetRef.current(),

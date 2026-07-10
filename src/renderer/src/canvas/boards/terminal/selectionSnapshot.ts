@@ -63,3 +63,30 @@ export function clearSnapshot(cell: SelectionSnapshot): void {
   cell.text = ''
   cell.at = 0
 }
+
+/**
+ * The Ctrl+C copy effect: copy the live selection, or fall back to the snapshot when an
+ * agent-side wipe emptied it. Returns false ONLY when both are empty — the caller falls
+ * through to xterm's SIGINT. The snapshot is consumed and the highlight cleared ONLY once
+ * MAIN confirms the clipboard write landed (PR #332 review fix: consuming before the async
+ * result would strand a failed snapshot-fallback copy with nothing left to retry, so the
+ * user's second Ctrl+C would SIGINT the running agent — the exact bug this module fixes).
+ */
+export function copyWithFallback(opts: {
+  live: string
+  cell: SelectionSnapshot
+  now: number
+  /** MAIN's readback-verified clipboard write (clipboardIpc). */
+  write: (text: string) => Promise<boolean>
+  /** Clear the xterm highlight (guarded by the caller against a stale term). */
+  clearHighlight: () => void
+}): boolean {
+  const sel = opts.live || readSnapshot(opts.cell, opts.now)
+  if (!sel) return false
+  void opts.write(sel).then((ok) => {
+    if (!ok) return // failed write: keep snapshot + highlight so a retry can copy
+    clearSnapshot(opts.cell)
+    opts.clearHighlight()
+  })
+  return true
+}

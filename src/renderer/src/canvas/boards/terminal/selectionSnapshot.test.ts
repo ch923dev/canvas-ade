@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   SELECTION_SNAPSHOT_TTL_MS,
   cacheSnapshot,
   clearSnapshot,
+  copyWithFallback,
   emptySnapshot,
   readSnapshot
 } from './selectionSnapshot'
@@ -46,5 +47,72 @@ describe('selectionSnapshot', () => {
 
   it('empty cell reads as empty', () => {
     expect(readSnapshot(emptySnapshot(), 0)).toBe('')
+  })
+})
+
+describe('copyWithFallback (PR #332 review fix: consume only on a VERIFIED write)', () => {
+  const settle = async (): Promise<void> => {
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  it('prefers the live selection; verified write consumes the snapshot + clears the highlight', async () => {
+    const cell = emptySnapshot()
+    cacheSnapshot(cell, 'stale-snap', 1000)
+    const write = vi.fn().mockResolvedValue(true)
+    const clearHighlight = vi.fn()
+    expect(copyWithFallback({ live: 'live-text', cell, now: 1000, write, clearHighlight })).toBe(
+      true
+    )
+    await settle()
+    expect(write).toHaveBeenCalledWith('live-text')
+    expect(readSnapshot(cell, 1000)).toBe('') // consumed → next Ctrl+C is SIGINT again
+    expect(clearHighlight).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to the snapshot when the live selection was wiped', async () => {
+    const cell = emptySnapshot()
+    cacheSnapshot(cell, 'from-snap', 1000)
+    const write = vi.fn().mockResolvedValue(true)
+    expect(copyWithFallback({ live: '', cell, now: 1000, write, clearHighlight: vi.fn() })).toBe(
+      true
+    )
+    await settle()
+    expect(write).toHaveBeenCalledWith('from-snap')
+    expect(readSnapshot(cell, 1000)).toBe('')
+  })
+
+  it('FAILED write keeps the snapshot so a retry can copy (no SIGINT strand)', async () => {
+    // The reviewer scenario: live selection wiped by the agent, snapshot-fallback copy fires,
+    // MAIN honestly reports the clipboard write failed (Windows contention). The snapshot must
+    // SURVIVE — the user's second Ctrl+C retries the copy instead of falling through to SIGINT.
+    const cell = emptySnapshot()
+    cacheSnapshot(cell, 'must-survive', 1000)
+    const write = vi.fn().mockResolvedValue(false)
+    const clearHighlight = vi.fn()
+    expect(copyWithFallback({ live: '', cell, now: 1000, write, clearHighlight })).toBe(true)
+    await settle()
+    expect(readSnapshot(cell, 1000)).toBe('must-survive')
+    expect(clearHighlight).not.toHaveBeenCalled()
+    // Retry succeeds → NOW it consumes.
+    const write2 = vi.fn().mockResolvedValue(true)
+    expect(copyWithFallback({ live: '', cell, now: 1500, write: write2, clearHighlight })).toBe(
+      true
+    )
+    await settle()
+    expect(write2).toHaveBeenCalledWith('must-survive')
+    expect(readSnapshot(cell, 1500)).toBe('')
+  })
+
+  it('returns false only when live AND snapshot are both empty (SIGINT falls through)', () => {
+    expect(
+      copyWithFallback({
+        live: '',
+        cell: emptySnapshot(),
+        now: 0,
+        write: vi.fn(),
+        clearHighlight: vi.fn()
+      })
+    ).toBe(false)
   })
 })
