@@ -38,10 +38,21 @@ export function registerClipboardHandlers(
   getWin: () => BrowserWindow | null,
   deps: ClipboardDeps = realDeps()
 ): void {
-  ipc.handle('clipboard:writeText', (e, text: string) => {
+  ipc.handle('clipboard:writeText', async (e, text: string) => {
     if (isForeignSender(e, getWin)) return false
-    deps.writeText(typeof text === 'string' ? text : '')
-    return true
+    const t = typeof text === 'string' ? text : ''
+    // Terminal-copy fix (docs/reviews/2026-07-11-terminal-copy-paste-research): Electron's
+    // clipboard.writeText surfaces no success/failure, and on Windows Chromium's ClipboardWin
+    // silently DROPS the write when OpenClipboard stays contended past its ~25ms retry budget
+    // (clipboard history / rdpclip / managers reopen the clipboard after every write). Verify
+    // by readback and retry with a short backoff; return the honest boolean so the renderer
+    // clears the selection highlight only when the copy actually landed.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      deps.writeText(t)
+      if (deps.readText() === t) return true
+      await new Promise((r) => setTimeout(r, 20 * (attempt + 1)))
+    }
+    return false
   })
 
   ipc.handle('clipboard:readText', (e) => {

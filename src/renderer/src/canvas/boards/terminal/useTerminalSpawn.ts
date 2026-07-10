@@ -61,6 +61,7 @@ import {
   appendTerminalInput
 } from '../../../smoke/e2eRegistry'
 import { handleTerminalKey, TERMINAL_NEWLINE } from './terminalKeymap'
+import { cacheSnapshot, clearSnapshot, emptySnapshot, readSnapshot } from './selectionSnapshot'
 import { registerTerminalInput, unregisterTerminalInput } from './terminalInputRegistry'
 import { isIdleOnMount, clearIdleOnMount } from '../../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
@@ -271,6 +272,13 @@ export interface TerminalSpawnApi {
   findOpen: boolean
   /** Stable handle the host passes to TerminalFindBar. */
   findApi: TerminalFindApi
+  /**
+   * Terminal-copy fix (docs/reviews/2026-07-11-terminal-copy-paste-research): the last-known
+   * selection TEXT ('' when none cached / expired). The copy paths (Ctrl+C, context menu) fall
+   * back to this when the live `getSelection()` is empty — a streaming agent's mouse-tracking
+   * toggles wipe the live selection out from under the user (xterm `SelectionService.disable()`).
+   */
+  selectionFallback: () => string
   /** Open the find bar (Ctrl/Cmd+F equivalent) — surfaces the keyboard-only Find as a clickable
    *  affordance for the Board Inspector's Session section. */
   openFind: () => void
@@ -303,9 +311,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // detected in this hook's xterm key handler. The bar's query/result state stays LOCAL to
   // TerminalFindBar (per-keystroke re-renders never reach the host).
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  // Terminal-copy fix: last-known selection text, cached on onSelectionChange and consumed by
+  // the copy paths when the live selection was wiped mid-gesture (selectionSnapshot.ts has the
+  // full policy: what caches it, what invalidates it, and why).
+  const snapRef = useRef(emptySnapshot())
   const [findOpen, setFindOpen] = useState(false)
   const closeFind = useCallback(() => setFindOpen(false), [])
   const openFind = useCallback(() => setFindOpen(true), [])
+  // Terminal-copy fix: non-consuming read of the snapshot for the host (menu enable-state +
+  // the context-menu Copy fallback). Stable identity — reads the ref at call time.
+  const selectionFallback = useCallback(() => readSnapshot(snapRef.current, performance.now()), [])
   // Find-count fix: the bar's flush-before-search seam. Routed through its OWN function ref
   // (the refitRef precedent above) rather than reading coalescerRef here: a coalescerRef read
   // reachable from an effect would make the spawn effect's `coalescerRef.current = coalescer`
@@ -680,7 +695,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // this cuts the xterm⇄ConPTY double-layout that duplicates/garbles rows on a resize (the
       // residual drag-resize path; full view is already reflow-free via Pure A1). Undefined off
       // Windows or on older builds, where setting it would DISABLE reflow and lose data on widen.
-      windowsPty: conptyHint(window.api?.osWinBuild ?? null)
+      windowsPty: conptyHint(window.api?.osWinBuild ?? null),
+      // Terminal-copy fix: when the child TUI has mouse-tracking on, xterm forwards mouse events
+      // to it and plain drag-select is disabled; Shift+drag forces local selection everywhere,
+      // and this gives macOS the conventional Option+click force as well (VS Code's
+      // `terminal.integrated.macOptionClickForcesSelection`). No-op on Windows/Linux.
+      macOptionClickForcesSelection: true
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -756,6 +776,24 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const selectionDisp =
       screenEl && wrapEl ? installSelectionShim(wrapEl, screenEl, getZoom) : null
 
+    // Terminal-copy fix: cache the selection TEXT the moment it exists (xterm stores only
+    // buffer coordinates — an Ink redraw rewrites the cells under an intact-looking highlight,
+    // and agent-side mouse-tracking toggles clear it outright). Empty updates are ignored by
+    // cacheSnapshot: clears are handled by the gesture listeners below, never by this event.
+    const selSnapDisp = term.onSelectionChange(() => {
+      cacheSnapshot(snapRef.current, term.getSelection(), performance.now())
+    })
+    // A plain left-click in the well is the deliberate-deselect gesture → drop the fallback so
+    // the next Ctrl+C is SIGINT. A new drag re-caches via onSelectionChange on its own; Shift is
+    // excluded because Shift+click EXTENDS a selection (and Shift+drag is the forced-selection
+    // escape hatch under mouse-tracking). Capture phase: at zoom ≠ 1 the selection shim swallows
+    // the original mousedown at the wrap and re-dispatches a clone from `.xterm-screen` — capture
+    // on `el` sees exactly one of the two in both regimes.
+    const invalidateSnapOnDown = (e: MouseEvent): void => {
+      if (e.button === 0 && !e.shiftKey) clearSnapshot(snapRef.current)
+    }
+    el.addEventListener('mousedown', invalidateSnapOnDown, true)
+
     // Forward keystrokes + resizes to whatever port is CURRENT. Registered ONCE
     // (not inside onWinMsg) so a restart — which delivers a fresh port through the
     // same persistent message listener — doesn't stack duplicate xterm listeners;
@@ -765,6 +803,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // so the key handler (newline) and term.paste both share the same path.
     const sendInput = (d: string): void => {
       if (isE2E()) appendTerminalInput(board.id, d)
+      // Terminal-copy fix: typed input invalidates the copy-fallback snapshot — the user is
+      // interacting with the agent again, so a later Ctrl+C means interrupt, not copy. ESC-
+      // prefixed data is NOT typed intent and must not invalidate: mouse reports under DECSET
+      // 1000/1002/1003 (the very agent-side traffic the snapshot exists to survive), focus
+      // events, arrow keys, bracketed-paste frames.
+      if (!d.startsWith('\x1b')) clearSnapshot(snapRef.current)
       portRef.current?.postMessage({ t: 'input', d })
     }
     // Voice V3 injection seam: paste rides term.paste (bracketed), submit is ONE discrete \r
@@ -784,21 +828,31 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // _keyDown bails before its own preventDefault once we return false, so without it the
     // follow-up keypress for Enter leaks a CR after our LF (the Shift+Enter submit bug).
     //  - Shift+Enter inserts a newline (LF / Ctrl+J via TERMINAL_NEWLINE; NOT the ConPTY-fragile ESC+CR).
-    //  - Ctrl/Cmd+C copies when a selection exists (then clears); else falls through to
-    //    xterm's SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there.
+    //  - Ctrl/Cmd+C copies when a selection exists — live OR the snapshot fallback (a streaming
+    //    agent's mouse-tracking toggles wipe the live one) — else falls through to xterm's
+    //    SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there. The highlight is
+    //    cleared only after MAIN verifies the clipboard write landed (readback in clipboardIpc);
+    //    on failure it stays as the "not copied" signal. The snapshot is consumed one-shot so
+    //    the NEXT Ctrl+C is SIGINT again (same cadence as today's copy-then-clear).
     //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
     //    multiline content gets bracketed-paste markers.
     term.attachCustomKeyEventHandler((e) =>
       handleTerminalKey(
         e,
-        { hasSelection: term.hasSelection(), isMac: IS_MAC },
+        {
+          hasSelection:
+            term.hasSelection() || readSnapshot(snapRef.current, performance.now()) !== '',
+          isMac: IS_MAC
+        },
         {
           newline: () => sendInput(TERMINAL_NEWLINE),
           copySelection: () => {
-            const sel = term.getSelection()
+            const sel = term.getSelection() || readSnapshot(snapRef.current, performance.now())
             if (!sel) return false
-            void window.api.clipboard.writeText(sel)
-            term.clearSelection()
+            clearSnapshot(snapRef.current)
+            void window.api.clipboard.writeText(sel).then((ok) => {
+              if (ok && termRef.current === term) term.clearSelection()
+            })
             return true
           },
           paste: () => void pasteIntoTerminal(term, board.id, () => termRef.current === term),
@@ -1063,7 +1117,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       disposed = true
       window.removeEventListener('message', onWinMsg)
       el.removeEventListener('keydown', stopKeys)
+      el.removeEventListener('mousedown', invalidateSnapOnDown, true)
       selectionDisp?.()
+      selSnapDisp.dispose()
+      // The snapshot belongs to the disposed term's buffer — a fresh/reconfigured term must
+      // never serve a predecessor's selection through the fallback.
+      clearSnapshot(snapRef.current)
       dataDisp.dispose()
       resizeDisp.dispose()
       ro.disconnect()
@@ -1192,6 +1251,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     counterScale,
     findOpen,
     findApi,
-    openFind
+    openFind,
+    selectionFallback
   }
 }

@@ -1,6 +1,7 @@
 import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
 import { MessageChannelMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import { buildSpawnEnv, type RecapEnvProvider } from './ptySpawnEnv'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
@@ -230,17 +231,8 @@ const parked = new Map<string, ParkedLike>()
  */
 const boardCwds = new Map<string, string>()
 
-/**
- * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
- * Returns a record to merge LAST into the spawn env, or undefined for no extra env.
- * Policy errors must NEVER break a spawn — the provider is called inside a try/catch.
- * index.ts wires the policy (consent + claude detection) here; pty.ts stays decoupled.
- */
-type RecapEnvProvider = (opts: {
-  id: string
-  launchCommand?: string
-  cwd?: string
-}) => Record<string, string> | undefined
+// Injectable env-policy seam (CANVAS_RECAP_BOARD etc.) — type + merge semantics + the
+// never-break-a-spawn try/catch live in ptySpawnEnv.ts (buildSpawnEnv).
 let recapEnvProvider: RecapEnvProvider | undefined
 
 /** index.ts wires the policy (consent + claude detection) here; pty.ts stays decoupled. */
@@ -646,17 +638,6 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     if (process.platform === 'win32' && args.length === 0 && /\\bash\.exe$/i.test(shell)) {
       args = ['-l', '-i']
     }
-    let recapEnv: Record<string, string> | undefined
-    try {
-      recapEnv = recapEnvProvider?.({
-        id: opts.id,
-        launchCommand: opts.launchCommand,
-        cwd: opts.cwd
-      })
-    } catch {
-      recapEnv = undefined // policy must never break a spawn
-    }
-
     // BUG-023: clamp spawn dims to the same [1, 1000] bounds that isValidResize
     // enforces on the resize path. Without this, a board wider than 1000 cols
     // spawns fine but every subsequent resize (including row-only changes) is
@@ -673,7 +654,13 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         cols: spawnCols,
         rows: spawnRows,
         cwd: spawnCwd,
-        env: { ...process.env, ...(recapEnv ?? {}) } as Record<string, string>
+        // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
+        // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
+        env: buildSpawnEnv(recapEnvProvider, {
+          id: opts.id,
+          launchCommand: opts.launchCommand,
+          cwd: opts.cwd
+        })
       })
     } catch (err) {
       // No live session was registered, so report the failure straight back.

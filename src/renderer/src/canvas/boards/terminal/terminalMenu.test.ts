@@ -24,6 +24,7 @@ function mkTerm(over: Partial<Terminal> = {}): RefObject<Terminal | null> {
 
 const base = {
   hasSel: false,
+  selectionFallback: () => '',
   boardId: 'b1',
   effectiveFont: 13,
   minFont: 8,
@@ -72,6 +73,62 @@ describe('buildTerminalMenuEntries (TERM-07)', () => {
     expect(disabledOf(atMax, 'font-smaller')).toBe(false)
     expect(disabledOf(atMin, 'font-smaller')).toBe(true)
     expect(disabledOf(atMin, 'font-bigger')).toBe(false)
+  })
+
+  describe('terminal-copy fix: Copy snapshot fallback + verified write', () => {
+    /** Run Copy with a stubbed window.api.clipboard; returns the mocks for assertions. */
+    async function runCopy(opts: {
+      live: string
+      fallback: string
+      writeOk: boolean
+    }): Promise<{ writeText: ReturnType<typeof vi.fn>; clearSelection: ReturnType<typeof vi.fn> }> {
+      const writeText = vi.fn().mockResolvedValue(opts.writeOk)
+      // Node test env (no jsdom): stub the `window.api` bridge the menu action reads.
+      vi.stubGlobal('window', { api: { clipboard: { writeText } } })
+      try {
+        const clearSelection = vi.fn()
+        const termRef = mkTerm({ getSelection: () => opts.live, clearSelection })
+        const entries = buildTerminalMenuEntries({
+          ...base,
+          hasSel: true,
+          selectionFallback: () => opts.fallback,
+          termRef
+        })
+        const copy = entries.find((x) => x.id === 'copy')
+        if (copy && copy.kind === 'action') copy.onSelect()
+        // Settle the writeText promise + the .then that clears the selection.
+        await Promise.resolve()
+        await Promise.resolve()
+        return { writeText, clearSelection }
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    }
+
+    it('falls back to the snapshot when the live selection was wiped', async () => {
+      const { writeText, clearSelection } = await runCopy({
+        live: '',
+        fallback: 'from-snapshot',
+        writeOk: true
+      })
+      expect(writeText).toHaveBeenCalledWith('from-snapshot')
+      expect(clearSelection).toHaveBeenCalledOnce()
+    })
+
+    it('prefers the live selection over the snapshot', async () => {
+      const { writeText } = await runCopy({ live: 'live-text', fallback: 'stale', writeOk: true })
+      expect(writeText).toHaveBeenCalledWith('live-text')
+    })
+
+    it('keeps the highlight when the clipboard write fails (honest false from MAIN)', async () => {
+      const { writeText, clearSelection } = await runCopy({
+        live: 'live-text',
+        fallback: '',
+        writeOk: false
+      })
+      expect(writeText).toHaveBeenCalledWith('live-text')
+      expect(clearSelection).not.toHaveBeenCalled()
+    })
   })
 
   it('Select all / Clear drive the live terminal; font actions call the nudges', () => {

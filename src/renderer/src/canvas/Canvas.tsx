@@ -887,6 +887,14 @@ function CanvasInner(): ReactElement {
             panOnScroll
             zoomActivationKeyCode={['Meta', 'Control']}
             deleteKeyCode={['Backspace', 'Delete']}
+            // Terminal-copy fix: RF's default selectionKeyCode is 'Shift', and its Pane swallows
+            // (capture-phase stopPropagation+preventDefault) ANY Shift-held pointerdown inside a
+            // node while that key is down — which kills Shift+drag inside a terminal, the one
+            // gesture xterm honors as forced text selection while a TUI has mouse-tracking on
+            // (xterm shouldForceSelection). RF box-select is vestigial here: the app's own
+            // single-selection store (selectBoard/clearSelection) never consumes RF
+            // multi-selection, so disabling costs nothing.
+            selectionKeyCode={null}
             // D4-B: React Flow's built-in node keyboard a11y is replaced by the
             // useBoardKeyboardNav model. The built-in put tabIndex=0 on every node (Tab
             // walked raw DOM order, not the canvas) and its node-level arrow-move
