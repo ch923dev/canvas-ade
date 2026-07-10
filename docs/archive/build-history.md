@@ -2283,3 +2283,38 @@ shipped app is byte-identical at runtime. v0.13.1 → **0.13.2**.
   code; isolated Linux rerun retry-recovered — exit-0, 279 passed, dataFlow `flaky`) — landed
   `--no-verify` with the flake documented. CI check + analyze + CodeQL + claude-review all PASS
   (0 critical / 0 warning / 0 inline). Squash `fe634794`.
+
+## 2026-07-11 — PR #332: reliable terminal copy/paste while a CLI agent streams (`8f38a4f7`)
+
+Copy/select in a Terminal board usually failed while the CLI agent streamed (fine when idle).
+12-agent research workflow (`docs/reviews/2026-07-11-terminal-copy-paste-research/RESEARCH.md`,
+claims verified at shipped xterm 5.5.0 / @xyflow/react 12.11.0) ranked the causes: Claude Code
+(≥2.1.150 fullscreen default) toggles DECSET mouse-tracking → xterm `SelectionService.disable()`
+wipes + blocks selection; our Ctrl+C keymap fell through to SIGINT on a wiped selection
+(interrupting the agent); selection = buffer coords so Ink redraws made stale copies;
+fire-and-forget Electron clipboard write (Windows silently drops contended writes) +
+unconditional `clearSelection()`; React Flow's default `selectionKeyCode: 'Shift'`
+capture-swallowed Shift+drag inside the terminal — the documented force-select escape hatch.
+Fix: new `selectionSnapshot.ts` caches selection text on `onSelectionChange` (invalidated by
+plain click / typed non-ESC input / verified-copy consume / 15s TTL) with `copyWithFallback()`
+feeding both Ctrl+C and the context-menu Copy — a failed copy can never SIGINT the agent;
+`clipboardIpc` readback-verifies with 3× retry and reports an honest boolean (highlight clears
+only on success); `selectionKeyCode={null}` (box-select was vestigial) +
+`macOptionClickForcesSelection`; new `ptySpawnEnv.ts` seam adds `FORCE_HYPERLINK=1` (win32 OSC 8
+links) + `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (restores selection AND scrollback), recap
+policy env still merges last. max-lines pins: pty.ts 706→696 (seam split), Canvas.tsx 765→766
+(+1 RF prop). v0.13.2 → **0.14.1** (0.14.0 taken by the jarvis-J1 lane). P2 follow-ups
+(copy-on-select option, coalescer hold-during-drag, Copy-link menu, dblclick-flip defect,
+mouse-mode hint badge) documented in the research package.
+
+- **Verified**: typecheck · lint 0 · format · unit 4971/3 skip (env-sanitized) · manual dev
+  check (user eyeball, title `terminal-copy 0.14.1`: copy during live Claude Code stream via
+  Ctrl+C / Shift+drag / context menu; bare Ctrl+C still interrupts) · pre-push FULL matrix both
+  legs (`src/main` = LINUX_SENSITIVE; Win green · Linux-Docker 280 passed / 1 doc-flake retried /
+  1 skip, exit-0). Rebased twice mid-flight (#330 then #331 — both package.json version-line
+  conflicts; second one had made the PR CONFLICTING, which silently suppresses ALL pull_request
+  workflows: zero checks until the rebase). claude-review round 1: one REAL [critical] — the
+  snapshot was consumed before the async clipboard write resolved, so a failed write stranded
+  the fallback and the second Ctrl+C SIGINT'd the agent; fixed via the `copyWithFallback()`
+  extraction + 4 regression tests (`7407497b`), inline-dispositioned. Round 2 incremental clean
+  (0 new inline); CI check + analyze + CodeQL + claude-review all PASS. Squash `8f38a4f7`.
