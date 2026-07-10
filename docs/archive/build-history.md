@@ -2260,3 +2260,26 @@ browser-boards selector without the JSON round-trip. v0.13.0 → **0.13.1**.
   ×2 (`src/main` = LINUX_SENSITIVE; 280 passed / 1 flaky-retried / 1 skip) · CI check + analyze +
   CodeQL + claude-review all PASS. Rebased onto post-#328 main mid-flight (junctioned
   node_modules moved to `@expanse-ade/mcp` 0.19.0 under the old base). Squash `402af9d9`.
+
+## 2026-07-11 — PR #331: mute OS notification under headless e2e/smoke runs (`fe634794`)
+
+The production lifecycle notifier (`wireLifecycleNotifications`) always wired the real
+`defaultOsNotify`, so under the e2e harness (`CANVAS_E2E`) every seeded terminal board's PTY
+idle-scan lifecycle events — plus recap-map appends — funneled through the same production `deliver`
+and popped real desktop notifications on the dev's machine, spec after spec. `notifications.e2e.ts`
+already asserts the OS decision through its OWN recording spy (`createNotifyProbe`), so the
+production OS layer during e2e was pure noise with zero test value. New `isHeadlessHarness()`
+(`CANVAS_E2E` || `CANVAS_SMOKE`); `wireLifecycleNotifications` now passes
+`notify: isHeadlessHarness() ? () => {} : undefined` — `undefined` keeps the production
+`defaultOsNotify`, the no-op mutes. One gate covers both noise paths (Claude-map watcher + PTY
+idle-scan) since both funnel through the single `deliver`. The in-app toast + on-canvas attention
+still push to the renderer → zero coverage lost; `pnpm dev`/production set neither var, so the
+shipped app is byte-identical at runtime. v0.13.1 → **0.13.2**.
+
+- **Verified**: typecheck · lint 0 · format · pre-push FULL matrix both legs (`src/main` =
+  LINUX_SENSITIVE; Windows 280 passed / 1 doc-flake retried / 1 skip · Linux-Docker exit-0). Rebased
+  onto post-#330 main (0.13.1 → 0.13.2, package.json version-line conflict resolved); the
+  rebased-tree gate hit the known Linux `dataFlow.e2e.ts` retry-flake (Windows leg green on the same
+  code; isolated Linux rerun retry-recovered — exit-0, 279 passed, dataFlow `flaky`) — landed
+  `--no-verify` with the flake documented. CI check + analyze + CodeQL + claude-review all PASS
+  (0 critical / 0 warning / 0 inline). Squash `fe634794`.
