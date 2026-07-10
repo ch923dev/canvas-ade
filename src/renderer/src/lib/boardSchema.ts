@@ -789,7 +789,7 @@ function isPositiveNum(v: unknown): v is number {
 }
 
 /** A valid persisted viewport: finite x/y and a finite, strictly-positive zoom. */
-function isValidViewport(v: unknown): v is CanvasViewport {
+export function isValidViewport(v: unknown): v is CanvasViewport {
   return (
     isRecord(v) &&
     isFiniteNum(v.x) &&
@@ -1122,7 +1122,7 @@ const clampTo = (v: number, r: { min: number; max: number }): number =>
  * - dim/saturation non-finite → defaults; out-of-band → clamped
  * - gridDots non-boolean → false; gridStyle outside the union → dropped (reads as 'dots')
  */
-function reconcileBackground(doc: CanvasDoc): CanvasBackground | undefined {
+export function reconcileBackground(doc: CanvasDoc): CanvasBackground | undefined {
   const raw = (doc as { background?: unknown }).background
   if (raw === undefined || raw === null) return undefined
   if (!isRecord(raw)) return undefined

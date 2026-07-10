@@ -33,8 +33,22 @@ export const OSR_MIN_SUPERSAMPLE = 1
 /** Supersample ceiling for Phase 1: bounds the per-frame buffer cost (S=2 ⇒ 4× pixels).
  *  Lifting it depends on the Phase-2 (M2) CPU/frame-rate gating, not this slice. */
 export const OSR_MAX_SUPERSAMPLE = 2
+/** Low-RAM (AUDIT §5): cap S at 1× — a 1280 desktop board drops from ~16 MB to ~4 MB per frame,
+ *  the 4× cut on the retina-8 GB common case. */
+export const OSR_MAX_SUPERSAMPLE_LOW_RAM = 1
 /** Quantize S to this step so micro zoom-settles don't churn MAIN's `setContentSize`. */
 export const OSR_SUPERSAMPLE_STEP = 0.25
+
+// Low-RAM cap toggle: set ONCE at renderer boot from `window.api.lowRam` (MAIN decides from
+// os.totalmem). A settable module flag keeps this file pure + unit-testable — no window access here.
+let lowRamMode = false
+export function setLowRamMode(on: boolean): void {
+  lowRamMode = on
+}
+/** The effective supersample ceiling for the current mode (2×, or 1× under Low-RAM). */
+export function osrMaxSupersample(): number {
+  return lowRamMode ? OSR_MAX_SUPERSAMPLE_LOW_RAM : OSR_MAX_SUPERSAMPLE
+}
 
 /** The board geometry `computeOsrSize` needs (board world box + responsive preset). */
 export interface OsrSizeGeom {
@@ -57,7 +71,7 @@ export interface OsrSize {
 export function quantizeSupersample(s: number): number {
   if (!Number.isFinite(s)) return OSR_MIN_SUPERSAMPLE
   const stepped = Math.round(s / OSR_SUPERSAMPLE_STEP) * OSR_SUPERSAMPLE_STEP
-  return Math.max(OSR_MIN_SUPERSAMPLE, Math.min(OSR_MAX_SUPERSAMPLE, stepped))
+  return Math.max(OSR_MIN_SUPERSAMPLE, Math.min(osrMaxSupersample(), stepped))
 }
 
 /**

@@ -90,25 +90,34 @@ describe('sanitizeOsrSize', () => {
       supersample: 1
     })
   })
-  it('hard-caps supersample at 4 (above the renderer M1 cap) and floors at 1', () => {
-    expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 99 }).supersample).toBe(4)
+  it('L7: hard-caps supersample at 2 (the renderer OSR_MAX_SUPERSAMPLE contract) and floors at 1', () => {
+    expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 99 }).supersample).toBe(2)
+    // A directly-driven S=4 (the old ceiling) is now clamped to 2 — halves the worst-case surface.
+    expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 4 }).supersample).toBe(2)
     expect(sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: 0.2 }).supersample).toBe(1)
     // Infinity is non-finite → falls back to 1 (the finite guard fires before the clamp).
     expect(
       sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: Infinity }).supersample
     ).toBe(1)
   })
-  it('hard-caps each logical dimension at 4096px (GPU texture sanity, even at S=4)', () => {
+  it('L7: hard-caps each logical dimension at 3840px (the uhd preset ceiling)', () => {
     const s = sanitizeOsrSize({ logicalW: 99999, logicalH: 8000, supersample: 2 })
-    expect(s.logicalW).toBe(4096)
-    expect(s.logicalH).toBe(4096)
-  })
-  it('passes the 4K (uhd) preset 3840×2160 through under the 4096 cap (v15)', () => {
-    const s = sanitizeOsrSize({ logicalW: 3840, logicalH: 2160, supersample: 2 })
     expect(s.logicalW).toBe(3840)
-    expect(s.logicalH).toBe(2160)
+    expect(s.logicalH).toBe(3840)
+  })
+  it('L7 plan-correction: the qhd (2560×1440) + uhd (3840×2160) wide presets pass unclamped', () => {
+    // STRUCTURAL_PLAN §4.3 said "logical ≤1280" — that MISSED these; clamping to 1280 would break
+    // their reflow. The real ceiling is uhd 3840. Both must round-trip unchanged.
+    expect(sanitizeOsrSize({ logicalW: 2560, logicalH: 1440, supersample: 2 })).toEqual({
+      logicalW: 2560,
+      logicalH: 1440,
+      supersample: 2
+    })
+    const uhd = sanitizeOsrSize({ logicalW: 3840, logicalH: 2160, supersample: 2 })
+    expect(uhd.logicalW).toBe(3840)
+    expect(uhd.logicalH).toBe(2160)
     // physical = logical · S = 3840·2 = 7680 ≤ the ~16384 GPU texture limit.
-    expect(s.logicalW * s.supersample).toBeLessThanOrEqual(16384)
+    expect(uhd.logicalW * uhd.supersample).toBeLessThanOrEqual(16384)
   })
 })
 
@@ -165,29 +174,34 @@ function mkPaintWin() {
   const startPainting = vi.fn<() => void>()
   const stopPainting = vi.fn<() => void>()
   const invalidate = vi.fn<() => void>()
-  const win = { webContents: { startPainting, stopPainting, invalidate } }
-  return { win, startPainting, stopPainting, invalidate }
+  const setBackgroundThrottling = vi.fn<(allowed: boolean) => void>()
+  const win = {
+    webContents: { startPainting, stopPainting, invalidate, setBackgroundThrottling }
+  }
+  return { win, startPainting, stopPainting, invalidate, setBackgroundThrottling }
 }
 
 describe('applyOsrPaint', () => {
-  it('freezes (true→false): stopPainting, no invalidate, state cleared', () => {
-    const { win, startPainting, stopPainting, invalidate } = mkPaintWin()
+  it('freezes (true→false): stopPainting + throttle on, no invalidate, state cleared', () => {
+    const { win, startPainting, stopPainting, invalidate, setBackgroundThrottling } = mkPaintWin()
     const state = { painting: true }
     applyOsrPaint(win, state, false)
     expect(stopPainting).toHaveBeenCalledTimes(1)
     expect(startPainting).not.toHaveBeenCalled()
     expect(invalidate).not.toHaveBeenCalled()
     expect(state.painting).toBe(false)
+    expect(setBackgroundThrottling).toHaveBeenCalledWith(true) // H7: frozen ⇒ throttle page JS
   })
 
-  it('resumes (false→true): startPainting + invalidate (no stale pre-freeze frame), state set', () => {
-    const { win, startPainting, stopPainting, invalidate } = mkPaintWin()
+  it('resumes (false→true): startPainting + invalidate + throttle off (no stale frame), state set', () => {
+    const { win, startPainting, stopPainting, invalidate, setBackgroundThrottling } = mkPaintWin()
     const state = { painting: false }
     applyOsrPaint(win, state, true)
     expect(startPainting).toHaveBeenCalledTimes(1)
     expect(invalidate).toHaveBeenCalledTimes(1)
     expect(stopPainting).not.toHaveBeenCalled()
     expect(state.painting).toBe(true)
+    expect(setBackgroundThrottling).toHaveBeenCalledWith(false) // H7: on-screen ⇒ un-throttle
   })
 
   it('is idempotent — a redundant set to the current state is a no-op', () => {
@@ -345,6 +359,25 @@ describe('pickOsrEvictions (GLOBAL_OSR_MAX existence budget)', () => {
       ...Array.from({ length: 6 }, (_, i) => [`f${i}`, fg()] as [string, { backgrounded: boolean }])
     ]
     expect(pickOsrEvictions(entries, 8)).toEqual(['unstamped'])
+  })
+
+  // H4: the standalone-trim contract that trimOsrToBudget relies on. ensureOsr calls
+  // pickOsrEvictions(entries, max) to make room for ONE NEW window → need = len - max + 1. A
+  // standalone trim (trimOsrToBudget) creates NO window, so it must pass max + 1 to reach EXACTLY
+  // `max` (need = len - max), not over-evict by one. This pins that arithmetic + the max=1 trap.
+  it('STANDALONE trim to budget N evicts len-N when called with N+1 (the +1 off-by-one)', () => {
+    const five: Array<[string, { backgrounded: boolean; backgroundedAt?: number }]> = Array.from(
+      { length: 5 },
+      (_, i) => [`b${i}`, bg(i)]
+    )
+    // Trim 5 background windows to budget 3 → evict the 2 oldest. trimOsrToBudget passes 3+1=4.
+    expect(pickOsrEvictions(five, 4)).toEqual(['b0', 'b1'])
+    // The TRAP: passing the budget directly (3) evicts 3 → over-trims to 2.
+    expect(pickOsrEvictions(five, 3)).toEqual(['b0', 'b1', 'b2'])
+    // Low-RAM budget 1: the standalone trim passes 1+1=2 → evict 4, KEEP one …
+    expect(pickOsrEvictions(five, 2)).toEqual(['b0', 'b1', 'b2', 'b3'])
+    // … whereas passing 1 directly would evict ALL five (the max=1 catastrophe the +1 avoids).
+    expect(pickOsrEvictions(five, 1)).toEqual(['b0', 'b1', 'b2', 'b3', 'b4'])
   })
 })
 

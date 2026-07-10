@@ -19,8 +19,7 @@ import { createPortal } from 'react-dom'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalState'
-import { prefersReducedMotion } from '../../lib/motion'
+import { agentIdentity, isRunning, statusFor } from './terminalState'
 import { useAttentionStore } from '../../store/attentionStore'
 import { useCanvasStore } from '../../store/canvasStore'
 import {
@@ -398,31 +397,22 @@ export function TerminalBoard({
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
-  // §9/§7.1 braille spinner: advance one frame every 80ms while running. Reduced
-  // motion holds it on a static glyph (no interval → frame stays put).
-  const [spinnerFrame, setSpinnerFrame] = useState(0)
-  useEffect(() => {
-    if (!running || prefersReducedMotion()) return
-    const id = setInterval(() => setSpinnerFrame((f) => f + 1), 80)
-    return () => clearInterval(id)
-  }, [running])
-
   // TERM-01: an elapsed run timer (mm:ss) appended to the running pill — statusFor
   // already renders the optional `timer` arg as a ` · ${timer}` suffix.
   const runTimer = useRunTimer(running)
-  // Desktop-notifications P2: unseen attention re-tints the pill DOT to warn/err (the DESIGN.md
-  // Surface-1 dot column) — the label stays the runtime truth (running/idle/exited); the node-level
-  // ring/badge overlay carries the wording. The warn/err dot also disarms BoardFrame's --ok glyph
-  // pulse, so the attention pulse is the only one lit.
+  // Desktop-notifications P2 (#314): unseen attention re-tints the pill DOT to warn/err (the
+  // DESIGN.md Surface-1 dot column) — the label stays the runtime truth (running/idle/exited); the
+  // node-level ring/badge overlay carries the wording. The warn/err dot also disarms BoardFrame's
+  // --ok glyph pulse, so the attention pulse is the only one lit.
   const attention = useAttentionStore((s) => s.byId[board.id])
   const attnDot =
     attention === 'needs-input' ? 'var(--warn)' : attention === 'error' ? 'var(--err)' : null
   const baseStatus = statusFor(state, identity, runTimer)
+  // C2: the §7.1 "working" braille spinner is a pure-CSS ::before in BoardFrame (gated on `running`)
+  // — it no longer bumps component state on this node every 80ms (12.5×/sec). So there is NO JS
+  // spinner-glyph label prefix here (that reintroduced exactly the churn C2 removed); the attention
+  // dot is the only status override, and the CSS ::before renders the spinner.
   const status = attnDot ? { ...baseStatus, dot: attnDot } : baseStatus
-  // Prefix the running label with the spinner glyph (the §7.1 "working" indicator).
-  const displayStatus = running
-    ? { ...status, label: `${brailleFrame(spinnerFrame)} ${status.label}` }
-    : status
 
   // TERM-06: send Ctrl-C + a brief confirmation (⏹ button pulse + "interrupt sent" chip).
   const { interruptSent, interrupt } = useInterruptFeedback(portRef)
@@ -589,7 +579,7 @@ export function TerminalBoard({
         dimmed={dimmed}
         running={running}
         spawning={state === 'spawning'}
-        status={displayStatus}
+        status={status}
         contentBg={themeBg}
         onFull={onFull}
         onDuplicate={onDuplicate}

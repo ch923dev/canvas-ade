@@ -23,6 +23,17 @@ describe('fileWatch.shouldIgnore', () => {
     expect(shouldIgnore(ROOT, at('canvas.json'))).toBe(false)
     expect(shouldIgnore(ROOT, at('README.md'))).toBe(false)
   })
+  it('ignores the app write dir (.canvas) + heavy build/output dirs (H3)', () => {
+    expect(shouldIgnore(ROOT, at('.canvas', 'canvas.json'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('.canvas', 'assets', 'x.png'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('dist', 'bundle.js'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('build', 'main.js'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('out', 'index.html'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('.next', 'cache', 'x'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('target', 'debug', 'app'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('venv', 'lib', 'py'))).toBe(true)
+    expect(shouldIgnore(ROOT, at('.worktrees', 'feat', 'x'))).toBe(true)
+  })
 })
 
 describe('fileWatch.toTreeEvent', () => {

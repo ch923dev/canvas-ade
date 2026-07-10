@@ -12,7 +12,7 @@ import {
 // ADR 0009 ignore templates: default-private tracks ONLY canvas.json; committed also versions
 // assets/ + memory/ and ignores only the volatile files.
 const IGNORE_PRIVATE = '*\n!canvas.json\n'
-const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\n'
+const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\nsession.json\n'
 
 describe('canvasMemory', () => {
   let dir: string
@@ -215,6 +215,17 @@ describe('canvasMemory', () => {
       writeFileSync(m.paths.gitignore, 'audit/\ntmp/\ncanvas.json.bak', 'utf8') // pre-S3 committed
       upgradeProjectGitignore(dir)
       expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_COMMITTED)
+    })
+
+    it('M1: remaps the pre-session-sidecar committed ignore to ignore session.json', () => {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold()
+      // The pre-M1 committed body (with terminal/, WITHOUT session.json).
+      writeFileSync(m.paths.gitignore, 'audit/\ntmp/\nterminal/\ncanvas.json.bak', 'utf8')
+      upgradeProjectGitignore(dir)
+      const body = readFileSync(m.paths.gitignore, 'utf8')
+      expect(body).toBe(IGNORE_COMMITTED)
+      expect(body).toContain('session.json') // an opted-in project now ignores the machine-local sidecar
     })
 
     it('leaves a user-customised ignore untouched, and is a no-op when absent', () => {

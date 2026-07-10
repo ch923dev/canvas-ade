@@ -19,6 +19,7 @@ import {
 } from 'react'
 import { useCanvasStore, type RecentProject } from '../store/canvasStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
+import { saveErrorMessage } from '../lib/saveError'
 import { showToast, dismissToast } from '../store/toastStore'
 import { performProjectSwitch } from '../store/projectSwitch'
 import type { BackgroundProjectInfo } from '../../../preload'
@@ -106,12 +107,13 @@ export function ProjectSwitcher(): ReactElement {
     try {
       // BUG-009 parity: pin the write to the current project dir so a racing switch
       // can't land this doc in the wrong canvas.json.
-      const ok = await window.api.project.save(
+      const res = await window.api.project.save(
         toObject(),
         useCanvasStore.getState().project.dir ?? undefined
       )
-      if (ok) markSaved()
-      else setSaveFailure('Save failed again — check disk space and permissions')
+      if (res.ok) markSaved()
+      // C3: errno-mapped copy — only ENOSPC says "disk full"; a lock/permission failure reads true.
+      else setSaveFailure(saveErrorMessage(res.code, 'Save failed again'))
     } catch (err) {
       // Fixed user-facing string (same rationale as useAutosave::onError) — raw OS
       // rejections are opaque + read aloud by the alert region; console keeps detail.

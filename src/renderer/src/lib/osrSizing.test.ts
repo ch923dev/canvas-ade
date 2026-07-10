@@ -1,12 +1,18 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import {
   computeOsrSize,
   computeFullViewOsrSize,
   quantizeSupersample,
+  setLowRamMode,
   OSR_MIN_SUPERSAMPLE,
   OSR_MAX_SUPERSAMPLE,
+  OSR_MAX_SUPERSAMPLE_LOW_RAM,
   type OsrSizeGeom
 } from './osrSizing'
+
+// Low-RAM (AUDIT §5): setLowRamMode is a module flag; ALWAYS reset it so it never leaks to the
+// other tests in this file (which assume the full-RAM 2× ceiling).
+afterEach(() => setLowRamMode(false))
 
 // A board large enough that deviceFitScale saturates at MAX_FIT_SCALE (1.1) for every
 // preset — keeps the supersample arithmetic exact and preset-comparable.
@@ -23,6 +29,14 @@ describe('quantizeSupersample', () => {
     expect(quantizeSupersample(0)).toBe(OSR_MIN_SUPERSAMPLE)
     expect(quantizeSupersample(3.0)).toBe(OSR_MAX_SUPERSAMPLE) // ceil
     expect(quantizeSupersample(10)).toBe(OSR_MAX_SUPERSAMPLE)
+  })
+  it('Low-RAM caps the supersample ceiling at 1× (AUDIT §5: 16→4 MB/frame)', () => {
+    expect(quantizeSupersample(3.0)).toBe(OSR_MAX_SUPERSAMPLE) // full-RAM: 2×
+    setLowRamMode(true)
+    expect(quantizeSupersample(3.0)).toBe(OSR_MAX_SUPERSAMPLE_LOW_RAM) // Low-RAM: 1×
+    expect(quantizeSupersample(2.0)).toBe(1) // a would-be 2× is capped to 1
+    expect(quantizeSupersample(1.0)).toBe(1) // 1× is unaffected
+    expect(OSR_MAX_SUPERSAMPLE_LOW_RAM).toBe(1)
   })
   it('falls back to MIN on a non-finite input (Infinity is non-finite → safe MIN, not ceil)', () => {
     expect(quantizeSupersample(NaN)).toBe(OSR_MIN_SUPERSAMPLE)

@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron'
 import { BrowserWindow } from 'electron'
 import { existsSync } from 'node:fs'
 import { isForeignSender } from './ipcGuard'
+import { isLowRam } from './lowRamConfig'
 import {
   isAllowedPreviewUrl,
   registerPreviewNavGuards,
@@ -157,8 +158,10 @@ function scheduleResizeSettle(id: string): void {
   )
 }
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). Exported for the
- *  self-test probes (previewOsrProbe.ts — split out under the max-lines ratchet). */
+ *  self-test probes (previewOsrProbe.ts — split out under the max-lines ratchet). Low-RAM (AUDIT §5)
+ *  drops it to cut per-second frame-pipeline cost on the 8 GB target. */
 export const OSR_FRAME_RATE = 30
+export const OSR_FRAME_RATE_LOW_RAM = 20
 
 /** Background sessions (Phase 3): the EXISTENCE budget across ALL projects — at most this many
  *  offscreen windows may exist at once (foreground + backgrounded residents). Checked in ensureOsr
@@ -227,7 +230,14 @@ export interface OsrFramePayload {
 /** Minimal hidden-window surface `applyOsrPaint` drives — so paint-gating is unit-testable
  *  without a real Electron `BrowserWindow`. A `BrowserWindow` satisfies it structurally. */
 interface OsrPaintTarget {
-  webContents: { startPainting(): void; stopPainting(): void; invalidate(): void }
+  webContents: {
+    startPainting(): void
+    stopPainting(): void
+    invalidate(): void
+    /** H7: throttle page JS/timers/sockets while paint-frozen. Optional so the paint unit test's
+     *  minimal mock need not stub it; a real Electron `BrowserWindow` always has it. */
+    setBackgroundThrottling?(allowed: boolean): void
+  }
 }
 /** The mutable paint state `applyOsrPaint` reads/writes (the live `OsrEntry` satisfies it). */
 interface OsrPaintState {
@@ -251,6 +261,13 @@ export function applyOsrPaint(win: OsrPaintTarget, state: OsrPaintState, on: boo
     } else {
       win.webContents.stopPainting()
     }
+    // H7: `stopPainting` freezes only the COMPOSITOR — these windows are built with
+    // `backgroundThrottling:false`, so a frozen off-screen board's setInterval/fetch/WebSocket keep
+    // burning CPU full-speed (the audit's "unthrottled off-screen JS"). Gate throttling on paint:
+    // frozen ⇒ throttle, resume ⇒ un-throttle. Composes with applyOsrBackground (project switch),
+    // which sets the SAME knob to `true` right after calling applyOsrPaint(false) on background — a
+    // redundant same-value set, harmless — so a backgrounded window is never left un-throttled.
+    win.webContents.setBackgroundThrottling?.(!on)
   } catch {
     /* window gone / not OSR-capable */
   }
@@ -615,7 +632,8 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   wc.on('media-paused', () => emitAudible(e, id, false))
   // Frame cap (M2 knob). The window size already set the render surface; the window is
   // never shown, so nothing paints above the HTML — the whole point of OSR (occlusion-free).
-  wc.setFrameRate(OSR_FRAME_RATE)
+  // Low-RAM (AUDIT §5) lowers the cap to cut frame-pipeline cost on the 8 GB target.
+  wc.setFrameRate(isLowRam() ? OSR_FRAME_RATE_LOW_RAM : OSR_FRAME_RATE)
   wc.on('paint', (_ev, dirty, image) => {
     const size = image.getSize()
     if (size.width === 0 || size.height === 0) return
