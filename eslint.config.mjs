@@ -286,7 +286,9 @@ export default tseslint.config(
     // choke points (cleanupCore/parkCore/adoptCore) beside the maps and identity guards they
     // protect — extracting them would split one lifecycle invariant across files. Pinned at
     // the post-fix count; ratchet DOWNWARD when pty.ts is next split.
-    rules: { 'max-lines': ['error', { max: 706, skipBlankLines: true, skipComments: true }] }
+    // 706→696 (terminal-copy fix): the spawn-env build + recap-provider try/catch extracted to
+    // ptySpawnEnv.ts (buildSpawnEnv) — ratcheted down per the rule above.
+    rules: { 'max-lines': ['error', { max: 696, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
@@ -298,8 +300,9 @@ export default tseslint.config(
     files: ['src/renderer/src/canvas/Canvas.tsx'],
     // 764→765 (M8, perf-polish): the digestOpen gate + last-digest fallback state must live in
     // CanvasInner next to the digestOpen/digestProjectKey render-adjust block it extends.
-    // Ratchet DOWNWARD when Canvas.tsx is next split.
-    rules: { 'max-lines': ['error', { max: 765, skipBlankLines: true, skipComments: true }] }
+    // 765→766 (terminal-copy fix): `selectionKeyCode={null}` is a <ReactFlow> prop — it can
+    // only live on the element in CanvasInner. Ratchet DOWNWARD when Canvas.tsx is next split.
+    rules: { 'max-lines': ['error', { max: 766, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],
