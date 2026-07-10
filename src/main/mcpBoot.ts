@@ -51,10 +51,7 @@ export interface McpBootDeps {
    * boardProjectDir resolvers + enqueueProjectCommand, spread into the registry so a confirmed
    * visualize_plan targeting a NON-active project queues for its next foreground.
    */
-  mcpRouting: Pick<
-    BoardRegistry,
-    'currentProjectDir' | 'boardProjectDir' | 'enqueueProjectCommand'
-  >
+  mcpRouting: Pick<BoardRegistry, 'currentProjectDir' | 'boardProjectDir' | 'enqueueProjectCommand'>
 }
 
 /**
