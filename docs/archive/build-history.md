@@ -2223,3 +2223,40 @@ Linux-Docker 280P exit-0) · live exercise against the title-stamped dev instanc
 focus_viewport correctly invisible to a connected-tier token per D5). claude-review clean ×2 (full +
 incremental): 0 critical / 0 warning / 0 inline. User eyeball PASS. Version `0.11.1` → `0.12.0` →
 re-bumped `0.13.0` (collision: #327 took 0.12.0 on main first). Squash `87813673`.
+
+## 2026-07-11 — PR #330: perf polish wave — audit L/M follow-ups, review-hardened (`402af9d9`)
+
+The polish (Medium+Low) wave of the 2026-07-08 perf & persistence audit — the items left after
+quick-wins (#315) and structural (#327): **M2/M4** `fsync:false` + skip-unchanged writes for
+regenerable memory sidecars · **M3** `memoryEngine.observe` deferred off the save critical path
+(`setImmediate`, with a BUG-009 stale-dir re-check inside the tick) · **M8** `buildDigest` gated on
+`digestOpen` · **M9** PTY `onData` micro-batched into one `postMessage` per tick (new
+`ptyDataBatch.ts`) · **M10** `React.memo` on the three edge components + stabilized
+`markerEnd`/`onDelete` · **L3** recent-projects list cached per userDataDir (fd-paired
+mtime+size validation) · **L4** BoardInspector zoom-eligibility boolean · **L5** DataFlow
+browser-boards selector without the JSON round-trip. v0.13.0 → **0.13.1**.
+
+- **Review hardening (`fb275352`)**: a pre-PR multi-agent review found 5 verified defects, all
+  resolved before the PR opened — (1) M8's gate had an infinite render loop (`lastDigest` as a
+  memo dep + render-phase `setLastDigest` + fresh `buildDigest` object per call → "Too many
+  re-renders" white-screen whenever the digest panel was open, i.e. on every project open); the
+  memo now yields `null` while closed and excludes `lastDigest` from deps. (2) L3's cache was
+  invisible to external writers (dev builds share userData without the single-instance lock) →
+  per-read mtime+size validation. (3) M9 dropped a chunk buffered in the same tick as a
+  kill/restart/reap/park → sessions carry a `flushData` drain, invoked via `drainBatch` before
+  `cleanupCore`/`parkCore` delete the entry, threaded across park→adopt (+3 unit tests). (4) L5's
+  `useShallow` over board objects re-rendered every DataFlowBoard on a Browser-board drag → flat
+  id/title primitive fingerprint. (5) **L1 (compact `.bak`) REVERTED** — re-serializing the prior
+  doc traded background-I/O bytes for synchronous main-thread CPU per autosave, the opposite of
+  H1/H2; decline documented inline. Two justified `max-lines` pins: `pty.ts` 706, `Canvas.tsx` 765.
+- **PR dispositions (`8c796b8`)**: CodeQL HIGH `js/file-system-race` (#118) — L3's stat+read now
+  share one fd (`openSync → fstatSync → readFileSync(fd)`), and the post-write re-stat became a
+  plain invalidation; claude-review [warning] — the M3-deferred observe re-asserts
+  `getCurrentDir() !== dir → return` inside the deferred tick (save-then-switch is the normal
+  projectSwitch flow). Both threads replied inline; incremental round clean, 0 open alerts.
+- **Verified**: typecheck · lint 0 · format · unit 4942 (16 env-only fails identical on main) ·
+  manual dev check in the built app (Playwright `_electron`: digest auto-open no-white-screen,
+  terminal sentinel through the micro-batch, zero page errors) · pre-push FULL matrix both legs
+  ×2 (`src/main` = LINUX_SENSITIVE; 280 passed / 1 flaky-retried / 1 skip) · CI check + analyze +
+  CodeQL + claude-review all PASS. Rebased onto post-#328 main mid-flight (junctioned
+  node_modules moved to `@expanse-ade/mcp` 0.19.0 under the old base). Squash `402af9d9`.
