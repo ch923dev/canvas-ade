@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useCanvasStore } from './canvasStore'
+import { useCameraRequestStore } from './cameraRequestStore'
 import { applyMcpCommand } from './useMcpCommands'
 
 beforeEach(() => {
@@ -13,6 +14,7 @@ beforeEach(() => {
     past: [],
     future: []
   })
+  useCameraRequestStore.setState({ seq: 0, target: null })
 })
 
 describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)', () => {
@@ -970,6 +972,111 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     const ack = applyMcpCommand({ type: 'tidyBoards' })
     expect(ack).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
+})
+
+describe('applyMcpCommand focusCamera (H1 viewport focus)', () => {
+  it('boardId target: validates against the live store + parks a board request', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b1', type: 'terminal' } })
+    const ack = applyMcpCommand({ type: 'focusCamera', boardId: 'b1' })
+    expect(ack).toEqual({ ok: true, type: 'focusCamera' })
+    expect(useCameraRequestStore.getState().target).toEqual({ kind: 'board', id: 'b1' })
+  })
+
+  it('groupId target: resolves the group + parks a group request', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b1', type: 'terminal' } })
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b2', type: 'terminal' } })
+    const gid = useCanvasStore.getState().addGroup('zone', ['b1', 'b2'])
+    const ack = applyMcpCommand({ type: 'focusCamera', groupId: gid })
+    expect(ack).toEqual({ ok: true, type: 'focusCamera' })
+    expect(useCameraRequestStore.getState().target).toEqual({ kind: 'group', id: gid })
+  })
+
+  it('no target ⇒ fit-all request', () => {
+    const ack = applyMcpCommand({ type: 'focusCamera' })
+    expect(ack).toEqual({ ok: true, type: 'focusCamera' })
+    expect(useCameraRequestStore.getState().target).toEqual({ kind: 'all' })
+  })
+
+  it('unknown board id acks {ok:false} and parks NOTHING (the agent must learn)', () => {
+    const before = useCameraRequestStore.getState().seq
+    const ack = applyMcpCommand({ type: 'focusCamera', boardId: 'ghost' })
+    expect(ack.ok).toBe(false)
+    expect(useCameraRequestStore.getState().seq).toBe(before)
+  })
+
+  it('unknown group id acks {ok:false}', () => {
+    const ack = applyMcpCommand({ type: 'focusCamera', groupId: 'ghost' })
+    expect(ack.ok).toBe(false)
+  })
+
+  it('rejects both targets at once (defense in depth over MAIN + the wire)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b1', type: 'terminal' } })
+    const ack = applyMcpCommand({ type: 'focusCamera', boardId: 'b1', groupId: 'g' })
+    expect(ack.ok).toBe(false)
+  })
+
+  it('rejects a forged empty-string target id', () => {
+    const ack = applyMcpCommand({ type: 'focusCamera', boardId: '' })
+    expect(ack.ok).toBe(false)
+  })
+
+  it('pushes NO undo step (viewport-only — the canvas doc is untouched)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b1', type: 'terminal' } })
+    useCanvasStore.setState({ past: [], future: [] })
+    applyMcpCommand({ type: 'focusCamera', boardId: 'b1' })
+    expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
+})
+
+describe('applyMcpCommand addBoard url (H3 browser initial page)', () => {
+  it('lands a http(s) url on a browser board via PATCHABLE_KEYS.browser', () => {
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'web-1', type: 'browser', url: 'http://localhost:3000/' }
+    })
+    expect(ack).toEqual({ ok: true, type: 'addBoard' })
+    expect(useCanvasStore.getState().boards[0]).toMatchObject({
+      id: 'web-1',
+      type: 'browser',
+      url: 'http://localhost:3000/'
+    })
+  })
+
+  it('rejects a url on a non-browser board WITHOUT adding it (browser-only)', () => {
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 't-1', type: 'terminal', url: 'http://localhost:3000/' }
+    })
+    expect(ack.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('rejects a forged non-http url WITHOUT adding a board (defense in depth)', () => {
+    for (const url of ['file:///etc/passwd', 'javascript:alert(1)']) {
+      const ack = applyMcpCommand({
+        type: 'addBoard',
+        board: { id: 'web-x', type: 'browser', url }
+      })
+      expect(ack.ok).toBe(false)
+    }
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('rejects a forged non-string url WITHOUT adding a board', () => {
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'web-x', type: 'browser', url: 42 as unknown as string }
+    })
+    expect(ack.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('a url-less browser spawn keeps the default url (back-compat)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'web-1', type: 'browser' } })
+    const b = useCanvasStore.getState().boards[0] as { url?: string }
+    expect(typeof b.url).toBe('string')
+    expect(b.url!.length).toBeGreaterThan(0)
   })
 })
 

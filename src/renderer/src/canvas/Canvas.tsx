@@ -99,6 +99,7 @@ import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
 import { useCanvasFileGlue } from './hooks/useCanvasFileGlue'
+import { useCameraFocusRequests } from './hooks/useCameraFocusRequests'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
 import { useZoomSettle } from './hooks/useZoomSettle'
 import { PlacementCaptureOverlay } from './PlacementCaptureOverlay'
@@ -533,6 +534,10 @@ function CanvasInner(): ReactElement {
   // File-tree glue (S3): camera-focus a file opened from the tree (consumes pendingFocusId) +
   // accept a file-ref dropped from the tree onto empty canvas → new File board at the drop point.
   const fileGlue = useCanvasFileGlue(rf, focusBoardById)
+
+  // H1 (Lane H): consume MCP focus_viewport requests parked by the applier — executes the SAME
+  // focusBoardById / fitGroup verbs wired above, so agent-driven focus can't drift from user focus.
+  useCameraFocusRequests({ rf, focusBoardById, fitGroup })
 
   // Drag start: checkpoint for undo. (Browser previews paint into a clipping DOM <canvas>
   // since OS-3, so a dragged board z-orders normally over them — no live-view detach needed.)
