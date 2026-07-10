@@ -8,10 +8,16 @@
  * path midpoint and highlights when selected. Shares PreviewEdge's geometry via
  * `floatingPath`.
  */
+import { memo } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type EdgeProps } from '@xyflow/react'
 import { floatingPath } from './floatingPath'
 
-export function OrchestrationEdge({
+interface OrchestrationEdgeData {
+  connectorId: string
+  onRemoveConnector: (id: string) => void
+}
+
+function OrchestrationEdgeImpl({
   id,
   source,
   target,
@@ -25,7 +31,8 @@ export function OrchestrationEdge({
   const fp = floatingPath(s, t)
   if (!fp) return null
   const { path, labelX, labelY } = fp
-  const onDelete = (data as { onDelete?: () => void } | undefined)?.onDelete
+  const d = data as OrchestrationEdgeData | undefined
+  const onDelete = d ? () => d.onRemoveConnector(d.connectorId) : undefined
   return (
     <>
       <BaseEdge
@@ -74,3 +81,23 @@ export function OrchestrationEdge({
     </>
   )
 }
+
+/**
+ * M10: same rationale as PreviewEdge — `buildCanvasEdges` hands this component a fresh `data`
+ * wrapper every recompute, but `data.connectorId`/`data.onRemoveConnector` (and `markerEnd`, a
+ * module-level constant in canvasEdges.ts) are themselves stable when this connector's selection
+ * hasn't changed, so compare those instead of the wrapper object identities.
+ */
+export const OrchestrationEdge = memo(OrchestrationEdgeImpl, (prev, next) => {
+  const pd = prev.data as OrchestrationEdgeData | undefined
+  const nd = next.data as OrchestrationEdgeData | undefined
+  return (
+    prev.id === next.id &&
+    prev.source === next.source &&
+    prev.target === next.target &&
+    prev.selected === next.selected &&
+    prev.markerEnd === next.markerEnd &&
+    pd?.connectorId === nd?.connectorId &&
+    pd?.onRemoveConnector === nd?.onRemoveConnector
+  )
+})
