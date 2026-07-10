@@ -110,7 +110,10 @@ export async function writeTerminalSnapshotAsync(
   if (!target) return false
   try {
     await mkdirAsync(terminalSnapshotDir(projectDir), { recursive: true })
-    await writeFileAtomic(target.file, text, 'utf8')
+    // M2: regenerable scrollback cache, not the quit/crash-sink flush (that stays `.sync` with
+    // fsync ON, mirroring H1's "reserve .sync for the quit path" split) — a lost snapshot here just
+    // means an empty reopen, never data loss. Skip the fsync on this normal-operation path.
+    await writeFileAtomic(target.file, text, { encoding: 'utf8', fsync: false })
     return true
   } catch (err) {
     console.warn('[terminalSnapshot] write failed (non-fatal)', err)
