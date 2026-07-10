@@ -2148,3 +2148,47 @@ on the user's explicit instruction** (live app session occupied the shared dev e
 two-project switch-back scenario remains to be exercised post-merge. Activation: MAIN
 `pnpm install` (picks up the 0.18.1 pin) + app restart. Version `0.11.0` → `0.11.1`.
 Squash `685a6abe`.
+
+## 2026-07-10 — PR #327: structural performance & persistence epic — C1·H4·H5·M1·M11·Low-RAM (`16695cf6`)
+
+The six structural items from `docs/reviews/2026-07-08-perf-persistence-audit/STRUCTURAL_PLAN.md`,
+each developed + reviewed as its own stacked PR into `perf/audit-umbrella`, then integrated with
+`origin/main` (advanced by #314 notifications + #321 MCP routing) and squash-merged.
+
+**The six items:**
+- **M11 lazy-MCP** (#316): the in-app `@expanse-ade/mcp` loopback server no longer boots in
+  `whenReady`. A memoized single-flight `ensureMcp()` (registry + boot extracted to `mcpBoot.ts`)
+  pays the ESM import + Express/SDK heap + loopback bind only on the FIRST orchestration use.
+- **C1 bg session cap+TTL** (#317): a resident cap (`MAX_BACKGROUND=3`, longest-backgrounded evicted
+  first) + a 10-min idle-TTL sweep for backgrounded project sessions. Fixes a data-loss bug —
+  `disposeProjectPtys` never flushed a backgrounded project's parked ring tails; every close path now
+  routes through one `closeBg` helper that flushes tails BEFORE disposing.
+- **H4 OSR trim** (#318): trims offscreen renderers back to the global budget on switch/foreground
+  (fixes an off-by-one that could over-evict).
+- **H5/M6 frame pool** (#319): an in-worker RGBA buffer pool for the OSR blit worker — reuses ~16 MB
+  output buffers instead of one alloc per frame (was ~1 GB/s of GC pressure under motion).
+  Review-hardened: bounded by a total-byte LRU budget (skips the hot size), so a long session with
+  churning dirty-rect sizes can't grow memory monotonically.
+- **M1 session sidecar** (#320): camera/backdrop split out of `canvas.json` into
+  `.canvas/session.json` — a pan/backdrop change writes a few hundred bytes, not the whole board tree
+  + its `.bak`. Review-hardened (critical): `performProjectSwitch` writes the sidecar authoritatively
+  on switch — otherwise a change made just before a switch was reverted on reopen by a stale sidecar.
+- **Low-RAM mode** (#322): packages the C1/H4/H5 knobs for ≤8 GiB machines (auto-detected from
+  `os.totalmem`, override via `userData/low-ram.json`): background cap → 1, idle TTL → 4 min, OSR trim
+  budget → 3, OSR frame rate → 20 fps, OSR supersample ceiling → 1×.
+
+**Integration with main:** M11 × #321 — `startMcpCommandRouting` armed eagerly (its foreground
+drainer must deliver a queued cross-project command independent of the lazy loopback server), its
+registry slice passed into `createMcpBoot` and spread into the lazy `startMcpServer` registry. C2 ×
+#314 — kept C2's pure-CSS terminal spinner (no 80 ms re-render churn) + grafted #314's attention-dot
+pill re-tint; dropped #314's JS braille-spinner label prefix (it reintroduced exactly the churn C2
+removed — the CSS `::before` renders the spinner).
+
+**Verified:** per-PR typecheck · lint 0-err · full unit suite · boot smoke · scoped Playwright e2e;
+every reviewer finding fixed + inline-dispositioned (H5 byte-budget + skip-not-break; M1 the critical
+sidecar-on-switch fix, pinned by a new integration test). Integrated umbrella: typecheck 0 · lint 0
+err · 4902 units · build clean · boot smoke green · MCP e2e 33/33 · switch/OSR/persistence e2e green.
+`check` first RED on a prettier `mcpBoot.ts` merge-artifact → fixed `a896b76f`; all 4 checks green +
+mergeStateStatus CLEAN / MERGEABLE at merge. User eyeball PASS (surfaced the by-design
+empty-project-not-in-dock behavior → `recents-in-dock` follow-up filed on the coordination board).
+Version `0.11.1` → `0.12.0`. Squash `16695cf6`.
