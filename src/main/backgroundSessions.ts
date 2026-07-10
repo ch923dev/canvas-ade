@@ -28,18 +28,23 @@ import {
 } from './previewOsrBackground'
 import { GLOBAL_OSR_MAX } from './previewOsr'
 import { getCurrentDir } from './projectStore'
+import { isLowRam } from './lowRamConfig'
 
 // Keep at most MAX_BACKGROUND projects resident (PTYs parked + OSR frozen); backgrounding past it
 // auto-closes the longest-backgrounded. The idle TTL reaps a resident left untouched (never
-// switched back to) this long. The sweep cadence is how often the TTL is checked.
+// switched back to) this long. The sweep cadence is how often the TTL is checked. Low-RAM (AUDIT §5)
+// collapses the resident set hard: cap 3→1, TTL 10→4 min.
 const MAX_BACKGROUND = 3
+const LOW_RAM_MAX_BACKGROUND = 1
 const BG_IDLE_TTL_MS = 10 * 60_000
+const LOW_RAM_BG_IDLE_TTL_MS = 4 * 60_000
 const BG_SWEEP_INTERVAL_MS = 60_000
 // H4: the TOTAL offscreen-renderer budget enforced on every project switch/foreground (C1 caps
 // background PROJECTS; this caps resident RENDERERS — the many-Browser-boards-in-one-resident case
-// C1 can't see). Defaults to the existence ceiling (a no-op for full-RAM power users); the Low-RAM
-// PR lowers it (≈3–4) so the 8 frozen ~150 MB renderers shed on switch — coupled to MAX_BACKGROUND.
+// C1 can't see). Full-RAM = the existence ceiling (a no-op — no reload churn for power users);
+// Low-RAM lowers it to 3 so the 8 frozen ~150 MB renderers shed on switch (coupled to MAX_BACKGROUND).
 const OSR_TRIM_BUDGET = GLOBAL_OSR_MAX
+const LOW_RAM_OSR_TRIM_BUDGET = 3
 
 // Phase 4: the persisted forever-keep list (the dialog's opt-in checkbox) — app/machine preference
 // in userData, NEVER the project folder. Read lazily by the registry (first policy access is
@@ -58,14 +63,15 @@ export const projectSessions: ProjectSessions = createProjectSessions({
   // the next Browser board somewhere triggers ensureOsr. Foreground/active windows are never evicted.
   foregroundOsr: (dir) => {
     const n = foregroundProjectOsr(dir)
-    trimOsrToBudget(OSR_TRIM_BUDGET)
+    trimOsrToBudget(isLowRam() ? LOW_RAM_OSR_TRIM_BUDGET : OSR_TRIM_BUDGET)
     return n
   },
   disposeOsr: disposeProjectOsr,
   countOsr: countProjectOsr,
   now: () => Date.now(),
-  maxBackground: () => MAX_BACKGROUND,
-  idleTtlMs: () => BG_IDLE_TTL_MS,
+  // Low-RAM getters: read fresh so the mode (decided once at boot) is honoured without a rebuild.
+  maxBackground: () => (isLowRam() ? LOW_RAM_MAX_BACKGROUND : MAX_BACKGROUND),
+  idleTtlMs: () => (isLowRam() ? LOW_RAM_BG_IDLE_TTL_MS : BG_IDLE_TTL_MS),
   // C1 data-loss fix: flush a closing background project's parked ring tails to their snapshot
   // sidecar BEFORE its PTYs are disposed (disposeProjectPtys does not; the renderer flush covers
   // only the ACTIVE project's xterms).

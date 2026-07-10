@@ -69,6 +69,7 @@ import { registerClipboardHandlers } from './clipboardIpc'
 import { registerShellHandlers } from './shellIpc'
 import { registerTerminalHandlers } from './terminalIpc'
 import { registerPlatformIpc } from './platformIpc'
+import { bindLowRamConfig } from './lowRamConfig'
 import { flushRendererAutosave } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
 import {
@@ -364,6 +365,10 @@ app.whenReady().then(async () => {
   // step lands recordSession.js at out/main/hooks/ and electron-builder asarUnpacks it so the
   // external `node <path>` Claude hook has a real on-disk file at runtime (see Step 6).
   const userData = app.getPath('userData')
+  // Low-RAM (AUDIT §5): bind the override file dir; the mode itself is decided lazily on first read
+  // (os.totalmem, or the userData override). Must precede registerPlatformIpc so platform:lowRam
+  // resolves the bound config.
+  bindLowRamConfig(userData)
   const recapMapPath = join(userData, 'recap', 'session-map.jsonl')
   // BUG-003 (path half): in a packaged build __dirname resolves inside app.asar; electron-builder
   // asarUnpacks recordSession.js to app.asar.unpacked, but the baked path still points into the

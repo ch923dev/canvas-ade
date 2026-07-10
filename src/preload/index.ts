@@ -456,11 +456,17 @@ const osWinBuild: number | null =
 // query alone).
 const e2eEnabled: boolean = ipcRenderer.sendSync('platform:e2eEnabled') as boolean
 
+// Low-RAM (AUDIT §5): MAIN decides once from os.totalmem; read SYNC at load (same pattern). The
+// renderer caps OSR_MAX_SUPERSAMPLE at 1× off this (osrSizing.setLowRamMode at boot).
+const lowRam: boolean = ipcRenderer.sendSync('platform:lowRam') as boolean
+
 const api = {
   /** Windows OS build number, or null off Windows (A-Win xterm windowsPty hint). */
   osWinBuild,
   /** MAIN-owned: true only when the Playwright harness set CANVAS_E2E (see BUG-057). */
   e2eEnabled,
+  /** Low-RAM mode (AUDIT §5): auto-enabled when total RAM ≤ 8 GiB (MAIN decides). */
+  lowRam,
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),
