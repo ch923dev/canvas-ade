@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useCallback, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
+import { useShallow } from 'zustand/react/shallow'
 import type {
   Board,
   DataFlowBoard as DataFlowBoardData,
@@ -86,14 +87,20 @@ export function DataFlowBoard({
   const addBoard = useCanvasStore((s) => s.addBoard)
   // Board Inspector slot (P2): non-null only while THIS board is the single eligible selection.
   const inspectorSlot = useInspectorSlot(board.id)
-  // Stable fingerprint of the bindable Browser boards (id+title only — not position, so a drag never
-  // re-renders this subtree). Parsed into options below.
-  const browserKey = useCanvasStore((s) =>
-    JSON.stringify(s.boards.filter((b) => b.type === 'browser').map((b) => [b.id, b.title]))
+  // L5: the bindable Browser boards. Was a JSON.stringify/JSON.parse round-trip used as a manual
+  // fingerprint key so a drag on some OTHER board never re-renders this subtree. useShallow does the
+  // same job without the string-building: `updateBoard`/`applyBoardPatch` only mint a new object
+  // reference for the board actually being edited (boardPatch.ts) — every other board keeps its
+  // exact prior reference — so filtering to browser boards yields an array whose ELEMENTS are
+  // reference-stable across an unrelated board's update, which useShallow's per-element `Object.is`
+  // compare picks up on directly (map to {id,title} in a separate memo below, NOT here, so that
+  // mapping doesn't mint fresh per-render objects that would defeat the comparison).
+  const browserBoards = useCanvasStore(
+    useShallow((s) => s.boards.filter((b) => b.type === 'browser'))
   )
   const browsers = useMemo<{ id: string; title: string }[]>(
-    () => (JSON.parse(browserKey) as [string, string][]).map(([id, title]) => ({ id, title })),
-    [browserKey]
+    () => browserBoards.map((b) => ({ id: b.id, title: b.title })),
+    [browserBoards]
   )
   // The bound Browser board's registrable domain — drives the first-party filter (primitive ⇒ stable).
   const sourceDomain = useCanvasStore((s) => {
