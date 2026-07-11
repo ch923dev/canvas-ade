@@ -1,13 +1,15 @@
 /**
  * Jarvis J2 — TTS runner units: the speak queue pure over OfflineTtsLike (fake engine,
- * no addon). Contract: FIFO serial synthesis, the chunk-stream shape (exactly-sized
- * COPIED buffers + self-described sampleRate), cancel = the active synth stops at its
- * next onProgress (return 0) while queued ids close with `{cancelled:true}` dones, and
- * a null engine answers every speak with tts:error instead of synthesizing.
+ * no addon). Contract: FIFO serial synthesis, the chunk-stream shape (plain-JSON
+ * base64-PCM16 payloads + self-described sampleRate — the only encoding that survives
+ * the worker→host→port hops in Electron's caged Node), cancel = the active synth stops
+ * at its next onProgress (return 0) while queued ids close with `{cancelled:true}`
+ * dones, and a null engine answers every speak with tts:error instead of synthesizing.
  */
 import { describe, expect, it } from 'vitest'
 import {
   createTtsRunner,
+  floatToPcm16Base64,
   type OfflineTtsLike,
   type TtsOutMsg,
   type TtsSpeakReq
@@ -17,7 +19,7 @@ interface FakeCall {
   text: string
   sid: number
   speed: number
-  onProgress?: (samples: Float32Array, progress: number) => number | boolean
+  onProgress?: (info: { samples: Float32Array; progress: number }) => number | boolean
   resolve: () => void
   reject: (err: Error) => void
 }
@@ -45,6 +47,9 @@ function makeFakeTts(sampleRate = 24000): { tts: OfflineTtsLike; calls: FakeCall
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
+/** Node pools small Buffers — .buffer alone is the WHOLE pool; honor the view. */
+const i16 = (b: Buffer): Int16Array => new Int16Array(b.buffer, b.byteOffset, b.length / 2)
+
 const req = (id: number, text = `utterance ${id}`): TtsSpeakReq => ({
   id,
   text,
@@ -62,23 +67,24 @@ describe('createTtsRunner', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ text: 'hello there', sid: 4, speed: 1.0 })
 
-    expect(calls[0].onProgress!(Float32Array.from([0.1, -0.2]), 0.5)).toBe(1)
-    expect(calls[0].onProgress!(Float32Array.from([0.3]), 1)).toBe(1)
+    expect(calls[0].onProgress!({ samples: Float32Array.from([0.1, -0.2]), progress: 0.5 })).toBe(1)
+    expect(calls[0].onProgress!({ samples: Float32Array.from([0.3]), progress: 1 })).toBe(1)
     calls[0].resolve()
     await tick()
 
     expect(posted).toEqual([
-      { t: 'tts:chunk', id: 1, seq: 0, sampleRate: 24000, d: expect.any(ArrayBuffer) },
-      { t: 'tts:chunk', id: 1, seq: 1, sampleRate: 24000, d: expect.any(ArrayBuffer) },
+      { t: 'tts:chunk', id: 1, seq: 0, sampleRate: 24000, pcm16: expect.any(String) },
+      { t: 'tts:chunk', id: 1, seq: 1, sampleRate: 24000, pcm16: expect.any(String) },
       { t: 'tts:done', id: 1, cancelled: false }
     ])
-    const first = posted[0] as { d: ArrayBuffer }
-    expect(Array.from(new Float32Array(first.d))).toEqual([
-      0.10000000149011612, -0.20000000298023224
-    ])
+    const first = posted[0] as { pcm16: string }
+    const decoded = i16(Buffer.from(first.pcm16, 'base64'))
+    expect(decoded).toHaveLength(2)
+    expect(decoded[0] / 32767).toBeCloseTo(0.1, 3)
+    expect(decoded[1] / 32768).toBeCloseTo(-0.2, 3)
   })
 
-  it('posts an exactly-sized COPY (a view into a larger buffer does not leak its backing)', () => {
+  it('encodes a plain-JSON COPY in the callback (native backing reuse cannot corrupt it)', () => {
     const { tts, calls } = makeFakeTts()
     const posted: TtsOutMsg[] = []
     createTtsRunner(tts, (m) => posted.push(m)).speak(req(1))
@@ -87,12 +93,20 @@ describe('createTtsRunner', () => {
     const view = backing.subarray(2, 4) // 2 samples inside an 8-sample buffer
     view[0] = 0.5
     view[1] = -0.5
-    calls[0].onProgress!(view, 0.5)
+    calls[0].onProgress!({ samples: view, progress: 0.5 })
     backing.fill(0) // engine reuses its native memory after the callback returns
 
-    const chunk = posted[0] as { d: ArrayBuffer }
-    expect(chunk.d.byteLength).toBe(2 * 4)
-    expect(Array.from(new Float32Array(chunk.d))).toEqual([0.5, -0.5])
+    const chunk = posted[0] as { pcm16: string }
+    const decoded = i16(Buffer.from(chunk.pcm16, 'base64'))
+    expect(decoded).toHaveLength(2)
+    expect(decoded[0] / 32767).toBeCloseTo(0.5, 3)
+    expect(decoded[1] / 32768).toBeCloseTo(-0.5, 3)
+  })
+
+  it('floatToPcm16Base64 clamps out-of-range samples and round-trips the payload', () => {
+    const b64 = floatToPcm16Base64(Float32Array.from([2, -2, 0]))
+    const decoded = i16(Buffer.from(b64, 'base64'))
+    expect(Array.from(decoded)).toEqual([32767, -32768, 0])
   })
 
   it('runs speaks serially FIFO: the second synth starts only after the first resolves', async () => {
@@ -123,13 +137,13 @@ describe('createTtsRunner', () => {
 
     runner.speak(req(1))
     runner.speak(req(2))
-    expect(calls[0].onProgress!(Float32Array.from([0.1]), 0.3)).toBe(1)
+    expect(calls[0].onProgress!({ samples: Float32Array.from([0.1]), progress: 0.3 })).toBe(1)
 
     runner.cancel()
     // Queued id 2 closes immediately; its generateAsync is never invoked.
     expect(posted).toContainEqual({ t: 'tts:done', id: 2, cancelled: true })
     // The active synth's next progress callback returns 0 — sherpa cancels the rest.
-    expect(calls[0].onProgress!(Float32Array.from([0.2]), 0.6)).toBe(0)
+    expect(calls[0].onProgress!({ samples: Float32Array.from([0.2]), progress: 0.6 })).toBe(0)
     calls[0].resolve()
     await tick()
 
@@ -150,7 +164,7 @@ describe('createTtsRunner', () => {
 
     runner.speak(req(2))
     expect(calls).toHaveLength(2)
-    expect(calls[1].onProgress!(Float32Array.from([0.1]), 1)).toBe(1)
+    expect(calls[1].onProgress!({ samples: Float32Array.from([0.1]), progress: 1 })).toBe(1)
     calls[1].resolve()
     await tick()
     expect(posted).toContainEqual({ t: 'tts:done', id: 2, cancelled: false })

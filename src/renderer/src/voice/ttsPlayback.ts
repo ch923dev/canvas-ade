@@ -57,6 +57,21 @@ export function createPlaybackLedger(lead: number = SCHEDULE_LEAD_SECONDS): Play
   }
 }
 
+/**
+ * base64(PCM16LE) → Float32 [-1,1] — decodes the port-safe chunk encoding (see
+ * main/voiceEngineHost.ts TtsOutMsg: only plain-JSON payloads survive the
+ * worker→host→port hops in Electron's caged Node).
+ */
+export function pcm16Base64ToFloat32(b64: string): Float32Array<ArrayBuffer> {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1)
+  const out = new Float32Array(pcm.length)
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768
+  return out
+}
+
 // ── DOM glue ───────────────────────────────────────────────────────────────────────────
 
 /** The renderer-side view of a host TtsOutMsg (see main/voiceEngineHost.ts). */
@@ -65,7 +80,7 @@ interface TtsPortMsg {
   id?: number
   seq?: number
   sampleRate?: number
-  d?: ArrayBuffer
+  pcm16?: string
   cancelled?: boolean
   error?: string
 }
@@ -73,6 +88,11 @@ interface TtsPortMsg {
 export interface TtsPlayer {
   /** Adopt a freshly forwarded voice:tts:port (replaces any previous one). */
   attach(port: MessagePort): void
+  /** A live port is adopted. False after dispose() or before the first attach —
+   *  speakText re-runs voice:tts:start when this is false even though the store says
+   *  the session is live (a rebuilt player orphans the old port: MAIN keeps streaming
+   *  into it and playback silently dies — the stuck-"Synthesizing…" dev-check bug). */
+  attached(): boolean
   /** D6 barge-in: ramp the master gain to silence over DUCK_SECONDS, stop + drop
    *  everything scheduled, restore the gain for the next utterance. */
   duckAndFlush(): void
@@ -132,11 +152,11 @@ export function createTtsPlayer(cb: TtsPlayerCallbacks = {}): TtsPlayer {
   }
 
   const onChunk = (m: TtsPortMsg): void => {
-    if (typeof m.id !== 'number' || !(m.d instanceof ArrayBuffer) || !m.sampleRate) return
+    if (typeof m.id !== 'number' || typeof m.pcm16 !== 'string' || !m.sampleRate) return
     maxSeenId = Math.max(maxSeenId, m.id)
     if (m.id <= flushedThroughId) return // tail of a barged-in utterance
     const { ctx: c, out } = ensureGraph()
-    const f32 = new Float32Array(m.d)
+    const f32 = pcm16Base64ToFloat32(m.pcm16)
     if (f32.length === 0) return
     const buf = c.createBuffer(1, f32.length, m.sampleRate)
     buf.copyToChannel(f32, 0)
@@ -153,6 +173,9 @@ export function createTtsPlayer(cb: TtsPlayerCallbacks = {}): TtsPlayer {
   }
 
   return {
+    attached(): boolean {
+      return port !== null
+    },
     attach(p: MessagePort): void {
       port?.close()
       port = p

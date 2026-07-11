@@ -183,7 +183,11 @@ export function createFrameProcessor(
 /**
  * Structural slice of sherpa's OfflineTts (J1). `generateAsync` streams sentence chunks
  * via onProgress on a background thread; returning 0/false from onProgress CANCELS the
- * remaining synthesis — the J2 barge-in flush hook.
+ * remaining synthesis — the J2 barge-in flush hook. NOTE: the callback receives ONE
+ * `{samples, progress}` info object (sherpa-onnx-node non-streaming-tts.js wraps the
+ * addon callback), NOT two positional args — a positional signature still fires and
+ * still cancels, but `new Float32Array(infoObject)` is length 0, so every chunk goes
+ * out EMPTY (found live in the J2 dev check; the probe test guards it now).
  */
 export interface OfflineTtsLike {
   sampleRate: number
@@ -192,7 +196,12 @@ export interface OfflineTtsLike {
     text: string
     sid: number
     speed: number
-    onProgress?: (samples: Float32Array, progress: number) => number | boolean
+    /** MUST be false under Electron: the default (true) returns the final audio as a
+     *  napi EXTERNAL arraybuffer, which Electron's caged Node forbids — the addon's
+     *  completion throws "External buffers are not allowed" and kills the worker
+     *  thread after every finished utterance (found live in the J2 dev check). */
+    enableExternalBuffer?: boolean
+    onProgress?: (info: { samples: Float32Array; progress: number }) => number | boolean
   }): Promise<{ samples: Float32Array; sampleRate: number }>
 }
 
@@ -207,15 +216,29 @@ export interface TtsSpeakReq {
 }
 
 /**
- * TTS worker/host → renderer payloads over the TTS session port. Plain JSON + ArrayBuffer
- * COPIES only — the same cross-process port discipline as the STT session port (a
- * transferable in the transfer list nulls the whole payload; see V1). `d` is Float32 PCM
- * at `sampleRate` (chunks self-describe the rate — Kokoro 24 kHz vs Piper 22.05 kHz).
+ * TTS worker/host → renderer payloads over the TTS session port. Plain JSON ONLY — the
+ * V1 port discipline, and here it is load-bearing twice over: a transferable in a
+ * cross-process port transfer list nulls the whole payload (V1), and in Electron's
+ * caged Node an ArrayBuffer payload posted from a worker_thread throws
+ * "External buffers are not allowed" and KILLS the worker (found live in the J2 dev
+ * check — every utterance crashed the worker and its OfflineTts cache with it). `pcm16`
+ * is base64-encoded 16-bit little-endian mono PCM at `sampleRate` (chunks self-describe
+ * the rate — Kokoro 24 kHz vs Piper 22.05 kHz); 16-bit matches the WAV assets we ship.
  */
 export type TtsOutMsg =
-  | { t: 'tts:chunk'; id: number; seq: number; sampleRate: number; d: ArrayBuffer }
+  | { t: 'tts:chunk'; id: number; seq: number; sampleRate: number; pcm16: string }
   | { t: 'tts:done'; id: number; cancelled: boolean }
   | { t: 'tts:error'; id: number; error: string }
+
+/** Float32 [-1,1] → base64(PCM16LE) — the port-safe chunk encoding. */
+export function floatToPcm16Base64(samples: Float32Array): string {
+  const pcm = new Int16Array(samples.length)
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]))
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff
+  }
+  return Buffer.from(pcm.buffer).toString('base64')
+}
 
 export interface TtsRunner {
   /** Enqueue a speak; requests synthesize serially (J3's brain streams one clause each). */
@@ -251,16 +274,18 @@ export function createTtsRunner(
           text: req.text,
           sid: req.sid,
           speed: req.speed,
-          onProgress: (samples) => {
+          enableExternalBuffer: false, // Electron cage — see OfflineTtsLike
+          onProgress: (info) => {
             if (epoch !== myEpoch) return 0 // cancel remaining synthesis (barge-in)
-            // COPY into an exactly-sized buffer: the callback's Float32Array may view
-            // native memory the engine reuses after this frame returns.
+            // Encode to a plain string IN the callback: the Float32Array views native
+            // memory the engine reuses after this frame returns, and only JSON-safe
+            // payloads survive the worker→host→port hops (see TtsOutMsg).
             post({
               t: 'tts:chunk',
               id: req.id,
               seq: seq++,
               sampleRate: tts!.sampleRate,
-              d: new Float32Array(samples).buffer
+              pcm16: floatToPcm16Base64(info.samples)
             })
             return 1
           }

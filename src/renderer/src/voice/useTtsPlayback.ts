@@ -4,8 +4,9 @@
  * forwards on voice:tts:start, mirrors player state into ttsStore, hydrates the D6
  * duplex mode from voiceConfig (live re-sync on voice:config:changed), listens for
  * engine-failure pushes, and runs the barge-in loop — a store subscription that watches
- * STT partials (full duplex) / capture RMS (half duplex) while audio is speaking and
- * fires duck-flush-cancel when the user talks over Jarvis.
+ * STT partials + the slow RMS safety net (full duplex) / capture RMS alone (half
+ * duplex) while audio is speaking and fires duck-flush-cancel when the user talks
+ * over Jarvis.
  */
 import { useEffect } from 'react'
 import { createTtsPlayer, setTtsPlayer } from './ttsPlayback'

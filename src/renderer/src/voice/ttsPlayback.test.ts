@@ -8,9 +8,53 @@ import {
   DUCK_SECONDS,
   SCHEDULE_LEAD_SECONDS,
   createPlaybackLedger,
-  nextChunkStart
+  createTtsPlayer,
+  nextChunkStart,
+  pcm16Base64ToFloat32
 } from './ttsPlayback'
 import { EARCONS, earconDuration } from './earcons'
+
+describe('createTtsPlayer.attached (the speakText re-broker signal)', () => {
+  it('false before attach, true after, false again after dispose', () => {
+    // A rebuilt player (effect re-run — dev HMR, React remount) starts portless while
+    // the store still says sessionLive; speakText keys the voice:tts:start re-broker
+    // on this flag (the stuck-"Synthesizing…" dev-check regression).
+    const player = createTtsPlayer()
+    expect(player.attached()).toBe(false)
+    const stub = { close(): void {}, onmessage: null } as unknown as MessagePort
+    player.attach(stub)
+    expect(player.attached()).toBe(true)
+    player.dispose()
+    expect(player.attached()).toBe(false)
+  })
+})
+
+/** Mirrors main/voiceEngineHost.floatToPcm16Base64 (renderer tests can't import the
+ *  host module — it pulls worker_threads into the web project). Keep in lockstep. */
+function encodePcm16Base64(samples: Float32Array): string {
+  const pcm = new Int16Array(samples.length)
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]))
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff
+  }
+  let bin = ''
+  const bytes = new Uint8Array(pcm.buffer)
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
+
+describe('pcm16Base64ToFloat32 (the port chunk decoding)', () => {
+  it('round-trips PCM within 16-bit quantization error', () => {
+    const src = Float32Array.from([0, 0.5, -0.5, 0.999, -1, 0.0003])
+    const out = pcm16Base64ToFloat32(encodePcm16Base64(src))
+    expect(out).toHaveLength(src.length)
+    for (let i = 0; i < src.length; i++) expect(out[i]).toBeCloseTo(src[i], 3)
+  })
+
+  it('decodes empty input to an empty buffer (no throw)', () => {
+    expect(pcm16Base64ToFloat32('')).toHaveLength(0)
+  })
+})
 
 describe('nextChunkStart', () => {
   it('starts a fresh burst just ahead of now', () => {

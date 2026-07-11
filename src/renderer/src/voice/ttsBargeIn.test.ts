@@ -27,13 +27,42 @@ describe('normalizeTokens / looksLikeEcho', () => {
   it('flags a partial that is a fragment of the spoken text as echo', () => {
     const spoken = ['Done. The auth terminal is running in the top right group.']
     expect(looksLikeEcho('the auth terminal is running', spoken)).toBe(true)
-    expect(looksLikeEcho('AUTH TERMINAL RUNNING', spoken)).toBe(true) // STT re-casing
+    // STT re-casing AND word-dropping ("is" lost) — the skip-distance pair match.
+    expect(looksLikeEcho('AUTH TERMINAL RUNNING', spoken)).toBe(true)
   })
 
   it('does not flag a genuinely different utterance', () => {
     const spoken = ['Done. The auth terminal is running in the top right group.']
     expect(looksLikeEcho('stop please', spoken)).toBe(false)
     expect(looksLikeEcho('open a browser on localhost', spoken)).toBe(false)
+  })
+
+  it('word-bag overlap is NOT echo: commands reusing spoken words still interrupt', () => {
+    // The live-drill regression: the preview said "…and I will stop", the user said
+    // "stop Stop, stop" — every token was in the spoken bag, but no word PAIR mirrors
+    // the spoken order, so it must interrupt.
+    const spoken = ['Keep talking over me at any time, and I will stop.']
+    expect(looksLikeEcho('stop Stop, stop', spoken)).toBe(false)
+    expect(looksLikeEcho('stop talking', spoken)).toBe(false) // words present, pair not
+  })
+
+  it('pairs never straddle a sentence boundary (the "stop right now" live regression)', () => {
+    // Second live drill: the preview said "…and I will stop. Right now I am reading…";
+    // the user said "Stop right now" repeatedly — the boundary-crossing pair
+    // "stop right" plus the sentence-2 opener "right now" hit 4/5 bigrams and the
+    // interrupt was swallowed for three consecutive partials.
+    const spoken = [
+      'Keep talking over me at any time, and I will stop. ' +
+        'Right now I am reading a deliberately long passage.'
+    ]
+    expect(looksLikeEcho('Stop right now. Stop right now', spoken)).toBe(false)
+    // A genuine echo of either single sentence still filters.
+    expect(looksLikeEcho('right now I am reading a deliberately long', spoken)).toBe(true)
+  })
+
+  it('a single-word partial is never echo (one-word commands are the common interrupt)', () => {
+    expect(looksLikeEcho('stop', ['and I will stop now'])).toBe(false)
+    expect(looksLikeEcho('wait', ['wait for the build to finish'])).toBe(false)
   })
 
   it('an empty partial is vacuously echo (nothing to interrupt with)', () => {
@@ -52,9 +81,14 @@ describe('createBargeInDetector — full duplex (transcription-gated)', () => {
     expect(d.onPartial('a', spoken)).toBe(false) // below MIN_PARTIAL_CHARS
   })
 
-  it('ignores the RMS layer entirely in full mode', () => {
+  it('RMS safety net: sustained loud speech fires without a partial, on a longer sustain', () => {
+    // AEC double-talk suppression / decoder CPU starvation can eat the partial
+    // entirely — the live-drill "sometimes it does not capture" finding.
     const d = createBargeInDetector(() => 'full')
-    expect(d.onLevel(1.0, 1000)).toBe(false)
+    expect(d.onLevel(RMS_BARGE_THRESHOLD, RMS_BARGE_SUSTAIN_MS)).toBe(false) // half-gate sustain: not yet
+    expect(d.onLevel(RMS_BARGE_THRESHOLD, RMS_BARGE_SUSTAIN_MS)).toBe(true) // 480 ms sustained
+    d.reset()
+    expect(d.onLevel(0.001, 1000)).toBe(false) // quiet never fires, however long
   })
 })
 
@@ -85,7 +119,7 @@ describe('createBargeInDetector — half duplex (RMS gate)', () => {
     d.reset()
     expect(d.onLevel(0.9, 120)).toBe(false) // accumulator restarted
     mode = 'full'
-    expect(d.onLevel(0.9, 120)).toBe(false) // now the RMS layer is off
+    expect(d.onLevel(0.9, 120)).toBe(false) // full-mode net needs 480 ms, not 120
     expect(d.onPartial('hey stop', [])).toBe(true) // and transcription is on
   })
 })

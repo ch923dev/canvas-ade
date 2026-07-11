@@ -16,14 +16,20 @@ export async function speakText(text: string): Promise<boolean> {
   const api = window.api?.voice?.tts
   if (!api) return false // non-electron test runtimes (App.tsx discipline)
   const store = useTtsStore.getState()
-  if (!store.sessionLive) {
+  // Re-open on EITHER signal: the store flag can outlive the player's port (the player
+  // is rebuilt whenever the owning effect re-runs — dev HMR, React remount — and the
+  // rebuilt one is portless while MAIN keeps streaming into the orphan). voice:tts:start
+  // is re-broker-idempotent end to end (host closes the old port and adopts the new),
+  // so over-calling it is safe; trusting a stale sessionLive is not.
+  if (!store.sessionLive || !getTtsPlayer()?.attached()) {
     try {
       const r = await api.start()
       if (!r.ok) {
         store.setError(r.modelStatus === 'absent' ? 'model-absent' : 'start-failed')
         return false
       }
-    } catch {
+    } catch (err) {
+      console.error('[tts] start threw', err)
       return false // MAIN gone (shutdown)
     }
     // The port arrives async via __voiceTtsPort (chunks queue in it until adopted);
@@ -38,7 +44,8 @@ export async function speakText(text: string): Promise<boolean> {
     }
     useTtsStore.getState().spokeText(text)
     return true
-  } catch {
+  } catch (err) {
+    console.error('[tts] speak threw', err)
     return false
   }
 }

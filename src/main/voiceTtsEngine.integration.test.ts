@@ -126,9 +126,22 @@ describe.runIf(CASES.some((c) => c.ready))(
             }
           }, 50)
         })
-        const fullChunks = full.filter((m) => m.t === 'tts:chunk')
+        const fullChunks = full.filter(
+          (m): m is Extract<TtsOutMsg, { t: 'tts:chunk' }> => m.t === 'tts:chunk'
+        )
         expect(fullChunks.length).toBeGreaterThanOrEqual(2)
         expect(full.at(-1)).toEqual({ t: 'tts:done', id: 1, cancelled: false })
+        // Chunks carry REAL PCM — guards the sherpa onProgress signature (the callback
+        // takes ONE {samples, progress} object; a positional mistake still fires but
+        // every chunk goes out 0-byte — the exact bug the J2 dev check caught live).
+        for (const chunk of fullChunks) {
+          const raw = Buffer.from(chunk.pcm16, 'base64')
+          const pcm = new Int16Array(raw.buffer, raw.byteOffset, raw.length / 2)
+          expect(pcm.length).toBeGreaterThan(1000)
+          let peak = 0
+          for (const s of pcm) peak = Math.max(peak, Math.abs(s) / 32768)
+          expect(peak).toBeGreaterThan(0.05)
+        }
 
         // Cancelled run: cancel on the FIRST chunk → fewer chunks than the full run and
         // a cancelled done (sherpa stops synthesizing the remaining sentences).

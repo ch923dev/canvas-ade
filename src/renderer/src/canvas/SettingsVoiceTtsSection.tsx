@@ -18,12 +18,22 @@ import type {
 import { formatMb } from './SettingsVoiceSection'
 import { pane } from './settings/paneStyles'
 import { speakText, cancelSpeech } from '../voice/ttsSession'
+import { getTtsPlayer } from '../voice/ttsPlayback'
+import { playEarcon } from '../voice/earcons'
 import { useTtsStore } from '../store/ttsStore'
 
-/** Two sentences → at least two streamed chunks, and enough airtime to try talking over
- *  it (the barge-in drill from the Settings pane). */
+/** Several sentences (~20 s of speech, one streamed chunk each) — long enough airtime
+ *  to actually try talking over it (the barge-in drill from the Settings pane). The
+ *  wording deliberately avoids interrupt phrases ("stop", "right now", "wait"): the
+ *  echo filter compares the user's partial against THIS text, and a script that speaks
+ *  the interrupt words swallows the very interrupt it invites (both live-drill
+ *  regressions — see looksLikeEcho). */
 const PREVIEW_TEXT =
-  'Hi — this is how I will sound. Keep talking over me at any time, and I will stop.'
+  'Hi — this is how I will sound. Talk over me whenever you like, and I will yield immediately. ' +
+  'I am reading a deliberately long passage so you have plenty of airtime to interrupt me. ' +
+  'You could ask me to spawn a terminal, tidy the canvas, or focus a board. ' +
+  'Sentences arrive one at a time, and cutting in mid-thought is exactly what this drill is for. ' +
+  'If I reach the end of this line, nobody interrupted me, and honestly I am a little proud of that.'
 
 export function SettingsVoiceTtsSection(): ReactElement | null {
   const supported = window.api?.voice?.supported !== false
@@ -33,7 +43,29 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
   const [progress, setProgress] = useState<VoiceDownloadProgress | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Click → audio-out gap feedback: true from the Preview click until playback actually
+  // starts (or the speak fails) — drives the "Synthesizing…" button state.
+  const [pending, setPending] = useState(false)
   const speaking = useTtsStore((s) => s.speaking)
+  // Pending settles on either edge of `speaking` (start = the normal path; end covers a
+  // start missed during the subscribe race), with a watchdog so the button can never
+  // wedge on "Synthesizing…" (the stuck dev-check bug class) — if no audio started
+  // within the window (cold Kokoro init ≈2 s; wide margin for machine load), reset and
+  // surface an error instead of a dead disabled button.
+  useEffect(() => {
+    if (!pending) return
+    const off = useTtsStore.subscribe((s, prev) => {
+      if (s.speaking !== prev.speaking) setPending(false)
+    })
+    const t = window.setTimeout(() => {
+      setPending(false)
+      setError('Speech did not start — try Preview again.')
+    }, 20_000)
+    return () => {
+      off()
+      window.clearTimeout(t)
+    }
+  }, [pending])
 
   useEffect(() => {
     if (!enabled) return
@@ -112,8 +144,17 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
 
   const preview = (): void => {
     setError(null)
+    setPending(true)
+    // Instant audible ack: Kokoro first-audio is ~0.5–2 s (machine-load dependent) — a
+    // click with silent dead air reads as "broken" (the J2 dev-check finding). The
+    // earcon fires immediately through the same ducked master gain.
+    const g = getTtsPlayer()?.graph()
+    if (g) playEarcon('ack', g.ctx, g.out)
     void speakText(PREVIEW_TEXT).then((ok) => {
-      if (!ok) setError('Could not start speech — is the selected voice downloaded?')
+      if (!ok) {
+        setPending(false)
+        setError('Could not start speech — is the selected voice downloaded?')
+      }
     })
   }
 
@@ -231,12 +272,12 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
         ) : (
           <button
             type="button"
-            style={{ ...pane.syncBtn, ...(!selectedReady ? pane.ctlDisabled : null) }}
-            disabled={!selectedReady}
+            style={{ ...pane.syncBtn, ...(!selectedReady || pending ? pane.ctlDisabled : null) }}
+            disabled={!selectedReady || pending}
             data-test="tts-preview"
             onClick={preview}
           >
-            Preview
+            {pending ? 'Synthesizing…' : 'Preview'}
           </button>
         )}
       </div>
