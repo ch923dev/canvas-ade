@@ -101,7 +101,9 @@ function toWav(samples: Float32Array, sampleRate: number): Buffer {
 describe.runIf(CASES.some((c) => c.ready))(
   'createTtsRunner ↔ real OfflineTts (model-gated)',
   () => {
-    const c = CASES.find((x) => x.ready)!
+    // Fallback keeps COLLECTION safe where no model is installed (CI): runIf(false)
+    // still executes this describe body to collect titles — only the run is skipped.
+    const c = CASES.find((x) => x.ready) ?? CASES[0]
     const MULTI = 'First sentence here. Second sentence follows. Third sentence closes it out.'
 
     it(

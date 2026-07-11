@@ -136,6 +136,10 @@ export function useVoiceCapture(): void {
     if (!window.api?.voice) return undefined // non-electron test runtimes (App.tsx discipline)
     let session: ActiveCapture | null = null
     const onWinMsg = (e: MessageEvent): void => {
+      // Same-window pin (SEC-2 receive side, matching useTtsPlayback — see the note
+      // there on why this is NOT an origin-string compare): only the preload forwarder
+      // may hand us the frame port.
+      if (e.source !== window) return
       const data = e.data as { __voicePort?: boolean } | null
       if (!data?.__voicePort || !e.ports[0]) return
       session?.dispose() // a re-start replaces any live session (MAIN disposed its end too)

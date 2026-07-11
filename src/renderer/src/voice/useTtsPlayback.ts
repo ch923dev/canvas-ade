@@ -34,6 +34,12 @@ export function useTtsPlayback(): void {
     setTtsPlayer(player)
 
     const onWinMsg = (e: MessageEvent): void => {
+      // Same-window pin (SEC-2 receive side): only this window's own code — the preload
+      // forwarder, which already posts with an explicit same-origin target — may hand us
+      // the chunk port. NOT an origin-string compare: under the packaged file:// origin
+      // MessageEvent.origin serializes to "null" while location.origin is "file://",
+      // so that compare drops every port (caught by the @voice e2e leg).
+      if (e.source !== window) return
       const data = e.data as { __voiceTtsPort?: boolean } | null
       if (!data?.__voiceTtsPort || !e.ports[0]) return
       player.attach(e.ports[0])
