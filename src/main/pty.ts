@@ -1,7 +1,7 @@
 import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
 import { MessageChannelMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import { buildSpawnEnv, type RecapEnvProvider } from './ptySpawnEnv'
+import { buildSpawnEnv, syncRecapHook, type RecapEnvProvider } from './ptySpawnEnv'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
@@ -794,6 +794,10 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     } catch {
       /* provisioning is best-effort — never block the spawn */
     }
+
+    // Cross-cwd recap capture: ensure the recap hook exists where THIS spawn's claude reads it
+    // (the resolved cwd), before the launch line. Seam + spawn guard: ptySpawnEnv.syncRecapHook.
+    syncRecapHook({ id: opts.id, cwd: spawnCwd })
 
     const launch = opts.launchCommand?.trim()
     if (launch) proc.write(launch + '\r')

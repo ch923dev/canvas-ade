@@ -49,6 +49,13 @@ export interface RecapHealthDeps {
   hasCapture: (boardId: string) => boolean
   /** Boot age of the board's live PTY session (getTerminalBootInfo), null when none. */
   sessionAgeMs: (boardId: string) => number | null
+  /**
+   * Cross-cwd recap capture: the board's RESOLVED spawn cwd (pty getTerminalCwd), undefined
+   * for a never-spawned id. Claude Code reads hooks from the directory it launches in, so the
+   * hookInstalled probe must check THAT dir — probing only the open project dir reported
+   * "hook ok" for a cross-cwd board whose repo never had the hook at all.
+   */
+  boardCwd: (boardId: string) => string | undefined
 }
 
 /**
@@ -63,7 +70,9 @@ export function computeRecapHealth(
   if (!dir || !deps.isConsented(dir)) return null
   return {
     runner: deps.runnerOk() ? 'ok' : 'missing',
-    hookInstalled: deps.hookInstalled(dir),
+    // Probe the dir the board's claude actually launched in (falling back to the open project
+    // dir for a not-yet-spawned board) — the open dir alone lied for cross-cwd boards.
+    hookInstalled: deps.hookInstalled(deps.boardCwd(boardId) ?? dir),
     captured: deps.hasCapture(boardId),
     sessionAgeMs: deps.sessionAgeMs(boardId)
   }
@@ -84,12 +93,20 @@ export interface FocusReEnsureDeps {
   runnerOk: () => boolean
   /** installRecapHook for the dir — idempotent + no-op-write-guarded, so per-focus is cheap. */
   install: (dir: string) => void
+  /**
+   * Cross-cwd recap capture: extra dirs to heal alongside the open project — the live terminal
+   * boards' resolved spawn cwds (pty listTerminalCwds). A cross-cwd board's hook (installed at
+   * spawn) can be clobbered mid-session too; without this it only healed on a respawn.
+   * Optional: undefined ⇒ open-project-only (tests, e2e).
+   */
+  extraDirs?: () => string[]
 }
 
 /**
- * The browser-window-focus handler: re-ensure the recap hook for the open CONSENTED project.
- * A clobbered settings.local.json heals on the next alt-tab back instead of the next project
- * open. Swallows install errors — a broken settings file must never break window focus.
+ * The browser-window-focus handler: re-ensure the recap hook for the open CONSENTED project
+ * plus every live board's spawn cwd. A clobbered settings.local.json heals on the next alt-tab
+ * back instead of the next project open. Swallows install errors — a broken settings file must
+ * never break window focus.
  */
 export function createFocusReEnsure(deps: FocusReEnsureDeps): () => void {
   return () => {
@@ -97,6 +114,15 @@ export function createFocusReEnsure(deps: FocusReEnsureDeps): () => void {
       const dir = deps.getCurrentDir()
       if (!dir || !deps.isConsented(dir) || !deps.runnerOk()) return
       deps.install(dir)
+      // Per-dir try/catch: one unwritable cross-cwd repo must not stop the others healing.
+      for (const extra of deps.extraDirs?.() ?? []) {
+        if (extra === dir) continue
+        try {
+          deps.install(extra)
+        } catch {
+          /* best-effort heal */
+        }
+      }
     } catch {
       /* best-effort heal */
     }

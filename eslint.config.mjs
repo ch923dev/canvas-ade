@@ -288,7 +288,10 @@ export default tseslint.config(
     // the post-fix count; ratchet DOWNWARD when pty.ts is next split.
     // 706→696 (terminal-copy fix): the spawn-env build + recap-provider try/catch extracted to
     // ptySpawnEnv.ts (buildSpawnEnv) — ratcheted down per the rule above.
-    rules: { 'max-lines': ['error', { max: 696, skipBlankLines: true, skipComments: true }] }
+    // 696→697 (cross-cwd recap capture): the one-line syncRecapHook(...) call must fire at the
+    // spawn choke point (before the launch-line write, beside the orchestration sync); the seam
+    // itself (type + state + guard) lives in ptySpawnEnv.ts. Ratchet DOWNWARD on the next split.
+    rules: { 'max-lines': ['error', { max: 697, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

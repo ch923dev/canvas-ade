@@ -46,3 +46,31 @@ export function buildSpawnEnv(
     ...(recapEnv ?? {})
   } as Record<string, string>
 }
+
+/**
+ * Cross-cwd recap capture: ensure the recap hook exists in the SPAWN CWD's
+ * `.claude/settings.local.json` before the launch line is written. Claude Code reads hooks from
+ * the directory it launches in, but the hook was only ever installed into the OPEN project dir
+ * (project open + window focus) — so a board whose cwd override points at another repo (MCP
+ * `spawn_board` cwd, the Inspector's Edit… cwd) launched a claude that never fired
+ * recordSession.js: no map entry, "Capture didn't record this session", Resume impossible.
+ * The injected provider owns the policy (consent + runner + which dirs to skip); the write is
+ * synchronous + idempotent so the file is on disk before the agent reads it. Like the env seam
+ * above, a provider error must NEVER break a spawn — syncRecapHook guards the call.
+ */
+export type RecapHookSyncProvider = (opts: { id: string; cwd: string }) => void
+let recapHookSyncProvider: RecapHookSyncProvider | undefined
+
+/** index.ts wires the policy (consent + runner + skip-list) here; pty.ts stays decoupled. */
+export function setRecapHookSyncProvider(fn: RecapHookSyncProvider | undefined): void {
+  recapHookSyncProvider = fn
+}
+
+/** pty.ts calls this just before the launch line; the guard keeps spawns unbreakable. */
+export function syncRecapHook(opts: { id: string; cwd: string }): void {
+  try {
+    recapHookSyncProvider?.(opts)
+  } catch {
+    /* hook install is best-effort — never block a spawn */
+  }
+}

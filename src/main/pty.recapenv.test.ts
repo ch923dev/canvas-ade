@@ -250,3 +250,75 @@ describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
     })
   })
 })
+
+describe('setRecapHookSyncProvider (cross-cwd recap capture — spawn-time hook install seam)', () => {
+  beforeEach(() => {
+    spawnSpy.mockClear()
+  })
+
+  afterEach(async () => {
+    const { setRecapHookSyncProvider } = await import('./ptySpawnEnv')
+    setRecapHookSyncProvider(undefined)
+  })
+
+  it('provider is consulted with the id + RESOLVED cwd on every spawn (even a bare shell)', async () => {
+    const { setRecapHookSyncProvider } = await import('./ptySpawnEnv')
+    const { registerPtyHandlers } = await import('./pty')
+    const seen: { id: string; cwd: string }[] = []
+    setRecapHookSyncProvider((o) => {
+      seen.push(o)
+    })
+
+    const { ipcMain, invoke } = buildIpc()
+    registerPtyHandlers(ipcMain, makeGetWin())
+
+    // No launchCommand: a bare shell board must still get the hook — a hand-typed `claude`
+    // in it needs the cwd repo's hook exactly as a configured launch does.
+    const cwd = process.cwd() // a real dir, so safeCwd resolves it verbatim
+    await invoke('pty:spawn', { id: 'b7', cwd })
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ id: 'b7', cwd })
+  })
+
+  it('provider runs BEFORE the launch line is written (hook on disk before the agent boots)', async () => {
+    const { setRecapHookSyncProvider } = await import('./ptySpawnEnv')
+    const { registerPtyHandlers } = await import('./pty')
+    const provider = vi.fn()
+    setRecapHookSyncProvider(provider)
+
+    const { ipcMain, invoke } = buildIpc()
+    registerPtyHandlers(ipcMain, makeGetWin())
+
+    await invoke('pty:spawn', { id: 'b8', launchCommand: 'claude' })
+
+    const proc = spawnSpy.mock.results[0].value as { write: ReturnType<typeof vi.fn> }
+    const launchWrite = proc.write.mock.invocationCallOrder[0]
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.invocationCallOrder[0]).toBeLessThan(launchWrite)
+  })
+
+  it('a throwing provider does NOT break the spawn', async () => {
+    const { setRecapHookSyncProvider } = await import('./ptySpawnEnv')
+    const { registerPtyHandlers } = await import('./pty')
+    setRecapHookSyncProvider(() => {
+      throw new Error('EACCES writing settings.local.json')
+    })
+
+    const { ipcMain, invoke } = buildIpc()
+    registerPtyHandlers(ipcMain, makeGetWin())
+
+    const result = await invoke('pty:spawn', { id: 'b9', launchCommand: 'claude' })
+    expect((result as { state: string }).state).toBe('running')
+    expect(spawnSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('no provider set (undefined) → spawn is unchanged', async () => {
+    const { registerPtyHandlers } = await import('./pty')
+    const { ipcMain, invoke } = buildIpc()
+    registerPtyHandlers(ipcMain, makeGetWin())
+
+    const result = await invoke('pty:spawn', { id: 'b10' })
+    expect((result as { state: string }).state).toBe('running')
+  })
+})
