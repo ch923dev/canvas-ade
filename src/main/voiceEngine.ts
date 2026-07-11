@@ -17,8 +17,9 @@
 import { utilityProcess } from 'electron'
 import type { MessagePortMain, UtilityProcess } from 'electron'
 import { join } from 'path'
-import type { SpikeResult } from './voiceEngineHost'
+import type { SpikeResult, TtsSpeakReq } from './voiceEngineHost'
 import type { VoiceModelPaths } from './voiceModels'
+import type { TtsModelPaths } from './voiceTtsModels'
 
 export function spawnEngineHost(): UtilityProcess {
   const child = utilityProcess.fork(join(__dirname, 'voiceEngineHost.js'), [], {
@@ -51,6 +52,22 @@ export interface VoiceEngineHandle {
    * own exit event. One listener (voiceIpc's restart-once policy); null clears it.
    */
   onEngineFailure(cb: ((reason: string) => void) | null): void
+  /** J2: transfer the renderer end's peer of a TTS chunk channel to the host (spawns it
+   *  if needed) — the host lazily builds its TTS worker + OfflineTts off-loop. */
+  startTtsSession(port: MessagePortMain, model: TtsModelPaths | null): void
+  /** J2: enqueue one speak (FIFO in the host's TTS worker; chunks stream on the port). */
+  ttsSpeak(req: TtsSpeakReq): void
+  /** J2 barge-in: cancel the active synthesis + drain the speak queue. */
+  ttsCancel(): void
+  /** J2: cancel + close the TTS port. Safe when no TTS session is live. */
+  stopTtsSession(): void
+  /**
+   * J2: observe TTS-ONLY failures ({t:'tts:engine:error'} — the TTS worker died or its
+   * session init failed). The host stays up (STT unaffected); the next startTtsSession
+   * respawns the worker. Does NOT fire for whole-host failures — those land on
+   * onEngineFailure. One listener; null clears it.
+   */
+  onTtsFailure(cb: ((reason: string) => void) | null): void
   /** Kill the host outright (app quit). Safe when never spawned. */
   dispose(): void
 }
@@ -61,6 +78,7 @@ export function createVoiceEngine(
   let child: EngineChildLike | null = null
   let pendingStop: ((r: { frames: number }) => void) | null = null
   let failCb: ((reason: string) => void) | null = null
+  let ttsFailCb: ((reason: string) => void) | null = null
 
   const settleStop = (frames: number): void => {
     const resolve = pendingStop
@@ -74,7 +92,10 @@ export function createVoiceEngine(
     c.on('message', (m: unknown) => {
       const msg = m as { t?: string; frames?: number; error?: string } | null
       if (msg?.t === 'session:stopped') settleStop(msg.frames ?? 0)
-      else if (msg?.t === 'decoder:error' && child === c) {
+      else if (msg?.t === 'tts:engine:error' && child === c) {
+        // TTS-only degradation: the host (and any live STT session) keeps running.
+        ttsFailCb?.(msg.error ?? 'voice tts failed')
+      } else if (msg?.t === 'decoder:error' && child === c) {
         // The decode thread died inside a still-running host — the host is degraded
         // (frames count but nothing transcribes). Kill it and escalate; clearing `child`
         // FIRST makes the kill's own 'exit' event a no-op below (identity guard).
@@ -103,6 +124,23 @@ export function createVoiceEngine(
     },
     onEngineFailure(cb): void {
       failCb = cb
+    },
+    startTtsSession(port, model): void {
+      ensureChild().postMessage({ t: 'tts:session:start', ttsModel: model }, [port])
+    },
+    // Speak/cancel/stop never SPAWN the host: without a live tts session they'd only
+    // reach a worker that doesn't exist — a no-op either way, so don't pay a fork.
+    ttsSpeak(req): void {
+      child?.postMessage({ t: 'tts:speak', req })
+    },
+    ttsCancel(): void {
+      child?.postMessage({ t: 'tts:cancel' })
+    },
+    stopTtsSession(): void {
+      child?.postMessage({ t: 'tts:session:stop' })
+    },
+    onTtsFailure(cb): void {
+      ttsFailCb = cb
     },
     // 10 s = the eos drain (≤1 s) plus a wide margin. The V3-era 30 s stopgap existed
     // because a COLD recognizer init (>10 s under machine load) blocked the host loop

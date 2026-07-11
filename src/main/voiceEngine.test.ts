@@ -131,6 +131,41 @@ describe('createVoiceEngine', () => {
     expect(onFail).not.toHaveBeenCalled()
   })
 
+  it('J2 TTS: startTtsSession transfers the port; speak/cancel/stop route to a live host only', () => {
+    const engine = createVoiceEngine(fork)
+    // Without a live host, speak/cancel/stop never spawn one (no-op by design).
+    engine.ttsSpeak({ id: 1, text: 'x', sid: 4, speed: 1 })
+    engine.ttsCancel()
+    engine.stopTtsSession()
+    expect(fork).not.toHaveBeenCalled()
+
+    const model = { engine: 'kokoro', model: 'M', tokens: 'T', dataDir: 'D', voices: 'V' }
+    engine.startTtsSession(fakePort, model as never)
+    const req = { id: 2, text: 'hello', sid: 4, speed: 1.0 }
+    engine.ttsSpeak(req)
+    engine.ttsCancel()
+    engine.stopTtsSession()
+    expect(child.posted).toEqual([
+      { msg: { t: 'tts:session:start', ttsModel: model }, transfer: [fakePort] },
+      { msg: { t: 'tts:speak', req }, transfer: undefined },
+      { msg: { t: 'tts:cancel' }, transfer: undefined },
+      { msg: { t: 'tts:session:stop' }, transfer: undefined }
+    ])
+  })
+
+  it('J2 TTS: tts:engine:error fires onTtsFailure WITHOUT killing the host (STT unaffected)', () => {
+    const engine = createVoiceEngine(fork)
+    const onFail = vi.fn()
+    const onTtsFail = vi.fn()
+    engine.onEngineFailure(onFail)
+    engine.onTtsFailure(onTtsFail)
+    engine.startTtsSession(fakePort, null)
+    child.emit('message', { t: 'tts:engine:error', error: 'tts worker exited (1)' })
+    expect(onTtsFail).toHaveBeenCalledExactlyOnceWith('tts worker exited (1)')
+    expect(onFail).not.toHaveBeenCalled()
+    expect(child.killed).toBe(false)
+  })
+
   it('decoder:error kills the host, fires onEngineFailure once, settles a pending stop (V5)', async () => {
     const engine = createVoiceEngine(fork)
     const onFail = vi.fn()

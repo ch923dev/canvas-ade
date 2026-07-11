@@ -7,7 +7,7 @@ import { recapApi, type RecapRefreshOutcome } from './recapApi'
 import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
-import { forwardVoicePort, voiceApi } from './voice'
+import { forwardVoicePort, forwardVoiceTtsPort, voiceApi } from './voice'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -923,9 +923,11 @@ const api = {
 }
 
 // Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):
-// the per-board PTY port (terminalApi.forwardPtyPort) and the voice capture port (voice.ts).
+// the per-board PTY port (terminalApi.forwardPtyPort) and the voice capture + TTS chunk
+// ports (voice.ts).
 forwardPtyPort()
 forwardVoicePort()
+forwardVoiceTtsPort()
 
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('api', api)
