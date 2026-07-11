@@ -4,10 +4,12 @@
  * attachCustomKeyEventHandler; an action means "we own this key" (suppress xterm's
  * default and run it), null means "let xterm handle it" (Enter→\r, Ctrl+C→\x03, …).
  *
- * Ctrl+C is selection-aware: copy ONLY when text is selected, else null so xterm
- * sends SIGINT — keeps the reflexive single-press interrupt and Claude Code's own
- * single/double Ctrl+C intact. The primary modifier is Cmd on macOS, Ctrl elsewhere,
- * so Ctrl+C remains SIGINT on a Mac.
+ * Ctrl+C is selection-aware: copy ONLY when text is selected — the caller's
+ * `ctx.hasSelection` covers the LIVE selection or the recent-snapshot fallback
+ * (selectionSnapshot.ts: a streaming agent's mouse-tracking toggles wipe the live one) —
+ * else null so xterm sends SIGINT, keeping the reflexive single-press interrupt and
+ * Claude Code's own single/double Ctrl+C intact. The primary modifier is Cmd on macOS,
+ * Ctrl elsewhere, so Ctrl+C remains SIGINT on a Mac.
  */
 export interface TermKeyChord {
   /** 'keydown' | 'keyup' | 'keypress' — the handler fires for all; act only on keydown. */
@@ -79,9 +81,12 @@ export interface TerminalKeyEffects {
   /** Write the newline byte (TERMINAL_NEWLINE) to the PTY. */
   newline(): void
   /**
-   * Copy the current xterm selection to the clipboard. Returns true if something was
-   * copied; false if the selection vanished between keydown and now — in which case the
+   * Copy the current xterm selection — or the recent-snapshot fallback when an agent-side
+   * wipe emptied the live one — to the clipboard. Returns true if something was copied;
+   * false ONLY when both the live selection and the snapshot are empty, in which case the
    * caller must FALL THROUGH to xterm's Ctrl+C (SIGINT) instead of swallowing the key.
+   * (Terminal-copy fix: a false here used to be common mid-stream and silently SIGINT'd
+   * the running agent; the snapshot fallback makes it the genuinely-nothing-selected case.)
    */
   copySelection(): boolean
   /** Smart-paste clipboard contents into the terminal (image → staged path, else text). */
@@ -115,7 +120,8 @@ export function handleTerminalKey(
   if (!action) return true
 
   if (action.kind === 'copy') {
-    // Selection may have vanished between keydown and now → fall through to SIGINT, no preventDefault.
+    // Both the live selection AND the snapshot fallback empty (vanished between keydown and
+    // now) → fall through to SIGINT, no preventDefault.
     if (!fx.copySelection()) return true
     e.preventDefault()
     return false

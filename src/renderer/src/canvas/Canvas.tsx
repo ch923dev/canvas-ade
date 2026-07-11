@@ -113,6 +113,8 @@ const edgeTypes: EdgeTypes = {
   orchestration: OrchestrationEdge,
   routing: RoutingEdge
 }
+// M8: the digest-panel-closed seed/fallback — computed once at module scope, not per mount.
+const EMPTY_DIGEST = buildDigest({ schemaVersion: SCHEMA_VERSION, boards: [], connectors: [] })
 // Fit/reset framing now lives in lib/canvasView (FIT_FRAME / RESET_FRAME) so the
 // camera-cluster buttons in AppChrome share the exact same presets. Used instant for
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
@@ -278,10 +280,17 @@ function CanvasInner(): ReactElement {
   // Tier-1 digest: a pure function of the persisted boards (DigestDoc = the doc minus the
   // camera). It does NOT read the camera `viewport`, so a pan/zoom must not recompute it
   // (CANVAS-01: subscribing to `s.viewport` here re-rendered CanvasInner every camera frame).
+  // M8: gate buildDigest (O(boards×elements)) on digestOpen — the memo yields null while
+  // closed and DigestPanel falls back to the last computed digest (STATE, not a ref: refs
+  // can't be read during render). `setLastDigest` mirrors the "adjust state during render"
+  // pattern above (digestProjectKey/digestOpen); it terminates because lastDigest is NOT a
+  // memo dep, so the adjust re-render returns the same memoized object and the guard closes.
+  const [lastDigest, setLastDigest] = useState(EMPTY_DIGEST)
   const digest = useMemo(
-    () => buildDigest({ schemaVersion: SCHEMA_VERSION, boards, connectors }),
-    [boards, connectors]
+    () => (digestOpen ? buildDigest({ schemaVersion: SCHEMA_VERSION, boards, connectors }) : null),
+    [boards, connectors, digestOpen]
   )
+  if (digest !== null && digest !== lastDigest) setLastDigest(digest)
 
   // T-M4 / T-F4: the reopen DigestPanel's cached Tier-2 prose + manual ⟳ refresh (incl. MCP-04
   // "why a refresh produced nothing"). Extracted to a hook to keep this file under the max-lines gate.
@@ -878,6 +887,14 @@ function CanvasInner(): ReactElement {
             panOnScroll
             zoomActivationKeyCode={['Meta', 'Control']}
             deleteKeyCode={['Backspace', 'Delete']}
+            // Terminal-copy fix: RF's default selectionKeyCode is 'Shift', and its Pane swallows
+            // (capture-phase stopPropagation+preventDefault) ANY Shift-held pointerdown inside a
+            // node while that key is down — which kills Shift+drag inside a terminal, the one
+            // gesture xterm honors as forced text selection while a TUI has mouse-tracking on
+            // (xterm shouldForceSelection). RF box-select is vestigial here: the app's own
+            // single-selection store (selectBoard/clearSelection) never consumes RF
+            // multi-selection, so disabling costs nothing.
+            selectionKeyCode={null}
             // D4-B: React Flow's built-in node keyboard a11y is replaced by the
             // useBoardKeyboardNav model. The built-in put tabIndex=0 on every node (Tab
             // walked raw DOM order, not the canvas) and its node-level arrow-move
@@ -996,7 +1013,7 @@ function CanvasInner(): ReactElement {
           )}
           <AppChrome onTidy={tidyAndFit} onFocusGroup={focusGroup} />
           <DigestPanel
-            digest={digest}
+            digest={digest ?? lastDigest}
             prose={prose}
             onRefresh={refreshBoardProse}
             open={digestOpen}

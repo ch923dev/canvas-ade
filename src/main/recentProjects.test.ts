@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -22,6 +22,44 @@ afterEach(() => {
 describe('recentProjects', () => {
   it('returns [] when the file is absent', async () => {
     expect(await listRecents(userData)).toEqual([])
+  })
+
+  // L3 cache: the parsed list is cached per userDataDir, validated by the file's mtime+size —
+  // a write by ANOTHER process sharing this userData dir (dev builds skip
+  // requestSingleInstanceLock) must be seen, not clobbered by our next write.
+  it('L3: an external rewrite of the file is picked up despite the warm cache', async () => {
+    const a = mkdtempSync(join(tmpdir(), 'proj-a-'))
+    const b = mkdtempSync(join(tmpdir(), 'proj-b-'))
+    await touchRecent(userData, a, 'a', 1000)
+    expect((await listRecents(userData)).map((r) => r.name)).toEqual(['a']) // cache primed
+    writeFileSync(
+      join(userData, 'recent-projects.json'),
+      JSON.stringify({
+        projects: [
+          { path: b, name: 'b', lastOpenedAt: 2000 },
+          { path: a, name: 'a', lastOpenedAt: 1000 }
+        ]
+      })
+    )
+    expect((await listRecents(userData)).map((r) => r.name)).toEqual(['b', 'a'])
+  })
+
+  it('L3: touchRecent builds on an externally-updated file instead of clobbering it', async () => {
+    const a = mkdtempSync(join(tmpdir(), 'proj-a-'))
+    const b = mkdtempSync(join(tmpdir(), 'proj-b-'))
+    await touchRecent(userData, a, 'a', 1000) // cache primed with [a]
+    writeFileSync(
+      join(userData, 'recent-projects.json'),
+      JSON.stringify({
+        projects: [
+          { path: b, name: 'b', lastOpenedAt: 2000 },
+          { path: a, name: 'a', lastOpenedAt: 1000 }
+        ]
+      })
+    )
+    await touchRecent(userData, a, 'a', 3000)
+    // b (the other process's entry) survives; a stale-cache write would have dropped it
+    expect((await listRecents(userData)).map((r) => r.name)).toEqual(['a', 'b'])
   })
 
   it('touchRecent inserts, then move-to-front on re-touch', async () => {

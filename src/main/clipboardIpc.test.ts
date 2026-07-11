@@ -22,13 +22,50 @@ function deps(over: Partial<ClipboardDeps> = {}): ClipboardDeps {
 }
 
 describe('clipboardIpc', () => {
-  it('clipboard:writeText writes through to deps', async () => {
+  it('clipboard:writeText writes through and verifies by readback', async () => {
     const ipc = fakeIpc()
-    const d = deps()
+    // A clipboard that actually lands: readText returns what was last written.
+    let held = ''
+    const d = deps({
+      writeText: vi.fn((t: string) => {
+        held = t
+      }),
+      readText: vi.fn(() => held)
+    })
     registerClipboardHandlers(ipc as never, () => null, d)
     const ok = await ipc.handlers['clipboard:writeText'](internal, 'copied')
     expect(d.writeText).toHaveBeenCalledWith('copied')
+    expect(d.writeText).toHaveBeenCalledTimes(1) // landed first try → no retries
     expect(ok).toBe(true)
+  })
+
+  describe('terminal-copy fix: verified write with retry (Windows silently drops contended writes)', () => {
+    it('retries when the readback mismatches and succeeds once the write lands', async () => {
+      const ipc = fakeIpc()
+      // First two writes are dropped (readback shows stale content), the third lands.
+      let held = 'stale'
+      let drops = 2
+      const d = deps({
+        writeText: vi.fn((t: string) => {
+          if (drops > 0) drops--
+          else held = t
+        }),
+        readText: vi.fn(() => held)
+      })
+      registerClipboardHandlers(ipc as never, () => null, d)
+      const ok = await ipc.handlers['clipboard:writeText'](internal, 'copied')
+      expect(d.writeText).toHaveBeenCalledTimes(3)
+      expect(ok).toBe(true)
+    })
+
+    it('returns false (honest failure) when every attempt is dropped — renderer keeps the highlight', async () => {
+      const ipc = fakeIpc()
+      const d = deps({ writeText: vi.fn(), readText: vi.fn(() => 'stale') })
+      registerClipboardHandlers(ipc as never, () => null, d)
+      const ok = await ipc.handlers['clipboard:writeText'](internal, 'copied')
+      expect(d.writeText).toHaveBeenCalledTimes(3)
+      expect(ok).toBe(false)
+    })
   })
 
   it('clipboard:readText returns the clipboard text', async () => {

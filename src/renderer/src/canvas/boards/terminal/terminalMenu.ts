@@ -15,8 +15,14 @@ import { pasteIntoTerminal } from './pasteIntoTerminal'
 import { runTerminalSave } from './terminalSaveOutput'
 
 export interface TerminalMenuParams {
-  /** Selection present at open-time → enables Copy. */
+  /** Selection present at open-time (live OR snapshot fallback) → enables Copy. */
   hasSel: boolean
+  /**
+   * Terminal-copy fix: the last-known selection text ('' when none). Copy falls back to it
+   * when the live selection was wiped between menu-open and the click — a streaming agent's
+   * mouse-tracking toggles do exactly that (docs/reviews/2026-07-11-terminal-copy-paste-research).
+   */
+  selectionFallback: () => string
   boardId: string
   /** Current effective (pinned-space) font, for the ± disabled bounds. */
   effectiveFont: number
@@ -37,10 +43,13 @@ export function buildTerminalMenuEntries(p: TerminalMenuParams): MenuEntry[] {
       disabled: !p.hasSel,
       onSelect: () => {
         const t = termRef.current
-        const sel = t?.getSelection()
+        const sel = t?.getSelection() || p.selectionFallback()
         if (t && sel) {
-          void window.api.clipboard.writeText(sel)
-          t.clearSelection()
+          // Clear the highlight only when MAIN verified the write landed (readback in
+          // clipboardIpc); on failure it stays as the "not copied" signal.
+          void window.api.clipboard.writeText(sel).then((ok) => {
+            if (ok && termRef.current === t) t.clearSelection()
+          })
         }
       }
     },

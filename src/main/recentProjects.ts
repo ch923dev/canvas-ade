@@ -3,7 +3,7 @@
  * Pure file I/O keyed by an explicit userDataDir + caller-supplied timestamp, so it's
  * fully testable without Electron's `app`. MRU-ordered, capped, prunes dead folders.
  */
-import { mkdirSync, readFileSync, existsSync } from 'fs'
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from 'fs'
 import { access } from 'fs/promises'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
@@ -53,6 +53,41 @@ function pathExists(p: string): Promise<boolean> {
 }
 
 /**
+ * L3: the parsed+shaped list, cached per userDataDir so project:open/create/reopen (each calling
+ * listRecents, incl. the isUnderApprovedRoot gate) don't re-read + re-parse the file on every call.
+ * Validated against the file's mtime+size on every read (an fstat is ~µs vs read+parse), so a
+ * write by ANOTHER process sharing this userData dir (dev builds skip requestSingleInstanceLock)
+ * or a manual edit is picked up instead of being clobbered by our next write. Writes in this
+ * module invalidate the entry (cacheWritten); the next read re-caches.
+ */
+interface StoredCacheEntry {
+  mtimeMs: number
+  size: number
+  list: RecentProject[]
+}
+const storedCache = new Map<string, StoredCacheEntry>()
+
+/**
+ * Invalidate after a write: the next read re-reads + re-caches through the fd-paired path in
+ * readStoredRecents. Re-caching here with a path-stat would repeat the js/file-system-race
+ * TOCTOU (a concurrent external write between our rename and the stat would pair ITS stat
+ * with OUR list). Writes are rare (open/create/remove), so the one extra parse is noise.
+ */
+function cacheWritten(userDataDir: string): void {
+  storedCache.delete(userDataDir)
+}
+
+function shapeRecents(raw: unknown): RecentProject[] {
+  return (Array.isArray(raw) ? (raw as RecentProject[]) : []).filter(
+    (r) =>
+      r &&
+      typeof r.path === 'string' &&
+      typeof r.name === 'string' &&
+      typeof r.lastOpenedAt === 'number'
+  )
+}
+
+/**
  * Read + shape-validate the stored list WITHOUT any existence filtering.
  * BUG-044: this is the persistence-side read — touchRecent must build its written list
  * from the raw stored entries, because the pathExists timeout in listRecents is a
@@ -61,21 +96,32 @@ function pathExists(p: string): Promise<boolean> {
  */
 function readStoredRecents(userDataDir: string): RecentProject[] {
   const file = fileFor(userDataDir)
-  if (!existsSync(file)) return []
-  let raw: RecentProject[]
+  // CodeQL js/file-system-race: stat and read through the SAME fd so the cache entry's
+  // mtime+size are guaranteed to describe the exact bytes parsed — a path-based
+  // stat-then-read could pair the old stat with a concurrently-swapped file's content.
+  let fd: number
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { projects?: unknown }
-    raw = Array.isArray(parsed.projects) ? (parsed.projects as RecentProject[]) : []
+    fd = openSync(file, 'r')
   } catch {
+    storedCache.delete(userDataDir) // no file (or unreadable): nothing to cache against
     return []
   }
-  return raw.filter(
-    (r) =>
-      r &&
-      typeof r.path === 'string' &&
-      typeof r.name === 'string' &&
-      typeof r.lastOpenedAt === 'number'
-  )
+  try {
+    const stat = fstatSync(fd)
+    const cached = storedCache.get(userDataDir)
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.list
+    let shaped: RecentProject[]
+    try {
+      const parsed = JSON.parse(readFileSync(fd, 'utf8')) as { projects?: unknown }
+      shaped = shapeRecents(parsed.projects)
+    } catch {
+      return [] // parse failure: don't cache — a fixed-up file on a later read should be seen
+    }
+    storedCache.set(userDataDir, { mtimeMs: stat.mtimeMs, size: stat.size, list: shaped })
+    return shaped
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /**
@@ -108,6 +154,7 @@ export async function touchRecent(
   // making listRecents silently return [] (BUG-L5). write-file-atomic stages to a
   // temp file + rename, so a crash mid-write leaves the prior good file intact.
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
+  cacheWritten(userDataDir) // L3: invalidate; next read re-caches fd-paired
 }
 
 /**
@@ -122,10 +169,12 @@ export async function removeRecent(userDataDir: string, path: string): Promise<v
   if (next.length === stored.length) return
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
+  cacheWritten(userDataDir) // L3
 }
 
 /** Wipe the stored list entirely. LIST-ONLY: project folders on disk are untouched. */
 export async function clearRecents(userDataDir: string): Promise<void> {
   mkdirSync(userDataDir, { recursive: true })
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: [] }, null, 2), 'utf8')
+  cacheWritten(userDataDir) // L3
 }

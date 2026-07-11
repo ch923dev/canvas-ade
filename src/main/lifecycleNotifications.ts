@@ -54,6 +54,20 @@ function defaultOsNotify(opts: { title: string; body: string; onClick: () => voi
 }
 
 /**
+ * A real native OS notification is pure noise during an automated headless run. The e2e harness
+ * (`CANVAS_E2E`) spawns real terminal boards whose idle-scan lifecycle events — plus any recap-map
+ * appends — funnel through the SAME production `deliver` as at runtime, so WITHOUT this every e2e run
+ * pops real Windows/macOS notifications onto the dev's desktop (the distraction this suppresses).
+ * Under any headless harness (e2e, or the `CANVAS_SMOKE` self-test) the OS layer becomes a no-op; the
+ * in-app toast + on-canvas attention still push to the renderer, and the dedicated notifications.e2e.ts
+ * asserts the OS decision through its OWN recording spy (e2eMain's `createNotifyProbe`) — so muting the
+ * REAL Notification here costs zero coverage. Dev (`pnpm dev`) sets neither var, so it is unaffected.
+ */
+function isHeadlessHarness(): boolean {
+  return !!process.env.CANVAS_E2E || !!process.env.CANVAS_SMOKE
+}
+
+/**
  * A normalized lifecycle signal at the delivery boundary. `cwd` is OPTIONAL here (unlike the
  * Claude-path {@link LifecycleSignal}, which always carries one): the generic-PTY path may have no
  * resolved cwd for a board, and `deliver` already renders an empty locator in that case. A
@@ -186,7 +200,10 @@ export function wireLifecycleNotifications(
     // Fresh read per event (settings change rarely; events are infrequent — no cache to invalidate).
     getConfig: () => readNotificationsConfig(userDataDir),
     // Project the board mirror by id for the gate (monitorActivity) + copy (title / agentKind).
-    getBoard: (id) => listBoardMirror().find((b) => b.id === id)
+    getBoard: (id) => listBoardMirror().find((b) => b.id === id),
+    // Mute the REAL OS Notification under any headless harness so e2e/smoke runs never pop a desktop
+    // notification (see isHeadlessHarness). `undefined` keeps the production default (defaultOsNotify).
+    notify: isHeadlessHarness() ? () => {} : undefined
   })
   setPtyLifecycleEmitter(handle.deliver)
   return handle

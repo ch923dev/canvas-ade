@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useCallback, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
+import { useShallow } from 'zustand/react/shallow'
 import type {
   Board,
   DataFlowBoard as DataFlowBoardData,
@@ -86,15 +87,23 @@ export function DataFlowBoard({
   const addBoard = useCanvasStore((s) => s.addBoard)
   // Board Inspector slot (P2): non-null only while THIS board is the single eligible selection.
   const inspectorSlot = useInspectorSlot(board.id)
-  // Stable fingerprint of the bindable Browser boards (id+title only — not position, so a drag never
-  // re-renders this subtree). Parsed into options below.
-  const browserKey = useCanvasStore((s) =>
-    JSON.stringify(s.boards.filter((b) => b.type === 'browser').map((b) => [b.id, b.title]))
+  // L5: fingerprint of the bindable Browser boards (id+title only — NOT position, so a drag never
+  // re-renders this subtree — including a drag of a Browser board ITSELF, whose position patch
+  // re-mints that board's object reference via applyBoardPatch). Was a JSON.stringify/JSON.parse
+  // round-trip used as a manual key; useShallow over a flat list of primitives does the same job
+  // without the string-building. Selecting the board OBJECTS instead would regress the invariant:
+  // useShallow's per-element Object.is would see the dragged Browser board's fresh reference every
+  // frame. Parsed into options in the memo below.
+  const browserKey = useCanvasStore(
+    useShallow((s) => s.boards.flatMap((b) => (b.type === 'browser' ? [b.id, b.title] : [])))
   )
-  const browsers = useMemo<{ id: string; title: string }[]>(
-    () => (JSON.parse(browserKey) as [string, string][]).map(([id, title]) => ({ id, title })),
-    [browserKey]
-  )
+  const browsers = useMemo<{ id: string; title: string }[]>(() => {
+    const out: { id: string; title: string }[] = []
+    for (let i = 0; i < browserKey.length; i += 2) {
+      out.push({ id: browserKey[i], title: browserKey[i + 1] })
+    }
+    return out
+  }, [browserKey])
   // The bound Browser board's registrable domain — drives the first-party filter (primitive ⇒ stable).
   const sourceDomain = useCanvasStore((s) => {
     const b = sourceId ? s.boards.find((x) => x.id === sourceId) : undefined

@@ -1,6 +1,7 @@
 import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
 import { MessageChannelMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import { buildSpawnEnv, type RecapEnvProvider } from './ptySpawnEnv'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
@@ -15,6 +16,7 @@ import {
   type OutputPage,
   type OutputRing
 } from './ptyOutput'
+import { createChunkBatcher, drainBatch, ownedPort } from './ptyDataBatch'
 import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
@@ -141,6 +143,10 @@ interface SessionLike {
   spawnedAt: number
   /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
   exitCode?: number
+  /** M9: drain the pending onData micro-batch (ptyDataBatch) synchronously. Called by cleanupCore/
+   *  parkCore BEFORE the map delete + port close so a same-tick buffered chunk still reaches the
+   *  renderer (the per-chunk post it replaced was synchronous). Idempotent — empty batch no-ops. */
+  flushData?: () => void
   /**
    * Desktop-notifications P3: the board's `monitorActivity` opt-out, captured at spawn. Absent ⇒
    * monitored (read as `monitored !== false`). `false` silences this session's generic-PTY exit
@@ -195,6 +201,9 @@ interface ParkedLike {
    *  post-watermark tail (readRingSince) after re-writing the snapshot — full scrollback,
    *  no duplication, no 256KB ceiling. Undo parks ignore it (full-ring replay as ever). */
   watermark?: number
+  /** M9: the session's micro-batch drain, carried across park→adopt so the adopted session's
+   *  eventual cleanup can still flush a same-tick buffered chunk (see SessionLike.flushData). */
+  flushData?: () => void
 }
 
 const sessions = new Map<string, SessionLike>()
@@ -222,17 +231,8 @@ const parked = new Map<string, ParkedLike>()
  */
 const boardCwds = new Map<string, string>()
 
-/**
- * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
- * Returns a record to merge LAST into the spawn env, or undefined for no extra env.
- * Policy errors must NEVER break a spawn — the provider is called inside a try/catch.
- * index.ts wires the policy (consent + claude detection) here; pty.ts stays decoupled.
- */
-type RecapEnvProvider = (opts: {
-  id: string
-  launchCommand?: string
-  cwd?: string
-}) => Record<string, string> | undefined
+// Injectable env-policy seam (CANVAS_RECAP_BOARD etc.) — type + merge semantics + the
+// never-break-a-spawn try/catch live in ptySpawnEnv.ts (buildSpawnEnv).
 let recapEnvProvider: RecapEnvProvider | undefined
 
 /** index.ts wires the policy (consent + claude detection) here; pty.ts stays decoupled. */
@@ -344,6 +344,8 @@ export function parkCore(
 ): void {
   const s = sessionsMap.get(id)
   if (!s) return
+  // M9: drain while the session is still in the map (the flush resolves its target through it).
+  drainBatch(s)
   sessionsMap.delete(id)
   try {
     s.port.close()
@@ -368,7 +370,8 @@ export function parkCore(
     // add hundreds of ms) belongs to the post-snapshot tail, not below the watermark.
     // Undo parks (nothing was flushed at delete) keep the park-time value; it is unused.
     watermark:
-      kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written
+      kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written,
+    flushData: s.flushData // M9: survives the round-trip for the adopted session's cleanup
   })
 }
 
@@ -428,7 +431,8 @@ export function adoptCore(
     // switch-back-and-away) records watermark = live `written`, and the bytes between the
     // snapshot and that point land in neither the preface nor the tail. A later real
     // flush overwrites it; undo parks carry nothing (their watermark is never read).
-    flushWatermark: p.kind === 'background' ? p.watermark : undefined
+    flushWatermark: p.kind === 'background' ? p.watermark : undefined,
+    flushData: p.flushData // M9: restore the micro-batch drain for this session's cleanup
   })
   transferPort(port2)
 
@@ -634,17 +638,6 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     if (process.platform === 'win32' && args.length === 0 && /\\bash\.exe$/i.test(shell)) {
       args = ['-l', '-i']
     }
-    let recapEnv: Record<string, string> | undefined
-    try {
-      recapEnv = recapEnvProvider?.({
-        id: opts.id,
-        launchCommand: opts.launchCommand,
-        cwd: opts.cwd
-      })
-    } catch {
-      recapEnv = undefined // policy must never break a spawn
-    }
-
     // BUG-023: clamp spawn dims to the same [1, 1000] bounds that isValidResize
     // enforces on the resize path. Without this, a board wider than 1000 cols
     // spawns fine but every subsequent resize (including row-only changes) is
@@ -661,7 +654,13 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         cols: spawnCols,
         rows: spawnRows,
         cwd: spawnCwd,
-        env: { ...process.env, ...(recapEnv ?? {}) } as Record<string, string>
+        // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
+        // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
+        env: buildSpawnEnv(recapEnvProvider, {
+          id: opts.id,
+          launchCommand: opts.launchCommand,
+          cwd: opts.cwd
+        })
       })
     } catch (err) {
       // No live session was registered, so report the failure straight back.
@@ -675,6 +674,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const { port1, port2 } = new MessageChannelMain()
 
     const buf = createRing(RING_CAP_BYTES)
+    // M9: batch chunks landing in the same tick into one postMessage (ptyDataBatch.ts) instead of
+    // one per chunk. Same lookup-at-fire-time + identity guard as the direct post it replaces.
+    const dataBatch = createChunkBatcher(() => ownedPort(sessions.get(opts.id), proc))
     proc.onData((d) => {
       pushRing(buf, d) // PERF-06: amortised O(chunk), no per-chunk O(cap) copy
       // Forward to the current live port (looked up at fire time, so it follows an
@@ -683,21 +685,17 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // ~1s after kill() (node-pty's flush window), and without this check those
       // late bytes would bleed into a freshly-restarted session under the same id.
       const live = sessions.get(opts.id)
-      if (live && live.proc === proc) {
-        live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
-        ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
-        // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
-        // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
-        // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
-        pasteMode.observe(opts.id, d)
-        try {
-          live.port.postMessage({ t: 'data', d })
-        } catch {
-          /* port closed */
-        }
-      }
+      if (!live || live.proc !== proc) return
+      live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
+      ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
+      // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
+      // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
+      // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
+      pasteMode.observe(opts.id, d)
+      dataBatch.push(d)
     })
     proc.onExit(({ exitCode }) => {
+      dataBatch.flushNow() // M9: any buffered chunk must reach the renderer before state/exit below
       // Post lifecycle to the CURRENT live port (looked up at fire time) the same
       // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
       // is told when its process exits. Posting to the captured spawn-time `port1`
@@ -771,7 +769,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // a board's cwd override can point anywhere. null = no project open (e2e boot).
       projectDir: getCurrentDir(),
       // P3: capture the board's monitorActivity opt-out for the generic-PTY lifecycle emits.
-      monitored: opts.monitorActivity !== false
+      monitored: opts.monitorActivity !== false,
+      // M9: let cleanupCore drain the micro-batch before it deletes the entry / closes the port.
+      flushData: () => dataBatch.flushNow()
     })
     boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
@@ -873,6 +873,9 @@ export function cleanupCore(
   const s = sessionsMap.get(id)
   if (!s) return Promise.resolve()
   if (isStaleExit(s.proc, proc)) return Promise.resolve()
+  // M9: drain the pending micro-batch while the session is still in the map and its port is
+  // open — otherwise output buffered this tick is dropped on kill/restart/reap.
+  drainBatch(s)
   sessionsMap.delete(id)
   // PR-2: drop this board's gitDiff cwd when its session is torn down, so the map doesn't
   // accrete entries for the session lifetime (it otherwise only drained on project switch).
