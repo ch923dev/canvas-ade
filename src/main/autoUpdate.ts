@@ -73,6 +73,12 @@ export interface UpdaterLike {
   checkForUpdates(): Promise<unknown>
   downloadUpdate(): Promise<unknown>
   quitAndInstall(): void
+  /**
+   * Present on the real autoUpdater; optional here so test fakes stay minimal. Used ONLY by
+   * the dev-only local update channel (index.ts, compile-gated __LOCAL_UPDATE_CHANNEL__) to
+   * repoint the feed at a validated loopback URL before any check runs.
+   */
+  setFeedURL?(options: { provider: 'generic'; url: string; channel?: string }): void
 }
 
 export interface AutoUpdateDeps {
