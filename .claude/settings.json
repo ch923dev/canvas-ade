@@ -41,5 +41,38 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"Z:\\Canvas ADE\\.claude\\coordination\\coordination-hook.cjs\" session-start"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"Z:\\Canvas ADE\\.claude\\coordination\\coordination-hook.cjs\" post-edit"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"Z:\\Canvas ADE\\.claude\\coordination\\coordination-hook.cjs\" user-prompt-submit"
+          }
+        ]
+      }
+    ]
   }
 }
