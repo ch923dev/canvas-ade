@@ -5,6 +5,7 @@ import { buildSpawnEnv, syncRecapHook, type RecapEnvProvider } from './ptySpawnE
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
+import { maybeEnsureClaudeHook } from './claudeBootDetect'
 import {
   MAX_OUTPUT_PAGE,
   pageOutput,
@@ -692,6 +693,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
       // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
       pasteMode.observe(opts.id, d)
+      // Cross-cwd recap capture: a hand-typed `claude` (any cwd the user cd'd to) announces its
+      // working dir in the boot banner — ensure the recap hook there (claudeBootDetect.ts).
+      maybeEnsureClaudeHook(d, () => readRing(buf), opts.id)
       dataBatch.push(d)
     })
     proc.onExit(({ exitCode }) => {
