@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync, existsSync } from 'fs'
+import { writeFileSync, mkdtempSync, existsSync, rmSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -39,6 +39,7 @@ import {
 import { registerMicPermissionPosture } from './micPermission'
 import { disposeVoiceSession, registerVoiceHandlers } from './voiceIpc'
 import { applyVoiceBootEnv, runVoiceSpikeGate } from './voiceBoot'
+import { applyDevProfileIsolation } from './profileIsolation'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
@@ -161,6 +162,25 @@ let resultSynth: ResultSynthesizer | null = null
 // registry is never persisted or drained at shutdown.
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
+
+// Dev profile isolation (profileIsolation.ts): every unpackaged instance gets a PER-CHECKOUT
+// userData (main-checkout dev, worktree devs, the e2e/smoke harnesses), so concurrent instances
+// never share a Chromium profile or the app's JSON stores — the "close all Expanse windows
+// before a dev check" ritual dies here. Module scope: must precede the single-instance lock
+// (keyed on userData) and every userData read. Packaged builds and the voice spike (which owns
+// its own redirect, below) are left untouched. CANVAS_USERDATA overrides; CANVAS_FRESH=1 mints
+// a throwaway profile, deleted on quit (best-effort — Windows may still hold a handle).
+const devProfile = applyDevProfileIsolation(app, process.env, process.cwd())
+if (devProfile.fresh && devProfile.dir) {
+  const freshDir = devProfile.dir
+  app.on('will-quit', () => {
+    try {
+      rmSync(freshDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
+  })
+}
 
 // Voice boot env (voiceBoot.ts): the fake-mic switches (CANVAS_FAKE_MEDIA) + the spike
 // run's userData isolation. Module scope: appendSwitch must run before app.ready, and the
@@ -347,7 +367,13 @@ app.whenReady().then(async () => {
   // Voice V2/V5 spike gate (voiceBoot.ts): prove the sherpa addon loads in THIS layout
   // (host + decoder worker), print a marker, exit. Never part of a normal boot.
   if (await runVoiceSpikeGate(smokeLog)) return
-  electronApp.setAppUserModelId('com.expanse.app')
+  // Taskbar identity: packaged keeps the product AUMID; dev gets a PER-CHECKOUT one so several
+  // dev instances group per checkout instead of with each other / the installed app. (The toolkit
+  // helper pins dev to process.execPath — the SAME electron.exe for every checkout via the
+  // node_modules junction — so the dev branch calls the raw API.)
+  if (app.isPackaged) electronApp.setAppUserModelId('com.expanse.app')
+  else if (process.platform === 'win32')
+    app.setAppUserModelId(`com.expanse.dev.${devProfile.slug ?? 'dev'}`)
   // Cold start via the scheme (Windows/Linux first launch): the deep-link URL is in our argv.
   if (app.isPackaged) deepLinks.handleColdStart()
   // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
