@@ -248,6 +248,39 @@ describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
       expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBe('0')
       expect(spawnedEnv['FORCE_HYPERLINK']).toBe('1')
     })
+
+    it('nested-claude session identity vars are scrubbed from every spawn', async () => {
+      // The app launched from inside a claude session (dev running `pnpm dev` in a claude
+      // terminal) inherits the parent session's identity — a board's claude must not.
+      const poisoned = {
+        CLAUDECODE: '1',
+        CLAUDE_CODE_CHILD_SESSION: '1',
+        CLAUDE_CODE_SESSION_ID: 'parent-session-id',
+        CLAUDE_CODE_SSE_PORT: '12345',
+        CLAUDE_CODE_ENTRYPOINT: 'cli'
+      }
+      const saved: Record<string, string | undefined> = {}
+      for (const [k, v] of Object.entries(poisoned)) {
+        saved[k] = process.env[k]
+        process.env[k] = v
+      }
+      try {
+        const { registerPtyHandlers } = await import('./pty')
+        const { ipcMain, invoke } = buildIpc()
+        registerPtyHandlers(ipcMain, makeGetWin())
+
+        await invoke('pty:spawn', { id: 'b11' })
+        const spawnedEnv = spawnSpy.mock.calls[0][2].env as Record<string, string>
+        for (const k of Object.keys(poisoned)) expect(spawnedEnv[k]).toBeUndefined()
+        // The deliberate baseline survives the scrub.
+        expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBe('1')
+      } finally {
+        for (const [k, v] of Object.entries(saved)) {
+          if (v === undefined) delete process.env[k]
+          else process.env[k] = v
+        }
+      }
+    })
   })
 })
 

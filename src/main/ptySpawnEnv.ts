@@ -29,6 +29,23 @@ export type RecapEnvProvider = (opts: {
  * Both are inert for non-Claude agents. `recapEnv` (the injectable policy seam) is spread
  * LAST so a policy can still override either baseline var.
  */
+/**
+ * Nested-session env scrub: when the app itself was launched FROM a Claude Code session (a dev
+ * running `pnpm dev` inside a claude terminal — including Expanse's own boards), process.env
+ * carries that parent session's identity. A claude spawned in a board must NOT inherit it: with
+ * these set it behaves as a child of the OUTER session (observed: no transcript of its own →
+ * recap resolves a stale sibling, Resume impossible). Boards are top-level sessions by
+ * definition — strip the identity vars; keep deliberate baseline vars (DISABLE_ALTERNATE_SCREEN
+ * is OURS below).
+ */
+const NESTED_CLAUDE_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_CODE_ENTRYPOINT'
+] as const
+
 export function buildSpawnEnv(
   provider: RecapEnvProvider | undefined,
   opts: { id: string; launchCommand?: string; cwd?: string }
@@ -39,12 +56,14 @@ export function buildSpawnEnv(
   } catch {
     recapEnv = undefined // policy must never break a spawn
   }
-  return {
+  const env = {
     ...process.env,
     FORCE_HYPERLINK: '1',
     CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
     ...(recapEnv ?? {})
   } as Record<string, string>
+  for (const k of NESTED_CLAUDE_ENV) delete env[k]
+  return env
 }
 
 /**
