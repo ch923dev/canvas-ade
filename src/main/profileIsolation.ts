@@ -91,6 +91,11 @@ export function resolveDevProfile(input: ResolveProfileInput): ProfileDecision {
  * (regenerates on the next project snapshot).
  */
 export const MIGRATED_FILES = [
+  // Chromium's `Local State` carries the DPAPI-wrapped os_crypt key that Electron safeStorage
+  // encrypts with on Windows — without it, migrated ciphertext (auth-tokens.json) is unreadable
+  // in the new profile (a fresh key gets minted) and the user is silently signed out. Same-user
+  // DPAPI so the copy decrypts fine; macOS/Linux keep the key in the OS keychain (copy harmless).
+  'Local State',
   'recent-projects.json',
   'recap-consent.json',
   'hotkey-config.json',

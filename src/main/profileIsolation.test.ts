@@ -107,6 +107,8 @@ describe('migrateLegacyProfile', () => {
   it('copies present config files + the recap dir into a brand-new profile', () => {
     writeFileSync(join(legacy, 'recent-projects.json'), '{"v":1}', 'utf8')
     writeFileSync(join(legacy, 'hotkey-config.json'), '{"enabled":true}', 'utf8')
+    // The safeStorage key wrapper — MUST travel with auth-tokens.json or it can't decrypt.
+    writeFileSync(join(legacy, 'Local State'), '{"os_crypt":{"encrypted_key":"k"}}', 'utf8')
     mkdirSync(join(legacy, 'recap'), { recursive: true })
     writeFileSync(join(legacy, 'recap', 'session-map.jsonl'), '{"boardId":"b1"}\n', 'utf8')
 
@@ -114,7 +116,9 @@ describe('migrateLegacyProfile', () => {
 
     expect(copied).toContain('recent-projects.json')
     expect(copied).toContain('hotkey-config.json')
+    expect(copied).toContain('Local State')
     expect(copied).toContain('recap/')
+    expect(readFileSync(join(profile, 'Local State'), 'utf8')).toContain('encrypted_key')
     expect(readFileSync(join(profile, 'recent-projects.json'), 'utf8')).toBe('{"v":1}')
     expect(readFileSync(join(profile, 'recap', 'session-map.jsonl'), 'utf8')).toBe(
       '{"boardId":"b1"}\n'
