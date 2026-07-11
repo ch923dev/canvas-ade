@@ -2350,3 +2350,30 @@ mouse-mode hint badge) documented in the research package.
   `PR dev-profile-isolation v0.14.3`; worktree dev + another lane's dev + packaged
   coexisting, migrated state + sign-in intact). claude-review clean (0/0/0 inline); all 4
   checks PASS. Squash `3a0fbf31`.
+
+## PR #333 — recap captures cross-cwd terminal sessions (2026-07-12, v0.14.4)
+
+- **Problem** (three root causes, all live-verified): (1) the recap capture hook was installed
+  only in the OPEN project dir, so a terminal board spawned with any other cwd (MCP
+  `spawn_board` cwd, `cd`-elsewhere) ran claude with no hook — "Capture didn't record this
+  session", no resume after a crash/close; (2) a hand-typed `claude` after an interactive `cd`
+  targets a dir MAIN cannot know at spawn time; (3) launching the app FROM a claude session
+  leaked `CLAUDECODE`/`CLAUDE_CODE_*` env into board PTYs — a spawned claude believed it was a
+  child session and wrote NO transcript at all (the "wrong recap resolves a 117-hour-old file"
+  symptom).
+- **Fix**: spawn-time hook install via a new `setRecapHookSyncProvider` seam
+  (`ptySpawnEnv.ts`, mirrors the orchestration `.mcp.json` sync pattern) — consent-gated,
+  home-dir-skipped, idempotent; runtime claude-boot detection (`claudeBootDetect.ts`) — the
+  data plane spots the "Claude Code v" banner chunk, parses the printed working dir from the
+  ring buffer (ANSI-stripped, LAST banner wins, drive/UNC roots refused, per-board dedupe) and
+  ensures the hook there, covering hand-typed sessions; nested-claude env scrub list in
+  `buildSpawnEnv`; `recordSession.js` exits early without `CANVAS_RECAP_BOARD`; recapHealth
+  probes the BOARD's cwd (homedir → open-dir fallback — caught by recapHealth.e2e at
+  pre-push) and focus re-ensure walks live board cwds; divergent installs tracked in
+  `recapHookDirs.ts` (`<userData>/recap-hook-dirs.json`) and removed on consent decline.
+- **Verified**: typecheck · lint 0-err · format · 43 new/updated units green (full suite
+  environmental-2 only) · FULL matrix at pre-push (Win 279P/1 skip + Linux Docker) ·
+  manual dev check USER EYEBALL PASS (board `ba6a54cf`: SessionStart→UserPromptSubmit→Stop
+  with transcriptExists=true). claude-review: 1 [critical] (root-path install target +
+  banner re-trigger dedupe) + 1 [warning] (untracked divergent installs) — both fixed in
+  `d2d92bf2`, inline-dispositioned; re-review clean, all 4 checks PASS. Squash `a9feafe9`.
