@@ -10,6 +10,7 @@ import {
   type VoiceConfig
 } from './voiceConfig'
 import { DEFAULT_VOICE_MODEL_ID } from './voiceModels'
+import { DEFAULT_TTS_MODEL_ID } from './voiceTtsModels'
 
 const DEFAULTS: VoiceConfig = {
   engine: 'sherpa-onnx',
@@ -21,7 +22,9 @@ const DEFAULTS: VoiceConfig = {
   cloudProvider: undefined,
   showPill: true,
   pillPosition: undefined,
-  promptHistory: []
+  promptHistory: [],
+  ttsModelId: DEFAULT_TTS_MODEL_ID,
+  ttsDuplex: 'full'
 }
 
 describe('voiceConfig (V4 full SPEC §5 shape)', () => {
@@ -61,10 +64,22 @@ describe('voiceConfig (V4 full SPEC §5 shape)', () => {
       cloudProvider: 'someday',
       showPill: false,
       pillPosition: { x: 12, y: 34 },
-      promptHistory: ['deploy the site', 'run the tests']
+      promptHistory: ['deploy the site', 'run the tests'],
+      ttsModelId: 'piper-en_US-lessac-medium',
+      ttsDuplex: 'half'
     }
     writeVoiceConfig(dir, cfg)
     expect(readVoiceConfig(dir)).toEqual(cfg)
+  })
+
+  it('J2: preserves an unknown ttsModelId and repairs a junk ttsDuplex to full', () => {
+    expect(repairVoiceConfig({ ttsModelId: 'tts-from-the-future' }).ttsModelId).toBe(
+      'tts-from-the-future'
+    )
+    expect(repairVoiceConfig({ ttsModelId: 7 }).ttsModelId).toBe(DEFAULT_TTS_MODEL_ID)
+    expect(repairVoiceConfig({ ttsDuplex: 'half' }).ttsDuplex).toBe('half')
+    expect(repairVoiceConfig({ ttsDuplex: 'quantum' }).ttsDuplex).toBe('full')
+    expect(repairVoiceConfig({}).ttsDuplex).toBe('full')
   })
 
   it('preserves an unknown modelId (catalog fallback happens at use time, not here)', () => {

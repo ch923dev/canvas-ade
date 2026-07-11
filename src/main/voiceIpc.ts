@@ -35,6 +35,16 @@ import {
   type VoiceModelPaths,
   type VoiceModelStatus
 } from './voiceModels'
+import {
+  DEFAULT_TTS_MODEL_ID,
+  TTS_MODEL_CATALOG,
+  deleteTtsModel,
+  downloadTtsModel,
+  getTtsModelSpec,
+  ttsModelPaths,
+  ttsModelStatus,
+  type TtsModelStatus
+} from './voiceTtsModels'
 
 export interface VoiceStartResult {
   ok: boolean
@@ -108,7 +118,24 @@ export interface VoiceIpcDeps {
     remove: typeof deleteModel
     sweep: typeof sweepStaging
   }
+  /** J2: TTS catalog ops (status/paths/download/delete), injectable like modelOps. */
+  ttsModelOps?: {
+    status: typeof ttsModelStatus
+    paths: typeof ttsModelPaths
+    download: typeof downloadTtsModel
+    remove: typeof deleteTtsModel
+  }
 }
+
+/** J2: `voice:tts:start` result — a session only brokers when the model is installed. */
+export interface VoiceTtsStartResult {
+  ok: boolean
+  modelStatus: TtsModelStatus
+}
+
+/** J2: renderer push for TTS-side failures (worker death / host death — the playback
+ *  queue flushes and the next speak lazily re-opens the session). */
+export type VoiceTtsEvent = { kind: 'error'; reason?: string }
 
 // The single live engine handle. V1's per-session stub became a persistent host process
 // (its recognizer cache makes mic re-toggles cheap); sessions inside it replace each other.
@@ -141,6 +168,12 @@ export function registerVoiceHandlers(
     remove: deleteModel,
     sweep: sweepStaging
   }
+  const ttsOps = deps.ttsModelOps ?? {
+    status: ttsModelStatus,
+    paths: ttsModelPaths,
+    download: downloadTtsModel,
+    remove: deleteTtsModel
+  }
   // Resolution order: explicit test injection → the e2e runtime stub (dormant null in
   // every normal run — only settable through e2eMain's gated registry) → the real host.
   const engine = (): VoiceEngineHandle => deps.engine ?? currentVoiceStubEngine() ?? defaultEngine()
@@ -156,6 +189,11 @@ export function registerVoiceHandlers(
   let liveModel: VoiceModelPaths | null = null
   let liveActive = false
   let restartedOnce = false
+  // J2 TTS session state. `hostFailureAlsoFails` lets the TTS block below observe a
+  // WHOLE-host failure (which kills any TTS session too) without reordering this file —
+  // it is assigned once the TTS handlers are registered.
+  let ttsActive = false
+  let hostFailureAlsoFails: ((reason: string) => void) | null = null
 
   const brokerSession = (paths: VoiceModelPaths | null): boolean => {
     const win = getWin()
@@ -169,6 +207,7 @@ export function registerVoiceHandlers(
   }
 
   const onEngineFailure = (reason: string): void => {
+    hostFailureAlsoFails?.(reason) // a dead host takes any live TTS session with it
     if (!liveActive) return // idle host death — the next start respawns anyway
     if (!restartedOnce) {
       restartedOnce = true
@@ -224,53 +263,25 @@ export function registerVoiceHandlers(
     return { ok: true, frames }
   })
 
-  ipcMain.handle('voice:models:list', async (e): Promise<VoiceModelListEntry[]> => {
-    if (isForeignSender(e, getWin)) return []
-    const userData = getUserData()
-    return Promise.all(
-      VOICE_MODEL_CATALOG.map(async (m) => ({
-        id: m.id,
-        label: m.label,
-        language: m.language,
-        license: m.license,
-        licenseNote: m.licenseNote,
-        totalBytes: m.totalBytes,
-        isDefault: m.id === DEFAULT_VOICE_MODEL_ID,
-        status: await ops.status(userData, m.id)
-      }))
-    )
+  // Model catalog channels — one registration per catalog: `voice:models:*` (STT) and
+  // `voice:tts:models:*` (J2 TTS), byte-identical semantics (list/status/download/delete,
+  // throttled progress push, per-catalog single-flight).
+  registerModelCatalogIpc(ipcMain, getWin, getUserData, {
+    prefix: 'voice:models',
+    catalog: VOICE_MODEL_CATALOG,
+    defaultId: DEFAULT_VOICE_MODEL_ID,
+    status: ops.status,
+    download: ops.download,
+    remove: ops.remove
   })
-
-  ipcMain.handle('voice:models:status', async (e, id: unknown): Promise<VoiceModelStatus> => {
-    if (isForeignSender(e, getWin) || typeof id !== 'string') return 'absent'
-    return ops.status(getUserData(), id)
+  registerModelCatalogIpc(ipcMain, getWin, getUserData, {
+    prefix: 'voice:tts:models',
+    catalog: TTS_MODEL_CATALOG,
+    defaultId: DEFAULT_TTS_MODEL_ID,
+    status: ttsOps.status,
+    download: ttsOps.download,
+    remove: ttsOps.remove
   })
-
-  // One download at a time (the manifest files stream sequentially anyway); progress is
-  // throttled to ~every 512 KB so a 70 MB model doesn't emit a thousand IPC events.
-  const downloading = new Set<string>()
-  ipcMain.handle(
-    'voice:models:download',
-    async (e, id: unknown): Promise<{ ok: boolean; error?: string }> => {
-      if (isForeignSender(e, getWin) || typeof id !== 'string') return { ok: false }
-      if (downloading.size > 0) return { ok: false, error: 'download already in progress' }
-      downloading.add(id)
-      let lastSent = 0
-      const onProgress = (p: DownloadProgress): void => {
-        if (p.receivedBytes - lastSent < 512 * 1024 && p.receivedBytes !== p.totalBytes) return
-        lastSent = p.receivedBytes
-        getWin()?.webContents.send('voice:models:progress', p)
-      }
-      try {
-        await ops.download(getUserData(), id, { onProgress })
-        return { ok: true }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      } finally {
-        downloading.delete(id)
-      }
-    }
-  )
 
   // App voice config (SPEC §5). set() is a merge-patch funneled through repairVoiceConfig
   // so a malformed renderer payload can never write junk to disk; the repaired result is
@@ -292,13 +303,188 @@ export function registerVoiceHandlers(
     return { ok: true }
   })
 
+  // ── J2 TTS session + speak control (data plane = the voice:tts:port chunk stream) ──
+  let ttsSpeakId = 0
+
+  const configuredTtsModelId = (): string => {
+    const cfg = readVoiceConfig(getUserData()).ttsModelId
+    return TTS_MODEL_CATALOG.some((m) => m.id === cfg) ? cfg : DEFAULT_TTS_MODEL_ID
+  }
+
+  const onTtsFailure = (reason: string): void => {
+    if (!ttsActive) return
+    ttsActive = false
+    getWin()?.webContents.send('voice:tts:event', {
+      kind: 'error',
+      reason
+    } satisfies VoiceTtsEvent)
+  }
+  // The whole host dying takes any TTS session with it. The STT side restarts itself
+  // (restart-once above); TTS stays lazy — the renderer flushes on the event and the
+  // next speak re-opens a session against the fresh host.
+  hostFailureAlsoFails = onTtsFailure
+
+  ipcMain.handle('voice:tts:start', async (e): Promise<VoiceTtsStartResult> => {
+    if (isForeignSender(e, getWin) || !isVoicePlatformSupported()) {
+      return { ok: false, modelStatus: 'absent' }
+    }
+    const win = getWin()
+    if (!win) return { ok: false, modelStatus: 'absent' }
+    const userData = getUserData()
+    const modelId = configuredTtsModelId()
+    const status = await ttsOps.status(userData, modelId)
+    const paths = status === 'ready' ? ttsOps.paths(userData, modelId) : null
+    // No count-only degraded mode here (unlike STT): a TTS session without a model has
+    // nothing to stream — fail fast and let Settings drive the download CTA.
+    if (!paths) return { ok: false, modelStatus: status }
+    engine().onTtsFailure(onTtsFailure)
+    // A TTS-only user still needs host-death observation (STT may never have started —
+    // without this the exit escalation would have no listener to reach onTtsFailure).
+    engine().onEngineFailure(onEngineFailure)
+    const { port1, port2 } = new MessageChannelMain()
+    engine().startTtsSession(port1, paths)
+    win.webContents.postMessage('voice:tts:port', {}, [port2])
+    ttsActive = true
+    return { ok: true, modelStatus: status }
+  })
+
   ipcMain.handle(
-    'voice:models:delete',
+    'voice:tts:speak',
+    async (e, payload: unknown): Promise<{ ok: boolean; id?: number; error?: string }> => {
+      if (isForeignSender(e, getWin)) return { ok: false }
+      if (!ttsActive) return { ok: false, error: 'no tts session' }
+      const p = payload as { text?: unknown; sid?: unknown; speed?: unknown } | null
+      const text = typeof p?.text === 'string' ? p.text.trim() : ''
+      if (!text || text.length > 2000) return { ok: false, error: 'invalid text' }
+      const spec = getTtsModelSpec(configuredTtsModelId())
+      const sid =
+        typeof p?.sid === 'number' && Number.isInteger(p.sid) && p.sid >= 0
+          ? p.sid
+          : (spec?.defaultSid ?? 0)
+      const speed =
+        typeof p?.speed === 'number' && Number.isFinite(p.speed)
+          ? Math.min(2, Math.max(0.5, p.speed))
+          : 1.0
+      const id = ++ttsSpeakId
+      engine().ttsSpeak({ id, text, sid, speed })
+      return { ok: true, id }
+    }
+  )
+
+  ipcMain.handle('voice:tts:cancel', async (e): Promise<{ ok: boolean }> => {
+    if (isForeignSender(e, getWin)) return { ok: false }
+    engine().ttsCancel()
+    return { ok: true }
+  })
+
+  ipcMain.handle('voice:tts:stop', async (e): Promise<{ ok: boolean }> => {
+    if (isForeignSender(e, getWin)) return { ok: false }
+    ttsActive = false
+    engine().stopTtsSession()
+    return { ok: true }
+  })
+
+  ipcMain.handle(
+    'voice:tts:status',
+    async (e): Promise<{ modelId: string; modelStatus: TtsModelStatus; active: boolean }> => {
+      if (isForeignSender(e, getWin)) return { modelId: '', modelStatus: 'absent', active: false }
+      const modelId = configuredTtsModelId()
+      return {
+        modelId,
+        modelStatus: await ttsOps.status(getUserData(), modelId),
+        active: ttsActive
+      }
+    }
+  )
+}
+
+/** Everything the shared catalog registration needs from a model spec (STT and TTS
+ *  catalog entries both satisfy it structurally). */
+interface CatalogEntryMeta {
+  id: string
+  label: string
+  language: string
+  license: string
+  licenseNote?: string
+  totalBytes: number
+}
+
+/**
+ * Register the four catalog channels under `<prefix>:list|status|download|delete` plus
+ * the `<prefix>:progress` push. One download at a time per catalog (the manifest files
+ * stream sequentially anyway); progress is throttled to ~every 512 KB so a large model
+ * doesn't emit a thousand IPC events.
+ */
+function registerModelCatalogIpc(
+  ipcMain: IpcMain,
+  getWin: () => BrowserWindow | null,
+  getUserData: () => string,
+  cfg: {
+    prefix: string
+    catalog: CatalogEntryMeta[]
+    defaultId: string
+    status: (userData: string, id: string) => Promise<VoiceModelStatus>
+    download: (
+      userData: string,
+      id: string,
+      deps: { onProgress?: (p: DownloadProgress) => void }
+    ) => Promise<void>
+    remove: (userData: string, id: string) => Promise<void>
+  }
+): void {
+  ipcMain.handle(`${cfg.prefix}:list`, async (e): Promise<VoiceModelListEntry[]> => {
+    if (isForeignSender(e, getWin)) return []
+    const userData = getUserData()
+    return Promise.all(
+      cfg.catalog.map(async (m) => ({
+        id: m.id,
+        label: m.label,
+        language: m.language,
+        license: m.license,
+        licenseNote: m.licenseNote,
+        totalBytes: m.totalBytes,
+        isDefault: m.id === cfg.defaultId,
+        status: await cfg.status(userData, m.id)
+      }))
+    )
+  })
+
+  ipcMain.handle(`${cfg.prefix}:status`, async (e, id: unknown): Promise<VoiceModelStatus> => {
+    if (isForeignSender(e, getWin) || typeof id !== 'string') return 'absent'
+    return cfg.status(getUserData(), id)
+  })
+
+  const downloading = new Set<string>()
+  ipcMain.handle(
+    `${cfg.prefix}:download`,
+    async (e, id: unknown): Promise<{ ok: boolean; error?: string }> => {
+      if (isForeignSender(e, getWin) || typeof id !== 'string') return { ok: false }
+      if (downloading.size > 0) return { ok: false, error: 'download already in progress' }
+      downloading.add(id)
+      let lastSent = 0
+      const onProgress = (p: DownloadProgress): void => {
+        if (p.receivedBytes - lastSent < 512 * 1024 && p.receivedBytes !== p.totalBytes) return
+        lastSent = p.receivedBytes
+        getWin()?.webContents.send(`${cfg.prefix}:progress`, p)
+      }
+      try {
+        await cfg.download(getUserData(), id, { onProgress })
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      } finally {
+        downloading.delete(id)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    `${cfg.prefix}:delete`,
     async (e, id: unknown): Promise<{ ok: boolean; error?: string }> => {
       if (isForeignSender(e, getWin) || typeof id !== 'string') return { ok: false }
       if (downloading.has(id)) return { ok: false, error: 'download in progress' }
       try {
-        await ops.remove(getUserData(), id)
+        await cfg.remove(getUserData(), id)
         return { ok: true }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }

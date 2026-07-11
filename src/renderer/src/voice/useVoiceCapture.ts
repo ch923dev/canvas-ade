@@ -17,6 +17,7 @@ import { useEffect } from 'react'
 import workletUrl from './captureWorklet?worker&url'
 import { createSilenceWatchdog, micConstraints, type WorkletFrameMsg } from './captureMath'
 import { useVoiceStore } from '../store/voiceStore'
+import { suppressMicForward } from '../store/ttsStore'
 
 interface ActiveCapture {
   dispose: () => void
@@ -107,7 +108,10 @@ function createCapture(port: MessagePort): ActiveCapture {
       // rides the transfer list (verified against Electron 42 — the message event still fires,
       // payload gone). A structured-clone copy arrives intact; at 3840 B × ~8.3/s (~32 KB/s)
       // the copy is noise. The worklet→node hop above stays zero-copy (same process).
-      port.postMessage(msg)
+      // J2 half-duplex gate (D6 fallback): while TTS speaks in 'half' mode the frame is
+      // NOT forwarded — the STT host never transcribes self-capture. Level/RMS below
+      // keep flowing (the meter and the RMS barge-in gate run renderer-side).
+      if (!suppressMicForward()) port.postMessage(msg)
       const s = useVoiceStore.getState()
       s.frameSent(rms)
       s.setMicSilent(watchdog.push(rms))

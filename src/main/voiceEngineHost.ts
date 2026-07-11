@@ -46,6 +46,20 @@
  *                     stream reset.
  *   All session-port payloads are plain JSON — NEVER put a transferable in a cross-process
  *   port transfer list (Electron nulls the whole payload silently; see V1).
+ *
+ * J2 TTS seam (parentPort control; chunks flow over a SECOND MessagePort):
+ *   IN  {t:'tts:session:start', ttsModel: TtsModelPaths|null} + ports[0]=tts port —
+ *                     lazily spawns the TTS worker (own thread, same bundle) and builds
+ *                     the OfflineTts there (createAsync >10 s cold — NEVER on this loop).
+ *   IN  {t:'tts:speak', req: TtsSpeakReq} — FIFO into the worker's speak queue.
+ *   IN  {t:'tts:cancel'} — barge-in: active synth cancels via onProgress-return-0, the
+ *                     queue drains with {cancelled:true} dones.
+ *   IN  {t:'tts:session:stop'} — cancel + close the tts port.
+ *   OUT (tts port) TtsOutMsg — tts:chunk (Float32 PCM copy + sampleRate) / tts:done /
+ *                     tts:error, streamed as sherpa finishes each sentence
+ *                     (maxNumSentences:1 = sentence-chunked synthesis).
+ *   OUT {t:'tts:engine:error', error} — TTS worker died or its session init failed. The
+ *                     host stays up (STT unaffected); the next tts:session:start respawns.
  */
 import { Worker, isMainThread, parentPort as nodeWorkerPort, workerData } from 'worker_threads'
 import type { MessagePort as NodeMessagePort } from 'worker_threads'
@@ -180,6 +194,103 @@ export interface OfflineTtsLike {
     speed: number
     onProgress?: (samples: Float32Array, progress: number) => number | boolean
   }): Promise<{ samples: Float32Array; sampleRate: number }>
+}
+
+// ── J2 TTS session (speak queue + chunk stream) ────────────────────────────────────────
+
+/** One speak request (id assigned by MAIN's voice:tts:speak handler; executed FIFO). */
+export interface TtsSpeakReq {
+  id: number
+  text: string
+  sid: number
+  speed: number
+}
+
+/**
+ * TTS worker/host → renderer payloads over the TTS session port. Plain JSON + ArrayBuffer
+ * COPIES only — the same cross-process port discipline as the STT session port (a
+ * transferable in the transfer list nulls the whole payload; see V1). `d` is Float32 PCM
+ * at `sampleRate` (chunks self-describe the rate — Kokoro 24 kHz vs Piper 22.05 kHz).
+ */
+export type TtsOutMsg =
+  | { t: 'tts:chunk'; id: number; seq: number; sampleRate: number; d: ArrayBuffer }
+  | { t: 'tts:done'; id: number; cancelled: boolean }
+  | { t: 'tts:error'; id: number; error: string }
+
+export interface TtsRunner {
+  /** Enqueue a speak; requests synthesize serially (J3's brain streams one clause each). */
+  speak(req: TtsSpeakReq): void
+  /** Barge-in flush: cancel the ACTIVE synthesis (next onProgress returns 0 — sherpa
+   *  drops the remaining sentences) and drain the queue, closing every id with
+   *  `{cancelled:true}` so the renderer's ledger settles. */
+  cancel(): void
+}
+
+/**
+ * The per-session speak queue, pure over OfflineTtsLike so it unit-tests without the
+ * addon. `tts === null` (model absent / init failed) answers every speak with a
+ * `tts:error` instead of synthesizing — MAIN gates sessions on model status, so this is
+ * a defensive rail, not a mode.
+ */
+export function createTtsRunner(
+  tts: OfflineTtsLike | null,
+  post: (m: TtsOutMsg) => void
+): TtsRunner {
+  const queue: TtsSpeakReq[] = []
+  let running = false
+  let epoch = 0
+  const drain = async (): Promise<void> => {
+    if (running) return
+    running = true
+    while (queue.length > 0) {
+      const req = queue.shift()!
+      const myEpoch = epoch
+      let seq = 0
+      try {
+        await tts!.generateAsync({
+          text: req.text,
+          sid: req.sid,
+          speed: req.speed,
+          onProgress: (samples) => {
+            if (epoch !== myEpoch) return 0 // cancel remaining synthesis (barge-in)
+            // COPY into an exactly-sized buffer: the callback's Float32Array may view
+            // native memory the engine reuses after this frame returns.
+            post({
+              t: 'tts:chunk',
+              id: req.id,
+              seq: seq++,
+              sampleRate: tts!.sampleRate,
+              d: new Float32Array(samples).buffer
+            })
+            return 1
+          }
+        })
+        post({ t: 'tts:done', id: req.id, cancelled: epoch !== myEpoch })
+      } catch (err) {
+        post({
+          t: 'tts:error',
+          id: req.id,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+    }
+    running = false
+  }
+  return {
+    speak(req: TtsSpeakReq): void {
+      if (!tts) {
+        post({ t: 'tts:error', id: req.id, error: 'tts model not loaded' })
+        return
+      }
+      queue.push(req)
+      void drain()
+    },
+    cancel(): void {
+      epoch++
+      for (const q of queue) post({ t: 'tts:done', id: q.id, cancelled: true })
+      queue.length = 0
+    }
+  }
 }
 
 interface SherpaModule {
@@ -434,6 +545,67 @@ function runDecoderWorker(parent: NodeMessagePort): void {
   })
 }
 
+// ── J2 TTS worker (same bundle, discriminated by workerData.role = 'voice-tts') ────────
+
+/** Host → TTS worker messages. */
+type TtsWorkerInMsg =
+  | { t: 'session'; model: TtsModelPaths | null }
+  | { t: 'speak'; req: TtsSpeakReq }
+  | { t: 'cancel' }
+
+/**
+ * The TTS thread body: owns the sherpa addon + an OfflineTts cache (keyed by model path —
+ * re-opening a session on the same model skips the multi-second createAsync). Everything
+ * long-running (createAsync — >10 s cold under load, the V3 lesson — and synthesis)
+ * happens HERE, never on the host loop. Speaks/cancels chain through the init promise so
+ * a request arriving mid-createAsync executes against the session it targeted, in order.
+ */
+function runTtsWorker(parent: NodeMessagePort): void {
+  const { mod, result } = loadAddon()
+  parent.postMessage({ t: 'worker:ready', ok: !!result.ttsOk, error: result.error })
+
+  const ttsCache = new Map<string, OfflineTtsLike>()
+  const post = (m: TtsOutMsg): void => parent.postMessage(m)
+  let runner: Promise<TtsRunner> = Promise.resolve(createTtsRunner(null, post))
+
+  parent.on('message', (m: TtsWorkerInMsg) => {
+    if (m?.t === 'session') {
+      const model = m.model
+      const prev = runner
+      runner = (async () => {
+        ;(await prev).cancel() // a session swap never leaves the old queue speaking
+        if (!mod?.OfflineTts || !model) {
+          parent.postMessage({ t: 'session:ready', ok: true, live: false })
+          return createTtsRunner(null, post)
+        }
+        try {
+          const cached = ttsCache.get(model.model)
+          const tts = cached ?? (await mod.OfflineTts.createAsync(buildTtsConfig(model)))
+          ttsCache.set(model.model, tts)
+          parent.postMessage({
+            t: 'session:ready',
+            ok: true,
+            live: true,
+            sampleRate: tts.sampleRate
+          })
+          return createTtsRunner(tts, post)
+        } catch (err) {
+          // Model files present but unloadable — surface it; MAIN pushes the renderer's
+          // tts error event. The null runner answers any queued speaks with tts:error.
+          const error = err instanceof Error ? err.message : String(err)
+          console.error('[voice-tts] OfflineTts init failed:', error)
+          parent.postMessage({ t: 'session:ready', ok: false, error })
+          return createTtsRunner(null, post)
+        }
+      })()
+    } else if (m?.t === 'speak') {
+      void runner.then((r) => r.speak(m.req))
+    } else if (m?.t === 'cancel') {
+      void runner.then((r) => r.cancel())
+    }
+  })
+}
+
 /** Host-side client for the decoder thread. */
 interface DecoderClient {
   ready: Promise<{ ok: boolean; error?: string }>
@@ -504,6 +676,8 @@ const workerRole = (workerData as { role?: string } | null)?.role
 
 if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
   runDecoderWorker(nodeWorkerPort)
+} else if (!isMainThread && workerRole === 'voice-tts' && nodeWorkerPort) {
+  runTtsWorker(nodeWorkerPort)
 } else if (parentPort) {
   const debug = !!process.env.CANVAS_VOICE_DEBUG
   let session: SessionHandle | null = null
@@ -540,8 +714,57 @@ if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
     } satisfies SpikeResult)
   })
 
+  // ── J2 TTS session: lazy worker (spawned on the first tts session start — non-Jarvis
+  // sessions never pay the second addon load), respawned by the next start after a death.
+  // Chunks flow host → renderer over the TTS port; control arrives via parentPort.
+  let ttsPort: SessionPortLike | null = null
+  let ttsWorker: Worker | null = null
+
+  const postTtsFailure = (error: string): void => {
+    try {
+      parentPort.postMessage({ t: 'tts:engine:error', error })
+    } catch {
+      /* parent gone — the host is being torn down anyway */
+    }
+  }
+  const ensureTtsWorker = (): Worker => {
+    if (ttsWorker) return ttsWorker
+    const w = new Worker(__filename, { workerData: { role: 'voice-tts' } })
+    w.on('message', (m: { t?: string; ok?: boolean; error?: string } | null) => {
+      if (m?.t === 'tts:chunk' || m?.t === 'tts:done' || m?.t === 'tts:error') {
+        try {
+          ttsPort?.postMessage(m)
+        } catch {
+          /* renderer end gone — chunks have nowhere to go */
+        }
+      } else if (m?.t === 'session:ready' && !m.ok) {
+        postTtsFailure(`tts session init failed: ${m.error ?? 'unknown'}`)
+      }
+    })
+    // Worker death: clear the handle (the next tts:session:start respawns clean) and
+    // escalate — MAIN pushes the renderer's voice:tts:event. The identity guard keeps a
+    // replaced worker's exit from clobbering its successor. STT is untouched: unlike the
+    // decoder worker, a dead TTS thread never degrades dictation, so the host stays up.
+    const fail = (reason: string): void => {
+      if (ttsWorker !== w) return
+      ttsWorker = null
+      postTtsFailure(reason)
+    }
+    w.on('error', (err) =>
+      fail(`tts worker error: ${err instanceof Error ? err.message : String(err)}`)
+    )
+    w.on('exit', (code) => fail(`tts worker exited (${code})`))
+    ttsWorker = w
+    return w
+  }
+
   parentPort.on('message', (e) => {
-    const m = e.data as { t?: string; model?: VoiceModelPaths | null } | null
+    const m = e.data as {
+      t?: string
+      model?: VoiceModelPaths | null
+      ttsModel?: TtsModelPaths | null
+      req?: TtsSpeakReq
+    } | null
     if (m?.t === 'session:start' && e.ports[0]) {
       session?.endNow() // restart-idempotent: a second start replaces the live session
       const model = m.model ?? null
@@ -556,6 +779,27 @@ if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
         return
       }
       s.requestStop((frames) => parentPort.postMessage({ t: 'session:stopped', frames }))
+    } else if (m?.t === 'tts:session:start' && e.ports[0]) {
+      try {
+        ttsPort?.close() // restart-idempotent, like session:start
+      } catch {
+        /* already gone */
+      }
+      ttsPort = e.ports[0]
+      ttsPort.start() // renderer never posts on this port today; started for symmetry
+      ensureTtsWorker().postMessage({ t: 'session', model: m.ttsModel ?? null })
+    } else if (m?.t === 'tts:speak' && m.req) {
+      ttsWorker?.postMessage({ t: 'speak', req: m.req })
+    } else if (m?.t === 'tts:cancel') {
+      ttsWorker?.postMessage({ t: 'cancel' })
+    } else if (m?.t === 'tts:session:stop') {
+      ttsWorker?.postMessage({ t: 'cancel' })
+      try {
+        ttsPort?.close()
+      } catch {
+        /* already gone */
+      }
+      ttsPort = null
     }
   })
 }

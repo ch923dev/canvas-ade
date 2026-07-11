@@ -98,6 +98,14 @@ export function createStubVoiceEngine(): VoiceEngineHandle {
     onEngineFailure(): void {
       /* the stub never crashes — nothing to observe */
     },
+    // J2 TTS: the stub covers dictation e2e only. TTS never activates through it —
+    // voiceIpc gates tts:start on model status, and the stub runs model-less, so these
+    // are inert no-ops that just satisfy the handle shape.
+    startTtsSession(): void {},
+    ttsSpeak(): void {},
+    ttsCancel(): void {},
+    stopTtsSession(): void {},
+    onTtsFailure(): void {},
     dispose(): void {
       const s = session
       session = null

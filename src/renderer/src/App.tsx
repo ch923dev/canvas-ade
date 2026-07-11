@@ -21,6 +21,7 @@ import { useAutosave } from './store/useAutosave'
 import { useProjectSwitchHotkey } from './store/useProjectSwitchHotkey'
 import { useNotifications } from './store/useNotifications'
 import { useVoiceCapture } from './voice/useVoiceCapture'
+import { useTtsPlayback } from './voice/useTtsPlayback'
 import { VoicePill } from './voice/VoicePill'
 import { isE2E } from './smoke/e2eRegistry'
 
@@ -45,6 +46,8 @@ function App(): React.ReactElement {
   // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
   // voice:session:start is the start signal (see useVoiceCapture).
   useVoiceCapture()
+  // Jarvis J2: TTS playback queue + barge-in — adopts the voice:tts:port chunk stream.
+  useTtsPlayback()
   // Desktop notifications: MAIN pushes agent-lifecycle events (done / needs-input / error) → an
   // in-app toast + focus-on-click. The native OS notification is raised in MAIN.
   useNotifications()

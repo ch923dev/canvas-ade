@@ -14,7 +14,12 @@ import { createRequire } from 'module'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it } from 'vitest'
-import { buildTtsConfig, type OfflineTtsLike } from './voiceEngineHost'
+import {
+  buildTtsConfig,
+  createTtsRunner,
+  type OfflineTtsLike,
+  type TtsOutMsg
+} from './voiceEngineHost'
 import type { TtsModelPaths } from './voiceTtsModels'
 
 const MODELS_ROOT = process.env.CANVAS_VOICE_MODELS_ROOT
@@ -89,6 +94,67 @@ function toWav(samples: Float32Array, sampleRate: number): Buffer {
   Buffer.from(pcm.buffer).copy(buf, 44)
   return buf
 }
+
+// J2: the speak-queue runner over a REAL engine — the chunk stream actually streams
+// (multi-sentence text → ≥2 chunks before done) and a mid-synthesis cancel() stops
+// the remaining sentences (the onProgress-return-0 barge-in hook, D6).
+describe.runIf(CASES.some((c) => c.ready))(
+  'createTtsRunner ↔ real OfflineTts (model-gated)',
+  () => {
+    const c = CASES.find((x) => x.ready)!
+    const MULTI = 'First sentence here. Second sentence follows. Third sentence closes it out.'
+
+    it(
+      `${c.label}: streams per-sentence chunks; cancel mid-stream drops the tail`,
+      { timeout: 120_000 },
+      async () => {
+        const req = createRequire(import.meta.url)
+        const sherpa = req('sherpa-onnx-node') as {
+          OfflineTts: { createAsync(config: unknown): Promise<OfflineTtsLike> }
+        }
+        const tts = await sherpa.OfflineTts.createAsync(buildTtsConfig(c.paths))
+
+        // Full run: every sentence chunk arrives, then a clean done.
+        const full: TtsOutMsg[] = []
+        const runner = createTtsRunner(tts, (m) => full.push(m))
+        runner.speak({ id: 1, text: MULTI, sid: c.sid, speed: 1.0 })
+        await new Promise<void>((resolve) => {
+          const iv = setInterval(() => {
+            if (full.some((m) => m.t === 'tts:done')) {
+              clearInterval(iv)
+              resolve()
+            }
+          }, 50)
+        })
+        const fullChunks = full.filter((m) => m.t === 'tts:chunk')
+        expect(fullChunks.length).toBeGreaterThanOrEqual(2)
+        expect(full.at(-1)).toEqual({ t: 'tts:done', id: 1, cancelled: false })
+
+        // Cancelled run: cancel on the FIRST chunk → fewer chunks than the full run and
+        // a cancelled done (sherpa stops synthesizing the remaining sentences).
+        const cut: TtsOutMsg[] = []
+        const runner2 = createTtsRunner(tts, (m) => {
+          cut.push(m)
+          if (m.t === 'tts:chunk' && cut.filter((x) => x.t === 'tts:chunk').length === 1) {
+            runner2.cancel()
+          }
+        })
+        runner2.speak({ id: 2, text: MULTI, sid: c.sid, speed: 1.0 })
+        await new Promise<void>((resolve) => {
+          const iv = setInterval(() => {
+            if (cut.some((m) => m.t === 'tts:done')) {
+              clearInterval(iv)
+              resolve()
+            }
+          }, 50)
+        })
+        const cutChunks = cut.filter((m) => m.t === 'tts:chunk')
+        expect(cutChunks.length).toBeLessThan(fullChunks.length)
+        expect(cut.at(-1)).toEqual({ t: 'tts:done', id: 2, cancelled: true })
+      }
+    )
+  }
+)
 
 describe.runIf(CASES.some((c) => c.ready))(
   'sherpa-onnx OfflineTts ↔ buildTtsConfig (model-gated)',
