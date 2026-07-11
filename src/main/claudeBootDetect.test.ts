@@ -40,6 +40,16 @@ describe('detectClaudeBootCwd — the boot-banner working-dir parse', () => {
     // The model/plan tagline sits between the version and the cwd — must be skipped.
     expect(detectClaudeBootCwd(banner(dir))).toBe(dir)
   })
+
+  it('review [critical]: refuses filesystem/drive roots — `/`, `C:\\`, `C:/` never resolve', () => {
+    // statSync('/')/('C:\\') is a real directory, but a root is never a claude project dir —
+    // a stray root-only output line must not become a hook-install target.
+    for (const root of ['/', 'C:\\', 'C:/']) {
+      expect(detectClaudeBootCwd(banner(root))).toBeNull()
+    }
+    // A real dir printed AFTER a root line still wins (root skipped, scan continues).
+    expect(detectClaudeBootCwd(banner(`C:\\\r\n${dir}`))).toBe(dir)
+  })
 })
 
 describe('maybeEnsureClaudeHook — the data-plane probe', () => {
@@ -80,5 +90,20 @@ describe('maybeEnsureClaudeHook — the data-plane probe', () => {
     })
     const ring = `Claude Code v2.1.201\r\n${dir}\r\n`
     expect(() => maybeEnsureClaudeHook('Claude Code v', () => ring, 'b1')).not.toThrow()
+  })
+
+  it('review [critical] dedupe: a dir already ensured for a board never re-fires the install', () => {
+    // The banner marker can recur for the session's whole life (`claude --version`, help
+    // text, docs quoting it) — repeats must cost a parse at most, never another install.
+    const seen: unknown[] = []
+    setRecapHookSyncProvider((o) => seen.push(o))
+    const ring = `Claude Code v2.1.201\r\n${dir}\r\n`
+    maybeEnsureClaudeHook('Claude Code v', () => ring, 'b-dedupe')
+    maybeEnsureClaudeHook('Claude Code v', () => ring, 'b-dedupe')
+    maybeEnsureClaudeHook('Claude Code v', () => ring, 'b-dedupe')
+    expect(seen).toHaveLength(1)
+    // A DIFFERENT board ensuring the same dir still fires (dedupe is per board).
+    maybeEnsureClaudeHook('Claude Code v', () => ring, 'b-other')
+    expect(seen).toHaveLength(2)
   })
 })

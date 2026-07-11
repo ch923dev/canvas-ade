@@ -15,6 +15,7 @@
  */
 import * as fs from 'node:fs'
 import * as os from 'node:os'
+import * as path from 'node:path'
 import { syncRecapHook } from './ptySpawnEnv'
 
 /** The stable prefix of the claude boot banner's version line. */
@@ -46,14 +47,28 @@ export function detectClaudeBootCwd(ring: string): string | null {
   for (const raw of lines) {
     const line = raw.trim()
     if (!looksAbsolute(line)) continue
+    // Review [critical]: a bare `/`, `C:\`, or UNC share root is "a real directory" to statSync
+    // but is never a claude project dir — installing a hook (and mkdir'ing `.claude/`) at a
+    // filesystem/drive root on a stray root-only output line is the false-positive to refuse.
+    const norm = path.resolve(line)
+    if (path.parse(norm).root === norm) continue
     try {
-      if (fs.statSync(line).isDirectory()) return line
+      if (fs.statSync(norm).isDirectory()) return norm
     } catch {
       /* not a real dir — keep scanning */
     }
   }
   return null
 }
+
+/**
+ * Review [critical] dedupe: dirs already ensured, per board. The banner marker can recur for a
+ * session's whole life (`claude --version`, help text, docs quoting it) — a dir seen before
+ * skips the install call entirely, so lifetime re-triggers cost one ring parse and nothing
+ * else. Bounded: boards × distinct real dirs a session actually printed. Cleared on respawn is
+ * unnecessary — installs are idempotent; the set only suppresses repeats.
+ */
+const ensuredDirs = new Map<string, Set<string>>()
 
 /**
  * The one-line pty.ts data-plane hook: cheap substring test per chunk; only a chunk carrying
@@ -64,7 +79,15 @@ export function maybeEnsureClaudeHook(chunk: string, ringText: () => string, id:
   try {
     if (!chunk.includes(BANNER)) return
     const cwd = detectClaudeBootCwd(ringText())
-    if (cwd && cwd !== os.homedir()) syncRecapHook({ id, cwd })
+    if (!cwd || cwd === os.homedir()) return
+    let seen = ensuredDirs.get(id)
+    if (seen?.has(cwd)) return
+    if (!seen) {
+      seen = new Set()
+      ensuredDirs.set(id, seen)
+    }
+    seen.add(cwd)
+    syncRecapHook({ id, cwd })
   } catch {
     /* best-effort — never break the data plane */
   }

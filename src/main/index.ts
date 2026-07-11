@@ -18,6 +18,7 @@ import {
   backgroundParkedBoardIds
 } from './pty'
 import { setRecapHookSyncProvider } from './ptySpawnEnv'
+import { recordRecapHookDir, listRecapHookDirs, clearRecapHookDirs } from './recapHookDirs'
 import { appendTerminalSnapshot } from './terminalSnapshot'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { disposeProjectOsr } from './previewOsrBackground'
@@ -465,6 +466,9 @@ app.whenReady().then(async () => {
       scriptPath: recordScript,
       mapPath: recapMapPath
     })
+    // Review [warning]: track every divergent install (keyed by the CONSENTING project) so a
+    // consent decline can clean each cross-cwd repo too — mirrors provisionedDirStore (F8).
+    recordRecapHookDir(userData, dir, cwd)
   })
 
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
@@ -854,9 +858,11 @@ app.whenReady().then(async () => {
 
   // ── Recap consent IPC + hook-install policy (Task 10 Step 5) ────────────────────────
   // recap:getConsent / recap:setConsent (frame-guarded inside recapConsent.ts). The decision
-  // callback is the SINGLE place that mutates the project's .claude/settings.local.json hook:
-  // 'enabled' → install (idempotent), anything else → remove only OUR entry. The map path is
-  // baked into the hook args here so the external Claude process appends to the app-owned map.
+  // callback owns the consent-driven install/remove of the project's .claude/settings.local.json
+  // hook ('enabled' → install idempotently, anything else → remove only OUR entry) — the
+  // spawn-time / boot-detect providers above may ALSO install into a board's divergent cwd, and
+  // every such install is tracked in recapHookDirs so the decline below cleans those too. The
+  // map path is baked into the hook args so the external Claude process appends to the app map.
   registerRecapHandlers(
     ipcMain,
     () => mainWindow,
@@ -876,6 +882,17 @@ app.whenReady().then(async () => {
         }
       } else {
         removeRecapHook(projectPath, recordScript)
+        // Review [warning]: also remove OUR hook entry from every divergent cwd this project's
+        // consent ever installed into (tracked by the providers above; persisted across
+        // restarts). Per-dir try/catch — one unwritable repo must not strand the others.
+        for (const divergent of listRecapHookDirs(userData, projectPath)) {
+          try {
+            removeRecapHook(divergent, recordScript)
+          } catch {
+            /* best-effort cleanup */
+          }
+        }
+        clearRecapHookDirs(userData, projectPath)
         // BUG-002: on decline, stop all in-flight recap activity for this project's boards
         // so transcript content stops egressing to the LLM even while a claude session runs.
         // 1. Derive the current project's live board ids from the board mirror.
