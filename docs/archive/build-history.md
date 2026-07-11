@@ -2318,3 +2318,35 @@ mouse-mode hint badge) documented in the research package.
   the fallback and the second Ctrl+C SIGINT'd the agent; fixed via the `copyWithFallback()`
   extraction + 4 regression tests (`7407497b`), inline-dispositioned. Round 2 incremental clean
   (0 new inline); CI check + analyze + CodeQL + claude-review all PASS. Squash `8f38a4f7`.
+
+## PR #334 — per-checkout dev profile isolation (2026-07-11, v0.14.3)
+
+- **Problem**: every unpackaged instance shared ONE Electron profile (`%APPDATA%/canvas-ade` —
+  app name from `package.json` `name`): main-checkout dev, every worktree dev, AND the
+  Playwright e2e harness. Chromium cross-process profile locks (Local Storage LevelDB, DIPS,
+  caches) made a second live instance boot degraded or die — the "close ALL Expanse windows
+  before a dev check" ritual — and the app's JSON stores raced across processes (the
+  `recentProjects.ts` hazard).
+- **Fix** (`src/main/profileIsolation.ts`, new): per-checkout profile under
+  `<legacy userData>/profiles/<folder-slug>-<6-hex FNV-1a path hash>`; `-e2e` / `-smoke`
+  suffixes for the harnesses (e2e can run while a dev window of the same checkout is open);
+  `CANVAS_USERDATA` explicit override; `CANVAS_FRESH=1` throwaway mkdtemp profile deleted on
+  quit. One-time migration of the legacy root into a brand-new profile: config JSONs +
+  `recap/` + `voice-models/` + Chromium **`Local State`** — the safeStorage os_crypt key
+  wrapper, caught live on the first isolated boot (auth-tokens ciphertext unreadable without
+  it → silent sign-out). Applied at module scope in `index.ts` BEFORE the single-instance
+  lock; redirects BOTH `userData` and `sessionData`. Dev AppUserModelId now per-checkout
+  (`com.expanse.dev.<slug>`) so dev windows stop taskbar-grouping with the installed app.
+  Packaged builds + the voice spike untouched. e2e harness base is `%APPDATA%/Electron`
+  (file-path launch → default app name) — isolation nests under it, consistent with its
+  historical location.
+- **Deferred follow-up**: Layer 3 same-project residuals (recap `CANVAS_RECAP_MAP` env
+  preference + `.mcp.json` focus re-stamp) — overlaps the in-flight #333 recap lane.
+- **Verified**: typecheck · lint 0-err · format · units 16/16 new + FULL suite 4991P/3 skip
+  zero-fail · @core smoke 44/44 in its own `-e2e` profile WHILE a dev instance ran · FULL
+  matrix both legs on the push tree (Win 279P + menuShell/osrCropSupersample documented
+  flakes rerun-green isolated = 281/281 accounted · Linux-Docker 280P + menuShell
+  retry-recovered, exit-0) · manual dev check USER EYEBALL PASS (title
+  `PR dev-profile-isolation v0.14.3`; worktree dev + another lane's dev + packaged
+  coexisting, migrated state + sign-in intact). claude-review clean (0/0/0 inline); all 4
+  checks PASS. Squash `3a0fbf31`.
