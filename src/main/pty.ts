@@ -1,10 +1,11 @@
 import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
 import { MessageChannelMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import { buildSpawnEnv, type RecapEnvProvider } from './ptySpawnEnv'
+import { buildSpawnEnv, syncRecapHook, type RecapEnvProvider } from './ptySpawnEnv'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
+import { maybeEnsureClaudeHook } from './claudeBootDetect'
 import {
   MAX_OUTPUT_PAGE,
   pageOutput,
@@ -692,6 +693,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
       // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
       pasteMode.observe(opts.id, d)
+      // Cross-cwd recap capture: a hand-typed `claude` (any cwd the user cd'd to) announces its
+      // working dir in the boot banner — ensure the recap hook there (claudeBootDetect.ts).
+      maybeEnsureClaudeHook(d, () => readRing(buf), opts.id)
       dataBatch.push(d)
     })
     proc.onExit(({ exitCode }) => {
@@ -794,6 +798,10 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     } catch {
       /* provisioning is best-effort — never block the spawn */
     }
+
+    // Cross-cwd recap capture: ensure the recap hook exists where THIS spawn's claude reads it
+    // (the resolved cwd), before the launch line. Seam + spawn guard: ptySpawnEnv.syncRecapHook.
+    syncRecapHook({ id: opts.id, cwd: spawnCwd })
 
     const launch = opts.launchCommand?.trim()
     if (launch) proc.write(launch + '\r')

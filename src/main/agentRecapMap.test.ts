@@ -71,6 +71,19 @@ describe('recordSession.js hook script', () => {
       transcriptExists: true
     })
   })
+
+  it('cross-cwd junk guard: no CANVAS_RECAP_BOARD → exits clean, appends NOTHING', () => {
+    // The hook now also lives in repos boards spawn INTO, where the user's ordinary claude
+    // sessions run without the env var — those must not grow the map with boardId:'' lines.
+    const map = join(dir, 'map.jsonl')
+    const env = { ...process.env }
+    delete env.CANVAS_RECAP_BOARD
+    execFileSync(process.execPath, ['src/main/hooks/recordSession.js', map], {
+      input: JSON.stringify({ session_id: 'sess-3', hook_event_name: 'SessionStart' }),
+      env
+    })
+    expect(existsSync(map)).toBe(false)
+  })
 })
 
 describe('readRecapMap', () => {

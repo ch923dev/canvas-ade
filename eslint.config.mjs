@@ -288,7 +288,11 @@ export default tseslint.config(
     // the post-fix count; ratchet DOWNWARD when pty.ts is next split.
     // 706→696 (terminal-copy fix): the spawn-env build + recap-provider try/catch extracted to
     // ptySpawnEnv.ts (buildSpawnEnv) — ratcheted down per the rule above.
-    rules: { 'max-lines': ['error', { max: 696, skipBlankLines: true, skipComments: true }] }
+    // 696→700 (cross-cwd recap capture): the one-line syncRecapHook(...) call must fire at the
+    // spawn choke point, and the one-line maybeEnsureClaudeHook(...) probe must sit in the
+    // onData handler beside the pasteMode observer it mirrors (+ its import). The seams
+    // themselves live in ptySpawnEnv.ts / claudeBootDetect.ts. Ratchet DOWNWARD on next split.
+    rules: { 'max-lines': ['error', { max: 700, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

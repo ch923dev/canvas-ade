@@ -29,6 +29,23 @@ export type RecapEnvProvider = (opts: {
  * Both are inert for non-Claude agents. `recapEnv` (the injectable policy seam) is spread
  * LAST so a policy can still override either baseline var.
  */
+/**
+ * Nested-session env scrub: when the app itself was launched FROM a Claude Code session (a dev
+ * running `pnpm dev` inside a claude terminal — including Expanse's own boards), process.env
+ * carries that parent session's identity. A claude spawned in a board must NOT inherit it: with
+ * these set it behaves as a child of the OUTER session (observed: no transcript of its own →
+ * recap resolves a stale sibling, Resume impossible). Boards are top-level sessions by
+ * definition — strip the identity vars; keep deliberate baseline vars (DISABLE_ALTERNATE_SCREEN
+ * is OURS below).
+ */
+const NESTED_CLAUDE_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_CODE_ENTRYPOINT'
+] as const
+
 export function buildSpawnEnv(
   provider: RecapEnvProvider | undefined,
   opts: { id: string; launchCommand?: string; cwd?: string }
@@ -39,10 +56,40 @@ export function buildSpawnEnv(
   } catch {
     recapEnv = undefined // policy must never break a spawn
   }
-  return {
+  const env = {
     ...process.env,
     FORCE_HYPERLINK: '1',
     CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
     ...(recapEnv ?? {})
   } as Record<string, string>
+  for (const k of NESTED_CLAUDE_ENV) delete env[k]
+  return env
+}
+
+/**
+ * Cross-cwd recap capture: ensure the recap hook exists in the SPAWN CWD's
+ * `.claude/settings.local.json` before the launch line is written. Claude Code reads hooks from
+ * the directory it launches in, but the hook was only ever installed into the OPEN project dir
+ * (project open + window focus) — so a board whose cwd override points at another repo (MCP
+ * `spawn_board` cwd, the Inspector's Edit… cwd) launched a claude that never fired
+ * recordSession.js: no map entry, "Capture didn't record this session", Resume impossible.
+ * The injected provider owns the policy (consent + runner + which dirs to skip); the write is
+ * synchronous + idempotent so the file is on disk before the agent reads it. Like the env seam
+ * above, a provider error must NEVER break a spawn — syncRecapHook guards the call.
+ */
+export type RecapHookSyncProvider = (opts: { id: string; cwd: string }) => void
+let recapHookSyncProvider: RecapHookSyncProvider | undefined
+
+/** index.ts wires the policy (consent + runner + skip-list) here; pty.ts stays decoupled. */
+export function setRecapHookSyncProvider(fn: RecapHookSyncProvider | undefined): void {
+  recapHookSyncProvider = fn
+}
+
+/** pty.ts calls this just before the launch line; the guard keeps spawns unbreakable. */
+export function syncRecapHook(opts: { id: string; cwd: string }): void {
+  try {
+    recapHookSyncProvider?.(opts)
+  } catch {
+    /* hook install is best-effort — never block a spawn */
+  }
 }

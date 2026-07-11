@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { writeFileSync, mkdtempSync, existsSync, rmSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -12,10 +12,13 @@ import {
   getTerminalBootInfo,
   setRecapEnvProvider,
   setOrchestrationSyncProvider,
+  getTerminalCwd,
   disposeProjectPtys,
   persistBackgroundRingTails,
   backgroundParkedBoardIds
 } from './pty'
+import { setRecapHookSyncProvider } from './ptySpawnEnv'
+import { recordRecapHookDir, listRecapHookDirs, clearRecapHookDirs } from './recapHookDirs'
 import { appendTerminalSnapshot } from './terminalSnapshot'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { disposeProjectOsr } from './previewOsrBackground'
@@ -441,6 +444,33 @@ app.whenReady().then(async () => {
     return { CANVAS_RECAP_BOARD: id }
   })
 
+  // ── Cross-cwd recap hook install (spawn-time) ─────────────────────────────────────────
+  // The env var above reaches EVERY consented spawn, but the recap hook itself only ever
+  // landed in the OPEN project's .claude/settings.local.json (project open + window focus).
+  // Claude Code reads hooks from the directory it launches in — so a board whose cwd points at
+  // another repo (MCP spawn_board cwd, the Inspector's Edit… cwd) ran a claude that never fired
+  // recordSession.js: no map entry, "Capture didn't record this session", no Resume. pty.ts
+  // calls this synchronously just before the launch line (inside its own try/catch), mirroring
+  // the orchestration config sync that already re-stamps .mcp.json into the spawn cwd.
+  // Skip the user home dir: it's the safeCwd fallback for a missing/invalid cwd, and
+  // ~/.claude/settings.local.json is Claude Code USER scope — a hook there would fire for every
+  // claude session on the machine, not just this project's boards.
+  setRecapHookSyncProvider(({ cwd }) => {
+    if (!recapRunner) return
+    const dir = getCurrentDir()
+    if (!dir || readConsent(userData, dir) !== 'enabled') return
+    if (cwd === homedir()) return
+    installRecapHook({
+      projectDir: cwd,
+      command: recapRunner,
+      scriptPath: recordScript,
+      mapPath: recapMapPath
+    })
+    // Review [warning]: track every divergent install (keyed by the CONSENTING project) so a
+    // consent decline can clean each cross-cwd repo too — mirrors provisionedDirStore (F8).
+    recordRecapHookDir(userData, dir, cwd)
+  })
+
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
   // boot dependency. If listen() fails (EACCES from AV/firewall loopback denial,
   // EMFILE/ENFILE under fd exhaustion, ENETDOWN), surface a clear diagnostic and
@@ -691,7 +721,15 @@ app.whenReady().then(async () => {
     getWin: () => mainWindow,
     hookInstalled: (dir) => isRecapHookInstalled(dir, recordScript),
     hasCapture: (id) => recapMap.has(id),
-    sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null
+    sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null,
+    // Cross-cwd recap capture: probe the hook where the board's claude actually launched.
+    // A homedir cwd is the safeCwd fallback (cwd-less/invalid board), not a project scope we
+    // manage — the spawn-time install skips it, so probe the open project dir instead (the
+    // pre-fix behavior for default boards).
+    boardCwd: (id) => {
+      const cwd = getTerminalCwd(id)
+      return cwd === homedir() ? undefined : cwd
+    }
   })
   const recapReEnsure = createFocusReEnsure({
     ...recapHealthDeps,
@@ -702,7 +740,17 @@ app.whenReady().then(async () => {
         command: recapRunner ?? '',
         scriptPath: recordScript,
         mapPath: recapMapPath
-      })
+      }),
+    // Cross-cwd recap capture: heal every live board cwd too (spawn-time installs can be
+    // clobbered mid-session as well). Derived from the board mirror through the pty cwd map
+    // (non-terminals resolve undefined). Home-dir skip matches the spawn-time policy.
+    extraDirs: () => [
+      ...new Set(
+        listBoardMirror()
+          .map((b) => getTerminalCwd(b.id))
+          .filter((d): d is string => !!d && d !== homedir())
+      )
+    ]
   })
   app.on('browser-window-focus', recapReEnsure)
   registerProjectHandlers(
@@ -810,9 +858,11 @@ app.whenReady().then(async () => {
 
   // ── Recap consent IPC + hook-install policy (Task 10 Step 5) ────────────────────────
   // recap:getConsent / recap:setConsent (frame-guarded inside recapConsent.ts). The decision
-  // callback is the SINGLE place that mutates the project's .claude/settings.local.json hook:
-  // 'enabled' → install (idempotent), anything else → remove only OUR entry. The map path is
-  // baked into the hook args here so the external Claude process appends to the app-owned map.
+  // callback owns the consent-driven install/remove of the project's .claude/settings.local.json
+  // hook ('enabled' → install idempotently, anything else → remove only OUR entry) — the
+  // spawn-time / boot-detect providers above may ALSO install into a board's divergent cwd, and
+  // every such install is tracked in recapHookDirs so the decline below cleans those too. The
+  // map path is baked into the hook args so the external Claude process appends to the app map.
   registerRecapHandlers(
     ipcMain,
     () => mainWindow,
@@ -832,6 +882,17 @@ app.whenReady().then(async () => {
         }
       } else {
         removeRecapHook(projectPath, recordScript)
+        // Review [warning]: also remove OUR hook entry from every divergent cwd this project's
+        // consent ever installed into (tracked by the providers above; persisted across
+        // restarts). Per-dir try/catch — one unwritable repo must not strand the others.
+        for (const divergent of listRecapHookDirs(userData, projectPath)) {
+          try {
+            removeRecapHook(divergent, recordScript)
+          } catch {
+            /* best-effort cleanup */
+          }
+        }
+        clearRecapHookDirs(userData, projectPath)
         // BUG-002: on decline, stop all in-flight recap activity for this project's boards
         // so transcript content stops egressing to the LLM even while a claude session runs.
         // 1. Derive the current project's live board ids from the board mirror.
