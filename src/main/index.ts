@@ -719,7 +719,13 @@ app.whenReady().then(async () => {
     hasCapture: (id) => recapMap.has(id),
     sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null,
     // Cross-cwd recap capture: probe the hook where the board's claude actually launched.
-    boardCwd: (id) => getTerminalCwd(id)
+    // A homedir cwd is the safeCwd fallback (cwd-less/invalid board), not a project scope we
+    // manage — the spawn-time install skips it, so probe the open project dir instead (the
+    // pre-fix behavior for default boards).
+    boardCwd: (id) => {
+      const cwd = getTerminalCwd(id)
+      return cwd === homedir() ? undefined : cwd
+    }
   })
   const recapReEnsure = createFocusReEnsure({
     ...recapHealthDeps,
