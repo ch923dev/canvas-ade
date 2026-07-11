@@ -145,6 +145,11 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 # board e2e smoke: pnpm build; $env:CANVAS_SMOKE='e2e'; pnpm start   (seeds each board, prints E2E_* / E2E_DONE, exits non-zero on fail) — FROZEN in CI, see Status
 # HTML screenshot:  $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start  (renderer DOM only, NOT the native preview view)
 # manual PR check:  $env:CANVAS_DEV_TITLE='PR#NNN <feature>'; pnpm dev  (stamps the window title so you can tell WHICH PR's build you're inspecting — see Conventions › Manual dev check)
+# isolated dev profiles: every unpackaged instance gets a PER-CHECKOUT userData automatically
+#   (%APPDATA%/canvas-ade/profiles/<checkout>-<hash>[-e2e|-smoke]) — dev instances from several
+#   checkouts + the packaged app + the e2e harness all run side by side, no close-all ritual.
+#   CANVAS_FRESH=1 pnpm dev → throwaway profile (pure-eyeball check, deleted on quit);
+#   CANVAS_USERDATA=<dir> → explicit profile override. (src/main/profileIsolation.ts)
 ```
 
 ## Conventions
