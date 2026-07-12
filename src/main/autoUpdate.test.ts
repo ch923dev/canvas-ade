@@ -302,6 +302,9 @@ describe('initAutoUpdate — wired (signed production build)', () => {
     const result = install({})
     expect(result).toBe(true)
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+    // (isSilent, isForceRunAfter) — silent in-place install + relaunch. Without these the
+    // assisted NSIS installer (oneClick:false) replays the full wizard on every update.
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 
   it('update:install denies a foreign sender (does not install)', async () => {

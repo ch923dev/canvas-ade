@@ -72,7 +72,7 @@ export interface UpdaterLike {
   on(event: string, listener: (info: UpdaterEventArg) => void): unknown
   checkForUpdates(): Promise<unknown>
   downloadUpdate(): Promise<unknown>
-  quitAndInstall(): void
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
   /**
    * Present on the real autoUpdater; optional here so test fakes stay minimal. Used ONLY by
    * the dev-only local update channel (index.ts, compile-gated __LOCAL_UPDATE_CHANNEL__) to
@@ -240,7 +240,10 @@ export async function initAutoUpdate(deps: AutoUpdateDeps): Promise<void> {
   ipc.handle('update:install', (e) => {
     if (isForeignSender(e, getWin)) return false
     try {
-      updater.quitAndInstall()
+      // (true, true) = SILENT install + force relaunch. Without isSilent the assisted NSIS
+      // installer (oneClick:false) replays the full wizard on restart — the user re-clicks
+      // through every install page instead of getting a seamless in-place update.
+      updater.quitAndInstall(true, true)
     } catch (err) {
       logError('[auto-update] quitAndInstall failed', err)
     }
