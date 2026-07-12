@@ -10,7 +10,6 @@
  * - 'keep' — the setting says always-keep: silent tray residency, no modal.
  * - 'ask'  — pop the close modal and let the user choose.
  */
-import { basename } from 'node:path'
 import type { CloseGuardAnswer, CloseSessionRow } from '../../shared/closeGuardTypes'
 import type { CloseWithSessions } from './config'
 
@@ -65,11 +64,17 @@ export interface KeepableSnapshotDeps {
 }
 
 /** Display command for a session: its launchCommand (what the user is actually running),
- *  else the shell binary name — the mock-1 "cmd" column, honest either way. */
+ *  else the shell binary name — the mock-1 "cmd" column ("pwsh", not a path), honest either
+ *  way. Manual separator split (NOT node:path.basename): the shell string is a WINDOWS path
+ *  whatever platform this pure core runs on — POSIX basename would return the whole
+ *  backslashed string (the CI-linux unit-suite lesson), and the tray core already renders
+ *  rows this way, so modal and tray stay consistent. */
 function displayCmd(facts: KeepableFacts | undefined): string {
   const launch = facts?.launchCommand?.trim()
   if (launch) return launch
-  return facts ? basename(facts.shell) : 'shell'
+  if (!facts) return 'shell'
+  const base = facts.shell.replace(/\\/g, '/').split('/').pop() ?? facts.shell
+  return base.replace(/\.exe$/i, '')
 }
 
 /**

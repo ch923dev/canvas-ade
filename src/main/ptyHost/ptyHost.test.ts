@@ -536,7 +536,9 @@ describe('buildKeepableRows (close-modal snapshot filter)', () => {
       },
       {
         id: 'b',
-        cmd: 'pwsh.exe', // no launchCommand → shell binary name
+        // No launchCommand → shell binary name, split platform-agnostically (a Windows path
+        // rendered by a POSIX CI runner must not survive whole) and .exe-stripped (mock 1).
+        cmd: 'pwsh',
         title: null,
         cwd: null,
         running: false, // idle-at-prompt heuristic dims the row
