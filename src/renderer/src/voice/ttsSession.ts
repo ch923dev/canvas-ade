@@ -8,11 +8,37 @@
 import { getTtsPlayer } from './ttsPlayback'
 import { useTtsStore } from '../store/ttsStore'
 
+// ── J3: the barge-in listener registry. useTtsPlayback's interrupt trigger calls
+// notifyBargeIn() so the Jarvis controller can cancel the in-flight LLM stream in the
+// same beat as the audio flush (KICKOFF-J3 §1.2 — no such hook existed before J3).
+const bargeInListeners = new Set<() => void>()
+
+/** Subscribe to barge-in (user talked over playback). Returns an unsubscribe fn. */
+export function onBargeIn(cb: () => void): () => void {
+  bargeInListeners.add(cb)
+  return () => bargeInListeners.delete(cb)
+}
+
+/** Fire the barge-in listeners (useTtsPlayback's trigger; a listener throw never breaks the flush). */
+export function notifyBargeIn(): void {
+  for (const cb of bargeInListeners) {
+    try {
+      cb()
+    } catch {
+      /* listener bug must not block the interrupt */
+    }
+  }
+}
+
 /**
  * Speak `text` through the configured TTS model, opening the session if needed.
  * Resolves true when the utterance was accepted (chunks will stream to the player).
+ * `opts` (J3): per-utterance speaker id + rate — the persona voice settings.
  */
-export async function speakText(text: string): Promise<boolean> {
+export async function speakText(
+  text: string,
+  opts?: { sid?: number; speed?: number }
+): Promise<boolean> {
   const api = window.api?.voice?.tts
   if (!api) return false // non-electron test runtimes (App.tsx discipline)
   const store = useTtsStore.getState()
@@ -37,7 +63,7 @@ export async function speakText(text: string): Promise<boolean> {
     useTtsStore.getState().sessionStarted()
   }
   try {
-    const r = await api.speak(text)
+    const r = await api.speak(text, opts)
     if (!r.ok) {
       useTtsStore.getState().setError(r.error ?? 'speak failed')
       return false

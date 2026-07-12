@@ -1,0 +1,410 @@
+/**
+ * Settings · Voice · Persona pane (mock-persona-settings.html, user-approved 2026-07-10) —
+ * who answers when you talk to Expanse. Persona fields apply IMMEDIATELY (the voice-pane
+ * pattern: every change is one jarvis.config.set merge-patch, pushed back live). The API
+ * key row is the one explicit-commit control (LlmPane posture: write-only into MAIN) and
+ * writes the EXISTING llmKeyStore `anthropic` slot via window.api.llm — no second store.
+ */
+import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
+import { pane } from '../paneStyles'
+import type { JarvisConfigView } from '../../../../../preload/jarvis'
+
+const TONES: Array<{ id: JarvisConfigView['tonePreset']; name: string; quote: string }> = [
+  {
+    id: 'butler',
+    name: 'Butler, dry wit',
+    quote: '“The tests pass, sir. I contained my astonishment.”'
+  },
+  {
+    id: 'mission-control',
+    name: 'Mission control',
+    quote: '“Spawn confirmed. Two boards running. Standing by.”'
+  },
+  {
+    id: 'pair-programmer',
+    name: 'Pair programmer',
+    quote: '“Okay so the auth test is the flaky one, want me to rerun it?”'
+  },
+  { id: 'custom', name: 'Custom', quote: '' }
+]
+
+const MODELS = [
+  { id: 'claude-opus-4-8', label: 'claude-opus-4-8 (default)' },
+  { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5 (fast conversation)' }
+]
+
+const seg: CSSProperties = {
+  display: 'inline-flex',
+  background: 'var(--inset)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--r-ctl)',
+  overflow: 'hidden'
+}
+const segBtn = (on: boolean): CSSProperties => ({
+  fontFamily: 'var(--ui)',
+  fontSize: 11,
+  padding: '4px 10px',
+  border: 0,
+  cursor: 'pointer',
+  background: on ? 'var(--accent-wash)' : 'transparent',
+  color: on ? 'var(--accent-hover)' : 'var(--text-3)'
+})
+const toneCard = (on: boolean): CSSProperties => ({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  textAlign: 'left',
+  cursor: 'pointer',
+  background: on ? 'var(--accent-wash)' : 'var(--inset)',
+  border: `1px solid ${on ? 'rgba(79,140,255,0.45)' : 'var(--border-subtle)'}`,
+  borderRadius: 'var(--r-inner)',
+  padding: '9px 11px'
+})
+
+function Seg<T extends string>({
+  value,
+  options,
+  onPick,
+  testId
+}: {
+  value: T
+  options: Array<{ id: T; label: string }>
+  onPick: (v: T) => void
+  testId: string
+}): ReactElement {
+  return (
+    <span style={seg} data-test={testId}>
+      {options.map((o) => (
+        <button key={o.id} style={segBtn(o.id === value)} onClick={() => onPick(o.id)}>
+          {o.label}
+        </button>
+      ))}
+    </span>
+  )
+}
+
+export function PersonaPane(): ReactElement | null {
+  const [cfg, setCfg] = useState<JarvisConfigView | null>(null)
+  const [hasKey, setHasKey] = useState(false)
+  const [encryptionAvailable, setEncryptionAvailable] = useState(true)
+  const [key, setKey] = useState('')
+  const [keyBusy, setKeyBusy] = useState(false)
+  const [keyError, setKeyError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!window.api?.jarvis) return
+    let cancelled = false
+    void window.api.jarvis
+      .status()
+      .then((s) => {
+        if (cancelled) return
+        setCfg(s.config)
+        setHasKey(s.hasKey)
+        setEncryptionAvailable(s.encryptionAvailable)
+      })
+      .catch(() => {
+        if (!cancelled) setHasKey(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!window.api?.jarvis || !cfg) return null
+
+  /** Immediate-apply merge patch; MAIN repairs + pushes jarvis:config:changed live. */
+  const patch = (p: Partial<JarvisConfigView>): void => {
+    setCfg((c) => (c ? { ...c, ...p } : c))
+    void window.api.jarvis.config.set(p).catch(() => {})
+  }
+
+  const saveKey = async (): Promise<void> => {
+    const cleanKey = key.replace(/\s+/g, '') // LlmPane BUG-007(4): strip embedded whitespace
+    if (!cleanKey) return
+    setKeyBusy(true)
+    setKeyError(null)
+    try {
+      const r = await window.api.llm.setKey({ provider: 'anthropic', key: cleanKey })
+      if (!r.ok) {
+        setKeyError(
+          r.reason === 'encryption-unavailable'
+            ? 'No system keyring available to encrypt the key. Set ANTHROPIC_API_KEY instead.'
+            : 'Key could not be saved.'
+        )
+        return
+      }
+      setKey('')
+      setHasKey(true)
+    } catch {
+      setKeyError('Key could not be saved — please try again.')
+    } finally {
+      setKeyBusy(false)
+    }
+  }
+
+  const clearKey = async (): Promise<void> => {
+    setKeyBusy(true)
+    setKeyError(null)
+    try {
+      const r = await window.api.llm.clearKey({ provider: 'anthropic' })
+      if (r.ok) setHasKey(false)
+      else setKeyError('Could not clear the key.')
+    } catch {
+      setKeyError('Could not clear the key.')
+    } finally {
+      setKeyBusy(false)
+    }
+  }
+
+  return (
+    <div style={pane.section} data-test="persona-pane">
+      <div style={pane.setrow}>
+        <div style={{ flex: 1 }}>
+          <div style={pane.rowTitle}>Show {cfg.name}</div>
+          <div style={pane.rowSub}>The island docks top-right; drag it anywhere.</div>
+        </div>
+        <button
+          role="switch"
+          aria-checked={cfg.enabled}
+          aria-label="Show Jarvis island"
+          onClick={() => patch({ enabled: !cfg.enabled })}
+          style={{
+            ...pane.toggle,
+            background: cfg.enabled ? 'var(--accent)' : 'var(--surface-overlay)',
+            cursor: 'pointer'
+          }}
+        >
+          <span style={{ ...pane.toggleKnob, left: cfg.enabled ? 17 : 2 }} />
+        </button>
+      </div>
+
+      <label style={pane.field}>
+        <span style={pane.label}>Name</span>
+        <input
+          aria-label="Persona name"
+          value={cfg.name}
+          maxLength={40}
+          style={{ ...pane.input, width: 180 }}
+          onChange={(e) => patch({ name: e.target.value })}
+        />
+        <span style={pane.hint}>used in the prompt + island label</span>
+      </label>
+
+      <div style={pane.field}>
+        <span style={pane.label}>Tone</span>
+        <div
+          role="radiogroup"
+          aria-label="Tone preset"
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
+          data-test="persona-tones"
+        >
+          {TONES.map((t) => {
+            const on = cfg.tonePreset === t.id
+            return (
+              // A div, not a button: the custom card nests a textarea (invalid inside a button).
+              <div
+                key={t.id}
+                role="radio"
+                aria-checked={on}
+                tabIndex={0}
+                style={toneCard(on)}
+                onClick={() => patch({ tonePreset: t.id })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    patch({ tonePreset: t.id })
+                  }
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)' }}>
+                  {t.name}
+                </span>
+                {t.id !== 'custom' ? (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      lineHeight: '15px',
+                      color: 'var(--text-3)',
+                      fontStyle: 'italic'
+                    }}
+                  >
+                    {t.quote}
+                  </span>
+                ) : (
+                  <textarea
+                    aria-label="Custom tone"
+                    rows={2}
+                    disabled={!on}
+                    placeholder="Describe the tone in your own words…"
+                    value={cfg.customToneText}
+                    maxLength={1000}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => patch({ customToneText: e.target.value })}
+                    style={{
+                      fontFamily: 'var(--ui)',
+                      fontSize: 11,
+                      lineHeight: '15px',
+                      color: 'var(--text-2)',
+                      background: 'transparent',
+                      border: '1px dashed var(--border-subtle)',
+                      borderRadius: 'var(--r-ctl)',
+                      padding: '4px 6px',
+                      resize: 'none',
+                      outline: 'none',
+                      marginTop: 2
+                    }}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <label style={pane.field}>
+        <span style={pane.label}>Speaking rate</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <input
+            aria-label="Speaking rate"
+            type="range"
+            min={80}
+            max={130}
+            value={Math.round(cfg.speakingRate * 100)}
+            style={{ width: 120, accentColor: 'var(--accent)' }}
+            onChange={(e) => patch({ speakingRate: Number(e.target.value) / 100 })}
+          />
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--text-2)' }}>
+            {cfg.speakingRate.toFixed(2)}×
+          </span>
+        </span>
+        <span style={pane.hint}>
+          voice + model download live in Settings › Voice (Speech block)
+        </span>
+      </label>
+
+      <label style={pane.field}>
+        <span style={pane.label}>Verbosity</span>
+        <Seg
+          value={cfg.verbosity}
+          testId="persona-verbosity"
+          options={[
+            { id: 'concise', label: 'Concise' },
+            { id: 'normal', label: 'Normal' },
+            { id: 'narrative', label: 'Narrative' }
+          ]}
+          onPick={(v) => patch({ verbosity: v })}
+        />
+        <span style={pane.hint}>concise = lead with the answer, one breath per sentence</span>
+      </label>
+
+      <label style={pane.field}>
+        <span style={pane.label}>Announcements</span>
+        <Seg
+          value={cfg.announcePolicy}
+          testId="persona-announce"
+          options={[
+            { id: 'all', label: 'All events' },
+            { id: 'attention', label: 'Attention only' },
+            { id: 'chips-only', label: 'Chips only' }
+          ]}
+          onPick={(v) => patch({ announcePolicy: v })}
+        />
+        <span style={pane.hint}>
+          what {cfg.name} speaks from agent events (arrives with the Hands update)
+        </span>
+      </label>
+
+      <div style={pane.divider} />
+      <div style={pane.head}>Brain</div>
+
+      <label style={pane.field}>
+        <span style={pane.label}>Model</span>
+        <select
+          aria-label="Brain model"
+          value={cfg.model}
+          style={{ ...pane.input, width: 280 }}
+          onChange={(e) => patch({ model: e.target.value })}
+        >
+          {MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+          {!MODELS.some((m) => m.id === cfg.model) && (
+            <option value={cfg.model}>{cfg.model}</option>
+          )}
+        </select>
+      </label>
+
+      <label style={pane.field}>
+        <span style={pane.label}>History</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Seg
+            value={cfg.historyMode}
+            testId="persona-history"
+            options={[
+              { id: 'session', label: 'Session only' },
+              { id: 'off', label: 'Off' }
+            ]}
+            onPick={(v) => patch({ historyMode: v })}
+          />
+          <button
+            className="ca-btn-ghost"
+            onClick={() => void window.api.jarvis.history.clear().catch(() => {})}
+          >
+            Clear
+          </button>
+        </span>
+        <span style={pane.hint}>
+          per-project persistence (.canvas/memory/jarvis) arrives in a later update
+        </span>
+      </label>
+
+      <label style={pane.field}>
+        <span style={pane.label}>
+          Anthropic API key {hasKey && <span style={{ color: 'var(--accent)' }}>· set</span>}
+        </span>
+        <input
+          aria-label="Anthropic API key"
+          type="password"
+          value={key}
+          placeholder={hasKey ? '•••••••• (leave blank to keep)' : 'Paste your key'}
+          style={pane.input}
+          onChange={(e) => setKey(e.target.value)}
+        />
+        <span style={pane.hint}>
+          encrypted via safeStorage, main process only — shared with Context · LLM&apos;s Anthropic
+          slot
+        </span>
+      </label>
+      {!encryptionAvailable && (
+        <div role="note" style={pane.notice}>
+          No system keyring detected — set the <code>ANTHROPIC_API_KEY</code> environment variable
+          instead.
+        </div>
+      )}
+      {keyError && (
+        <div role="alert" style={pane.error}>
+          {keyError}
+        </div>
+      )}
+      <div style={pane.row}>
+        <button
+          className="ca-btn-ghost"
+          disabled={keyBusy || !hasKey}
+          onClick={() => void clearKey()}
+        >
+          Clear key
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          className="ca-btn-primary"
+          disabled={keyBusy || !key}
+          onClick={() => void saveKey()}
+        >
+          Save key
+        </button>
+      </div>
+    </div>
+  )
+}

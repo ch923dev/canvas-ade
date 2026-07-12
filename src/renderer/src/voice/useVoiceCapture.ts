@@ -18,6 +18,7 @@ import workletUrl from './captureWorklet?worker&url'
 import { createSilenceWatchdog, micConstraints, type WorkletFrameMsg } from './captureMath'
 import { useVoiceStore } from '../store/voiceStore'
 import { suppressMicForward } from '../store/ttsStore'
+import { consumeFinal } from './finalConsumer'
 
 interface ActiveCapture {
   dispose: () => void
@@ -69,7 +70,10 @@ function createCapture(port: MessagePort): ActiveCapture {
     else if (m?.t === 'partial' && typeof m.text === 'string') {
       useVoiceStore.getState().partialReceived(m.text)
     } else if (m?.t === 'final' && typeof m.text === 'string') {
-      useVoiceStore.getState().finalReceived(m.text)
+      // J3 converse seam: an armed consumer (the Jarvis controller) takes the final —
+      // the dictation draft/flyout never see it. Unconsumed finals keep the V3 route.
+      if (!consumeFinal(m.text)) useVoiceStore.getState().finalReceived(m.text)
+      else useVoiceStore.getState().partialReceived('')
     }
   }
 

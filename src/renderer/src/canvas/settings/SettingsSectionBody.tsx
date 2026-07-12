@@ -18,6 +18,7 @@ import { TerminalPane } from './panes/TerminalPane'
 import { ShortcutsPane } from './panes/ShortcutsPane'
 import { NotificationsPane } from './panes/NotificationsPane'
 import { LlmPane } from './panes/LlmPane'
+import { PersonaPane } from './panes/PersonaPane'
 import { OrchestrationPane } from './panes/OrchestrationPane'
 import { McpPane } from './panes/McpPane'
 import { AboutPane } from './panes/AboutPane'
@@ -58,6 +59,9 @@ export function SettingsSectionBody({
           <SettingsVoiceTtsSection />
         </>
       )
+    case 'persona':
+      // Jarvis J3: persona fields immediate-apply; the key row rides the llm anthropic slot.
+      return <PersonaPane />
     case 'llm':
       return <LlmPane />
     case 'orchestration':

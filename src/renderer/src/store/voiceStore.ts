@@ -62,6 +62,9 @@ interface VoiceState {
   /** Flyout visibility — opened on the first partial/final or an attention state; an
    *  explicit close keeps the draft. */
   flyoutOpen: boolean
+  /** J3 converse mode: suppress the dictation composer's auto-open (partials/finals belong
+   *  to the Jarvis turn, not the flyout draft). The flyout still opens for attention states. */
+  composerSuppressed: boolean
   /** OS mic grant reported by the last voice.start() ('granted'|'denied'|…|'unknown'). */
   micStatus: string
   /** Default model install state from the last voice.start() ('unknown' before any start). */
@@ -90,6 +93,7 @@ interface VoiceState {
   /** Send/Insert consumed the transcript — drop draft AND tail in one update. */
   clearTranscript: () => void
   setFlyoutOpen: (open: boolean) => void
+  setComposerSuppressed: (on: boolean) => void
   /** Download CTA completion flips 'absent' → 'ready' without another start(). */
   setModelStatus: (s: 'ready' | 'absent' | 'unknown') => void
   setEngineError: (on: boolean) => void
@@ -109,6 +113,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   draft: '',
   partial: '',
   flyoutOpen: false,
+  composerSuppressed: false,
   micStatus: 'unknown',
   modelStatus: 'unknown',
   engineError: false,
@@ -150,17 +155,19 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   partialReceived: (text) =>
     set((s) => ({
       partial: text,
-      flyoutOpen: s.flyoutOpen || text.length > 0
+      flyoutOpen: s.flyoutOpen || (text.length > 0 && !s.composerSuppressed)
     })),
   finalReceived: (text) =>
     set((s) => ({
       draft: joinFinal(s.draft, text),
       partial: '',
-      flyoutOpen: s.flyoutOpen || text.length > 0
+      flyoutOpen: s.flyoutOpen || (text.length > 0 && !s.composerSuppressed)
     })),
   setDraft: (text) => set({ draft: text }),
   clearTranscript: () => set({ draft: '', partial: '' }),
   setFlyoutOpen: (open) => set((s) => (s.flyoutOpen === open ? s : { flyoutOpen: open })),
+  setComposerSuppressed: (on) =>
+    set((s) => (s.composerSuppressed === on ? s : { composerSuppressed: on })),
   setModelStatus: (modelStatus) => set({ modelStatus }),
   setEngineError: (on) => set((s) => (s.engineError === on ? s : { engineError: on })),
   recent: [],

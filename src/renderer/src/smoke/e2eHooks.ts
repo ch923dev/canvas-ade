@@ -46,6 +46,8 @@ import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStor
 import { clearStickyLocalPrefs } from './e2eStickyPrefs'
 import { useCommandStore, commandStoreDefaults } from '../store/commandStore'
 import { useVoiceStore } from '../store/voiceStore'
+import { useJarvisStore } from '../store/jarvisStore'
+import { setConverseMode } from '../jarvis/jarvisSession'
 import { useLibraryStore } from '../store/libraryStore'
 import { useAccountStore } from '../store/accountStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
@@ -557,6 +559,20 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         lastVoiceAt: 0,
         captureStartedAt: 0
       })
+      // Jarvis J3: converse mode + the display transcript are the same ephemeral-isolation
+      // class — a live conversation would eat the next spec's dictation finals.
+      void setConverseMode(false)
+      useJarvisStore.setState({
+        converseMode: false,
+        activeTurnId: null,
+        awaitingReply: false,
+        streamText: '',
+        lastUserText: '',
+        turns: [],
+        tailOpen: false,
+        viewOpen: false,
+        lastError: null
+      })
       // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
       // collapse state) — extracted to e2eStickyPrefs.ts (max-lines), key literals kept
       // there for the same eager-bundle reason documented in that module.
@@ -596,6 +612,22 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         partial: s.partial,
         flyoutOpen: s.flyoutOpen,
         modelStatus: s.modelStatus
+      }
+    },
+    jarvisState() {
+      const s = useJarvisStore.getState()
+      const lastAssistant = [...s.turns].reverse().find((t) => t.role === 'assistant')
+      return {
+        converseMode: s.converseMode,
+        activeTurnId: s.activeTurnId,
+        awaitingReply: s.awaitingReply,
+        streamText: s.streamText,
+        lastUserText: s.lastUserText,
+        turnCount: s.turns.length,
+        lastAssistantText: lastAssistant?.text ?? '',
+        tailOpen: s.tailOpen,
+        viewOpen: s.viewOpen,
+        lastError: s.lastError
       }
     },
     async openProjectFromDisk(dir) {

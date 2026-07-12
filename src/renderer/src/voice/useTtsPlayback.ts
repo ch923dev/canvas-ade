@@ -11,7 +11,7 @@
 import { useEffect } from 'react'
 import { createTtsPlayer, setTtsPlayer } from './ttsPlayback'
 import { createBargeInDetector } from './ttsBargeIn'
-import { cancelSpeech } from './ttsSession'
+import { cancelSpeech, notifyBargeIn } from './ttsSession'
 import { useTtsStore } from '../store/ttsStore'
 import { useVoiceStore } from '../store/voiceStore'
 import { FRAME_SAMPLES, TARGET_SAMPLE_RATE } from './captureMath'
@@ -69,6 +69,8 @@ export function useTtsPlayback(): void {
     const trigger = (): void => {
       detector.reset()
       void cancelSpeech()
+      // J3: same-beat fan-out — the Jarvis controller cancels its in-flight LLM stream.
+      notifyBargeIn()
     }
     const offBarge = useVoiceStore.subscribe((s, prev) => {
       const tts = useTtsStore.getState()
