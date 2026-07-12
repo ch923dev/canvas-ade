@@ -48,6 +48,8 @@ export default function TerminalSmoke() {
     let port: MessagePort | null = null
 
     const onWinMsg = (e: MessageEvent): void => {
+      // SEC-2 class: same-window source pin, matching useTerminalSpawn's port adoption.
+      if (e.source !== window) return
       const data = e.data as { __ptyPort?: boolean; id?: string }
       if (!data || !data.__ptyPort || data.id !== TERM_ID) return
       port = e.ports[0]
