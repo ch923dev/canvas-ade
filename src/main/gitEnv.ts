@@ -46,5 +46,12 @@ export function repoScopedEnv(): NodeJS.ProcessEnv {
   // (Git Bash → /mingw64/bin/git-askpass.exe) and a gitDiff/gitPermalink call errors out.
   delete env.SSH_ASKPASS
   delete env.SSH_ASKPASS_REQUIRE
+  // Same class, rest of simple-git's UNPREFIXED block-list (`editor`/`pager`/`prefix` in
+  // @simple-git/argv-parser's env map): a shell/toolchain that exports a bare EDITOR or PAGER —
+  // the Playwright test-runner environment does — makes every gitDiff/gitPermalink call refuse to
+  // spawn exactly like the SSH_ASKPASS case above. A read-only git read needs none of them.
+  delete env.EDITOR
+  delete env.PAGER
+  delete env.PREFIX
   return env
 }
