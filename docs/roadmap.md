@@ -218,6 +218,11 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 - **Design/UX audit waves D1+** — on `feat/design-audit` (D0 merged #108).
 - Dependabot: **#77 react HELD — CI-RED** (React major, own slice; #76/#78/#79/#80 merged 2026-06-08).
 - Research-only docs (#25/27/29/71/72). **Diagram #72** — next free schema version when implemented (v8 now taken by #92).
+- **Detached PTY host — terminals survive app restart** (filed 2026-07-12) — tmux-style daemon
+  owns node-pty sessions; app reconnects after update/crash/relaunch (replay ring + snapshot
+  fallback). Companion lane to the Jarvis epic (managed-agent threads need survivable sessions);
+  plan: `research/2026-07-04-jarvis-voice-agent/PLAN.md` §10. Spike ConPTY reattach + daemon
+  security posture first.
 
 **Performance wave (2026-06-23) — ✅ SHIPPED (#219):**
 - A codebase-wide, measurement-grounded perf review (8 parallel discovery zones → adversarial
