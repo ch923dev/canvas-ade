@@ -1,6 +1,13 @@
 import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
 import { MessageChannelMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import { acquireProc, configurePtyHostBridge, tryDaemonReattach } from './ptyHost/bridge'
+
+// PTY-host daemon (DESIGN.md 2026-07-12): sessions optionally live in a detached daemon so they
+// survive update installs and crashes. The daemon hands back IPty-SHAPED proxies (D4), so all
+// the session bookkeeping in this file — park/adopt, lifecycle heuristics, killTree, rings —
+// operates on daemon sessions unchanged. The glue (gate, survivor list, acquire, reattach,
+// boot + quit-drain wiring) lives in ./ptyHost/bridge (max-lines ratchet).
 import { buildSpawnEnv, syncRecapHook, type RecapEnvProvider } from './ptySpawnEnv'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
@@ -22,7 +29,7 @@ import { readTerminalSnapshotAsync } from './terminalSnapshot'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
 import { createPasteModeTracker } from './ptyPasteMode'
-import { isValidResize, clampSpawnDim } from './ptyResize'
+import { attachPortInput, clampSpawnDim } from './ptyResize'
 import type { PtyLifecycleEmitter } from './ptyLifecycle'
 import * as ptyLC from './ptyLifecycleMonitor'
 import * as residue from './ptyExitResidue'
@@ -48,39 +55,10 @@ export { takeExitResidue, type ExitResidue } from './ptyExitResidue'
  * MessagePort as `{ t: 'state', … }` so the board can render its identity pill.
  */
 
-/** Renderer→PTY input/resize message over a board's MessagePort. The discriminated
- * union lets the resize branch read cols/rows as plain numbers (no non-null casts);
- * the runtime guards below still defend against malformed/untrusted payloads. */
-type PortInputMsg = { t: 'input'; d: string } | { t: 'resize'; cols: number; rows: number }
-
-/**
- * Attach the renderer→PTY input/resize forwarder to one MessagePort and start it.
- * This is the SINGLE renderer→PTY write guard, shared by the spawn-time and adopt-time
- * listener sites so the resize clamp (isValidResize) and the swallow-on-exited-pty
- * try/catch live in ONE place. node-pty's write/resize THROW on an exited-but-not-yet-
- * reaped pty; that throw would escape this EventEmitter listener as an uncaughtException
- * → app.exit(1), crashing the app — so it is swallowed (the session is being torn down).
- */
-export function attachPortInput(port: MessagePortMain, proc: pty.IPty): void {
-  port.on('message', (e) => {
-    const m = e.data as PortInputMsg
-    try {
-      if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-      else if (m.t === 'resize') {
-        if (isValidResize(m.cols, m.rows)) proc.resize(m.cols, m.rows)
-        else if (Number.isInteger(m.cols) && Number.isInteger(m.rows) && m.cols >= 1 && m.rows >= 1)
-          // BUG-023: a legit but OVERSIZED grid (>1000 cols/rows — wide board at a
-          // tiny font) is clamped instead of dropped, so row updates keep applying
-          // instead of the PTY freezing at spawn dimensions. Garbage (non-integer,
-          // <1, non-finite) is still dropped wholesale.
-          proc.resize(clampSpawnDim(m.cols, 80), clampSpawnDim(m.rows, 24))
-      }
-    } catch {
-      /* pty already exited */
-    }
-  })
-  port.start()
-}
+// attachPortInput (the SINGLE renderer→PTY write guard) lives beside its clamp helpers in
+// ptyResize.ts (max-lines doctrine); re-exported so pty.test.ts and this module's import
+// sites keep their './pty' path.
+export { attachPortInput } from './ptyResize'
 
 export interface SpawnOpts {
   id: string
@@ -599,6 +577,93 @@ function parkedForActiveProject(id: string): ParkedLike | undefined {
 }
 
 /**
+ * Wire one proc's data plane (spawn-time AND daemon-reattach): record into the ring, forward to
+ * whichever port is CURRENTLY live under this id, feed the paste-mode/claude-hook observers, and
+ * route the exit through the same lifecycle + cleanup + parked-residue paths. Extracted verbatim
+ * from the spawn handler so a daemon session reattached after an app restart (which has no
+ * spawn-time closure) gets the IDENTICAL pump. Returns the micro-batch drain hook
+ * (SessionLike.flushData / ParkedLike.flushData).
+ */
+function bindProcPump(id: string, proc: pty.IPty, buf: OutputRing): () => void {
+  // M9: batch chunks landing in the same tick into one postMessage (ptyDataBatch.ts) instead of
+  // one per chunk. Same lookup-at-fire-time + identity guard as the direct post it replaces.
+  const dataBatch = createChunkBatcher(() => ownedPort(sessions.get(id), proc))
+  proc.onData((d) => {
+    pushRing(buf, d) // PERF-06: amortised O(chunk), no per-chunk O(cap) copy
+    // Forward to the current live port (looked up at fire time, so it follows an
+    // adopt onto the new port); none while parked → guard the post. Identity
+    // guard `live.proc === proc`: a dying OLD proc keeps draining bytes for up to
+    // ~1s after kill() (node-pty's flush window), and without this check those
+    // late bytes would bleed into a freshly-restarted session under the same id.
+    const live = sessions.get(id)
+    if (!live || live.proc !== proc) return
+    live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
+    ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
+    // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
+    // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
+    // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
+    pasteMode.observe(id, d)
+    // Cross-cwd recap capture: a hand-typed `claude` (any cwd the user cd'd to) announces its
+    // working dir in the boot banner — ensure the recap hook there (claudeBootDetect.ts).
+    maybeEnsureClaudeHook(d, () => readRing(buf), id)
+    dataBatch.push(d)
+  })
+  proc.onExit(({ exitCode }) => {
+    dataBatch.flushNow() // M9: any buffered chunk must reach the renderer before state/exit below
+    // Post lifecycle to the CURRENT live port (looked up at fire time) the same
+    // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
+    // is told when its process exits. Posting to the captured spawn-time `port1`
+    // would hit the port park() already closed, and the adopted renderer would
+    // stay stuck in 'running' forever. During a restart/config-respawn the port
+    // may already be closed (the new session took over this id), so guard the post.
+    try {
+      // Identity guard: only the session that still OWNS this exact proc should
+      // be told it exited — a stale OLD-proc exit must not post 'exited' to a NEW
+      // session that has since respawned under the same id (mirrors isStaleExit).
+      const live = sessions.get(id)
+      if (live && live.proc === proc) {
+        live.state = 'exited'
+        live.exitCode = exitCode // T-F1: record the code while the session briefly survives
+        live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
+        live.port.postMessage({ t: 'exit', code: exitCode })
+        // Desktop-notifications P3: a NATURAL process exit (agent finished / errored). This
+        // identity-guarded block is reached ONLY when the live session still owns this proc — it
+        // is skipped for an explicit pty:kill / restart / reap (cleanup deletes the session
+        // BEFORE onExit fires), so board deletes and restarts never raise a spurious "done".
+        ptyLC.emitPtyExit(lifecycleEmitter, id, exitCode, live.monitored, boardCwds.get(id))
+      }
+    } catch {
+      /* port already closed by a newer session */
+    }
+    // Reference our OWN proc so a late exit from this (old) process cannot tear
+    // down a freshly respawned session that now occupies the same id.
+    cleanup(id, proc)
+    // If this proc was parked and exited on its own, drop it. Fork by park kind (R6): a
+    // BACKGROUND park's last words (ring tail + exit code) become consumable residue so the
+    // switch-back can say "exited in background (code N)" instead of showing a stale snapshot;
+    // an UNDO park (deleted board) keeps today's silent drop.
+    const p = parked.get(id)
+    if (p && p.proc === proc) {
+      if (p.timer) clearTimeout(p.timer)
+      parked.delete(id)
+      if (p.kind === 'background') {
+        residue.recordExitResidue(p.owningDir ?? null, id, {
+          // Phase 5 splice: the residue is the POST-PARK tail only — the switch-back
+          // restore re-writes the sidecar snapshot first, then appends this, so the
+          // user sees pre-park scrollback + exactly what the agent said before dying.
+          output: readRingSince(p.buf, p.watermark ?? 0),
+          exitCode,
+          exitedAt: Date.now()
+        })
+      }
+      // FIND-009: this parked exit bypasses cleanupCore too, so drop the gitDiff cwd here as well.
+      boardCwds.delete(id)
+    }
+  })
+  return () => dataBatch.flushNow()
+}
+
+/**
  * Bug #33 (defense-in-depth): every handler below rejects IPC that did not originate from the
  * main window's main frame via the shared `isForeignSender` (./ipcGuard). ipcMain channels are
  * shared by ALL webContents, including the per-board preview WebContentsViews that load untrusted
@@ -615,7 +680,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     return parsePortsFromOutput(box ? readRing(box) : '')
   })
 
-  ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
+  ipcMain.handle('pty:spawn', async (e, opts: SpawnOpts) => {
     if (isForeignSender(e, getWin)) throw new Error('pty:spawn — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('pty:spawn — no window')
@@ -650,19 +715,24 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const spawnCwd = safeCwd(opts.cwd)
     let proc: pty.IPty
     try {
-      proc = pty.spawn(shell, args, {
-        name: 'xterm-256color',
-        cols: spawnCols,
-        rows: spawnRows,
-        cwd: spawnCwd,
-        // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
-        // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
-        env: buildSpawnEnv(recapEnvProvider, {
+      // Daemon-first (DESIGN.md D2/D4): an IPty-shaped proxy from the PTY host when the gate is
+      // ON (sessions survive app restarts), the classic in-proc node-pty otherwise — acquireProc
+      // owns the choice + the surfaced fallback. Everything below treats them identically.
+      // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
+      // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
+      proc = await acquireProc(
+        opts,
+        shell,
+        args,
+        spawnCols,
+        spawnRows,
+        spawnCwd,
+        buildSpawnEnv(recapEnvProvider, {
           id: opts.id,
           launchCommand: opts.launchCommand,
           cwd: opts.cwd
         })
-      })
+      )
     } catch (err) {
       // No live session was registered, so report the failure straight back.
       const message = err instanceof Error ? err.message : String(err)
@@ -675,87 +745,10 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const { port1, port2 } = new MessageChannelMain()
 
     const buf = createRing(RING_CAP_BYTES)
-    // M9: batch chunks landing in the same tick into one postMessage (ptyDataBatch.ts) instead of
-    // one per chunk. Same lookup-at-fire-time + identity guard as the direct post it replaces.
-    const dataBatch = createChunkBatcher(() => ownedPort(sessions.get(opts.id), proc))
-    proc.onData((d) => {
-      pushRing(buf, d) // PERF-06: amortised O(chunk), no per-chunk O(cap) copy
-      // Forward to the current live port (looked up at fire time, so it follows an
-      // adopt onto the new port); none while parked → guard the post. Identity
-      // guard `live.proc === proc`: a dying OLD proc keeps draining bytes for up to
-      // ~1s after kill() (node-pty's flush window), and without this check those
-      // late bytes would bleed into a freshly-restarted session under the same id.
-      const live = sessions.get(opts.id)
-      if (!live || live.proc !== proc) return
-      live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
-      ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
-      // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
-      // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
-      // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
-      pasteMode.observe(opts.id, d)
-      // Cross-cwd recap capture: a hand-typed `claude` (any cwd the user cd'd to) announces its
-      // working dir in the boot banner — ensure the recap hook there (claudeBootDetect.ts).
-      maybeEnsureClaudeHook(d, () => readRing(buf), opts.id)
-      dataBatch.push(d)
-    })
-    proc.onExit(({ exitCode }) => {
-      dataBatch.flushNow() // M9: any buffered chunk must reach the renderer before state/exit below
-      // Post lifecycle to the CURRENT live port (looked up at fire time) the same
-      // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
-      // is told when its process exits. Posting to the captured spawn-time `port1`
-      // would hit the port park() already closed, and the adopted renderer would
-      // stay stuck in 'running' forever. During a restart/config-respawn the port
-      // may already be closed (the new session took over this id), so guard the post.
-      try {
-        // Identity guard: only the session that still OWNS this exact proc should
-        // be told it exited — a stale OLD-proc exit must not post 'exited' to a NEW
-        // session that has since respawned under the same id (mirrors isStaleExit).
-        const live = sessions.get(opts.id)
-        if (live && live.proc === proc) {
-          live.state = 'exited'
-          live.exitCode = exitCode // T-F1: record the code while the session briefly survives
-          live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
-          live.port.postMessage({ t: 'exit', code: exitCode })
-          // Desktop-notifications P3: a NATURAL process exit (agent finished / errored). This
-          // identity-guarded block is reached ONLY when the live session still owns this proc — it
-          // is skipped for an explicit pty:kill / restart / reap (cleanup deletes the session
-          // BEFORE onExit fires), so board deletes and restarts never raise a spurious "done".
-          ptyLC.emitPtyExit(
-            lifecycleEmitter,
-            opts.id,
-            exitCode,
-            live.monitored,
-            boardCwds.get(opts.id)
-          )
-        }
-      } catch {
-        /* port already closed by a newer session */
-      }
-      // Reference our OWN proc so a late exit from this (old) process cannot tear
-      // down a freshly respawned session that now occupies the same id.
-      cleanup(opts.id, proc)
-      // If this proc was parked and exited on its own, drop it. Fork by park kind (R6): a
-      // BACKGROUND park's last words (ring tail + exit code) become consumable residue so the
-      // switch-back can say "exited in background (code N)" instead of showing a stale snapshot;
-      // an UNDO park (deleted board) keeps today's silent drop.
-      const p = parked.get(opts.id)
-      if (p && p.proc === proc) {
-        if (p.timer) clearTimeout(p.timer)
-        parked.delete(opts.id)
-        if (p.kind === 'background') {
-          residue.recordExitResidue(p.owningDir ?? null, opts.id, {
-            // Phase 5 splice: the residue is the POST-PARK tail only — the switch-back
-            // restore re-writes the sidecar snapshot first, then appends this, so the
-            // user sees pre-park scrollback + exactly what the agent said before dying.
-            output: readRingSince(p.buf, p.watermark ?? 0),
-            exitCode,
-            exitedAt: Date.now()
-          })
-        }
-        // FIND-009: this parked exit bypasses cleanupCore too, so drop the gitDiff cwd here as well.
-        boardCwds.delete(opts.id)
-      }
-    })
+    // The whole data plane (ring record, identity-guarded forward, paste/claude observers,
+    // exit lifecycle + parked residue) lives in bindProcPump — shared verbatim with the
+    // daemon-reattach path, which has no spawn-time closure.
+    const flushData = bindProcPump(opts.id, proc, buf)
 
     attachPortInput(port1, proc)
 
@@ -775,7 +768,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // P3: capture the board's monitorActivity opt-out for the generic-PTY lifecycle emits.
       monitored: opts.monitorActivity !== false,
       // M9: let cleanupCore drain the micro-batch before it deletes the entry / closes the port.
-      flushData: () => dataBatch.flushNow()
+      flushData
     })
     boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
@@ -834,6 +827,13 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     if (isForeignSender(e, getWin)) return { adopted: false }
     const win = getWin()
     if (!win) return { adopted: false }
+    // Daemon reattach (DESIGN.md): a session that SURVIVED a previous app run (update restart /
+    // crash) reattaches through this same adopt flow — synthesized just-in-time as a park so the
+    // port-rebind/replay/owner semantics below are byte-identical to a live park. Await the
+    // boot-time survivor list first so an early board mount can't race it.
+    if (!parked.has(id) && !sessions.has(id)) {
+      await tryDaemonReattach(id)
+    }
     // Phase 5 splice: for a background park owned by the ACTIVE project, read its sidecar
     // snapshot (flushed at switch-away) to replay as the preface before the ring tail.
     // Read here (async, before the sync adopt) so adoptCore stays pure of fs. If the
@@ -1400,3 +1400,15 @@ export function writeToPtyCore(
 export function writeToPty(id: string, text: string): boolean {
   return writeToPtyCore(id, text, sessions)
 }
+
+// Hand the PTY-host bridge the private session state its reattach-as-synthetic-park and
+// quit-path drain need (module-load wiring, the sessionDeps pattern).
+configurePtyHostBridge({
+  sessions,
+  parked,
+  boardCwds,
+  bindProcPump,
+  reapParked,
+  parkTtlMs: PARK_TTL_MS,
+  disposeAllPtys
+})

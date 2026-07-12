@@ -17,6 +17,7 @@ import {
   persistBackgroundRingTails,
   backgroundParkedBoardIds
 } from './pty'
+import { bootPtyHost, quitPtyDrain } from './ptyHost/bridge'
 import { setRecapHookSyncProvider } from './ptySpawnEnv'
 import { recordRecapHookDir, listRecapHookDirs, clearRecapHookDirs } from './recapHookDirs'
 import { appendTerminalSnapshot } from './terminalSnapshot'
@@ -492,6 +493,8 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  // PTY-host boot (DESIGN.md 2026-07-12): failure notifier (muted headless) + reattach warm-up.
+  bootPtyHost({ muted: process.env.CANVAS_E2E === '1' || Boolean(SMOKE) })
   registerVoiceHandlers(ipcMain, () => mainWindow) // voice V1: session control + port broker
   registerClipboardHandlers(ipcMain, () => mainWindow)
   // General external-open channel (scheme re-validated in MAIN) — Phase 4 terminal web-links.
@@ -1119,7 +1122,9 @@ function shutdown(): Promise<void> {
   // tail to its owning project's sidecar BEFORE the rings die in the PTY drain. Sync +
   // best-effort, so the crash sinks that share this teardown can run it too.
   persistBackgroundRingTails(appendTerminalSnapshot)
-  const drained = disposeAllPtys()
+  // PTY-host D5: an UPDATE-INSTALL quit detaches (daemon keeps the sessions for the relaunch's
+  // reattach); every other quit path keeps the kill-everything drain. Decision in the bridge.
+  const drained = quitPtyDrain()
   disposeAllOsr() // close offscreen preview renderers
   disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
   disposeVoiceSession() // kill the sherpa-onnx utilityProcess engine host (voice V2)

@@ -7,6 +7,7 @@
  */
 import type { BrowserWindow, IpcMain } from 'electron'
 import { coerceUpdateMeta, initAutoUpdate, type UpdaterLike, type UpdateMeta } from './autoUpdate'
+import { setKeepSessionsOnQuit } from './ptyHost/client'
 
 /**
  * Feed base for the side-channel tier manifest (`updates.json`) — a sibling of the
@@ -87,6 +88,10 @@ export async function startAutoUpdate(opts: {
   const { localFeedUrl, ...deps } = opts
   await initAutoUpdate({
     ...deps,
+    // PTY-host D5 (DESIGN.md 2026-07-12): flag the update-install quit so shutdown() detaches
+    // (keeps) daemon sessions instead of killing them; unflag when the install throws.
+    onBeforeInstall: () => setKeepSessionsOnQuit(true),
+    onInstallFailed: () => setKeepSessionsOnQuit(false),
     getMeta: () => fetchUpdateMeta(localFeedUrl ?? undefined),
     getUpdater: async () => {
       const updater = await resolveUpdater()
