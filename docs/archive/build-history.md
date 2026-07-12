@@ -2405,3 +2405,36 @@ mouse-mode hint badge) documented in the research package.
   claude-review: 0 critical / 0 warnings, zero inline (3 no-reply nits). All 4 checks PASS.
   Squash `63f6dafd`. Packaged in-app flow check = the bootstrap install of 0.14.6-local.1
   (feature is packaged-only by design; dev builds no-op).
+
+## PR #337 — detached PTY-host daemon: terminal sessions survive update installs + crashes (2026-07-13, v0.15.0)
+
+- **Squash `2879bc76`** (branch `feat/ptyhost-daemon`, worktree torn down). PR 1 of the
+  background-sessions track (PLAN.md §10 of the jarvis research dir; spike GO `b42a6b36` on
+  `spike/ptyhost-reattach`; design `docs/research/2026-07-12-ptyhost-daemon/DESIGN.md`).
+  PR 2 (close modal + tray residency UX, user-approved mock `mock-background-sessions.html`)
+  = next lane.
+- **What shipped:** a detached daemon (`src/main/ptyHost/daemonMain.ts`, own electron-vite
+  entry, ELECTRON_RUN_AS_NODE) owns node-pty/ConPTY sessions on a token-gated per-profile
+  named pipe (NDJSON protocol, version handshake, 256KB line-boundary-trimmed replay ring,
+  taskkill /T /F, zero-session idle-exit). Runs from a STAGED runtime copy in
+  `%LOCALAPPDATA%\expanse-ptyhost\<version>\` — measured-minimal 4-file run-as-node set +
+  node-pty subset, because a daemon in the install dir locks the exe and blocks the NSIS
+  update (measured `Device or resource busy`). MAIN sees daemon sessions as IPty-SHAPED
+  proxies (client.ts) so pty.ts's park/adopt/killTree/ring bookkeeping runs unchanged;
+  bridge.ts owns the gate (runtime setting default ON, win32-only, `CANVAS_PTYHOST`
+  override), boot survivor list, reattach-as-synthetic-park via the adopt flow, and the
+  quit split: `quitAndInstall` detaches (sessions survive), every other quit keeps the
+  kill-everything drain (close-policy change waits for the PR-2 modal). Daemon failure ⇒
+  surfaced in-proc fallback (once-per-reason OS notification) — never silent. Extractions
+  for the 700-line ratchet: `bindProcPump`, `attachPortInput`→ptyResize, `quitDrainCore`.
+- **Verified:** trio · 5043 units 0-fail (20 new ptyHost cores) · protocol smoke on the
+  built bundle (bad-token reject / disconnect-survive / replay+meta / kill ack / idle-exit) ·
+  new `ptyhostReattach` e2e (hard kill → relaunch → SAME-pid reattach + replay + duplex →
+  clean reap + daemon idle-exit; own app instance on a dedicated profile) · USER EYEBALL
+  (live `ping -t` survived a Task-Manager kill and reattached mid-stream) · FULL matrix both
+  legs (Win 280P + menuShell flake rerun-green + previewLink latent spawn-race fixed
+  in-spec; Linux-Docker 280P exit-0). claude-review ×3 rounds → convergence: 4 findings
+  fixed (spawn-timeout orphan reap · mixed-fleet quit partition · settings.json restore ·
+  quitDrain unit coverage) + 2 by-design dispositions, all inline-replied. CodeQL check red
+  = pre-existing main backlog only (alert 116 osrBlitWorker, not in the diff) — handoff
+  filed: `KICKOFF-CODEQL-TRIAGE.md`.
