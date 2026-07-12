@@ -295,6 +295,17 @@ export default tseslint.config(
     rules: { 'max-lines': ['error', { max: 700, skipBlankLines: true, skipComments: true }] }
   },
   {
+    files: ['src/main/index.ts'],
+    // 700→702 (PR-2 background sessions): the whole feature lives in its own modules
+    // (backgroundSessionsBoot / closeGuard / trayResidency), but its four wiring lines are
+    // choke points that can only live here — attachCloseGuard(mainWindow) inside createWindow
+    // (must re-arm on every window (re)creation incl. tray reopen), the one-call
+    // wireBackgroundSessionsUx boot (replaces the old wireLifecycleNotifications line), the
+    // isTrayResident() guard merged into the existing window-all-closed quit condition, and
+    // the two import lines. Ratchet DOWNWARD when index.ts is next split.
+    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
+  },
+  {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
     // PA-9/TERM-07 ratcheted 631→627 (extracted the context-menu builder, run-timer and
     // interrupt-feedback into boards/terminal/*). Pins move DOWNWARD only.

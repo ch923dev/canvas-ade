@@ -70,6 +70,12 @@
   background: var(--surface-raised);
   color: var(--text);
 }
+/* Red-ink ghost (mock 1 "Stop all & close"): the destructive secondary stays a GHOST — same
+   calm chrome, error ink only. Composes onto .ca-btn-ghost; declared after it so the ink wins. */
+.ca-btn-ghost-danger,
+.ca-btn-ghost-danger:hover:not(:disabled) {
+  color: var(--err);
+}
 .ca-btn-primary:disabled,
 .ca-btn-ghost:disabled {
   opacity: 0.45;

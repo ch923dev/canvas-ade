@@ -18,6 +18,8 @@ import {
   backgroundParkedBoardIds
 } from './pty'
 import { bootPtyHost, quitPtyDrain } from './ptyHost/bridge'
+import { attachCloseGuard } from './closeGuard'
+import { isTrayResident, wireBackgroundSessionsUx } from './backgroundSessionsBoot'
 import { setRecapHookSyncProvider } from './ptySpawnEnv'
 import { recordRecapHookDir, listRecapHookDirs, clearRecapHookDirs } from './recapHookDirs'
 import { appendTerminalSnapshot } from './terminalSnapshot'
@@ -112,7 +114,6 @@ import {
 } from './agentTranscript'
 import { createGetAgentMilestones, persistedTranscriptPath } from './agentMilestones'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
-import { wireLifecycleNotifications } from './lifecycleNotifications'
 import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
@@ -228,6 +229,10 @@ function createWindow(): void {
   })
   // The renderer's <title> overwrites the window title on load — keep the dev stamp.
   if (devTitle) mainWindow.on('page-title-updated', (e) => e.preventDefault())
+
+  // PR-2 background sessions: intercept a user close while daemon sessions live (BEFORE the
+  // `quitting` latch). Re-armed here so a tray-reopened window is guarded like the first.
+  attachCloseGuard(mainWindow)
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
@@ -1051,7 +1056,11 @@ app.whenReady().then(async () => {
   // the SAME session map. wireLifecycleNotifications registers the notifications:* IPC, watches that
   // map for NEW lines (skips history at init — no boot replay), gates + delivers each event, and
   // routes the generic-PTY path into the same delivery site. Self-disposes on before-quit.
-  wireLifecycleNotifications(() => mainWindow, recapMapPath, userData)
+  // PR-2 background sessions: ONE boot call (backgroundSessionsBoot.ts) — wires the #314
+  // lifecycle notifications (exactly the wireLifecycleNotifications call that used to sit
+  // here), the ptyhost:config IPC, the close-guard context, and tray residency; background-
+  // exit toasts ride the same lifecycle delivery site.
+  wireBackgroundSessionsUx({ getWin: () => mainWindow, createWindow, userData })
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this
@@ -1162,8 +1171,9 @@ function flushRenderer(timeoutMs = 1500): Promise<void> {
 app.on('window-all-closed', () => {
   // Route through app.quit() (non-darwin) so the guarded before-quit handler below
   // performs the awaited PTY-tree drain (#49) instead of racing a fire-and-forget
-  // shutdown() against process exit.
-  if (process.platform !== 'darwin') app.quit()
+  // shutdown() against process exit. PR-2: a "keep in background" close destroys the
+  // window ON PURPOSE — while tray-resident, trayResidency.ts owns the eventual quit.
+  if (process.platform !== 'darwin' && !isTrayResident()) app.quit()
 })
 
 // Guarded async quit (#49/BUG-031): on first entry, defer the quit, flush the renderer

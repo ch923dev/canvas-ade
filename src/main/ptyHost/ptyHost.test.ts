@@ -20,6 +20,10 @@ import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
 import { quitDrainCore } from './quitDrain'
 import { pipeNameFor, repairState } from './state'
 import { ptyHostEnabled, readPtyHostConfig, repairPtyHostConfig } from './config'
+import { decideOnClose, normalizeCloseAnswer, type CloseDecisionInput } from './closeGuardCore'
+import { buildTrayMenuModel, exitedIds, seedModelFromRows } from './trayResidencyCore'
+import { formatSessionAge, type CloseSessionRow } from '../../shared/closeGuardTypes'
+import type { SessionInfo } from './protocol'
 import {
   DAEMON_JS,
   RUNTIME_FILES,
@@ -146,20 +150,31 @@ describe('discovery state', () => {
 })
 
 describe('rollout gate (config × platform × env)', () => {
-  it('repairs any malformed config to the default-ON', () => {
-    expect(repairPtyHostConfig(null)).toEqual({ surviveRestart: true })
-    expect(repairPtyHostConfig({ surviveRestart: 'yes' })).toEqual({ surviveRestart: true })
-    expect(repairPtyHostConfig({ surviveRestart: false })).toEqual({ surviveRestart: false })
+  const DEFAULTS = { surviveRestart: true, onCloseWithSessions: 'ask', notifyBackgroundExit: true }
+  it('repairs any malformed config to the defaults, field by field', () => {
+    expect(repairPtyHostConfig(null)).toEqual(DEFAULTS)
+    expect(repairPtyHostConfig({ surviveRestart: 'yes' })).toEqual(DEFAULTS)
+    expect(repairPtyHostConfig({ surviveRestart: false })).toEqual({
+      ...DEFAULTS,
+      surviveRestart: false
+    })
+    // PR-2 fields: valid values survive; garbage repairs per-field without touching siblings.
+    expect(
+      repairPtyHostConfig({ onCloseWithSessions: 'keep', notifyBackgroundExit: false })
+    ).toEqual({ surviveRestart: true, onCloseWithSessions: 'keep', notifyBackgroundExit: false })
+    expect(repairPtyHostConfig({ onCloseWithSessions: 'stop' }).onCloseWithSessions).toBe('stop')
+    expect(repairPtyHostConfig({ onCloseWithSessions: 'maybe' }).onCloseWithSessions).toBe('ask')
+    expect(repairPtyHostConfig({ notifyBackgroundExit: 'no' }).notifyBackgroundExit).toBe(true)
   })
   it('reads a missing/corrupt file as the default', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ptyhost-cfg-'))
-    expect(readPtyHostConfig(dir)).toEqual({ surviveRestart: true })
+    expect(readPtyHostConfig(dir)).toEqual(DEFAULTS)
     fs.writeFileSync(path.join(dir, 'ptyhost-config.json'), '{corrupt')
-    expect(readPtyHostConfig(dir)).toEqual({ surviveRestart: true })
+    expect(readPtyHostConfig(dir)).toEqual(DEFAULTS)
   })
   it('gates on platform, env override, then the setting', () => {
-    const on = { surviveRestart: true }
-    const off = { surviveRestart: false }
+    const on = repairPtyHostConfig({ surviveRestart: true })
+    const off = repairPtyHostConfig({ surviveRestart: false })
     expect(ptyHostEnabled(on, 'linux', {})).toBe(false)
     expect(ptyHostEnabled(on, 'darwin', {})).toBe(false)
     expect(ptyHostEnabled(on, 'win32', {})).toBe(true)
@@ -314,5 +329,118 @@ describe('quit-path drain (D5 keep-vs-kill, mixed fleet)', () => {
     expect(deps.parked.size).toBe(0)
     expect(deps.boardCwds.size).toBe(0)
     expect(disconnected.v).toBe(true)
+  })
+})
+
+describe('close-guard decision core (PR-2)', () => {
+  const base: CloseDecisionInput = {
+    quitting: false,
+    bypass: false,
+    resident: false,
+    keepableCount: 2,
+    mode: 'ask'
+  }
+  it('asks only for a user close with keepable sessions under mode=ask', () => {
+    expect(decideOnClose(base)).toBe('ask')
+  })
+  it('NEVER intercepts once the quit path owns the close (update restart never prompts)', () => {
+    expect(decideOnClose({ ...base, quitting: true })).toBe('proceed')
+  })
+  it('lets a guard-approved stop re-close and its own residency teardown through', () => {
+    expect(decideOnClose({ ...base, bypass: true })).toBe('proceed')
+    expect(decideOnClose({ ...base, resident: true })).toBe('proceed')
+  })
+  it('skips the modal when nothing would survive a keep (no daemon-backed sessions)', () => {
+    expect(decideOnClose({ ...base, keepableCount: 0 })).toBe('proceed')
+  })
+  it('honors the always-keep / always-stop settings without a modal', () => {
+    expect(decideOnClose({ ...base, mode: 'keep' })).toBe('keep')
+    expect(decideOnClose({ ...base, mode: 'stop' })).toBe('proceed')
+  })
+
+  it('normalizes any malformed modal reply to cancel (fail-safe: nothing changes)', () => {
+    expect(normalizeCloseAnswer({ action: 'keep', remember: true })).toEqual({
+      action: 'keep',
+      remember: true
+    })
+    expect(normalizeCloseAnswer({ action: 'stop' })).toEqual({ action: 'stop', remember: false })
+    expect(normalizeCloseAnswer({ action: 'quit-now' })).toEqual({
+      action: 'cancel',
+      remember: false
+    })
+    expect(normalizeCloseAnswer(null)).toEqual({ action: 'cancel', remember: false })
+    expect(normalizeCloseAnswer('keep')).toEqual({ action: 'cancel', remember: false })
+    // remember must be an explicit boolean true — truthy garbage does not persist a setting
+    expect(normalizeCloseAnswer({ action: 'stop', remember: 'yes' }).remember).toBe(false)
+  })
+})
+
+describe('tray residency core (PR-2)', () => {
+  const mkInfo = (id: string, meta: Partial<SessionInfo['meta']> = {}): SessionInfo => ({
+    id,
+    pid: 1,
+    cols: 80,
+    rows: 24,
+    meta: {
+      projectDir: null,
+      cwd: 'C:\\proj\\storefront',
+      shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      monitored: true,
+      ...meta
+    }
+  })
+
+  it('diffs exits between polls (order-independent, additions ignored)', () => {
+    expect(exitedIds(['a', 'b', 'c'], ['b'])).toEqual(['a', 'c'])
+    expect(exitedIds(['a'], ['a', 'new'])).toEqual([])
+    expect(exitedIds([], ['x'])).toEqual([])
+  })
+
+  it('renders honest menu rows: launchCommand first, shell fallback, cwd locator, age', () => {
+    const now = Date.now()
+    const model = buildTrayMenuModel(
+      [
+        mkInfo('b', { launchCommand: 'pnpm dev', startedAt: now - 2 * 60 * 60_000 }),
+        mkInfo('a', { startedAt: now - 24 * 60_000, cwd: 'C:\\proj\\api-server' })
+      ],
+      now
+    )
+    expect(model.header).toBe('Expanse — 2 sessions running')
+    // sorted by id: shell-fallback row first (no launchCommand → 'pwsh', .exe stripped)
+    expect(model.rows[0].label).toBe('pwsh · api-server · running 24m')
+    expect(model.rows[1].label).toBe('pnpm dev · storefront · running 2h')
+  })
+
+  it('omits the age for a PR-1-era survivor (no startedAt) instead of inventing one', () => {
+    const model = buildTrayMenuModel([mkInfo('a')], Date.now())
+    expect(model.rows[0].label).toBe('pwsh · storefront')
+    expect(buildTrayMenuModel([], Date.now()).header).toBe('Expanse — 0 sessions running')
+  })
+
+  it('seeds the menu from the close-modal snapshot (board title wins over cwd)', () => {
+    const now = Date.now()
+    const rows: CloseSessionRow[] = [
+      {
+        id: 'x',
+        cmd: 'claude',
+        title: 'API server',
+        cwd: 'C:\\proj\\api',
+        running: true,
+        startedAt: now - 5 * 60_000,
+        lastActivityAt: now
+      }
+    ]
+    expect(seedModelFromRows(rows, now).rows[0].label).toBe('claude · API server · running 5m')
+    expect(seedModelFromRows(rows, now).header).toBe('Expanse — 1 session running')
+  })
+
+  it('formats relative ages at minute/hour/day granularity, "now" under a minute', () => {
+    const now = 10_000_000_000
+    expect(formatSessionAge(now, now - 10_000)).toBe('now')
+    expect(formatSessionAge(now, now - 41 * 60_000)).toBe('41m')
+    expect(formatSessionAge(now, now - 3 * 60 * 60_000)).toBe('3h')
+    expect(formatSessionAge(now, now - 49 * 60 * 60_000)).toBe('2d')
+    expect(formatSessionAge(now, 0)).toBe('') // unknown epoch → no claim
+    expect(formatSessionAge(now, now + 60_000)).toBe('') // future epoch → clock skew, no claim
   })
 })
