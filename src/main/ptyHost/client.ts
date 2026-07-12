@@ -308,6 +308,12 @@ export function ensurePtyHost(): Promise<void> {
 
 /* ── IPty-shaped proxy (D4) ─────────────────────────────────────────────────────────────────── */
 
+/** Brand test: is this IPty a daemon-backed proxy (vs a real in-proc node-pty)? The quit-path
+ *  drain partitions on this (review #337 — a mixed fleet must kill its in-proc members). */
+export function isDaemonProxy(proc: unknown): boolean {
+  return proc instanceof DaemonPty
+}
+
 class DaemonPty implements IPty {
   pid: number
   cols: number
@@ -399,7 +405,14 @@ export async function spawnViaDaemon(opts: DaemonSpawnOpts): Promise<IPty> {
       meta: opts.meta
     })
     setTimeout(() => {
-      if (pending.spawned.delete(opts.id)) reject(new Error('daemon spawn timed out'))
+      if (pending.spawned.delete(opts.id)) {
+        // Review #337 [warning]: a LATE `spawned` ack (slow ConPTY under load) would otherwise
+        // leave a session registered in the daemon that MAIN never tracks — an orphan until the
+        // next app restart. Tell the daemon to reap the id regardless of which side of the race
+        // the ack lands on; a kill for a not-(yet-)existing id is acked harmlessly.
+        sendMsg({ op: 'kill', id: opts.id })
+        reject(new Error('daemon spawn timed out'))
+      }
     }, 10_000).unref()
   })
   return new DaemonPty(opts.id, pid, opts.cols, opts.rows, path.basename(opts.shell))

@@ -12,6 +12,7 @@ import type { SpawnOpts } from '../pty'
 import {
   attachDaemonSession,
   disconnectPtyHost,
+  isDaemonProxy,
   killDaemonSession,
   listDaemonSessions,
   reportPtyHostFailure,
@@ -35,6 +36,7 @@ interface ParkedEntryLike {
 
 /** The slice of pty.ts's SessionLike the quit-path detach needs. */
 interface SessionEntryLike {
+  proc: pty.IPty
   port: { close(): void }
   flushData?: () => void
 }
@@ -54,6 +56,8 @@ interface BridgeDeps {
   parkTtlMs: number
   /** pty.ts's disposeAllPtys — the normal-quit kill-everything drain. */
   disposeAllPtys: () => Promise<void>
+  /** pty.ts's killTree — reaps the IN-PROC members of a mixed fleet on the detach path. */
+  killTree: (proc: pty.IPty) => Promise<void>
 }
 
 let deps: BridgeDeps | null = null
@@ -87,6 +91,11 @@ export function bootPtyHost(opts: { muted: boolean }): void {
 export function quitPtyDrain(): Promise<void> {
   if (!deps) return Promise.resolve()
   if (!shouldKeepSessionsOnQuit()) return deps.disposeAllPtys()
+  // Review #337 [warning]: the fleet can be MIXED — daemon-backed proxies plus in-proc
+  // sessions from the surfaced fallback (D2). Only daemon-backed sessions survive an app
+  // quit by construction; the in-proc members must still be tree-killed here or they leak
+  // as unreattachable orphans. Partition on the proxy brand.
+  const kills: Promise<void>[] = []
   for (const s of deps.sessions.values()) {
     try {
       s.flushData?.()
@@ -98,15 +107,17 @@ export function quitPtyDrain(): Promise<void> {
     } catch {
       /* already closed */
     }
+    if (!isDaemonProxy(s.proc)) kills.push(deps.killTree(s.proc))
   }
   deps.sessions.clear()
   for (const p of deps.parked.values()) {
     if (p.timer) clearTimeout(p.timer)
+    if (!isDaemonProxy(p.proc)) kills.push(deps.killTree(p.proc))
   }
   deps.parked.clear()
   deps.boardCwds.clear()
   disconnectPtyHost()
-  return Promise.resolve()
+  return Promise.all(kills).then(() => undefined)
 }
 
 /** Sessions found alive in the daemon at boot (a previous app run kept them): id → info. */

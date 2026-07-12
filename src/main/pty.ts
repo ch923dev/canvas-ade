@@ -1410,5 +1410,6 @@ configurePtyHostBridge({
   bindProcPump,
   reapParked,
   parkTtlMs: PARK_TTL_MS,
-  disposeAllPtys
+  disposeAllPtys,
+  killTree
 })
