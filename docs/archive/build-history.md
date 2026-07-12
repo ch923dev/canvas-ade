@@ -2438,3 +2438,31 @@ mouse-mode hint badge) documented in the research package.
   quitDrain unit coverage) + 2 by-design dispositions, all inline-replied. CodeQL check red
   = pre-existing main backlog only (alert 116 osrBlitWorker, not in the diff) — handoff
   filed: `KICKOFF-CODEQL-TRIAGE.md`.
+
+## PR #338 — CodeQL backlog triage: repo-wide alert sweep to green (2026-07-13, v0.15.1)
+
+- **Squash `214c0623`** (branch `fix/codeql-triage`). Handoff `KICKOFF-CODEQL-TRIAGE.md`
+  executed: every open CodeQL alert got an individual verdict so the CodeQL PR check is
+  green repo-wide (it had been red on every PR from the pre-existing backlog, most
+  recently #337 with zero alerts of its own).
+- **What shipped:** live pull found **47** open alerts (not the kickoff's 30 snapshot —
+  wider e2e cluster + new #120 `runtimeStage.ts` js/file-system-race high). 3 FIXED:
+  `e.source === window` pin on the window-message port-adoption handlers (#52
+  `useTerminalSpawn` `__ptyPort`, #113 `useVoiceCapture` `__voicePort`, #36
+  `TerminalSmoke` — orphaned but pinned; SEC-2 class: source pin, not origin-string
+  compare, which is unreliable under packaged `file://`). 44 DISMISSED with per-alert
+  recorded justifications via `gh api` (`dismissed_reason` + `dismissed_comment`, 280-char
+  cap discovered en route): 37 e2e "used in tests" (JSON.stringify-escaped test-local
+  constants) · #34/#35 design-reference prototype (never bundled) · #109 false positive
+  (read-only `openSync`; tmpdir taint test-only; prod gated by `isTrustedTranscriptPath`) ·
+  #112 by-design sha256-pinned staged download (PR #300 disposition carried) · #116 false
+  positive (dedicated worker — `e.origin` empty, origin check inapplicable) · #120
+  by-design single-writer per-user stage dir (PR #337). `codeql.yml` untouched.
+- **Verified:** trio · 5040 units (5 fails = documented env false-fail classes: pathSafe
+  8.3-TEMP ×2 + recapenv ambient `CANVAS_RECAP_BOARD` ×3 — both files 40/40 sanitized-env
+  rerun) · e2e @terminal 79P + 3 ambient flakes rerun-green isolated + @voice 8P/1skip
+  (both pinned adoption paths exercised live: real PTY spawn sentinel + stub-engine
+  composer injection) · push-hook full Win leg 279P · Linux-Docker leg 279P/2-flaky-
+  recovered exit-0 (full matrix both legs on the exact merge tree). PR checks all green
+  incl. **CodeQL — the deliverable**. claude-review real pass (verified the preload
+  send-side re-post matches the pin), 0 inline findings.
