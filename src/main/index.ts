@@ -116,8 +116,8 @@ import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
-import { initAutoUpdate } from './autoUpdate'
-import { fetchUpdateMeta, resolveUpdater } from './autoUpdateWiring'
+import { startAutoUpdate } from './autoUpdateWiring'
+import { readLocalFeedOverride } from './localUpdateFeed'
 import { createDeepLinkRouter } from './deepLinkBoot'
 import { createAuthTokenStore } from './authTokenStore'
 import { readSession, writeSession, clearSession } from './authSession'
@@ -129,6 +129,10 @@ import { AUTH_CONFIG } from './authConfig'
 // Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
 // production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
 declare const __ENABLE_AUTO_UPDATE__: boolean
+// Build-time local-update-channel gate (electron.vite.config.ts `define`). True ONLY for the
+// maintainer's personal builds (scripts/release-local.mjs); every distributed build strips the
+// userData feed-override path entirely. See src/main/localUpdateFeed.ts for the full posture.
+declare const __LOCAL_UPDATE_CHANNEL__: boolean
 // Build-time e2e-seam gate (electron.vite.config.ts `define`), mirrored from e2eMain.ts. M11:
 // installE2EMain captures the `mcp` VALUE, so under the e2e seam we must eager-start the lazy MCP
 // server before that call — gated on the SAME (compile ∧ runtime) predicate e2eMain uses.
@@ -1071,21 +1075,18 @@ app.whenReady().then(async () => {
     installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth, recapReEnsure)
   }
 
-  // Phase 5 auto-update (gated · tiered). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
-  // electron.vite.config.ts); in a signed production build it checks the feed on launch and
-  // surfaces the right tier — optional toast / recommended banner / mandatory blocking modal
-  // (updates.json via getMeta). The concrete wiring (dynamic electron-updater import + the meta
-  // fetch) lives in autoUpdateWiring.ts so this file stays a thin caller. A rejection here means
-  // the gate was open (signed build) but init failed — a packaging defect; log it, never let it
-  // become an unhandled rejection that crashes main under Node 22's throw-on-rejection default.
-  initAutoUpdate({
+  // Phase 5 auto-update (gated · tiered) — full wiring in autoUpdateWiring.ts › startAutoUpdate
+  // (this file stays a thin caller). A NO-OP in dev/unsigned builds. The localFeedUrl ternary is
+  // the dev-only local update channel: compile-gated, so distributed builds fold it to null and
+  // tree-shake localUpdateFeed out entirely (posture: src/main/localUpdateFeed.ts). A rejection
+  // here means the gate was open but init failed — log it, never an unhandled rejection.
+  startAutoUpdate({
     enabled: __ENABLE_AUTO_UPDATE__,
     isPackaged: app.isPackaged,
     ipc: ipcMain,
     getWin: () => mainWindow,
     currentVersion: app.getVersion(),
-    getMeta: fetchUpdateMeta,
-    getUpdater: resolveUpdater
+    localFeedUrl: __LOCAL_UPDATE_CHANNEL__ ? readLocalFeedOverride(app.getPath('userData')) : null
   }).catch((err) => console.error('[auto-update] init failed', err))
 
   if (SMOKE && mainWindow) {

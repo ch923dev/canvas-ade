@@ -85,6 +85,13 @@ export default defineConfig({
     // (no unsigned auto-update over a feed) is enforced by the compiler, not by convention.
     define: {
       __ENABLE_AUTO_UPDATE__: JSON.stringify(process.env.ENABLE_AUTO_UPDATE === '1'),
+      // Local update channel (dev-only): true ONLY when scripts/release-local.mjs sets
+      // LOCAL_UPDATE_CHANNEL=1 for the maintainer's personal build. Compile-time gated
+      // exactly like __ENABLE_AUTO_UPDATE__ above, so pr/staging/production builds
+      // dead-code-eliminate the userData feed-override path entirely — the ADR 0008
+      // invariant stays intact at the BINARY level for everything users receive
+      // (src/main/localUpdateFeed.ts has the full posture).
+      __LOCAL_UPDATE_CHANNEL__: JSON.stringify(process.env.LOCAL_UPDATE_CHANNEL === '1'),
       // BUG-027: compile-time gate for the __canvasE2EMain test-surface registry
       // (src/main/e2eMain.ts), mirroring the __ENABLE_AUTO_UPDATE__ gate above so this
       // equally powerful debug surface (pty write, clipboard, gitDiff, spawnGroupNow,

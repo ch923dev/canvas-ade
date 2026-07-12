@@ -229,3 +229,51 @@ Prove the whole flow — including force — on `127.0.0.1`:
 Use **`127.0.0.1`, not `localhost`** — `localhost` resolves to IPv6 `::1`, and http-server binds IPv4
 only (a "couldn't reach the server" red herring). Fully quit every `Expanse.exe` between runs (the
 single-instance lock re-focuses the old process and won't re-read the patched config).
+
+---
+
+## Local update channel (maintainer-only, dev-only)
+
+A personal update channel so the maintainer's own installed Expanse updates **in-app from a
+loopback feed** — build → publish locally → toast → Download → Restart, no manual
+close-and-reinstall. It productizes the local test above, with a hard security fence.
+
+### Security posture (extends ADR 0008, binary-level)
+
+- **Compile-gated:** the userData feed-override path exists ONLY when the build sets
+  `LOCAL_UPDATE_CHANNEL=1` (`__LOCAL_UPDATE_CHANNEL__`, `electron.vite.config.ts`) — which only
+  `scripts/release-local.mjs` does. pr/staging/production builds dead-code-eliminate it: a
+  distributed binary can never be steered by a dropped config file.
+- **Loopback-literal only:** the override URL must name `127.0.0.1` or `[::1]` verbatim
+  (`localhost` rejected — DNS name). Non-loopback/invalid → production feed (fail-closed).
+  Full posture: `src/main/localUpdateFeed.ts`.
+- **No upload path:** `release-local.mjs` cannot reach the production feed. Real releases go
+  through `scripts/release.mjs` / `production.yml` only.
+- **Never forces:** the local `updates.json` is written with no `minSupported` floor.
+
+### One-time bootstrap
+
+1. Write the override into the **packaged** app's userData (survives every update install —
+   unlike `resources/app-update.yml`, which each install rewrites). The packaged app's
+   userData is named after `productName`, NOT the package name (`canvas-ade` is dev-only):
+   ```
+   %APPDATA%\Expanse\update-feed.local.json   →   { "url": "http://127.0.0.1:8090/" }
+   ```
+2. `node scripts/release-local.mjs` — builds with both gates on, stamps
+   `X.Y.(Z+1)-local.N`, stages `C:\expanse\local-feed\`, starts/verifies the loopback server
+   (`scripts/serve-local-feed.mjs`, binds 127.0.0.1 only).
+3. Install that first build manually (`C:\expanse\local-build\Expanse-…-local.1-x64.exe`) —
+   the **last** manual install. Every later `release-local` run is offered in-app.
+
+### Versioning
+
+`package.json` `X.Y.Z` → stamp `X.Y.(Z+1)-local.N` via `--config.extraMetadata.version`
+(`package.json` never edited). Always above the repo version, always **below** the next real
+patch release — a future signed `X.Y.(Z+1)` supersedes every `-local.N` build. Delete the
+userData override file to return the install to the production feed.
+
+### Signing interplay (later)
+
+Once real releases are signed (Azure Trusted Signing), a signed installed app + unsigned
+local updates need a decision: sign local builds too, or keep `publisherName` out of the
+local feed config so electron-updater skips the publisher check. Revisit when certs land.
