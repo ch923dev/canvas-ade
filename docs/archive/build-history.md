@@ -2466,3 +2466,55 @@ mouse-mode hint badge) documented in the research package.
   recovered exit-0 (full matrix both legs on the exact merge tree). PR checks all green
   incl. **CodeQL — the deliverable**. claude-review real pass (verified the preload
   send-side re-post matches the pin), 0 inline findings.
+
+## PR #340 — background sessions PR 2: close modal + tray residency + settings UX (2026-07-13, v0.16.0)
+
+- **Squash `60bfc1f0`** (branch `feat/background-sessions-ux`, head `109462d4`). The
+  user-facing half PR #337's daemon deferred (DESIGN.md D5): a normal close no longer
+  silently kills every session. Design was USER-APPROVED up front
+  (`mock-background-sessions.html`, `ebc35b90`); implementation matches mocks 1/2/4.
+- **Close guard** (`closeGuard.ts` + pure `closeGuardCore.ts`): intercepts a user window
+  close while daemon-backed sessions live, on the window `close` event BEFORE the
+  `quitting` latch (update-install quit NEVER prompts — closeGuard latches `before-quit`
+  itself). Modal round trip mirrors mcpConfirm (unguessable reply channel, frame-guarded,
+  single-subscriber preload gate) with a fail-SAFE floor: every degenerate reply = cancel.
+  Harness-bypassed under CANVAS_E2E/CANVAS_SMOKE; specs opt in via CANVAS_E2E_CLOSEGUARD.
+- **CloseSessionsModal** (mock 1): honest dots (running vs idle-dimmed via awaitingInput),
+  ages, Enter=keep primary, Esc=cancel, red-ink ghost "Stop all & close"
+  (`.ca-btn-ghost-danger`), "Always do this" persists the policy.
+- **Tray residency, Option B** (mock 2, `trayResidency.ts` + pure `trayResidencyCore.ts`):
+  keep → flush renderer + persist ring tails → D5 keep-drain (2nd caller of
+  `setKeepSessionsOnQuit(true)`, reset after) → window destroyed → MAIN shrinks to a tray
+  icon that exists ONLY while background sessions exist. Menu: session rows · Open
+  Expanse · Stop all · "Quit — stop all sessions". ~4s POLL of the daemon list (deliberate:
+  attach would stream all output through MAIN, and any protocol change bumps
+  PROTOCOL_VERSION which orphans survivors across updates); background exits ride the #314
+  lifecycle delivery (new notify toggle); LAST exit → tray removed → app fully quits.
+  Reopen (tray click / menu / second-instance) re-warms the PR-1 survivor list →
+  createWindow → adopt-first reattach. Poll is failure-HONEST (review round 1 critical):
+  `listDaemonSessionsStrict()` null ≠ confirmed-empty; `decidePollOutcome` skips transient
+  failures, daemon declared gone only after 5 consecutive misses (no 'done' toasts on that
+  path), quits on confirmed-empty only.
+- **Settings › Terminal › Background sessions** (mock 4, `BackgroundSessionsSection.tsx`):
+  close policy select (ask/keep/stop) + background-exit notify toggle + the surviveRestart
+  master toggle PR-1 deferred. `PtyHostConfig` per-field repair + frame-guarded merge-on-set
+  IPC. `SessionMeta` gains optional `launchCommand`/`startedAt` (opaque round-trip, NO
+  protocol bump) so rows stay honest across restarts.
+- **Ratchet:** all behavior in own files (+ `backgroundSessionsBoot.ts` one-call boot that
+  absorbed the wireLifecycleNotifications wiring); `index.ts` pinned 700→702 (choke-point
+  lines only, documented ratchet-down note).
+- **Drive-by fix:** `gitEnv.ts` now also clears unprefixed `EDITOR`/`PAGER`/`PREFIX`
+  (simple-git env block-list — the documented SSH_ASKPASS class; a bare `EDITOR` in the
+  Playwright runner env broke every gitDiff e2e call).
+- **Verified:** trio · full units 5056P→5069 (0 fail; new: config repair matrix,
+  close-decision matrix, fail-safe answer normalization, poll-outcome + keepable-filter +
+  tray-menu cores, preload single-subscriber gate) · NEW own-app-instance e2e
+  `closeModalKeep.e2e.ts` (modal-approved keep → tray resident → trayReopen probe → SAME
+  pid + replay + duplex → stop-config close reaps all + daemon idle-exits) ·
+  `ptyhostReattach` regression green · FULL matrix both legs (Win 282P + menuShell
+  documented-flake rerun-green; Linux-Docker 279P/3skip exit-0 clean) · USER EYEBALL PASS
+  (title `PR#340 bg-sessions-ux`: modal/tray/reattach/settings live) + mock-match
+  screenshots. claude-review: 3 findings (1 critical poll-honesty + 2 warnings) fixed +
+  inline-dispositioned; rounds 2–3 clean; all 4 checks green ×3 rounds; CodeQL clean.
+  One CI red en route: the new keepable unit failed on the Linux runner (POSIX
+  `path.basename` vs a Windows path) — fixed platform-agnostic in `109462d4`.
