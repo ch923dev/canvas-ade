@@ -25,6 +25,48 @@ export function exitedIds(prev: readonly string[], next: readonly string[]): str
   return prev.filter((id) => !alive.has(id))
 }
 
+/** Consecutive failed polls before the daemon is declared gone (≈ failures × poll interval).
+ *  Daemon death kills its ConPTY children, so quitting then is honest — but a single flaky
+ *  poll must never end residency (review #340 [critical]). */
+export const MAX_POLL_FAILURES = 5
+
+export type PollOutcome =
+  /** Transient failure — keep the tray and the last menu, retry next tick. */
+  | { action: 'skip'; failures: number }
+  /** MAX_POLL_FAILURES consecutive failures — daemon gone, sessions died with it. NO 'done'
+   *  toasts (claiming an agent "finished" when its host crashed would be a lie). */
+  | { action: 'quit-daemon-lost'; failures: number }
+  /** Daemon CONFIRMED zero sessions — the last one exited; toast the leavers, then quit. */
+  | { action: 'quit-empty'; failures: 0; exited: string[] }
+  /** Sessions confirmed alive — toast any leavers and refresh the menu. */
+  | { action: 'refresh'; failures: 0; exited: string[] }
+
+/**
+ * One poll tick's decision, pure: `list` is `null` when the daemon call FAILED (strict list)
+ * vs a confirmed (possibly empty) session list. Failure and empty are deliberately distinct —
+ * conflating them is exactly the review-#340 critical (false exit toasts + a silent quit with
+ * sessions still running headless).
+ */
+export function decidePollOutcome(
+  prevIds: readonly string[],
+  list: readonly SessionInfo[] | null,
+  failures: number
+): PollOutcome {
+  if (list === null) {
+    const next = failures + 1
+    return next >= MAX_POLL_FAILURES
+      ? { action: 'quit-daemon-lost', failures: next }
+      : { action: 'skip', failures: next }
+  }
+  const exited = exitedIds(
+    prevIds,
+    list.map((s) => s.id)
+  )
+  return list.length === 0
+    ? { action: 'quit-empty', failures: 0, exited }
+    : { action: 'refresh', failures: 0, exited }
+}
+
 /** Display command for a daemon session row: launchCommand, else the shell binary name. */
 function cmdOf(info: SessionInfo): string {
   const launch = info.meta.launchCommand?.trim()

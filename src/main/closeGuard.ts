@@ -70,6 +70,11 @@ export function attachCloseGuard(win: BrowserWindow): void {
   win.on('close', (e) => {
     const deps = ctx
     if (!deps) return // never configured — behave exactly like today's close
+    // Consume the bypass HERE (review #340 [warning]): it is scoped to exactly the one
+    // re-driven close a "stop" answer issues — a stale flag must never approve a future
+    // window's close if the quit path is ever interrupted before process exit.
+    const bypass = bypassClose
+    bypassClose = false
     let rows: CloseSessionRow[] = []
     let decision: ReturnType<typeof decideOnClose> = 'proceed'
     try {
@@ -79,7 +84,7 @@ export function attachCloseGuard(win: BrowserWindow): void {
           : []
       decision = decideOnClose({
         quitting: quitLatched,
-        bypass: bypassClose,
+        bypass,
         resident: isTrayResident(),
         keepableCount: rows.length,
         mode: readPtyHostConfig(deps.userData).onCloseWithSessions

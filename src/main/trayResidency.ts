@@ -19,12 +19,16 @@
 import { app, Menu, Tray, nativeImage } from 'electron'
 import type { CloseSessionRow } from '../shared/closeGuardTypes'
 import { quitPtyDrain, warmPtyHostReattach } from './ptyHost/bridge'
-import { listDaemonSessions, setKeepSessionsOnQuit, shutdownPtyHostDaemon } from './ptyHost/client'
+import {
+  listDaemonSessionsStrict,
+  setKeepSessionsOnQuit,
+  shutdownPtyHostDaemon
+} from './ptyHost/client'
 import { readPtyHostConfig } from './ptyHost/config'
 import type { SessionInfo } from './ptyHost/protocol'
 import {
   buildTrayMenuModel,
-  exitedIds,
+  decidePollOutcome,
   seedModelFromRows,
   type TrayMenuModel
 } from './ptyHost/trayResidencyCore'
@@ -52,6 +56,8 @@ let tray: Tray | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 /** Sessions seen by the previous poll — the exit-diff baseline. */
 let lastSeen: SessionInfo[] = []
+/** Consecutive failed polls (review #340 [critical] — see decidePollOutcome). */
+let pollFailures = 0
 
 /** window-all-closed consults this: while resident (or entering residency) the app must NOT quit. */
 export function isTrayResident(): boolean {
@@ -98,6 +104,7 @@ export async function enterTrayResidency(rows: CloseSessionRow[]): Promise<void>
   deps.destroyWindow()
   await raiseTray(seedModelFromRows(rows, Date.now()))
   lastSeen = []
+  pollFailures = 0
   pollTimer = setInterval(() => void poll(), POLL_MS)
   void poll() // immediate first poll seeds lastSeen from the daemon's truth
 }
@@ -129,6 +136,7 @@ function stopResidency(): void {
   tray?.destroy()
   tray = null
   lastSeen = []
+  pollFailures = 0
 }
 
 async function raiseTray(model: TrayMenuModel): Promise<void> {
@@ -163,24 +171,41 @@ function applyMenu(model: TrayMenuModel): void {
   )
 }
 
-/** One poll tick: refresh the menu, toast exits, and quit when the last session is gone. */
+/**
+ * One poll tick: refresh the menu, toast exits, and quit when the last session is gone. The
+ * decision math is pure (decidePollOutcome — review #340 [critical]): a FAILED daemon call is
+ * a retry, never "zero sessions"; only a run of MAX_POLL_FAILURES declares the daemon (and
+ * therefore its ConPTY children) gone, and that path skips the 'done' toasts — an agent whose
+ * host crashed did not "finish".
+ */
 async function poll(): Promise<void> {
   if (!resident || !deps) return
-  const list = await listDaemonSessions() // [] on any failure — daemon gone = sessions gone
+  const list = await listDaemonSessionsStrict() // null = call FAILED (≠ empty daemon)
   if (!resident) return // stop-all / reopen raced the await — this tick no longer owns state
-  const gone = exitedIds(
+  const outcome = decidePollOutcome(
     lastSeen.map((s) => s.id),
-    list.map((s) => s.id)
+    list,
+    pollFailures
   )
-  if (gone.length > 0) notifyExits(gone)
-  lastSeen = list
-  if (list.length === 0) {
-    // Last session ended on its own: tray removed, app fully quits — no permanent resident.
-    stopResidency()
-    app.quit()
-    return
+  pollFailures = outcome.failures
+  switch (outcome.action) {
+    case 'skip':
+      return // transient hiccup: keep the tray + last menu, retry next tick
+    case 'quit-daemon-lost':
+      stopResidency()
+      app.quit()
+      return
+    case 'quit-empty':
+      // Last session ended on its own: toast it, tray removed, app fully quits.
+      if (outcome.exited.length > 0) notifyExits(outcome.exited)
+      stopResidency()
+      app.quit()
+      return
+    case 'refresh':
+      if (outcome.exited.length > 0) notifyExits(outcome.exited)
+      lastSeen = list ?? []
+      applyMenu(buildTrayMenuModel(lastSeen, Date.now()))
   }
-  applyMenu(buildTrayMenuModel(list, Date.now()))
 }
 
 /** Route background exits through the ONE #314 delivery site, gated by the Settings toggle. */

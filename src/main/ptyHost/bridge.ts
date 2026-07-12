@@ -5,9 +5,9 @@
  * pump, reaper) via `configurePtyHostBridge` at module load; everything else imports directly.
  */
 import { app, Notification } from 'electron'
-import { basename } from 'node:path'
 import * as pty from 'node-pty'
 import type { CloseSessionRow } from '../../shared/closeGuardTypes'
+import { buildKeepableRows } from './closeGuardCore'
 import { getCurrentDir } from '../projectStore'
 import { createRing, pushRing, type OutputRing } from '../ptyOutput'
 import type { SpawnOpts } from '../pty'
@@ -269,54 +269,22 @@ export async function tryDaemonReattach(id: string): Promise<boolean> {
   return true
 }
 
-/** Display command for a session: its launchCommand (what the user is actually running),
- *  else the shell binary name — the mock-1 "cmd" column, honest either way. */
-function displayCmd(facts: SessionFacts | undefined): string {
-  const launch = facts?.launchCommand?.trim()
-  if (launch) return launch
-  return facts ? basename(facts.shell) : 'shell'
-}
-
 /**
- * PR-2 close-modal snapshot: every session that would SURVIVE a "keep in background" — live
- * daemon-backed sessions plus daemon-backed background parks (their procs run headless).
- * In-proc fallback sessions (D2) are deliberately excluded: they die with this process, so
- * listing them under a "keep running" offer would be a lie — when this list is empty the
- * close guard skips the modal entirely and the close behaves exactly as today.
+ * PR-2 close-modal snapshot: every session that would SURVIVE a "keep in background". The
+ * filter semantics live in the PURE buildKeepableRows (closeGuardCore.ts, unit-tested —
+ * review #340 [warning]); this wrapper binds the real maps + facts. When the list is empty
+ * the close guard skips the modal entirely and the close behaves exactly as today.
  */
 export function listKeepableSessions(
   getTitle: (id: string) => string | undefined
 ): CloseSessionRow[] {
   if (!deps) return []
-  const rows: CloseSessionRow[] = []
-  for (const [id, s] of deps.sessions) {
-    if (!isDaemonProxy(s.proc)) continue
-    if (s.state && s.state !== 'running') continue
-    const facts = sessionFacts.get(id)
-    rows.push({
-      id,
-      cmd: displayCmd(facts),
-      title: getTitle(id) ?? null,
-      cwd: deps.boardCwds.get(id) ?? null,
-      // Honest dot: only the idle-at-prompt heuristic dims a row (absent = running).
-      running: s.awaitingInput !== true,
-      startedAt: facts?.startedAt ?? 0,
-      lastActivityAt: s.lastActivityAt ?? 0
-    })
-  }
-  for (const [id, p] of deps.parked) {
-    // Background parks only — an undo park is a deleted board, not a running terminal.
-    if (p.kind !== 'background' || !isDaemonProxy(p.proc)) continue
-    const facts = sessionFacts.get(id)
-    rows.push({
-      id,
-      cmd: displayCmd(facts),
-      title: getTitle(id) ?? null,
-      cwd: deps.boardCwds.get(id) ?? null,
-      running: true, // parked-background procs run headless; no idle tracking exists for them
-      startedAt: facts?.startedAt ?? 0,
-      lastActivityAt: 0
-    })
-  }
-  return rows
+  return buildKeepableRows({
+    sessions: deps.sessions,
+    parked: deps.parked,
+    boardCwds: deps.boardCwds,
+    facts: sessionFacts,
+    isDaemonProxy,
+    getTitle
+  })
 }

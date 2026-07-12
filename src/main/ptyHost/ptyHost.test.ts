@@ -20,8 +20,20 @@ import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
 import { quitDrainCore } from './quitDrain'
 import { pipeNameFor, repairState } from './state'
 import { ptyHostEnabled, readPtyHostConfig, repairPtyHostConfig } from './config'
-import { decideOnClose, normalizeCloseAnswer, type CloseDecisionInput } from './closeGuardCore'
-import { buildTrayMenuModel, exitedIds, seedModelFromRows } from './trayResidencyCore'
+import {
+  buildKeepableRows,
+  decideOnClose,
+  normalizeCloseAnswer,
+  type CloseDecisionInput,
+  type KeepableSnapshotDeps
+} from './closeGuardCore'
+import {
+  MAX_POLL_FAILURES,
+  buildTrayMenuModel,
+  decidePollOutcome,
+  exitedIds,
+  seedModelFromRows
+} from './trayResidencyCore'
 import { formatSessionAge, type CloseSessionRow } from '../../shared/closeGuardTypes'
 import type { SessionInfo } from './protocol'
 import {
@@ -442,5 +454,121 @@ describe('tray residency core (PR-2)', () => {
     expect(formatSessionAge(now, now - 49 * 60 * 60_000)).toBe('2d')
     expect(formatSessionAge(now, 0)).toBe('') // unknown epoch → no claim
     expect(formatSessionAge(now, now + 60_000)).toBe('') // future epoch → clock skew, no claim
+  })
+
+  // Review #340 [critical]: a FAILED daemon list (null) must never read as "zero sessions" —
+  // a single flaky poll would fire false 'finished' toasts and silently end residency.
+  describe('decidePollOutcome (failure ≠ empty)', () => {
+    it('a failed poll skips the tick and counts up; sessions/menu untouched', () => {
+      expect(decidePollOutcome(['a', 'b'], null, 0)).toEqual({ action: 'skip', failures: 1 })
+      expect(decidePollOutcome(['a', 'b'], null, MAX_POLL_FAILURES - 2)).toEqual({
+        action: 'skip',
+        failures: MAX_POLL_FAILURES - 1
+      })
+    })
+    it('MAX_POLL_FAILURES consecutive failures = daemon gone → quit WITHOUT done-toasts', () => {
+      const o = decidePollOutcome(['a'], null, MAX_POLL_FAILURES - 1)
+      expect(o.action).toBe('quit-daemon-lost')
+      expect('exited' in o).toBe(false) // no per-session 'done' claims for a crashed host
+    })
+    it('a CONFIRMED empty list quits residency and toasts the leavers', () => {
+      expect(decidePollOutcome(['a', 'b'], [], 3)).toEqual({
+        action: 'quit-empty',
+        failures: 0,
+        exited: ['a', 'b']
+      })
+    })
+    it('a confirmed non-empty list refreshes, diffs exits, and resets the failure streak', () => {
+      const alive = [
+        {
+          id: 'b',
+          pid: 1,
+          cols: 80,
+          rows: 24,
+          meta: { projectDir: null, cwd: 'C:\\x', shell: 'pwsh.exe', monitored: true }
+        }
+      ]
+      expect(decidePollOutcome(['a', 'b'], alive, MAX_POLL_FAILURES - 1)).toEqual({
+        action: 'refresh',
+        failures: 0,
+        exited: ['a']
+      })
+    })
+  })
+})
+
+// Review #340 [warning]: the filter that decides which sessions the close modal PROMISES will
+// survive a keep — its exclusions are load-bearing honesty, so they get direct unit coverage.
+describe('buildKeepableRows (close-modal snapshot filter)', () => {
+  const daemon = { brand: 'daemon' }
+  const inproc = { brand: 'inproc' }
+  const mkDeps = (over: Partial<KeepableSnapshotDeps> = {}): KeepableSnapshotDeps => ({
+    sessions: new Map(),
+    parked: new Map(),
+    boardCwds: new Map([['a', 'C:\\proj\\api']]),
+    facts: new Map([
+      ['a', { launchCommand: 'claude', shell: 'C:\\pwsh.exe', startedAt: 111 }],
+      ['b', { shell: 'C:\\Program Files\\PowerShell\\pwsh.exe', startedAt: 222 }]
+    ]),
+    isDaemonProxy: (p) => (p as { brand?: string }).brand === 'daemon',
+    getTitle: (id) => (id === 'a' ? 'API server' : undefined),
+    ...over
+  })
+
+  it('lists daemon-backed live sessions with honest cmd/title/cwd/dot/epochs', () => {
+    const rows = buildKeepableRows(
+      mkDeps({
+        sessions: new Map([
+          ['a', { proc: daemon, state: 'running', lastActivityAt: 999 }],
+          ['b', { proc: daemon, state: 'running', awaitingInput: true, lastActivityAt: 5 }]
+        ])
+      })
+    )
+    expect(rows).toEqual([
+      {
+        id: 'a',
+        cmd: 'claude',
+        title: 'API server',
+        cwd: 'C:\\proj\\api',
+        running: true,
+        startedAt: 111,
+        lastActivityAt: 999
+      },
+      {
+        id: 'b',
+        cmd: 'pwsh.exe', // no launchCommand → shell binary name
+        title: null,
+        cwd: null,
+        running: false, // idle-at-prompt heuristic dims the row
+        startedAt: 222,
+        lastActivityAt: 5
+      }
+    ])
+  })
+
+  it('EXCLUDES in-proc sessions and non-running states — never promise a survival that is a lie', () => {
+    const rows = buildKeepableRows(
+      mkDeps({
+        sessions: new Map([
+          ['a', { proc: inproc, state: 'running' }], // D2 fallback: dies with this process
+          ['b', { proc: daemon, state: 'exited' }] // already dead — nothing to keep
+        ])
+      })
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('includes daemon-backed BACKGROUND parks but never undo parks or in-proc parks', () => {
+    const rows = buildKeepableRows(
+      mkDeps({
+        parked: new Map([
+          ['a', { proc: daemon, kind: 'background' }],
+          ['u', { proc: daemon, kind: 'undo' }], // deleted board, not a running terminal
+          ['i', { proc: inproc, kind: 'background' }] // dies with this process
+        ])
+      })
+    )
+    expect(rows.map((r) => r.id)).toEqual(['a'])
+    expect(rows[0].running).toBe(true) // headless park: no idle tracking, honest default
   })
 })
