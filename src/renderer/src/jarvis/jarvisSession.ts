@@ -22,10 +22,18 @@ let speakChain: Promise<void> = Promise.resolve()
  *  events are dropped — MAIN keeps its history either way). */
 let currentTurnId: number | null = null
 let voiceOpts: { sid?: number; speed?: number } = {}
+/** Speak-generation stamp: bumped on barge-in / new turn / disarm. A clause already
+ *  sitting in `speakChain` when the user interrupts re-checks this at fire time and
+ *  skips — chunker.reset() alone only drops UN-chunked text, not queued clauses
+ *  (review finding on PR #339). */
+let speakEpoch = 0
 
 function enqueueSpeak(clause: string): void {
+  const epoch = speakEpoch
   speakChain = speakChain
-    .then(() => speakText(clause, voiceOpts).then(() => undefined))
+    .then(() =>
+      epoch === speakEpoch ? speakText(clause, voiceOpts).then(() => undefined) : undefined
+    )
     .catch(() => {})
 }
 
@@ -33,6 +41,7 @@ function enqueueSpeak(clause: string): void {
 export function sendTurn(text: string): void {
   const trimmed = text.trim()
   if (!trimmed) return
+  speakEpoch++ // a new turn must never speak a superseded turn's queued clauses
   chunker = createClauseChunker()
   void window.api.jarvis
     .startTurn(trimmed)
@@ -56,6 +65,7 @@ export async function setConverseMode(on: boolean): Promise<void> {
     unregisterConsumer?.()
     unregisterConsumer = null
     currentTurnId = null
+    speakEpoch++ // queued clauses die with the conversation
     chunker.reset()
     useVoiceStore.getState().setComposerSuppressed(false)
     jarvis.setConverseMode(false)
@@ -130,9 +140,11 @@ export function useJarvisController(): void {
     })
 
     // Barge-in: the audio flush already ran (useTtsPlayback trigger) — cancel the LLM
-    // stream and drop buffered clauses so nothing queued speaks after the interrupt.
+    // stream, drop un-chunked text (chunker) AND invalidate clauses already queued in
+    // the speak chain (epoch bump), so nothing speaks after the interrupt.
     const offBarge = onBargeIn(() => {
       if (!store.getState().converseMode) return
+      speakEpoch++
       chunker.reset()
       void window.api.jarvis.cancelTurn().catch(() => {})
     })

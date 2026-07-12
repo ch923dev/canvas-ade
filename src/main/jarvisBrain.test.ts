@@ -120,6 +120,31 @@ describe('streamJarvisReply', () => {
     expect(r).toEqual({ ok: true, text: 'partial', cancelled: true })
   })
 
+  it('a MID-stream stall (silent, unclosed body) aborts via the re-armed watchdog', async () => {
+    const deps: JarvisStreamDeps = {
+      env: {},
+      stallTimeoutMs: 50,
+      fetch: async (_url, init) => ({
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          const enc = new TextEncoder()
+          yield enc.encode(
+            sse('{"type":"content_block_delta","delta":{"type":"text_delta","text":"first"}}')
+          )
+          // Server goes silent WITHOUT closing: hang until the stall watchdog aborts.
+          await new Promise<void>((resolve) => {
+            init.signal?.addEventListener('abort', () => resolve(), { once: true })
+          })
+          throw new DOMException('aborted', 'AbortError')
+        })()
+      })
+    }
+    const r = await streamJarvisReply(REQ, deps, new AbortController().signal, () => {})
+    expect(r.ok).toBe(false) // watchdog abort, NOT a silent forever-hang
+    if (!r.ok) expect(r.reason).toBe('provider-error')
+  }, 5000)
+
   it('a thrown transport error surfaces as provider-error, not a rejection', async () => {
     const deps = depsWith(async () => {
       throw new Error('boom')

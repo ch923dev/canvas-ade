@@ -112,6 +112,8 @@ export type StreamFetchLike = (
 export interface JarvisStreamDeps {
   fetch: StreamFetchLike
   env: Record<string, string | undefined>
+  /** Test seam: override the per-chunk stall watchdog (default STREAM_STALL_TIMEOUT_MS). */
+  stallTimeoutMs?: number
 }
 
 /** Typed, never-throws stream result (SummarizeResult discipline; travels over IPC). */
@@ -153,9 +155,17 @@ export async function streamJarvisReply(
   }
   let text = ''
   try {
-    // Stall watchdog composed onto the caller's barge-in signal.
+    // Stall watchdog composed onto the caller's barge-in signal. Re-armed on EVERY
+    // received chunk (review finding on PR #339): a one-shot timer only guarded
+    // time-to-first-byte — a server that goes silent MID-stream without closing would
+    // otherwise hang the `for await` forever.
     const stall = new AbortController()
-    const timer = setTimeout(() => stall.abort(), STREAM_STALL_TIMEOUT_MS)
+    const stallMs = deps.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS
+    let timer = setTimeout(() => stall.abort(), stallMs)
+    const rearm = (): void => {
+      clearTimeout(timer)
+      timer = setTimeout(() => stall.abort(), stallMs)
+    }
     const onOuterAbort = (): void => stall.abort()
     signal.addEventListener('abort', onOuterAbort, { once: true })
     try {
@@ -174,7 +184,7 @@ export async function streamJarvisReply(
       const decoder = new TextDecoder()
       for await (const chunk of res.body) {
         if (signal.aborted) return { ok: true, text, cancelled: true }
-        clearTimeout(timer)
+        rearm()
         for (const ev of parser.push(decoder.decode(chunk, { stream: true }))) {
           if (ev.kind === 'delta') {
             text += ev.text
