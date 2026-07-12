@@ -6,6 +6,8 @@
  */
 import { app, Notification } from 'electron'
 import * as pty from 'node-pty'
+import type { CloseSessionRow } from '../../shared/closeGuardTypes'
+import { buildKeepableRows } from './closeGuardCore'
 import { getCurrentDir } from '../projectStore'
 import { createRing, pushRing, type OutputRing } from '../ptyOutput'
 import type { SpawnOpts } from '../pty'
@@ -35,11 +37,16 @@ interface ParkedEntryLike {
   flushData?: () => void
 }
 
-/** The slice of pty.ts's SessionLike the quit-path detach needs. */
+/** The slice of pty.ts's SessionLike the quit-path detach + the close-modal snapshot need.
+ *  The optional fields are the honest-status reads (PR-2 close modal) — same map objects,
+ *  just a wider structural view; pty.ts's real SessionLike satisfies it unchanged. */
 interface SessionEntryLike {
   proc: pty.IPty
   port: { close(): void }
   flushData?: () => void
+  state?: string
+  lastActivityAt?: number
+  awaitingInput?: boolean
 }
 
 interface BridgeDeps {
@@ -107,6 +114,19 @@ export function quitPtyDrain(): Promise<void> {
   })
 }
 
+/**
+ * PR-2 (close modal / tray): per-session display facts captured at acquire time — the bits the
+ * sessions map itself doesn't carry (launchCommand, shell, spawn epoch). Keyed by board id;
+ * overwritten on respawn-under-same-id, so a stale entry can never describe a live session.
+ * Never reaped (a handful of small strings per app run — the maps this mirrors ARE reaped).
+ */
+interface SessionFacts {
+  launchCommand?: string
+  shell: string
+  startedAt: number
+}
+const sessionFacts = new Map<string, SessionFacts>()
+
 /** Sessions found alive in the daemon at boot (a previous app run kept them): id → info. */
 const daemonSurvivors = new Map<string, SessionInfo>()
 /** The boot-time survivor list fetch; reattach awaits it so early board mounts can't race it. */
@@ -159,6 +179,9 @@ export async function acquireProc(
   cwd: string,
   env: NodeJS.ProcessEnv
 ): Promise<pty.IPty> {
+  // PR-2: record the display facts for BOTH acquisition paths (daemon proxy and the in-proc
+  // fallback below) — the close modal names sessions from this, not from the session map.
+  sessionFacts.set(opts.id, { launchCommand: opts.launchCommand, shell, startedAt: Date.now() })
   if (isPtyHostActive()) {
     try {
       if (daemonSurvivors.has(opts.id)) {
@@ -171,7 +194,11 @@ export async function acquireProc(
         projectDir: getCurrentDir(),
         cwd,
         shell,
-        monitored: opts.monitorActivity !== false
+        monitored: opts.monitorActivity !== false,
+        // PR-2: persisted so the tray menu / a post-restart close modal can still name + age
+        // the session honestly (additive optional meta — no protocol bump, see protocol.ts).
+        launchCommand: opts.launchCommand,
+        startedAt: Date.now()
       }
       return await spawnViaDaemon({
         id: opts.id,
@@ -219,6 +246,13 @@ export async function tryDaemonReattach(id: string): Promise<boolean> {
   }
   const buf = createRing(256 * 1024)
   if (att.replay) pushRing(buf, att.replay)
+  // PR-2: restore the display facts from the round-tripped meta (a PR-1-era survivor has no
+  // launchCommand/startedAt — fall back to "started now", the least-dishonest age available).
+  sessionFacts.set(id, {
+    launchCommand: att.meta.launchCommand,
+    shell: att.meta.shell,
+    startedAt: att.meta.startedAt ?? Date.now()
+  })
   const flushData = deps.bindProcPump(id, att.proxy, buf)
   const reap = deps.reapParked
   deps.parked.set(id, {
@@ -233,4 +267,24 @@ export async function tryDaemonReattach(id: string): Promise<boolean> {
   })
   deps.boardCwds.set(id, att.meta.cwd)
   return true
+}
+
+/**
+ * PR-2 close-modal snapshot: every session that would SURVIVE a "keep in background". The
+ * filter semantics live in the PURE buildKeepableRows (closeGuardCore.ts, unit-tested —
+ * review #340 [warning]); this wrapper binds the real maps + facts. When the list is empty
+ * the close guard skips the modal entirely and the close behaves exactly as today.
+ */
+export function listKeepableSessions(
+  getTitle: (id: string) => string | undefined
+): CloseSessionRow[] {
+  if (!deps) return []
+  return buildKeepableRows({
+    sessions: deps.sessions,
+    parked: deps.parked,
+    boardCwds: deps.boardCwds,
+    facts: sessionFacts,
+    isDaemonProxy,
+    getTitle
+  })
 }

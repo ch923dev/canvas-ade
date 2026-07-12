@@ -11,21 +11,35 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 
+/** PR-2 close policy: what a user-initiated close does when live sessions exist. */
+export type CloseWithSessions = 'ask' | 'keep' | 'stop'
+
 export interface PtyHostConfig {
   /** Terminal sessions survive app restart (daemon-owned PTYs). */
   surviveRestart: boolean
+  /** PR-2: close-with-running-sessions behavior — 'ask' pops the close modal (default),
+   *  'keep' silently enters tray residency, 'stop' silently kills everything (today's close). */
+  onCloseWithSessions: CloseWithSessions
+  /** PR-2: OS notification when a background session exits while the window is closed. */
+  notifyBackgroundExit: boolean
 }
 
 function fileFor(userDataDir: string): string {
   return join(userDataDir, 'ptyhost-config.json')
 }
 
+const CLOSE_MODES: readonly CloseWithSessions[] = ['ask', 'keep', 'stop']
+
 export function repairPtyHostConfig(p: unknown): PtyHostConfig {
-  if (typeof p === 'object' && p !== null) {
-    const o = p as { surviveRestart?: unknown }
-    if (typeof o.surviveRestart === 'boolean') return { surviveRestart: o.surviveRestart }
+  const o = typeof p === 'object' && p !== null ? (p as Record<string, unknown>) : {}
+  return {
+    surviveRestart: typeof o.surviveRestart === 'boolean' ? o.surviveRestart : true,
+    onCloseWithSessions: CLOSE_MODES.includes(o.onCloseWithSessions as CloseWithSessions)
+      ? (o.onCloseWithSessions as CloseWithSessions)
+      : 'ask',
+    notifyBackgroundExit:
+      typeof o.notifyBackgroundExit === 'boolean' ? o.notifyBackgroundExit : true
   }
-  return { surviveRestart: true }
 }
 
 export function readPtyHostConfig(userDataDir: string): PtyHostConfig {

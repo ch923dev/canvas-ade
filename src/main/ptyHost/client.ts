@@ -418,25 +418,36 @@ export async function spawnViaDaemon(opts: DaemonSpawnOpts): Promise<IPty> {
   return new DaemonPty(opts.id, pid, opts.cols, opts.rows, path.basename(opts.shell))
 }
 
-/** Live daemon sessions (boot reattach list). Empty on any failure — reattach is best-effort;
- *  the board then takes its normal spawn path. */
-export async function listDaemonSessions(): Promise<SessionInfo[]> {
+/**
+ * Live daemon sessions, failure-HONEST (PR-2 review #340 [critical]): `null` means the call
+ * FAILED (daemon unreachable / response timeout) — callers that act on "zero sessions" (the
+ * tray's last-exit-quits poll) must not confuse a transient IPC hiccup with a confirmed-empty
+ * daemon, or a single flaky poll ends residency and quits with sessions still alive.
+ */
+export async function listDaemonSessionsStrict(): Promise<SessionInfo[] | null> {
   try {
     await ensurePtyHost()
   } catch {
-    return []
+    return null
   }
-  return new Promise<SessionInfo[]>((resolve) => {
-    pending.lists.push(resolve)
+  return new Promise<SessionInfo[] | null>((resolve) => {
+    const settle = (l: SessionInfo[]): void => resolve(l)
+    pending.lists.push(settle)
     sendMsg({ op: 'list' })
     setTimeout(() => {
-      const i = pending.lists.indexOf(resolve)
+      const i = pending.lists.indexOf(settle)
       if (i >= 0) {
         pending.lists.splice(i, 1)
-        resolve([])
+        resolve(null) // timed out — a failure, NOT an empty daemon
       }
     }, 5_000).unref()
   })
+}
+
+/** Live daemon sessions (boot reattach list). Empty on any failure — reattach is best-effort;
+ *  the board then takes its normal spawn path. */
+export async function listDaemonSessions(): Promise<SessionInfo[]> {
+  return (await listDaemonSessionsStrict()) ?? []
 }
 
 /** Attach to a surviving daemon session: proxy + ring replay + persisted meta. */

@@ -23,6 +23,17 @@ export interface SessionMeta {
   shell: string
   /** monitorActivity opt-out captured at spawn (lifecycle notifications). */
   monitored: boolean
+  /**
+   * PR-2 (close modal / tray): the board's launchCommand at spawn, so a surviving session can be
+   * named honestly ("claude", "pnpm dev") in the close modal and the tray menu even after an app
+   * restart. OPTIONAL + additive — the meta blob is opaque to the daemon (stored and echoed back
+   * verbatim), so a PR-1 daemon round-trips it untouched and NO protocol version bump is needed
+   * (a bump would orphan surviving sessions across an app update — the drain-and-respawn path).
+   */
+  launchCommand?: string
+  /** PR-2: epoch ms the session was spawned — drives the modal/tray "running 24m" age labels
+   *  across app restarts. Optional + additive for the same no-version-bump reason as above. */
+  startedAt?: number
 }
 
 /** client → daemon */

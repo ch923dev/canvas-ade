@@ -57,6 +57,19 @@ describe('repoScopedEnv (shared MAIN read-only git env)', () => {
     expect(env.SSH_ASKPASS_REQUIRE).toBeUndefined()
   })
 
+  it("clears the unprefixed EDITOR/PAGER/PREFIX family — the rest of simple-git's block-list", () => {
+    // Same class as SSH_ASKPASS: bare (no GIT_ prefix) vars on @simple-git/argv-parser's env
+    // block-list. The Playwright test-runner environment exports a bare EDITOR, which made every
+    // gitDiff call under the e2e harness refuse to spawn (GitPluginError "Use of EDITOR").
+    process.env.EDITOR = 'vim'
+    process.env.PAGER = 'less'
+    process.env.PREFIX = '/usr/local'
+    const env = repoScopedEnv()
+    expect(env.EDITOR).toBeUndefined()
+    expect(env.PAGER).toBeUndefined()
+    expect(env.PREFIX).toBeUndefined()
+  })
+
   it('sets GIT_TERMINAL_PROMPT=0 (never block on a credential prompt) — overriding any inherited value', () => {
     delete process.env.GIT_TERMINAL_PROMPT
     expect(repoScopedEnv().GIT_TERMINAL_PROMPT).toBe('0')

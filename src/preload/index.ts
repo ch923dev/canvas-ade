@@ -7,6 +7,7 @@ import { recapApi, type RecapRefreshOutcome } from './recapApi'
 import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
+import { closeGuardApi } from './closeGuardApi'
 import { forwardVoicePort, voiceApi } from './voice'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
@@ -925,7 +926,11 @@ const api = {
   mcp: mcpApi,
 
   // ── Voice dictation V1 (control plane; audio frames flow over a MessagePort) ──
-  voice: voiceApi
+  voice: voiceApi,
+
+  // ── PR-2 background sessions: close-modal round trip + Settings › Terminal config rows
+  //    (factored to closeGuardApi.ts) ──
+  closeGuard: closeGuardApi
 }
 
 // Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):
