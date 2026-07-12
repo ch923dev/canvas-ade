@@ -255,9 +255,11 @@ close-and-reinstall. It productizes the local test above, with a hard security f
 
 1. Write the override into the **packaged** app's userData (survives every update install —
    unlike `resources/app-update.yml`, which each install rewrites). The packaged app's
-   userData is named after `productName`, NOT the package name (`canvas-ade` is dev-only):
+   userData is named after the package **name** (`app.getName()` falls back to package.json
+   `name` — electron-builder's `productName` names the install dir/exe, not userData; dev
+   instances use per-checkout `profiles/` subdirs under the same root and never read this):
    ```
-   %APPDATA%\Expanse\update-feed.local.json   →   { "url": "http://127.0.0.1:8090/" }
+   %APPDATA%\canvas-ade\update-feed.local.json   →   { "url": "http://127.0.0.1:8090/" }
    ```
 2. `node scripts/release-local.mjs` — builds with both gates on, stamps
    `X.Y.(Z+1)-local.N`, stages `C:\expanse\local-feed\`, starts/verifies the loopback server
