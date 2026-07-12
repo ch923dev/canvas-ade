@@ -7,6 +7,7 @@
  * sendSync) so the value is present the instant the first Terminal mounts — no async race against
  * xterm construction. Returns null off Windows.
  */
+import { app } from 'electron'
 import type { BrowserWindow, IpcMain } from 'electron'
 import { release } from 'os'
 import { isForeignSender } from './ipcGuard'
@@ -48,5 +49,11 @@ export function registerPlatformIpc(ipcMain: IpcMain, getWin: () => BrowserWindo
   // renderer reads it ONCE and caps OSR_MAX_SUPERSAMPLE at 1× (osrSizing.setLowRamMode). Frame-guarded.
   ipcMain.on('platform:lowRam', (e) => {
     e.returnValue = isForeignSender(e, getWin) ? false : isLowRam()
+  })
+
+  // The RUNNING app version (`app.getVersion()` — the packaged/stamped version, not package.json at
+  // bundle time), shown in Settings › About. Same SYNC-at-load pattern; frame-guarded.
+  ipcMain.on('platform:appVersion', (e) => {
+    e.returnValue = isForeignSender(e, getWin) ? '' : app.getVersion()
   })
 }
