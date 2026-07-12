@@ -111,7 +111,12 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           // Voice V2: the sherpa-onnx engine host — forked as a utilityProcess by
           // voiceEngine.ts, so it must exist as its own file at out/main/voiceEngineHost.js.
-          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts')
+          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts'),
+          // PTY-host daemon (DESIGN.md 2026-07-12): a DETACHED process spawned via
+          // ELECTRON_RUN_AS_NODE from a staged runtime copy (never the install dir), so it
+          // must exist as its own file at out/main/ptyHostDaemon.js for runtimeStage.ts to
+          // copy out. Plain-Node code only — no electron imports reachable from this entry.
+          ptyHostDaemon: resolve(__dirname, 'src/main/ptyHost/daemonMain.ts')
         }
       }
     }

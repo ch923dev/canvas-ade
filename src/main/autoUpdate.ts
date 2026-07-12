@@ -104,6 +104,15 @@ export interface AutoUpdateDeps {
    */
   getMeta: () => Promise<UpdateMeta | null>
   logError?: (...args: unknown[]) => void
+  /**
+   * PTY-host D5 (DESIGN.md 2026-07-12): invoked synchronously JUST BEFORE quitAndInstall —
+   * the wiring flags the imminent quit as an update install so daemon-owned terminal
+   * sessions are detached (kept alive) instead of tree-killed. `onInstallFailed` undoes the
+   * flag when quitAndInstall throws (the app is NOT quitting after all). Both optional so
+   * unit fakes and non-daemon platforms stay minimal.
+   */
+  onBeforeInstall?: () => void
+  onInstallFailed?: () => void
 }
 
 /**
@@ -240,11 +249,15 @@ export async function initAutoUpdate(deps: AutoUpdateDeps): Promise<void> {
   ipc.handle('update:install', (e) => {
     if (isForeignSender(e, getWin)) return false
     try {
+      // PTY-host D5: THIS quit is an update install — daemon-owned sessions must survive it.
+      deps.onBeforeInstall?.()
       // (true, true) = SILENT install + force relaunch. Without isSilent the assisted NSIS
       // installer (oneClick:false) replays the full wizard on restart — the user re-clicks
       // through every install page instead of getting a seamless in-place update.
       updater.quitAndInstall(true, true)
     } catch (err) {
+      // Install failed → the app is NOT quitting; restore close-kills-sessions semantics.
+      deps.onInstallFailed?.()
       logError('[auto-update] quitAndInstall failed', err)
     }
     return true

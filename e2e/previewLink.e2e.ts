@@ -59,6 +59,16 @@ test.describe('@preview terminal → browser preview link (live port-detect + ac
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+    // The seed only stages the board — the PTY registers when the async pty:spawn settles
+    // (a daemon round-trip since the PTY host landed), and writeTerminal against an
+    // unregistered id silently no-ops (writeToPty → false). Wait for the live pid first,
+    // exactly like projectBackgroundContinuity's seedLiveTerminal discipline.
+    await expect
+      .poll(
+        async () => ((await mainCall<number | null>(electronApp, 'terminalPid', termId)) ?? 0) > 0,
+        { timeout: 20_000 }
+      )
+      .toBe(true)
     await mainCall(electronApp, 'writeTerminal', termId, 'echo http://localhost:3000/\r')
     const urlSeen = await pollEval(
       page,
