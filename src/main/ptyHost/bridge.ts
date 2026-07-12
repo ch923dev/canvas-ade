@@ -22,6 +22,7 @@ import {
 } from './client'
 import { ptyHostEnabled, readPtyHostConfig } from './config'
 import type { SessionInfo, SessionMeta } from './protocol'
+import { quitDrainCore } from './quitDrain'
 
 /** The slice of pty.ts's ParkedLike the synthetic reattach park needs to construct. */
 interface ParkedEntryLike {
@@ -90,34 +91,20 @@ export function bootPtyHost(opts: { muted: boolean }): void {
  */
 export function quitPtyDrain(): Promise<void> {
   if (!deps) return Promise.resolve()
-  if (!shouldKeepSessionsOnQuit()) return deps.disposeAllPtys()
   // Review #337 [warning]: the fleet can be MIXED — daemon-backed proxies plus in-proc
-  // sessions from the surfaced fallback (D2). Only daemon-backed sessions survive an app
-  // quit by construction; the in-proc members must still be tree-killed here or they leak
-  // as unreattachable orphans. Partition on the proxy brand.
-  const kills: Promise<void>[] = []
-  for (const s of deps.sessions.values()) {
-    try {
-      s.flushData?.()
-    } catch {
-      /* already torn down */
-    }
-    try {
-      s.port.close()
-    } catch {
-      /* already closed */
-    }
-    if (!isDaemonProxy(s.proc)) kills.push(deps.killTree(s.proc))
-  }
-  deps.sessions.clear()
-  for (const p of deps.parked.values()) {
-    if (p.timer) clearTimeout(p.timer)
-    if (!isDaemonProxy(p.proc)) kills.push(deps.killTree(p.proc))
-  }
-  deps.parked.clear()
-  deps.boardCwds.clear()
-  disconnectPtyHost()
-  return Promise.all(kills).then(() => undefined)
+  // sessions from the surfaced fallback (D2). The partition semantics live in the PURE
+  // quitDrainCore (unit-tested with a mock fleet — round-2 coverage finding); this wrapper
+  // binds the real state + collaborators.
+  return quitDrainCore({
+    keep: shouldKeepSessionsOnQuit(),
+    sessions: deps.sessions,
+    parked: deps.parked,
+    boardCwds: deps.boardCwds,
+    isDaemonProxy,
+    killTree: deps.killTree as (proc: unknown) => Promise<void>,
+    disposeAllPtys: deps.disposeAllPtys,
+    disconnect: disconnectPtyHost
+  })
 }
 
 /** Sessions found alive in the daemon at boot (a previous app run kept them): id → info. */

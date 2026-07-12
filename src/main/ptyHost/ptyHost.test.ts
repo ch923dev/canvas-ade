@@ -17,6 +17,7 @@ import {
   type DaemonMsg
 } from './protocol'
 import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
+import { quitDrainCore } from './quitDrain'
 import { pipeNameFor, repairState } from './state'
 import { ptyHostEnabled, readPtyHostConfig, repairPtyHostConfig } from './config'
 import {
@@ -229,5 +230,89 @@ describe('runtime stage', () => {
     sweepOldStages(stageRoot, '2.0.0')
     expect(fs.existsSync(path.join(stageRoot, '1.9.0'))).toBe(false)
     expect(fs.existsSync(path.join(stageRoot, '2.0.0'))).toBe(true)
+  })
+})
+
+describe('quit-path drain (D5 keep-vs-kill, mixed fleet)', () => {
+  function mkDeps(keep: boolean): {
+    deps: import('./quitDrain').QuitDrainDeps
+    killed: unknown[]
+    closed: string[]
+    disposed: { v: boolean }
+    disconnected: { v: boolean }
+  } {
+    const killed: unknown[] = []
+    const closed: string[] = []
+    const disposed = { v: false }
+    const disconnected = { v: false }
+    const mkSession = (id: string, proc: unknown) => ({
+      proc,
+      port: {
+        close: () => {
+          closed.push(id)
+        }
+      }
+    })
+    const daemonProc = { brand: 'daemon' }
+    const inprocLive = { brand: 'inproc-live' }
+    const inprocParked = { brand: 'inproc-parked' }
+    const sessions = new Map([
+      ['a', mkSession('a', daemonProc)],
+      ['b', mkSession('b', inprocLive)]
+    ])
+    const parked = new Map([
+      ['c', { proc: { brand: 'daemon' } }],
+      ['e', { proc: inprocParked, timer: setTimeout(() => undefined, 60_000) }]
+    ])
+    const boardCwds = new Map([['a', 'C:/x']])
+    return {
+      deps: {
+        keep,
+        sessions,
+        parked,
+        boardCwds,
+        isDaemonProxy: (p) => (p as { brand?: string }).brand === 'daemon',
+        killTree: (p) => {
+          killed.push(p)
+          return Promise.resolve()
+        },
+        disposeAllPtys: () => {
+          disposed.v = true
+          return Promise.resolve()
+        },
+        disconnect: () => {
+          disconnected.v = true
+        }
+      },
+      killed,
+      closed,
+      disposed,
+      disconnected
+    }
+  }
+
+  it('keep=false routes to the classic kill-everything drain untouched', async () => {
+    const { deps, killed, disposed, disconnected } = mkDeps(false)
+    await quitDrainCore(deps)
+    expect(disposed.v).toBe(true)
+    expect(killed).toHaveLength(0) // disposeAllPtys owns the killing on this path
+    expect(disconnected.v).toBe(false)
+    expect(deps.sessions.size).toBe(2) // untouched — disposeAllPtys drains them itself
+  })
+
+  it('keep=true detaches daemon sessions and tree-kills ONLY the in-proc fleet members', async () => {
+    const { deps, killed, closed, disposed, disconnected } = mkDeps(true)
+    await quitDrainCore(deps)
+    expect(disposed.v).toBe(false)
+    // both live ports closed (detach), but only the in-proc procs killed — live AND parked
+    expect(closed.sort()).toEqual(['a', 'b'])
+    expect(killed.map((p) => (p as { brand: string }).brand).sort()).toEqual([
+      'inproc-live',
+      'inproc-parked'
+    ])
+    expect(deps.sessions.size).toBe(0)
+    expect(deps.parked.size).toBe(0)
+    expect(deps.boardCwds.size).toBe(0)
+    expect(disconnected.v).toBe(true)
   })
 })
