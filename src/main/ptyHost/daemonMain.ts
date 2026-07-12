@@ -29,6 +29,7 @@ import {
   type SessionInfo,
   type SessionMeta
 } from './protocol'
+import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
 
 // node-pty resolves relative to the daemon's own on-disk location: the stage dir carries a
 // node_modules/node-pty subset beside ptyHostDaemon.js; in dev the walk-up finds the checkout's
@@ -59,41 +60,9 @@ function log(msg: string): void {
   }
 }
 
-/** Chunk-deque ring, trimmed from the head (same shape as pty.ts's OutputRing, kept local —
- *  the daemon must not import electron-adjacent modules). */
-interface Ring {
-  chunks: string[]
-  len: number
-}
-export function pushRing(r: Ring, data: string): void {
-  r.chunks.push(data)
-  r.len += data.length
-  while (r.len > RING_CAP && r.chunks.length > 1) {
-    r.len -= r.chunks[0].length
-    r.chunks.shift()
-  }
-  if (r.len > RING_CAP) {
-    const only = r.chunks[0]
-    r.chunks[0] = only.slice(only.length - RING_CAP)
-    r.len = RING_CAP
-  }
-}
-
-/**
- * Replay = ring joined, head-trimmed to the first line boundary (DESIGN.md D3 / spike lesson:
- * a byte-capped ring can open mid-escape-sequence; starting at a fresh line keeps xterm clean).
- * A single line longer than the ring replays as-is — losing it entirely would be worse.
- */
-export function ringReplay(r: Ring): string {
-  const joined = r.chunks.join('')
-  if (r.len < RING_CAP) return joined
-  const nl = joined.indexOf('\n')
-  return nl >= 0 && nl < joined.length - 1 ? joined.slice(nl + 1) : joined
-}
-
 interface Session {
   proc: import('node-pty').IPty
-  ring: Ring
+  ring: DaemonRing
   cols: number
   rows: number
   meta: SessionMeta
@@ -207,7 +176,7 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
       sessions.set(msg.id, s)
       if (idleTimer) clearTimeout(idleTimer)
       proc.onData((d) => {
-        pushRing(s.ring, d)
+        pushDaemonRing(s.ring, d, RING_CAP)
         maybePushPid(msg.id, s)
         for (const sub of s.subscribers) send(sub, { ev: 'output', id: msg.id, data: d })
       })
@@ -232,7 +201,7 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
       send(sock, {
         ev: 'replay',
         id: msg.id,
-        data: ringReplay(s.ring),
+        data: daemonRingReplay(s.ring, RING_CAP),
         cols: s.cols,
         rows: s.rows,
         pid: s.proc.pid,

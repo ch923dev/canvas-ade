@@ -24,44 +24,9 @@ import {
   type SessionMeta
 } from './protocol'
 import { ensureStaged, sweepOldStages, type StageSources } from './runtimeStage'
-
-/* ── pure helpers (unit-tested without Electron) ────────────────────────────────────────────── */
-
-/** Per-profile pipe name: userData hash isolates dev/e2e/packaged instances; the random
- *  suffix rotates per daemon generation so a stale state file can never alias a new daemon. */
-export function pipeNameFor(userDataDir: string, randomSuffix: string): string {
-  const h = crypto.createHash('sha1').update(userDataDir).digest('hex').slice(0, 12)
-  return `\\\\.\\pipe\\expanse-ptyhost-${h}-${randomSuffix}`
-}
-
-export interface PtyHostState {
-  pipe: string
-  token: string
-  daemonPid: number
-  protocolVersion: number
-}
-
-/** Validate a parsed state file — anything malformed reads as "no daemon". */
-export function repairState(p: unknown): PtyHostState | null {
-  if (typeof p !== 'object' || p === null) return null
-  const o = p as Partial<Record<keyof PtyHostState, unknown>>
-  if (
-    typeof o.pipe === 'string' &&
-    o.pipe.startsWith('\\\\.\\pipe\\expanse-ptyhost-') &&
-    typeof o.token === 'string' &&
-    o.token.length >= 32 &&
-    typeof o.daemonPid === 'number' &&
-    o.protocolVersion === PROTOCOL_VERSION
-  ) {
-    return {
-      pipe: o.pipe,
-      token: o.token,
-      daemonPid: o.daemonPid,
-      protocolVersion: o.protocolVersion
-    }
-  }
-  return null
-}
+// Pure discovery-state helpers (pipe-name derivation, state-file repair) live in ./state so the
+// unit suite imports them without dragging this module's electron dependency in.
+import { pipeNameFor, repairState, type PtyHostState } from './state'
 
 /* ── connection state ───────────────────────────────────────────────────────────────────────── */
 
