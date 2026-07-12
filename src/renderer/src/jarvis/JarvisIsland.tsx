@@ -33,9 +33,15 @@ export function clampIslandPos(pos: IslandPos, vw: number, vh: number): IslandPo
   }
 }
 
-/** D7: docked top-right by default (left edge = panels/file tree, bottom = toast/minimap). */
+/** Clearance under the top-right chrome `.toolbar` (top:12 + ~34px controls + a gap) —
+ *  at y:12 the island sat ON the account pill/gear and intercepted their clicks (caught
+ *  by the accounts e2e specs). Still draggable anywhere. */
+const DOCK_TOP = 56
+
+/** D7: docked top-right by default, just below the chrome toolbar cluster (left edge =
+ *  panels/file tree, bottom = toast/minimap islands). */
 export function defaultIslandPos(vw: number, vh: number): IslandPos {
-  return clampIslandPos({ x: vw - JARVIS_W - MARGIN, y: MARGIN }, vw, vh)
+  return clampIslandPos({ x: vw - JARVIS_W - MARGIN, y: DOCK_TOP }, vw, vh)
 }
 
 /** Per-bar level multipliers (the mock's uneven 5-bar cap silhouette). */
