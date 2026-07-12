@@ -680,11 +680,18 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     return parsePortsFromOutput(box ? readRing(box) : '')
   })
 
-  ipcMain.handle('pty:spawn', async (e, opts: SpawnOpts) => {
+  ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
+    // The security guard stays SYNCHRONOUS (fail-fast before any await — and the
+    // pty.integration.test contract asserts the throw, not a rejection); only the
+    // spawn body below is async (the daemon round-trip in acquireProc).
     if (isForeignSender(e, getWin)) throw new Error('pty:spawn — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('pty:spawn — no window')
+    return spawnSessionBody(opts, win)
+  })
 
+  type SpawnResult = { id: string; shell: string; pid: number; state: PtyState; error?: string }
+  async function spawnSessionBody(opts: SpawnOpts, win: BrowserWindow): Promise<SpawnResult> {
     // Bug #13: a Restart can race the mount's deferred/adopt launch so two pty:spawn
     // calls land under one id. Without this, sessions.set below overwrites the prior
     // entry WITHOUT reaping its proc, dropping that process out of BOTH the sessions
@@ -713,26 +720,19 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const spawnRows = clampSpawnDim(opts.rows ?? 24, 24)
     // PR-2: resolve the cwd ONCE so the live process and the gitDiff cwd map agree.
     const spawnCwd = safeCwd(opts.cwd)
+    // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
+    // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
+    const env = buildSpawnEnv(recapEnvProvider, {
+      id: opts.id,
+      launchCommand: opts.launchCommand,
+      cwd: opts.cwd
+    })
     let proc: pty.IPty
     try {
       // Daemon-first (DESIGN.md D2/D4): an IPty-shaped proxy from the PTY host when the gate is
       // ON (sessions survive app restarts), the classic in-proc node-pty otherwise — acquireProc
       // owns the choice + the surfaced fallback. Everything below treats them identically.
-      // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
-      // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
-      proc = await acquireProc(
-        opts,
-        shell,
-        args,
-        spawnCols,
-        spawnRows,
-        spawnCwd,
-        buildSpawnEnv(recapEnvProvider, {
-          id: opts.id,
-          launchCommand: opts.launchCommand,
-          cwd: opts.cwd
-        })
-      )
+      proc = await acquireProc(opts, shell, args, spawnCols, spawnRows, spawnCwd, env)
     } catch (err) {
       // No live session was registered, so report the failure straight back.
       const message = err instanceof Error ? err.message : String(err)
@@ -800,7 +800,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     if (launch) proc.write(launch + '\r')
 
     return { id: opts.id, shell, pid: proc.pid, state: 'running' as PtyState }
-  })
+  }
 
   ipcMain.handle('pty:kill', (e, id: string) => {
     if (isForeignSender(e, getWin)) return false
