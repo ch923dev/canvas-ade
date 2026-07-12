@@ -2377,3 +2377,31 @@ mouse-mode hint badge) documented in the research package.
   with transcriptExists=true). claude-review: 1 [critical] (root-path install target +
   banner re-trigger dedupe) + 1 [warning] (untracked divergent installs) — both fixed in
   `d2d92bf2`, inline-dispositioned; re-review clean, all 4 checks PASS. Squash `a9feafe9`.
+
+## PR #336 — local update channel: maintainer-only in-app updates (2026-07-12, v0.14.5)
+
+- **Problem**: updating the maintainer's own installed Expanse required the manual
+  close-and-reinstall ritual on every local build — the production feed (R2) is not live
+  (cert-gated), `resources/app-update.yml` is rewritten by every install (hand-patching does
+  not survive), and `CANVAS_UPDATE_FEED` is env-only (a Start-menu launch never sees it).
+- **Fix**: a compile-gated personal update channel. `__LOCAL_UPDATE_CHANNEL__`
+  (electron.vite.config.ts, set only by `scripts/release-local.mjs` via
+  `LOCAL_UPDATE_CHANNEL=1`) fences a userData override (`update-feed.local.json`, survives
+  installs) read by new `src/main/localUpdateFeed.ts` — loopback-LITERAL URLs only
+  (`127.0.0.1`/`[::1]`; `localhost` rejected as a DNS name), fail-closed to the production
+  feed. `autoUpdateWiring.ts › startAutoUpdate()` (extracted from index.ts — max-lines)
+  repoints BOTH feed reads: `setFeedURL` + `fetchUpdateMeta(baseOverride)`. Distributed
+  builds dead-code-eliminate the whole path (verified by grep both directions), so the
+  ADR 0008 unsigned-feed invariant holds at the binary level. Tooling:
+  `scripts/release-local.mjs` (stamps `X.Y.(Z+1)-local.N` via extraMetadata — above the repo
+  version, below the next real patch; packs to C:\ per the M:-ReFS gotcha; stages the feed
+  with latest.yml LAST; floorless updates.json; deliberately NO upload path) +
+  `scripts/serve-local-feed.mjs` (127.0.0.1-only static server, basename-flattened, GET/HEAD).
+  Docs: releasing.md › Local update channel (posture, bootstrap, signing interplay).
+- **Verified**: typecheck · lint 0-err · format · 5060 units (5 = the memorized
+  CANVAS_RECAP_BOARD/8.3-TEMP env-only classes, re-proven 40/40 green sanitized) · pre-push
+  matrix on the exact merge tree (base = origin/main, 280P + 1 documented flaky-recovered) ·
+  release-local run end-to-end (0.14.6-local.1 built → staged → served → manifest verified).
+  claude-review: 0 critical / 0 warnings, zero inline (3 no-reply nits). All 4 checks PASS.
+  Squash `63f6dafd`. Packaged in-app flow check = the bootstrap install of 0.14.6-local.1
+  (feature is packaged-only by design; dev builds no-op).
