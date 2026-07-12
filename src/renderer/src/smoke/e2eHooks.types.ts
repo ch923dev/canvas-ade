@@ -377,6 +377,23 @@ export interface CanvasE2E {
     flyoutOpen: boolean
     modelStatus: 'ready' | 'absent' | 'unknown'
   }
+  /**
+   * Jarvis J3 — the conversation/island state (`jarvisStore`, ephemeral). The jarvis e2e
+   * drives a stub-voice final through the mock brain and asserts the turn lifecycle
+   * (thinking → streaming reply → done) + the display transcript. Evaluate-bridge safe.
+   */
+  jarvisState: () => {
+    converseMode: boolean
+    activeTurnId: number | null
+    awaitingReply: boolean
+    streamText: string
+    lastUserText: string
+    turnCount: number
+    lastAssistantText: string
+    tailOpen: boolean
+    viewOpen: boolean
+    lastError: string | null
+  }
   setAuthStatus: (status: {
     isLoggedIn: boolean
     email?: string

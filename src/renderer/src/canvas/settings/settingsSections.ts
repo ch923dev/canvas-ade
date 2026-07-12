@@ -18,6 +18,7 @@ export type SettingsSectionId =
   | 'shortcuts'
   | 'notifications'
   | 'voice'
+  | 'persona'
   | 'llm'
   | 'orchestration'
   | 'mcp'
@@ -95,7 +96,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     id: 'voice',
     label: 'Voice',
     sections: [
-      { id: 'voice', label: 'Voice', icon: 'mic', blurb: 'Local-first dictation & history' }
+      { id: 'voice', label: 'Voice', icon: 'mic', blurb: 'Local-first dictation & history' },
+      {
+        id: 'persona',
+        label: 'Persona',
+        icon: 'user',
+        blurb: 'Who answers when you talk to Expanse'
+      }
     ]
   },
   {

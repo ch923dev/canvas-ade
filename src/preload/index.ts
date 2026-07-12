@@ -8,6 +8,7 @@ import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
 import { forwardVoicePort, forwardVoiceTtsPort, voiceApi } from './voice'
+import { jarvisApi } from './jarvis'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -919,7 +920,10 @@ const api = {
   mcp: mcpApi,
 
   // ── Voice dictation V1 (control plane; audio frames flow over a MessagePort) ──
-  voice: voiceApi
+  voice: voiceApi,
+
+  // ── Jarvis J3 (brain session control plane; reply text streams as jarvis:turn:event) ──
+  jarvis: jarvisApi
 }
 
 // Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):
