@@ -44,9 +44,10 @@ export interface JarvisConfig {
   /** Claude model id for the brain session. */
   model: string
   historyMode: JarvisHistoryMode
-  /** Island screen position (viewport-clamped again on restore); undefined = top-right dock. */
-  islandPosition?: { x: number; y: number }
 }
+/* Retired (panel surface rev, 2026-07-13): `islandPosition` — the island is gone and the
+ * panel docks. The repair funnel silently accepts old files that still carry it (unknown
+ * keys are simply not emitted), so the field drops on the next write with no migration. */
 
 function fileFor(userDataDir: string): string {
   return join(userDataDir, 'jarvis-config.json')
@@ -75,16 +76,6 @@ export function repairJarvisConfig(p: unknown): JarvisConfig {
   const d = jarvisDefaults()
   if (typeof p !== 'object' || p === null) return d
   const o = p as Partial<Record<keyof JarvisConfig, unknown>>
-  const pos = o.islandPosition as { x?: unknown; y?: unknown } | undefined
-  const islandPosition =
-    typeof pos === 'object' &&
-    pos !== null &&
-    typeof pos.x === 'number' &&
-    typeof pos.y === 'number' &&
-    Number.isFinite(pos.x) &&
-    Number.isFinite(pos.y)
-      ? { x: pos.x, y: pos.y }
-      : undefined
   const name =
     typeof o.name === 'string' && o.name.trim().length > 0
       ? o.name.trim().slice(0, MAX_PERSONA_NAME_LEN)
@@ -118,8 +109,7 @@ export function repairJarvisConfig(p: unknown): JarvisConfig {
     // Any non-empty string persists (scene-id discipline: an id from a future build is
     // preserved; the request builder falls back at use time if the API rejects it).
     model: typeof o.model === 'string' && o.model.length > 0 ? o.model.slice(0, 256) : d.model,
-    historyMode: optEnum(o.historyMode, ['session', 'off'] as const, d.historyMode),
-    islandPosition
+    historyMode: optEnum(o.historyMode, ['session', 'off'] as const, d.historyMode)
   }
 }
 

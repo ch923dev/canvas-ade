@@ -559,8 +559,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         lastVoiceAt: 0,
         captureStartedAt: 0
       })
-      // Jarvis J3: converse mode + the display transcript are the same ephemeral-isolation
-      // class — a live conversation would eat the next spec's dictation finals.
+      // Jarvis: converse mode + the display transcript are the same ephemeral-isolation
+      // class — a live conversation would eat the next spec's dictation finals. The
+      // panel closes with it (an open panel occludes right-edge click targets).
       void setConverseMode(false)
       useJarvisStore.setState({
         converseMode: false,
@@ -569,8 +570,7 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         streamText: '',
         lastUserText: '',
         turns: [],
-        tailOpen: false,
-        viewOpen: false,
+        panelOpen: false,
         lastError: null
       })
       // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
@@ -625,8 +625,7 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         lastUserText: s.lastUserText,
         turnCount: s.turns.length,
         lastAssistantText: lastAssistant?.text ?? '',
-        tailOpen: s.tailOpen,
-        viewOpen: s.viewOpen,
+        panelOpen: s.panelOpen,
         lastError: s.lastError
       }
     },

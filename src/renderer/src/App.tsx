@@ -23,7 +23,7 @@ import { useNotifications } from './store/useNotifications'
 import { useVoiceCapture } from './voice/useVoiceCapture'
 import { useTtsPlayback } from './voice/useTtsPlayback'
 import { VoicePill } from './voice/VoicePill'
-import { JarvisIsland } from './jarvis/JarvisIsland'
+import { JarvisPanel } from './jarvis/JarvisPanel'
 import { isE2E } from './smoke/e2eRegistry'
 
 /**
@@ -136,9 +136,10 @@ function App(): React.ReactElement {
       {/* Voice V3: pill + flyout — screen-fixed overlay islands (not inside React Flow);
           dictation needs an open canvas (terminal targets), so they gate on it too. */}
       {status === 'open' && <VoicePill />}
-      {/* Jarvis J3: the persona island — same overlay-island family, docked top-right;
-          conversation grounds in the open canvas (workspace manifest), so it gates on it too. */}
-      {status === 'open' && <JarvisIsland />}
+      {/* Jarvis: the right-side panel + collapsed edge tab (surface rev, KICKOFF-PANEL).
+          Conversation grounds in the open canvas (workspace manifest), so it gates on it
+          too — and unmounting on project close runs the structural mic-gate teardown. */}
+      {status === 'open' && <JarvisPanel />}
       <ConfirmModal />
       {/* relay_prompts: the per-row BATCH confirm gate — app-level beside ConfirmModal, its own
           FIFO queue on the mcp:confirm:batch channel. Same click-outside-inert / Esc-denies contract. */}
