@@ -2519,7 +2519,7 @@ mouse-mode hint badge) documented in the research package.
   One CI red en route: the new keepable unit failed on the Linux runner (POSIX
   `path.basename` vs a Windows path) — fixed platform-agnostic in `109462d4`.
 
-## PR #TBD — project switching: window-scoped hotkey + running-projects switcher (2026-07-13, v0.17.0)
+## PR #342 — project switching: window-scoped hotkey + running-projects switcher (2026-07-13, v0.17.0)
 
 Fixes three reported project-switch defects and reshapes the switch key into an Alt-Tab-style
 picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board driven live).
