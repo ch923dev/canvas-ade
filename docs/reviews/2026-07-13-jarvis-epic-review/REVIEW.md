@@ -14,6 +14,27 @@ async transitions guarded by single-shot precondition checks** (MIC-1/2, BRAIN-1
 and **the filesystem/crash boundary** (TTS-1/2/3, BRAIN-2). Fix P0+P1 before the epic-end
 umbrella→main PR.
 
+## Dispositions — review wave `fix/jarvis-review-wave` (0.17.1, 2026-07-13)
+
+**FIXED (with regression tests):** all P0 (MIC-1 · MIC-2 · TTS-1 incl. the pre-existing STT
+path · BRAIN-2) and all P1 (BRAIN-1 · TTS-2 · TTS-3 · ESC-1 · HIST-1 · TTS-4), plus the cheap
+P2s: BRAIN-4 (the supersede/cancel/destroyed-window/pre-abort tests now exist), TURN-1, DUCK-1,
+NIT-1, NIT-2. HIST-1 decision: **read-back hydrate** on panel mount (App gates the panel on
+`status==='open'`, so mount = the project boundary) — chosen over clear-on-switch so a
+reload/switch-back shows the turns the model actually remembers; hydrated turns carry `at: 0`
+(MAIN keeps no timestamps) and render without time/day labels.
+
+**DEFERRED (open):**
+- **BRAIN-5 → J4 injection audit (hard MUST — do not lose).**
+- BRAIN-3 (typed stall reason), TTS-5 (sid clamp), TTS-6 (addon-load misreport), TTS-7 (worker
+  cache eviction), MIC-3 (mic strip vs OS denial), BADGE-1 (stale attention chips), PANE-1
+  (config-changed subscription) → J4/J5 follow-up lanes.
+- E2E-1 partially addressed in-wave (double-tap hotkey drill + scoped-Esc spec landed); the
+  Settings-disable-while-open, mic-strip disarm/re-arm and badge/chip specs remain open.
+
+This doc stays live until the deferred tail lands; collapse to a dated summary then
+(docs/reviews README convention).
+
 ## P0 — fix before anything else
 
 | id | sev | where | defect | fix shape |

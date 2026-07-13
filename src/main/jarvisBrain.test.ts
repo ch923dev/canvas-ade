@@ -153,6 +153,36 @@ describe('streamJarvisReply', () => {
     expect(r).toEqual({ ok: false, reason: 'provider-error', message: 'boom' })
   })
 
+  it('a PRE-aborted signal returns cancelled without fetching (BRAIN-1)', async () => {
+    // The abort landed while the caller was still awaiting the manifest — a listener
+    // attached now would never fire, and pre-fix the dead turn still issued the full
+    // paid request concurrently with the superseding turn.
+    let fetched = false
+    const deps = depsWith(async () => {
+      fetched = true
+      return { ok: true, status: 200, body: null }
+    })
+    const abort = new AbortController()
+    abort.abort()
+    const r = await streamJarvisReply(REQ, deps, abort.signal, () => {})
+    expect(r).toEqual({ ok: true, text: '', cancelled: true })
+    expect(fetched).toBe(false)
+  })
+
+  it('a pre-aborted signal short-circuits the mock path too (no deltas)', async () => {
+    const abort = new AbortController()
+    abort.abort()
+    const seen: string[] = []
+    const r = await streamJarvisReply(
+      REQ,
+      { fetch: async () => ({ ok: true, status: 200, body: null }), env: { CANVAS_LLM_MOCK: '1' } },
+      abort.signal,
+      (t) => seen.push(t)
+    )
+    expect(r).toEqual({ ok: true, text: '', cancelled: true })
+    expect(seen).toEqual([])
+  })
+
   it('CANVAS_LLM_MOCK streams the deterministic reply with zero egress', async () => {
     let fetched = false
     const deps: JarvisStreamDeps = {

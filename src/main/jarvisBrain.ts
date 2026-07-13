@@ -142,6 +142,10 @@ export async function streamJarvisReply(
   signal: AbortSignal,
   onDelta: (text: string) => void
 ): Promise<JarvisStreamResult> {
+  // BRAIN-1: an abort listener attached to an ALREADY-aborted signal never fires, and the
+  // caller awaits (manifest/getAppModel — seconds on first turn) before reaching here. A
+  // barge-in landing in that window must not still issue the full paid request.
+  if (signal.aborted) return { ok: true, text: '', cancelled: true }
   if (isJarvisMockEnabled(deps.env)) {
     // Two deltas so consumers see real streaming behavior without egress.
     const full = mockJarvisReply(extractLastUserText(req))

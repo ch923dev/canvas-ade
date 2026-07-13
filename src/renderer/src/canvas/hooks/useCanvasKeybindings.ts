@@ -332,6 +332,10 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
         // never before it) — bail so Esc bubbles to the palette's Modal listener and
         // closes it; the following Esc then exits full view. One Esc, one layer.
         if (document.querySelector('[data-palette-open]')) return
+        // ESC-1: an Esc pressed INSIDE the Jarvis panel belongs to the panel (its own
+        // scoped capture listener closes it + kills the mic) — bail so one press never
+        // both closes the panel and exits full view.
+        if (e.target instanceof Element && e.target.closest('.jarvis-panel')) return
         e.preventDefault()
         e.stopPropagation()
         if (cameraFullViewId) exitCameraFullView()

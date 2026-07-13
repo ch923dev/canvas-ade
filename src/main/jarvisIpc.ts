@@ -87,7 +87,16 @@ export function registerJarvisHandlers(
   let activeAbort: AbortController | null = null
 
   const push = (ev: JarvisTurnEvent): void => {
-    getWin()?.webContents.send('jarvis:turn:event', ev)
+    // BRAIN-2: close-the-window-mid-stream lands here with a destroyed-but-not-yet-nulled
+    // window — the webContents getter itself throws then (index.ts 'closed' handler), so
+    // the isDestroyed() guard needs the try as well (the recap-map lesson).
+    try {
+      const win = getWin()
+      if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+      win.webContents.send('jarvis:turn:event', ev)
+    } catch {
+      /* window died mid-send — the turn's events die with their window */
+    }
   }
 
   const anthropicKey = (): string | undefined =>
@@ -148,6 +157,14 @@ export function registerJarvisHandlers(
         } catch {
           manifest = null // a manifest failure never blocks the conversation
         }
+        // BRAIN-1: the getAppModel await above is the long pre-stream hop (first turn =
+        // full lazy ensureMcp, seconds). A barge-in landing there finds no abort listener
+        // attached yet — settle the turn as cancelled instead of issuing the request.
+        if (abort.signal.aborted) {
+          if (activeAbort === abort) activeAbort = null
+          push({ id, kind: 'done', text: '', cancelled: true })
+          return
+        }
         const system = composeSystem(cfg, manifest)
         const messages = composeMessages(cfg.historyMode === 'off' ? [] : history, text)
         const req = buildJarvisRequest(cfg.model, key ?? '', system, messages)
@@ -173,7 +190,13 @@ export function registerJarvisHandlers(
             history.splice(0, history.length - MAX_HISTORY_TURNS)
         }
         push({ id, kind: 'done', text: result.text, cancelled: result.cancelled })
-      })()
+      })().catch(() => {
+        // BRAIN-2: the turn body is void'd — without this catch any unexpected throw
+        // (push used to throw on a destroyed window) became an unhandledRejection →
+        // crashShutdown. Settle the turn as errored; push itself never throws now.
+        if (activeAbort === abort) activeAbort = null
+        push({ id, kind: 'error', reason: 'turn-failed' })
+      })
 
       return { ok: true, id }
     }

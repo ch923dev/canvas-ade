@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 import type { Page } from '@playwright/test'
-import { mainCall } from './helpers'
+import { evalIn, mainCall, pollEval, seed } from './helpers'
 
 /**
  * Jarvis — converse round-trip through the PANEL surface (KICKOFF-PANEL.md; mock rev 1
@@ -94,6 +94,46 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
     await expect.poll(async () => voiceCapturing(page), { timeout: 10_000 }).toBe(false)
     await expect(tab).toBeVisible() // collapsed home again
+  })
+
+  test('double-tap hotkey: the immediately-closed panel never leaves a hot mic (MIC-1/2)', async ({
+    page
+  }) => {
+    // Tap 1 opens the panel and STARTS the async arm chain; tap 2 closes mid-arm. The
+    // stale arm continuation must never register a consumer or start capture later.
+    await page.keyboard.press('Control+Shift+KeyJ')
+    await page.keyboard.press('Control+Shift+KeyJ')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+    // Give the stale arm continuation every chance to land wrong, then assert it didn't.
+    await page.waitForTimeout(1500)
+    const s = await jarvisState(page)
+    expect(s.converseMode).toBe(false)
+    expect(s.panelOpen).toBe(false)
+    expect(await voiceCapturing(page)).toBe(false) // closed panel ⇒ no capture path exists
+    await expect(page.locator('[data-test="jarvis-edge-tab"]')).toBeVisible()
+  })
+
+  test('scoped Esc (ESC-1): a focused terminal keeps Esc; the canvas root still closes', async ({
+    page
+  }) => {
+    await page.locator('[data-test="jarvis-edge-tab"]').click()
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+    // Esc with focus INSIDE a terminal board belongs to the terminal (vim/TUI), not the panel.
+    const id = await seed(page, 'terminal', {})
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 10_000)
+    await page.locator('.xterm').first().click()
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    const s = await jarvisState(page)
+    expect(s.panelOpen).toBe(true) // the panel did not steal the terminal's Esc
+    expect(s.converseMode).toBe(true)
+    // Focus back on the canvas root (blur the terminal) — Esc is the mic-off gesture again.
+    await evalIn(page, 'document.activeElement && document.activeElement.blur()')
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+    await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
   })
 
   test('MAIN history follows the mode: recorded per project, cleared on demand', async ({

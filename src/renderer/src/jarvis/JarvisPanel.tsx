@@ -95,6 +95,8 @@ export function JarvisPanel(): ReactElement | null {
   const capturing = useVoiceStore((s) => s.capturing)
   const partial = useVoiceStore((s) => s.partial)
   const attention = useAttentionStore((s) => s.byId)
+  // Subscribed (not getState) so a board retitle re-renders the D8 chips (NIT-2).
+  const boards = useCanvasStore((s) => s.boards)
 
   const [show, setShow] = useState(true)
   const [toneMeta, setToneMeta] = useState('butler')
@@ -185,19 +187,43 @@ export function JarvisPanel(): ReactElement | null {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [enabled, show])
 
-  // Esc closes from anywhere while the panel is open — the mic-off gesture. Skipped when
-  // a modal holds focus (modals focus-trap, so the event target sits inside the dialog).
+  // Esc — the mic-off gesture, SCOPED (ESC-1; was a window-wide capture grab that ate
+  // Esc bound for vim/TUI in terminal boards, double-fired with the full-view capture
+  // Esc and suppressed every bubble-phase Esc consumer). Two tiers, one Esc one layer:
+  //  · target INSIDE the panel (capture + stop) — the panel owns that Esc outright; the
+  //    full-view capture listener has a matching bail for panel-contained targets.
+  //  · target = <body> (bubble) — focus is nowhere more specific, so Esc keeps working
+  //    as the quick mic kill. Bubble phase means a focused terminal/editor/full-view
+  //    (which consume in capture or hold their own focus target) never loses its Esc;
+  //    the palette/confirm-gate guards keep deeper layers first.
   useEffect(() => {
     if (!panelOpen) return
-    const onKey = (e: KeyboardEvent): void => {
+    const onCaptureKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
-      if (e.target instanceof Element && e.target.closest('[role="dialog"]')) return
+      if (!(e.target instanceof Element) || !asideRef.current?.contains(e.target)) return
       e.preventDefault()
       e.stopPropagation()
       closeJarvisPanel()
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    const onBubbleKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      // Canvas root only: <body> or the focusable React Flow pane. Anything more
+      // specific (terminal, editor, flyout, modal) owns its own Esc.
+      const t = e.target
+      const onCanvasRoot =
+        t === document.body || (t instanceof Element && t.classList.contains('react-flow__pane'))
+      if (!onCanvasRoot) return
+      if (document.querySelector('[data-confirm-active]')) return
+      if (document.querySelector('[data-palette-open]')) return
+      e.preventDefault()
+      closeJarvisPanel()
+    }
+    window.addEventListener('keydown', onCaptureKey, true)
+    window.addEventListener('keydown', onBubbleKey)
+    return () => {
+      window.removeEventListener('keydown', onCaptureKey, true)
+      window.removeEventListener('keydown', onBubbleKey)
+    }
   }, [panelOpen])
 
   // Keep the transcript pinned to the newest row while a reply streams / turns land.
@@ -209,7 +235,6 @@ export function JarvisPanel(): ReactElement | null {
   if (!enabled || !show) return null
 
   const eventEntries = Object.entries(attention)
-  const boards = useCanvasStore.getState().boards
   const focusBoard = (boardId: string): void => {
     // The useNotifications focus intent: camera-fit + select (selecting clears the mark).
     useCanvasStore.setState({ pendingFocusId: boardId })

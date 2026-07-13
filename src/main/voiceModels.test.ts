@@ -5,7 +5,15 @@
  * model dir.
  */
 import { createHash } from 'crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readdirSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +26,7 @@ import {
   modelDir,
   modelPaths,
   modelStatus,
+  streamBodyToFile,
   sweepStaging,
   voiceModelsRoot,
   type VoiceModelSpec
@@ -234,5 +243,39 @@ describe('modelStatus / modelPaths / deleteModel / sweepStaging', () => {
     await sweepStaging(userData)
     expect(existsSync(join(root, '.staging-crashed'))).toBe(false)
     expect(existsSync(join(root, 'kept-model'))).toBe(true)
+  })
+})
+
+// ── streamBodyToFile (TTS-1 regression: write-side 'error' must reject, never crash) ───
+
+describe('streamBodyToFile', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'voice-stream-test-'))
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  const body = (...chunks: string[]): AsyncIterable<Uint8Array> =>
+    (async function* () {
+      for (const c of chunks) yield new Uint8Array(Buffer.from(c))
+    })()
+
+  it('streams chunks to the file and reports each to onChunk', async () => {
+    const seen: number[] = []
+    await streamBodyToFile(body('hello ', 'world'), join(dir, 'out.bin'), (c) =>
+      seen.push(c.byteLength)
+    )
+    expect(readFileSync(join(dir, 'out.bin'), 'utf8')).toBe('hello world')
+    expect(seen).toEqual([6, 5])
+  })
+
+  it("REJECTS on a write-stream 'error' (ENOSPC/EPERM class) instead of an unhandled emission", async () => {
+    // A dest whose parent is a regular FILE makes the async open fail — the same
+    // listenerless 'error' emission that previously escaped to uncaughtException
+    // (crashShutdown) mid-download.
+    writeFileSync(join(dir, 'blocker'), 'i am a file')
+    await expect(
+      streamBodyToFile(body('data-that-never-lands'), join(dir, 'blocker', 'out.bin'), () => {})
+    ).rejects.toThrow()
   })
 })

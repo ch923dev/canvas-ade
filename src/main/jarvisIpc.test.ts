@@ -9,8 +9,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
-import { registerJarvisHandlers, type JarvisTurnEvent } from './jarvisIpc'
-import { mockJarvisReply } from './jarvisBrain'
+import { registerJarvisHandlers, type JarvisIpcDeps, type JarvisTurnEvent } from './jarvisIpc'
+import { mockJarvisReply, type JarvisStreamDeps } from './jarvisBrain'
 import { jarvisDefaults } from './jarvisConfig'
 
 type Handler = (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown
@@ -24,7 +24,14 @@ interface Harness {
   dir: string
 }
 
-function makeHarness(over: { getProjectKey?: () => string | null } = {}): Harness {
+function makeHarness(
+  over: {
+    getProjectKey?: () => string | null
+    stream?: JarvisStreamDeps
+    getAppModel?: JarvisIpcDeps['getAppModel']
+    win?: (mainFrame: object, sent: Array<{ channel: string; payload: unknown }>) => BrowserWindow
+  } = {}
+): Harness {
   const handlers: Record<string, Handler> = {}
   const ipcMain = {
     handle: (channel: string, fn: Handler): void => {
@@ -33,19 +40,22 @@ function makeHarness(over: { getProjectKey?: () => string | null } = {}): Harnes
   } as unknown as IpcMain
   const sent: Array<{ channel: string; payload: unknown }> = []
   const mainFrame = { id: 'main' }
-  const win = {
-    isDestroyed: () => false,
-    webContents: {
-      isDestroyed: () => false,
-      mainFrame,
-      send: (channel: string, payload: unknown) => sent.push({ channel, payload })
-    }
-  } as unknown as BrowserWindow
+  const win = over.win
+    ? over.win(mainFrame, sent)
+    : ({
+        isDestroyed: () => false,
+        webContents: {
+          isDestroyed: () => false,
+          mainFrame,
+          send: (channel: string, payload: unknown) => sent.push({ channel, payload })
+        }
+      } as unknown as BrowserWindow)
   const dir = mkdtempSync(join(tmpdir(), 'jarvisipc-'))
   registerJarvisHandlers(ipcMain, () => win, {
     getUserData: () => dir,
     getProjectKey: over.getProjectKey ?? (() => 'M:/proj'),
-    stream: { fetch: vi.fn(), env: { CANVAS_LLM_MOCK: '1' } }
+    getAppModel: over.getAppModel,
+    stream: over.stream ?? { fetch: vi.fn(), env: { CANVAS_LLM_MOCK: '1' } }
   })
   const ownEvent = { senderFrame: mainFrame } as unknown as IpcMainInvokeEvent
   const foreignEvent = { senderFrame: { id: 'other' } } as unknown as IpcMainInvokeEvent
@@ -163,5 +173,97 @@ describe('jarvisIpc', () => {
     await waitForDone(h, r.id)
     expect(h.invoke('jarvis:history:clear')).toEqual({ ok: true })
     expect(h.invoke('jarvis:history:get')).toEqual([])
+  })
+
+  // ── The coverage the header always claimed (BRAIN-4) + the review-wave crash class ──
+
+  it('supersede-on-new-turn: a second start cancels the first, which settles cancelled', async () => {
+    const r1 = h.invoke('jarvis:turn:start', { text: 'first thought' }) as { id: number }
+    const r2 = h.invoke('jarvis:turn:start', { text: 'actually, this' }) as { id: number }
+    const done1 = (await waitForDone(h, r1.id)).find((ev) => ev.kind === 'done') as Extract<
+      JarvisTurnEvent,
+      { kind: 'done' }
+    >
+    expect(done1.cancelled).toBe(true)
+    const done2 = (await waitForDone(h, r2.id)).find((ev) => ev.kind === 'done') as Extract<
+      JarvisTurnEvent,
+      { kind: 'done' }
+    >
+    expect(done2.cancelled).toBe(false)
+    expect(done2.text).toBe(mockJarvisReply('actually, this'))
+  })
+
+  it('cancel aborts the in-flight turn (barge-in), settling it as a cancelled done', async () => {
+    const r = h.invoke('jarvis:turn:start', { text: 'long answer please' }) as { id: number }
+    expect(h.invoke('jarvis:turn:cancel')).toEqual({ ok: true })
+    const done = (await waitForDone(h, r.id)).find((ev) => ev.kind === 'done') as Extract<
+      JarvisTurnEvent,
+      { kind: 'done' }
+    >
+    expect(done.cancelled).toBe(true)
+  })
+
+  it('a barge-in during the getAppModel await never issues the provider request (BRAIN-1)', async () => {
+    let releaseModel: () => void = () => {}
+    const modelGate = new Promise<null>((res) => {
+      releaseModel = () => res(null)
+    })
+    const fetchSpy = vi.fn()
+    const hb = makeHarness({
+      stream: { fetch: fetchSpy as never, env: { ANTHROPIC_API_KEY: 'test-key' } },
+      getAppModel: () => modelGate
+    })
+    const r = hb.invoke('jarvis:turn:start', { text: 'hello' }) as { ok: boolean; id: number }
+    expect(r.ok).toBe(true)
+    hb.invoke('jarvis:turn:cancel') // lands while the turn body awaits the manifest
+    releaseModel()
+    const done = (await waitForDone(hb, r.id)).find((ev) => ev.kind === 'done') as Extract<
+      JarvisTurnEvent,
+      { kind: 'done' }
+    >
+    expect(done.cancelled).toBe(true)
+    expect(fetchSpy).not.toHaveBeenCalled() // the dead turn paid nothing
+    rmSync(hb.dir, { recursive: true, force: true })
+  })
+
+  it('a window destroyed mid-stream never crashes the turn body (BRAIN-2)', async () => {
+    // The nasty real shape (index.ts 'closed'): isDestroyed() still false, but the
+    // webContents GETTER itself throws. Pre-fix this rethrew out of the void'd turn
+    // body → unhandledRejection → crashShutdown(1).
+    let destroyed = false
+    const hb = makeHarness({
+      win: (mainFrame, sent) =>
+        ({
+          isDestroyed: () => false,
+          get webContents() {
+            if (destroyed) throw new Error('Object has been destroyed')
+            return {
+              isDestroyed: () => false,
+              mainFrame,
+              send: (channel: string, payload: unknown) => {
+                sent.push({ channel, payload })
+                if ((payload as JarvisTurnEvent).kind === 'delta') destroyed = true
+              }
+            }
+          }
+        }) as unknown as BrowserWindow
+    })
+    const syntheticEvent = {} as IpcMainInvokeEvent // no senderFrame → in-process call, allowed
+    const r = hb.handlers['jarvis:turn:start'](syntheticEvent, { text: 'stream then die' }) as {
+      ok: boolean
+      id: number
+    }
+    expect(r.ok).toBe(true)
+    // Pushes die with the window — completion is observable through MAIN's history.
+    await vi.waitFor(() => {
+      expect(hb.handlers['jarvis:history:get'](syntheticEvent)).toHaveLength(2)
+    })
+    // The first delta reached the renderer; everything after the destroy was dropped.
+    const kinds = hb.sent
+      .filter((s) => s.channel === 'jarvis:turn:event')
+      .map((s) => (s.payload as JarvisTurnEvent).kind)
+    expect(kinds).toContain('delta')
+    expect(kinds).not.toContain('done')
+    rmSync(hb.dir, { recursive: true, force: true })
   })
 })

@@ -42,6 +42,9 @@ export function sendTurn(text: string): void {
   const trimmed = text.trim()
   if (!trimmed) return
   speakEpoch++ // a new turn must never speak a superseded turn's queued clauses
+  // TURN-1: null synchronously — during the startTurn round-trip the superseded turn's
+  // late deltas would otherwise still match the stale id and speak under the new epoch.
+  currentTurnId = null
   chunker = createClauseChunker()
   void window.api.jarvis
     .startTurn(trimmed)
@@ -56,17 +59,27 @@ export function sendTurn(text: string): void {
     .catch(() => useJarvisStore.getState().turnFailed('start-failed'))
 }
 
+/** Arm-generation token (MIC-1): bumped by every disarm AND every new arm, so an arm
+ *  continuation resuming after its awaits can tell it was superseded. The panelOpen
+ *  re-check rides the same predicate — a close lands `panelOpen=false` before any
+ *  stale continuation runs. */
+let armGeneration = 0
+
 /** Arm/disarm converse mode. Arming loads persona config, probes TTS availability
  *  (absent model ⇒ text-only conversation), registers the final consumer and starts the
  *  mic; disarming unwinds all of it (an in-flight turn is cancelled).
  *
  *  THE MIC-GATE IS STRUCTURAL (KICKOFF-PANEL §3): arming refuses while the panel is
  *  closed — every arm affordance lives inside the open panel (or opens it in the same
- *  gesture, openJarvisPanel). Closed panel ⇒ no capture path exists. */
+ *  gesture, openJarvisPanel). Closed panel ⇒ no capture path exists. The arm chain is
+ *  multi-await, so the gate is re-checked after EVERY await (MIC-1): a close landing
+ *  mid-arm must never leave a consumer registered or the mic starting behind a closed
+ *  panel. */
 export async function setConverseMode(on: boolean): Promise<void> {
   const jarvis = useJarvisStore.getState()
   if (on && !jarvis.panelOpen) return
   if (!on) {
+    armGeneration++ // any in-flight arm continuation is now stale (MIC-1)
     unregisterConsumer?.()
     unregisterConsumer = null
     currentTurnId = null
@@ -75,11 +88,17 @@ export async function setConverseMode(on: boolean): Promise<void> {
     useVoiceStore.getState().setComposerSuppressed(false)
     jarvis.setConverseMode(false)
     void window.api.jarvis.cancelTurn().catch(() => {})
-    if (useVoiceStore.getState().capturing) void stopVoice()
+    // MIC-2: unconditional — `capturing` only flips true after the async arm chain, so a
+    // close inside that window used to skip the stop and the port armed the mic anyway.
+    // An extra stop on a not-yet-open session is a cheap MAIN no-op.
+    void stopVoice()
     return
   }
+  const gen = ++armGeneration
+  const armStale = (): boolean => gen !== armGeneration || !useJarvisStore.getState().panelOpen
   try {
     const status = await window.api.jarvis.status()
+    if (armStale()) return
     jarvis.setPersonaName(status.config.name)
     voiceOpts = {
       sid: status.config.voiceSid,
@@ -101,6 +120,7 @@ export async function setConverseMode(on: boolean): Promise<void> {
   } catch {
     jarvis.setSpeechReady(false)
   }
+  if (armStale()) return
   unregisterConsumer?.()
   unregisterConsumer = setFinalConsumer((text) => {
     // Only consume while converse mode is live (a stale registration never eats dictation).
@@ -110,7 +130,13 @@ export async function setConverseMode(on: boolean): Promise<void> {
   })
   useVoiceStore.getState().setComposerSuppressed(true)
   jarvis.setConverseMode(true)
-  if (!useVoiceStore.getState().capturing) void startVoice()
+  if (!useVoiceStore.getState().capturing) {
+    await startVoice()
+    // A disarm racing the voice:start round-trip may have issued its stop BEFORE the
+    // session finished starting — re-stop now that it has (the disarm already unwound
+    // everything else; without this the mic would arm behind the closed panel).
+    if (armStale()) void stopVoice()
+  }
 }
 
 export function toggleConverse(): void {
@@ -143,6 +169,20 @@ export function useJarvisController(): void {
   useEffect(() => {
     if (!window.api?.jarvis) return undefined
     const store = useJarvisStore
+
+    // HIST-1: the display transcript mirrors MAIN's per-project history. The panel mounts
+    // per open project (App gates it on status==='open'), so mount = the project boundary:
+    // clear the previous project's mirror, then hydrate from MAIN's canonical history
+    // (read-back chosen over clear-on-switch so a reload/switch-back still shows the turns
+    // the model actually remembers). MAIN keeps no timestamps — hydrated turns carry at:0,
+    // which the view renders without time/day labels.
+    store.getState().clearTurns()
+    void window.api.jarvis.history
+      .get()
+      .then((h) =>
+        store.getState().hydrateTurns(h.map((t) => ({ role: t.role, text: t.text, at: 0 })))
+      )
+      .catch(() => {})
 
     const offTurn = window.api.jarvis.onTurnEvent((ev) => {
       if (ev.id !== currentTurnId) return // superseded turn — drop its late events

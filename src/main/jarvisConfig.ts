@@ -27,9 +27,9 @@ export const JARVIS_MODELS = ['claude-opus-4-8', 'claude-haiku-4-5'] as const
 export const DEFAULT_JARVIS_MODEL = 'claude-opus-4-8'
 
 export interface JarvisConfig {
-  /** Whether the Jarvis island renders at all (Settings toggle, live-apply). */
+  /** Whether the Jarvis surface (panel + edge tab) renders at all (Settings toggle, live-apply). */
   enabled: boolean
-  /** Persona name — prompt identity + island label. */
+  /** Persona name — prompt identity + panel/edge-tab label. */
   name: string
   tonePreset: JarvisTonePreset
   /** Free tone text when tonePreset === 'custom'; ignored otherwise, capped on repair. */

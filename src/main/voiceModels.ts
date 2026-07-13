@@ -243,6 +243,46 @@ export interface DownloadDeps {
 }
 
 /**
+ * Stream a download body into `dest`, calling `onChunk` per received chunk (hash/progress
+ * accounting stays with the caller). Rejects on read-side failures AND write-side stream
+ * `'error'` events (ENOSPC, AV EPERM) — without the listener a mid-write disk error was
+ * an unhandled `'error'` emission → `uncaughtException` → app exit, and a pending drain
+ * wait would hang forever.
+ */
+export async function streamBodyToFile(
+  body: AsyncIterable<Uint8Array>,
+  dest: string,
+  onChunk: (chunk: Uint8Array) => void
+): Promise<void> {
+  const out = createWriteStream(dest)
+  let failed: Error | null = null
+  let wakeDrainWait: (() => void) | null = null
+  // Persistent (not once): a second 'error' — e.g. from end() on the destroyed stream —
+  // must also land here, never as an unhandled emission.
+  out.on('error', (err) => {
+    failed ??= err instanceof Error ? err : new Error(String(err))
+    wakeDrainWait?.()
+  })
+  try {
+    for await (const chunk of body) {
+      if (failed) throw failed
+      onChunk(chunk)
+      if (!out.write(chunk)) {
+        await new Promise<void>((resolve) => {
+          wakeDrainWait = resolve
+          out.once('drain', resolve)
+        })
+        wakeDrainWait = null
+        if (failed) throw failed
+      }
+    }
+  } finally {
+    await new Promise<void>((resolve) => out.end(resolve))
+  }
+  if (failed) throw failed
+}
+
+/**
  * Download every manifest file into `.staging-<id>/`, hashing while streaming; verify
  * sha256 + size per file; then swap the staging dir into place. Any failure (network,
  * bad status, hash/size mismatch) removes the staging dir and rethrows — the model dir
@@ -270,14 +310,14 @@ export async function downloadModel(
         throw new Error(`voice model download failed: ${f.name} → HTTP ${res.status}`)
       }
       const hash = createHash('sha256')
-      const out = createWriteStream(join(staging, f.name))
       let fileBytes = 0
-      try {
-        for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
+      await streamBodyToFile(
+        res.body as AsyncIterable<Uint8Array>,
+        join(staging, f.name),
+        (chunk) => {
           hash.update(chunk)
           fileBytes += chunk.byteLength
           received += chunk.byteLength
-          if (!out.write(chunk)) await new Promise((r) => out.once('drain', r))
           deps.onProgress?.({
             id,
             receivedBytes: received,
@@ -286,9 +326,7 @@ export async function downloadModel(
             fileCount: spec.files.length
           })
         }
-      } finally {
-        await new Promise((r) => out.end(r))
-      }
+      )
       const digest = hash.digest('hex')
       if (digest !== f.sha256) {
         throw new Error(`voice model integrity failure: ${f.name} sha256 ${digest} != pinned`)

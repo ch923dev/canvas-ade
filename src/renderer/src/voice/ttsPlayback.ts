@@ -93,6 +93,12 @@ export interface TtsPlayer {
    *  the session is live (a rebuilt player orphans the old port: MAIN keeps streaming
    *  into it and playback silently dies — the stuck-"Synthesizing…" dev-check bug). */
   attached(): boolean
+  /** Record an ACCEPTED utterance id (speakText, from the voice:tts:speak return) so the
+   *  barge-in watermark covers utterances still in synthesis warmup — an id whose chunks
+   *  have not arrived yet (the ~456 ms Kokoro first-audio window). Without it a barge-in
+   *  in that window flushed below the in-flight utterance and the WHOLE cancelled clause
+   *  played at full volume after the duck restore (TTS-4). */
+  noteUtterance(id: number): void
   /** D6 barge-in: ramp the master gain to silence over DUCK_SECONDS, stop + drop
    *  everything scheduled, restore the gain for the next utterance. */
   duckAndFlush(): void
@@ -117,10 +123,25 @@ export function createTtsPlayer(cb: TtsPlayerCallbacks = {}): TtsPlayer {
   let speaking = false
   let speakTimer: ReturnType<typeof setTimeout> | null = null
   // Utterance ids are monotonic (MAIN's speak counter). A barge-in flushes everything
-  // up to the newest id seen — chunks from those utterances still in flight over the
-  // port afterwards are dropped instead of playing into the restored gain.
+  // up to the newest id seen OR accepted (noteUtterance) — chunks from those utterances
+  // still in flight over the port afterwards are dropped instead of playing into the
+  // restored gain.
   let maxSeenId = 0
   let flushedThroughId = 0
+  // DUCK-1: the pending duck-restore. A second barge-in inside the previous duck's window
+  // must supersede it — the first restore firing mid-second-duck snapped the gain to 1.
+  let restoreTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingDoomed: AudioBufferSourceNode[] = []
+
+  const stopDoomed = (batch: AudioBufferSourceNode[]): void => {
+    for (const s of batch) {
+      try {
+        s.stop()
+      } catch {
+        /* never started / already ended */
+      }
+    }
+  }
 
   const ensureGraph = (): { ctx: AudioContext; out: AudioNode } => {
     if (!ctx || !gain) {
@@ -189,29 +210,36 @@ export function createTtsPlayer(cb: TtsPlayerCallbacks = {}): TtsPlayer {
         // utterances were already flushed by the barge-in that cancelled them.
       }
     },
+    noteUtterance(id: number): void {
+      maxSeenId = Math.max(maxSeenId, id)
+    },
     duckAndFlush(): void {
       flushedThroughId = maxSeenId
       if (!ctx || !gain) return
+      // DUCK-1: supersede a still-pending restore — stop ITS doomed batch now (its timer
+      // dies with it) so only THIS duck's timer restores the gain, after all batches.
+      if (restoreTimer) {
+        clearTimeout(restoreTimer)
+        restoreTimer = null
+        stopDoomed(pendingDoomed)
+      }
       const g = gain.gain
       const now = ctx.currentTime
       g.cancelScheduledValues(now)
       g.setValueAtTime(g.value, now)
       g.linearRampToValueAtTime(0.0001, now + DUCK_SECONDS)
       const doomed = [...sources]
+      pendingDoomed = doomed
       sources.clear()
       ledger.flush()
       setSpeaking(false)
       if (speakTimer) clearTimeout(speakTimer)
       const c = ctx // dispose() may null the field before this timer fires
-      setTimeout(
+      restoreTimer = setTimeout(
         () => {
-          for (const s of doomed) {
-            try {
-              s.stop()
-            } catch {
-              /* never started / already ended */
-            }
-          }
+          restoreTimer = null
+          pendingDoomed = []
+          stopDoomed(doomed)
           // Restore the gain only after the doomed sources are dead.
           if (c.state !== 'closed') g.setValueAtTime(1, c.currentTime)
         },
@@ -236,6 +264,9 @@ export function createTtsPlayer(cb: TtsPlayerCallbacks = {}): TtsPlayer {
       port?.close()
       port = null
       if (speakTimer) clearTimeout(speakTimer)
+      if (restoreTimer) clearTimeout(restoreTimer)
+      stopDoomed(pendingDoomed)
+      pendingDoomed = []
       for (const s of sources) {
         try {
           s.stop()

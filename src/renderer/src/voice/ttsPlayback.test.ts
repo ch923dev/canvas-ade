@@ -3,7 +3,7 @@
  * flush, speaking horizon) and the earcon envelope data. The AudioContext glue is thin
  * DOM plumbing exercised by the manual dev check; the math lives here.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DUCK_SECONDS,
   SCHEDULE_LEAD_SECONDS,
@@ -107,5 +107,150 @@ describe('duck + earcon envelopes', () => {
       expect(earconDuration(notes)).toBeLessThanOrEqual(0.2)
       for (const n of notes) expect(n.peak).toBeLessThanOrEqual(0.2)
     }
+  })
+})
+
+// ── Barge-in watermark + duck-restore against a fake audio graph (TTS-4 / DUCK-1) ──────
+
+interface FakeSource {
+  buffer: unknown
+  connect: ReturnType<typeof vi.fn>
+  start: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+  onended: (() => void) | null
+}
+
+class FakeAudioContext {
+  currentTime = 0
+  state = 'running'
+  destination = {}
+  created: FakeSource[] = []
+  gainNode = {
+    connect: vi.fn(),
+    gain: {
+      value: 1,
+      cancelScheduledValues: vi.fn(),
+      setValueAtTime: vi.fn(),
+      linearRampToValueAtTime: vi.fn()
+    }
+  }
+  createGain(): unknown {
+    return this.gainNode
+  }
+  createBuffer(_ch: number, len: number, rate: number): unknown {
+    return { duration: len / rate, copyToChannel: vi.fn() }
+  }
+  createBufferSource(): FakeSource {
+    const src: FakeSource = {
+      buffer: null,
+      connect: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      onended: null
+    }
+    this.created.push(src)
+    return src
+  }
+  close(): Promise<void> {
+    this.state = 'closed'
+    return Promise.resolve()
+  }
+}
+
+/** A silent one-second-ish PCM16 chunk message for utterance `id`. */
+const chunkMsg = (id: number): unknown => ({
+  t: 'tts:chunk',
+  id,
+  seq: 0,
+  sampleRate: 4,
+  pcm16: encodePcm16Base64(Float32Array.from([0.1, 0.2, 0.1, 0]))
+})
+
+/** Attach a fake port and return a `deliver` fn that plays a message into the player. */
+const attachFakePort = (player: ReturnType<typeof createTtsPlayer>): ((m: unknown) => void) => {
+  const port = { close: vi.fn(), onmessage: null } as unknown as MessagePort
+  player.attach(port)
+  return (m) =>
+    (port as unknown as { onmessage: (e: { data: unknown }) => void }).onmessage({ data: m })
+}
+
+describe('barge-in flush watermark covers ACCEPTED utterances (TTS-4)', () => {
+  let fakeCtx: FakeAudioContext
+  beforeEach(() => {
+    fakeCtx = new FakeAudioContext()
+    // A real function (constructible) — `new` on an arrow throws.
+    vi.stubGlobal('AudioContext', function AudioContextStub() {
+      return fakeCtx
+    })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('drops the chunks of an utterance accepted BEFORE the barge-in but heard after', () => {
+    // The warmup window: speak() accepted id 1, zero chunks seen, user barges in.
+    const player = createTtsPlayer()
+    const deliver = attachFakePort(player)
+    player.noteUtterance(1)
+    player.duckAndFlush()
+    deliver(chunkMsg(1)) // the cancelled clause arrives post-flush
+    expect(fakeCtx.created).toHaveLength(0) // dropped — nothing scheduled at restored gain
+    deliver(chunkMsg(2)) // the NEXT utterance still plays
+    expect(fakeCtx.created).toHaveLength(1)
+    player.dispose()
+  })
+
+  it('without noteUtterance the same chunk would have played (the pre-fix hole)', () => {
+    const player = createTtsPlayer()
+    const deliver = attachFakePort(player)
+    player.duckAndFlush() // watermark = max SEEN = 0
+    deliver(chunkMsg(1))
+    expect(fakeCtx.created).toHaveLength(1) // documents why accepted-id reporting matters
+    player.dispose()
+  })
+})
+
+describe('overlapping duckAndFlush restores supersede (DUCK-1)', () => {
+  let fakeCtx: FakeAudioContext
+  beforeEach(() => {
+    vi.useFakeTimers()
+    fakeCtx = new FakeAudioContext()
+    // A real function (constructible) — `new` on an arrow throws.
+    vi.stubGlobal('AudioContext', function AudioContextStub() {
+      return fakeCtx
+    })
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('a second duck inside the first restore window cancels the first restore', () => {
+    const player = createTtsPlayer()
+    const deliver = attachFakePort(player)
+    deliver(chunkMsg(1))
+    const first = fakeCtx.created[0]
+    player.duckAndFlush()
+    // Second barge-in lands mid-way through the first duck's restore window.
+    vi.advanceTimersByTime(DUCK_SECONDS * 1000 * 0.5)
+    deliver(chunkMsg(2))
+    const second = fakeCtx.created[1]
+    player.duckAndFlush()
+    expect(first.stop).toHaveBeenCalled() // superseded batch stopped immediately
+    const restoresBefore = fakeCtx.gainNode.gain.setValueAtTime.mock.calls.filter(
+      (c: unknown[]) => c[0] === 1
+    ).length
+    // Advance past where the FIRST timer would have fired — no restore may land yet.
+    vi.advanceTimersByTime(DUCK_SECONDS * 1000 * 0.5 + 25)
+    const restoresMid = fakeCtx.gainNode.gain.setValueAtTime.mock.calls.filter(
+      (c: unknown[]) => c[0] === 1
+    ).length
+    expect(restoresMid).toBe(restoresBefore) // the first restore never snaps the gain mid-duck
+    // The SECOND duck's own timer restores once, after stopping its batch.
+    vi.advanceTimersByTime(DUCK_SECONDS * 1000)
+    expect(second.stop).toHaveBeenCalled()
+    const restoresAfter = fakeCtx.gainNode.gain.setValueAtTime.mock.calls.filter(
+      (c: unknown[]) => c[0] === 1
+    ).length
+    expect(restoresAfter).toBe(restoresBefore + 1)
+    player.dispose()
   })
 })

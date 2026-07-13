@@ -68,6 +68,10 @@ export async function speakText(
       useTtsStore.getState().setError(r.error ?? 'speak failed')
       return false
     }
+    // TTS-4: tell the player the id was ACCEPTED before any chunk arrives, so a barge-in
+    // during synthesis warmup flushes through this utterance too (not just ids already
+    // seen on the port).
+    if (typeof r.id === 'number') getTtsPlayer()?.noteUtterance(r.id)
     useTtsStore.getState().spokeText(text)
     return true
   } catch (err) {
