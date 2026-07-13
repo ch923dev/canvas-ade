@@ -54,8 +54,7 @@ import { registerProjectLibraryIpc } from './projectLibrary'
 import { registerFileIpc } from './fileIpc'
 import { createFileWatcher, type FileWatcher } from './fileWatch'
 import { runSummarize, defaultDeps } from './llmService'
-import { registerLlmHandlers } from './llmIpc'
-import { registerJarvisHandlers } from './jarvisIpc'
+import { wireLlmJarvis } from './jarvisBoot'
 import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
 import { createSummaryLoop } from './summaryLoop'
@@ -861,22 +860,8 @@ app.whenReady().then(async () => {
     sessionDirs: () => projectSessions.listBackgroundProjects().map((b) => b.dir),
     thumbsDir: () => join(app.getPath('userData'), 'project-thumbs')
   })
-  registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
-  // Jarvis J3: the voice-brain session. Key = the llmKeyStore `anthropic` slot (llmDataDir,
-  // same encryptor); the per-turn workspace manifest reads the AppModel in-process via the
-  // lazy MCP boot (first Jarvis turn pays the one-time ensureMcp, like first orchestration).
-  registerJarvisHandlers(ipcMain, () => mainWindow, {
-    getUserData: () => llmDataDir,
-    encryptor: llmEncryptor,
-    getProjectKey: getCurrentDir,
-    getAppModel: async () => {
-      try {
-        return (await ensureMcp())?.describeApp() ?? null
-      } catch {
-        return null
-      }
-    }
-  })
+  // LLM key store + Jarvis brain (wiring in jarvisBoot.ts — max-lines ratchet).
+  wireLlmJarvis(ipcMain, () => mainWindow, { llmDataDir, llmEncryptor, getCurrentDir, ensureMcp })
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
   // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated
   // llmDataDir; the orchestrator reads the same file via the `cap` getter passed to startMcpServer.
