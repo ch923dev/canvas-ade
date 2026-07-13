@@ -2518,3 +2518,41 @@ mouse-mode hint badge) documented in the research package.
   inline-dispositioned; rounds 2–3 clean; all 4 checks green ×3 rounds; CodeQL clean.
   One CI red en route: the new keepable unit failed on the Linux runner (POSIX
   `path.basename` vs a Windows path) — fixed platform-agnostic in `109462d4`.
+
+## PR #342 — project switching: window-scoped hotkey + running-projects switcher (2026-07-13, v0.17.0)
+
+Fixes three reported project-switch defects and reshapes the switch key into an Alt-Tab-style
+picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board driven live).
+
+- **#1 fired while unfocused (fix).** `globalHotkey.ts` no longer registers an OS-wide
+  `globalShortcut` (which fired from any app AND yanked the window forward on every press). It
+  binds a MAIN-window `before-input-event` listener instead — that only reaches a focused
+  webContents, so the chord fires ONLY when Expanse is focused: no cross-app fire, no
+  foreground-steal, no system-wide accelerator reservation. Accelerators are parsed + matched live
+  per keystroke (exact chord; `CommandOrControl`→Ctrl off-mac / Cmd on-mac; auto-repeat + key-up
+  ignored), so a Settings rebind needs no re-attach; the listener is attached lazily on first focus
+  (mirrors the recap re-ensure wiring). A window binding cannot fail to register → `hotkey:failures`
+  now always answers `[]` (endpoint kept for the preload/renderer contract; the renderer
+  failure-pull toast is removed).
+- **#2 no picker (feature).** New running-projects switcher overlay (`RunningProjectSwitcher.tsx` +
+  `runningSwitcherStore.ts` + `styles/screens/running-switcher.css`), mounted at the App root — a
+  centered panel over a frosted, dimmed whole-app backdrop (Alt-Tab framing, deliberately NOT a
+  full-screen takeover; the resident cap makes a Task-View a misfit). Cards = active first, then
+  backgrounded residents (the shared `dockCards` order) with canvas thumbnail + live badge + status
+  dot. Tab / `]` / arrows advance, Shift+Tab / `[` go back, Enter or click opens, Esc cancels; the
+  commit runs the UNCHANGED `performProjectSwitch` pipeline. The hotkey opens the overlay, or
+  advances the highlight when it's already up.
+- **#3 churned / jumped to non-open projects (fix).** The old renderer path re-read the MRU recents
+  every press and `project.open`→`touchRecent` reordered it, so the cycle was non-deterministic and
+  lost its origin — and it walked ALL history (cold recents), not the running set. The overlay
+  SNAPSHOTS the running set ONCE per interaction and navigates that frozen list → stable, always
+  returns to the origin; the universe is running projects only (active + residents), so a single
+  running project shows an empty-state hint and never dives into recents (cold recents stay
+  reachable from the ProjectSwitcher pill). `useProjectSwitchHotkey` drops the recents-ring cycle.
+- **Verified:** trio (typecheck · lint 0-err · format) · units +17 (`globalHotkey.test.ts`:
+  accelerator parse + exact-chord matcher + mac/win resolution + disabled + key-up/auto-repeat;
+  `runningSwitcherStore.test.ts`: snapshot order + running-only universe + single/empty + stable
+  frozen round-trip) · build (plain + `CANVAS_E2E`) · NEW `projectSwitcher.e2e.ts` (@chrome — real
+  `project:cycleHotkey` channel → overlay membership, Tab nav, Esc dismiss, single-project empty
+  state) green · LIVE app check via the `_electron` harness (2 running → overlay + "2 running",
+  Tab advances, Esc closes, close resident → 1 card + empty note; screenshots).
