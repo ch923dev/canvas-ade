@@ -1,0 +1,203 @@
+/* ── Running-projects switcher (Alt-Tab-style picker; RunningProjectSwitcher.tsx). A centered
+   panel over a frosted, dimmed whole-app backdrop — the "app-wide switch mode" framing without a
+   full-screen takeover. Solid surfaces + the one accent, per DESIGN.md; z above Canvas + the
+   ProjectDock (100), below the modals (10000) and toasts (10100). */
+.rps-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(7px) saturate(0.9);
+  -webkit-backdrop-filter: blur(7px) saturate(0.9);
+  animation: rps-fade 120ms ease both;
+}
+
+.rps-panel {
+  width: min(720px, 92vw);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+  padding: 18px 18px 12px;
+  outline: none;
+  animation: rps-pop 140ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.rps-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 14px;
+}
+.rps-diamond {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background: var(--accent);
+}
+.rps-title {
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  color: var(--text);
+}
+.rps-title b {
+  color: var(--text-2);
+  font-weight: 450;
+}
+.rps-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+
+.rps-cards {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 2px;
+}
+
+.rps-card {
+  position: relative;
+  width: 210px;
+  padding: 0;
+  border-radius: 9px;
+  overflow: hidden;
+  text-align: left;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.rps-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rps-sel {
+  border-color: transparent;
+  box-shadow:
+    0 0 0 2px var(--accent),
+    var(--shadow-pop);
+  transform: translateY(-2px);
+}
+
+.rps-thumb {
+  display: block;
+  height: 118px;
+  border-bottom: 1px solid var(--border-subtle);
+  background-color: var(--inset);
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 13px 13px;
+  background-position: center;
+}
+
+.rps-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px 11px;
+}
+.rps-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+.rps-live {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-wash);
+}
+.rps-idle {
+  background: var(--text-faint);
+}
+.rps-name {
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rps-badge {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  padding: 2px 7px;
+}
+.rps-tagnow {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-radius: var(--r-pill);
+  padding: 2px 7px;
+}
+
+.rps-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  padding: 13px 5px 3px;
+  border-top: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.rps-key {
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: var(--fs-micro);
+}
+
+.rps-empty {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--fs-label);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+@keyframes rps-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes rps-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rps-overlay,
+  .rps-panel {
+    animation: none;
+  }
+}

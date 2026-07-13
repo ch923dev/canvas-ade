@@ -8,6 +8,7 @@ import AskOnSwitchModal from './canvas/AskOnSwitchModal'
 import CloseSessionsModal from './canvas/CloseSessionsModal'
 import ProjectDock from './canvas/ProjectDock'
 import SwitchTransitionOverlay from './canvas/SwitchTransitionOverlay'
+import { RunningProjectSwitcher } from './canvas/RunningProjectSwitcher'
 import { useSwitchTransitionStore } from './store/switchTransitionStore'
 import { ToastIsland } from './canvas/Toast'
 import { UpdateSurfaces } from './canvas/UpdateSurfaces'
@@ -33,8 +34,9 @@ import { isE2E } from './smoke/e2eRegistry'
 function App(): React.ReactElement {
   useRendererSmoke()
   useAutosave()
-  // Global project-switch hotkey (renderer half): drives performProjectSwitch off MAIN's OS-wide
-  // accelerator. Mounted here so it survives a switch (ProjectSwitcher unmounts mid-'loading').
+  // Project-switch hotkey (renderer half): MAIN's window-scoped chord forwards a direction; this
+  // raises the running-projects switcher overlay. Mounted here so it survives a switch (the
+  // ProjectSwitcher pill unmounts mid-'loading').
   useProjectSwitchHotkey()
   useMcpPublish()
   useMcpCommands()
@@ -146,6 +148,9 @@ function App(): React.ReactElement {
       {/* Phase 4c: the switch-transition overlay — z above Canvas/Welcome, below modals
           (the ask dialog settles BEFORE the overlay arms; Cancel paths never reach arm). */}
       <SwitchTransitionOverlay />
+      {/* Running-projects switcher (Alt-Tab-style picker). App-level + self-gating on its store's
+          `open`, so the switch hotkey can raise it over any surface and it survives the switch. */}
+      <RunningProjectSwitcher />
       {/* D1-A: app-level so toasts survive a project switch and show on the welcome
           screen too (a failed final flush aborts the switch — its toast must outlive
           whatever surface raised it). */}
