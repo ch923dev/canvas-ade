@@ -22,10 +22,10 @@
  * GPL-3.0 (downloaded from the published sherpa-onnx mirrors, never redistributed).
  */
 import { createHash } from 'crypto'
-import { createWriteStream } from 'fs'
+import { createReadStream } from 'fs'
 import { mkdir, rename, rm, stat } from 'fs/promises'
 import { dirname, join } from 'path'
-import { voiceModelsRoot, type DownloadDeps } from './voiceModels'
+import { streamBodyToFile, voiceModelsRoot, type DownloadDeps } from './voiceModels'
 import ttsManifest from './voiceTtsManifest.json'
 
 export interface TtsComponentFile {
@@ -148,6 +148,29 @@ export async function ttsModelStatus(userData: string, id: string): Promise<TtsM
   return 'ready'
 }
 
+/**
+ * Full sha256 re-verify of a LANDED component (readiness itself stays size-only — this is
+ * the explicit-download repair probe, not the per-session check). False = at least one
+ * file's content diverged from its pin (size-preserving corruption) or is unreadable.
+ */
+export async function ttsComponentHashesOk(userData: string, key: string): Promise<boolean> {
+  const comp = TTS_COMPONENTS[key]
+  if (!comp) return false
+  const dir = ttsComponentDir(userData, key)
+  for (const f of comp.files) {
+    const hash = createHash('sha256')
+    try {
+      for await (const chunk of createReadStream(join(dir, f.path))) {
+        hash.update(chunk as Uint8Array)
+      }
+    } catch {
+      return false
+    }
+    if (hash.digest('hex') !== f.sha256) return false
+  }
+  return true
+}
+
 /** Absolute paths the engine host needs to build an OfflineTts (voiceEngineHost). */
 export interface TtsModelPaths {
   engine: TtsEngineKind
@@ -192,18 +215,28 @@ export function ttsModelPaths(userData: string, id: string): TtsModelPaths | nul
  * which is what makes retries resume). Per component: stream into `.staging-tts-<key>/`
  * while hashing → verify sha256 + size per file → atomic rename into place. Any failure
  * removes that component's staging dir and rethrows; already-landed components stay.
+ *
+ * `verifyReady` (the EXPLICIT user download — Settings row): hash-verify landed components
+ * and re-fetch any that fail, so Download repairs size-preserving corruption instead of
+ * no-op'ing `ok:true` against a permanently broken install (readiness is size-only). The
+ * STT catalog needs no equivalent — its re-download always re-fetches everything.
  */
 export async function downloadTtsModel(
   userData: string,
   id: string,
-  deps: DownloadDeps = {}
+  deps: DownloadDeps = {},
+  opts: { verifyReady?: boolean } = {}
 ): Promise<void> {
   const spec = getTtsModelSpec(id)
   if (!spec) throw new Error(`tts model unknown: ${id}`)
   const fetchImpl = deps.fetchImpl ?? fetch
   const pending: string[] = []
   for (const key of spec.components) {
-    if ((await ttsComponentStatus(userData, key)) !== 'ready') pending.push(key)
+    if ((await ttsComponentStatus(userData, key)) !== 'ready') {
+      pending.push(key)
+    } else if (opts.verifyReady && !(await ttsComponentHashesOk(userData, key))) {
+      pending.push(key)
+    }
   }
   const totalBytes = componentsTotal(pending)
   const fileCount = pending.reduce((s, k) => s + TTS_COMPONENTS[k].files.length, 0)
@@ -227,25 +260,19 @@ export async function downloadTtsModel(
         const dest = join(staging, f.path)
         await mkdir(dirname(dest), { recursive: true })
         const hash = createHash('sha256')
-        const out = createWriteStream(dest)
         let fileBytes = 0
-        try {
-          for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
-            hash.update(chunk)
-            fileBytes += chunk.byteLength
-            received += chunk.byteLength
-            if (!out.write(chunk)) await new Promise((r) => out.once('drain', r))
-            deps.onProgress?.({
-              id,
-              receivedBytes: received,
-              totalBytes,
-              fileIndex,
-              fileCount
-            })
-          }
-        } finally {
-          await new Promise((r) => out.end(r))
-        }
+        await streamBodyToFile(res.body as AsyncIterable<Uint8Array>, dest, (chunk) => {
+          hash.update(chunk)
+          fileBytes += chunk.byteLength
+          received += chunk.byteLength
+          deps.onProgress?.({
+            id,
+            receivedBytes: received,
+            totalBytes,
+            fileIndex,
+            fileCount
+          })
+        })
         const digest = hash.digest('hex')
         if (digest !== f.sha256) {
           throw new Error(`tts model integrity failure: ${f.path} sha256 ${digest} != pinned`)
@@ -267,15 +294,25 @@ export async function downloadTtsModel(
  * Remove the model's components — EXCEPT any component another still-installed catalog
  * model needs (the shared espeak dir only goes when the last engine that uses it goes).
  * Keep-set is computed BEFORE anything is removed, so the decision can't observe its own
- * partial effects.
+ * partial effects. `inFlightIds` (voiceIpc's live download set) extends the keep-set to
+ * components of models still INSTALLING — a not-yet-ready install skips its shared
+ * components (already landed), so deleting the sibling mid-flight would otherwise rm a
+ * dir the in-flight install completes against and silently strand it 'absent'.
  */
-export async function deleteTtsModel(userData: string, id: string): Promise<void> {
+export async function deleteTtsModel(
+  userData: string,
+  id: string,
+  opts: { inFlightIds?: readonly string[] } = {}
+): Promise<void> {
   const spec = getTtsModelSpec(id)
   if (!spec) throw new Error(`tts model unknown: ${id}`)
   const keep = new Set<string>()
   for (const other of TTS_MODEL_CATALOG) {
     if (other.id === id) continue
-    if ((await ttsModelStatus(userData, other.id)) === 'ready') {
+    if (
+      opts.inFlightIds?.includes(other.id) ||
+      (await ttsModelStatus(userData, other.id)) === 'ready'
+    ) {
       for (const k of other.components) keep.add(k)
     }
   }

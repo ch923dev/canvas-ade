@@ -513,7 +513,23 @@ describe('J2 voice:tts:models catalog channels (shared registration)', () => {
     await expect(t.handlers['voice:tts:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
       ok: true
     })
-    expect(t.ttsOps.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1')
+    expect(t.ttsOps.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1', { inFlightIds: [] })
+  })
+
+  it('a cross-model delete during a download hands remove the in-flight set (TTS-2)', async () => {
+    const t = makeHarness()
+    let release!: () => void
+    t.ttsOps.download.mockImplementation(() => new Promise<void>((r) => (release = () => r())))
+    const dl = t.handlers['voice:tts:models:download'](t.ownEvent, 'm1') as Promise<unknown>
+    // Deleting the SIBLING is allowed — but its shared components must be protected.
+    await expect(t.handlers['voice:tts:models:delete'](t.ownEvent, 'm2')).resolves.toEqual({
+      ok: true
+    })
+    expect(t.ttsOps.remove).toHaveBeenCalledWith('C:/test-userdata', 'm2', {
+      inFlightIds: ['m1']
+    })
+    release()
+    await dl
   })
 })
 
@@ -620,6 +636,8 @@ describe('voice:models handlers', () => {
     await expect(t.handlers['voice:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
       ok: true
     })
-    expect(t.ops.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1')
+    // The shared registration hands every catalog's remove the live in-flight set
+    // (the TTS keep-set guard); the STT deleteModel simply ignores it.
+    expect(t.ops.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1', [])
   })
 })

@@ -279,8 +279,12 @@ export function registerVoiceHandlers(
     catalog: TTS_MODEL_CATALOG,
     defaultId: DEFAULT_TTS_MODEL_ID,
     status: ttsOps.status,
-    download: ttsOps.download,
-    remove: ttsOps.remove
+    // The IPC download IS the explicit user gesture (Settings row) — verifyReady makes it
+    // the repair path for size-preserving corruption of landed components (TTS-3).
+    download: (userData, id, deps) => ttsOps.download(userData, id, deps, { verifyReady: true }),
+    // Components of a model still downloading join the delete keep-set (TTS-2): deleting
+    // the sibling mid-flight must not rm the shared espeak dir the install skipped.
+    remove: (userData, id, inFlightIds) => ttsOps.remove(userData, id, { inFlightIds })
   })
 
   // App voice config (SPEC §5). set() is a merge-patch funneled through repairVoiceConfig
@@ -429,7 +433,8 @@ function registerModelCatalogIpc(
       id: string,
       deps: { onProgress?: (p: DownloadProgress) => void }
     ) => Promise<void>
-    remove: (userData: string, id: string) => Promise<void>
+    /** `inFlightIds` = the catalog's live download set at call time (TTS keep-set guard). */
+    remove: (userData: string, id: string, inFlightIds: readonly string[]) => Promise<void>
   }
 ): void {
   ipcMain.handle(`${cfg.prefix}:list`, async (e): Promise<VoiceModelListEntry[]> => {
@@ -484,7 +489,7 @@ function registerModelCatalogIpc(
       if (isForeignSender(e, getWin) || typeof id !== 'string') return { ok: false }
       if (downloading.has(id)) return { ok: false, error: 'download in progress' }
       try {
-        await cfg.remove(getUserData(), id)
+        await cfg.remove(getUserData(), id, [...downloading])
         return { ok: true }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }

@@ -5,7 +5,15 @@
  * swap lets retries resume, and delete never strands/steals a shared component.
  */
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -269,5 +277,51 @@ describe('ttsModelStatus / ttsModelPaths / deleteTtsModel', () => {
     await deleteTtsModel(userData, 'test-b')
     expect(await ttsComponentStatus(userData, 'test-shared')).toBe('absent')
     expect(existsSync(ttsComponentDir(userData, 'test-shared'))).toBe(false)
+  })
+
+  it('delete keeps a shared component the IN-FLIGHT sibling install needs (TTS-2)', async () => {
+    // A installed → B downloading (skips the shared component, already landed) → delete A
+    // mid-flight. The keep-set only saw READY models, so espeak was rm'd and B completed
+    // ok:true yet 'absent' — 345 MB for an unusable install, no error surfaced.
+    await downloadTtsModel(userData, 'test-a', { fetchImpl: fakeFetch() })
+    await deleteTtsModel(userData, 'test-a', { inFlightIds: ['test-b'] })
+    expect(await ttsComponentStatus(userData, 'test-shared')).toBe('ready') // B's dependency survived
+    expect(existsSync(ttsComponentDir(userData, 'test-a-engine'))).toBe(false) // A's own engine went
+    // B's install resumes past the kept shared component and lands ready.
+    await downloadTtsModel(userData, 'test-b', { fetchImpl: fakeFetch() })
+    expect(await ttsModelStatus(userData, 'test-b')).toBe('ready')
+  })
+})
+
+describe('downloadTtsModel verifyReady (TTS-3 — the explicit-download repair path)', () => {
+  useSyntheticComponents()
+
+  it('re-fetches a landed component whose content diverged at the SAME size', async () => {
+    await downloadTtsModel(userData, 'test-a', { fetchImpl: fakeFetch() })
+    // Size-preserving corruption: readiness (size-only) still says 'ready'; every session
+    // fails; a resume-mode download no-ops.
+    const victim = join(ttsComponentDir(userData, 'test-a-engine'), 'a-model.onnx')
+    const original = bodyOf('a-model.onnx')
+    writeFileSync(victim, 'X'.repeat(Buffer.byteLength(original)))
+    expect(await ttsModelStatus(userData, 'test-a')).toBe('ready') // the trap
+    const resumeFetch = fakeFetch()
+    await downloadTtsModel(userData, 'test-a', { fetchImpl: resumeFetch })
+    expect((resumeFetch as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0) // no-op
+    const repairFetch = fakeFetch()
+    await downloadTtsModel(userData, 'test-a', { fetchImpl: repairFetch }, { verifyReady: true })
+    expect(readFileSync(victim, 'utf8')).toBe(original) // repaired
+    // Only the corrupt component re-fetched — the intact shared component verified clean.
+    const urls = (repairFetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) =>
+      String(c[0])
+    )
+    expect(urls.every((u) => !u.includes('espeak-ng-data'))).toBe(true)
+    expect(urls.length).toBe(ENGINE_A_FILES.length)
+  })
+
+  it('verifyReady on an intact install fetches nothing', async () => {
+    await downloadTtsModel(userData, 'test-a', { fetchImpl: fakeFetch() })
+    const f = fakeFetch()
+    await downloadTtsModel(userData, 'test-a', { fetchImpl: f }, { verifyReady: true })
+    expect((f as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0)
   })
 })
