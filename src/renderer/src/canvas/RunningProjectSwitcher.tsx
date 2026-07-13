@@ -131,7 +131,9 @@ export function RunningProjectSwitcher(): ReactElement | null {
           <span className="rps-count">{cards.length} running</span>
         </div>
 
-        <div className="rps-cards" role="listbox" aria-label="Running projects">
+        {/* A group of choice buttons, not a listbox: an ARIA `option` must not be interactive,
+            so the highlighted card is marked with aria-current instead of role=option/aria-selected. */}
+        <div className="rps-cards" role="group" aria-label="Running projects">
           {cards.map((c, i) => {
             const live = c.active || c.terminalsRunning + c.previews > 0
             const selected = i === index
@@ -139,8 +141,7 @@ export function RunningProjectSwitcher(): ReactElement | null {
               <button
                 key={c.dir}
                 type="button"
-                role="option"
-                aria-selected={selected}
+                aria-current={selected ? 'true' : undefined}
                 className={selected ? 'rps-card rps-sel' : 'rps-card'}
                 style={single ? { width: '100%' } : undefined}
                 title={c.dir}
@@ -173,8 +174,8 @@ export function RunningProjectSwitcher(): ReactElement | null {
 
         {single ? (
           <div className="rps-empty">
-            No other project is running. Open one from the switcher pill or your recents — the
-            switch key only cycles projects you&rsquo;re currently working in.
+            Only one project is running. Open another from the switcher pill or your recents — the
+            switch key cycles the projects you have running.
           </div>
         ) : (
           <div className="rps-foot">
