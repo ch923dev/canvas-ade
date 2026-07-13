@@ -59,6 +59,12 @@ let sock: net.Socket | null = null
 let ready: Promise<void> | null = null
 let keepOnQuit = false
 let failedReason: string | null = null
+/** Circuit breaker: a FRESH daemon that failed to come up won't come up on the next spawn
+ *  either (bad stage, AV block) — without this, every terminal spawn re-paid the full
+ *  connect-retry ladder (~10 s) because `ready` resets on failure. Tripped only by a
+ *  fresh-spawn failure (never a benign stale-state reattach miss); reset = app restart,
+ *  consistent with the process-lifetime ptyHostGate memo (bridge.ts). */
+let daemonDisabled = false
 const handlers = new Map<string, SessionHandlers>()
 const pending: Pending = { spawned: new Map(), replay: new Map(), killed: new Map(), lists: [] }
 
@@ -67,20 +73,29 @@ let notifier: ((message: string) => void) | null = null
 export function setPtyHostNotifier(fn: ((message: string) => void) | null): void {
   notifier = fn
 }
-function notifyOnce(message: string): void {
-  if (failedReason === message) return
-  failedReason = message
+/** `key` is the dedupe identity; it defaults to the message but MUST be stable for failures
+ *  whose display text embeds run-variable detail (the fresh-spawn pipe name changes per
+ *  attempt — keying on the full message re-toasted every spawn while the daemon was broken). */
+function notifyOnce(message: string, key: string = message): void {
+  if (failedReason === key) return
+  failedReason = key
   console.error(`[ptyhost] ${message}`)
   notifier?.(message)
 }
 
 /** pty.ts's fallback path surfaces its reason through the same once-per-reason sink. */
-export function reportPtyHostFailure(message: string): void {
-  notifyOnce(message)
+export function reportPtyHostFailure(message: string, key?: string): void {
+  notifyOnce(message, key)
 }
 
 function stateFile(): string {
   return path.join(app.getPath('userData'), 'ptyhost-state.json')
+}
+
+/** Boot-crash diagnostics: the daemon's stderr lands here (a staged daemon that dies before
+ *  its first log line used to vanish without a trace — stdio was fully ignored). */
+function bootErrFile(): string {
+  return path.join(app.getPath('userData'), 'ptyhost-boot.err')
 }
 
 function sendMsg(msg: ClientMsg): void {
@@ -158,27 +173,62 @@ function onConnectionLost(): void {
   }
 }
 
-function connectTo(pipe: string, token: string, retries: number): Promise<net.Socket> {
+/** `signal` (fresh-spawn path) short-circuits the retry ladder the moment the daemon child is
+ *  known dead — a boot crash fails in ~one attempt instead of burning the full retry budget. */
+function connectTo(
+  pipe: string,
+  token: string,
+  retries: number,
+  signal?: AbortSignal
+): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     let attempt = 0
+    let finished = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let inFlight: net.Socket | null = null
+    const finish = (err: Error | null, s?: net.Socket): void => {
+      if (finished) return
+      finished = true
+      if (retryTimer) clearTimeout(retryTimer)
+      signal?.removeEventListener('abort', onAbort)
+      if (err) reject(err)
+      else resolve(s as net.Socket)
+    }
+    const onAbort = (): void => {
+      inFlight?.destroy()
+      finish(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new Error(String(signal?.reason ?? 'connect aborted'))
+      )
+    }
+    if (signal) {
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
     const tryOnce = (): void => {
+      retryTimer = null
       const s = net.connect(pipe)
+      inFlight = s
       let settled = false
       const feed = createLineDecoder<DaemonMsg>((msg) => {
         if (!settled && msg.ev === 'hello') {
           settled = true
           if (msg.version !== PROTOCOL_VERSION) {
             s.destroy()
-            reject(new Error(`protocol mismatch: daemon v${msg.version}, app v${PROTOCOL_VERSION}`))
+            finish(new Error(`protocol mismatch: daemon v${msg.version}, app v${PROTOCOL_VERSION}`))
             return
           }
-          resolve(s)
+          finish(null, s)
           return
         }
         if (!settled && msg.ev === 'error') {
           settled = true
           s.destroy()
-          reject(new Error(msg.message))
+          finish(new Error(msg.message))
           return
         }
         routeMsg(msg)
@@ -188,11 +238,11 @@ function connectTo(pipe: string, token: string, retries: number): Promise<net.So
         s.write(encodeLine({ op: 'hello', token, version: PROTOCOL_VERSION }))
       )
       s.once('error', (err) => {
-        if (settled) return
+        if (settled || finished) return
         if (++attempt >= retries) {
           settled = true
-          reject(err)
-        } else setTimeout(tryOnce, 250)
+          finish(err)
+        } else retryTimer = setTimeout(tryOnce, 250)
       })
       s.once('close', () => {
         if (settled && sock === s) onConnectionLost()
@@ -221,8 +271,9 @@ function resolveSources(): { src: StageSources; stageInPlace: boolean } {
     }
   }
   // Dev: the checkout's electron dist + out/main. No install dir exists to lock, so the daemon
-  // runs IN PLACE (no 245 MB copy per dev iteration); e2e opts back into staging via env to
-  // exercise the packaged path.
+  // runs IN PLACE (no 245 MB copy per dev iteration). CANVAS_PTYHOST_STAGE=1 opts back into
+  // staging — e2e/ptyhostReattach.e2e.ts sets it so the packaged stage-and-boot path (the one
+  // that shipped broken when only the in-place path had coverage) is exercised on every run.
   const checkout = path.resolve(__dirname, '..', '..')
   return {
     src: {
@@ -235,7 +286,7 @@ function resolveSources(): { src: StageSources; stageInPlace: boolean } {
   }
 }
 
-function spawnDaemon(): PtyHostState {
+function spawnDaemon(): { state: PtyHostState; child: ReturnType<typeof spawnChild> } {
   const { src, stageInPlace } = resolveSources()
   let exe: string
   let script: string
@@ -257,9 +308,18 @@ function spawnDaemon(): PtyHostState {
     daemonPid: 0,
     protocolVersion: PROTOCOL_VERSION
   }
+  // Capture the daemon's stderr: a boot crash (a bad stage, a blocked exe) used to be fully
+  // invisible under stdio 'ignore' — the pipe just never appeared. The child dupes the fd at
+  // spawn, so the parent's copy closes right after; the daemon stays detached either way.
+  let errFd: number | 'ignore' = 'ignore'
+  try {
+    errFd = fs.openSync(bootErrFile(), 'a')
+  } catch {
+    /* diagnostics only — never block the spawn */
+  }
   const child = spawnChild(exe, [script], {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', errFd],
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
@@ -268,14 +328,30 @@ function spawnDaemon(): PtyHostState {
       PTYHOST_LOG: path.join(app.getPath('userData'), 'ptyhost.log')
     }
   })
+  // A zero-listener 'error' (exe missing/blocked) would otherwise throw uncaught in MAIN's
+  // event loop; ensurePtyHost attaches the observing handler, this one just keeps us safe.
+  child.on('error', () => undefined)
   child.unref()
+  if (typeof errFd === 'number') {
+    try {
+      fs.closeSync(errFd)
+    } catch {
+      /* already closed */
+    }
+  }
   state.daemonPid = child.pid ?? 0
   fs.writeFileSync(stateFile(), JSON.stringify(state, null, 2))
-  return state
+  return { state, child }
 }
 
 /** Connect to the existing daemon or spawn a fresh one. Single-flight. */
 export function ensurePtyHost(): Promise<void> {
+  if (daemonDisabled)
+    return Promise.reject(
+      new Error(
+        'terminal host disabled for this run after a failed start — restart the app to retry'
+      )
+    )
   if (ready) return ready
   ready = (async () => {
     // 1. A daemon from a previous app run? (update restart / crash — the reattach case.)
@@ -294,10 +370,32 @@ export function ensurePtyHost(): Promise<void> {
         /* daemon gone or incompatible — fresh spawn below */
       }
     }
-    // 2. Fresh daemon.
-    const state = spawnDaemon()
-    sock = await connectTo(state.pipe, state.token, 40)
-    failedReason = null
+    // 2. Fresh daemon. A boot crash must fail FAST and loudly: the child's early exit aborts
+    //    the connect-retry ladder (instead of burning its full ~10 s budget), and any failure
+    //    trips the circuit breaker so later spawns fall back in-proc instantly.
+    const { state, child } = spawnDaemon()
+    const abort = new AbortController()
+    const onSpawnError = (err: Error): void => abort.abort(err)
+    const onEarlyExit = (code: number | null, sig: NodeJS.Signals | null): void =>
+      abort.abort(
+        new Error(
+          `daemon exited before listening (code=${code ?? 'null'}${
+            sig ? ` signal=${sig}` : ''
+          }) — see ${bootErrFile()}`
+        )
+      )
+    child.once('error', onSpawnError)
+    child.once('exit', onEarlyExit)
+    try {
+      sock = await connectTo(state.pipe, state.token, 40, abort.signal)
+      failedReason = null
+    } catch (err) {
+      daemonDisabled = true
+      throw err
+    } finally {
+      child.off('error', onSpawnError)
+      child.off('exit', onEarlyExit)
+    }
   })()
   ready.catch(() => {
     ready = null
