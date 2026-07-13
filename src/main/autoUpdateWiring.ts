@@ -5,7 +5,9 @@
  * autoUpdate.ts itself stays dependency-injected + electron-updater-free for unit tests; these
  * concretions are only ever invoked once the gate is open (signed + packaged).
  */
-import { coerceUpdateMeta, type UpdaterLike, type UpdateMeta } from './autoUpdate'
+import type { BrowserWindow, IpcMain } from 'electron'
+import { coerceUpdateMeta, initAutoUpdate, type UpdaterLike, type UpdateMeta } from './autoUpdate'
+import { setKeepSessionsOnQuit } from './ptyHost/client'
 
 /**
  * Feed base for the side-channel tier manifest (`updates.json`) — a sibling of the
@@ -32,8 +34,8 @@ const META_FETCH_TIMEOUT_MS = 8000
  * `minSupported`) can never reach `cmpVersion` and crash main; bad fields degrade to
  * no-floor/no-tiers, preserving the fail-OPEN guarantee (ADR 0012).
  */
-export async function fetchUpdateMeta(): Promise<UpdateMeta | null> {
-  const res = await fetch(`${updateFeedBase()}/updates.json`, {
+export async function fetchUpdateMeta(baseOverride?: string): Promise<UpdateMeta | null> {
+  const res = await fetch(`${baseOverride ?? updateFeedBase()}/updates.json`, {
     cache: 'no-store',
     signal: AbortSignal.timeout(META_FETCH_TIMEOUT_MS)
   })
@@ -61,4 +63,40 @@ export async function resolveUpdater(): Promise<UpdaterLike> {
   const updater = mod.default?.autoUpdater ?? mod.autoUpdater
   if (!updater) throw new Error('electron-updater: autoUpdater export not found')
   return updater
+}
+
+/**
+ * Assemble the real-runtime AutoUpdateDeps and start the updater — the one-call entry
+ * index.ts uses (max-lines: the god-file stays a thin caller; this file owns the wiring).
+ *
+ * `localFeedUrl` is the dev-only local update channel override (a loopback URL already
+ * validated by src/main/localUpdateFeed.ts, or null). Index.ts computes it behind the
+ * __LOCAL_UPDATE_CHANNEL__ compile gate, so in every distributed build the argument is a
+ * constant null AND the localUpdateFeed module tree-shakes out of the bundle entirely.
+ * When set, it repoints BOTH feed reads at the same loopback origin: electron-updater via
+ * setFeedURL (the baked app-update.yml still carries the production URL) and the
+ * updates.json meta fetch via fetchUpdateMeta's base override.
+ */
+export async function startAutoUpdate(opts: {
+  enabled: boolean
+  isPackaged: boolean
+  ipc: IpcMain
+  getWin: () => BrowserWindow | null
+  currentVersion: string
+  localFeedUrl: string | null
+}): Promise<void> {
+  const { localFeedUrl, ...deps } = opts
+  await initAutoUpdate({
+    ...deps,
+    // PTY-host D5 (DESIGN.md 2026-07-12): flag the update-install quit so shutdown() detaches
+    // (keeps) daemon sessions instead of killing them; unflag when the install throws.
+    onBeforeInstall: () => setKeepSessionsOnQuit(true),
+    onInstallFailed: () => setKeepSessionsOnQuit(false),
+    getMeta: () => fetchUpdateMeta(localFeedUrl ?? undefined),
+    getUpdater: async () => {
+      const updater = await resolveUpdater()
+      if (localFeedUrl) updater.setFeedURL?.({ provider: 'generic', url: localFeedUrl })
+      return updater
+    }
+  })
 }

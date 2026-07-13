@@ -174,3 +174,89 @@ Phases J1/J2 are parallelizable with J3 (disjoint files) if run as two lanes.
 - J3 = the biggest net-new (brain + persona + settings + design): ~1.5–2 sessions.
 - J4–J5: ~1–1.5 sessions.
 - Total ≈ 5–6 focused sessions after the dictation epic merges.
+
+## 9. Path 2 follow-up (post-J5): Managed Agents multi-agent backend
+
+> Filed 2026-07-12. Not part of the J0–J5 epic — a v2 direction for after it ships. Mirrored on
+> the "Jarvis Agent Helper — Epic Plan" canvas board (Path 2 note + checklist).
+
+Anthropic's **Managed Agents multi-agent sessions** (beta `managed-agents-2026-04-01`) offer a
+hosted coordinator/roster model that maps almost 1:1 onto Expanse's canvas:
+
+| Managed Agents concept | Expanse mapping |
+|---|---|
+| Coordinator agent (`multiagent: {type: "coordinator", agents: [...]}` + `agent_toolset_20260401`) | Jarvis brain (v2) |
+| Session thread per delegate (isolated context, persistent, shared sandbox) | Board / card per worker |
+| `send_to_agent` / `wait_for_agents` | `relay_prompt` family |
+| Primary-thread events (`session.thread_created`, `thread_status_running/idle`, `agent.thread_message_received`) | Card lifecycle + notification chips (D8) |
+| Cross-posted tool-permission requests (`requires_action` routed to primary thread) | One confirm chip on the Jarvis island (J4 gating posture carries over) |
+
+**Why:** the "plan big, execute small" pattern (cookbook `CMA_plan_big_execute_small`) — frontier
+coordinator plans + synthesizes, cheap workers (Sonnet/Haiku) absorb the mechanical reading —
+measured ~2.5x cheaper and ~3x faster at matched verification rigor. Jarvis v1 (§3.4) stays a
+direct single-agent Claude API session; this is the fan-out upgrade.
+
+**Constraints:** 20 roster agents max, 25 concurrent threads, delegation depth 1 only; requires
+beta API access, an environment (sandbox), and vault credentials for any MCP servers workers use.
+
+**Pattern gotchas to carry into any spike** (from the cookbook): only pays on token-heavy work;
+too many narrow briefs raises cost (batch related facts per worker); the coordinator must be
+prompted to always delegate rather than answer from memory; its system prompt must describe worker
+behavior accurately (it cannot inspect worker prompts); verification only audits what the brief
+explicitly demands — spec sources explicitly.
+
+**Follow-up items** (checklist mirrored on the canvas board):
+1. Bring the 2026-06-18 managed-agents research doc (Command-Board mapping) into `docs/research/`
+   on a docs branch — preserved at `Z:\canvas-ade-artifacts\managed-agents-research\`.
+2. Spike: coordinator + roster session against the beta API (environment, vault, event stream).
+3. Design: session threads → canvas cards + notification chips.
+4. Decide: Jarvis brain as coordinator (v2) vs direct API (v1 stays).
+
+**Path 1 (already done, 2026-07-12, no repo impact):** the same pattern inside Claude Code
+sessions — user-level worker subagents (`research-worker` sonnet, `log-triage-worker` haiku,
+`code-recon-worker` sonnet) + a `fanout-research` workflow template live in `~/.claude/agents/`
+and `~/.claude/workflows/`.
+
+Refs: `platform.claude.com/docs/en/managed-agents/multi-agent` ·
+`anthropics/claude-cookbooks` → `managed_agents/CMA_plan_big_execute_small.ipynb`.
+
+## 10. Companion track (parallel with J3+): detached PTY host — terminals survive app restart
+
+> Filed 2026-07-12 (user request, born from the local-update-channel work: an in-app update
+> restart kills every running terminal agent). Voice-independent — can run as its own lane
+> alongside J3–J5, the Lane-H pattern. Mirrored on the "Jarvis Agent Helper — Epic Plan" board.
+
+**Problem.** node-pty sessions are children of MAIN; any app quit (update install, crash, plain
+restart) kills the tree by design. Terminal snapshot persist/restore (S3) brings back scrollback,
+not the live process — every agent must be relaunched. This gets worse, not better, as Jarvis
+grows: managed-agent worker threads on boards (§9) are long-running by nature.
+
+**Shape (tmux/VS Code-ptyHost model, but app-independent):**
+- A small **PTY-host daemon** owns all node-pty sessions. Spawned by the app on demand
+  (detached, outlives it), one per OS user.
+- **Transport:** named pipe (Windows) / unix socket, user-ACL'd + token-authenticated — the
+  app's MAIN reconnects after relaunch and re-bridges each session to its MessagePort.
+- **Replay ring:** the daemon keeps a bounded output ring per session so a reconnecting app
+  repaints recent scrollback and the xterm buffer resumes seamlessly (snapshot restore stays as
+  the cold-start fallback).
+- **Ownership moves:** kill-the-tree (taskkill /T on Windows), park/adopt (#15), and the
+  lifecycle notifications' PTY monitoring all migrate to (or proxy through) the daemon.
+- **Idle exit:** daemon self-terminates when it holds zero sessions (no permanent resident).
+
+**Payoffs:** update installs stop being disruptive (the missing half of the seamless-update
+work); app crash ≠ agent loss; Jarvis v2 worker threads survive app lifecycle events.
+
+**Sharp edges to spike first:**
+1. ConPTY handle ownership on Windows — resize/reattach semantics when the creating process is
+   the daemon, not MAIN (node-pty 1.2.0-beta ConPTY-only; the pipe fds should transfer cleanly,
+   verify no console-window flash + Spectre-libs build reuse).
+2. Security review — the daemon is a new privileged surface (arbitrary shell spawn): token in
+   userData with owner-only ACL, pipe name randomized per user, NEVER a TCP port. Same
+   trusted-user-only posture as the PTY write channel (CLAUDE.md security invariants hold).
+3. e2e story — the Playwright harness must not leak daemons between runs (per-profile pipe name
+   + teardown sweep).
+4. Update interplay — quitAndInstall(true, true) relaunches the app; daemon must tolerate the
+   binary being replaced under it (no handles into the install dir).
+
+**Non-goals (v1):** cross-user/remote sessions; surviving OS reboot; daemon auto-update (it
+ships inside the app package; version-handshake on connect, drain-and-respawn on mismatch).

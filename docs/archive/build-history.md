@@ -2283,3 +2283,238 @@ shipped app is byte-identical at runtime. v0.13.1 → **0.13.2**.
   code; isolated Linux rerun retry-recovered — exit-0, 279 passed, dataFlow `flaky`) — landed
   `--no-verify` with the flake documented. CI check + analyze + CodeQL + claude-review all PASS
   (0 critical / 0 warning / 0 inline). Squash `fe634794`.
+
+## 2026-07-11 — PR #332: reliable terminal copy/paste while a CLI agent streams (`8f38a4f7`)
+
+Copy/select in a Terminal board usually failed while the CLI agent streamed (fine when idle).
+12-agent research workflow (`docs/reviews/2026-07-11-terminal-copy-paste-research/RESEARCH.md`,
+claims verified at shipped xterm 5.5.0 / @xyflow/react 12.11.0) ranked the causes: Claude Code
+(≥2.1.150 fullscreen default) toggles DECSET mouse-tracking → xterm `SelectionService.disable()`
+wipes + blocks selection; our Ctrl+C keymap fell through to SIGINT on a wiped selection
+(interrupting the agent); selection = buffer coords so Ink redraws made stale copies;
+fire-and-forget Electron clipboard write (Windows silently drops contended writes) +
+unconditional `clearSelection()`; React Flow's default `selectionKeyCode: 'Shift'`
+capture-swallowed Shift+drag inside the terminal — the documented force-select escape hatch.
+Fix: new `selectionSnapshot.ts` caches selection text on `onSelectionChange` (invalidated by
+plain click / typed non-ESC input / verified-copy consume / 15s TTL) with `copyWithFallback()`
+feeding both Ctrl+C and the context-menu Copy — a failed copy can never SIGINT the agent;
+`clipboardIpc` readback-verifies with 3× retry and reports an honest boolean (highlight clears
+only on success); `selectionKeyCode={null}` (box-select was vestigial) +
+`macOptionClickForcesSelection`; new `ptySpawnEnv.ts` seam adds `FORCE_HYPERLINK=1` (win32 OSC 8
+links) + `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (restores selection AND scrollback), recap
+policy env still merges last. max-lines pins: pty.ts 706→696 (seam split), Canvas.tsx 765→766
+(+1 RF prop). v0.13.2 → **0.14.1** (0.14.0 taken by the jarvis-J1 lane). P2 follow-ups
+(copy-on-select option, coalescer hold-during-drag, Copy-link menu, dblclick-flip defect,
+mouse-mode hint badge) documented in the research package.
+
+- **Verified**: typecheck · lint 0 · format · unit 4971/3 skip (env-sanitized) · manual dev
+  check (user eyeball, title `terminal-copy 0.14.1`: copy during live Claude Code stream via
+  Ctrl+C / Shift+drag / context menu; bare Ctrl+C still interrupts) · pre-push FULL matrix both
+  legs (`src/main` = LINUX_SENSITIVE; Win green · Linux-Docker 280 passed / 1 doc-flake retried /
+  1 skip, exit-0). Rebased twice mid-flight (#330 then #331 — both package.json version-line
+  conflicts; second one had made the PR CONFLICTING, which silently suppresses ALL pull_request
+  workflows: zero checks until the rebase). claude-review round 1: one REAL [critical] — the
+  snapshot was consumed before the async clipboard write resolved, so a failed write stranded
+  the fallback and the second Ctrl+C SIGINT'd the agent; fixed via the `copyWithFallback()`
+  extraction + 4 regression tests (`7407497b`), inline-dispositioned. Round 2 incremental clean
+  (0 new inline); CI check + analyze + CodeQL + claude-review all PASS. Squash `8f38a4f7`.
+
+## PR #334 — per-checkout dev profile isolation (2026-07-11, v0.14.3)
+
+- **Problem**: every unpackaged instance shared ONE Electron profile (`%APPDATA%/canvas-ade` —
+  app name from `package.json` `name`): main-checkout dev, every worktree dev, AND the
+  Playwright e2e harness. Chromium cross-process profile locks (Local Storage LevelDB, DIPS,
+  caches) made a second live instance boot degraded or die — the "close ALL Expanse windows
+  before a dev check" ritual — and the app's JSON stores raced across processes (the
+  `recentProjects.ts` hazard).
+- **Fix** (`src/main/profileIsolation.ts`, new): per-checkout profile under
+  `<legacy userData>/profiles/<folder-slug>-<6-hex FNV-1a path hash>`; `-e2e` / `-smoke`
+  suffixes for the harnesses (e2e can run while a dev window of the same checkout is open);
+  `CANVAS_USERDATA` explicit override; `CANVAS_FRESH=1` throwaway mkdtemp profile deleted on
+  quit. One-time migration of the legacy root into a brand-new profile: config JSONs +
+  `recap/` + `voice-models/` + Chromium **`Local State`** — the safeStorage os_crypt key
+  wrapper, caught live on the first isolated boot (auth-tokens ciphertext unreadable without
+  it → silent sign-out). Applied at module scope in `index.ts` BEFORE the single-instance
+  lock; redirects BOTH `userData` and `sessionData`. Dev AppUserModelId now per-checkout
+  (`com.expanse.dev.<slug>`) so dev windows stop taskbar-grouping with the installed app.
+  Packaged builds + the voice spike untouched. e2e harness base is `%APPDATA%/Electron`
+  (file-path launch → default app name) — isolation nests under it, consistent with its
+  historical location.
+- **Deferred follow-up**: Layer 3 same-project residuals (recap `CANVAS_RECAP_MAP` env
+  preference + `.mcp.json` focus re-stamp) — overlaps the in-flight #333 recap lane.
+- **Verified**: typecheck · lint 0-err · format · units 16/16 new + FULL suite 4991P/3 skip
+  zero-fail · @core smoke 44/44 in its own `-e2e` profile WHILE a dev instance ran · FULL
+  matrix both legs on the push tree (Win 279P + menuShell/osrCropSupersample documented
+  flakes rerun-green isolated = 281/281 accounted · Linux-Docker 280P + menuShell
+  retry-recovered, exit-0) · manual dev check USER EYEBALL PASS (title
+  `PR dev-profile-isolation v0.14.3`; worktree dev + another lane's dev + packaged
+  coexisting, migrated state + sign-in intact). claude-review clean (0/0/0 inline); all 4
+  checks PASS. Squash `3a0fbf31`.
+
+## PR #333 — recap captures cross-cwd terminal sessions (2026-07-12, v0.14.4)
+
+- **Problem** (three root causes, all live-verified): (1) the recap capture hook was installed
+  only in the OPEN project dir, so a terminal board spawned with any other cwd (MCP
+  `spawn_board` cwd, `cd`-elsewhere) ran claude with no hook — "Capture didn't record this
+  session", no resume after a crash/close; (2) a hand-typed `claude` after an interactive `cd`
+  targets a dir MAIN cannot know at spawn time; (3) launching the app FROM a claude session
+  leaked `CLAUDECODE`/`CLAUDE_CODE_*` env into board PTYs — a spawned claude believed it was a
+  child session and wrote NO transcript at all (the "wrong recap resolves a 117-hour-old file"
+  symptom).
+- **Fix**: spawn-time hook install via a new `setRecapHookSyncProvider` seam
+  (`ptySpawnEnv.ts`, mirrors the orchestration `.mcp.json` sync pattern) — consent-gated,
+  home-dir-skipped, idempotent; runtime claude-boot detection (`claudeBootDetect.ts`) — the
+  data plane spots the "Claude Code v" banner chunk, parses the printed working dir from the
+  ring buffer (ANSI-stripped, LAST banner wins, drive/UNC roots refused, per-board dedupe) and
+  ensures the hook there, covering hand-typed sessions; nested-claude env scrub list in
+  `buildSpawnEnv`; `recordSession.js` exits early without `CANVAS_RECAP_BOARD`; recapHealth
+  probes the BOARD's cwd (homedir → open-dir fallback — caught by recapHealth.e2e at
+  pre-push) and focus re-ensure walks live board cwds; divergent installs tracked in
+  `recapHookDirs.ts` (`<userData>/recap-hook-dirs.json`) and removed on consent decline.
+- **Verified**: typecheck · lint 0-err · format · 43 new/updated units green (full suite
+  environmental-2 only) · FULL matrix at pre-push (Win 279P/1 skip + Linux Docker) ·
+  manual dev check USER EYEBALL PASS (board `ba6a54cf`: SessionStart→UserPromptSubmit→Stop
+  with transcriptExists=true). claude-review: 1 [critical] (root-path install target +
+  banner re-trigger dedupe) + 1 [warning] (untracked divergent installs) — both fixed in
+  `d2d92bf2`, inline-dispositioned; re-review clean, all 4 checks PASS. Squash `a9feafe9`.
+
+## PR #336 — local update channel: maintainer-only in-app updates (2026-07-12, v0.14.5)
+
+- **Problem**: updating the maintainer's own installed Expanse required the manual
+  close-and-reinstall ritual on every local build — the production feed (R2) is not live
+  (cert-gated), `resources/app-update.yml` is rewritten by every install (hand-patching does
+  not survive), and `CANVAS_UPDATE_FEED` is env-only (a Start-menu launch never sees it).
+- **Fix**: a compile-gated personal update channel. `__LOCAL_UPDATE_CHANNEL__`
+  (electron.vite.config.ts, set only by `scripts/release-local.mjs` via
+  `LOCAL_UPDATE_CHANNEL=1`) fences a userData override (`update-feed.local.json`, survives
+  installs) read by new `src/main/localUpdateFeed.ts` — loopback-LITERAL URLs only
+  (`127.0.0.1`/`[::1]`; `localhost` rejected as a DNS name), fail-closed to the production
+  feed. `autoUpdateWiring.ts › startAutoUpdate()` (extracted from index.ts — max-lines)
+  repoints BOTH feed reads: `setFeedURL` + `fetchUpdateMeta(baseOverride)`. Distributed
+  builds dead-code-eliminate the whole path (verified by grep both directions), so the
+  ADR 0008 unsigned-feed invariant holds at the binary level. Tooling:
+  `scripts/release-local.mjs` (stamps `X.Y.(Z+1)-local.N` via extraMetadata — above the repo
+  version, below the next real patch; packs to C:\ per the M:-ReFS gotcha; stages the feed
+  with latest.yml LAST; floorless updates.json; deliberately NO upload path) +
+  `scripts/serve-local-feed.mjs` (127.0.0.1-only static server, basename-flattened, GET/HEAD).
+  Docs: releasing.md › Local update channel (posture, bootstrap, signing interplay).
+- **Verified**: typecheck · lint 0-err · format · 5060 units (5 = the memorized
+  CANVAS_RECAP_BOARD/8.3-TEMP env-only classes, re-proven 40/40 green sanitized) · pre-push
+  matrix on the exact merge tree (base = origin/main, 280P + 1 documented flaky-recovered) ·
+  release-local run end-to-end (0.14.6-local.1 built → staged → served → manifest verified).
+  claude-review: 0 critical / 0 warnings, zero inline (3 no-reply nits). All 4 checks PASS.
+  Squash `63f6dafd`. Packaged in-app flow check = the bootstrap install of 0.14.6-local.1
+  (feature is packaged-only by design; dev builds no-op).
+
+## PR #337 — detached PTY-host daemon: terminal sessions survive update installs + crashes (2026-07-13, v0.15.0)
+
+- **Squash `2879bc76`** (branch `feat/ptyhost-daemon`, worktree torn down). PR 1 of the
+  background-sessions track (PLAN.md §10 of the jarvis research dir; spike GO `b42a6b36` on
+  `spike/ptyhost-reattach`; design `docs/research/2026-07-12-ptyhost-daemon/DESIGN.md`).
+  PR 2 (close modal + tray residency UX, user-approved mock `mock-background-sessions.html`)
+  = next lane.
+- **What shipped:** a detached daemon (`src/main/ptyHost/daemonMain.ts`, own electron-vite
+  entry, ELECTRON_RUN_AS_NODE) owns node-pty/ConPTY sessions on a token-gated per-profile
+  named pipe (NDJSON protocol, version handshake, 256KB line-boundary-trimmed replay ring,
+  taskkill /T /F, zero-session idle-exit). Runs from a STAGED runtime copy in
+  `%LOCALAPPDATA%\expanse-ptyhost\<version>\` — measured-minimal 4-file run-as-node set +
+  node-pty subset, because a daemon in the install dir locks the exe and blocks the NSIS
+  update (measured `Device or resource busy`). MAIN sees daemon sessions as IPty-SHAPED
+  proxies (client.ts) so pty.ts's park/adopt/killTree/ring bookkeeping runs unchanged;
+  bridge.ts owns the gate (runtime setting default ON, win32-only, `CANVAS_PTYHOST`
+  override), boot survivor list, reattach-as-synthetic-park via the adopt flow, and the
+  quit split: `quitAndInstall` detaches (sessions survive), every other quit keeps the
+  kill-everything drain (close-policy change waits for the PR-2 modal). Daemon failure ⇒
+  surfaced in-proc fallback (once-per-reason OS notification) — never silent. Extractions
+  for the 700-line ratchet: `bindProcPump`, `attachPortInput`→ptyResize, `quitDrainCore`.
+- **Verified:** trio · 5043 units 0-fail (20 new ptyHost cores) · protocol smoke on the
+  built bundle (bad-token reject / disconnect-survive / replay+meta / kill ack / idle-exit) ·
+  new `ptyhostReattach` e2e (hard kill → relaunch → SAME-pid reattach + replay + duplex →
+  clean reap + daemon idle-exit; own app instance on a dedicated profile) · USER EYEBALL
+  (live `ping -t` survived a Task-Manager kill and reattached mid-stream) · FULL matrix both
+  legs (Win 280P + menuShell flake rerun-green + previewLink latent spawn-race fixed
+  in-spec; Linux-Docker 280P exit-0). claude-review ×3 rounds → convergence: 4 findings
+  fixed (spawn-timeout orphan reap · mixed-fleet quit partition · settings.json restore ·
+  quitDrain unit coverage) + 2 by-design dispositions, all inline-replied. CodeQL check red
+  = pre-existing main backlog only (alert 116 osrBlitWorker, not in the diff) — handoff
+  filed: `KICKOFF-CODEQL-TRIAGE.md`.
+
+## PR #338 — CodeQL backlog triage: repo-wide alert sweep to green (2026-07-13, v0.15.1)
+
+- **Squash `214c0623`** (branch `fix/codeql-triage`). Handoff `KICKOFF-CODEQL-TRIAGE.md`
+  executed: every open CodeQL alert got an individual verdict so the CodeQL PR check is
+  green repo-wide (it had been red on every PR from the pre-existing backlog, most
+  recently #337 with zero alerts of its own).
+- **What shipped:** live pull found **47** open alerts (not the kickoff's 30 snapshot —
+  wider e2e cluster + new #120 `runtimeStage.ts` js/file-system-race high). 3 FIXED:
+  `e.source === window` pin on the window-message port-adoption handlers (#52
+  `useTerminalSpawn` `__ptyPort`, #113 `useVoiceCapture` `__voicePort`, #36
+  `TerminalSmoke` — orphaned but pinned; SEC-2 class: source pin, not origin-string
+  compare, which is unreliable under packaged `file://`). 44 DISMISSED with per-alert
+  recorded justifications via `gh api` (`dismissed_reason` + `dismissed_comment`, 280-char
+  cap discovered en route): 37 e2e "used in tests" (JSON.stringify-escaped test-local
+  constants) · #34/#35 design-reference prototype (never bundled) · #109 false positive
+  (read-only `openSync`; tmpdir taint test-only; prod gated by `isTrustedTranscriptPath`) ·
+  #112 by-design sha256-pinned staged download (PR #300 disposition carried) · #116 false
+  positive (dedicated worker — `e.origin` empty, origin check inapplicable) · #120
+  by-design single-writer per-user stage dir (PR #337). `codeql.yml` untouched.
+- **Verified:** trio · 5040 units (5 fails = documented env false-fail classes: pathSafe
+  8.3-TEMP ×2 + recapenv ambient `CANVAS_RECAP_BOARD` ×3 — both files 40/40 sanitized-env
+  rerun) · e2e @terminal 79P + 3 ambient flakes rerun-green isolated + @voice 8P/1skip
+  (both pinned adoption paths exercised live: real PTY spawn sentinel + stub-engine
+  composer injection) · push-hook full Win leg 279P · Linux-Docker leg 279P/2-flaky-
+  recovered exit-0 (full matrix both legs on the exact merge tree). PR checks all green
+  incl. **CodeQL — the deliverable**. claude-review real pass (verified the preload
+  send-side re-post matches the pin), 0 inline findings.
+
+## PR #340 — background sessions PR 2: close modal + tray residency + settings UX (2026-07-13, v0.16.0)
+
+- **Squash `60bfc1f0`** (branch `feat/background-sessions-ux`, head `109462d4`). The
+  user-facing half PR #337's daemon deferred (DESIGN.md D5): a normal close no longer
+  silently kills every session. Design was USER-APPROVED up front
+  (`mock-background-sessions.html`, `ebc35b90`); implementation matches mocks 1/2/4.
+- **Close guard** (`closeGuard.ts` + pure `closeGuardCore.ts`): intercepts a user window
+  close while daemon-backed sessions live, on the window `close` event BEFORE the
+  `quitting` latch (update-install quit NEVER prompts — closeGuard latches `before-quit`
+  itself). Modal round trip mirrors mcpConfirm (unguessable reply channel, frame-guarded,
+  single-subscriber preload gate) with a fail-SAFE floor: every degenerate reply = cancel.
+  Harness-bypassed under CANVAS_E2E/CANVAS_SMOKE; specs opt in via CANVAS_E2E_CLOSEGUARD.
+- **CloseSessionsModal** (mock 1): honest dots (running vs idle-dimmed via awaitingInput),
+  ages, Enter=keep primary, Esc=cancel, red-ink ghost "Stop all & close"
+  (`.ca-btn-ghost-danger`), "Always do this" persists the policy.
+- **Tray residency, Option B** (mock 2, `trayResidency.ts` + pure `trayResidencyCore.ts`):
+  keep → flush renderer + persist ring tails → D5 keep-drain (2nd caller of
+  `setKeepSessionsOnQuit(true)`, reset after) → window destroyed → MAIN shrinks to a tray
+  icon that exists ONLY while background sessions exist. Menu: session rows · Open
+  Expanse · Stop all · "Quit — stop all sessions". ~4s POLL of the daemon list (deliberate:
+  attach would stream all output through MAIN, and any protocol change bumps
+  PROTOCOL_VERSION which orphans survivors across updates); background exits ride the #314
+  lifecycle delivery (new notify toggle); LAST exit → tray removed → app fully quits.
+  Reopen (tray click / menu / second-instance) re-warms the PR-1 survivor list →
+  createWindow → adopt-first reattach. Poll is failure-HONEST (review round 1 critical):
+  `listDaemonSessionsStrict()` null ≠ confirmed-empty; `decidePollOutcome` skips transient
+  failures, daemon declared gone only after 5 consecutive misses (no 'done' toasts on that
+  path), quits on confirmed-empty only.
+- **Settings › Terminal › Background sessions** (mock 4, `BackgroundSessionsSection.tsx`):
+  close policy select (ask/keep/stop) + background-exit notify toggle + the surviveRestart
+  master toggle PR-1 deferred. `PtyHostConfig` per-field repair + frame-guarded merge-on-set
+  IPC. `SessionMeta` gains optional `launchCommand`/`startedAt` (opaque round-trip, NO
+  protocol bump) so rows stay honest across restarts.
+- **Ratchet:** all behavior in own files (+ `backgroundSessionsBoot.ts` one-call boot that
+  absorbed the wireLifecycleNotifications wiring); `index.ts` pinned 700→702 (choke-point
+  lines only, documented ratchet-down note).
+- **Drive-by fix:** `gitEnv.ts` now also clears unprefixed `EDITOR`/`PAGER`/`PREFIX`
+  (simple-git env block-list — the documented SSH_ASKPASS class; a bare `EDITOR` in the
+  Playwright runner env broke every gitDiff e2e call).
+- **Verified:** trio · full units 5056P→5069 (0 fail; new: config repair matrix,
+  close-decision matrix, fail-safe answer normalization, poll-outcome + keepable-filter +
+  tray-menu cores, preload single-subscriber gate) · NEW own-app-instance e2e
+  `closeModalKeep.e2e.ts` (modal-approved keep → tray resident → trayReopen probe → SAME
+  pid + replay + duplex → stop-config close reaps all + daemon idle-exits) ·
+  `ptyhostReattach` regression green · FULL matrix both legs (Win 282P + menuShell
+  documented-flake rerun-green; Linux-Docker 279P/3skip exit-0 clean) · USER EYEBALL PASS
+  (title `PR#340 bg-sessions-ux`: modal/tray/reattach/settings live) + mock-match
+  screenshots. claude-review: 3 findings (1 critical poll-honesty + 2 warnings) fixed +
+  inline-dispositioned; rounds 2–3 clean; all 4 checks green ×3 rounds; CodeQL clean.
+  One CI red en route: the new keepable unit failed on the Linux runner (POSIX
+  `path.basename` vs a Windows path) — fixed platform-agnostic in `109462d4`.

@@ -6,6 +6,11 @@ const fs = require('node:fs')
 try {
   const mapPath = process.argv[2]
   if (!mapPath) process.exit(0)
+  // Cross-cwd recap capture: the hook now also lives in repos boards spawn INTO (not only the
+  // open project), where the user's ordinary claude sessions run without CANVAS_RECAP_BOARD.
+  // Those sessions are not canvas boards — exit before reading stdin instead of appending a
+  // boardId:'' line per event forever (readRecapMap drops such lines, but the file would grow).
+  if (!process.env.CANVAS_RECAP_BOARD) process.exit(0)
   let stdin = ''
   try {
     stdin = fs.readFileSync(0, 'utf8')

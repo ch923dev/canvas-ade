@@ -253,3 +253,30 @@ describe('preload api → mcp.onConfirmBatch single-subscriber gate (relay_promp
     expect(second).not.toHaveBeenCalled()
   })
 })
+
+// 🔒 PR-2: the close-modal channel gets the SAME BUG-029 single-subscriber gate — the worst a
+// racing in-frame listener could do is answer 'cancel' (MAIN's fail-safe floor), but the
+// decision authority still stays with the one real CloseSessionsModal.
+describe('preload api → closeGuard.onCloseQuery single-subscriber gate (PR-2)', () => {
+  const queryCalls = (): unknown[][] => h.on.mock.calls.filter((c) => c[0] === 'closeGuard:query')
+
+  it('wires the underlying IPC listener only once, even across multiple onCloseQuery calls', () => {
+    api.closeGuard.onCloseQuery(() => {})
+    expect(queryCalls()).toHaveLength(1)
+    api.closeGuard.onCloseQuery(() => {}) // no-op: an active subscriber already holds the channel
+    expect(queryCalls()).toHaveLength(1)
+  })
+
+  it('forwards the session rows and a reply fn to the FIRST handler only', () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    api.closeGuard.onCloseQuery(first)
+    api.closeGuard.onCloseQuery(second) // no-op
+    const listener = queryCalls()[0][1] as (e: unknown, msg: unknown) => void
+    listener({}, { sessions: [{ id: 'b1' }], replyChannel: 'ch' })
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(first.mock.calls[0][0]).toEqual([{ id: 'b1' }])
+    expect(typeof first.mock.calls[0][1]).toBe('function') // the reply fn
+    expect(second).not.toHaveBeenCalled()
+  })
+})

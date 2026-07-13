@@ -5,6 +5,7 @@ import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
 import BatchConfirmModal from './canvas/BatchConfirmModal'
 import AskOnSwitchModal from './canvas/AskOnSwitchModal'
+import CloseSessionsModal from './canvas/CloseSessionsModal'
 import ProjectDock from './canvas/ProjectDock'
 import SwitchTransitionOverlay from './canvas/SwitchTransitionOverlay'
 import { useSwitchTransitionStore } from './store/switchTransitionStore'
@@ -147,6 +148,9 @@ function App(): React.ReactElement {
       {/* Phase 4 (bg sessions): app-level like ConfirmModal — the ask-on-switch decision is
           awaited mid-switch-pipeline and must not depend on any project-scoped surface. */}
       <AskOnSwitchModal />
+      {/* PR-2 background sessions: the close-with-running-sessions modal — app-level like
+          ConfirmModal (MAIN's close guard must reach it whatever surface/project is open). */}
+      <CloseSessionsModal />
       {/* Phase 4c: the switch-transition overlay — z above Canvas/Welcome, below modals
           (the ask dialog settles BEFORE the overlay arms; Cancel paths never reach arm). */}
       <SwitchTransitionOverlay />

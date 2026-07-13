@@ -85,6 +85,13 @@ export default defineConfig({
     // (no unsigned auto-update over a feed) is enforced by the compiler, not by convention.
     define: {
       __ENABLE_AUTO_UPDATE__: JSON.stringify(process.env.ENABLE_AUTO_UPDATE === '1'),
+      // Local update channel (dev-only): true ONLY when scripts/release-local.mjs sets
+      // LOCAL_UPDATE_CHANNEL=1 for the maintainer's personal build. Compile-time gated
+      // exactly like __ENABLE_AUTO_UPDATE__ above, so pr/staging/production builds
+      // dead-code-eliminate the userData feed-override path entirely — the ADR 0008
+      // invariant stays intact at the BINARY level for everything users receive
+      // (src/main/localUpdateFeed.ts has the full posture).
+      __LOCAL_UPDATE_CHANNEL__: JSON.stringify(process.env.LOCAL_UPDATE_CHANNEL === '1'),
       // BUG-027: compile-time gate for the __canvasE2EMain test-surface registry
       // (src/main/e2eMain.ts), mirroring the __ENABLE_AUTO_UPDATE__ gate above so this
       // equally powerful debug surface (pty write, clipboard, gitDiff, spawnGroupNow,
@@ -104,7 +111,12 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           // Voice V2: the sherpa-onnx engine host — forked as a utilityProcess by
           // voiceEngine.ts, so it must exist as its own file at out/main/voiceEngineHost.js.
-          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts')
+          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts'),
+          // PTY-host daemon (DESIGN.md 2026-07-12): a DETACHED process spawned via
+          // ELECTRON_RUN_AS_NODE from a staged runtime copy (never the install dir), so it
+          // must exist as its own file at out/main/ptyHostDaemon.js for runtimeStage.ts to
+          // copy out. Plain-Node code only — no electron imports reachable from this entry.
+          ptyHostDaemon: resolve(__dirname, 'src/main/ptyHost/daemonMain.ts')
         }
       }
     }

@@ -118,6 +118,11 @@ export function AboutPane(): ReactElement {
           <div style={pane.acctEmail}>Expanse</div>
           <div style={pane.acctSub}>An infinite canvas for AI-assisted development.</div>
         </div>
+        {window.api?.appVersion && (
+          <span style={pane.badgeFree} data-test="about-app-version">
+            v{window.api.appVersion}
+          </span>
+        )}
       </div>
 
       <div style={pane.setrow} data-test="about-updates-row">

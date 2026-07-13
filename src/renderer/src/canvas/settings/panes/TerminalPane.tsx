@@ -8,6 +8,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../../../store/canvasStore'
 import { pane } from '../paneStyles'
+import { BackgroundSessionsSection } from './BackgroundSessionsSection'
 
 export function TerminalPane(): ReactElement {
   const projectDir = useCanvasStore((s) => s.project.dir)
@@ -87,6 +88,9 @@ export function TerminalPane(): ReactElement {
           {error}
         </div>
       )}
+
+      {/* PR-2 background sessions: close policy + notify + surviveRestart (mock 4). */}
+      <BackgroundSessionsSection />
     </div>
   )
 }

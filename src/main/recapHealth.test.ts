@@ -11,6 +11,7 @@ const healthDeps = (
   hookInstalled: () => true,
   hasCapture: () => true,
   sessionAgeMs: () => 42_000,
+  boardCwd: () => undefined,
   ...over
 })
 
@@ -59,6 +60,34 @@ describe('computeRecapHealth — the fault matrix', () => {
       sessionAgeMs: null
     })
   })
+
+  it('hookInstalled probes the BOARD cwd when the board spawned elsewhere (cross-cwd)', () => {
+    // The open project has the hook; the board's spawn cwd repo does not — the probe must
+    // report the board's reality, not the open project's.
+    const probed: string[] = []
+    const deps = healthDeps({
+      boardCwd: () => 'D:/other-repo',
+      hookInstalled: (dir) => {
+        probed.push(dir)
+        return dir === 'C:/proj'
+      }
+    })
+    expect(computeRecapHealth(deps, 'b1')?.hookInstalled).toBe(false)
+    expect(probed).toEqual(['D:/other-repo'])
+  })
+
+  it('hookInstalled falls back to the open project dir for a never-spawned board', () => {
+    const probed: string[] = []
+    const deps = healthDeps({
+      boardCwd: () => undefined,
+      hookInstalled: (dir) => {
+        probed.push(dir)
+        return true
+      }
+    })
+    expect(computeRecapHealth(deps, 'b1')?.hookInstalled).toBe(true)
+    expect(probed).toEqual(['C:/proj'])
+  })
 })
 
 describe('createFocusReEnsure — the focus-time self-heal', () => {
@@ -101,6 +130,27 @@ describe('createFocusReEnsure — the focus-time self-heal', () => {
       }
     })
     expect(() => reEnsure()).not.toThrow()
+  })
+
+  it('also heals every live board cwd, deduping the open project dir (cross-cwd)', () => {
+    const { reEnsure, install } = mk({
+      extraDirs: () => ['D:/other-repo', 'C:/proj', 'E:/third']
+    })
+    reEnsure()
+    expect(install.mock.calls.map((c) => c[0])).toEqual(['C:/proj', 'D:/other-repo', 'E:/third'])
+  })
+
+  it('one unwritable cross-cwd repo does not stop the others healing', () => {
+    const healed: string[] = []
+    const { reEnsure } = mk({
+      extraDirs: () => ['D:/bad', 'E:/good'],
+      install: (dir) => {
+        if (dir === 'D:/bad') throw new Error('EACCES')
+        healed.push(dir)
+      }
+    })
+    expect(() => reEnsure()).not.toThrow()
+    expect(healed).toEqual(['C:/proj', 'E:/good'])
   })
 })
 

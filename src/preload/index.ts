@@ -7,6 +7,7 @@ import { recapApi, type RecapRefreshOutcome } from './recapApi'
 import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
+import { closeGuardApi } from './closeGuardApi'
 import { forwardVoicePort, forwardVoiceTtsPort, voiceApi } from './voice'
 import { jarvisApi } from './jarvis'
 
@@ -465,6 +466,10 @@ const e2eEnabled: boolean = ipcRenderer.sendSync('platform:e2eEnabled') as boole
 // renderer caps OSR_MAX_SUPERSAMPLE at 1× off this (osrSizing.setLowRamMode at boot).
 const lowRam: boolean = ipcRenderer.sendSync('platform:lowRam') as boolean
 
+// The RUNNING app version (`app.getVersion()` in MAIN — the stamped/packaged version), shown in
+// Settings › About. A static one-time value; same SYNC-at-load pattern as osWinBuild.
+const appVersion: string = ipcRenderer.sendSync('platform:appVersion') as string
+
 const api = {
   /** Windows OS build number, or null off Windows (A-Win xterm windowsPty hint). */
   osWinBuild,
@@ -472,6 +477,8 @@ const api = {
   e2eEnabled,
   /** Low-RAM mode (AUDIT §5): auto-enabled when total RAM ≤ 8 GiB (MAIN decides). */
   lowRam,
+  /** The RUNNING app version (`app.getVersion()`) — shown in Settings › About. */
+  appVersion,
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),
@@ -923,7 +930,11 @@ const api = {
   voice: voiceApi,
 
   // ── Jarvis J3 (brain session control plane; reply text streams as jarvis:turn:event) ──
-  jarvis: jarvisApi
+  jarvis: jarvisApi,
+
+  // ── PR-2 background sessions: close-modal round trip + Settings › Terminal config rows
+  //    (factored to closeGuardApi.ts) ──
+  closeGuard: closeGuardApi
 }
 
 // Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):

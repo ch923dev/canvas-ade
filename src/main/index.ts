@@ -1,8 +1,8 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
-import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync, existsSync } from 'fs'
+import { tmpdir, homedir } from 'os'
+import { writeFileSync, mkdtempSync, existsSync, rmSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -12,10 +12,16 @@ import {
   getTerminalBootInfo,
   setRecapEnvProvider,
   setOrchestrationSyncProvider,
+  getTerminalCwd,
   disposeProjectPtys,
   persistBackgroundRingTails,
   backgroundParkedBoardIds
 } from './pty'
+import { bootPtyHost, quitPtyDrain } from './ptyHost/bridge'
+import { attachCloseGuard } from './closeGuard'
+import { isTrayResident, wireBackgroundSessionsUx } from './backgroundSessionsBoot'
+import { setRecapHookSyncProvider } from './ptySpawnEnv'
+import { recordRecapHookDir, listRecapHookDirs, clearRecapHookDirs } from './recapHookDirs'
 import { appendTerminalSnapshot } from './terminalSnapshot'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { disposeProjectOsr } from './previewOsrBackground'
@@ -39,6 +45,7 @@ import {
 import { registerMicPermissionPosture } from './micPermission'
 import { disposeVoiceSession, registerVoiceHandlers } from './voiceIpc'
 import { applyVoiceBootEnv, runVoiceSpikeGate } from './voiceBoot'
+import { applyDevProfileIsolation } from './profileIsolation'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
@@ -108,13 +115,12 @@ import {
 } from './agentTranscript'
 import { createGetAgentMilestones, persistedTranscriptPath } from './agentMilestones'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
-import { wireLifecycleNotifications } from './lifecycleNotifications'
 import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
-import { initAutoUpdate } from './autoUpdate'
-import { fetchUpdateMeta, resolveUpdater } from './autoUpdateWiring'
+import { startAutoUpdate } from './autoUpdateWiring'
+import { readLocalFeedOverride } from './localUpdateFeed'
 import { createDeepLinkRouter } from './deepLinkBoot'
 import { createAuthTokenStore } from './authTokenStore'
 import { readSession, writeSession, clearSession } from './authSession'
@@ -126,6 +132,10 @@ import { AUTH_CONFIG } from './authConfig'
 // Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
 // production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
 declare const __ENABLE_AUTO_UPDATE__: boolean
+// Build-time local-update-channel gate (electron.vite.config.ts `define`). True ONLY for the
+// maintainer's personal builds (scripts/release-local.mjs); every distributed build strips the
+// userData feed-override path entirely. See src/main/localUpdateFeed.ts for the full posture.
+declare const __LOCAL_UPDATE_CHANNEL__: boolean
 // Build-time e2e-seam gate (electron.vite.config.ts `define`), mirrored from e2eMain.ts. M11:
 // installE2EMain captures the `mcp` VALUE, so under the e2e seam we must eager-start the lazy MCP
 // server before that call — gated on the SAME (compile ∧ runtime) predicate e2eMain uses.
@@ -162,6 +172,25 @@ let resultSynth: ResultSynthesizer | null = null
 // registry is never persisted or drained at shutdown.
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
+
+// Dev profile isolation (profileIsolation.ts): every unpackaged instance gets a PER-CHECKOUT
+// userData (main-checkout dev, worktree devs, the e2e/smoke harnesses), so concurrent instances
+// never share a Chromium profile or the app's JSON stores — the "close all Expanse windows
+// before a dev check" ritual dies here. Module scope: must precede the single-instance lock
+// (keyed on userData) and every userData read. Packaged builds and the voice spike (which owns
+// its own redirect, below) are left untouched. CANVAS_USERDATA overrides; CANVAS_FRESH=1 mints
+// a throwaway profile, deleted on quit (best-effort — Windows may still hold a handle).
+const devProfile = applyDevProfileIsolation(app, process.env, process.cwd())
+if (devProfile.fresh && devProfile.dir) {
+  const freshDir = devProfile.dir
+  app.on('will-quit', () => {
+    try {
+      rmSync(freshDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
+  })
+}
 
 // Voice boot env (voiceBoot.ts): the fake-mic switches (CANVAS_FAKE_MEDIA) + the spike
 // run's userData isolation. Module scope: appendSwitch must run before app.ready, and the
@@ -201,6 +230,10 @@ function createWindow(): void {
   })
   // The renderer's <title> overwrites the window title on load — keep the dev stamp.
   if (devTitle) mainWindow.on('page-title-updated', (e) => e.preventDefault())
+
+  // PR-2 background sessions: intercept a user close while daemon sessions live (BEFORE the
+  // `quitting` latch). Re-armed here so a tray-reopened window is guarded like the first.
+  attachCloseGuard(mainWindow)
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
@@ -348,7 +381,13 @@ app.whenReady().then(async () => {
   // Voice V2/V5 spike gate (voiceBoot.ts): prove the sherpa addon loads in THIS layout
   // (host + decoder worker), print a marker, exit. Never part of a normal boot.
   if (await runVoiceSpikeGate(smokeLog)) return
-  electronApp.setAppUserModelId('com.expanse.app')
+  // Taskbar identity: packaged keeps the product AUMID; dev gets a PER-CHECKOUT one so several
+  // dev instances group per checkout instead of with each other / the installed app. (The toolkit
+  // helper pins dev to process.execPath — the SAME electron.exe for every checkout via the
+  // node_modules junction — so the dev branch calls the raw API.)
+  if (app.isPackaged) electronApp.setAppUserModelId('com.expanse.app')
+  else if (process.platform === 'win32')
+    app.setAppUserModelId(`com.expanse.dev.${devProfile.slug ?? 'dev'}`)
   // Cold start via the scheme (Windows/Linux first launch): the deep-link URL is in our argv.
   if (app.isPackaged) deepLinks.handleColdStart()
   // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
@@ -416,6 +455,33 @@ app.whenReady().then(async () => {
     return { CANVAS_RECAP_BOARD: id }
   })
 
+  // ── Cross-cwd recap hook install (spawn-time) ─────────────────────────────────────────
+  // The env var above reaches EVERY consented spawn, but the recap hook itself only ever
+  // landed in the OPEN project's .claude/settings.local.json (project open + window focus).
+  // Claude Code reads hooks from the directory it launches in — so a board whose cwd points at
+  // another repo (MCP spawn_board cwd, the Inspector's Edit… cwd) ran a claude that never fired
+  // recordSession.js: no map entry, "Capture didn't record this session", no Resume. pty.ts
+  // calls this synchronously just before the launch line (inside its own try/catch), mirroring
+  // the orchestration config sync that already re-stamps .mcp.json into the spawn cwd.
+  // Skip the user home dir: it's the safeCwd fallback for a missing/invalid cwd, and
+  // ~/.claude/settings.local.json is Claude Code USER scope — a hook there would fire for every
+  // claude session on the machine, not just this project's boards.
+  setRecapHookSyncProvider(({ cwd }) => {
+    if (!recapRunner) return
+    const dir = getCurrentDir()
+    if (!dir || readConsent(userData, dir) !== 'enabled') return
+    if (cwd === homedir()) return
+    installRecapHook({
+      projectDir: cwd,
+      command: recapRunner,
+      scriptPath: recordScript,
+      mapPath: recapMapPath
+    })
+    // Review [warning]: track every divergent install (keyed by the CONSENTING project) so a
+    // consent decline can clean each cross-cwd repo too — mirrors provisionedDirStore (F8).
+    recordRecapHookDir(userData, dir, cwd)
+  })
+
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
   // boot dependency. If listen() fails (EACCES from AV/firewall loopback denial,
   // EMFILE/ENFILE under fd exhaustion, ENETDOWN), surface a clear diagnostic and
@@ -433,6 +499,8 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  // PTY-host boot (DESIGN.md 2026-07-12): failure notifier (muted headless) + reattach warm-up.
+  bootPtyHost({ muted: process.env.CANVAS_E2E === '1' || Boolean(SMOKE) })
   registerVoiceHandlers(ipcMain, () => mainWindow) // voice V1: session control + port broker
   registerClipboardHandlers(ipcMain, () => mainWindow)
   // General external-open channel (scheme re-validated in MAIN) — Phase 4 terminal web-links.
@@ -666,7 +734,15 @@ app.whenReady().then(async () => {
     getWin: () => mainWindow,
     hookInstalled: (dir) => isRecapHookInstalled(dir, recordScript),
     hasCapture: (id) => recapMap.has(id),
-    sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null
+    sessionAgeMs: (id) => getTerminalBootInfo(id)?.ageMs ?? null,
+    // Cross-cwd recap capture: probe the hook where the board's claude actually launched.
+    // A homedir cwd is the safeCwd fallback (cwd-less/invalid board), not a project scope we
+    // manage — the spawn-time install skips it, so probe the open project dir instead (the
+    // pre-fix behavior for default boards).
+    boardCwd: (id) => {
+      const cwd = getTerminalCwd(id)
+      return cwd === homedir() ? undefined : cwd
+    }
   })
   const recapReEnsure = createFocusReEnsure({
     ...recapHealthDeps,
@@ -677,7 +753,17 @@ app.whenReady().then(async () => {
         command: recapRunner ?? '',
         scriptPath: recordScript,
         mapPath: recapMapPath
-      })
+      }),
+    // Cross-cwd recap capture: heal every live board cwd too (spawn-time installs can be
+    // clobbered mid-session as well). Derived from the board mirror through the pty cwd map
+    // (non-terminals resolve undefined). Home-dir skip matches the spawn-time policy.
+    extraDirs: () => [
+      ...new Set(
+        listBoardMirror()
+          .map((b) => getTerminalCwd(b.id))
+          .filter((d): d is string => !!d && d !== homedir())
+      )
+    ]
   })
   app.on('browser-window-focus', recapReEnsure)
   registerProjectHandlers(
@@ -800,9 +886,11 @@ app.whenReady().then(async () => {
 
   // ── Recap consent IPC + hook-install policy (Task 10 Step 5) ────────────────────────
   // recap:getConsent / recap:setConsent (frame-guarded inside recapConsent.ts). The decision
-  // callback is the SINGLE place that mutates the project's .claude/settings.local.json hook:
-  // 'enabled' → install (idempotent), anything else → remove only OUR entry. The map path is
-  // baked into the hook args here so the external Claude process appends to the app-owned map.
+  // callback owns the consent-driven install/remove of the project's .claude/settings.local.json
+  // hook ('enabled' → install idempotently, anything else → remove only OUR entry) — the
+  // spawn-time / boot-detect providers above may ALSO install into a board's divergent cwd, and
+  // every such install is tracked in recapHookDirs so the decline below cleans those too. The
+  // map path is baked into the hook args so the external Claude process appends to the app map.
   registerRecapHandlers(
     ipcMain,
     () => mainWindow,
@@ -822,6 +910,17 @@ app.whenReady().then(async () => {
         }
       } else {
         removeRecapHook(projectPath, recordScript)
+        // Review [warning]: also remove OUR hook entry from every divergent cwd this project's
+        // consent ever installed into (tracked by the providers above; persisted across
+        // restarts). Per-dir try/catch — one unwritable repo must not strand the others.
+        for (const divergent of listRecapHookDirs(userData, projectPath)) {
+          try {
+            removeRecapHook(divergent, recordScript)
+          } catch {
+            /* best-effort cleanup */
+          }
+        }
+        clearRecapHookDirs(userData, projectPath)
         // BUG-002: on decline, stop all in-flight recap activity for this project's boards
         // so transcript content stops egressing to the LLM even while a claude session runs.
         // 1. Derive the current project's live board ids from the board mirror.
@@ -973,7 +1072,11 @@ app.whenReady().then(async () => {
   // the SAME session map. wireLifecycleNotifications registers the notifications:* IPC, watches that
   // map for NEW lines (skips history at init — no boot replay), gates + delivers each event, and
   // routes the generic-PTY path into the same delivery site. Self-disposes on before-quit.
-  wireLifecycleNotifications(() => mainWindow, recapMapPath, userData)
+  // PR-2 background sessions: ONE boot call (backgroundSessionsBoot.ts) — wires the #314
+  // lifecycle notifications (exactly the wireLifecycleNotifications call that used to sit
+  // here), the ptyhost:config IPC, the close-guard context, and tray residency; background-
+  // exit toasts ride the same lifecycle delivery site.
+  wireBackgroundSessionsUx({ getWin: () => mainWindow, createWindow, userData })
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this
@@ -1000,21 +1103,18 @@ app.whenReady().then(async () => {
     installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth, recapReEnsure)
   }
 
-  // Phase 5 auto-update (gated · tiered). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
-  // electron.vite.config.ts); in a signed production build it checks the feed on launch and
-  // surfaces the right tier — optional toast / recommended banner / mandatory blocking modal
-  // (updates.json via getMeta). The concrete wiring (dynamic electron-updater import + the meta
-  // fetch) lives in autoUpdateWiring.ts so this file stays a thin caller. A rejection here means
-  // the gate was open (signed build) but init failed — a packaging defect; log it, never let it
-  // become an unhandled rejection that crashes main under Node 22's throw-on-rejection default.
-  initAutoUpdate({
+  // Phase 5 auto-update (gated · tiered) — full wiring in autoUpdateWiring.ts › startAutoUpdate
+  // (this file stays a thin caller). A NO-OP in dev/unsigned builds. The localFeedUrl ternary is
+  // the dev-only local update channel: compile-gated, so distributed builds fold it to null and
+  // tree-shake localUpdateFeed out entirely (posture: src/main/localUpdateFeed.ts). A rejection
+  // here means the gate was open but init failed — log it, never an unhandled rejection.
+  startAutoUpdate({
     enabled: __ENABLE_AUTO_UPDATE__,
     isPackaged: app.isPackaged,
     ipc: ipcMain,
     getWin: () => mainWindow,
     currentVersion: app.getVersion(),
-    getMeta: fetchUpdateMeta,
-    getUpdater: resolveUpdater
+    localFeedUrl: __LOCAL_UPDATE_CHANNEL__ ? readLocalFeedOverride(app.getPath('userData')) : null
   }).catch((err) => console.error('[auto-update] init failed', err))
 
   if (SMOKE && mainWindow) {
@@ -1047,7 +1147,9 @@ function shutdown(): Promise<void> {
   // tail to its owning project's sidecar BEFORE the rings die in the PTY drain. Sync +
   // best-effort, so the crash sinks that share this teardown can run it too.
   persistBackgroundRingTails(appendTerminalSnapshot)
-  const drained = disposeAllPtys()
+  // PTY-host D5: an UPDATE-INSTALL quit detaches (daemon keeps the sessions for the relaunch's
+  // reattach); every other quit path keeps the kill-everything drain. Decision in the bridge.
+  const drained = quitPtyDrain()
   disposeAllOsr() // close offscreen preview renderers
   disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
   disposeVoiceSession() // kill the sherpa-onnx utilityProcess engine host (voice V2)
@@ -1085,8 +1187,9 @@ function flushRenderer(timeoutMs = 1500): Promise<void> {
 app.on('window-all-closed', () => {
   // Route through app.quit() (non-darwin) so the guarded before-quit handler below
   // performs the awaited PTY-tree drain (#49) instead of racing a fire-and-forget
-  // shutdown() against process exit.
-  if (process.platform !== 'darwin') app.quit()
+  // shutdown() against process exit. PR-2: a "keep in background" close destroys the
+  // window ON PURPOSE — while tray-resident, trayResidency.ts owns the eventual quit.
+  if (process.platform !== 'darwin' && !isTrayResident()) app.quit()
 })
 
 // Guarded async quit (#49/BUG-031): on first entry, defer the quit, flush the renderer

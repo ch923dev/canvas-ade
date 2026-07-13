@@ -920,6 +920,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     if (isE2E()) e2eTerminalHeld.set(board.id, () => coalescer.held())
 
     const onWinMsg = (e: MessageEvent): void => {
+      // SEC-2 class: adopt ports only from our own preload's same-window re-post — e.source is
+      // this window for those. Pin the SOURCE, not the origin string (origin compare is
+      // unreliable under packaged file://).
+      if (e.source !== window) return
       const data = e.data as { __ptyPort?: boolean; id?: string }
       if (!data || !data.__ptyPort || data.id !== board.id) return
       const port = e.ports[0]
