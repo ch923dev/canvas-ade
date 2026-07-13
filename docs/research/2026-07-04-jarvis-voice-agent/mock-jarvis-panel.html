@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock: Jarvis panel rev 1 (right-tab home · mic-gated on open · island retired)</title>
+<style>
+  /* Tokens: faithful copy of src/renderer/src/styles/tokens.css (DESIGN.md §2-4).
+     Fonts fall back to system stacks when viewed outside the repo (artifact CSP). */
+  @font-face {
+    font-family: 'Geist';
+    src: url('../../../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('../../../src/renderer/src/assets/fonts/GeistMono-Variable.woff2') format('woff2');
+    font-weight: 100 900; font-display: swap;
+  }
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --void: #0a0a0b; --grid-dot: #202022;
+    --surface: #141416; --surface-raised: #1a1a1d; --surface-overlay: #1e1e22; --inset: #0e0e10;
+    --border-subtle: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+    --text: #ededee; --text-2: #9b9ba1; --text-3: #7b7b81; --text-faint: #46464b;
+    --accent: #4f8cff; --accent-hover: #6ea0ff; --accent-wash: rgba(79,140,255,0.14);
+    --ok: #3ecf8e; --warn: #e8b339; --err: #f2545b;
+    --r-board: 8px; --r-inner: 6px; --r-ctl: 5px; --r-pill: 999px;
+    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,0.7);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: var(--ui); background: var(--void); color: var(--text);
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 24px 24px; min-height: 100vh; padding: 36px 44px 44px;
+  }
+  .page-hd { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+  .page-sub { font-size: 11px; color: var(--text-faint); margin-bottom: 28px; max-width: 700px; line-height: 15px; }
+  .lane { display: flex; flex-direction: column; gap: 30px; }
+  .row { display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap; }
+  .spec { display: flex; flex-direction: column; gap: 7px; }
+  .spec-lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .spec-note { font-size: 10.5px; color: var(--text-faint); max-width: 250px; line-height: 14px; }
+
+  /* ── app frame (placement demo) ── */
+  .app {
+    border: 1px solid var(--border); border-radius: var(--r-board); overflow: hidden;
+    background: var(--void); box-shadow: var(--shadow-pop); width: 720px; max-width: 100%;
+  }
+  .app-tb {
+    height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border-subtle);
+  }
+  .app-dots { display: flex; gap: 5px; }
+  .app-dots i { width: 9px; height: 9px; border-radius: 999px; background: var(--surface-overlay); border: 1px solid var(--border-subtle); }
+  .app-title { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); margin: 0 auto; }
+  .app-canvas {
+    position: relative; height: 360px; display: flex;
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .ghost-board {
+    position: absolute; border: 1px solid var(--border-subtle); border-radius: var(--r-board);
+    background: rgba(20,20,22,0.72);
+  }
+  .ghost-board .gb-hd {
+    height: 22px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center;
+    padding: 0 8px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-faint); gap: 5px;
+  }
+  .gb-dot { width: 5px; height: 5px; border-radius: 999px; background: var(--ok); }
+
+  /* ── the panel (Context/Library family: fixed right, full height) ── */
+  .jpanel {
+    margin-left: auto; width: 264px; height: 100%; display: flex; flex-direction: column;
+    background: var(--surface-raised); border-left: 1px solid var(--border);
+  }
+  .jpanel.solo { margin: 0; height: 560px; width: 340px; border: 1px solid var(--border); border-radius: var(--r-board); overflow: hidden; box-shadow: var(--shadow-pop); }
+
+  .jp-hd { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+  .jp-core { width: 44px; height: 44px; flex: none; }
+  .jp-core canvas { width: 44px; height: 44px; display: block; }
+  .jp-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .jp-name { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); }
+  .jp-meta { font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+  .jp-state { margin-left: auto; display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--accent-hover); }
+  .jp-state i { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
+  .jp-state.quiet { color: var(--text-3); } .jp-state.quiet i { background: var(--text-faint); }
+  .jp-x { border: 0; background: transparent; color: var(--text-3); font-size: 12px; cursor: pointer; padding: 2px 4px; }
+  .jp-x:hover { color: var(--text); }
+
+  /* mic-gate strip — THE contract, always visible while open */
+  .jp-mic {
+    display: flex; align-items: center; gap: 7px; padding: 6px 12px;
+    background: var(--accent-wash); border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono); font-size: 9.5px; color: var(--accent-hover);
+  }
+  .jp-mic i { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); flex: none; }
+  .jp-mic .key { margin-left: auto; border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); padding: 1px 6px; color: var(--text-3); }
+  .jp-mic.off { background: var(--inset); color: var(--text-3); }
+  .jp-mic.off i { background: var(--text-faint); }
+
+  .jp-body { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; }
+  .hist-chip {
+    align-self: center; font-family: var(--mono); font-size: 9px; color: var(--text-faint);
+    border: 1px dashed var(--border-subtle); border-radius: var(--r-pill); padding: 2px 8px;
+  }
+  .hist-sep { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .hist-sep::before, .hist-sep::after { content: ''; flex: 1; border-top: 1px solid var(--border-subtle); }
+  .turn-you { font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-3); }
+  .turn-you b { color: var(--text-2); font-weight: 450; }
+  .turn-j { font-size: 12px; line-height: 18px; color: var(--text); }
+  .turn-t { font-family: var(--mono); font-size: 8.5px; color: var(--text-faint); margin-left: 6px; }
+  .turn-act { font-family: var(--mono); font-size: 9.5px; color: var(--text-3); padding: 3px 8px; background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); width: max-content; }
+  .caret { display: inline-block; width: 1px; height: 13px; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 0%,100% { opacity: 0.25; } 40% { opacity: 1; } }
+
+  /* D8 chip feed inside the panel */
+  .jp-events { border-top: 1px solid var(--border-subtle); padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .jp-events-lbl { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .notif {
+    display: flex; align-items: flex-start; gap: 8px; width: 100%;
+    background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--r-inner);
+    padding: 7px 9px; cursor: pointer; text-align: left;
+  }
+  .notif:hover { border-color: var(--border-strong); }
+  .nf-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; margin-top: 4px; }
+  .nf-dot.warn { background: var(--warn); }
+  .nf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .nf-board { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+  .nf-msg { font-size: 11px; line-height: 15px; color: var(--text); }
+  .nf-focus { flex: none; font-family: var(--mono); font-size: 9px; color: var(--text-3); border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); padding: 2px 6px; align-self: center; }
+  .notif:hover .nf-focus { color: var(--accent-hover); border-color: rgba(79,140,255,0.45); }
+
+  .jp-ft { display: flex; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--border-subtle); font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+  .jp-ft b { color: var(--text-3); font-weight: 450; }
+  .jp-ft .end { margin-left: auto; }
+
+  /* ── collapsed edge tab (lib-reopen family, right edge) ── */
+  .edge-demo { position: relative; width: 120px; height: 190px; border: 1px dashed var(--border-subtle); border-radius: var(--r-board); }
+  .jtab {
+    position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    padding: 9px 5px 10px; background: var(--surface-raised);
+    border: 1px solid var(--border); border-right: none; border-radius: var(--r-inner) 0 0 var(--r-inner);
+    cursor: pointer; box-shadow: var(--shadow-pop);
+  }
+  .jtab:hover { border-color: var(--border-strong); }
+  .jtab .mini { width: 18px; height: 18px; position: relative; }
+  .jtab .mini canvas { width: 18px; height: 18px; display: block; }
+  .jtab .vlabel { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.14em; color: var(--text-3); writing-mode: vertical-rl; text-transform: uppercase; }
+  .jtab .badge {
+    position: absolute; top: -4px; right: -4px; min-width: 12px; height: 12px; padding: 0 3px;
+    border-radius: 999px; background: var(--warn); color: #0a0a0b;
+    font-family: var(--mono); font-size: 8px; font-weight: 600; line-height: 12px; text-align: center;
+  }
+  .micoff-note { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 9px; color: var(--text-faint); }
+  .micoff-note i { width: 6px; height: 6px; border-radius: 999px; background: var(--text-faint); }
+
+  /* contract notes */
+  .contract {
+    width: 340px; background: var(--surface-raised); border: 1px solid var(--border);
+    border-radius: var(--r-inner); padding: 11px 13px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .contract h4 { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); font-weight: 500; }
+  .contract p { font-size: 11px; line-height: 15px; color: var(--text-2); }
+  .contract p b { color: var(--text); font-weight: 500; }
+
+  @media (prefers-reduced-motion: reduce) { .caret { animation: none !important; } }
+</style>
+</head>
+<body>
+  <div class="page-hd">MOCK · JARVIS PANEL · REV 1 · docs/research/2026-07-04-jarvis-voice-agent · tokens per DESIGN.md §2-4</div>
+  <div class="page-sub">Surface revision (2026-07-13, user-directed): Jarvis moves from a floating island + tail into a
+  <b>right-side panel</b> (Context/Library family). The floating island and transcript tail RETIRE. The privacy contract
+  becomes structural: <b>the microphone can only listen while this panel is open</b>. Closing the panel hard-stops the mic
+  and cancels the in-flight turn. Collapsed, Jarvis is an edge tab with the mini core + unread badge. The brain, IPC, chunker,
+  barge-in and Persona settings from J3 carry over unchanged.</div>
+
+  <div class="lane">
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">A · placement: panel open, in context (conversation live)</div>
+        <div class="app">
+          <div class="app-tb">
+            <span class="app-dots"><i></i><i></i><i></i></span>
+            <span class="app-title">expanse — canvas ade</span>
+          </div>
+          <div class="app-canvas">
+            <div class="ghost-board" style="left:24px; top:26px; width:200px; height:130px"><div class="gb-hd"><span class="gb-dot"></span>terminal · auth api</div></div>
+            <div class="ghost-board" style="left:250px; top:80px; width:160px; height:110px"><div class="gb-hd"><span class="gb-dot" style="background:var(--warn)"></span>terminal · tests</div></div>
+            <div class="ghost-board" style="left:60px; top:196px; width:230px; height:120px"><div class="gb-hd"><span class="gb-dot" style="background:var(--text-faint)"></span>planning · jarvis epic</div></div>
+            <div class="jpanel">
+              <div class="jp-hd">
+                <span class="jp-core"><canvas data-core="speaking" data-d="88"></canvas></span>
+                <span class="jp-id">
+                  <span class="jp-name">Jarvis</span>
+                  <span class="jp-meta">pair programmer · af_sky</span>
+                </span>
+                <span class="jp-state"><i></i>speaking</span>
+                <button class="jp-x">✕</button>
+              </div>
+              <div class="jp-mic"><i></i>mic live — panel open<span class="key">⌃⇧J</span></div>
+              <div class="jp-body">
+                <div class="turn-you"><b>You</b> · how did the auth tests end up?<span class="turn-t">18:03</span></div>
+                <div class="turn-j">Fourteen passed, none skipped. The flaky socket spec held this time.</div>
+                <div class="turn-you"><b>You</b> · focus the auth terminal and tidy the rest<span class="turn-t">18:04</span></div>
+                <div class="turn-j">Focused the auth terminal. The remaining nine boards are now tidied by type<span class="caret"></span></div>
+              </div>
+              <div class="jp-ft"><span><b>speak</b> to interrupt</span><span class="end"><b>esc</b> closes · mic off</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="spec-note" style="max-width:700px">The panel is the Context/Library pattern: full-height, right edge,
+        canvas keeps working beside it. No island, no floating tail; the streaming reply lives IN the transcript.
+        The mic strip under the header is the standing contract: it exists exactly as long as the mic can hear.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="spec">
+        <div class="spec-lbl">B · the full panel anatomy (hero, 340px)</div>
+        <div class="jpanel solo">
+          <div class="jp-hd">
+            <span class="jp-core"><canvas data-core="listening" data-d="88"></canvas></span>
+            <span class="jp-id">
+              <span class="jp-name">Jarvis</span>
+              <span class="jp-meta">butler · kokoro af_sky · opus-4-8</span>
+            </span>
+            <span class="jp-state"><i></i>listening</span>
+            <button class="jp-x">✕</button>
+          </div>
+          <div class="jp-mic"><i></i>mic live — only while this panel is open<span class="key">⌃⇧J</span></div>
+          <div class="jp-body">
+            <span class="hist-chip">earlier · 14 turns summarized into context</span>
+            <div class="hist-sep">yesterday</div>
+            <div>
+              <div class="turn-you"><b>You</b> · spawn a terminal for the migration work<span class="turn-t">17:42</span></div>
+              <div class="turn-act">spawn_board · terminal “migration” · confirmed a3d1</div>
+              <div class="turn-j">Done. Migration terminal is up, bottom left, running claude.</div>
+            </div>
+            <div class="hist-sep">today</div>
+            <div>
+              <div class="turn-you"><b>You</b> · where were we with the migration?<span class="turn-t">09:12</span></div>
+              <div class="turn-j">Yesterday you spawned the migration terminal and the auth suite went green. The migration agent is idle since 18:20, awaiting the schema decision, sir.</div>
+            </div>
+            <div>
+              <div class="turn-you"><b>You</b> · focus the auth terminal and tidy the rest<span class="turn-t">09:14</span></div>
+              <div class="turn-j">Focused the auth terminal. The remaining nine boards are now tidied by type. The canvas is, dare I say, presentable<span class="caret"></span></div>
+            </div>
+          </div>
+          <div class="jp-events">
+            <span class="jp-events-lbl">agent events · 1 unread</span>
+            <button class="notif">
+              <span class="nf-dot warn"></span>
+              <span class="nf-main">
+                <span class="nf-board">terminal · tests</span>
+                <span class="nf-msg">Agent needs your attention: 2 failing specs</span>
+              </span>
+              <span class="nf-focus">focus ↵</span>
+            </button>
+          </div>
+          <div class="jp-ft"><span><b>speak</b> to interrupt</span><span><b>esc</b> closes · mic off</span><span class="end">grounded in tool results</span></div>
+        </div>
+        <div class="spec-note">Header = the scaled neural core (44px, same renderer, per-state motion): the “Jarvis image
+        at the top”, kept inside the design language (token hexes, no gifs/mascots). D8 chips dock at the panel foot;
+        chip click → focus_viewport. Announcements still speak with the panel closed (speaking needs no mic).</div>
+      </div>
+
+      <div class="spec">
+        <div class="spec-lbl">C · collapsed: edge tab (mic hard-off)</div>
+        <div class="edge-demo">
+          <div class="jtab">
+            <span class="mini"><canvas data-core="idle" data-d="36"></canvas><span class="badge">2</span></span>
+            <span class="vlabel">jarvis</span>
+          </div>
+        </div>
+        <div class="micoff-note"><i></i>closed = mic off, guaranteed: no capture path exists</div>
+        <div class="spec-note" style="margin-top:4px">The lib-reopen edge-tab family. Mini core stays static (no rAF loop
+        while closed, so it stays cheap). Badge = unread agent events (D8). Click or ⌃⇧J opens the panel AND arms the mic in one
+        gesture; Esc / ✕ / tab click closes it and kills the mic + in-flight turn.</div>
+
+        <div class="spec-lbl" style="margin-top:18px">D · header states</div>
+        <div class="row" style="gap:14px">
+          <div class="spec"><span class="jp-core"><canvas data-core="idle" data-d="88"></canvas></span><span class="spec-note">idle</span></div>
+          <div class="spec"><span class="jp-core"><canvas data-core="listening" data-d="88"></canvas></span><span class="spec-note">listening</span></div>
+          <div class="spec"><span class="jp-core"><canvas data-core="thinking" data-d="88"></canvas></span><span class="spec-note">thinking</span></div>
+          <div class="spec"><span class="jp-core"><canvas data-core="speaking" data-d="88"></canvas></span><span class="spec-note">speaking</span></div>
+        </div>
+        <div class="spec-note">Same five-state machine and tuning table as the island core — one renderer, two sizes
+        (44px header, 18px edge tab). ‘acting’ (J4) adds the accent arc.</div>
+      </div>
+
+      <div class="spec">
+        <div class="spec-lbl">E · the contract (what this revision locks)</div>
+        <div class="contract">
+          <h4>mic gate — structural</h4>
+          <p><b>Open panel = mic may listen. Closed panel = mic cannot.</b> Converse arms only from the open panel;
+          close/Esc runs the same teardown as converse-off today (stop capture, cancel turn, drop queued speech).
+          If you can’t see the conversation, it can’t hear you.</p>
+          <h4>wake word (J5) carve-out</h4>
+          <p>The local KeywordSpotter (no cloud, no STT) may run with the panel closed, <b>opt-in only</b>, and its sole
+          power is to OPEN the panel. Turns still require the open panel.</p>
+          <h4>cost posture</h4>
+          <p>Dictation (VoicePill) stays free/local and untouched. Jarvis is opt-in behind the Persona toggle; no island
+          means no paid affordance on screen for users who never enable it.</p>
+          <h4>what retires / what carries</h4>
+          <p>Retired: floating island, floating tail. Carried unchanged: brain, IPC + turn lifecycle, clause chunker,
+          barge-in seams, stores, PersonaPane, unit + e2e coverage (asserts are store-level).</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* Neural core — same renderer + MODES as mock-jarvis-island.html, parameterized size. */
+(function () {
+  const NEUTRAL = '#7b7b81', FAINT = '#46464b', ACCENT = '#4f8cff', BRIGHT = '#6ea0ff';
+  const MODES = {
+    idle:      { orbit: 0.25, dot: FAINT,   dotHi: NEUTRAL, nuc: NEUTRAL, beat: 'heart', depth: 0.18, period: 1.6 },
+    listening: { orbit: 0.45, dot: NEUTRAL, dotHi: ACCENT,  nuc: ACCENT,  beat: 'react', depth: 0.5,  period: 1.0 },
+    thinking:  { orbit: 2.2,  dot: NEUTRAL, dotHi: '#c8c8cc', nuc: FAINT, beat: 'still', depth: 0.06, period: 1.0 },
+    speaking:  { orbit: 0.6,  dot: NEUTRAL, dotHi: ACCENT,  nuc: BRIGHT,  beat: 'pulse', depth: 0.32, period: 0.42 },
+    acting:    { orbit: 1.2,  dot: NEUTRAL, dotHi: ACCENT,  nuc: NEUTRAL, beat: 'heart', depth: 0.12, period: 1.2, arc: true },
+  };
+  const gauss = (x, m, s) => Math.exp(-((x - m) * (x - m)) / (2 * s * s));
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  document.querySelectorAll('canvas[data-core]').forEach((cv) => {
+    const m = MODES[cv.dataset.core] || MODES.idle;
+    const D = parseInt(cv.dataset.d || '44', 10); cv.width = D; cv.height = D;
+    const k = D / 44; /* scale factor vs the island's 44px backing store */
+    const ctx = cv.getContext('2d'), C = D / 2;
+    const dots = [];
+    for (let i = 0; i < 6; i++) dots.push({ r: 16 * k, a: (i / 6) * Math.PI * 2, ph: i * 1.7, s: 1 });
+    for (let i = 0; i < 4; i++) dots.push({ r: 10 * k, a: (i / 4) * Math.PI * 2 + 0.6, ph: i * 2.3, s: -1.4 });
+
+    function nucleusScale(t) {
+      if (m.beat === 'heart') { const p = (t % m.period);
+        return 1 + m.depth * (gauss(p, 0.10, 0.055) + 0.55 * gauss(p, 0.32, 0.06)); }
+      if (m.beat === 'pulse') return 1 + m.depth * (0.5 + 0.5 * Math.sin(t / m.period * Math.PI * 2));
+      if (m.beat === 'react') return 1 + m.depth * Math.max(0,
+        0.45 * Math.sin(t * 5.1) + 0.35 * Math.sin(t * 8.7 + 1.4) + 0.2 * Math.sin(t * 2.3 + 0.5));
+      return 1;
+    }
+    function frame(ms) {
+      const t = ms / 1000;
+      ctx.clearRect(0, 0, D, D);
+      const ns = nucleusScale(t);
+      dots.forEach((d) => {
+        const a = d.a + t * m.orbit * d.s;
+        const tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 1.8 + d.ph));
+        const rr = d.r + (m.beat === 'pulse' ? (ns - 1) * 6 * k : 0);
+        ctx.globalAlpha = tw;
+        ctx.fillStyle = tw > 0.8 ? m.dotHi : m.dot;
+        ctx.beginPath();
+        ctx.arc(C + Math.cos(a) * rr, C + Math.sin(a) * rr, 1.6 * k, 0, 7);
+        ctx.fill();
+      });
+      if (m.arc) {
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5 * k; ctx.lineCap = 'round';
+        const a0 = t * 2.4;
+        ctx.beginPath(); ctx.arc(C, C, 16 * k, a0, a0 + 1.5); ctx.stroke();
+      }
+      ctx.globalAlpha = 1; ctx.fillStyle = m.nuc;
+      ctx.beginPath(); ctx.arc(C, C, 3.4 * k * ns, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.35; ctx.strokeStyle = m.nuc; ctx.lineWidth = 1 * k;
+      ctx.beginPath(); ctx.arc(C, C, 5.6 * k * ns, 0, 7); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (!reduced) requestAnimationFrame(frame);
+    }
+    frame(performance.now());
+  });
+})();
+</script>
+</body>
+</html>

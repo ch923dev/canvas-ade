@@ -18,7 +18,6 @@ export interface JarvisConfigView {
   announcePolicy: 'all' | 'attention' | 'chips-only'
   model: string
   historyMode: 'session' | 'off'
-  islandPosition?: { x: number; y: number }
 }
 
 export interface JarvisStatusView {

@@ -161,12 +161,12 @@ export function PersonaPane(): ReactElement | null {
       <div style={pane.setrow}>
         <div style={{ flex: 1 }}>
           <div style={pane.rowTitle}>Show {cfg.name}</div>
-          <div style={pane.rowSub}>The island docks top-right; drag it anywhere.</div>
+          <div style={pane.rowSub}>The right-edge tab; open the panel to talk.</div>
         </div>
         <button
           role="switch"
           aria-checked={cfg.enabled}
-          aria-label="Show Jarvis island"
+          aria-label="Show Jarvis panel"
           onClick={() => patch({ enabled: !cfg.enabled })}
           style={{
             ...pane.toggle,
@@ -187,7 +187,7 @@ export function PersonaPane(): ReactElement | null {
           style={{ ...pane.input, width: 180 }}
           onChange={(e) => patch({ name: e.target.value })}
         />
-        <span style={pane.hint}>used in the prompt + island label</span>
+        <span style={pane.hint}>used in the prompt + panel label</span>
       </label>
 
       <div style={pane.field}>

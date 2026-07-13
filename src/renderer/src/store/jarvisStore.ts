@@ -1,12 +1,9 @@
 /**
- * Jarvis J3 — ephemeral conversation/island state (the voiceStore discipline:
- * session-state ONLY, never serialized, never routed into boardSchema or a board patch
- * key). The jarvisSession controller writes it; the island, tail and history view read it.
+ * Jarvis — ephemeral conversation/panel state (the voiceStore discipline: session-state
+ * ONLY, never serialized, never routed into boardSchema or a board patch key). The
+ * jarvisSession controller writes it; the panel + edge tab read it.
  */
 import { create } from 'zustand'
-
-/** Island visual states (mock B1–B5; 'acting'/'confirm' arrive with J4 tools). */
-export type JarvisIslandState = 'idle' | 'listening' | 'thinking' | 'speaking'
 
 /** One display turn (the renderer mirror; MAIN keeps the canonical history). */
 export interface JarvisDisplayTurn {
@@ -19,25 +16,25 @@ export interface JarvisDisplayTurn {
 }
 
 interface JarvisState {
-  /** Converse mode armed: finals route to the brain, the island listens/answers. */
+  /** Converse mode armed: finals route to the brain, the panel listens/answers. */
   converseMode: boolean
   /** Turn id currently streaming (null = no turn in flight). */
   activeTurnId: number | null
-  /** True from turn start until the first delta (the island's `thinking` window). */
+  /** True from turn start until the first delta (the core's `thinking` window). */
   awaitingReply: boolean
-  /** Streaming reply text of the in-flight turn (the tail renders it live). */
+  /** Streaming reply text of the in-flight turn (the panel body renders it live). */
   streamText: string
-  /** The last user utterance sent (the tail's "You ·" row). */
+  /** The last user utterance sent (the panel's "You ·" row). */
   lastUserText: string
   /** Display transcript, oldest first (session mirror of MAIN's history). */
   turns: JarvisDisplayTurn[]
-  /** Tail overlay visibility (auto-opens on a turn; Esc dismisses). */
-  tailOpen: boolean
-  /** D4′ conversation view (tail expanded to the scrollable session transcript). */
-  viewOpen: boolean
-  /** Last brain error surfaced to the island ('no-key' gets a Settings CTA). */
+  /** The right-side panel is open — THE mic-gate bit: converse mode can only arm while
+   *  this is true, and flipping it false always rides the full converse teardown
+   *  (closeJarvisPanel). The collapsed edge tab renders while false. */
+  panelOpen: boolean
+  /** Last brain error surfaced to the panel ('no-key' gets a Settings CTA). */
   lastError: string | null
-  /** Persona mirror for labels (island header, tail meta). */
+  /** Persona mirror for labels (panel header, edge tab). */
   personaName: string
   /** TTS availability probed at converse-enable — false = text-only conversation. */
   speechReady: boolean
@@ -46,8 +43,7 @@ interface JarvisState {
   deltaReceived: (text: string) => void
   turnDone: (text: string, cancelled: boolean) => void
   turnFailed: (reason: string) => void
-  setTailOpen: (open: boolean) => void
-  setViewOpen: (open: boolean) => void
+  setPanelOpen: (open: boolean) => void
   setPersonaName: (name: string) => void
   setSpeechReady: (ready: boolean) => void
   hydrateTurns: (turns: JarvisDisplayTurn[]) => void
@@ -61,8 +57,7 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   streamText: '',
   lastUserText: '',
   turns: [],
-  tailOpen: false,
-  viewOpen: false,
+  panelOpen: false,
   lastError: null,
   personaName: 'Jarvis',
   speechReady: false,
@@ -76,7 +71,6 @@ export const useJarvisStore = create<JarvisState>((set) => ({
       awaitingReply: true,
       streamText: '',
       lastUserText: userText,
-      tailOpen: true,
       lastError: null
     }),
   deltaReceived: (text) => set((s) => ({ streamText: s.streamText + text, awaitingReply: false })),
@@ -93,8 +87,7 @@ export const useJarvisStore = create<JarvisState>((set) => ({
     })),
   turnFailed: (reason) =>
     set({ activeTurnId: null, awaitingReply: false, streamText: '', lastError: reason }),
-  setTailOpen: (open) => set((s) => (s.tailOpen === open ? s : { tailOpen: open })),
-  setViewOpen: (open) => set((s) => (s.viewOpen === open ? s : { viewOpen: open })),
+  setPanelOpen: (open) => set((s) => (s.panelOpen === open ? s : { panelOpen: open })),
   setPersonaName: (personaName) =>
     set((s) => (s.personaName === personaName ? s : { personaName })),
   setSpeechReady: (speechReady) =>

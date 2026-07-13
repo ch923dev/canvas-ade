@@ -1,6 +1,7 @@
 /**
- * Jarvis J3 — the canvas-drawn "neural core" (mock rev 2, D7): a beating nucleus inside
- * two rings of orbiting dots, one renderer with per-state tunings. Ported from the
+ * Jarvis — the canvas-drawn "neural core" (mock rev 2, D7; panel rev 1 exhibit D): a
+ * beating nucleus inside two rings of orbiting dots, ONE renderer with per-state tunings,
+ * parameterized by size (44px panel header, 18px edge tab). Ported from the
  * approved mock's script verbatim where possible. Token hexes only, no glow/gradients —
  * literal copies of 4 tokens because <canvas> can't read CSS custom properties (the
  * planning/exportColors.ts precedent: keep in step with styles/tokens.css if they change).
@@ -77,27 +78,30 @@ const MODES: Record<CoreMode, ModeTuning> = {
   }
 }
 
-/** Logical (CSS) core size — the backing store doubles it for crispness (mock D=44@22px). */
+/** Default logical (CSS) core size — the backing store doubles it for crispness
+ *  (mock D=44@22px). The panel surface reuses the same renderer at other sizes
+ *  (44px header, 18px edge tab) via the `cssPx` parameter — geometry always draws in
+ *  the fixed 44-unit space and scales to the backing store. */
 const CORE_CSS_PX = 22
 const D = 44
 
 const gauss = (x: number, m: number, s: number): number =>
   Math.exp(-((x - m) * (x - m)) / (2 * s * s))
 
-/**
- * Start the core renderer on `cv`. `getMode` is read every frame so state flips need no
- * restart. Returns a dispose fn. Under prefers-reduced-motion the loop is replaced by one
- * static frame per mode change (a lightweight poll at 4 Hz repaints only when it changed).
- */
-export function startNeuralCore(cv: HTMLCanvasElement, getMode: () => CoreMode): () => void {
+/** Size the canvas for `cssPx` (2× supersample × DPR) and return a paint(ms, mode) fn. */
+function createCorePainter(
+  cv: HTMLCanvasElement,
+  cssPx: number
+): ((ms: number, mode: CoreMode) => void) | null {
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
-  cv.width = D * dpr
-  cv.height = D * dpr
-  cv.style.width = `${CORE_CSS_PX}px`
-  cv.style.height = `${CORE_CSS_PX}px`
+  const backing = cssPx * 2 * dpr
+  cv.width = backing
+  cv.height = backing
+  cv.style.width = `${cssPx}px`
+  cv.style.height = `${cssPx}px`
   const ctx = cv.getContext('2d')
-  if (!ctx) return () => {}
-  ctx.scale((D * dpr) / D, (D * dpr) / D)
+  if (!ctx) return null
+  ctx.scale(backing / D, backing / D)
   const C = D / 2
 
   const dots: { r: number; a: number; ph: number; s: number }[] = []
@@ -126,8 +130,8 @@ export function startNeuralCore(cv: HTMLCanvasElement, getMode: () => CoreMode):
     return 1
   }
 
-  const paint = (ms: number): void => {
-    const m = MODES[getMode()]
+  return (ms: number, mode: CoreMode): void => {
+    const m = MODES[mode]
     const t = ms / 1000
     ctx.clearRect(0, 0, D, D)
     const ns = nucleusScale(m, t)
@@ -164,6 +168,24 @@ export function startNeuralCore(cv: HTMLCanvasElement, getMode: () => CoreMode):
     ctx.stroke()
     ctx.globalAlpha = 1
   }
+}
+
+/** A fixed paint phase that reads well for every beat type (static frames). */
+const STATIC_PHASE_MS = 400
+
+/**
+ * Start the core renderer on `cv` at `cssPx` (default 22 — the island-era size; the
+ * panel header passes 44). `getMode` is read every frame so state flips need no restart.
+ * Returns a dispose fn. Under prefers-reduced-motion the loop is replaced by one static
+ * frame per mode change (a lightweight poll at 4 Hz repaints only when it changed).
+ */
+export function startNeuralCore(
+  cv: HTMLCanvasElement,
+  getMode: () => CoreMode,
+  cssPx: number = CORE_CSS_PX
+): () => void {
+  const paint = createCorePainter(cv, cssPx)
+  if (!paint) return () => {}
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   if (reduced) {
@@ -173,7 +195,7 @@ export function startNeuralCore(cv: HTMLCanvasElement, getMode: () => CoreMode):
       const mode = getMode()
       if (mode !== lastMode) {
         lastMode = mode
-        paint(400) // a fixed phase that reads well for every beat type
+        paint(STATIC_PHASE_MS, mode)
       }
     }
     tick()
@@ -183,9 +205,17 @@ export function startNeuralCore(cv: HTMLCanvasElement, getMode: () => CoreMode):
 
   let raf = 0
   const frame = (ms: number): void => {
-    paint(ms)
+    paint(ms, getMode())
     raf = requestAnimationFrame(frame)
   }
   raf = requestAnimationFrame(frame)
   return () => cancelAnimationFrame(raf)
+}
+
+/**
+ * Paint ONE static frame — the collapsed edge tab's mini core (18px, deliberately no
+ * rAF/interval while the panel is closed, KICKOFF-PANEL §4: closed Jarvis stays cheap).
+ */
+export function paintNeuralCoreFrame(cv: HTMLCanvasElement, mode: CoreMode, cssPx: number): void {
+  createCorePainter(cv, cssPx)?.(STATIC_PHASE_MS, mode)
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -41,8 +41,7 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
       voiceSid: 3,
       announcePolicy: 'all',
       model: 'claude-haiku-4-5',
-      historyMode: 'off',
-      islandPosition: { x: 40, y: 24 }
+      historyMode: 'off'
     }
     writeJarvisConfig(dir, cfg)
     expect(readJarvisConfig(dir)).toEqual(cfg)
@@ -60,8 +59,7 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
         voiceSid: -2,
         announcePolicy: 'loud',
         model: '',
-        historyMode: 'project', // J5 value — repairs to 'session' until the union widens
-        islandPosition: { x: 'a', y: 0 }
+        historyMode: 'project' // J5 value — repairs to 'session' until the union widens
       })
     ).toEqual(jarvisDefaults())
   })
@@ -87,9 +85,21 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
     expect(readJarvisConfig(dir).speakingRate).toBe(2)
   })
 
-  it('drops a non-finite island position', () => {
-    expect(
-      repairJarvisConfig({ islandPosition: { x: Infinity, y: 2 } }).islandPosition
-    ).toBeUndefined()
+  it('reads a pre-panel config carrying the retired islandPosition field and drops it', () => {
+    // Surface rev 2026-07-13: the island retired. Old on-disk configs still carry the
+    // field; the repair funnel must accept them silently and never re-emit it.
+    writeFileSync(
+      join(dir, 'jarvis-config.json'),
+      JSON.stringify({ ...jarvisDefaults(), islandPosition: { x: 40, y: 24 } }),
+      'utf8'
+    )
+    const read = readJarvisConfig(dir)
+    expect(read).toEqual(jarvisDefaults())
+    expect('islandPosition' in read).toBe(false)
+    // And the write funnel scrubs it from disk on the next persist.
+    writeJarvisConfig(dir, read)
+    expect(JSON.parse(readFileSync(join(dir, 'jarvis-config.json'), 'utf8'))).not.toHaveProperty(
+      'islandPosition'
+    )
   })
 })

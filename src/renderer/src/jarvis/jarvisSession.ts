@@ -58,9 +58,14 @@ export function sendTurn(text: string): void {
 
 /** Arm/disarm converse mode. Arming loads persona config, probes TTS availability
  *  (absent model ⇒ text-only conversation), registers the final consumer and starts the
- *  mic; disarming unwinds all of it (an in-flight turn is cancelled). */
+ *  mic; disarming unwinds all of it (an in-flight turn is cancelled).
+ *
+ *  THE MIC-GATE IS STRUCTURAL (KICKOFF-PANEL §3): arming refuses while the panel is
+ *  closed — every arm affordance lives inside the open panel (or opens it in the same
+ *  gesture, openJarvisPanel). Closed panel ⇒ no capture path exists. */
 export async function setConverseMode(on: boolean): Promise<void> {
   const jarvis = useJarvisStore.getState()
+  if (on && !jarvis.panelOpen) return
   if (!on) {
     unregisterConsumer?.()
     unregisterConsumer = null
@@ -112,9 +117,27 @@ export function toggleConverse(): void {
   void setConverseMode(!useJarvisStore.getState().converseMode)
 }
 
+/** Open the panel AND arm the mic in one gesture (edge-tab click / hotkey). */
+export function openJarvisPanel(): void {
+  useJarvisStore.getState().setPanelOpen(true)
+  void setConverseMode(true)
+}
+
+/** Close the panel — ALWAYS rides the full converse teardown (✕ / Esc / hotkey / project
+ *  close): stop capture, cancel the in-flight turn, drop queued clauses. */
+export function closeJarvisPanel(): void {
+  void setConverseMode(false)
+  useJarvisStore.getState().setPanelOpen(false)
+}
+
+export function toggleJarvisPanel(): void {
+  if (useJarvisStore.getState().panelOpen) closeJarvisPanel()
+  else openJarvisPanel()
+}
+
 /**
- * Mount-once wiring (JarvisIsland). Subscribes turn events, barge-in and config pushes;
- * cleans up on unmount (project close) — converse mode does not survive the island.
+ * Mount-once wiring (JarvisPanel). Subscribes turn events, barge-in and config pushes;
+ * cleans up on unmount (project close) — the panel closes and converse mode dies with it.
  */
 export function useJarvisController(): void {
   useEffect(() => {
@@ -158,7 +181,7 @@ export function useJarvisController(): void {
       offTurn()
       offBarge()
       offConfig()
-      void setConverseMode(false)
+      closeJarvisPanel()
     }
   }, [])
 }
