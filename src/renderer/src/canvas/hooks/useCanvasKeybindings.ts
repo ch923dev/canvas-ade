@@ -17,6 +17,8 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import { cameraAnim } from '../../lib/motion'
 import { FIT_FRAME, RESET_FRAME } from '../../lib/canvasView'
 import { shouldFireBoardNavKey, shouldFireCameraShortcut } from '../cameraShortcut'
+import { useJarvisStore } from '../../store/jarvisStore'
+import { closeJarvisPanel } from '../../jarvis/jarvisSession'
 
 /** The keydown fields the main-keymap resolver reads (a subset of KeyboardEvent). */
 export interface KeyChord {
@@ -321,17 +323,19 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
   // No-op when not in full view.
   useEffect(() => {
     const onEscapeCapture = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && (fullViewId || cameraFullViewId)) {
-        // SECURITY (BUG-005): an active human-confirm gate (ConfirmModal, marked with
-        // `[data-confirm-active]`) owns Esc — it must DENY the pending dangerous MCP action.
-        // Stealing Esc here (preventDefault + stopPropagation) would close full-view but
-        // leave the confirm unanswered (fail-open). Bail so Esc reaches the modal's bubble
-        // listener; a second Esc then exits full-view.
-        if (document.querySelector('[data-confirm-active]')) return
-        // D4-A: an open command palette owns the next Esc layer (after the confirm gate,
-        // never before it) — bail so Esc bubbles to the palette's Modal listener and
-        // closes it; the following Esc then exits full view. One Esc, one layer.
-        if (document.querySelector('[data-palette-open]')) return
+      if (e.key !== 'Escape') return
+      // Shared deeper-layer guards — these own Esc before full view AND before the panel:
+      // SECURITY (BUG-005): an active human-confirm gate (ConfirmModal, marked with
+      // `[data-confirm-active]`) owns Esc — it must DENY the pending dangerous MCP action.
+      // Stealing Esc here (preventDefault + stopPropagation) would close full-view but
+      // leave the confirm unanswered (fail-open). Bail so Esc reaches the modal's bubble
+      // listener; a second Esc then exits full-view.
+      if (document.querySelector('[data-confirm-active]')) return
+      // D4-A: an open command palette owns the next Esc layer (after the confirm gate,
+      // never before it) — bail so Esc bubbles to the palette's Modal listener and
+      // closes it; the following Esc then exits full view. One Esc, one layer.
+      if (document.querySelector('[data-palette-open]')) return
+      if (fullViewId || cameraFullViewId) {
         // ESC-1: an Esc pressed INSIDE the Jarvis panel belongs to the panel (its own
         // scoped capture listener closes it + kills the mic) — bail so one press never
         // both closes the panel and exits full view.
@@ -340,6 +344,22 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
         e.stopPropagation()
         if (cameraFullViewId) exitCameraFullView()
         else closeFullView()
+        return
+      }
+      // ESC-1: the OPEN Jarvis panel is the next layer — a canvas-root Esc (<body> or the
+      // focusable RF pane; anything more specific owns its own Esc) closes it. Lives in
+      // THIS capture listener, not a panel-side bubble one: capture + stopPropagation is
+      // the only registration-order-proof way to keep the same press from ALSO running the
+      // bubble-phase clearSelection below (same-target siblings ignore stopPropagation —
+      // the rubber-band-selection-vanishes review finding on PR #343).
+      if (useJarvisStore.getState().panelOpen) {
+        const t = e.target
+        const onCanvasRoot =
+          t === document.body || (t instanceof Element && t.classList.contains('react-flow__pane'))
+        if (!onCanvasRoot) return
+        e.preventDefault()
+        e.stopPropagation()
+        closeJarvisPanel()
       }
     }
     window.addEventListener('keydown', onEscapeCapture, true)

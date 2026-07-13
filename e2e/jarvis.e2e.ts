@@ -129,11 +129,16 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     const s = await jarvisState(page)
     expect(s.panelOpen).toBe(true) // the panel did not steal the terminal's Esc
     expect(s.converseMode).toBe(true)
-    // Focus back on the canvas root (blur the terminal) — Esc is the mic-off gesture again.
+    // Focus back on the canvas root (blur the terminal) — Esc is the mic-off gesture
+    // again. The board selection must SURVIVE that press: the panel-close Esc runs in
+    // the capture chain and stops before the bubble clearSelection (one Esc, one layer —
+    // the rubber-band-selection-vanishes finding from the PR #343 review).
+    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
     await evalIn(page, 'document.activeElement && document.activeElement.blur()')
     await page.keyboard.press('Escape')
     await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
     await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
+    expect(await evalIn(page, 'window.__canvasE2E.getSelection()')).toEqual([id])
   })
 
   test('MAIN history follows the mode: recorded per project, cleared on demand', async ({

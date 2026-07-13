@@ -189,13 +189,14 @@ export function JarvisPanel(): ReactElement | null {
 
   // Esc — the mic-off gesture, SCOPED (ESC-1; was a window-wide capture grab that ate
   // Esc bound for vim/TUI in terminal boards, double-fired with the full-view capture
-  // Esc and suppressed every bubble-phase Esc consumer). Two tiers, one Esc one layer:
-  //  · target INSIDE the panel (capture + stop) — the panel owns that Esc outright; the
-  //    full-view capture listener has a matching bail for panel-contained targets.
-  //  · target = <body> (bubble) — focus is nowhere more specific, so Esc keeps working
-  //    as the quick mic kill. Bubble phase means a focused terminal/editor/full-view
-  //    (which consume in capture or hold their own focus target) never loses its Esc;
-  //    the palette/confirm-gate guards keep deeper layers first.
+  // Esc and suppressed every bubble-phase Esc consumer). This listener owns only the
+  // in-panel case: target INSIDE the panel → capture + stop (the full-view capture
+  // listener has a matching bail for panel-contained targets). The canvas-root case
+  // (<body> / RF pane — the quick mic kill when focus is nowhere more specific) lives
+  // in useCanvasKeybindings' capture Esc chain, ordered confirm gate > palette >
+  // full view > panel > clear-selection — the only registration-order-proof home for
+  // it (a bubble listener here could not stop the same press from ALSO clearing the
+  // board selection; PR #343 review).
   useEffect(() => {
     if (!panelOpen) return
     const onCaptureKey = (e: KeyboardEvent): void => {
@@ -205,25 +206,8 @@ export function JarvisPanel(): ReactElement | null {
       e.stopPropagation()
       closeJarvisPanel()
     }
-    const onBubbleKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      // Canvas root only: <body> or the focusable React Flow pane. Anything more
-      // specific (terminal, editor, flyout, modal) owns its own Esc.
-      const t = e.target
-      const onCanvasRoot =
-        t === document.body || (t instanceof Element && t.classList.contains('react-flow__pane'))
-      if (!onCanvasRoot) return
-      if (document.querySelector('[data-confirm-active]')) return
-      if (document.querySelector('[data-palette-open]')) return
-      e.preventDefault()
-      closeJarvisPanel()
-    }
     window.addEventListener('keydown', onCaptureKey, true)
-    window.addEventListener('keydown', onBubbleKey)
-    return () => {
-      window.removeEventListener('keydown', onCaptureKey, true)
-      window.removeEventListener('keydown', onBubbleKey)
-    }
+    return () => window.removeEventListener('keydown', onCaptureKey, true)
   }, [panelOpen])
 
   // Keep the transcript pinned to the newest row while a reply streams / turns land.
