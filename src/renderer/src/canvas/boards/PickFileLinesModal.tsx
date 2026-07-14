@@ -56,11 +56,18 @@ export function PickFileLinesModal({
     }
   }, [])
 
+  // Monotonic read token: each read captures one, and a resolved read only writes state if it's still
+  // the latest. Guards the click-A-then-B race — if A's readText resolves after B's, A must NOT clobber
+  // B's content (the path label already says B). Mirrors FileBoard's `cancelled` load guard.
+  const reqRef = useRef(0)
+
   // Async read ONLY (all setState is post-await) so the mount effect can call it without tripping the
   // set-state-in-effect rule. The click path pre-sets path/loading synchronously via `openFile` below.
   const readInto = useCallback(async (p: string): Promise<void> => {
+    const req = ++reqRef.current
     try {
       const content = await window.api.file.readText(p)
+      if (reqRef.current !== req) return // superseded by a newer open — drop this stale result
       if (looksBinary(content)) {
         setStatus('binary')
         return
@@ -68,6 +75,7 @@ export function PickFileLinesModal({
       setText(content)
       setStatus('idle')
     } catch {
+      if (reqRef.current !== req) return
       setStatus('error')
     }
   }, [])

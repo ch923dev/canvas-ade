@@ -50,6 +50,42 @@ describe('PickFileLinesModal', () => {
     expect((screen.getByTestId('pfl-add') as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('ignores a stale read that resolves after a newer file was picked', async () => {
+    // A's readText resolves AFTER B's — A must not clobber B's content in the editor.
+    const deferred: Record<string, { resolve: (v: string) => void }> = {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).api = {
+      file: {
+        listDir: vi.fn(async () => [
+          { name: 'a.ts', isDir: false },
+          { name: 'b.ts', isDir: false }
+        ]),
+        readText: vi.fn(
+          (p: string) =>
+            new Promise<string>((resolve) => {
+              deferred[p] = { resolve }
+            })
+        )
+      }
+    }
+    const onPick = vi.fn()
+    render(<PickFileLinesModal onPick={onPick} onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('a.ts')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('a.ts')) // request 1 (A)
+    fireEvent.click(screen.getByText('b.ts')) // request 2 (B) — now the latest
+    // Resolve B first, then A. A is stale and must be dropped.
+    deferred['b.ts'].resolve('BBB')
+    deferred['a.ts'].resolve('AAA')
+
+    // The committed ref keeps B's path regardless of resolution order.
+    await waitFor(() =>
+      expect((screen.getByTestId('pfl-add') as HTMLButtonElement).disabled).toBe(false)
+    )
+    fireEvent.click(screen.getByTestId('pfl-add'))
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ path: 'b.ts' }))
+  })
+
   it('filters file rows by name (dirs stay for navigation)', async () => {
     mockFileApi({
       '': [
