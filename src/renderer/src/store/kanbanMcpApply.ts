@@ -25,17 +25,23 @@ function mergeCard(
   const next: KanbanCard = {
     ...card,
     ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.tag !== undefined ? { tag: patch.tag } : {}),
     ...(patch.assignee !== undefined ? { assignee: patch.assignee } : {}),
     ...(patch.ref !== undefined ? { ref: patch.ref } : {}),
     // v19 card-detail: only the supplied fields change (a patch never clears one).
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.fileRefs !== undefined ? { fileRefs: patch.fileRefs } : {})
   }
-  // v19: writing `tags` supersedes + sheds the legacy singular `tag` (matches human setCardTags).
-  if (patch.tags === undefined) return next
-  const { tag: _legacy, ...rest } = next
-  return { ...rest, tags: patch.tags }
+  // v19: `tag` (legacy singular) and `tags` (plural) are mutually exclusive — writing EITHER sheds the
+  // other, in both directions, so a card never carries both (matches the `add` op + human setCardTags).
+  if (patch.tags !== undefined) {
+    const { tag: _legacy, ...rest } = next
+    return { ...rest, tags: patch.tags }
+  }
+  if (patch.tag !== undefined) {
+    const { tags: _superseded, ...rest } = next
+    return { ...rest, tag: patch.tag }
+  }
+  return next
 }
 
 /**

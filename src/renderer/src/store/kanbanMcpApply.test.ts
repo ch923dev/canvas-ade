@@ -115,6 +115,16 @@ describe('applyKanbanOps', () => {
     expect(out[0]).not.toHaveProperty('tag')
   })
 
+  it("update writing the legacy `tag` SHEDS the card's v19 `tags` (mutual exclusion, both directions)", () => {
+    const out = applyKanbanOps(
+      board([{ id: 'c1', columnId: 'backlog', title: 'One', tags: ['feature', 'security'] }]),
+      [{ op: 'update', cardId: 'c1', patch: { tag: 'legacy' } }]
+    )
+    // A later legacy-`tag`-only write must not leave the card carrying BOTH fields.
+    expect(out[0]).toEqual({ id: 'c1', columnId: 'backlog', title: 'One', tag: 'legacy' })
+    expect(out[0]).not.toHaveProperty('tags')
+  })
+
   it('applies a batch of ops in order', () => {
     const out = applyKanbanOps(board(), [
       { op: 'add', card: { id: 'c1', columnId: 'backlog', title: 'One' } },

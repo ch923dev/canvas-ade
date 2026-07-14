@@ -146,6 +146,12 @@ describe('mcpKanban.sanitizeCardFileRefs', () => {
     expect(() => sanitizeCardFileRefs([{ path: 'a.ts', line: 1.5 }])).toThrow(/positive integer/)
     expect(() => sanitizeCardFileRefs([{ path: '  ' }])).toThrow(/empty/)
   })
+  it('rejects an over-cap path LOUDLY (must not survive the write to silently drop on the mirror read)', () => {
+    // MAX_CARD_FILE_REF_PATH === 256 matches the boardRegistry mirror-ingest cap; a longer path is a
+    // clear write error here, never an ack:true that vanishes from canvas://board/{id}/cards on read-back.
+    expect(() => sanitizeCardFileRefs([{ path: 'x'.repeat(257) }])).toThrow(/limit/)
+    expect(sanitizeCardFileRefs([{ path: 'x'.repeat(256) }])).toEqual([{ path: 'x'.repeat(256) }])
+  })
 })
 
 describe('mcpKanban.buildKanbanAxisConfig', () => {

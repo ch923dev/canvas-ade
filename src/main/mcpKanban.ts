@@ -36,7 +36,11 @@ export const MAX_COLUMN_ID = 200
 export const MAX_CARD_DESCRIPTION = 4000
 export const MAX_CARD_TAGS = 20
 export const MAX_CARD_FILE_REFS = 50
-export const MAX_CARD_FILE_REF_PATH = 512
+// Matches the renderer→MAIN mirror-ingest cap (`boardRegistry.ts` MAX_FIELD_LEN = 256): a path the write
+// gate accepts here MUST survive the mirror round-trip, else it'd be silently dropped from the read-back
+// (`canvas://board/{id}/cards`) after the agent already got `ack: true`. `sanitizeId` rejects over-length
+// LOUDLY, so an over-256 path is a clear write error, not a silent read-time vanish.
+export const MAX_CARD_FILE_REF_PATH = 256
 /** Max chars for a kanban board's v19 `axisLabel` (a short single-line caption). */
 export const MAX_AXIS_LABEL = 60
 
