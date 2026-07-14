@@ -105,6 +105,17 @@ export interface RelayResult {
 }
 
 /**
+ * The v19 card-DETAIL fields an agent may set on add/update (host-local; the installed package
+ * predates them, same discipline as the card spec/patch types below). `description` is a multi-line
+ * body; `tags` supersedes the singular `tag`; `fileRefs` is a bounded list of `{path, line?, endLine?}`.
+ */
+interface KanbanCardDetailInput {
+  description?: string
+  tags?: string[]
+  fileRefs?: Array<{ path: string; line?: number; endLine?: number }>
+}
+
+/**
  * The adapter + awaitSettled (extras beyond the package contract), PLUS
  * app-side NARROWING of two methods the package `Orchestrator` now declares as of ≥0.15.0 (W1-G):
  * `describeApp(): Promise<unknown>` (the package does not own `AppModel`) and a structurally-
@@ -130,7 +141,26 @@ export type LifecycleOrchestrator = Omit<
   | 'dispatchPrompt'
   | 'relayPrompt'
   | 'relayPrompts'
+  | 'configureBoard'
 > & {
+  /**
+   * v19 WIDENING of the package's `configureBoard(boardId, BoardConfig)` (same Omit-and-redeclare
+   * discipline as `dispatchPrompt`): the durable config now also carries a KANBAN board's column axis
+   * (`columnAxis`/`axisLabel`) alongside the terminal `shell`/`launchCommand`/`cwd`. Declared here so
+   * MAIN keeps full typing regardless of the installed `@expanse-ade/mcp` version (the package's
+   * `configure_board` tool forwards these fields from 0.20.0); a widened optional-only param stays
+   * assignable to the package's narrower `BoardConfig` at the ServerFactory boundary.
+   */
+  configureBoard(
+    boardId: string,
+    config: {
+      shell?: string
+      launchCommand?: string
+      cwd?: string
+      columnAxis?: 'flow' | 'category'
+      axisLabel?: string
+    }
+  ): Promise<void>
   /**
    * Honest-ack WIDENING of the package's `dispatchPrompt/relayPrompt(): Promise<void>` (same
    * Omit-and-redeclare discipline as `describeApp`): the fire-and-forget write now reports HOW it
@@ -230,13 +260,19 @@ export type LifecycleOrchestrator = Omit<
    */
   addCard(
     boardId: string,
-    spec: { columnId: string; title: string; tag?: string; assignee?: string; ref?: string }
+    spec: {
+      columnId: string
+      title: string
+      tag?: string
+      assignee?: string
+      ref?: string
+    } & KanbanCardDetailInput
   ): Promise<{ id: string }>
   moveCard(boardId: string, cardId: string, toColumnId: string): Promise<void>
   updateCard(
     boardId: string,
     cardId: string,
-    patch: { title?: string; tag?: string; assignee?: string; ref?: string }
+    patch: { title?: string; tag?: string; assignee?: string; ref?: string } & KanbanCardDetailInput
   ): Promise<void>
   removeCard(boardId: string, cardId: string): Promise<void>
   /**

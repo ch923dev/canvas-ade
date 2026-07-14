@@ -93,4 +93,57 @@ describe('buildBoardCards (P3b canvas://board/{id}/cards grouper)', () => {
     })
     expect(cards.columns[0].cards[0]).toEqual({ id: 'c1', title: 'x' })
   })
+
+  it('projects the v19 card-detail fields (description / tags / fileRefs)', () => {
+    const cards = buildBoardCards({
+      id: 'k',
+      title: 'K',
+      type: 'kanban',
+      kanban: {
+        columns: [{ id: 'a', title: 'A' }],
+        cards: [
+          {
+            id: 'c1',
+            columnId: 'a',
+            title: 'x',
+            description: 'why this card',
+            tags: ['feature', 'security'],
+            fileRefs: [{ path: 'src/x.ts', line: 4, endLine: 9 }, { path: 'README.md' }]
+          }
+        ]
+      }
+    })
+    expect(cards.columns[0].cards[0]).toEqual({
+      id: 'c1',
+      title: 'x',
+      description: 'why this card',
+      tags: ['feature', 'security'],
+      fileRefs: [{ path: 'src/x.ts', line: 4, endLine: 9 }, { path: 'README.md' }]
+    })
+  })
+
+  it('surfaces the board column axis + label; omits both when absent', () => {
+    const withAxis = buildBoardCards({
+      id: 'k',
+      title: 'K',
+      type: 'kanban',
+      kanban: {
+        columns: [{ id: 'a', title: 'A' }],
+        cards: [],
+        columnAxis: 'category',
+        axisLabel: 'Subsystem'
+      }
+    })
+    expect(withAxis.columnAxis).toBe('category')
+    expect(withAxis.axisLabel).toBe('Subsystem')
+
+    const noAxis = buildBoardCards({
+      id: 'k2',
+      title: 'K2',
+      type: 'kanban',
+      kanban: { columns: [{ id: 'a', title: 'A' }], cards: [] }
+    })
+    expect(noAxis).not.toHaveProperty('columnAxis')
+    expect(noAxis).not.toHaveProperty('axisLabel')
+  })
 })

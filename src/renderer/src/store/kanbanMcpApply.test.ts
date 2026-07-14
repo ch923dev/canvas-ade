@@ -65,6 +65,56 @@ describe('applyKanbanOps', () => {
     expect(out.map((c) => c.id)).toEqual(['c2'])
   })
 
+  it('add carries the v19 detail fields (description / tags / fileRefs)', () => {
+    const out = applyKanbanOps(board(), [
+      {
+        op: 'add',
+        card: {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          description: 'why',
+          tags: ['feature'],
+          fileRefs: [{ path: 'a.ts', line: 3 }]
+        }
+      }
+    ])
+    expect(out[0]).toEqual({
+      id: 'c1',
+      columnId: 'backlog',
+      title: 'One',
+      description: 'why',
+      tags: ['feature'],
+      fileRefs: [{ path: 'a.ts', line: 3 }]
+    })
+  })
+
+  it('add with `tags` supersedes (never emits) the legacy singular `tag`', () => {
+    const out = applyKanbanOps(board(), [
+      {
+        op: 'add',
+        card: { id: 'c1', columnId: 'backlog', title: 'One', tag: 'legacy', tags: ['new'] }
+      }
+    ])
+    expect(out[0]).toEqual({ id: 'c1', columnId: 'backlog', title: 'One', tags: ['new'] })
+    expect(out[0]).not.toHaveProperty('tag')
+  })
+
+  it("update merges the v19 detail fields; writing `tags` SHEDS the card's legacy `tag`", () => {
+    const out = applyKanbanOps(
+      board([{ id: 'c1', columnId: 'backlog', title: 'One', tag: 'legacy' }]),
+      [{ op: 'update', cardId: 'c1', patch: { description: 'note', tags: ['shipped'] } }]
+    )
+    expect(out[0]).toEqual({
+      id: 'c1',
+      columnId: 'backlog',
+      title: 'One',
+      description: 'note',
+      tags: ['shipped']
+    })
+    expect(out[0]).not.toHaveProperty('tag')
+  })
+
   it('applies a batch of ops in order', () => {
     const out = applyKanbanOps(board(), [
       { op: 'add', card: { id: 'c1', columnId: 'backlog', title: 'One' } },

@@ -27,17 +27,34 @@ export interface BoardCardsInput {
       tag?: string
       assignee?: string
       ref?: string
+      description?: string
+      tags?: ReadonlyArray<string>
+      fileRefs?: ReadonlyArray<{ path: string; line?: number; endLine?: number }>
     }>
+    /** v19: what the columns group by (absent ⇒ 'flow' downstream) + its display name. */
+    columnAxis?: 'flow' | 'category'
+    axisLabel?: string
   }
 }
 
-/** One card in the grouped `canvas://board/{id}/cards` projection — chips omitted when absent. */
+/** One file+line ref in the grouped cards projection (v19) — path + optional 1-based line/endLine. */
+export interface BoardCardsFileRef {
+  path: string
+  line?: number
+  endLine?: number
+}
+
+/** One card in the grouped `canvas://board/{id}/cards` projection — chips/detail omitted when absent. */
 export interface BoardCardsCard {
   id: string
   title: string
   tag?: string
   assignee?: string
   ref?: string
+  /** v19 card-detail — an agent reads these to see a card's full content before it mutates it. */
+  description?: string
+  tags?: string[]
+  fileRefs?: BoardCardsFileRef[]
 }
 
 /** One column (lane) in the grouped projection — its cards nested in array order. */
@@ -59,14 +76,28 @@ export interface BoardCards {
   title: string
   isKanban: boolean
   columns: BoardCardsColumn[]
+  /** v19: the board's column axis — 'flow' | 'category' (absent ⇒ 'flow') + its display name. */
+  columnAxis?: 'flow' | 'category'
+  axisLabel?: string
 }
 
-/** Copy a card's optional chips onto the output card (omit — never emit an empty string). */
+/** Copy a card's optional chips + v19 detail onto the output card (omit — never emit an empty value). */
 function withChips(c: NonNullable<BoardCardsInput['kanban']>['cards'][number]): BoardCardsCard {
   const card: BoardCardsCard = { id: c.id, title: c.title }
   if (c.tag) card.tag = c.tag
   if (c.assignee) card.assignee = c.assignee
   if (c.ref) card.ref = c.ref
+  // v19 card-detail (already sanitized/capped on ingest) — surface it so an agent sees the full card.
+  if (c.description) card.description = c.description
+  if (c.tags && c.tags.length > 0) card.tags = [...c.tags]
+  if (c.fileRefs && c.fileRefs.length > 0) {
+    card.fileRefs = c.fileRefs.map((r) => {
+      const ref: BoardCardsFileRef = { path: r.path }
+      if (typeof r.line === 'number') ref.line = r.line
+      if (typeof r.endLine === 'number') ref.endLine = r.endLine
+      return ref
+    })
+  }
   return card
 }
 
@@ -90,7 +121,11 @@ export function buildBoardCards(board: BoardCardsInput): BoardCards {
     const col = byId.get(c.columnId)
     if (col) col.cards.push(withChips(c)) // drop dangling cards (columnId with no column)
   }
-  return { boardId: board.id, title: board.title, isKanban: true, columns }
+  const result: BoardCards = { boardId: board.id, title: board.title, isKanban: true, columns }
+  // v19: surface the board's column axis so an agent can read which axis a board is (absent ⇒ 'flow').
+  if (board.kanban.columnAxis !== undefined) result.columnAxis = board.kanban.columnAxis
+  if (board.kanban.axisLabel !== undefined) result.axisLabel = board.kanban.axisLabel
+  return result
 }
 
 /**

@@ -117,6 +117,27 @@ export type PlanningEditOp =
  * - `update` merges the supplied fields onto an existing card (only present keys change).
  * - `remove` deletes an existing card by id.
  */
+/**
+ * One SANITIZED file+line reference on a card (v19), MAIN → renderer. `path` is project-root-relative
+ * and already trimmed/capped; `line`/`endLine` are positive integers (a range) or absent (open at top).
+ * The renderer applier lands them verbatim onto {@link KanbanCard.fileRefs}.
+ */
+export interface KanbanOpFileRef {
+  path: string
+  line?: number
+  endLine?: number
+}
+
+/** The v19 card-detail fields an `add`/`update` op may carry (already sanitized MAIN-side). All optional. */
+interface KanbanOpCardDetail {
+  /** Long-form multi-line description (card modal body). */
+  description?: string
+  /** Label chips — the plural that supersedes the singular `tag`. */
+  tags?: string[]
+  /** File+line references the card touches. */
+  fileRefs?: KanbanOpFileRef[]
+}
+
 export type KanbanOp =
   | {
       op: 'add'
@@ -127,13 +148,13 @@ export type KanbanOp =
         tag?: string
         assignee?: string
         ref?: string
-      }
+      } & KanbanOpCardDetail
     }
   | { op: 'move'; cardId: string; toColumnId: string }
   | {
       op: 'update'
       cardId: string
-      patch: { title?: string; tag?: string; assignee?: string; ref?: string }
+      patch: { title?: string; tag?: string; assignee?: string; ref?: string } & KanbanOpCardDetail
     }
   | { op: 'remove'; cardId: string }
 
@@ -251,7 +272,15 @@ export type McpCommand =
   | {
       type: 'configureBoard'
       id: string
-      patch: { shell?: string; launchCommand?: string; cwd?: string }
+      // shell/launchCommand/cwd are TERMINAL config; columnAxis/axisLabel (v19) are KANBAN board
+      // config. updateBoard filters to PATCHABLE_KEYS per type, so an off-type key is dropped.
+      patch: {
+        shell?: string
+        launchCommand?: string
+        cwd?: string
+        columnAxis?: 'flow' | 'category'
+        axisLabel?: string
+      }
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
   | { type: 'patchPlanningEdit'; id: string; op: PlanningEditOp }

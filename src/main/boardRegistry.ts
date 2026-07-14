@@ -78,7 +78,14 @@ export interface KanbanColumnMirror {
   wip?: number
 }
 
-/** One card in a Kanban board's mirror projection (P3b) — flat, bound to a column by `columnId`. */
+/** One file+line ref on a Kanban card's mirror projection (v19) — path + optional 1-based line/endLine. */
+export interface KanbanCardFileRefMirror {
+  path: string
+  line?: number
+  endLine?: number
+}
+
+/** One card in a Kanban board's mirror projection (P3b→v19) — flat, bound to a column by `columnId`. */
 export interface KanbanCardMirror {
   id: string
   columnId: string
@@ -86,12 +93,25 @@ export interface KanbanCardMirror {
   tag?: string
   assignee?: string
   ref?: string
+  /** v19 card-detail: long-form description, TRUNCATED to a preview on ingest (identification, not fidelity). */
+  description?: string
+  /** v19 card-detail: label chips (the plural that supersedes `tag`). */
+  tags?: string[]
+  /** v19 card-detail: file+line references the card touches. */
+  fileRefs?: KanbanCardFileRefMirror[]
 }
 
-/** A Kanban board's bounded columns + cards on the mirror (P3b). The host groups it on read. */
+/**
+ * A Kanban board's bounded columns + cards on the mirror (P3b→v19). The host groups it on read. v19 adds
+ * the board's optional COLUMN AXIS (what the lanes group by) + its display name.
+ */
 export interface KanbanMirror {
   columns: KanbanColumnMirror[]
   cards: KanbanCardMirror[]
+  /** v19: 'flow' (workflow stages) | 'category' (buckets); absent ⇒ 'flow' at read. */
+  columnAxis?: 'flow' | 'category'
+  /** v19: display name of the column axis (e.g. "Phase"/"Subsystem"). */
+  axisLabel?: string
 }
 
 /** One checklist item in a Planning board's mirror projection (S6) — id + label + done. */
@@ -304,6 +324,9 @@ const MAX_FILEREFS = 500
 /** Cap a single kanban board's mirrored lanes + cards (P3b) so a forged push can't grow MAIN memory. */
 const MAX_KANBAN_COLUMNS = 50
 const MAX_KANBAN_CARDS = 300
+/** Cap a single card's mirrored v19 detail lists (tags / fileRefs) so a forged push can't grow memory. */
+const MAX_KANBAN_CARD_TAGS = 20
+const MAX_KANBAN_CARD_FILE_REFS = 50
 const MAX_FIELD_LEN = 256
 /** Cap a single planning board's mirrored elements + items (S6) so a forged push can't grow MAIN memory. */
 const MAX_PLANNING_ELEMENTS = 300
@@ -400,6 +423,41 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
   return out.length > 0 ? { elements: out } : undefined
 }
 
+/** Keep only well-formed card `tags` (v19) — non-empty length-capped strings, count-capped; else undefined. */
+function sanitizeCardTags(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: string[] = []
+  for (const t of input) {
+    if (out.length >= MAX_KANBAN_CARD_TAGS) break
+    const v = boundedStr(t)
+    if (v !== undefined) out.push(v)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * Keep only well-formed card `fileRefs` (v19) — each a `{path, line?, endLine?}` with a non-empty
+ * length-capped `path` and finite positive `line`/`endLine`. Count-capped ({@link MAX_KANBAN_CARD_FILE_REFS});
+ * a malformed entry is dropped. Returns `undefined` when nothing survives, so the card omits the field.
+ */
+function sanitizeCardFileRefs(input: unknown): KanbanCardFileRefMirror[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: KanbanCardFileRefMirror[] = []
+  for (const r of input) {
+    if (out.length >= MAX_KANBAN_CARD_FILE_REFS) break
+    if (!r || typeof r !== 'object') continue
+    const path = boundedStr((r as KanbanCardFileRefMirror).path)
+    if (path === undefined) continue
+    const ref: KanbanCardFileRefMirror = { path }
+    const { line, endLine } = r as KanbanCardFileRefMirror
+    if (typeof line === 'number' && Number.isFinite(line) && line > 0) ref.line = line
+    if (typeof endLine === 'number' && Number.isFinite(endLine) && endLine > 0)
+      ref.endLine = endLine
+    out.push(ref)
+  }
+  return out.length > 0 ? out : undefined
+}
+
 /**
  * Keep only well-formed Kanban lanes + cards; drop anything else (P3b). Bounded like the other
  * snapshot fields — `mcp:boards` is an IPC channel, so trust nothing: cap columns
@@ -411,7 +469,12 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
  */
 function sanitizeKanban(input: unknown): KanbanMirror | undefined {
   if (!input || typeof input !== 'object') return undefined
-  const { columns, cards } = input as { columns?: unknown; cards?: unknown }
+  const {
+    columns,
+    cards,
+    columnAxis: rawAxis,
+    axisLabel: rawLabel
+  } = input as { columns?: unknown; cards?: unknown; columnAxis?: unknown; axisLabel?: unknown }
   const cols: KanbanColumnMirror[] = []
   if (Array.isArray(columns)) {
     for (const c of columns) {
@@ -442,10 +505,34 @@ function sanitizeKanban(input: unknown): KanbanMirror | undefined {
       if (assignee !== undefined) card.assignee = assignee
       const ref = boundedStr((c as KanbanCardMirror).ref)
       if (ref !== undefined) card.ref = ref
+      // v19 card-detail: description is TRUNCATED to a preview (long free text, identification not
+      // fidelity — like a planning note); tags/fileRefs are bounded lists (count + per-field capped).
+      const rec = c as Record<string, unknown>
+      const description = boundedPreview(rec.description)
+      if (description !== undefined) card.description = description
+      const tags = sanitizeCardTags(rec.tags)
+      if (tags !== undefined) card.tags = tags
+      const fileRefs = sanitizeCardFileRefs(rec.fileRefs)
+      if (fileRefs !== undefined) card.fileRefs = fileRefs
       out.push(card)
     }
   }
-  return cols.length > 0 || out.length > 0 ? { columns: cols, cards: out } : undefined
+  // v19 board axis: keep only the two-value enum + a bounded single-line label (bad/absent ⇒ dropped,
+  // read as 'flow' downstream). The mirror carries them so canvas://board/{id}/cards can project them.
+  const columnAxis = rawAxis === 'flow' || rawAxis === 'category' ? rawAxis : undefined
+  const axisLabel = boundedStr(rawLabel)
+  if (
+    cols.length === 0 &&
+    out.length === 0 &&
+    columnAxis === undefined &&
+    axisLabel === undefined
+  ) {
+    return undefined
+  }
+  const mirror: KanbanMirror = { columns: cols, cards: out }
+  if (columnAxis !== undefined) mirror.columnAxis = columnAxis
+  if (axisLabel !== undefined) mirror.axisLabel = axisLabel
+  return mirror
 }
 
 /**

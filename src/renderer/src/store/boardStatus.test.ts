@@ -342,6 +342,47 @@ describe('buildBoardSnapshot', () => {
     })
   })
 
+  it('projects the v19 card-detail fields + the board column axis (agent read)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          columns: [{ id: 'backlog', title: 'Backlog' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'backlog',
+              title: 'One',
+              description: 'why this card',
+              tags: ['feature', 'security'],
+              fileRefs: [{ path: 'src/x.ts', line: 4, endLine: 9 }, { path: 'README.md' }]
+            }
+          ],
+          columnAxis: 'category',
+          axisLabel: 'Subsystem'
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(board.kanban).toEqual({
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          description: 'why this card',
+          tags: ['feature', 'security'],
+          fileRefs: [{ path: 'src/x.ts', line: 4, endLine: 9 }, { path: 'README.md' }]
+        }
+      ],
+      columnAxis: 'category',
+      axisLabel: 'Subsystem'
+    })
+  })
+
   it('omits kanban for every non-kanban board (byte-identical) even if it carries stray columns (P3b)', () => {
     const [plan] = buildBoardSnapshot(
       // A non-kanban board carrying stray `columns`/`cards` must not project a kanban field.

@@ -1,13 +1,19 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildAddCardOp,
+  buildKanbanAxisConfig,
   buildMoveCardOp,
   buildRemoveCardOp,
   buildUpdateCardOp,
   KanbanContentError,
+  renderKanbanAxisConfirmBody,
   renderKanbanConfirmBody,
+  sanitizeCardFileRefs,
   sanitizeCardLabel,
+  sanitizeCardTags,
+  sanitizeCardText,
   sanitizeId,
+  MAX_CARD_DESCRIPTION,
   MAX_CARD_TITLE
 } from './mcpKanban'
 
@@ -67,6 +73,95 @@ describe('mcpKanban op builders', () => {
     })
     expect(() => buildUpdateCardOp('c1', {})).toThrow(/no fields/)
   })
+
+  it('buildAddCardOp sanitizes the v19 detail fields (description / tags / fileRefs)', () => {
+    const op = buildAddCardOp('mint-1', {
+      columnId: 'backlog',
+      title: 'Wire auth',
+      description: 'Line one.\nLine two.\x07',
+      tags: [' feature ', 'security', 'feature'], // dup dropped, trimmed
+      fileRefs: [
+        { path: ' src/auth/mw.ts ', line: 12, endLine: 20 },
+        { path: 'src/auth/token.ts', line: 3, endLine: 2 } // endLine <= line ⇒ collapses to line
+      ]
+    })
+    expect(op).toEqual({
+      op: 'add',
+      card: {
+        id: 'mint-1',
+        columnId: 'backlog',
+        title: 'Wire auth',
+        description: 'Line one.\nLine two.', // newline KEPT, control stripped, trimmed
+        tags: ['feature', 'security'],
+        fileRefs: [
+          { path: 'src/auth/mw.ts', line: 12, endLine: 20 },
+          { path: 'src/auth/token.ts', line: 3 }
+        ]
+      }
+    })
+  })
+
+  it('buildUpdateCardOp carries the v19 detail fields', () => {
+    expect(buildUpdateCardOp('c1', { description: 'done', tags: ['shipped'] })).toEqual({
+      op: 'update',
+      cardId: 'c1',
+      patch: { description: 'done', tags: ['shipped'] }
+    })
+  })
+})
+
+describe('mcpKanban.sanitizeCardText (multi-line description)', () => {
+  it('keeps newlines + tabs, normalizes CRLF, strips C0/C1/DEL, trims, caps', () => {
+    expect(sanitizeCardText('a\r\nb\tc\x07\x9b', MAX_CARD_DESCRIPTION, 'description')).toBe(
+      'a\nb\tc'
+    )
+    expect(() => sanitizeCardText('   ', 100, 'description')).toThrow(/empty/)
+    expect(() => sanitizeCardText('x'.repeat(5), 4, 'description')).toThrow(/limit/)
+    expect(() => sanitizeCardText(5, 4, 'description')).toThrow(/must be a string/)
+  })
+})
+
+describe('mcpKanban.sanitizeCardTags', () => {
+  it('trims, dedups (first wins), rejects a non-array / empty result / over-cap', () => {
+    expect(sanitizeCardTags([' a ', 'b', 'a'])).toEqual(['a', 'b'])
+    expect(() => sanitizeCardTags('nope')).toThrow(/must be an array/)
+    expect(() => sanitizeCardTags(['   '])).toThrow(/empty/)
+    expect(() => sanitizeCardTags(Array.from({ length: 21 }, (_, i) => `t${i}`))).toThrow(/limit/)
+  })
+})
+
+describe('mcpKanban.sanitizeCardFileRefs', () => {
+  it('normalizes path/line/endLine and drops a non-range endLine', () => {
+    expect(
+      sanitizeCardFileRefs([
+        { path: ' a.ts ', line: 5, endLine: 9 },
+        { path: 'b.ts' },
+        { path: 'c.ts', line: 4, endLine: 4 } // endLine === line ⇒ dropped
+      ])
+    ).toEqual([{ path: 'a.ts', line: 5, endLine: 9 }, { path: 'b.ts' }, { path: 'c.ts', line: 4 }])
+  })
+  it('rejects a non-array, a non-integer line, and an empty result', () => {
+    expect(() => sanitizeCardFileRefs('nope')).toThrow(/must be an array/)
+    expect(() => sanitizeCardFileRefs([{ path: 'a.ts', line: 0 }])).toThrow(/positive integer/)
+    expect(() => sanitizeCardFileRefs([{ path: 'a.ts', line: 1.5 }])).toThrow(/positive integer/)
+    expect(() => sanitizeCardFileRefs([{ path: '  ' }])).toThrow(/empty/)
+  })
+})
+
+describe('mcpKanban.buildKanbanAxisConfig', () => {
+  it('accepts the two-value enum + a single-line label; requires ≥1 field', () => {
+    expect(buildKanbanAxisConfig({ columnAxis: 'category', axisLabel: '  Subsystem ' })).toEqual({
+      columnAxis: 'category',
+      axisLabel: 'Subsystem'
+    })
+    expect(buildKanbanAxisConfig({ columnAxis: 'flow' })).toEqual({ columnAxis: 'flow' })
+  })
+  it('rejects an off-enum axis, an empty/over-cap label, and an empty config', () => {
+    expect(() => buildKanbanAxisConfig({ columnAxis: 'sideways' })).toThrow(/flow.*category/)
+    expect(() => buildKanbanAxisConfig({ axisLabel: '   ' })).toThrow(/empty/)
+    expect(() => buildKanbanAxisConfig({ axisLabel: 'x'.repeat(61) })).toThrow(/limit/)
+    expect(() => buildKanbanAxisConfig({})).toThrow(/no fields/)
+  })
 })
 
 describe('mcpKanban.renderKanbanConfirmBody', () => {
@@ -86,5 +181,43 @@ describe('mcpKanban.renderKanbanConfirmBody', () => {
     expect(renderKanbanConfirmBody('Plan', { op: 'remove', cardId: 'c1' })).toMatch(
       /Remove card c1/
     )
+  })
+
+  it('shows the v19 detail fields on indented sub-lines (add)', () => {
+    const body = renderKanbanConfirmBody('Plan', {
+      op: 'add',
+      card: {
+        id: 'c1',
+        columnId: 'backlog',
+        title: 'T',
+        tags: ['feature', 'security'],
+        fileRefs: [{ path: 'a.ts', line: 1, endLine: 9 }, { path: 'b.ts' }],
+        description: 'line one\nline two'
+      }
+    })
+    expect(body).toContain('    tags: feature, security')
+    expect(body).toContain('    files: a.ts:1-9, b.ts')
+    expect(body).toContain('    description: line one')
+    // 🔒 a multi-line description's continuation line is INDENTED, never a forged top-level "• " bullet.
+    expect(body).toContain('\n      line two')
+    expect(body).not.toMatch(/^• line two/m)
+  })
+
+  it('renders an update carrying ONLY detail fields (no inline chips)', () => {
+    const body = renderKanbanConfirmBody('Plan', {
+      op: 'update',
+      cardId: 'c9',
+      patch: { tags: ['shipped'] }
+    })
+    expect(body).toContain('• Update card c9')
+    expect(body).toContain('    tags: shipped')
+  })
+})
+
+describe('mcpKanban.renderKanbanAxisConfirmBody', () => {
+  it('shows the axis + label the human is authorizing', () => {
+    expect(
+      renderKanbanAxisConfirmBody('Sprint', { columnAxis: 'category', axisLabel: 'Subsystem' })
+    ).toMatch(/column axis of kanban board "Sprint".*axis: category.*label: Subsystem/s)
   })
 })
