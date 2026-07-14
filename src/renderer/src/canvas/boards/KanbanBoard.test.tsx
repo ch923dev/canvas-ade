@@ -311,22 +311,68 @@ describe('KanbanBoard — card detail (v19)', () => {
 })
 
 describe('KanbanBoard — column axis (v19)', () => {
-  it('defaults to Flow and hides the axis-label input', () => {
-    seed()
+  // The axis is chosen ONCE in the New Kanban creation dialog — there is no in-board toggle. A
+  // Flow board shows nothing; a Category board captions its label read-only.
+  it('a Flow board shows no axis caption and no toggle', () => {
+    seed() // no columnAxis ⇒ flow
     render(<Harness />)
-    expect(screen.getByTestId('kb-axis-flow').getAttribute('aria-pressed')).toBe('true')
-    expect(screen.queryByTestId('kb-axis-label')).toBeNull()
+    expect(screen.queryByTestId('kb-axis-cap')).toBeNull()
+    expect(screen.queryByTestId('kb-axis-flow')).toBeNull()
+    expect(screen.queryByTestId('kb-axis-category')).toBeNull()
   })
 
-  it('toggling to Category sets columnAxis and commits an axis label (trimmed)', () => {
-    seed()
+  it('a Category board captions its axis label read-only (no toggle)', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: []
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
     render(<Harness />)
-    fireEvent.click(screen.getByTestId('kb-axis-category'))
-    expect(boardOf().columnAxis).toBe('category')
-    const input = screen.getByTestId('kb-axis-label') as HTMLInputElement
-    fireEvent.change(input, { target: { value: '  Phase  ' } })
-    fireEvent.blur(input)
-    expect(boardOf().axisLabel).toBe('Phase')
+    expect(within(screen.getByTestId('kb-axis-cap')).getByText('Phase')).toBeTruthy()
+    expect(screen.queryByTestId('kb-axis-category')).toBeNull()
+  })
+
+  it('an empty Category board prompts to add the first lane (opens the add-column input)', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [],
+      cards: []
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    const add = screen.getByTestId('kb-add-first-lane')
+    expect(add.textContent).toContain('Phase')
+    fireEvent.click(add)
+    expect(screen.getByLabelText('New column title')).toBeTruthy()
   })
 
   it('the modal column-field label reflects the axis (category → the axis label, not "Status")', () => {
@@ -414,5 +460,24 @@ describe('KanbanBoard — column authoring', () => {
     fireEvent.change(input, { target: { value: '' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(boardOf().columns.find((c) => c.id === 'progress')?.wip).toBeUndefined()
+  })
+})
+
+describe('KanbanBoard — creation gate (place-first New Kanban dialog)', () => {
+  it('shows the dialog while the board is configPending; Cancel releases it', () => {
+    seed()
+    useCanvasStore.setState({ configPendingId: 'k1' })
+    render(<Harness />)
+    expect(screen.getByRole('button', { name: 'Create Flow board' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(useCanvasStore.getState().configPendingId).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Create Flow board' })).toBeNull()
+  })
+
+  it('renders no dialog for a board that is not configPending', () => {
+    seed()
+    useCanvasStore.setState({ configPendingId: null })
+    render(<Harness />)
+    expect(screen.queryByRole('button', { name: 'Create Flow board' })).toBeNull()
   })
 })

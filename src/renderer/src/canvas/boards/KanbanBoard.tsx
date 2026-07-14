@@ -31,6 +31,7 @@ import {
   tagTint
 } from './kanbanEdit'
 import { KanbanCardModal } from './KanbanCardModal'
+import { NewKanbanDialog } from './NewKanbanDialog'
 
 /**
  * A tiny controlled inline editor reused for every Kanban text edit (card title, add-card, column
@@ -104,6 +105,10 @@ export function KanbanBoard({
 }: BoardViewProps<KanbanBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
+  // Place-first creation: a freshly-dropped Kanban is "held" (configPendingId) until the New Kanban
+  // dialog picks its column axis. While held, render the dialog over the (flow-template) board.
+  const configPending = useCanvasStore((s) => s.configPendingId === board.id)
+  const clearConfigPending = useCanvasStore((s) => s.clearConfigPending)
   // Which element is mid-edit (null = none). Ephemeral session state — NEVER serialized. (Card rename
   // lives in the detail modal now, so there is no card-edit state — only column/add editors.)
   const [addIn, setAddIn] = useState<string | null>(null) // column showing its add-card input
@@ -160,20 +165,10 @@ export function KanbanBoard({
     updateBoard(board.id, next)
   }
 
-  // v19 column axis — what the lanes MEAN: 'flow' (ordered workflow stages) vs 'category' (unordered
-  // buckets). Board-level, committed like any other patch (one undo step, ref-stable no-op).
-  const axis: 'flow' | 'category' = board.columnAxis ?? 'flow'
-  const setAxis = (next: 'flow' | 'category'): void => {
-    if (axis === next) return
-    beginChange()
-    updateBoard(board.id, { columnAxis: next })
-  }
-  const setAxisLabel = (raw: string): void => {
-    const next = raw.trim() || undefined
-    if ((board.axisLabel ?? undefined) === next) return
-    beginChange()
-    updateBoard(board.id, { axisLabel: next })
-  }
+  // v19 column axis (board.columnAxis / axisLabel) is chosen ONCE at creation in the New Kanban
+  // dialog and is not editable on the board — the card modal reads it for its lane-field label. The
+  // category label (below) captions the board so the lanes' MEANING stays legible at a glance.
+  const axisCaption = board.columnAxis === 'category' ? board.axisLabel?.trim() || 'Category' : null
 
   // ── HTML5 drag: card → column. The dragged id rides in dataTransfer (source of truth on drop);
   //    `dragCard` drives only the visual cues. A foreign card (another board's) never sets THIS
@@ -314,51 +309,38 @@ export function KanbanBoard({
       onStartConnect={onStartConnect}
     >
       <div className="kb-root">
-        <div className="kb-axis nodrag nopan">
-          <div className="kb-axis-seg" role="group" aria-label="What the columns mean">
-            <button
-              type="button"
-              className={'kb-axis-opt' + (axis === 'flow' ? ' kb-axis-on' : '')}
-              aria-pressed={axis === 'flow'}
-              data-testid="kb-axis-flow"
-              title="Columns are workflow stages a card progresses through"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setAxis('flow')}
-            >
-              Flow
-            </button>
-            <button
-              type="button"
-              className={'kb-axis-opt' + (axis === 'category' ? ' kb-axis-on' : '')}
-              aria-pressed={axis === 'category'}
-              data-testid="kb-axis-category"
-              title="Columns are categories a card belongs to (no progression)"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setAxis('category')}
-            >
-              Category
-            </button>
+        {/* v19: a Category board captions its axis (read-only) so the lanes read as buckets, not a
+            workflow — the axis is chosen once at creation (New Kanban dialog), not toggled here. A
+            Flow board needs no caption (its lanes are self-evidently a pipeline). */}
+        {axisCaption && (
+          <div
+            className="kb-axis-cap nodrag nopan"
+            data-testid="kb-axis-cap"
+            title={`Columns are categories, grouped by ${axisCaption}`}
+          >
+            <span className="kb-axis-cap-k">Grouped by</span>
+            <span className="kb-axis-cap-v">{axisCaption}</span>
           </div>
-          {axis === 'category' && (
-            <label className="kb-axis-label">
-              <span className="kb-axis-label-t">Grouped by</span>
-              <input
-                className="kb-axis-input nodrag nopan"
-                key={board.axisLabel ?? ''}
-                defaultValue={board.axisLabel ?? ''}
-                placeholder="Category"
-                aria-label="Category axis name"
-                data-testid="kb-axis-label"
-                onPointerDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') e.currentTarget.blur()
-                }}
-                onBlur={(e) => setAxisLabel(e.target.value)}
-              />
-            </label>
-          )}
-        </div>
+        )}
         <div className="kb-cols nowheel">
+          {board.columns.length === 0 && !addingCol && (
+            <div className="kb-lanes-empty">
+              <div className="kb-lanes-empty-t">No {axisCaption ?? 'column'} lanes yet</div>
+              <div className="kb-lanes-empty-s">
+                {axisCaption
+                  ? `Add a lane per ${axisCaption} and file cards into it.`
+                  : 'Add a column to start.'}
+              </div>
+              <button
+                className="kb-lanes-empty-add nodrag nopan"
+                data-testid="kb-add-first-lane"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setAddingCol(true)}
+              >
+                + Add your first {axisCaption ?? 'column'}
+              </button>
+            </div>
+          )}
           {board.columns.map((col) => {
             const cards = cardsByColumn.get(col.id) ?? []
             const atLimit = col.wip !== undefined && cards.length >= col.wip
@@ -492,6 +474,7 @@ export function KanbanBoard({
           onClose={() => setDetailCard(null)}
         />
       )}
+      {configPending && <NewKanbanDialog board={board} onClose={clearConfigPending} />}
     </BoardFrame>
   )
 }

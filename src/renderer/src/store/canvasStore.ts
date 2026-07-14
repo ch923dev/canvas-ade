@@ -130,12 +130,13 @@ export interface CanvasState {
   setProjectLoading: () => void
 
   /**
-   * Id of a terminal awaiting first-run config in the New Terminal dialog (place-first
-   * flow). EPHEMERAL session state — never serialized (scene/session split): set by a
-   * user-placed terminal (`addBoard` with `opts.configPending`), cleared on Create/Cancel
-   * (`clearConfigPending`) or if the board is removed. While set, the matching terminal's
-   * spawn effect is gated OFF so the PTY does not auto-spawn until the dialog resolves.
-   * The MCP `spawn_board` path never sets it (agents configure via `configure_board`).
+   * Id of a board awaiting its first-run config dialog (place-first flow) — a terminal (New
+   * Terminal) or a kanban (New Kanban: pick the column axis). EPHEMERAL session state — never
+   * serialized (scene/session split): set by a user-placed terminal/kanban (`addBoard` with
+   * `opts.configPending`), cleared on Create/Cancel (`clearConfigPending`) or if the board is
+   * removed. While set, a terminal's spawn effect is gated OFF (no auto-spawn until resolved); a
+   * kanban simply renders behind the dialog. The MCP `spawn_board` path never sets it (agents
+   * configure via `configure_board`).
    */
   configPendingId: string | null
   /**
@@ -155,7 +156,7 @@ export interface CanvasState {
    * Add a board of `type` at a world position; selects it; returns its id. `opts.id`
    * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
    * the tool can return it to the agent); omitted → the store mints one. `opts.configPending`
-   * (terminal only) holds the board's spawn until the New Terminal dialog resolves.
+   * (terminal or kanban) holds the board in its config dialog until it resolves.
    */
   addBoard: (
     type: BoardType,
@@ -668,11 +669,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
-    // Place-first New Terminal flow: a user-placed terminal holds its spawn until the
-    // dialog resolves (the spawn effect is gated on configPendingId). Terminal-only +
-    // never on the MCP path. EPHEMERAL — set OUTSIDE trackedChange so it isn't snapshotted
-    // onto the undo rail.
-    const pending = opts?.configPending === true && type === 'terminal'
+    // Place-first config flow: a user-placed terminal (holds its spawn) or kanban (picks its
+    // column axis) opens a config dialog on placement; the spawn effect is gated on
+    // configPendingId. Terminal/kanban only + never on the MCP path. EPHEMERAL — set OUTSIDE
+    // trackedChange so it isn't snapshotted onto the undo rail.
+    const pending = opts?.configPending === true && (type === 'terminal' || type === 'kanban')
     set((s) =>
       trackedChange(
         s,

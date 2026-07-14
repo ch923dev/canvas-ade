@@ -21,68 +21,55 @@
   overflow-y: hidden;
 }
 
-/* ── v19 column-axis strip: declares what the lanes MEAN (flow vs category) ── */
-.kb-axis {
+/* ── v19 column axis — chosen once at creation (New Kanban dialog), not toggled on the board. A
+   Category board captions its axis (read-only) so the lanes read as buckets, not a pipeline. ── */
+.kb-axis-cap {
   display: flex;
-  align-items: center;
-  gap: var(--space-12);
+  align-items: baseline;
+  gap: var(--space-6);
   padding: var(--space-6) var(--space-12);
   border-bottom: 1px solid var(--border-subtle);
 }
-.kb-axis-seg {
-  display: inline-flex;
-  padding: 1px;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-ctl);
-}
-.kb-axis-opt {
-  padding: 1px var(--space-8);
+.kb-axis-cap-k {
   font-size: var(--fs-micro);
-  font-weight: 500;
   letter-spacing: var(--tr-micro);
   text-transform: uppercase;
   color: var(--text-3);
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-ctl);
-  cursor: pointer;
 }
-.kb-axis-opt:hover {
+.kb-axis-cap-v {
+  font-size: var(--fs-meta);
+  font-weight: 500;
   color: var(--text-2);
 }
-.kb-axis-on,
-.kb-axis-on:hover {
-  color: var(--accent);
-  background: var(--accent-wash);
+
+/* Empty-lanes prompt — a fresh Category board starts with NO columns (you define your own). */
+.kb-lanes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-4);
 }
-.kb-axis-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-6);
+.kb-lanes-empty-t {
+  font-size: var(--fs-label);
+  font-weight: 500;
+  color: var(--text-2);
 }
-.kb-axis-label-t {
-  font-size: var(--fs-micro);
-  letter-spacing: var(--tr-micro);
-  text-transform: uppercase;
+.kb-lanes-empty-s {
+  font-size: var(--fs-meta);
   color: var(--text-3);
 }
-.kb-axis-input {
-  width: 120px;
-  padding: 1px var(--space-6);
+.kb-lanes-empty-add {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-8);
   font-family: inherit;
   font-size: var(--fs-meta);
-  color: var(--text);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent);
   border-radius: var(--r-ctl);
-  outline: none;
-}
-.kb-axis-input:focus {
-  border-color: var(--accent);
-}
-.kb-axis-input::placeholder {
-  color: var(--text-3);
+  cursor: pointer;
 }
 .kb-col {
   display: flex;

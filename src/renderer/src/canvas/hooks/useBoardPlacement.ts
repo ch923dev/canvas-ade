@@ -156,9 +156,10 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
       const onUp = (ev: PointerEvent): void => {
         abortDrag() // removes these listeners + clears the ghost
         const add = useCanvasStore.getState().addBoard
-        // A user-placed terminal opens the New Terminal dialog (place-first flow): its spawn
-        // is held until the dialog resolves. Browser/Planning place + render immediately.
-        const configPending = type === 'terminal'
+        // A user-placed terminal or kanban opens its config dialog (place-first flow): the board is
+        // held until the dialog resolves — terminal holds its spawn; kanban picks its column axis
+        // (Flow template vs empty Category). Browser/Planning place + render immediately.
+        const configPending = type === 'terminal' || type === 'kanban'
         if (isClickGesture(ev.clientX - sx, ev.clientY - sy)) {
           const pt = rf.screenToFlowPosition({ x: ev.clientX, y: ev.clientY })
           const size = DEFAULT_BOARD_SIZE[type]
