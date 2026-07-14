@@ -2585,3 +2585,35 @@ picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board 
   check + CodeQL + claude-review green (1 warning dispositioned inline: unit tier for the
   connect state machine filed as follow-up). Dev eyeball check waived by the user for this PR
   (packed-exe boot verify stood in).
+
+## PR #347 — feat(mcp): agent read/write of v19 kanban card-detail fields over MCP (2026-07-15, v0.18.1)
+
+- **Merge `88a29a06`** (commits `e78252ec` wiring+tests · `468c4b02` pin · `f7492c1f` live e2e ·
+  `d94f0ebd` attachment-read · `53829f11` review-fix). **Cross-repo, package-first:** the MCP
+  tool/resource schema lives in the sibling `canvas-ade-mcp` repo — `@expanse-ade/mcp@0.20.0` was
+  published FIRST (`a3952c6` + tag `v0.20.0`, tag-triggered npm OIDC), then this app pinned it.
+- **What:** lets an AGENT (not just the #345 human UI) read + write the v19 kanban card-detail
+  fields over the `canvas-ade` MCP — `add_card`/`update_card` gain `description` / `tags[]` /
+  `fileRefs[]`; `configure_board` gains `columnAxis` (flow|category) / `axisLabel`. All
+  optional/additive over the schema #345 already shipped ⇒ **no schema bump**.
+- **Chain:** MAIN-authoritative sanitize on BOTH the write ingest (`mcpKanban.ts` — multi-line-safe
+  description, dedup tags, positive-int fileRef lines) and the renderer→MAIN mirror
+  (`boardRegistry.ts`, defensive re-sanitize); writes reuse the existing `kanbanEdit` ops (ONE undo
+  step) behind the ADR-0003 human-confirm gate + audit; read projection `deriveKanban` →
+  `buildBoardCards` → `canvas://board/{id}/cards`. `LifecycleOrchestrator` Omit-and-redeclares the
+  widened methods host-side, so the app typechecks the new fields WITHOUT waiting on the package bump.
+- **Attachments (#346):** agent-READ only — `{assetId, name, kind, mime?, size?}` projected
+  read-only into `canvas://board/{id}/cards`, DORMANT/forward-compatible (the `attachments` field
+  lands with #346; a no-op until then, then it lights up automatically). No write tool — `assetId`
+  is a real blob ref (security surface) and agents can't author blobs over the MCP text channel.
+- **Reviewer (2 findings, both fixed + verified, no new findings on re-review):** 1 `[critical]` —
+  the write-gate fileRef-path cap (512) exceeded the mirror-ingest cap (256), so a 257–512-char path
+  ack'd `true` on write then silently vanished on read-back; fixed by lowering the write cap to 256
+  so `sanitizeId` rejects LOUDLY. 1 `[warning]` — `mergeCard`'s legacy `tag`/`tags` shedding was
+  one-directional (a later legacy-`tag`-only update left a card carrying both); fixed bidirectional.
+  Both dispositioned inline (the disposition-aware reviewer stops the re-flag loop).
+- **Verify:** typecheck/lint/unit green (new suites: `mcpKanban` · `boardRegistry` · `mcpBoardCards`
+  · `boardStatus` · `kanbanMcpApply` · `mcpOrchestrator.kanban`) · LIVE e2e round-trip (`mcp.e2e.ts`
+  — `add_card` writes description/tags/fileRefs through the gate → read back in
+  `canvas://board/{id}/cards` → `configure_board` sets the axis; worker denied) · FULL pre-push
+  matrix green (Win 284 / Linux 282) · manual dev check clean · CI check + CodeQL + claude-review green.
