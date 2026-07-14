@@ -252,6 +252,53 @@ describe('KanbanBoard — card detail (v19)', () => {
   })
 })
 
+describe('KanbanBoard — column axis (v19)', () => {
+  it('defaults to Flow and hides the axis-label input', () => {
+    seed()
+    render(<Harness />)
+    expect(screen.getByTestId('kb-axis-flow').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByTestId('kb-axis-label')).toBeNull()
+  })
+
+  it('toggling to Category sets columnAxis and commits an axis label (trimmed)', () => {
+    seed()
+    render(<Harness />)
+    fireEvent.click(screen.getByTestId('kb-axis-category'))
+    expect(boardOf().columnAxis).toBe('category')
+    const input = screen.getByTestId('kb-axis-label') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '  Phase  ' } })
+    fireEvent.blur(input)
+    expect(boardOf().axisLabel).toBe('Phase')
+  })
+
+  it('the modal column-field label reflects the axis (category → the axis label, not "Status")', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [{ id: 'c1', columnId: 'backlog', title: 'One' }]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'One' }))
+    expect(screen.getByLabelText('Phase')).toBeTruthy() // the column <select>, labelled by the axis
+    expect(screen.queryByText('Status')).toBeNull()
+  })
+})
+
 describe('KanbanBoard — column authoring', () => {
   it('adds a column via the inline input', () => {
     seed()

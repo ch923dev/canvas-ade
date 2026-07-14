@@ -285,6 +285,46 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
     ).toThrow(/fileRef/)
   })
 
+  it('round-trips the column axis (columnAxis + axisLabel)', () => {
+    const k: KanbanBoard = {
+      id: 'k',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [{ id: 'a', title: 'A' }],
+      cards: []
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('rejects an invalid columnAxis', () => {
+    const doc = {
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
+      viewport: null,
+      boards: [
+        {
+          id: 'k',
+          type: 'kanban',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 520,
+          title: 'Plan',
+          columnAxis: 'sideways',
+          columns: [{ id: 'a', title: 'A' }],
+          cards: []
+        }
+      ]
+    }
+    expect(() => fromObject(doc as unknown as CanvasDoc)).toThrow(/columnAxis/)
+  })
+
   it('migrate bumps a v18 doc to current (v19) — additive identity, floor unchanged', () => {
     const migrated = migrate({
       schemaVersion: 18,

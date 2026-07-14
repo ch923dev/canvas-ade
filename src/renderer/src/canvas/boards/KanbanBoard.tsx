@@ -160,6 +160,21 @@ export function KanbanBoard({
     updateBoard(board.id, next)
   }
 
+  // v19 column axis — what the lanes MEAN: 'flow' (ordered workflow stages) vs 'category' (unordered
+  // buckets). Board-level, committed like any other patch (one undo step, ref-stable no-op).
+  const axis: 'flow' | 'category' = board.columnAxis ?? 'flow'
+  const setAxis = (next: 'flow' | 'category'): void => {
+    if (axis === next) return
+    beginChange()
+    updateBoard(board.id, { columnAxis: next })
+  }
+  const setAxisLabel = (raw: string): void => {
+    const next = raw.trim() || undefined
+    if ((board.axisLabel ?? undefined) === next) return
+    beginChange()
+    updateBoard(board.id, { axisLabel: next })
+  }
+
   // ── HTML5 drag: card → column. The dragged id rides in dataTransfer (source of truth on drop);
   //    `dragCard` drives only the visual cues. A foreign card (another board's) never sets THIS
   //    board's `dragCard`, so onDragOver won't preventDefault → the browser refuses the cross-board
@@ -299,6 +314,50 @@ export function KanbanBoard({
       onStartConnect={onStartConnect}
     >
       <div className="kb-root">
+        <div className="kb-axis nodrag nopan">
+          <div className="kb-axis-seg" role="group" aria-label="What the columns mean">
+            <button
+              type="button"
+              className={'kb-axis-opt' + (axis === 'flow' ? ' kb-axis-on' : '')}
+              aria-pressed={axis === 'flow'}
+              data-testid="kb-axis-flow"
+              title="Columns are workflow stages a card progresses through"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setAxis('flow')}
+            >
+              Flow
+            </button>
+            <button
+              type="button"
+              className={'kb-axis-opt' + (axis === 'category' ? ' kb-axis-on' : '')}
+              aria-pressed={axis === 'category'}
+              data-testid="kb-axis-category"
+              title="Columns are categories a card belongs to (no progression)"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setAxis('category')}
+            >
+              Category
+            </button>
+          </div>
+          {axis === 'category' && (
+            <label className="kb-axis-label">
+              <span className="kb-axis-label-t">Grouped by</span>
+              <input
+                className="kb-axis-input nodrag nopan"
+                key={board.axisLabel ?? ''}
+                defaultValue={board.axisLabel ?? ''}
+                placeholder="Category"
+                aria-label="Category axis name"
+                data-testid="kb-axis-label"
+                onPointerDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                }}
+                onBlur={(e) => setAxisLabel(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
         <div className="kb-cols nowheel">
           {board.columns.map((col) => {
             const cards = cardsByColumn.get(col.id) ?? []

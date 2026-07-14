@@ -15,9 +15,74 @@
   gap: var(--space-12);
   align-items: flex-start;
   padding: var(--space-12);
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* ── v19 column-axis strip: declares what the lanes MEAN (flow vs category) ── */
+.kb-axis {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-6) var(--space-12);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.kb-axis-seg {
+  display: inline-flex;
+  padding: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+}
+.kb-axis-opt {
+  padding: 1px var(--space-8);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.kb-axis-opt:hover {
+  color: var(--text-2);
+}
+.kb-axis-on,
+.kb-axis-on:hover {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.kb-axis-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.kb-axis-label-t {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kb-axis-input {
+  width: 120px;
+  padding: 1px var(--space-6);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.kb-axis-input:focus {
+  border-color: var(--accent);
+}
+.kb-axis-input::placeholder {
+  color: var(--text-3);
 }
 .kb-col {
   display: flex;

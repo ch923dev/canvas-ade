@@ -63,14 +63,29 @@ export interface KanbanColumn {
 }
 
 /**
- * v17: the Kanban board — a dedicated full-board Trello-style plan visualizer. Unlike `command`/
+ * v17→v19: the Kanban board — a dedicated full-board Trello-style plan visualizer. Unlike `command`/
  * `dataflow` (ephemeral bodies), a Kanban board PERSISTS its content: ordered `columns` + a flat
  * `cards` list. A new board type is breaking → schema v17 / floor 17.
+ *
+ * v19 adds the optional COLUMN AXIS — what the columns group BY — so a board declares whether its
+ * lanes are a workflow (progress) or a categorization (grouping). Additive, defaulted-at-read.
  */
 export interface KanbanBoard extends BoardCommon {
   type: 'kanban'
   columns: KanbanColumn[]
   cards: KanbanCard[]
+  /**
+   * v19: what the columns represent. `'flow'` = ordered workflow stages a card PROGRESSES through
+   * (Backlog→Doing→Done; the classic kanban; the modal field reads "Status", WIP limits meaningful).
+   * `'category'` = unordered buckets a card BELONGS TO (subsystem/phase/owner; moving = re-filing, not
+   * progressing; no "done", WIP hidden by default). Absent ⇒ treated as `'flow'` (back-compat).
+   */
+  columnAxis?: 'flow' | 'category'
+  /**
+   * v19: display name of the column axis — the card-detail modal's column-field label AND a board
+   * caption. Absent ⇒ "Status" (flow) / "Category" (category). E.g. "Phase", "Subsystem", "Sprint".
+   */
+  axisLabel?: string
 }
 
 /**
@@ -100,6 +115,14 @@ export function assertKanbanContent(
   isRecord: (v: unknown) => v is Record<string, unknown>,
   isPositiveNum: (v: unknown) => v is number
 ): void {
+  // v19: the optional column AXIS (what the lanes group by) + its display label. Board-level, so
+  // validated here alongside columns/cards; absent ⇒ 'flow' at read. A bad enum value is rejected.
+  if (b.columnAxis !== undefined && b.columnAxis !== 'flow' && b.columnAxis !== 'category') {
+    fail('kanban board columnAxis is not "flow" or "category"')
+  }
+  if (b.axisLabel !== undefined && typeof b.axisLabel !== 'string') {
+    fail('kanban board axisLabel is not a string')
+  }
   // v17: columns + cards are required arrays. A column needs id/title strings (+ optional positive
   // wip — mirrors kanbanEdit.ts's setColumnWip, which only ever persists a finite `wip > 0` and
   // clears it to `undefined` otherwise, so a non-positive value here can only be a hand-edited/

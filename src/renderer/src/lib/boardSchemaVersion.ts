@@ -74,12 +74,14 @@
  *   ADR 0007 worktree-skew version-collision class.)
  * - v19 = optional Kanban CARD detail fields on `KanbanCard` — `description` (plain text), `tags`
  *   (string list, supersedes the singular `tag` which is still read as a fallback), and `fileRefs`
- *   ({path, line?, endLine?} — file+line pointers the card-detail modal opens on click). All optional
- *   + defaulted-at-read (absent ⇒ no description / fall back to `tag` / no refs), so this is ADDITIVE
- *   (card-detail epic): writer-only bump, floor STAYS 17. An older reader ignores the unknown optional
- *   keys and they survive the `fromObject` structuredClone round-trip; `assertKanbanContent`
- *   shape-checks them without rejecting the card. The migration is identity (no data rewrite — a
- *   pre-v19 card simply carries none of the new fields).
+ *   ({path, line?, endLine?} — file+line pointers the card-detail modal opens on click) — PLUS the
+ *   optional board-level COLUMN AXIS on `KanbanBoard`: `columnAxis` ('flow' | 'category') + `axisLabel`
+ *   (what the columns group by; drives the modal column-field label). All optional + defaulted-at-read
+ *   (absent ⇒ no description / fall back to `tag` / no refs / axis = 'flow'), so this is ADDITIVE
+ *   (card-detail + column-axis epic): writer-only bump, floor STAYS 17. An older reader ignores the
+ *   unknown optional keys and they survive the `fromObject` structuredClone round-trip;
+ *   `assertKanbanContent` shape-checks them without rejecting the card/board. The migration is identity
+ *   (no data rewrite — a pre-v19 board/card simply carries none of the new fields).
  */
 export const SCHEMA_VERSION = 19
 

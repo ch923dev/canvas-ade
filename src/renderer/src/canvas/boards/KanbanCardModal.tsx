@@ -75,6 +75,10 @@ export function KanbanCardModal({
 
   const tags = effectiveTags(card)
   const columnTitle = board.columns.find((c) => c.id === card.columnId)?.title ?? card.columnId
+  // v19 column axis: the sidebar column-picker label reflects what the columns MEAN — a workflow
+  // "Status" (flow) vs the board's category name (e.g. "Phase"). Absent axis ⇒ flow ⇒ "Status".
+  const axisLabel =
+    board.axisLabel?.trim() || (board.columnAxis === 'category' ? 'Category' : 'Status')
 
   const addTag = (): void => {
     const v = tagDraft.trim()
@@ -177,10 +181,10 @@ export function KanbanCardModal({
           {/* right — metadata sidebar */}
           <div className="kbm-side">
             <div className="kbm-block">
-              <span className="kbm-label">Status</span>
+              <span className="kbm-label">{axisLabel}</span>
               <select
                 className="kbm-select"
-                aria-label="Column"
+                aria-label={axisLabel}
                 data-testid="kbm-status"
                 value={card.columnId}
                 onChange={(e) => commit(moveCard(board, cardId, e.target.value))}
