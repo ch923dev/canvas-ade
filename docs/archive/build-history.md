@@ -2617,3 +2617,44 @@ picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board 
   — `add_card` writes description/tags/fileRefs through the gate → read back in
   `canvas://board/{id}/cards` → `configure_board` sets the axis; worker denied) · FULL pre-push
   matrix green (Win 284 / Linux 282) · manual dev check clean · CI check + CodeQL + claude-review green.
+
+## PR #346 — feat(kanban): add-card create modal + card attachments (2026-07-15, v0.19.0)
+
+- **Merge `3679ddf7`** (commits `9446b046` schema+create-modal · `e20e20bb` parity-test nit ·
+  `57d44c4a` links+picker-search+icon-redesign · `d2339c59` #347 MCP-snapshot integration ·
+  `f1ed6e5d` review-fix). Rebased onto main AFTER #347 landed: version conflict → 0.19.0; #347's
+  local `BoardSnapshotInput`/`KanbanAttachmentSummary` were frozen at the file-only attachment shape
+  (`assetId` required), so this relaxed them to the `KanbanAttachment` union (optional `assetId` +
+  `url`) — link attachments are intentionally NOT agent-mirrored yet (deliberate follow-up, test-pinned).
+- **Create-mode modal:** `+ Add card` no longer opens a bare inline title box — it opens the existing
+  `KanbanCardModal` in a new CREATE mode (empty draft, target column pre-picked) that commits
+  title+description+tags+fileRefs+attachments as ONE new card in one undo step (`addCardDetailed`). The
+  #345 remount discipline holds (keyed by `cardId` / a create token, no prop→state sync effect).
+- **Attachments (image · video · audio · any file · link):** an Attachments block on every card —
+  BUTTON (native picker over a hidden `<input type=file multiple>`) · DRAG-DROP · clipboard PASTE,
+  persisted to the SAME content-addressed store the whiteboard uses (`.canvas/assets/<sha1>.<ext>`) via
+  the generalized `asset:write` IPC. MAIN's `writeAsset` ext-gate widened from the 8-ext media allow-list
+  to a safe alphanumeric slug (`SAFE_EXT_RE`) — the sha1 stem is MAIN-computed, so no traversal/exec
+  surface (`ASSET_EXTS` stays the backdrop-picker media drift guard). Media renders via `blob:` URLs
+  in-sandbox: image→lightbox, `<video>`/`<audio>` players, other file→a chip that opens externally; a
+  LINK carries a `url` (no blob) and opens in the OS browser (scheme-gated `shell:openExternal`, bare
+  host → https://). Card face gains an attachment-count indicator. Schema additive on the unreleased v19
+  (`KanbanCard.attachments` + a `KanbanAttachment` file|link union) — no bump; rides the `cards` patch key.
+- **Also:** recursive file-picker search (Pick file & lines — a flat all-project match list, empty
+  folders pruned, heavy trees skipped, capped 500, listings cached, debounced) replacing the shallow
+  same-dir filter; a VS-Code-style file-tree icon redesign (self-contained inline SVG, calm one-accent —
+  folder + per-extension file glyphs recognizable by shape, chevron rotate-on-expand; via the impeccable
+  skill against the existing DESIGN.md tokens); + a `min-height:0` overflow fix carried from #345 (the
+  tree spilled out of the modal card on a large project).
+- **Reviewer (clean across all rounds; 2 `[warning]`s fixed + inline-replied):** (1) client-side 256 MB
+  size cap checked BEFORE `arrayBuffer()` buffers a file into renderer memory (multi-GB drop → OOM
+  guard); (2) create-mode commit-vs-write race — "Add card" is now disabled (`onPendingChange`) while an
+  `asset.write` is in flight, so a commit can't drop the attachment (orphaned blob). Both dispositioned
+  inline (the disposition-aware reviewer stops the re-flag loop).
+- **Verify:** typecheck/lint/format green · unit 5163 pass (5 known machine-env flakes — pathSafe
+  junction + pty.recapenv, identical on base) · e2e kanban 7/7 (create-modal add · real file attach to
+  `.canvas/assets/` · link add with https:// prepend) · FULL pre-merge matrix on the final head
+  `f1ed6e5d` (Win kanban green — the 3 gate failures confirmed pre-existing/env: `gitDiff`/`menuShell`
+  ambient + `mcp:758` fails on a pure #347 base checkout; Linux Docker **285 passed**) · CI check +
+  CodeQL + analyze + claude-review green · manual dev check via live HMR (create modal · attachments ·
+  links · picker search + icons).
