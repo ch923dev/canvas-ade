@@ -11,6 +11,7 @@
  * so the caller can blindly commit on blur without special-casing.
  */
 import type { KanbanBoard, KanbanCard, KanbanColumn, KanbanFileRef } from '../../lib/boardSchema'
+import type { KanbanAttachment } from '../../lib/kanbanSchema'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -46,6 +47,57 @@ function fileRefsEqual(a: KanbanFileRef[] | undefined, b: KanbanFileRef[] | unde
   )
 }
 
+/** Structural equality for two (possibly absent) attachment lists — the no-op guard for setCardAttachments. */
+function attachmentsEqual(
+  a: KanbanAttachment[] | undefined,
+  b: KanbanAttachment[] | undefined
+): boolean {
+  const x = a ?? []
+  const y = b ?? []
+  if (x.length !== y.length) return false
+  return x.every(
+    (t, i) =>
+      t.assetId === y[i].assetId &&
+      t.url === y[i].url &&
+      t.name === y[i].name &&
+      t.kind === y[i].kind &&
+      t.mime === y[i].mime &&
+      t.size === y[i].size
+  )
+}
+
+/** Trim + drop blanks and case-sensitive duplicates (first wins, order preserved). Shared by the tag ops. */
+function cleanTags(tags: string[]): string[] {
+  const cleaned: string[] = []
+  for (const t of tags) {
+    const v = t.trim()
+    if (v && !cleaned.includes(v)) cleaned.push(v)
+  }
+  return cleaned
+}
+
+/**
+ * Normalize a fileRef list (shared by setCardFileRefs + addCardDetailed): path trimmed (blank ⇒
+ * dropped); `line` clamped to a positive integer (else the line/endLine pair is dropped — the file
+ * opens at the top); `endLine` kept only when it is a positive integer STRICTLY greater than `line`.
+ */
+function cleanFileRefs(fileRefs: KanbanFileRef[]): KanbanFileRef[] {
+  const cleaned: KanbanFileRef[] = []
+  for (const r of fileRefs) {
+    const path = r.path.trim()
+    if (!path) continue
+    const ref: KanbanFileRef = { path }
+    const line = normLine(r.line)
+    if (line !== undefined) {
+      ref.line = line
+      const endLine = normLine(r.endLine)
+      if (endLine !== undefined && endLine > line) ref.endLine = endLine
+    }
+    cleaned.push(ref)
+  }
+  return cleaned
+}
+
 // ── card ops (return the new `cards` array) ──────────────────────────────────
 
 /** Append a new card (fresh id) to `columnId`'s tail. Empty/blank title ⇒ no-op. */
@@ -53,6 +105,46 @@ export function addCard(board: KanbanBoard, columnId: string, title: string): Ka
   const t = title.trim()
   if (!t) return board.cards
   return [...board.cards, { id: newId(), columnId, title: t }]
+}
+
+/** The full set of fields the create-mode modal can seed a new card with (#346). Only `title` is required. */
+export interface NewCardDraft {
+  title: string
+  description?: string
+  tags?: string[]
+  assignee?: string
+  ref?: string
+  fileRefs?: KanbanFileRef[]
+  attachments?: KanbanAttachment[]
+}
+
+/**
+ * Append a fully-formed new card built from the create-mode modal's draft (#346) — the rich
+ * counterpart to `addCard` (title-only). Every field is normalized through the SAME cleaners the
+ * per-field edit ops use (trim, tag dedupe, fileRef line clamp), and an empty/absent field simply
+ * doesn't get its key — so the new card is byte-identical to one built field-by-field in edit mode.
+ * Blank title ⇒ ref-stable no-op (a card must keep a title); the modal guards this before committing.
+ */
+export function addCardDetailed(
+  board: KanbanBoard,
+  columnId: string,
+  draft: NewCardDraft
+): KanbanCard[] {
+  const title = draft.title.trim()
+  if (!title) return board.cards
+  const card: KanbanCard = { id: newId(), columnId, title }
+  const description = draft.description?.trim()
+  if (description) card.description = description
+  const tags = draft.tags ? cleanTags(draft.tags) : []
+  if (tags.length) card.tags = tags
+  const assignee = draft.assignee?.trim()
+  if (assignee) card.assignee = assignee
+  const ref = draft.ref?.trim()
+  if (ref) card.ref = ref
+  const fileRefs = draft.fileRefs ? cleanFileRefs(draft.fileRefs) : []
+  if (fileRefs.length) card.fileRefs = fileRefs
+  if (draft.attachments && draft.attachments.length) card.attachments = draft.attachments
+  return [...board.cards, card]
 }
 
 /** Retitle a card. Blank or unchanged title ⇒ ref-stable no-op (a card must keep a title). */
@@ -115,11 +207,7 @@ export function setCardDescription(
 export function setCardTags(board: KanbanBoard, cardId: string, tags: string[]): KanbanCard[] {
   const cur = board.cards.find((c) => c.id === cardId)
   if (!cur) return board.cards
-  const cleaned: string[] = []
-  for (const t of tags) {
-    const v = t.trim()
-    if (v && !cleaned.includes(v)) cleaned.push(v)
-  }
+  const cleaned = cleanTags(tags)
   const next = cleaned.length ? cleaned : undefined
   const curTags = cur.tags ?? []
   const unchanged = curTags.length === cleaned.length && curTags.every((t, i) => t === cleaned[i])
@@ -146,25 +234,35 @@ export function setCardFileRefs(
 ): KanbanCard[] {
   const cur = board.cards.find((c) => c.id === cardId)
   if (!cur) return board.cards
-  const cleaned: KanbanFileRef[] = []
-  for (const r of fileRefs) {
-    const path = r.path.trim()
-    if (!path) continue
-    const ref: KanbanFileRef = { path }
-    const line = normLine(r.line)
-    if (line !== undefined) {
-      ref.line = line
-      const endLine = normLine(r.endLine)
-      if (endLine !== undefined && endLine > line) ref.endLine = endLine
-    }
-    cleaned.push(ref)
-  }
+  const cleaned = cleanFileRefs(fileRefs)
   const next = cleaned.length ? cleaned : undefined
   if (fileRefsEqual(cur.fileRefs, next)) return board.cards
   return board.cards.map((c) => {
     if (c.id !== cardId) return c
     const { fileRefs: _drop, ...rest } = c
     return next === undefined ? rest : { ...rest, fileRefs: next }
+  })
+}
+
+/**
+ * Replace a card's attachments (v19 / #346). The entries arrive already-built by the capture path
+ * (assetId + name + derived kind + optional mime/size) — this op only stores them, matching the
+ * setCardFileRefs discipline: empty ⇒ the key is dropped; unknown card or a structurally-identical
+ * list ⇒ ref-stable no-op (so the modal can commit blindly on each add/remove).
+ */
+export function setCardAttachments(
+  board: KanbanBoard,
+  cardId: string,
+  attachments: KanbanAttachment[]
+): KanbanCard[] {
+  const cur = board.cards.find((c) => c.id === cardId)
+  if (!cur) return board.cards
+  const next = attachments.length ? attachments : undefined
+  if (attachmentsEqual(cur.attachments, next)) return board.cards
+  return board.cards.map((c) => {
+    if (c.id !== cardId) return c
+    const { attachments: _drop, ...rest } = c
+    return next === undefined ? rest : { ...rest, attachments: next }
   })
 }
 

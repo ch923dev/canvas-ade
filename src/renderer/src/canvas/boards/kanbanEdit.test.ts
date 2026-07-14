@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import type { KanbanBoard } from '../../lib/boardSchema'
+import type { KanbanAttachment } from '../../lib/kanbanSchema'
 import {
   addCard,
+  addCardDetailed,
   addColumn,
   effectiveTags,
   moveCard,
@@ -10,6 +12,7 @@ import {
   renameCard,
   renameColumn,
   setCardAssignee,
+  setCardAttachments,
   setCardDescription,
   setCardFileRefs,
   setCardRef,
@@ -150,6 +153,64 @@ describe('kanbanEdit — card-detail ops (v19)', () => {
     })
     expect('assignee' in setCardAssignee(withAssignee, 'c1', '')[0]).toBe(false)
     expect(setCardAssignee(b, 'c1', '')).toBe(b.cards) // already absent → no-op
+  })
+
+  it('setCardAttachments stores entries, drops the key on empty, and no-ops when unchanged (#346)', () => {
+    const b = board()
+    const atts: KanbanAttachment[] = [
+      { assetId: 'assets/a.png', name: 'a.png', kind: 'image', mime: 'image/png', size: 12 }
+    ]
+    expect(setCardAttachments(b, 'c1', atts)[0].attachments).toEqual(atts)
+    // clearing an existing list DROPS the key rather than storing []
+    const withAtt = board({
+      cards: [{ id: 'c1', columnId: 'backlog', title: 'One', attachments: atts }]
+    })
+    expect('attachments' in setCardAttachments(withAtt, 'c1', [])[0]).toBe(false)
+    // structurally identical → ref-stable no-op
+    expect(
+      setCardAttachments(withAtt, 'c1', [
+        { assetId: 'assets/a.png', name: 'a.png', kind: 'image', mime: 'image/png', size: 12 }
+      ])
+    ).toBe(withAtt.cards)
+    expect(setCardAttachments(b, 'nope', atts)).toBe(b.cards) // unknown card
+  })
+
+  it('addCardDetailed appends a normalized new card with every field (#346)', () => {
+    const b = board()
+    const out = addCardDetailed(b, 'review', {
+      title: '  Ship it ',
+      description: '  body  ',
+      tags: [' feature ', 'feature', '  '], // trimmed + deduped, blank dropped
+      assignee: ' claude ',
+      ref: ' PR #9 ',
+      fileRefs: [{ path: ' src/x.ts ', line: 3.9 }, { path: '   ' }], // path trimmed, line floored, blank dropped
+      attachments: [{ assetId: 'assets/v.mp4', name: 'v.mp4', kind: 'video' }]
+    })
+    expect(out).toHaveLength(3)
+    const c = out[2]
+    expect(c).toMatchObject({
+      columnId: 'review',
+      title: 'Ship it',
+      description: 'body',
+      tags: ['feature'],
+      assignee: 'claude',
+      ref: 'PR #9',
+      fileRefs: [{ path: 'src/x.ts', line: 3 }],
+      attachments: [{ assetId: 'assets/v.mp4', name: 'v.mp4', kind: 'video' }]
+    })
+    expect(c.id).toBeTruthy()
+  })
+
+  it('addCardDetailed omits empty fields and refuses a blank title (#346)', () => {
+    const b = board()
+    const out = addCardDetailed(b, 'backlog', { title: 'Bare' })
+    const c = out[2]
+    expect(c).toEqual({ id: c.id, columnId: 'backlog', title: 'Bare' })
+    for (const k of ['description', 'tags', 'assignee', 'ref', 'fileRefs', 'attachments']) {
+      expect(k in c).toBe(false)
+    }
+    // blank title → ref-stable no-op (no card added)
+    expect(addCardDetailed(b, 'backlog', { title: '   ' })).toBe(b.cards)
   })
 
   it('effectiveTags prefers tags[], falls back to the legacy tag, else empty', () => {

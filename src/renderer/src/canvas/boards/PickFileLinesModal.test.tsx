@@ -86,19 +86,39 @@ describe('PickFileLinesModal', () => {
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ path: 'b.ts' }))
   })
 
-  it('filters file rows by name (dirs stay for navigation)', async () => {
+  it('a filter runs a RECURSIVE search → flat file matches across dirs, folders hidden (#346)', async () => {
     mockFileApi({
       '': [
         { name: 'src', isDir: true },
         { name: 'README.md', isDir: false },
         { name: 'LICENSE', isDir: false }
-      ]
+      ],
+      // A nested file the OLD shallow filter could never reach — the recursive walk finds it.
+      src: [{ name: 'readme-notes.txt', isDir: false }]
     })
     render(<PickFileLinesModal onPick={() => {}} onClose={() => {}} />)
     await waitFor(() => expect(screen.getByText('README.md')).toBeTruthy())
     fireEvent.change(screen.getByTestId('pfl-filter'), { target: { value: 'readme' } })
+    // Debounced recursive walk → flat matches: README.md + the nested src/readme-notes.txt.
+    await waitFor(() => expect(screen.getByText('readme-notes.txt')).toBeTruthy())
     expect(screen.getByText('README.md')).toBeTruthy()
-    expect(screen.queryByText('LICENSE')).toBeNull()
-    expect(screen.getByText('src')).toBeTruthy() // dir stays visible
+    expect(screen.queryByText('LICENSE')).toBeNull() // non-match dropped
+    // No navigable FOLDER rows in search results (the nested match still shows its parent as a dir label).
+    expect(document.querySelectorAll('.pfl-row.dir').length).toBe(0)
+  })
+
+  it('clearing the filter returns to the browse tree (folders visible again) (#346)', async () => {
+    mockFileApi({
+      '': [
+        { name: 'src', isDir: true },
+        { name: 'README.md', isDir: false }
+      ]
+    })
+    render(<PickFileLinesModal onPick={() => {}} onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('src')).toBeTruthy())
+    fireEvent.change(screen.getByTestId('pfl-filter'), { target: { value: 'readme' } })
+    await waitFor(() => expect(screen.queryByText('src')).toBeNull())
+    fireEvent.change(screen.getByTestId('pfl-filter'), { target: { value: '' } })
+    await waitFor(() => expect(screen.getByText('src')).toBeTruthy()) // tree restored
   })
 })

@@ -3,20 +3,25 @@ import { ASSET_EXTS } from './projectStore'
 import { IMAGE_EXTS, VIDEO_EXTS, MIME_BY_EXT } from '../renderer/src/canvas/backdrop/acceptExts'
 
 /**
- * S11b — accept-list drift guard (addendum-presets.md section 6). The renderer's
- * wallpaper accept lists and MAIN's `ASSET_EXTS` are duplicated ACROSS the trust
- * boundary on purpose (MAIN re-validates the untrusted renderer). The hazard is
- * drift: PR 1 added video to both renderer lists but not MAIN's, so the first real
- * `.webm` import threw `writeAsset: unsupported ext webm` at the IPC boundary. This
- * node-env test imports the live constants from both sides so the next ext added to
- * one side fails here instead of a user's import.
+ * S11b — backdrop accept-list drift guard (addendum-presets.md section 6). The renderer's wallpaper
+ * accept lists and MAIN's `ASSET_EXTS` are duplicated ACROSS the trust boundary on purpose. The
+ * hazard is drift between them: PR 1 added video to both renderer lists but not MAIN's, so the first
+ * real `.webm` import threw at the IPC boundary. This node-env test imports the live constants from
+ * both sides so the next ext added to one side fails here instead of a user's import.
+ *
+ * NOTE (#346): `ASSET_EXTS` is the backdrop-picker MEDIA allow-list, no longer the `writeAsset` gate
+ * — that widened to a safe alphanumeric slug (`SAFE_EXT_RE`) so card attachments can be any file. So
+ * this guards the picker↔media-list relationship, not "writability" (any safe ext is now writable).
  */
-describe('backdrop asset-ext parity (renderer accept lists subset of MAIN)', () => {
+describe('backdrop asset-ext parity (renderer picker lists subset of MAIN media list)', () => {
   const rendererExts = [...IMAGE_EXTS, ...VIDEO_EXTS, ...Object.keys(MIME_BY_EXT)]
 
-  it('every renderer-accepted ext is writable by MAIN (subset of ASSET_EXTS)', () => {
+  it('every renderer picker ext is in MAIN ASSET_EXTS media allow-list (backdrop drift guard)', () => {
     const orphans = rendererExts.filter((e) => !ASSET_EXTS.has(e))
-    expect(orphans, `renderer accepts exts MAIN would reject: ${orphans.join(', ')}`).toEqual([])
+    expect(
+      orphans,
+      `renderer picker exts absent from MAIN ASSET_EXTS: ${orphans.join(', ')}`
+    ).toEqual([])
   })
 
   it('the two renderer lists agree: MIME_BY_EXT covers exactly IMAGE_EXTS + VIDEO_EXTS', () => {

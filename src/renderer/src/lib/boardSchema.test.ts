@@ -285,6 +285,92 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
     ).toThrow(/fileRef/)
   })
 
+  it('round-trips attachments[] through toObject/fromObject (#346)', () => {
+    const k: KanbanBoard = {
+      id: 'k2',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'a', title: 'A' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'a',
+          title: 'one',
+          attachments: [
+            {
+              assetId: 'assets/aa.png',
+              name: 'shot.png',
+              kind: 'image',
+              mime: 'image/png',
+              size: 1234
+            },
+            { assetId: 'assets/bb.pdf', name: 'spec.pdf', kind: 'file' }
+          ]
+        }
+      ]
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('rejects a non-array attachments (#346)', () => {
+    expect(() => fromObject(withCard({ attachments: 'nope' }) as CanvasDoc)).toThrow(/attachments/)
+  })
+
+  it('rejects an attachment with an out-of-enum kind (#346)', () => {
+    expect(() =>
+      fromObject(
+        withCard({
+          attachments: [{ assetId: 'assets/x.bin', name: 'x', kind: 'zip' }]
+        }) as CanvasDoc
+      )
+    ).toThrow(/kind/)
+  })
+
+  it('rejects an attachment with a non-string assetId + a non-positive size (#346)', () => {
+    expect(() =>
+      fromObject(withCard({ attachments: [{ assetId: 5, name: 'x', kind: 'file' }] }) as CanvasDoc)
+    ).toThrow(/assetId/)
+    expect(() =>
+      fromObject(
+        withCard({
+          attachments: [{ assetId: 'assets/x.png', name: 'x', kind: 'image', size: 0 }]
+        }) as CanvasDoc
+      )
+    ).toThrow(/size/)
+  })
+
+  it('round-trips a LINK attachment (kind:link + url, no assetId) (#346)', () => {
+    const k: KanbanBoard = {
+      id: 'k2',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'a', title: 'A' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'a',
+          title: 'one',
+          attachments: [{ url: 'https://github.com/x/y', name: 'github.com/x/y', kind: 'link' }]
+        }
+      ]
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('rejects a link attachment with a non-string url (#346)', () => {
+    expect(() =>
+      fromObject(withCard({ attachments: [{ name: 'x', kind: 'link' }] }) as CanvasDoc)
+    ).toThrow(/url/)
+  })
+
   it('round-trips the column axis (columnAxis + axisLabel)', () => {
     const k: KanbanBoard = {
       id: 'k',

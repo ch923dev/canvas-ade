@@ -4,14 +4,19 @@
  * (add/rename/delete-with-reflow + soft WIP). Every edit lands through `updateBoard` as one undoable
  * step. The full-app slivers (React Flow drag interplay, actual pointer DnD) live in the e2e spec.
  */
-import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { KanbanBoard } from './KanbanBoard'
 import { useCanvasStore } from '../../store/canvasStore'
 import type { KanbanBoard as KanbanBoardData } from '../../lib/boardSchema'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  delete (window as any).api
+  vi.restoreAllMocks()
+})
 
 /** Seed one deterministic kanban board (fixed ids) with clean undo rails. */
 function seed(): void {
@@ -79,16 +84,79 @@ describe('KanbanBoard — read render', () => {
 })
 
 describe('KanbanBoard — card interaction', () => {
-  it('adds a card via the inline input (Enter commits to the store)', () => {
+  it('adds a card via the create-mode modal (Add card commits ONE new card in one step) (#346)', () => {
     seed()
     render(<Harness />)
     fireEvent.click(screen.getByLabelText('Add card to Backlog'))
-    const input = screen.getByLabelText('New card in Backlog') as HTMLInputElement
+    // The create modal opens (empty draft) rather than a bare inline input.
+    expect(screen.getByTestId('kanban-card-modal')).toBeTruthy()
+    const input = screen.getByTestId('kbm-title') as HTMLInputElement
+    expect(input.value).toBe('') // empty draft
     fireEvent.change(input, { target: { value: '  Fourth  ' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    // Seed a description too — proves the whole draft commits as one card / one undo step.
+    fireEvent.change(screen.getByTestId('kbm-desc'), { target: { value: 'body' } })
+    fireEvent.click(screen.getByTestId('kbm-add'))
     const backlog = boardOf().cards.filter((c) => c.columnId === 'backlog')
     expect(backlog.map((c) => c.title)).toEqual(['One', 'Fourth'])
+    expect(backlog[1].description).toBe('body')
     expect(useCanvasStore.getState().past).toHaveLength(1) // one undoable step
+    expect(screen.queryByTestId('kanban-card-modal')).toBeNull() // closes after Add
+  })
+
+  it('create modal pre-picks the target column and honours a column change (#346)', () => {
+    seed()
+    render(<Harness />)
+    fireEvent.click(screen.getByLabelText('Add card to Review'))
+    const status = screen.getByTestId('kbm-status') as HTMLSelectElement
+    expect(status.value).toBe('review') // pre-selected to the clicked column
+    // Re-file to Backlog before adding.
+    fireEvent.change(status, { target: { value: 'backlog' } })
+    fireEvent.change(screen.getByTestId('kbm-title'), { target: { value: 'Moved' } })
+    fireEvent.click(screen.getByTestId('kbm-add'))
+    const created = boardOf().cards.find((c) => c.title === 'Moved')
+    expect(created?.columnId).toBe('backlog')
+  })
+
+  it('create modal refuses a blank title (no card, no undo step) (#346)', () => {
+    seed()
+    render(<Harness />)
+    const before = boardOf().cards.length
+    fireEvent.click(screen.getByLabelText('Add card to Backlog'))
+    fireEvent.change(screen.getByTestId('kbm-title'), { target: { value: '   ' } })
+    fireEvent.click(screen.getByTestId('kbm-add'))
+    expect(boardOf().cards.length).toBe(before) // nothing added
+    expect(useCanvasStore.getState().past).toHaveLength(0)
+    expect(screen.getByTestId('kanban-card-modal')).toBeTruthy() // stays open
+  })
+
+  it('create modal disables "Add card" while an attachment write is in flight (#346 review)', async () => {
+    seed()
+    // A DEFERRED asset.write so the write can be held "in flight" mid-test.
+    let resolveWrite: (v: { assetId: string }) => void = () => {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).api = {
+      asset: {
+        write: vi.fn(() => new Promise<{ assetId: string }>((r) => (resolveWrite = r))),
+        read: vi.fn(async () => null)
+      }
+    }
+    render(<Harness />)
+    fireEvent.click(screen.getByLabelText('Add card to Backlog'))
+    fireEvent.change(screen.getByTestId('kbm-title'), { target: { value: 'Busy' } })
+    // Drop a file onto the hidden picker input → asset.write starts and stays pending.
+    const file = new File(['x'], 'a.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByTestId('kba-input'), { target: { files: [file] } })
+    // "Add card" is disabled while the write is in flight — a commit here would drop the attachment.
+    await waitFor(() =>
+      expect((screen.getByTestId('kbm-add') as HTMLButtonElement).disabled).toBe(true)
+    )
+    // Resolve the write → the button re-enables and the attachment is in the draft.
+    resolveWrite({ assetId: 'assets/' + 'a'.repeat(40) + '.txt' })
+    await waitFor(() =>
+      expect((screen.getByTestId('kbm-add') as HTMLButtonElement).disabled).toBe(false)
+    )
+    fireEvent.click(screen.getByTestId('kbm-add'))
+    expect(boardOf().cards.find((c) => c.title === 'Busy')?.attachments?.length).toBe(1)
   })
 
   it('renames a card via the detail modal title field (blur commits)', () => {
@@ -177,6 +245,39 @@ describe('KanbanBoard — card detail (v19)', () => {
     expect(screen.getByText('schema')).toBeTruthy()
     expect(screen.getByLabelText('Has a description')).toBeTruthy()
     expect(screen.getByLabelText('2 file references')).toBeTruthy()
+  })
+
+  it('paints an attachment-count indicator on the card face (#346)', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          attachments: [
+            { assetId: 'assets/a.png', name: 'a.png', kind: 'image' },
+            { assetId: 'assets/b.pdf', name: 'b.pdf', kind: 'file' }
+          ]
+        }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    expect(screen.getByLabelText('2 attachments')).toBeTruthy()
   })
 
   it('opens the detail modal on a card-body click and edits the description', () => {

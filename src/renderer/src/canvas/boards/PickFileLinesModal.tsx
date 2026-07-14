@@ -15,10 +15,32 @@ import type { KanbanFileRef } from '../../lib/boardSchema'
 import type { FileEntry } from '../fileTreeData'
 import { Modal } from '../Modal'
 import { buildEditorExtensions, extOf, looksBinary, resolveLanguage } from './fileBoardSyntax'
+import { FileIcon, FolderIcon, TreeChevron } from './fileTreeIcons'
 
 const childId = (parent: string, name: string): string => (parent ? `${parent}/${name}` : name)
+const dirOf = (p: string): string => {
+  const cut = p.lastIndexOf('/')
+  return cut < 0 ? '' : p.slice(0, cut)
+}
+
+/** Dirs the recursive filter search skips — heavy / generated trees a card ref never points into. */
+const SEARCH_IGNORE = new Set([
+  'node_modules',
+  '.git',
+  '.canvas',
+  '.next',
+  'dist',
+  'out',
+  'release',
+  'coverage',
+  '.turbo',
+  '.cache'
+])
+/** Result cap — stop the walk once this many files match, so a broad filter can't build an unbounded list. */
+const SEARCH_CAP = 500
 
 type LoadStatus = 'idle' | 'loading' | 'binary' | 'error'
+type Match = { path: string; name: string }
 
 export function PickFileLinesModal({
   initial,
@@ -33,6 +55,12 @@ export function PickFileLinesModal({
   const [listings, setListings] = useState<Record<string, FileEntry[]>>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState('')
+  // Filter search: a non-empty filter switches the left pane from the lazy TREE to a flat list of ALL
+  // matching files (recursive walk), so folders with no match simply don't appear. `null` = not searching.
+  const [matches, setMatches] = useState<Match[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const searchToken = useRef(0)
+  const dirCache = useRef<Map<string, FileEntry[]>>(new Map())
   const [path, setPath] = useState<string>(initial?.path ?? '')
   const [text, setText] = useState<string | null>(null)
   const [status, setStatus] = useState<LoadStatus>(initial?.path ? 'loading' : 'idle')
@@ -98,6 +126,65 @@ export function PickFileLinesModal({
   }, [])
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 
+  // Filter → flat file search. A non-empty filter kicks off a debounced recursive walk from the root
+  // (skipping SEARCH_IGNORE trees) that collects every file whose name matches, capped at SEARCH_CAP.
+  // Listings are cached across walks so re-typing is cheap; a monotonic token drops a superseded walk.
+  // ALL setState happens inside the timeout callback (never synchronously in the effect body) — so an
+  // empty filter resets in a 0ms tick and a search enters its loading state when the debounce fires.
+  useEffect(() => {
+    const q = filter.trim().toLowerCase()
+    const token = ++searchToken.current // also cancels any in-flight walk
+    if (!q) {
+      const t = setTimeout(() => {
+        if (searchToken.current !== token) return
+        setSearching(false)
+        setMatches(null)
+      }, 0)
+      return () => clearTimeout(t)
+    }
+    const listCached = async (dir: string): Promise<FileEntry[]> => {
+      const hit = dirCache.current.get(dir)
+      if (hit) return hit
+      const entries = (await window.api?.file?.listDir?.(dir)) ?? []
+      dirCache.current.set(dir, entries)
+      return entries
+    }
+    const timer = setTimeout(() => {
+      if (searchToken.current !== token) return
+      setSearching(true)
+      setMatches([]) // enter search mode (empty so far → the "Searching…" note shows)
+      void (async () => {
+        const found: Match[] = []
+        const stack: string[] = ['']
+        while (stack.length && found.length < SEARCH_CAP) {
+          if (searchToken.current !== token) return // superseded by a newer keystroke
+          const dir = stack.pop() as string
+          let entries: FileEntry[]
+          try {
+            entries = await listCached(dir)
+          } catch {
+            continue // a dir that fails to list is skipped — the rest of the walk still runs
+          }
+          if (searchToken.current !== token) return
+          for (const e of entries) {
+            const id = childId(dir, e.name)
+            if (e.isDir) {
+              if (!SEARCH_IGNORE.has(e.name)) stack.push(id)
+            } else if (e.name.toLowerCase().includes(q)) {
+              found.push({ path: id, name: e.name })
+              if (found.length >= SEARCH_CAP) break
+            }
+          }
+        }
+        if (searchToken.current !== token) return
+        found.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path))
+        setMatches(found)
+        setSearching(false)
+      })()
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [filter])
+
   const toggleDir = (id: string): void => {
     setExpanded((s) => {
       const n = new Set(s)
@@ -151,9 +238,8 @@ export function PickFileLinesModal({
     onPick(ref)
   }
 
-  // Recursive tree render. Dirs always show (so you can navigate); the filter only hides FILE rows by
-  // name within the loaded listings (an MVP filter — it doesn't force-load unexpanded dirs).
-  const f = filter.trim().toLowerCase()
+  // Recursive tree render for the BROWSE view (empty filter). A non-empty filter shows the flat
+  // recursive-search results instead (see the `matches` effect), so the tree needs no inline filter.
   const renderTree = (parent: string, depth: number): ReactElement[] => {
     const entries = listings[parent]
     if (!entries) return []
@@ -171,13 +257,13 @@ export function PickFileLinesModal({
             onClick={() => toggleDir(id)}
             title={id}
           >
-            <span className="pfl-caret">{open ? '▾' : '▸'}</span>
-            {e.name}
+            <TreeChevron open={open} />
+            <FolderIcon open={open} />
+            <span className="pfl-name">{e.name}</span>
           </div>
         )
         if (open) rows.push(...renderTree(id, depth + 1))
       } else {
-        if (f && !e.name.toLowerCase().includes(f)) continue
         rows.push(
           <div
             key={id}
@@ -187,8 +273,9 @@ export function PickFileLinesModal({
             title={id}
             onClick={() => openFile(id)}
           >
-            <span className="pfl-fjunk" />
-            {e.name}
+            <span className="pfl-chevron-gap" />
+            <FileIcon name={e.name} />
+            <span className="pfl-name">{e.name}</span>
           </div>
         )
       }
@@ -240,7 +327,34 @@ export function PickFileLinesModal({
                 onChange={(e) => setFilter(e.target.value)}
               />
             </div>
-            <div className="pfl-tree">{renderTree('', 0)}</div>
+            <div className="pfl-tree">
+              {matches === null ? (
+                renderTree('', 0)
+              ) : searching && matches.length === 0 ? (
+                <div className="pfl-note">Searching…</div>
+              ) : matches.length === 0 ? (
+                <div className="pfl-note">No files match “{filter.trim()}”</div>
+              ) : (
+                <>
+                  {matches.map((m) => (
+                    <div
+                      key={m.path}
+                      className={'pfl-row file' + (m.path === path ? ' sel' : '')}
+                      data-testid="pfl-file"
+                      title={m.path}
+                      onClick={() => openFile(m.path)}
+                    >
+                      <FileIcon name={m.name} />
+                      <span className="pfl-match-name">{m.name}</span>
+                      {dirOf(m.path) && <span className="pfl-match-dir">{dirOf(m.path)}</span>}
+                    </div>
+                  ))}
+                  {matches.length >= SEARCH_CAP && (
+                    <div className="pfl-note">Showing first {SEARCH_CAP} — refine the filter</div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           <div className="pfl-code">
