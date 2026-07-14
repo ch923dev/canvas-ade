@@ -166,6 +166,92 @@ describe('boardRegistry', () => {
     expect('kanban' in out[1]).toBe(false)
   })
 
+  it('keeps the v19 card-detail fields + board axis, truncates a long description (v19)', () => {
+    const longDesc = 'x'.repeat(600)
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'a',
+              title: 'One',
+              description: longDesc,
+              tags: ['feature', '', 'security'], // empty tag dropped
+              fileRefs: [
+                { path: 'src/x.ts', line: 4, endLine: 9 },
+                { path: 'ok.ts' },
+                { path: '', line: 2 }, // empty path → dropped
+                { path: 'neg.ts', line: -1 } // non-positive line → line dropped, path kept
+              ]
+            }
+          ],
+          columnAxis: 'category',
+          axisLabel: 'Subsystem'
+        }
+      }
+    ])
+    const card = out[0].kanban?.cards[0]
+    expect(card?.description).toHaveLength(500) // TRUNCATED to the preview cap (not dropped)
+    expect(card?.tags).toEqual(['feature', 'security'])
+    expect(card?.fileRefs).toEqual([
+      { path: 'src/x.ts', line: 4, endLine: 9 },
+      { path: 'ok.ts' },
+      { path: 'neg.ts' }
+    ])
+    expect(out[0].kanban?.columnAxis).toBe('category')
+    expect(out[0].kanban?.axisLabel).toBe('Subsystem')
+  })
+
+  it('keeps well-formed card attachments, drops malformed ones (#346)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'a',
+              title: 'One',
+              attachments: [
+                { assetId: 's1', name: 'a.png', kind: 'image', mime: 'image/png', size: 10 },
+                { assetId: 's2', name: 'b.bin', kind: 'file' },
+                { assetId: 's3', name: 'x', kind: 'bogus' }, // bad kind → dropped
+                { assetId: '', name: 'y', kind: 'file' }, // empty assetId → dropped
+                { assetId: 's5', name: 'z', kind: 'image', size: 0 } // size 0 → size dropped, entry kept
+              ]
+            }
+          ]
+        }
+      }
+    ])
+    expect(out[0].kanban?.cards[0].attachments).toEqual([
+      { assetId: 's1', name: 'a.png', kind: 'image', mime: 'image/png', size: 10 },
+      { assetId: 's2', name: 'b.bin', kind: 'file' },
+      { assetId: 's5', name: 'z', kind: 'image' }
+    ])
+  })
+
+  it('drops a bad columnAxis enum + keeps a valid axis-only kanban projection (v19)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: { columns: [], cards: [], columnAxis: 'sideways' }
+      }
+    ])
+    // Bad enum dropped; with no columns/cards/label either, the whole projection is omitted.
+    expect('kanban' in out[0]).toBe(false)
+  })
+
   it('count-caps kanban columns + cards and drops over-length fields (P3b)', () => {
     const longTitle = 'T'.repeat(300)
     const out = sanitizeSnapshot([

@@ -136,6 +136,30 @@ export interface KanbanCardSummary {
   tag?: string
   assignee?: string
   ref?: string
+  /** v19 card-detail: long-form description (the host TRUNCATES it to a preview on ingest). */
+  description?: string
+  /** v19 card-detail: label chips (the plural that supersedes `tag`). */
+  tags?: string[]
+  /** v19 card-detail: file+line references the card touches. */
+  fileRefs?: KanbanCardFileRefSummary[]
+  /** #346: attachments the card carries (blob refs + metadata). Absent until a card has any. */
+  attachments?: KanbanAttachmentSummary[]
+}
+
+/** One file+line ref on a card's mirror projection (v19) — path + optional 1-based line/endLine range. */
+export interface KanbanCardFileRefSummary {
+  path: string
+  line?: number
+  endLine?: number
+}
+
+/** One attachment on a card's mirror projection (#346) — a blob REF (assetId) + display metadata, no blob. */
+export interface KanbanAttachmentSummary {
+  assetId: string
+  name: string
+  kind: string
+  mime?: string
+  size?: number
 }
 
 /** One checklist item in a Planning board's mirror projection (S6) — id + label + done. */
@@ -206,7 +230,14 @@ export interface BoardMirrorEntry {
    * A BOUNDED projection (count-capped here, field-capped on the host ingest), NOT the raw arrays.
    * Absent (not empty) on every non-kanban board, keeping their snapshots byte-identical.
    */
-  kanban?: { columns: KanbanColumnSummary[]; cards: KanbanCardSummary[] }
+  kanban?: {
+    columns: KanbanColumnSummary[]
+    cards: KanbanCardSummary[]
+    /** v19: what the columns group by; absent ⇒ 'flow'. */
+    columnAxis?: 'flow' | 'category'
+    /** v19: display name of the column axis. */
+    axisLabel?: string
+  }
   /**
    * Planning board's bounded elements + their ids (S6; `type:'planning'` only) — so the host serves one
    * board's elements as `canvas://board/{id}/planning` (the read half of the in-place edit loop). A
@@ -260,7 +291,22 @@ export interface BoardSnapshotInput {
     tag?: string
     assignee?: string
     ref?: string
+    /** v19 card-detail (KanbanCard.description/tags/fileRefs) — projected onto the mirror; host caps. */
+    description?: string
+    tags?: ReadonlyArray<string>
+    fileRefs?: ReadonlyArray<{ path: string; line?: number; endLine?: number }>
+    /** #346 (KanbanCard.attachments) — blob refs + metadata; projected read-only, host validates/caps. */
+    attachments?: ReadonlyArray<{
+      assetId: string
+      name: string
+      kind: string
+      mime?: string
+      size?: number
+    }>
   }>
+  /** Present on a `'kanban'` board (v19 KanbanBoard.columnAxis/axisLabel) — the column-axis + its name. */
+  columnAxis?: 'flow' | 'category'
+  axisLabel?: string
 }
 
 /**
@@ -303,10 +349,14 @@ const MAX_KANBAN_CARDS = 300
  * optional chips/WIP through when present. Returns `undefined` (not an empty projection) when there
  * is nothing to project, so the conditional spread in {@link buildBoardSnapshot} omits the field.
  */
+type KanbanSummary = NonNullable<BoardMirrorEntry['kanban']>
+
 function deriveKanban(
   columns: BoardSnapshotInput['columns'],
-  cards: BoardSnapshotInput['cards']
-): { columns: KanbanColumnSummary[]; cards: KanbanCardSummary[] } | undefined {
+  cards: BoardSnapshotInput['cards'],
+  columnAxis: BoardSnapshotInput['columnAxis'],
+  axisLabel: BoardSnapshotInput['axisLabel']
+): KanbanSummary | undefined {
   const cols: KanbanColumnSummary[] = []
   if (columns) {
     for (const c of columns) {
@@ -334,10 +384,50 @@ function deriveKanban(
       if (typeof c.tag === 'string' && c.tag.length > 0) card.tag = c.tag
       if (typeof c.assignee === 'string' && c.assignee.length > 0) card.assignee = c.assignee
       if (typeof c.ref === 'string' && c.ref.length > 0) card.ref = c.ref
+      // v19 card-detail: project description/tags/fileRefs; the host caps/truncates on ingest.
+      if (typeof c.description === 'string' && c.description.length > 0) {
+        card.description = c.description
+      }
+      if (Array.isArray(c.tags)) {
+        const tags = c.tags.filter((t): t is string => typeof t === 'string' && t.length > 0)
+        if (tags.length > 0) card.tags = tags
+      }
+      if (Array.isArray(c.fileRefs)) {
+        const refs: KanbanCardFileRefSummary[] = []
+        for (const r of c.fileRefs) {
+          if (!r || typeof r.path !== 'string' || r.path.length === 0) continue
+          const ref: KanbanCardFileRefSummary = { path: r.path }
+          if (typeof r.line === 'number' && Number.isFinite(r.line)) ref.line = r.line
+          if (typeof r.endLine === 'number' && Number.isFinite(r.endLine)) ref.endLine = r.endLine
+          refs.push(ref)
+        }
+        if (refs.length > 0) card.fileRefs = refs
+      }
+      // #346 attachments: project the blob refs + metadata (read-only); the host validates/caps on ingest.
+      if (Array.isArray(c.attachments)) {
+        const atts: KanbanAttachmentSummary[] = []
+        for (const a of c.attachments) {
+          if (!a || typeof a.assetId !== 'string' || a.assetId.length === 0) continue
+          if (typeof a.name !== 'string' || typeof a.kind !== 'string') continue
+          const att: KanbanAttachmentSummary = { assetId: a.assetId, name: a.name, kind: a.kind }
+          if (typeof a.mime === 'string' && a.mime.length > 0) att.mime = a.mime
+          if (typeof a.size === 'number' && Number.isFinite(a.size)) att.size = a.size
+          atts.push(att)
+        }
+        if (atts.length > 0) card.attachments = atts
+      }
       out.push(card)
     }
   }
-  return cols.length > 0 || out.length > 0 ? { columns: cols, cards: out } : undefined
+  const label = typeof axisLabel === 'string' && axisLabel.length > 0 ? axisLabel : undefined
+  const axis = columnAxis === 'flow' || columnAxis === 'category' ? columnAxis : undefined
+  if (cols.length === 0 && out.length === 0 && axis === undefined && label === undefined) {
+    return undefined
+  }
+  const result: KanbanSummary = { columns: cols, cards: out }
+  if (axis !== undefined) result.columnAxis = axis
+  if (label !== undefined) result.axisLabel = label
+  return result
 }
 
 /** Cap the mirrored planning projection so a pathological board can't push an unbounded payload over the
@@ -403,7 +493,8 @@ export function buildBoardSnapshot(
     // S6: a planning board projects its bounded elements+ids so the host serves canvas://board/{id}/planning.
     const planning = b.type === 'planning' ? derivePlanning(b.elements) : undefined
     // P3b: a kanban board projects its bounded columns+cards so the host serves canvas://board/{id}/cards.
-    const kanban = b.type === 'kanban' ? deriveKanban(b.columns, b.cards) : undefined
+    const kanban =
+      b.type === 'kanban' ? deriveKanban(b.columns, b.cards, b.columnAxis, b.axisLabel) : undefined
     return {
       id: b.id,
       type: b.type,

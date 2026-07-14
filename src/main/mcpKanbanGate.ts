@@ -4,10 +4,12 @@ import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { DispatchStatus, LifecycleOrchestrator } from './mcpRegistry'
 import {
   buildAddCardOp,
+  buildKanbanAxisConfig,
   buildMoveCardOp,
   buildRemoveCardOp,
   buildUpdateCardOp,
   KanbanContentError,
+  renderKanbanAxisConfirmBody,
   renderKanbanConfirmBody
 } from './mcpKanban'
 
@@ -39,7 +41,16 @@ type KanbanMethods = Pick<
   'addCard' | 'moveCard' | 'updateCard' | 'removeCard'
 >
 
-export function createKanbanMethods(deps: KanbanGateDeps): KanbanMethods {
+/**
+ * The card methods plus `configureAxis` — the v19 kanban board-AXIS config gate (columnAxis/axisLabel).
+ * `configureBoard` in `mcpOrchestrator.ts` delegates to it when a config call targets a kanban board, so
+ * the resolve→kanban-check→sanitize→confirm→configureBoard→audit gate lives here (max-lines discipline).
+ */
+type KanbanMethodsWithConfig = KanbanMethods & {
+  configureAxis(boardId: string, config: unknown): Promise<void>
+}
+
+export function createKanbanMethods(deps: KanbanGateDeps): KanbanMethodsWithConfig {
   // 🔒 P3: the shared apply pipeline for ONE kanban card op — resolve + kanban-check + build
   // (sanitize/cap, via mcpKanban) + human-confirm + patchKanban + audit EVERY branch. Mirrors
   // addPlanningElements (attacker-influenceable content onto the durable canvas, ADR 0003); there is
@@ -120,6 +131,57 @@ export function createKanbanMethods(deps: KanbanGateDeps): KanbanMethods {
     },
     async removeCard(boardId, cardId) {
       await applyKanbanOp(boardId, 'remove_card', () => buildRemoveCardOp(cardId))
+    },
+    // 🔒 v19: the kanban board-AXIS config gate (columnAxis/axisLabel via configure_board). Same
+    // resolve→kanban-check→sanitize→confirm→configureBoard→audit discipline as the card ops — the
+    // axisLabel is renderable content (ADR 0003), so it is human-confirmed like a card write. There is
+    // NO PTY / nonce (nothing executes — the axis is passive board config).
+    async configureAxis(boardId, rawConfig) {
+      const audit = (
+        status: DispatchStatus,
+        opts: { prompt?: string; detail?: string } = {}
+      ): Promise<void> =>
+        deps.audit({
+          type: 'configure_board',
+          targetId: boardId,
+          prompt: opts.prompt ?? '',
+          nonce: '',
+          status,
+          ...(opts.detail !== undefined ? { detail: opts.detail } : {})
+        })
+
+      const board = deps.listBoards().find((b) => b.id === boardId)
+      if (!board) {
+        await audit('rejected', { detail: 'board not found' })
+        throw new Error(`configure_board: board not found: ${boardId}`)
+      }
+      if (board.type !== 'kanban') {
+        await audit('rejected', { detail: `non-kanban target (${board.type})` })
+        throw new Error(`configure_board: axis config target is not a kanban board (${board.type})`)
+      }
+      let cfg: ReturnType<typeof buildKanbanAxisConfig>
+      try {
+        cfg = buildKanbanAxisConfig(rawConfig)
+      } catch (err) {
+        const detail =
+          err instanceof KanbanContentError
+            ? `invalid content: ${err.message}`
+            : `error building config: ${err instanceof Error ? err.message : String(err)}`
+        await audit('rejected', { detail })
+        throw err
+      }
+      const body = renderKanbanAxisConfirmBody(board.title, cfg)
+      const { approved } = await deps.confirm({ title: `Configure "${board.title}"`, body })
+      if (!approved) {
+        await audit('denied', { prompt: body })
+        throw new Error('configure_board: axis config denied by the human gate')
+      }
+      const ack = await deps.sendCommand({ type: 'configureBoard', id: boardId, patch: cfg })
+      if (!ack.ok) {
+        await audit('failed', { prompt: body, detail: `apply failed: ${ack.error}` })
+        throw new Error(`configure_board failed: ${ack.error}`)
+      }
+      await audit('configured', { prompt: body })
     }
   }
 }

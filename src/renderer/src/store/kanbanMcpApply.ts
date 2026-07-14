@@ -22,13 +22,26 @@ function mergeCard(
   card: KanbanCard,
   patch: Extract<KanbanOp, { op: 'update' }>['patch']
 ): KanbanCard {
-  return {
+  const next: KanbanCard = {
     ...card,
     ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.tag !== undefined ? { tag: patch.tag } : {}),
     ...(patch.assignee !== undefined ? { assignee: patch.assignee } : {}),
-    ...(patch.ref !== undefined ? { ref: patch.ref } : {})
+    ...(patch.ref !== undefined ? { ref: patch.ref } : {}),
+    // v19 card-detail: only the supplied fields change (a patch never clears one).
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.fileRefs !== undefined ? { fileRefs: patch.fileRefs } : {})
   }
+  // v19: `tag` (legacy singular) and `tags` (plural) are mutually exclusive — writing EITHER sheds the
+  // other, in both directions, so a card never carries both (matches the `add` op + human setCardTags).
+  if (patch.tags !== undefined) {
+    const { tag: _legacy, ...rest } = next
+    return { ...rest, tags: patch.tags }
+  }
+  if (patch.tag !== undefined) {
+    const { tags: _superseded, ...rest } = next
+    return { ...rest, tag: patch.tag }
+  }
+  return next
 }
 
 /**
@@ -47,13 +60,22 @@ export function applyKanbanOps(board: KanbanBoard, ops: readonly KanbanOp[]): Ka
         if (cards.some((c) => c.id === op.card.id)) {
           throw new Error(`duplicate card id: ${op.card.id}`)
         }
+        const src = op.card
         const card: KanbanCard = {
-          id: op.card.id,
-          columnId: op.card.columnId,
-          title: op.card.title,
-          ...(op.card.tag !== undefined ? { tag: op.card.tag } : {}),
-          ...(op.card.assignee !== undefined ? { assignee: op.card.assignee } : {}),
-          ...(op.card.ref !== undefined ? { ref: op.card.ref } : {})
+          id: src.id,
+          columnId: src.columnId,
+          title: src.title,
+          ...(src.assignee !== undefined ? { assignee: src.assignee } : {}),
+          ...(src.ref !== undefined ? { ref: src.ref } : {}),
+          // v19 card-detail fields (agent write).
+          ...(src.description !== undefined ? { description: src.description } : {}),
+          ...(src.fileRefs !== undefined ? { fileRefs: src.fileRefs } : {}),
+          // `tags` supersedes the legacy singular `tag` — a card carries only one of the two.
+          ...(src.tags !== undefined
+            ? { tags: src.tags }
+            : src.tag !== undefined
+              ? { tag: src.tag }
+              : {})
         }
         cards = [...cards, card]
         break

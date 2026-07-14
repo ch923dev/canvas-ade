@@ -157,4 +157,67 @@ describe('orchestrator kanban card writes (P3 gate)', () => {
     expect(h.sent).toHaveLength(0)
     expect(h.audits.some((a) => a.status === 'rejected')).toBe(true)
   })
+
+  it('addCard carries the v19 detail fields through confirm + the patchKanban add op', async () => {
+    const h = harness(kanban)
+    const orch = buildOrchestrator(h.registry)
+    await orch.addCard('k1', {
+      columnId: 'backlog',
+      title: 'Wire auth',
+      description: 'token middleware',
+      tags: ['feature', 'security'],
+      fileRefs: [{ path: 'src/auth/mw.ts', line: 12, endLine: 20 }]
+    })
+    // The human sees the detail on the confirm body.
+    expect(h.confirms[0].body).toContain('tags: feature, security')
+    expect(h.confirms[0].body).toContain('files: src/auth/mw.ts:12-20')
+    expect(h.confirms[0].body).toContain('description: token middleware')
+    const cmd = h.sent[0]
+    if (cmd.type === 'patchKanban' && cmd.ops[0].op === 'add') {
+      expect(cmd.ops[0].card.description).toBe('token middleware')
+      expect(cmd.ops[0].card.tags).toEqual(['feature', 'security'])
+      expect(cmd.ops[0].card.fileRefs).toEqual([{ path: 'src/auth/mw.ts', line: 12, endLine: 20 }])
+    } else {
+      throw new Error('expected an add patchKanban op')
+    }
+  })
+})
+
+describe('orchestrator kanban axis config (v19 configure_board gate)', () => {
+  it('configureBoard(columnAxis/axisLabel): confirm → configureBoard command → audit configured', async () => {
+    const h = harness(kanban)
+    const orch = buildOrchestrator(h.registry)
+    await orch.configureBoard('k1', { columnAxis: 'category', axisLabel: 'Subsystem' })
+    // Human-confirmed (axisLabel is renderable content, ADR 0003).
+    expect(h.confirms).toHaveLength(1)
+    expect(h.confirms[0].body).toContain('axis: category')
+    expect(h.confirms[0].body).toContain('label: Subsystem')
+    // One configureBoard command carrying the sanitized axis patch.
+    expect(h.sent).toEqual([
+      {
+        type: 'configureBoard',
+        id: 'k1',
+        patch: { columnAxis: 'category', axisLabel: 'Subsystem' }
+      }
+    ])
+    expect(h.audits.some((a) => a.type === 'configure_board' && a.status === 'configured')).toBe(
+      true
+    )
+  })
+
+  it('rejects an axis config on a NON-kanban board (nothing sent, audit rejected)', async () => {
+    const h = harness([{ id: 't1', type: 'terminal', title: 'Term' }])
+    const orch = buildOrchestrator(h.registry)
+    await expect(orch.configureBoard('t1', { columnAxis: 'flow' })).rejects.toThrow(/not a kanban/)
+    expect(h.sent).toHaveLength(0)
+    expect(h.audits.some((a) => a.status === 'rejected')).toBe(true)
+  })
+
+  it('declined axis confirm: nothing sent, audit denied, throws', async () => {
+    const h = harness(kanban, { approve: false })
+    const orch = buildOrchestrator(h.registry)
+    await expect(orch.configureBoard('k1', { axisLabel: 'Phase' })).rejects.toThrow(/denied/)
+    expect(h.sent).toHaveLength(0)
+    expect(h.audits.some((a) => a.status === 'denied')).toBe(true)
+  })
 })

@@ -250,7 +250,9 @@ export function buildOrchestrator(
   // 🔒 P3 Kanban card writes (add/move/update/remove) — the resolve→kanban-check→confirm→patchKanban
   // →audit gate + the four methods live in ./mcpKanbanGate (keeps this file under the max-lines gate);
   // spread into the returned object below. No PTY / nonce — a card is passive content (ADR 0003).
-  const kanbanMethods = createKanbanMethods({
+  // configureAxis (v19 kanban board-axis config) is pulled OUT here so it is NOT spread into the public
+  // orchestrator object below — configureBoard delegates to it internally when a config targets a kanban.
+  const { configureAxis: configureKanbanAxis, ...kanbanMethods } = createKanbanMethods({
     listBoards: () => registry.listBoards(),
     confirm: (req) => registry.confirm(req),
     sendCommand: (cmd) => registry.sendCommand(cmd),
@@ -417,8 +419,24 @@ export function buildOrchestrator(
     },
     async configureBoard(
       boardId: BoardId,
-      config: { shell?: string; launchCommand?: string; cwd?: string }
+      config: {
+        shell?: string
+        launchCommand?: string
+        cwd?: string
+        columnAxis?: 'flow' | 'category'
+        axisLabel?: string
+      }
     ): Promise<void> {
+      // 🔒 v19: a KANBAN board-axis config (columnAxis/axisLabel) routes to the kanban gate — resolve +
+      // kanban-check + sanitize + human-confirm + audit. axisLabel is renderable content (ADR 0003), so
+      // it is confirmed like a card write, NOT treated as un-gated durable config (the shell/cwd path).
+      if (config.columnAxis !== undefined || config.axisLabel !== undefined) {
+        await configureKanbanAxis(boardId, {
+          ...(config.columnAxis !== undefined ? { columnAxis: config.columnAxis } : {}),
+          ...(config.axisLabel !== undefined ? { axisLabel: config.axisLabel } : {})
+        })
+        return
+      }
       // 🔒 S6 guard (user rule 2026-07-04): everything on the canvas is updatable EXCEPT a terminal that
       // is currently RUNNING. Reconfiguring a live terminal's shell/launchCommand/cwd is refused — the
       // change can't take effect until the next spawn and reconfiguring under a live session is confusing.
