@@ -1,32 +1,38 @@
 /**
  * Kanban card-detail modal (v19, card-detail epic) — the "open a card to see everything" surface the
  * flat card face deliberately withholds (Linear rule: no description prose on the face). Jira-style two
- * columns: the CONTENT pane (title + description) on the left, a METADATA sidebar (status, tags,
- * assignee, reference, file+line refs) on the right. Built on the shared `Modal` primitive, so the
+ * columns: the CONTENT pane (title + description + attachments) on the left, a METADATA sidebar (status,
+ * tags, assignee, reference, file+line refs) on the right. Built on the shared `Modal` primitive, so the
  * scrim / focus-trap / Esc / focus-restore all come for free (canvas/Modal.tsx).
  *
- * Every edit commits through the SAME `beginChange()` + `updateBoard({ cards })` path the board face
- * uses, via the pure `kanbanEdit` ops — so a modal edit is ONE undoable, autosaved step and a no-op
- * (unchanged value → op returns the same array ref) records nothing. Text fields commit on blur/Enter;
- * chips + file refs commit on each add/remove (and on blur for inline ref edits). The live card is read
- * from `board.cards` each render, so an external change (undo, an agent's MCP write) reflects live.
+ * TWO MODES (#346): EDIT (`cardId`) opens an existing card — every field commits through the SAME
+ * `beginChange()` + `updateBoard({ cards })` path the board face uses (a modal edit is ONE undoable,
+ * autosaved step; an unchanged value → op returns the same array ref → records nothing). CREATE
+ * (`createInColumnId`) opens an EMPTY draft with the target column pre-picked — nothing touches the
+ * store until the primary "Add card" commits the whole card (title + description + tags + fileRefs +
+ * attachments) as ONE new card in one undo step. The board keys this modal by cardId / a create token,
+ * so switching REMOUNTS with fresh state rather than needing a prop→state sync effect (#345 finding).
  */
 import { useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { KanbanBoard, KanbanCard, KanbanFileRef } from '../../lib/boardSchema'
+import type { KanbanAttachment } from '../../lib/kanbanSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { Modal } from '../Modal'
 import {
+  addCardDetailed,
   effectiveTags,
   moveCard,
   removeCard,
   renameCard,
   setCardAssignee,
+  setCardAttachments,
   setCardDescription,
   setCardFileRefs,
   setCardRef,
   setCardTags,
   tagTint
 } from './kanbanEdit'
+import { AttachmentsBlock } from './KanbanAttachments'
 import { PickFileLinesModal } from './PickFileLinesModal'
 
 /** Enter commits a single-line field by blurring it (the blur handler does the actual commit). */
@@ -40,43 +46,60 @@ function enterBlurs(e: KeyboardEvent<HTMLInputElement>): void {
 export function KanbanCardModal({
   board,
   cardId,
+  createInColumnId,
   onClose
 }: {
   board: KanbanBoard
-  cardId: string
+  /** EDIT mode: the id of the existing card to open. Mutually exclusive with `createInColumnId`. */
+  cardId?: string
+  /** CREATE mode: the column a brand-new card is being added to (pre-selected). */
+  createInColumnId?: string
   onClose: () => void
 }): ReactElement | null {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
   const openFileRef = useCanvasStore((s) => s.openFileRef)
 
-  // The live card (re-read each render so undo / an MCP write reflect immediately). Null ⇒ deleted out
-  // from under the modal; all hooks below still run (seeded from the optional card), then we bail.
-  const card: KanbanCard | null = board.cards.find((c) => c.id === cardId) ?? null
+  const isCreate = createInColumnId !== undefined
+
+  // The live card (re-read each render so undo / an MCP write reflect immediately). In create mode there
+  // is no card yet; all hooks below still run (seeded from empty), then we only bail in EDIT mode.
+  const card: KanbanCard | null =
+    cardId != null ? (board.cards.find((c) => c.id === cardId) ?? null) : null
 
   const titleRef = useRef<HTMLInputElement>(null)
 
-  // Single-value fields buffer locally and commit on blur (so a keystroke isn't a store write / undo
-  // step). Seeded once per mount from the card; the parent keys this modal by `cardId`, so switching
-  // to another card REMOUNTS with fresh state rather than needing a prop→state sync effect. File refs
-  // are authored by the Pick-file-lines modal (no inline text editing), so they commit straight to the card.
+  // Single-value fields buffer locally. In EDIT they seed from the card and commit on blur (a keystroke
+  // isn't a store write / undo step); in CREATE they ARE the draft and commit once on "Add card". Chip /
+  // fileRef / attachment lists live on the card in edit mode, or in the draft arrays below in create mode.
   const [title, setTitle] = useState(card?.title ?? '')
   const [description, setDescription] = useState(card?.description ?? '')
   const [assignee, setAssignee] = useState(card?.assignee ?? '')
   const [ref, setRef] = useState(card?.ref ?? '')
   const [tagDraft, setTagDraft] = useState('')
+  const [columnId, setColumnId] = useState(
+    createInColumnId ?? card?.columnId ?? board.columns[0]?.id ?? ''
+  )
   // The pick-file-lines modal: 'add' a new ref, or edit the ref at { index }; null = closed.
   const [picker, setPicker] = useState<'add' | { index: number } | null>(null)
+  // Create-mode-only draft lists (edit mode reads these fields off the live card instead).
+  const [draftTags, setDraftTags] = useState<string[]>([])
+  const [draftFileRefs, setDraftFileRefs] = useState<KanbanFileRef[]>([])
+  const [draftAttachments, setDraftAttachments] = useState<KanbanAttachment[]>([])
 
-  if (!card) return null
+  // EDIT mode only: bail if the card was deleted out from under the modal (create has no card).
+  if (!isCreate && !card) return null
 
   const commit = (cards: KanbanCard[]): void => {
     beginChange()
     updateBoard(board.id, { cards })
   }
 
-  const tags = effectiveTags(card)
-  const columnTitle = board.columns.find((c) => c.id === card.columnId)?.title ?? card.columnId
+  // Field values are read from the draft (create) or the live card (edit) uniformly below.
+  const tags = isCreate ? draftTags : effectiveTags(card as KanbanCard)
+  const fileRefs = isCreate ? draftFileRefs : (card?.fileRefs ?? [])
+  const attachments = isCreate ? draftAttachments : (card?.attachments ?? [])
+  const columnTitle = board.columns.find((c) => c.id === columnId)?.title ?? columnId
   // v19 column axis: the sidebar column-picker label reflects what the columns MEAN — a workflow
   // "Status" (flow) vs the board's category name (e.g. "Phase"). Absent axis ⇒ flow ⇒ "Status".
   const axisLabel =
@@ -85,34 +108,41 @@ export function KanbanCardModal({
   const addTag = (): void => {
     const v = tagDraft.trim()
     if (!v) return
-    commit(setCardTags(board, cardId, [...tags, v]))
+    if (isCreate) setDraftTags((prev) => (prev.includes(v) ? prev : [...prev, v]))
+    else commit(setCardTags(board, cardId as string, [...tags, v]))
     setTagDraft('')
   }
-  const removeTag = (t: string): void =>
-    commit(
-      setCardTags(
-        board,
-        cardId,
-        tags.filter((x) => x !== t)
+  const removeTag = (t: string): void => {
+    if (isCreate) setDraftTags((prev) => prev.filter((x) => x !== t))
+    else
+      commit(
+        setCardTags(
+          board,
+          cardId as string,
+          tags.filter((x) => x !== t)
+        )
       )
-    )
+  }
 
-  const fileRefs = card.fileRefs ?? []
-  const removeRef = (i: number): void =>
-    commit(
-      setCardFileRefs(
-        board,
-        cardId,
-        fileRefs.filter((_, j) => j !== i)
+  const removeRef = (i: number): void => {
+    if (isCreate) setDraftFileRefs((prev) => prev.filter((_, j) => j !== i))
+    else
+      commit(
+        setCardFileRefs(
+          board,
+          cardId as string,
+          fileRefs.filter((_, j) => j !== i)
+        )
       )
-    )
+  }
   // The pick-file-lines modal returns a normalized ref → append (add) or replace (edit), then close.
   const applyPick = (r: KanbanFileRef): void => {
     const next =
       picker && picker !== 'add'
         ? fileRefs.map((x, j) => (j === picker.index ? r : x))
         : [...fileRefs, r]
-    commit(setCardFileRefs(board, cardId, next))
+    if (isCreate) setDraftFileRefs(next)
+    else commit(setCardFileRefs(board, cardId as string, next))
     setPicker(null)
   }
   const openRef = (r: KanbanFileRef): void => {
@@ -122,14 +152,65 @@ export function KanbanCardModal({
     onClose() // reveal the file board (the modal sits above the canvas) scrolled to the line
   }
 
+  // Attachments. Add hands the parent freshly-built entries (the block already persisted the bytes).
+  // Edit-mode add RE-READS the live board at commit time: `asset.write` awaits open a window in which
+  // another edit could land, and updateBoard fully replaces `cards` — so committing off the stale prop
+  // would drop that concurrent change (the usePlanningImageIO live-read discipline).
+  const onAddAttachments = (entries: KanbanAttachment[]): void => {
+    if (isCreate) {
+      setDraftAttachments((prev) => [...prev, ...entries])
+      return
+    }
+    const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
+    if (live?.type !== 'kanban') return
+    const liveCard = live.cards.find((c) => c.id === cardId)
+    if (!liveCard) return
+    commit(
+      setCardAttachments(live, cardId as string, [...(liveCard.attachments ?? []), ...entries])
+    )
+  }
+  const removeAttachment = (i: number): void => {
+    if (isCreate) setDraftAttachments((prev) => prev.filter((_, j) => j !== i))
+    else
+      commit(
+        setCardAttachments(
+          board,
+          cardId as string,
+          attachments.filter((_, j) => j !== i)
+        )
+      )
+  }
+
   const onDelete = (): void => {
-    commit(removeCard(board, cardId))
+    commit(removeCard(board, cardId as string))
+    onClose()
+  }
+
+  // CREATE: commit the whole draft as ONE new card (addCardDetailed normalizes every field). A blank
+  // title is refused (a card must keep a title) — focus the field rather than silently no-op.
+  const onAdd = (): void => {
+    if (!title.trim()) {
+      titleRef.current?.focus()
+      return
+    }
+    beginChange()
+    updateBoard(board.id, {
+      cards: addCardDetailed(board, columnId, {
+        title,
+        description,
+        tags: draftTags,
+        assignee,
+        ref,
+        fileRefs: draftFileRefs,
+        attachments: draftAttachments
+      })
+    })
     onClose()
   }
 
   return (
     <Modal
-      label={`Card: ${card.title}`}
+      label={isCreate ? 'New card' : `Card: ${card?.title}`}
       onClose={onClose}
       zIndex={9000}
       initialFocusRef={titleRef}
@@ -141,7 +222,7 @@ export function KanbanCardModal({
           <span className="kbm-crumb">
             {board.title || 'Kanban'}
             <span className="kbm-sep">▸</span>
-            {columnTitle}
+            {isCreate ? `New card in ${columnTitle}` : columnTitle}
           </span>
           <span className="kbm-spacer" />
           <span className="kbm-hint">Esc to close</span>
@@ -159,16 +240,18 @@ export function KanbanCardModal({
               aria-label="Card title"
               data-testid="kbm-title"
               value={title}
+              placeholder={isCreate ? 'Card title…' : undefined}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={enterBlurs}
               onBlur={() => {
-                const next = renameCard(board, cardId, title)
+                if (isCreate) return // create commits on "Add card", not per-field
+                const next = renameCard(board, cardId as string, title)
                 commit(next)
                 // renameCard REJECTS a blank/unchanged title (returns the same array — a card must
                 // keep a title). Unlike the buffered clearable fields, a blank here doesn't persist,
                 // so resync the local buffer to the real title — else a cleared-then-abandoned field
                 // shows permanently empty while the card face still holds its name (review #345).
-                if (next === board.cards) setTitle(card.title)
+                if (next === board.cards && card) setTitle(card.title)
               }}
             />
             <div className="kbm-field">
@@ -181,7 +264,19 @@ export function KanbanCardModal({
                 placeholder="Add a description…"
                 rows={6}
                 onChange={(e) => setDescription(e.target.value)}
-                onBlur={() => commit(setCardDescription(board, cardId, description))}
+                onBlur={() => {
+                  if (isCreate) return
+                  commit(setCardDescription(board, cardId as string, description))
+                }}
+              />
+            </div>
+            <div className="kbm-field">
+              <span className="kbm-label">Attachments</span>
+              <AttachmentsBlock
+                attachments={attachments}
+                onAdd={onAddAttachments}
+                onRemove={removeAttachment}
+                toastKey={board.id}
               />
             </div>
           </div>
@@ -194,8 +289,11 @@ export function KanbanCardModal({
                 className="kbm-select"
                 aria-label={axisLabel}
                 data-testid="kbm-status"
-                value={card.columnId}
-                onChange={(e) => commit(moveCard(board, cardId, e.target.value))}
+                value={columnId}
+                onChange={(e) => {
+                  if (isCreate) setColumnId(e.target.value)
+                  else commit(moveCard(board, cardId as string, e.target.value))
+                }}
               >
                 {board.columns.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -248,7 +346,10 @@ export function KanbanCardModal({
                 placeholder="Unassigned"
                 onChange={(e) => setAssignee(e.target.value)}
                 onKeyDown={enterBlurs}
-                onBlur={() => commit(setCardAssignee(board, cardId, assignee))}
+                onBlur={() => {
+                  if (isCreate) return
+                  commit(setCardAssignee(board, cardId as string, assignee))
+                }}
               />
             </div>
 
@@ -262,7 +363,10 @@ export function KanbanCardModal({
                 placeholder="e.g. PR #271"
                 onChange={(e) => setRef(e.target.value)}
                 onKeyDown={enterBlurs}
-                onBlur={() => commit(setCardRef(board, cardId, ref))}
+                onBlur={() => {
+                  if (isCreate) return
+                  commit(setCardRef(board, cardId as string, ref))
+                }}
               />
             </div>
 
@@ -315,9 +419,21 @@ export function KanbanCardModal({
         </div>
 
         <div className="kbm-foot">
-          <button className="ca-btn-ghost kbm-del" data-testid="kbm-delete" onClick={onDelete}>
-            Delete card
-          </button>
+          {isCreate ? (
+            <>
+              <button className="ca-btn-ghost" data-testid="kbm-cancel" onClick={onClose}>
+                Cancel
+              </button>
+              <span className="kbm-spacer" />
+              <button className="ca-btn-primary kbm-addbtn" data-testid="kbm-add" onClick={onAdd}>
+                Add card
+              </button>
+            </>
+          ) : (
+            <button className="ca-btn-ghost kbm-del" data-testid="kbm-delete" onClick={onDelete}>
+              Delete card
+            </button>
+          )}
         </div>
 
         {picker !== null && (

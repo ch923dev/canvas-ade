@@ -26,6 +26,26 @@ export interface KanbanFileRef {
 }
 
 /**
+ * v19 (#346): a file attached to a card — an image / video / audio clip / any file. The bytes live
+ * in the SAME content-addressed store the whiteboard paste uses (`<project>/.canvas/assets/<sha1>.<ext>`,
+ * ADR 0009), so a card carries only the logical `assetId`, never the blob. `kind` is derived from the
+ * source MIME at capture and selects the modal renderer (thumbnail / `<video>` / `<audio>` / file chip);
+ * `mime`/`size` are best-effort display metadata (a 0-byte file drops `size`). Additive → no schema bump.
+ */
+export interface KanbanAttachment {
+  /** Logical content-addressed id `assets/<sha1>.<ext>` — resolved to bytes via `window.api.asset.read`. */
+  assetId: string
+  /** Original filename, for display. */
+  name: string
+  /** Coarse media class → which renderer the modal uses. */
+  kind: 'image' | 'video' | 'audio' | 'file'
+  /** Source MIME type, when known (used to type the blob URL for playback). */
+  mime?: string
+  /** Byte size, when known (>0). */
+  size?: number
+}
+
+/**
  * v17→v19: one card on a Kanban board. A card is bound to a column by `columnId` (a flat card list, not
  * nested-per-column, so an MCP `move_card` is a single-field patch and within-column order is array
  * order — mirrors Planning's flat `elements[]`). Only `id`/`columnId`/`title` are required; the rest is
@@ -48,6 +68,8 @@ export interface KanbanCard {
   description?: string
   /** v19: file+line references this card touches — click a ref to open the file at that line. Absent ⇒ none. */
   fileRefs?: KanbanFileRef[]
+  /** v19 (#346): attached files (images/video/audio/any file) in the content-addressed asset store. Absent ⇒ none. */
+  attachments?: KanbanAttachment[]
   /** Assignee agent-preset id (mirrors TerminalBoard.agentKind: 'claude'|'codex'|…) — the dot. Absent ⇒ unassigned. */
   assignee?: string
   /** Free-text external reference chip (e.g. "PR #271"). Absent ⇒ none. */
@@ -164,6 +186,27 @@ export function assertKanbanContent(
           if (r[k] !== undefined && !isPositiveNum(r[k])) {
             fail(`kanban card fileRef ${k} is not a positive number`)
           }
+        }
+      }
+    }
+    // v19 (#346) attachments: a list of {assetId, name, kind, mime?, size?}. Shape-only (same
+    // discipline): a malformed entry fails the doc; a missing blob is NOT checked here (it resolves
+    // to a "missing" tile at render, like a swept whiteboard image). `size` is positive when present
+    // (the capture path drops a 0-byte size), matching the fileRef line contract.
+    if (c.attachments !== undefined) {
+      if (!Array.isArray(c.attachments)) fail('kanban card attachments is not an array')
+      for (const a of c.attachments as unknown[]) {
+        if (!isRecord(a)) fail('kanban card attachment is not an object')
+        if (typeof a.assetId !== 'string') fail('kanban card attachment has a non-string assetId')
+        if (typeof a.name !== 'string') fail('kanban card attachment has a non-string name')
+        if (a.kind !== 'image' && a.kind !== 'video' && a.kind !== 'audio' && a.kind !== 'file') {
+          fail('kanban card attachment kind is not one of image/video/audio/file')
+        }
+        if (a.mime !== undefined && typeof a.mime !== 'string') {
+          fail('kanban card attachment mime is not a string')
+        }
+        if (a.size !== undefined && !isPositiveNum(a.size)) {
+          fail('kanban card attachment size is not a positive number')
         }
       }
     }

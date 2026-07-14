@@ -20,7 +20,6 @@ import { useCanvasStore } from '../../store/canvasStore'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import {
-  addCard,
   addColumn,
   effectiveTags,
   moveCard,
@@ -111,7 +110,7 @@ export function KanbanBoard({
   const clearConfigPending = useCanvasStore((s) => s.clearConfigPending)
   // Which element is mid-edit (null = none). Ephemeral session state — NEVER serialized. (Card rename
   // lives in the detail modal now, so there is no card-edit state — only column/add editors.)
-  const [addIn, setAddIn] = useState<string | null>(null) // column showing its add-card input
+  const [createCol, setCreateCol] = useState<string | null>(null) // column the create-card modal targets
   const [editCol, setEditCol] = useState<string | null>(null)
   const [wipCol, setWipCol] = useState<string | null>(null)
   const [addingCol, setAddingCol] = useState(false)
@@ -141,10 +140,6 @@ export function KanbanBoard({
     updateBoard(board.id, { columns })
   }
 
-  const commitAddCard = (colId: string, title: string): void => {
-    patchCards(addCard(board, colId, title))
-    setAddIn(null)
-  }
   const commitAddCol = (title: string): void => {
     patchCols(addColumn(board, title))
     setAddingCol(false)
@@ -205,8 +200,14 @@ export function KanbanBoard({
   const renderCard = (card: KanbanCard): ReactElement => {
     const tags = effectiveTags(card)
     const refCount = card.fileRefs?.length ?? 0
+    const attachCount = card.attachments?.length ?? 0
     const hasMeta =
-      tags.length > 0 || !!card.assignee || !!card.ref || !!card.description || refCount > 0
+      tags.length > 0 ||
+      !!card.assignee ||
+      !!card.ref ||
+      !!card.description ||
+      refCount > 0 ||
+      attachCount > 0
     return (
       <div
         className={'kb-card nodrag nopan' + (dragCard === card.id ? ' kb-dragging' : '')}
@@ -264,6 +265,24 @@ export function KanbanBoard({
                   <path d="M7 1.5V4h2.5" stroke="currentColor" strokeWidth="1.1" />
                 </svg>
                 <span className="kb-ind-n">{refCount}</span>
+              </span>
+            )}
+            {attachCount > 0 && (
+              <span
+                className="kb-ind"
+                title={`${attachCount} attachment${attachCount > 1 ? 's' : ''}`}
+                aria-label={`${attachCount} attachments`}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path
+                    d="M7.5 3 3.9 6.6a1.4 1.4 0 0 0 2 2L9 5.5a2.3 2.3 0 0 0-3.3-3.3L2.4 5.6a3.2 3.2 0 0 0 4.5 4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="kb-ind-n">{attachCount}</span>
               </span>
             )}
             {card.assignee && (
@@ -412,31 +431,20 @@ export function KanbanBoard({
                   )}
                 </div>
                 <div className="kb-cards nowheel">
-                  {cards.length === 0 && addIn !== col.id ? (
+                  {cards.length === 0 ? (
                     <div className="kb-col-empty">No cards</div>
                   ) : (
                     cards.map((card) => renderCard(card))
                   )}
-                  {addIn === col.id ? (
-                    <InlineInput
-                      initial=""
-                      ariaLabel={`New card in ${col.title}`}
-                      testid="kb-add-card-input"
-                      placeholder="Card title…"
-                      onCommit={(v) => commitAddCard(col.id, v)}
-                      onCancel={() => setAddIn(null)}
-                    />
-                  ) : (
-                    <button
-                      className="kb-add nodrag nopan"
-                      aria-label={`Add card to ${col.title}`}
-                      data-testid="kb-add-card"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => setAddIn(col.id)}
-                    >
-                      + Add card
-                    </button>
-                  )}
+                  <button
+                    className="kb-add nodrag nopan"
+                    aria-label={`Add card to ${col.title}`}
+                    data-testid="kb-add-card"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => setCreateCol(col.id)}
+                  >
+                    + Add card
+                  </button>
                 </div>
               </div>
             )
@@ -472,6 +480,14 @@ export function KanbanBoard({
           board={board}
           cardId={detailCard}
           onClose={() => setDetailCard(null)}
+        />
+      )}
+      {createCol && board.columns.some((c) => c.id === createCol) && (
+        <KanbanCardModal
+          key={'create-' + createCol}
+          board={board}
+          createInColumnId={createCol}
+          onClose={() => setCreateCol(null)}
         />
       )}
       {configPending && <NewKanbanDialog board={board} onClose={clearConfigPending} />}

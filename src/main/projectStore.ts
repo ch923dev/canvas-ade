@@ -379,14 +379,25 @@ export async function createProject(
 /** A safe stored assetId: exactly `assets/<40-hex sha1>.<ext>`; blocks any traversal. */
 const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
 /**
- * MAIN re-validates asset extensions independently of the renderer (untrusted) — a
- * deliberate cross-trust-boundary duplication of the renderer accept lists, NOT a
- * shared import. `assetExtsParity.test.ts` (S11b) drift-guards it: every ext in the
- * renderer's `acceptExts` (IMAGE_EXTS + VIDEO_EXTS + MIME_BY_EXT keys) must be a
- * subset of this set, so a new ext added on one side fails a unit test rather than a
- * user's import (the webm regression, addendum section 6). `svg` is MAIN-only here.
+ * The KNOWN-MEDIA extension set — the wallpaper/image pipeline's drift guard, NOT the write gate.
+ * `assetExtsParity.test.ts` (S11b) asserts every ext in the renderer's `acceptExts` (IMAGE_EXTS +
+ * VIDEO_EXTS + MIME_BY_EXT keys) is a subset of this set, so a new backdrop ext added on one side
+ * fails a unit test rather than a user's import (the webm regression, addendum section 6). `svg` is
+ * MAIN-only here. #346: `writeAsset` no longer GATES on this set — card attachments are any-file, so
+ * the gate widened to `SAFE_EXT_RE` (below); this set remains the media allow-list the picker checks.
  */
 export const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
+
+/**
+ * The write gate (#346): a safe stored extension — a short lower-case alphanumeric slug. The stored
+ * filename is `<sha1>.<ext>` with a MAIN-COMPUTED sha1 stem, so a slug-bounded ext (no `.` / `/` /
+ * `\`, length-capped) can neither path-traverse nor collide with the doc/backup files. Mirrors the
+ * read side, whose ASSET_RE already admits any `[a-f0-9]{40}.[a-z0-9]+`. Card attachments are
+ * any-file (`.pdf` / `.mp3` / `.zip` …); the bytes are NEVER executed — they render via a blob: URL
+ * inside the sandbox, or are user-opened externally — so a broad-but-bounded ext adds no exec/
+ * traversal surface over the old 8-ext media list (a compromised renderer could already write those).
+ */
+const SAFE_EXT_RE = /^[a-z0-9]{1,12}$/
 
 /**
  * MAIN-side write ceiling (DoS backstop) — mirrors fileIpc.ts's `MAX_READ_BYTES`. The renderer
@@ -409,7 +420,7 @@ export async function writeAsset(
   ext: string
 ): Promise<{ assetId: string }> {
   const e = String(ext).toLowerCase()
-  if (!ASSET_EXTS.has(e)) throw new Error(`writeAsset: unsupported ext ${ext}`)
+  if (!SAFE_EXT_RE.test(e)) throw new Error(`writeAsset: unsafe ext ${ext}`)
   if (bytes.byteLength > MAX_WRITE_BYTES) {
     throw new Error(
       `writeAsset: too large to write (${bytes.byteLength} bytes > ${MAX_WRITE_BYTES})`
