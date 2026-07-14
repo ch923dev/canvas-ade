@@ -295,9 +295,12 @@ export interface BoardSnapshotInput {
     description?: string
     tags?: ReadonlyArray<string>
     fileRefs?: ReadonlyArray<{ path: string; line?: number; endLine?: number }>
-    /** #346 (KanbanCard.attachments) — blob refs + metadata; projected read-only, host validates/caps. */
+    /** #346 (KanbanCard.attachments) — file blob refs OR external links; projected read-only, host
+     *  validates/caps. A link carries `url` (no `assetId`); a file kind carries `assetId` — mirrors
+     *  the KanbanAttachment union so the live board satisfies this read shape. */
     attachments?: ReadonlyArray<{
-      assetId: string
+      assetId?: string
+      url?: string
       name: string
       kind: string
       mime?: string
@@ -404,6 +407,9 @@ function deriveKanban(
         if (refs.length > 0) card.fileRefs = refs
       }
       // #346 attachments: project the blob refs + metadata (read-only); the host validates/caps on ingest.
+      // Only FILE attachments (with an `assetId`) are mirrored — LINK attachments (a `url`, no assetId)
+      // are intentionally skipped here for now: the agent-read summary + the published mcp schema know
+      // only blob refs, so exposing links to the agent is a deliberate future follow-up, not a bug.
       if (Array.isArray(c.attachments)) {
         const atts: KanbanAttachmentSummary[] = []
         for (const a of c.attachments) {
