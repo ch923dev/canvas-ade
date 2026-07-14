@@ -334,7 +334,10 @@ export default tseslint.config(
     // ratchet DOWNWARD when the store is next split. See docs/contributing/file-size-doctrine.md.
     // 720→725 (M1): the session-sidecar merge threads through applyLoadedDoc + applyOpenResult (the
     // doc-apply choke points that must live here, beside the load-epoch/pendingCheckpoint machinery).
-    rules: { 'max-lines': ['error', { max: 725, skipBlankLines: true, skipComments: true }] }
+    // 725→727 (v19 kanban card-detail): two CanvasState members — the ephemeral `pendingFileFocus`
+    // field + the `openFileRef` signature — must live in the store's own state type (a slice implements
+    // openFileRef but cannot declare it); both are single lines, so the cap moves by exactly two.
+    rules: { 'max-lines': ['error', { max: 727, skipBlankLines: true, skipComments: true }] }
   },
 
   // Disable all formatting rules that would conflict with Prettier. MUST be last.

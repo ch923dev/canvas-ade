@@ -146,6 +146,12 @@ export interface CanvasState {
    */
   pendingFocusId?: string | null
   /**
+   * One-shot "scroll this File board to a line" request — EPHEMERAL (never serialized). `openFileRef`
+   * (a Kanban file-ref click) sets it; FileBoard consumes it once its CodeMirror view exists (scroll +
+   * select `line`..`endLine`) then clears it. Distinct from `pendingFocusId`, which pans the camera.
+   */
+  pendingFileFocus?: { boardId: string; line: number; endLine?: number } | null
+  /**
    * Add a board of `type` at a world position; selects it; returns its id. `opts.id`
    * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
    * the tool can return it to the agent); omitted → the store mints one. `opts.configPending`
@@ -204,6 +210,12 @@ export interface CanvasState {
    * does NOT yank the camera.
    */
   openFileBoard: (relPath: string, at?: { x: number; y: number }) => string
+  /**
+   * Open (or re-focus) a File board for `relPath` AND scroll it to `line` — the Kanban file-ref click
+   * (v19). Wraps `openFileBoard` (dedupe/create + camera focus), then arms a one-shot `pendingFileFocus`
+   * for a positive `line` (absent ⇒ opens at the top). Returns the board id.
+   */
+  openFileRef: (relPath: string, line?: number, endLine?: number) => string
   /**
    * Open MANY files at once as PINNED boards in a tidy grid centred on the viewport (skips files
    * already open → just (re)selects them); selects the resulting set. The tree's multi-select →
