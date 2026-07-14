@@ -85,7 +85,16 @@ export interface KanbanCardFileRefMirror {
   endLine?: number
 }
 
-/** One card in a Kanban board's mirror projection (P3b→v19) — flat, bound to a column by `columnId`. */
+/** One attachment on a Kanban card's mirror projection (#346) — a blob REF (assetId) + display metadata. */
+export interface KanbanAttachmentMirror {
+  assetId: string
+  name: string
+  kind: string
+  mime?: string
+  size?: number
+}
+
+/** One card in a Kanban board's mirror projection (P3b→v19→#346) — flat, bound to a column by `columnId`. */
 export interface KanbanCardMirror {
   id: string
   columnId: string
@@ -99,6 +108,8 @@ export interface KanbanCardMirror {
   tags?: string[]
   /** v19 card-detail: file+line references the card touches. */
   fileRefs?: KanbanCardFileRefMirror[]
+  /** #346 attachments: blob refs (assetId + metadata) the card carries; read-only. Absent until a card has any. */
+  attachments?: KanbanAttachmentMirror[]
 }
 
 /**
@@ -324,10 +335,13 @@ const MAX_FILEREFS = 500
 /** Cap a single kanban board's mirrored lanes + cards (P3b) so a forged push can't grow MAIN memory. */
 const MAX_KANBAN_COLUMNS = 50
 const MAX_KANBAN_CARDS = 300
-/** Cap a single card's mirrored v19 detail lists (tags / fileRefs) so a forged push can't grow memory. */
+/** Cap a single card's mirrored v19 detail lists (tags / fileRefs / attachments) so a forged push can't grow memory. */
 const MAX_KANBAN_CARD_TAGS = 20
 const MAX_KANBAN_CARD_FILE_REFS = 50
+const MAX_KANBAN_CARD_ATTACHMENTS = 50
 const MAX_FIELD_LEN = 256
+/** The attachment `kind` values #346 mints (a card-store enum); an off-value is dropped on ingest. */
+const ATTACHMENT_KINDS: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'file'])
 /** Cap a single planning board's mirrored elements + items (S6) so a forged push can't grow MAIN memory. */
 const MAX_PLANNING_ELEMENTS = 300
 const MAX_PLANNING_ITEMS = 100
@@ -459,6 +473,34 @@ function sanitizeCardFileRefs(input: unknown): KanbanCardFileRefMirror[] | undef
 }
 
 /**
+ * Keep only well-formed card `attachments` (#346) — each a `{assetId, name, kind, mime?, size?}` blob
+ * ref. `assetId`/`name` are non-empty length-capped strings; `kind` is a known {@link ATTACHMENT_KINDS}
+ * value; `mime` a length-capped string; `size` a finite positive number. Count-capped; a malformed entry
+ * is dropped. Returns `undefined` when nothing survives, so the card omits the field. NEVER the blob —
+ * only the logical ref + display metadata (ADR 0009: the card carries the assetId, not the bytes).
+ */
+function sanitizeCardAttachments(input: unknown): KanbanAttachmentMirror[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: KanbanAttachmentMirror[] = []
+  for (const a of input) {
+    if (out.length >= MAX_KANBAN_CARD_ATTACHMENTS) break
+    if (!a || typeof a !== 'object') continue
+    const rec = a as Record<string, unknown>
+    const assetId = boundedStr(rec.assetId)
+    const name = boundedStr(rec.name)
+    if (assetId === undefined || name === undefined) continue
+    if (typeof rec.kind !== 'string' || !ATTACHMENT_KINDS.has(rec.kind)) continue
+    const att: KanbanAttachmentMirror = { assetId, name, kind: rec.kind }
+    const mime = boundedStr(rec.mime)
+    if (mime !== undefined) att.mime = mime
+    if (typeof rec.size === 'number' && Number.isFinite(rec.size) && rec.size > 0)
+      att.size = rec.size
+    out.push(att)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
  * Keep only well-formed Kanban lanes + cards; drop anything else (P3b). Bounded like the other
  * snapshot fields — `mcp:boards` is an IPC channel, so trust nothing: cap columns
  * ({@link MAX_KANBAN_COLUMNS}) + cards ({@link MAX_KANBAN_CARDS}), each string field
@@ -514,6 +556,9 @@ function sanitizeKanban(input: unknown): KanbanMirror | undefined {
       if (tags !== undefined) card.tags = tags
       const fileRefs = sanitizeCardFileRefs(rec.fileRefs)
       if (fileRefs !== undefined) card.fileRefs = fileRefs
+      // #346 attachments: blob refs (assetId + metadata) — validated/count-capped, read-only.
+      const attachments = sanitizeCardAttachments(rec.attachments)
+      if (attachments !== undefined) card.attachments = attachments
       out.push(card)
     }
   }

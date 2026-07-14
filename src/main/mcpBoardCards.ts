@@ -30,6 +30,13 @@ export interface BoardCardsInput {
       description?: string
       tags?: ReadonlyArray<string>
       fileRefs?: ReadonlyArray<{ path: string; line?: number; endLine?: number }>
+      attachments?: ReadonlyArray<{
+        assetId: string
+        name: string
+        kind: string
+        mime?: string
+        size?: number
+      }>
     }>
     /** v19: what the columns group by (absent ⇒ 'flow' downstream) + its display name. */
     columnAxis?: 'flow' | 'category'
@@ -44,6 +51,19 @@ export interface BoardCardsFileRef {
   endLine?: number
 }
 
+/**
+ * One attachment in the grouped cards projection (#346) — a blob REFERENCE (`assetId`), never the blob
+ * itself: the logical id + display metadata an agent needs to SEE what a card carries. Read-only; the
+ * agent cannot author blobs over the MCP text channel, so there is no attachment WRITE tool.
+ */
+export interface BoardCardsAttachment {
+  assetId: string
+  name: string
+  kind: string
+  mime?: string
+  size?: number
+}
+
 /** One card in the grouped `canvas://board/{id}/cards` projection — chips/detail omitted when absent. */
 export interface BoardCardsCard {
   id: string
@@ -55,6 +75,8 @@ export interface BoardCardsCard {
   description?: string
   tags?: string[]
   fileRefs?: BoardCardsFileRef[]
+  /** #346 attachments — blob refs (assetId + metadata), read-only. Absent until a card carries any. */
+  attachments?: BoardCardsAttachment[]
 }
 
 /** One column (lane) in the grouped projection — its cards nested in array order. */
@@ -96,6 +118,15 @@ function withChips(c: NonNullable<BoardCardsInput['kanban']>['cards'][number]): 
       if (typeof r.line === 'number') ref.line = r.line
       if (typeof r.endLine === 'number') ref.endLine = r.endLine
       return ref
+    })
+  }
+  // #346 attachments (blob refs, already sanitized/capped on ingest) — surface the metadata read-only.
+  if (c.attachments && c.attachments.length > 0) {
+    card.attachments = c.attachments.map((a) => {
+      const att: BoardCardsAttachment = { assetId: a.assetId, name: a.name, kind: a.kind }
+      if (a.mime) att.mime = a.mime
+      if (typeof a.size === 'number') att.size = a.size
+      return att
     })
   }
   return card

@@ -142,6 +142,8 @@ export interface KanbanCardSummary {
   tags?: string[]
   /** v19 card-detail: file+line references the card touches. */
   fileRefs?: KanbanCardFileRefSummary[]
+  /** #346: attachments the card carries (blob refs + metadata). Absent until a card has any. */
+  attachments?: KanbanAttachmentSummary[]
 }
 
 /** One file+line ref on a card's mirror projection (v19) — path + optional 1-based line/endLine range. */
@@ -149,6 +151,15 @@ export interface KanbanCardFileRefSummary {
   path: string
   line?: number
   endLine?: number
+}
+
+/** One attachment on a card's mirror projection (#346) — a blob REF (assetId) + display metadata, no blob. */
+export interface KanbanAttachmentSummary {
+  assetId: string
+  name: string
+  kind: string
+  mime?: string
+  size?: number
 }
 
 /** One checklist item in a Planning board's mirror projection (S6) — id + label + done. */
@@ -284,6 +295,14 @@ export interface BoardSnapshotInput {
     description?: string
     tags?: ReadonlyArray<string>
     fileRefs?: ReadonlyArray<{ path: string; line?: number; endLine?: number }>
+    /** #346 (KanbanCard.attachments) — blob refs + metadata; projected read-only, host validates/caps. */
+    attachments?: ReadonlyArray<{
+      assetId: string
+      name: string
+      kind: string
+      mime?: string
+      size?: number
+    }>
   }>
   /** Present on a `'kanban'` board (v19 KanbanBoard.columnAxis/axisLabel) — the column-axis + its name. */
   columnAxis?: 'flow' | 'category'
@@ -383,6 +402,19 @@ function deriveKanban(
           refs.push(ref)
         }
         if (refs.length > 0) card.fileRefs = refs
+      }
+      // #346 attachments: project the blob refs + metadata (read-only); the host validates/caps on ingest.
+      if (Array.isArray(c.attachments)) {
+        const atts: KanbanAttachmentSummary[] = []
+        for (const a of c.attachments) {
+          if (!a || typeof a.assetId !== 'string' || a.assetId.length === 0) continue
+          if (typeof a.name !== 'string' || typeof a.kind !== 'string') continue
+          const att: KanbanAttachmentSummary = { assetId: a.assetId, name: a.name, kind: a.kind }
+          if (typeof a.mime === 'string' && a.mime.length > 0) att.mime = a.mime
+          if (typeof a.size === 'number' && Number.isFinite(a.size)) att.size = a.size
+          atts.push(att)
+        }
+        if (atts.length > 0) card.attachments = atts
       }
       out.push(card)
     }

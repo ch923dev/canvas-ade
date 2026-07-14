@@ -383,6 +383,35 @@ describe('buildBoardSnapshot', () => {
     })
   })
 
+  it('projects card attachments onto the mirror read-only (#346)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          columns: [{ id: 'backlog', title: 'Backlog' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'backlog',
+              title: 'One',
+              attachments: [
+                { assetId: 's1', name: 'shot.png', kind: 'image', mime: 'image/png', size: 99 },
+                { assetId: 's2', name: 'doc.txt', kind: 'file' }
+              ]
+            }
+          ]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(board.kanban?.cards[0].attachments).toEqual([
+      { assetId: 's1', name: 'shot.png', kind: 'image', mime: 'image/png', size: 99 },
+      { assetId: 's2', name: 'doc.txt', kind: 'file' }
+    ])
+  })
+
   it('omits kanban for every non-kanban board (byte-identical) even if it carries stray columns (P3b)', () => {
     const [plan] = buildBoardSnapshot(
       // A non-kanban board carrying stray `columns`/`cards` must not project a kanban field.

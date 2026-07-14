@@ -207,6 +207,38 @@ describe('boardRegistry', () => {
     expect(out[0].kanban?.axisLabel).toBe('Subsystem')
   })
 
+  it('keeps well-formed card attachments, drops malformed ones (#346)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'a',
+              title: 'One',
+              attachments: [
+                { assetId: 's1', name: 'a.png', kind: 'image', mime: 'image/png', size: 10 },
+                { assetId: 's2', name: 'b.bin', kind: 'file' },
+                { assetId: 's3', name: 'x', kind: 'bogus' }, // bad kind → dropped
+                { assetId: '', name: 'y', kind: 'file' }, // empty assetId → dropped
+                { assetId: 's5', name: 'z', kind: 'image', size: 0 } // size 0 → size dropped, entry kept
+              ]
+            }
+          ]
+        }
+      }
+    ])
+    expect(out[0].kanban?.cards[0].attachments).toEqual([
+      { assetId: 's1', name: 'a.png', kind: 'image', mime: 'image/png', size: 10 },
+      { assetId: 's2', name: 'b.bin', kind: 'file' },
+      { assetId: 's5', name: 'z', kind: 'image' }
+    ])
+  })
+
   it('drops a bad columnAxis enum + keeps a valid axis-only kanban projection (v19)', () => {
     const out = sanitizeSnapshot([
       {

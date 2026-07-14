@@ -122,6 +122,32 @@ describe('buildBoardCards (P3b canvas://board/{id}/cards grouper)', () => {
     })
   })
 
+  it('projects card attachments read-only (#346) — assetId + metadata, never the blob', () => {
+    const cards = buildBoardCards({
+      id: 'k',
+      title: 'K',
+      type: 'kanban',
+      kanban: {
+        columns: [{ id: 'a', title: 'A' }],
+        cards: [
+          {
+            id: 'c1',
+            columnId: 'a',
+            title: 'x',
+            attachments: [
+              { assetId: 'sha1a', name: 'shot.png', kind: 'image', mime: 'image/png', size: 2048 },
+              { assetId: 'sha1b', name: 'notes.txt', kind: 'file' }
+            ]
+          }
+        ]
+      }
+    })
+    expect(cards.columns[0].cards[0].attachments).toEqual([
+      { assetId: 'sha1a', name: 'shot.png', kind: 'image', mime: 'image/png', size: 2048 },
+      { assetId: 'sha1b', name: 'notes.txt', kind: 'file' }
+    ])
+  })
+
   it('surfaces the board column axis + label; omits both when absent', () => {
     const withAxis = buildBoardCards({
       id: 'k',
