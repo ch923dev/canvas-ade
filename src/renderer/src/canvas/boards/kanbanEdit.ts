@@ -58,6 +58,7 @@ function attachmentsEqual(
   return x.every(
     (t, i) =>
       t.assetId === y[i].assetId &&
+      t.url === y[i].url &&
       t.name === y[i].name &&
       t.kind === y[i].kind &&
       t.mime === y[i].mime &&

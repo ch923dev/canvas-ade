@@ -171,10 +171,10 @@ function AttachmentTile({
   att: KanbanAttachment
   onRemove: () => void
 }): ReactElement {
-  // Media kinds need the blob URL; a plain file chip opens externally and needs no in-app URL (pass ''
-  // → the hook short-circuits to `missing` without a read; the file branch ignores it anyway).
-  const needsUrl = att.kind !== 'file'
-  const media = useAttachmentUrl(needsUrl ? att.assetId : '', att.mime)
+  // Only the media kinds need the in-app blob URL; a file chip opens externally and a link has no blob
+  // at all (pass '' → the hook short-circuits to `missing` without a read; those branches ignore it).
+  const needsUrl = att.kind !== 'file' && att.kind !== 'link'
+  const media = useAttachmentUrl(needsUrl && att.assetId ? att.assetId : '', att.mime)
   const [lightbox, setLightbox] = useState(false)
 
   const remove = (
@@ -268,6 +268,33 @@ function AttachmentTile({
     )
   }
 
+  if (att.kind === 'link') {
+    // link — a chip that opens the URL in the OS browser (scheme re-validated in MAIN).
+    return (
+      <div className="kba-tile kba-tile-file" data-testid="kba-tile">
+        <button
+          className="kba-file kba-link"
+          title={`Open ${att.url}`}
+          onClick={() => att.url && void window.api.openExternalUrl(att.url)}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M6.5 9.5 9.5 6.5M6 4.5 7.6 2.9a2.6 2.6 0 0 1 3.7 3.7L9.7 8.2M10 11.5 8.4 13.1a2.6 2.6 0 0 1-3.7-3.7L6.3 7.8"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="kba-file-name" title={att.url}>
+            {att.name}
+          </span>
+        </button>
+        {remove}
+      </div>
+    )
+  }
+
   // file — a chip that opens externally with the OS default app.
   const size = fmtSize(att.size)
   return (
@@ -275,7 +302,7 @@ function AttachmentTile({
       <button
         className="kba-file"
         title={`Open ${att.name}`}
-        onClick={() => void window.api.library.open(att.assetId)}
+        onClick={() => att.assetId && void window.api.library.open(att.assetId)}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path
@@ -311,6 +338,17 @@ export function AttachmentsBlock({
 }): ReactElement {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
+  const [linkDraft, setLinkDraft] = useState('')
+
+  // Add an external link (no blob): normalize a bare host to https:// (MAIN re-validates + only opens
+  // http/https), keep the raw text as the display name.
+  const addLink = (): void => {
+    const raw = linkDraft.trim()
+    if (!raw) return
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`
+    onAdd([{ kind: 'link', url, name: raw }])
+    setLinkDraft('')
+  }
 
   // Persist a file's bytes into the content-addressed store, then hand a built entry to the parent.
   // Sequential await (one gesture at a time); a single failed write toasts + is skipped, the rest land.
@@ -391,7 +429,11 @@ export function AttachmentsBlock({
       {attachments.length > 0 && (
         <div className="kba-grid">
           {attachments.map((att, i) => (
-            <AttachmentTile key={att.assetId + '#' + i} att={att} onRemove={() => onRemove(i)} />
+            <AttachmentTile
+              key={(att.assetId ?? att.url ?? att.name) + '#' + i}
+              att={att}
+              onRemove={() => onRemove(i)}
+            />
           ))}
         </div>
       )}
@@ -399,7 +441,21 @@ export function AttachmentsBlock({
         <button className="kba-add" data-testid="kba-add" onClick={() => inputRef.current?.click()}>
           + Add file
         </button>
-        <span className="kba-hint">or drop / paste an image</span>
+        <input
+          className="kba-linkinput"
+          data-testid="kba-link"
+          aria-label="Add a link"
+          value={linkDraft}
+          placeholder="or paste a link…"
+          onChange={(e) => setLinkDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              addLink()
+            }
+          }}
+          onBlur={addLink}
+        />
       </div>
       <input
         ref={inputRef}

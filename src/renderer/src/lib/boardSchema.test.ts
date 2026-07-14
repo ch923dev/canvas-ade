@@ -343,6 +343,34 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
     ).toThrow(/size/)
   })
 
+  it('round-trips a LINK attachment (kind:link + url, no assetId) (#346)', () => {
+    const k: KanbanBoard = {
+      id: 'k2',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'a', title: 'A' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'a',
+          title: 'one',
+          attachments: [{ url: 'https://github.com/x/y', name: 'github.com/x/y', kind: 'link' }]
+        }
+      ]
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('rejects a link attachment with a non-string url (#346)', () => {
+    expect(() =>
+      fromObject(withCard({ attachments: [{ name: 'x', kind: 'link' }] }) as CanvasDoc)
+    ).toThrow(/url/)
+  })
+
   it('round-trips the column axis (columnAxis + axisLabel)', () => {
     const k: KanbanBoard = {
       id: 'k',

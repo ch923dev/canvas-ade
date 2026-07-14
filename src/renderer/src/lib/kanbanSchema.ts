@@ -26,22 +26,26 @@ export interface KanbanFileRef {
 }
 
 /**
- * v19 (#346): a file attached to a card — an image / video / audio clip / any file. The bytes live
- * in the SAME content-addressed store the whiteboard paste uses (`<project>/.canvas/assets/<sha1>.<ext>`,
- * ADR 0009), so a card carries only the logical `assetId`, never the blob. `kind` is derived from the
- * source MIME at capture and selects the modal renderer (thumbnail / `<video>` / `<audio>` / file chip);
- * `mime`/`size` are best-effort display metadata (a 0-byte file drops `size`). Additive → no schema bump.
+ * v19 (#346): something attached to a card — a file (image / video / audio / any file) OR an external
+ * link. A FILE attachment's bytes live in the SAME content-addressed store the whiteboard paste uses
+ * (`<project>/.canvas/assets/<sha1>.<ext>`, ADR 0009), so the card carries only the logical `assetId`,
+ * never the blob; `kind` (derived from the source MIME) selects the modal renderer (thumbnail /
+ * `<video>` / `<audio>` / file chip) and `mime`/`size` are best-effort display metadata. A LINK
+ * attachment (`kind: 'link'`) has no blob — it carries a `url` and opens in the OS browser instead.
+ * Exactly one of `assetId` (file kinds) / `url` (link) is present. Additive → no schema bump.
  */
 export interface KanbanAttachment {
-  /** Logical content-addressed id `assets/<sha1>.<ext>` — resolved to bytes via `window.api.asset.read`. */
-  assetId: string
-  /** Original filename, for display. */
+  /** File kinds: logical content-addressed id `assets/<sha1>.<ext>` (read via `window.api.asset.read`). Absent for a link. */
+  assetId?: string
+  /** `kind: 'link'` only: the external URL, opened via `window.api.openExternalUrl`. Absent for file kinds. */
+  url?: string
+  /** Display name — a file's original filename, or a link's label (defaults to the URL). */
   name: string
-  /** Coarse media class → which renderer the modal uses. */
-  kind: 'image' | 'video' | 'audio' | 'file'
-  /** Source MIME type, when known (used to type the blob URL for playback). */
+  /** File media class (selects the renderer), or `'link'` for an external URL. */
+  kind: 'image' | 'video' | 'audio' | 'file' | 'link'
+  /** File kinds: source MIME type, when known (types the blob URL for playback). */
   mime?: string
-  /** Byte size, when known (>0). */
+  /** File kinds: byte size, when known (>0). */
   size?: number
 }
 
@@ -197,10 +201,22 @@ export function assertKanbanContent(
       if (!Array.isArray(c.attachments)) fail('kanban card attachments is not an array')
       for (const a of c.attachments as unknown[]) {
         if (!isRecord(a)) fail('kanban card attachment is not an object')
-        if (typeof a.assetId !== 'string') fail('kanban card attachment has a non-string assetId')
         if (typeof a.name !== 'string') fail('kanban card attachment has a non-string name')
-        if (a.kind !== 'image' && a.kind !== 'video' && a.kind !== 'audio' && a.kind !== 'file') {
-          fail('kanban card attachment kind is not one of image/video/audio/file')
+        const isLink = a.kind === 'link'
+        if (
+          a.kind !== 'image' &&
+          a.kind !== 'video' &&
+          a.kind !== 'audio' &&
+          a.kind !== 'file' &&
+          !isLink
+        ) {
+          fail('kanban card attachment kind is not one of image/video/audio/file/link')
+        }
+        // A link carries a `url`; every file kind carries an `assetId`. Each is a string when present.
+        if (isLink) {
+          if (typeof a.url !== 'string') fail('kanban card link attachment has a non-string url')
+        } else if (typeof a.assetId !== 'string') {
+          fail('kanban card attachment has a non-string assetId')
         }
         if (a.mime !== undefined && typeof a.mime !== 'string') {
           fail('kanban card attachment mime is not a string')

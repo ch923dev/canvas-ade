@@ -19,7 +19,14 @@ type Card = {
   description?: string
   tags?: string[]
   fileRefs?: { path: string; line?: number; endLine?: number }[]
-  attachments?: { assetId: string; name: string; kind: string; mime?: string; size?: number }[]
+  attachments?: {
+    assetId?: string
+    url?: string
+    name: string
+    kind: string
+    mime?: string
+    size?: number
+  }[]
 }
 type Column = { id: string; title: string; wip?: number }
 
@@ -113,17 +120,42 @@ test.describe('@planning kanban board interaction (P4.2)', () => {
       const att = created!.attachments![0]
       expect(att.name).toBe('note.txt')
       expect(att.kind).toBe('file')
-      expect(/^assets[/\\][0-9a-f]{40}\.txt$/.test(att.assetId), 'assets/<sha1>.txt id').toBe(true)
+      const assetId = att.assetId ?? ''
+      expect(/^assets[/\\][0-9a-f]{40}\.txt$/.test(assetId), 'assets/<sha1>.txt id').toBe(true)
       // ADR 0009: the blob lives under <project>/.canvas/assets/ — resolve through `.canvas/`.
       const fileOk = await mainCall<boolean>(
         electronApp,
         'fileExists',
-        await mainCall<string>(electronApp, 'joinPath', tmp, '.canvas', att.assetId)
+        await mainCall<string>(electronApp, 'joinPath', tmp, '.canvas', assetId)
       )
       expect(fileOk, 'attachment blob written to disk').toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
+  })
+
+  test('adds a LINK attachment in create mode (no blob; https:// prepended) (#346)', async ({
+    page
+  }) => {
+    const id = await seedKanban(page)
+    const node = page.locator(`[data-id="${id}"]`)
+    await node.getByRole('button', { name: 'Add card to Backlog' }).click()
+    const modal = page.getByTestId('kanban-card-modal')
+    await expect(modal).toBeVisible()
+    await modal.getByTestId('kbm-title').fill('With link')
+    const link = modal.getByTestId('kba-link')
+    await link.fill('github.com/anthropics/anthropic-sdk-typescript')
+    await link.press('Enter')
+    // The link chip renders with the typed text; committing lands it on the new card.
+    await expect(
+      modal.getByText('github.com/anthropics/anthropic-sdk-typescript', { exact: true })
+    ).toBeVisible()
+    await modal.getByTestId('kbm-add').click()
+    const created = (await kanbanCards(page)).find((c) => c.title === 'With link')
+    expect(created?.attachments?.length).toBe(1)
+    const att = created!.attachments![0]
+    expect(att.kind).toBe('link')
+    expect(att.url).toBe('https://github.com/anthropics/anthropic-sdk-typescript') // scheme prepended
   })
 
   test('drags a card between columns (HTML5 native drag re-parents it)', async ({ page }) => {
