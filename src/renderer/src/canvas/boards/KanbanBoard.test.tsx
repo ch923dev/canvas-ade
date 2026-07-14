@@ -4,14 +4,19 @@
  * (add/rename/delete-with-reflow + soft WIP). Every edit lands through `updateBoard` as one undoable
  * step. The full-app slivers (React Flow drag interplay, actual pointer DnD) live in the e2e spec.
  */
-import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { KanbanBoard } from './KanbanBoard'
 import { useCanvasStore } from '../../store/canvasStore'
 import type { KanbanBoard as KanbanBoardData } from '../../lib/boardSchema'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  delete (window as any).api
+  vi.restoreAllMocks()
+})
 
 /** Seed one deterministic kanban board (fixed ids) with clean undo rails. */
 function seed(): void {
@@ -122,6 +127,36 @@ describe('KanbanBoard — card interaction', () => {
     expect(boardOf().cards.length).toBe(before) // nothing added
     expect(useCanvasStore.getState().past).toHaveLength(0)
     expect(screen.getByTestId('kanban-card-modal')).toBeTruthy() // stays open
+  })
+
+  it('create modal disables "Add card" while an attachment write is in flight (#346 review)', async () => {
+    seed()
+    // A DEFERRED asset.write so the write can be held "in flight" mid-test.
+    let resolveWrite: (v: { assetId: string }) => void = () => {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).api = {
+      asset: {
+        write: vi.fn(() => new Promise<{ assetId: string }>((r) => (resolveWrite = r))),
+        read: vi.fn(async () => null)
+      }
+    }
+    render(<Harness />)
+    fireEvent.click(screen.getByLabelText('Add card to Backlog'))
+    fireEvent.change(screen.getByTestId('kbm-title'), { target: { value: 'Busy' } })
+    // Drop a file onto the hidden picker input → asset.write starts and stays pending.
+    const file = new File(['x'], 'a.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByTestId('kba-input'), { target: { files: [file] } })
+    // "Add card" is disabled while the write is in flight — a commit here would drop the attachment.
+    await waitFor(() =>
+      expect((screen.getByTestId('kbm-add') as HTMLButtonElement).disabled).toBe(true)
+    )
+    // Resolve the write → the button re-enables and the attachment is in the draft.
+    resolveWrite({ assetId: 'assets/' + 'a'.repeat(40) + '.txt' })
+    await waitFor(() =>
+      expect((screen.getByTestId('kbm-add') as HTMLButtonElement).disabled).toBe(false)
+    )
+    fireEvent.click(screen.getByTestId('kbm-add'))
+    expect(boardOf().cards.find((c) => c.title === 'Busy')?.attachments?.length).toBe(1)
   })
 
   it('renames a card via the detail modal title field (blur commits)', () => {

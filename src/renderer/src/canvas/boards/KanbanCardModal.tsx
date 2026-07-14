@@ -86,6 +86,9 @@ export function KanbanCardModal({
   const [draftTags, setDraftTags] = useState<string[]>([])
   const [draftFileRefs, setDraftFileRefs] = useState<KanbanFileRef[]>([])
   const [draftAttachments, setDraftAttachments] = useState<KanbanAttachment[]>([])
+  // True while an attachment's asset.write is in flight — gates the create-mode "Add card" so a commit
+  // can't race a pending write and drop the attachment (leaving an orphaned blob on disk).
+  const [attachBusy, setAttachBusy] = useState(false)
 
   // EDIT mode only: bail if the card was deleted out from under the modal (create has no card).
   if (!isCreate && !card) return null
@@ -189,6 +192,7 @@ export function KanbanCardModal({
   // CREATE: commit the whole draft as ONE new card (addCardDetailed normalizes every field). A blank
   // title is refused (a card must keep a title) — focus the field rather than silently no-op.
   const onAdd = (): void => {
+    if (attachBusy) return // an attachment write is still in flight — don't commit without it
     if (!title.trim()) {
       titleRef.current?.focus()
       return
@@ -276,6 +280,7 @@ export function KanbanCardModal({
                 attachments={attachments}
                 onAdd={onAddAttachments}
                 onRemove={removeAttachment}
+                onPendingChange={setAttachBusy}
                 toastKey={board.id}
               />
             </div>
@@ -425,8 +430,13 @@ export function KanbanCardModal({
                 Cancel
               </button>
               <span className="kbm-spacer" />
-              <button className="ca-btn-primary kbm-addbtn" data-testid="kbm-add" onClick={onAdd}>
-                Add card
+              <button
+                className="ca-btn-primary kbm-addbtn"
+                data-testid="kbm-add"
+                disabled={attachBusy}
+                onClick={onAdd}
+              >
+                {attachBusy ? 'Adding files…' : 'Add card'}
               </button>
             </>
           ) : (

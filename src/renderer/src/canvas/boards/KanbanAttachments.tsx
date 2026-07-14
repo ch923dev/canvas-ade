@@ -322,10 +322,16 @@ function AttachmentTile({
   )
 }
 
+/** Client-side attach ceiling — mirrors MAIN's `writeAsset` MAX_WRITE_BYTES so an oversize file is
+ *  rejected BEFORE `file.arrayBuffer()` buffers it into renderer memory (a multi-GB drop would OOM
+ *  the renderer long before MAIN's IPC ceiling could reject it). Same discipline as BackdropControls. */
+const MAX_ATTACH_BYTES = 256 * 1024 * 1024
+
 export function AttachmentsBlock({
   attachments,
   onAdd,
   onRemove,
+  onPendingChange,
   toastKey
 }: {
   attachments: KanbanAttachment[]
@@ -333,12 +339,16 @@ export function AttachmentsBlock({
   onAdd: (entries: KanbanAttachment[]) => void
   /** Remove the entry at `index` from the current list. */
   onRemove: (index: number) => void
+  /** Signals when ≥1 file write is in flight — the modal disables "Add card" so a commit can't race a
+   *  pending `asset.write` and drop the attachment (leaving an orphaned blob). */
+  onPendingChange?: (pending: boolean) => void
   /** A stable key (the board id) so repeated write-failure toasts collapse in place. */
   toastKey: string
 }): ReactElement {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [linkDraft, setLinkDraft] = useState('')
+  const pendingRef = useRef(0)
 
   // Add an external link (no blob): normalize a bare host to https:// (MAIN re-validates + only opens
   // http/https), keep the raw text as the display name.
@@ -354,32 +364,50 @@ export function AttachmentsBlock({
   // Sequential await (one gesture at a time); a single failed write toasts + is skipped, the rest land.
   const addFiles = useCallback(
     async (files: File[]): Promise<void> => {
-      const built: KanbanAttachment[] = []
-      for (const file of files) {
-        const mime = file.type || ''
-        const ext = deriveExt(file.name, mime)
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const res = await window.api.asset.write(bytes, ext)
-        if ('error' in res) {
-          showToast({
-            id: `attach-write-failed-${toastKey}`,
-            kind: 'error',
-            message: saveErrorMessage(res.code, 'Could not attach file')
-          })
-          continue
+      // Mark a write in flight so the modal disables commit until every file lands (no orphan-on-commit
+      // race). Refcounted so concurrent gestures (drop then paste) settle the pending flag exactly once.
+      pendingRef.current += 1
+      onPendingChange?.(true)
+      try {
+        const built: KanbanAttachment[] = []
+        for (const file of files) {
+          // Reject an oversize file BEFORE `arrayBuffer()` buffers it into memory (renderer OOM guard).
+          if (file.size > MAX_ATTACH_BYTES) {
+            showToast({
+              id: `attach-too-big-${toastKey}`,
+              kind: 'error',
+              message: `"${file.name}" is too large to attach (max 256 MB)`
+            })
+            continue
+          }
+          const mime = file.type || ''
+          const ext = deriveExt(file.name, mime)
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          const res = await window.api.asset.write(bytes, ext)
+          if ('error' in res) {
+            showToast({
+              id: `attach-write-failed-${toastKey}`,
+              kind: 'error',
+              message: saveErrorMessage(res.code, 'Could not attach file')
+            })
+            continue
+          }
+          const entry: KanbanAttachment = {
+            assetId: res.assetId,
+            name: file.name || `attachment.${ext}`,
+            kind: deriveKind(mime, ext)
+          }
+          if (mime) entry.mime = mime
+          if (file.size > 0) entry.size = file.size
+          built.push(entry)
         }
-        const entry: KanbanAttachment = {
-          assetId: res.assetId,
-          name: file.name || `attachment.${ext}`,
-          kind: deriveKind(mime, ext)
-        }
-        if (mime) entry.mime = mime
-        if (file.size > 0) entry.size = file.size
-        built.push(entry)
+        if (built.length) onAdd(built)
+      } finally {
+        pendingRef.current -= 1
+        if (pendingRef.current === 0) onPendingChange?.(false)
       }
-      if (built.length) onAdd(built)
     },
-    [onAdd, toastKey]
+    [onAdd, onPendingChange, toastKey]
   )
 
   // Paste: a clipboard image while the modal owns focus (the modal is the top surface + focus-trapped).
