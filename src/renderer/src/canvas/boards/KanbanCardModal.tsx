@@ -149,7 +149,15 @@ export function KanbanCardModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={enterBlurs}
-              onBlur={() => commit(renameCard(board, cardId, title))}
+              onBlur={() => {
+                const next = renameCard(board, cardId, title)
+                commit(next)
+                // renameCard REJECTS a blank/unchanged title (returns the same array — a card must
+                // keep a title). Unlike the buffered clearable fields, a blank here doesn't persist,
+                // so resync the local buffer to the real title — else a cleared-then-abandoned field
+                // shows permanently empty while the card face still holds its name (review #345).
+                if (next === board.cards) setTitle(card.title)
+              }}
             />
             <div className="kbm-field">
               <span className="kbm-label">Description</span>

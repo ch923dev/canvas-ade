@@ -101,6 +101,17 @@ describe('KanbanBoard — card interaction', () => {
     expect(boardOf().cards.find((c) => c.id === 'c1')?.title).toBe('One!')
   })
 
+  it('resyncs a blanked title on blur — blank is a store no-op, the field must not stay empty', () => {
+    seed()
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    const input = screen.getByTestId('kbm-title') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+    expect(boardOf().cards.find((c) => c.id === 'c1')?.title).toBe('One') // store keeps the real title
+    expect((screen.getByTestId('kbm-title') as HTMLInputElement).value).toBe('One') // input resynced
+  })
+
   it('deletes a card via its × button', () => {
     seed()
     render(<Harness />)
