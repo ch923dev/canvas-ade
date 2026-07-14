@@ -208,12 +208,9 @@ describe('KanbanBoard — card detail (v19)', () => {
     fireEvent.change(tagInput, { target: { value: 'urgent' } })
     fireEvent.keyDown(tagInput, { key: 'Enter' })
     expect(boardOf().cards.find((c) => c.id === 'c1')?.tags).toEqual(['urgent'])
-    // add a file ref
+    // + Add file & line opens the pick-file-lines modal (path/lines are chosen there, not typed)
     fireEvent.click(screen.getByTestId('kbm-ref-add'))
-    const pathInput = screen.getByLabelText('File path') as HTMLInputElement
-    fireEvent.change(pathInput, { target: { value: 'src/x.ts' } })
-    fireEvent.blur(pathInput)
-    expect(boardOf().cards.find((c) => c.id === 'c1')?.fileRefs).toEqual([{ path: 'src/x.ts' }])
+    expect(screen.getByTestId('pick-file-lines')).toBeTruthy()
   })
 
   it('opens a file ref via openFileRef and closes the modal', () => {
@@ -249,6 +246,67 @@ describe('KanbanBoard — card detail (v19)', () => {
     fireEvent.click(screen.getByLabelText('Open file at line'))
     expect(calls).toEqual([['a.ts', 9, undefined]])
     expect(screen.queryByTestId('kanban-card-modal')).toBeNull() // modal closed to reveal the file
+  })
+
+  it('renders ref rows (basename + line badge) and removes one via ×', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          fileRefs: [{ path: 'src/a.ts', line: 19, endLine: 21 }, { path: 'b.ts' }]
+        }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    expect(screen.getByText('L19–21')).toBeTruthy()
+    expect(screen.getByText('a.ts')).toBeTruthy() // basename shown
+    fireEvent.click(screen.getAllByLabelText('Remove file reference')[0])
+    expect(boardOf().cards.find((c) => c.id === 'c1')?.fileRefs).toEqual([{ path: 'b.ts' }])
+  })
+
+  it('clicking a ref path opens the picker to edit it', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        { id: 'c1', columnId: 'backlog', title: 'One', fileRefs: [{ path: 'src/a.ts', line: 5 }] }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    fireEvent.click(screen.getByTitle('Edit this reference'))
+    expect(screen.getByTestId('pick-file-lines')).toBeTruthy()
   })
 })
 

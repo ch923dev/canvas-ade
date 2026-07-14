@@ -27,6 +27,7 @@ import {
   setCardTags,
   tagTint
 } from './kanbanEdit'
+import { PickFileLinesModal } from './PickFileLinesModal'
 
 /** Enter commits a single-line field by blurring it (the blur handler does the actual commit). */
 function enterBlurs(e: KeyboardEvent<HTMLInputElement>): void {
@@ -57,14 +58,15 @@ export function KanbanCardModal({
 
   // Single-value fields buffer locally and commit on blur (so a keystroke isn't a store write / undo
   // step). Seeded once per mount from the card; the parent keys this modal by `cardId`, so switching
-  // to another card REMOUNTS with fresh state rather than needing a prop→state sync effect. The `refs`
-  // list buffers inline path/line edits and commits on add/remove + field blur.
+  // to another card REMOUNTS with fresh state rather than needing a prop→state sync effect. File refs
+  // are authored by the Pick-file-lines modal (no inline text editing), so they commit straight to the card.
   const [title, setTitle] = useState(card?.title ?? '')
   const [description, setDescription] = useState(card?.description ?? '')
   const [assignee, setAssignee] = useState(card?.assignee ?? '')
   const [ref, setRef] = useState(card?.ref ?? '')
   const [tagDraft, setTagDraft] = useState('')
-  const [refs, setRefs] = useState<KanbanFileRef[]>(card?.fileRefs ?? [])
+  // The pick-file-lines modal: 'add' a new ref, or edit the ref at { index }; null = closed.
+  const [picker, setPicker] = useState<'add' | { index: number } | null>(null)
 
   if (!card) return null
 
@@ -95,17 +97,23 @@ export function KanbanCardModal({
       )
     )
 
-  const commitRefs = (next: KanbanFileRef[]): void => commit(setCardFileRefs(board, cardId, next))
-  const updateRef = (i: number, patch: Partial<KanbanFileRef>): void =>
-    setRefs(refs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
-  const parseLine = (raw: string): number | undefined => {
-    const t = raw.trim()
-    return t ? Number(t) : undefined
-  }
-  const removeRef = (i: number): void => {
-    const next = refs.filter((_, j) => j !== i)
-    setRefs(next)
-    commitRefs(next)
+  const fileRefs = card.fileRefs ?? []
+  const removeRef = (i: number): void =>
+    commit(
+      setCardFileRefs(
+        board,
+        cardId,
+        fileRefs.filter((_, j) => j !== i)
+      )
+    )
+  // The pick-file-lines modal returns a normalized ref → append (add) or replace (edit), then close.
+  const applyPick = (r: KanbanFileRef): void => {
+    const next =
+      picker && picker !== 'add'
+        ? fileRefs.map((x, j) => (j === picker.index ? r : x))
+        : [...fileRefs, r]
+    commit(setCardFileRefs(board, cardId, next))
+    setPicker(null)
   }
   const openRef = (r: KanbanFileRef): void => {
     const p = r.path.trim()
@@ -261,58 +269,43 @@ export function KanbanCardModal({
             <div className="kbm-block">
               <span className="kbm-label">Files &amp; lines</span>
               <div className="kbm-refs">
-                {refs.map((r, i) => (
-                  <div className="kbm-ref" key={i} data-testid="kbm-ref">
-                    <input
-                      className="kbm-ref-path"
-                      aria-label="File path"
-                      value={r.path}
-                      placeholder="path/to/file.ts"
-                      onChange={(e) => updateRef(i, { path: e.target.value })}
-                      onBlur={() => commitRefs(refs)}
-                    />
-                    <input
-                      className="kbm-ref-line"
-                      aria-label="Start line"
-                      inputMode="numeric"
-                      value={r.line ?? ''}
-                      placeholder="ln"
-                      onChange={(e) => updateRef(i, { line: parseLine(e.target.value) })}
-                      onKeyDown={enterBlurs}
-                      onBlur={() => commitRefs(refs)}
-                    />
-                    <input
-                      className="kbm-ref-line"
-                      aria-label="End line"
-                      inputMode="numeric"
-                      value={r.endLine ?? ''}
-                      placeholder="–"
-                      onChange={(e) => updateRef(i, { endLine: parseLine(e.target.value) })}
-                      onKeyDown={enterBlurs}
-                      onBlur={() => commitRefs(refs)}
-                    />
-                    <button
-                      className="kbm-ref-open"
-                      aria-label="Open file at line"
-                      title="Open file at line"
-                      disabled={!r.path.trim()}
-                      onClick={() => openRef(r)}
-                    >
-                      ↗
-                    </button>
-                    <button
-                      className="kbm-ref-del"
-                      aria-label="Remove file reference"
-                      onClick={() => removeRef(i)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
+                {fileRefs.map((r, i) => {
+                  const cut = r.path.lastIndexOf('/') + 1
+                  const lines =
+                    r.line != null ? (r.endLine ? `L${r.line}–${r.endLine}` : `L${r.line}`) : ''
+                  return (
+                    <div className="kbm-ref" key={i} data-testid="kbm-ref">
+                      <button
+                        className="kbm-ref-path"
+                        title="Edit this reference"
+                        onClick={() => setPicker({ index: i })}
+                      >
+                        <span className="kbm-ref-dir">{r.path.slice(0, cut)}</span>
+                        <span className="kbm-ref-base">{r.path.slice(cut)}</span>
+                      </button>
+                      {lines && <span className="kbm-ref-ln">{lines}</span>}
+                      <button
+                        className="kbm-ref-open"
+                        aria-label="Open file at line"
+                        title="Open file at line on the canvas"
+                        onClick={() => openRef(r)}
+                      >
+                        ↗
+                      </button>
+                      <button
+                        className="kbm-ref-del"
+                        aria-label="Remove file reference"
+                        onClick={() => removeRef(i)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )
+                })}
                 <button
                   className="kbm-ref-add"
                   data-testid="kbm-ref-add"
-                  onClick={() => setRefs([...refs, { path: '' }])}
+                  onClick={() => setPicker('add')}
                 >
                   + Add file &amp; line
                 </button>
@@ -326,6 +319,14 @@ export function KanbanCardModal({
             Delete card
           </button>
         </div>
+
+        {picker !== null && (
+          <PickFileLinesModal
+            initial={picker === 'add' ? undefined : fileRefs[picker.index]}
+            onPick={applyPick}
+            onClose={() => setPicker(null)}
+          />
+        )}
       </div>
     </Modal>
   )

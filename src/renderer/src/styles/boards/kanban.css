@@ -590,35 +590,44 @@
   align-items: center;
   gap: var(--space-4);
 }
+/* the ref row's path is a button (click to edit in the picker) — basename bright, dir dimmed */
 .kbm-ref-path {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
   padding: var(--space-4) var(--space-6);
   font-family: var(--mono);
   font-size: var(--fs-meta);
-  color: var(--text);
+  text-align: left;
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-ctl);
-  outline: none;
+  cursor: pointer;
+  overflow: hidden;
 }
-.kbm-ref-line {
+.kbm-ref-path:hover {
+  border-color: var(--accent);
+}
+.kbm-ref-dir {
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kbm-ref-base {
   flex: 0 0 auto;
-  width: 34px;
-  padding: var(--space-4) var(--space-4);
+  color: var(--text);
+}
+.kbm-ref-ln {
+  flex: 0 0 auto;
+  padding: 0 var(--space-6);
   font-family: var(--mono);
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
-  text-align: center;
   color: var(--accent);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
+  background: var(--accent-wash);
   border-radius: var(--r-ctl);
-  outline: none;
-}
-.kbm-ref-path:focus,
-.kbm-ref-line:focus {
-  border-color: var(--accent);
 }
 .kbm-ref-open,
 .kbm-ref-del {
@@ -668,4 +677,189 @@
 }
 .kbm-del:hover {
   color: var(--err);
+}
+
+/* ── v19 Pick file & lines modal (PickFileLinesModal) ── */
+.pfl {
+  display: flex;
+  flex-direction: column;
+  max-height: 84vh;
+  font-family: var(--ui);
+}
+.pfl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.pfl-title {
+  font-size: var(--fs-h);
+  font-weight: 600;
+}
+.pfl-spacer {
+  flex: 1;
+}
+.pfl-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.pfl-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.pfl-close:hover {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.pfl-body {
+  display: grid;
+  grid-template-columns: 236px 1fr;
+  height: 440px;
+  max-height: 60vh;
+}
+
+/* left: lazy file tree + filter */
+.pfl-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border-subtle);
+}
+.pfl-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  margin: var(--space-8);
+  padding: 3px var(--space-8);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+}
+.pfl-filter svg {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+.pfl-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+}
+.pfl-filter input::placeholder {
+  color: var(--text-3);
+}
+.pfl-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 0 var(--space-4) var(--space-8);
+}
+.pfl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 2px var(--space-6);
+  font-size: var(--fs-meta);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pfl-row:hover {
+  background: var(--surface-overlay);
+}
+.pfl-row.dir {
+  color: var(--text-2);
+}
+.pfl-row.file {
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+.pfl-row.file.sel {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.pfl-caret {
+  flex: 0 0 auto;
+  width: 12px;
+  font-size: 9px;
+  color: var(--text-3);
+}
+.pfl-fjunk {
+  flex: 0 0 auto;
+  width: 12px;
+}
+
+/* right: code viewer */
+.pfl-code {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pfl-path {
+  padding: var(--space-8) var(--space-12);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pfl-view {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.pfl-view .cm-editor {
+  height: 100%;
+  font-size: var(--fs-meta);
+}
+.pfl-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-20);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.pfl-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-top: 1px solid var(--border-subtle);
+}
+.pfl-sel {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pfl-sel b {
+  color: var(--accent);
+}
+.pfl-sel-path {
+  color: var(--text-3);
 }
