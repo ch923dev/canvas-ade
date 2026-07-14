@@ -2556,3 +2556,32 @@ picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board 
   `project:cycleHotkey` channel → overlay membership, Tab nav, Esc dismiss, single-project empty
   state) green · LIVE app check via the `_electron` harness (2 running → overlay + "2 running",
   Tab advances, Esc closes, close resident → 1 card + empty note; screenshots).
+
+## PR #344 — fix(ptyhost): self-contained daemon bundle — staged daemon crashed on boot (2026-07-14, v0.17.1)
+
+- **Squash `ee8164ae`.** Root cause (proven by running the staged daemon manually): as a Rollup
+  entry sharing the main build's module graph, the daemon's `protocol.ts` import (shared with
+  `client.ts`) was chunk-split into `out/main/chunks/protocol-<hash>.js`, but `runtimeStage.ts`
+  stages ONLY `ptyHostDaemon.js` — the staged (= packaged-only) daemon died on its first require
+  (`Cannot find module './chunks/protocol-…'`, exit 1), silently (`stdio: 'ignore'`, no child
+  error/exit observation). Every terminal spawn then burned the full 40×250 ms connect-retry
+  ladder (~10 s) before falling back in-proc, re-paid it on EVERY spawn (`ready` resets on
+  failure), and re-toasted "Terminal host unavailable" per spawn (dedupe key embedded the
+  per-attempt random pipe suffix). Dev never hit it — the in-place daemon sits beside
+  `out/main/chunks/`; the staged path had ZERO coverage (`CANVAS_PTYHOST_STAGE` referenced only
+  in `client.ts`, never set by any test).
+- **Fix:** daemon now esbuild-bundled SELF-CONTAINED (`daemonBundle.ts` + a `writeBundle` plugin
+  in `electron.vite.config.ts`; `external: ['node-pty']`, target node24, metafile inputs
+  registered as watch files); `client.ts` hardening — daemon stderr → `ptyhost-boot.err`, child
+  error/early-exit aborts the connect ladder via AbortSignal (~300 ms fail, not 10 s), per-run
+  `daemonDisabled` circuit breaker, stable notification dedupe key; `daemonMain.ts` loads
+  node-pty lazily (broken stage → logged `spawn-failed`, not a silent pre-log death).
+- **Coverage the gap cost us:** `ptyhostReattach.e2e.ts` now runs with `CANVAS_PTYHOST_STAGE=1`
+  (real stage-and-boot path); `daemonBundle.test.ts` pins the bundle chunk-free + electron-free;
+  MANUAL-CHECKS.md gains the staged-daemon packaged row.
+- **Verify:** typecheck/lint/unit green · bundle 9.8 KB, zero chunk requires · standalone staged
+  boot (`listening`) · packed `Expanse.exe` + asar-extracted bundle boots · staged-mode e2e
+  reattach green · FULL pre-push matrix 281 passed / 1 known-flaky / 3 skipped (5.7 m) · CI
+  check + CodeQL + claude-review green (1 warning dispositioned inline: unit tier for the
+  connect state machine filed as follow-up). Dev eyeball check waived by the user for this PR
+  (packed-exe boot verify stood in).
