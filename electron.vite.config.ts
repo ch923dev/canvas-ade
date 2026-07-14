@@ -4,6 +4,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 import { injectCspMeta } from './src/main/csp'
+import { buildDaemonBundle } from './src/main/ptyHost/daemonBundle'
 
 /**
  * Terminal recap (Task 10 Step 6): copy the SessionStart hook script into the main build output
@@ -74,9 +75,43 @@ function copyDiagramWorker(): Plugin {
   }
 }
 
+/**
+ * PTY-host daemon bundle (DESIGN.md 2026-07-12, packaged-crash fix). The daemon is a DETACHED
+ * process spawned via ELECTRON_RUN_AS_NODE from a staged runtime copy that carries ONLY
+ * `ptyHostDaemon.js` beside the exe (runtimeStage.ts) — so the file MUST be self-contained.
+ * As a plain Rollup entry it was NOT: Rollup factored protocol.ts (shared with client.ts)
+ * into out/main/chunks/, the stage copy severed the require, and the staged daemon crashed
+ * on boot before it could log or listen (the "Terminal host unavailable … connect ENOENT"
+ * regression). esbuild inlines everything except node-pty (staged separately as a
+ * node_modules subset; natives can't inline). Runs on writeBundle for BOTH dev and build,
+ * like the copy plugins above.
+ *
+ * Watch-file note: once off Rollup's input list, daemonMain.ts and daemon-only imports
+ * (ring.ts) leave the watched module graph — buildStart registers the bundle's actual inputs
+ * (from esbuild's metafile) so dev-mode edits still rebuild.
+ */
+function bundlePtyHostDaemon(): Plugin {
+  const entry = resolve(__dirname, 'src/main/ptyHost/daemonMain.ts')
+  let outDir = resolve(__dirname, 'out/main')
+  let inputs: string[] = [entry]
+  return {
+    name: 'canvas-ade-bundle-ptyhost-daemon',
+    configResolved(cfg): void {
+      if (cfg.build?.outDir) outDir = resolve(__dirname, cfg.build.outDir)
+    },
+    buildStart(): void {
+      for (const f of inputs) this.addWatchFile(f)
+    },
+    writeBundle(): void {
+      const r = buildDaemonBundle({ entry, outfile: join(outDir, 'ptyHostDaemon.js') })
+      inputs = r.inputs.map((i) => resolve(__dirname, i))
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), copyRecapHook(), copyDiagramWorker()],
+    plugins: [externalizeDepsPlugin(), copyRecapHook(), copyDiagramWorker(), bundlePtyHostDaemon()],
     // Phase 5 auto-update gate. electron-updater is wired in main but the actual
     // checkForUpdates call is fenced behind this build-time constant (see
     // src/main/autoUpdate.ts). It is `true` ONLY when the build sets ENABLE_AUTO_UPDATE=1
@@ -111,12 +146,9 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           // Voice V2: the sherpa-onnx engine host — forked as a utilityProcess by
           // voiceEngine.ts, so it must exist as its own file at out/main/voiceEngineHost.js.
-          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts'),
-          // PTY-host daemon (DESIGN.md 2026-07-12): a DETACHED process spawned via
-          // ELECTRON_RUN_AS_NODE from a staged runtime copy (never the install dir), so it
-          // must exist as its own file at out/main/ptyHostDaemon.js for runtimeStage.ts to
-          // copy out. Plain-Node code only — no electron imports reachable from this entry.
-          ptyHostDaemon: resolve(__dirname, 'src/main/ptyHost/daemonMain.ts')
+          voiceEngineHost: resolve(__dirname, 'src/main/voiceEngineHost.ts')
+          // NOTE: ptyHostDaemon.js is deliberately NOT a Rollup entry — a shared-graph entry
+          // gets chunk-split and the staged daemon crashes (see bundlePtyHostDaemon above).
         }
       }
     }

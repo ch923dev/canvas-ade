@@ -61,6 +61,12 @@ is part of every check.
       arrow keys walk Resume/New.
 - [ ] Flip to recap -> keys/focus land on the recap face (typing does NOT reach the hidden
       terminal); flip back -> typing resumes in xterm without a click.
+- [ ] Terminal host daemon, STAGED (packaged path): after `pnpm pack:dir` (or a `release-local`
+      build), open a Terminal board -> spawn is instant (no ~10 s stall), NO "Terminal host
+      unavailable" toast, `%LOCALAPPDATA%\expanse-ptyhost\<version>\` exists, and the profile's
+      `ptyhost.log` shows `listening on \\.\pipe\expanse-ptyhost-...` with an empty/absent
+      `ptyhost-boot.err`. (Regression: the chunk-split daemon bundle crashed on boot — silent,
+      dev-invisible; only the staged path exercises it.)
 
 ## Browser preview board
 

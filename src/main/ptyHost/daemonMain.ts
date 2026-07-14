@@ -33,9 +33,15 @@ import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
 
 // node-pty resolves relative to the daemon's own on-disk location: the stage dir carries a
 // node_modules/node-pty subset beside ptyHostDaemon.js; in dev the walk-up finds the checkout's
-// node_modules. Both are the same Electron-ABI build (D1: no recompile).
+// node_modules. Both are the same Electron-ABI build (D1: no recompile). Loaded LAZILY at the
+// first spawn: a top-level require ran before the log sink existed, so a broken stage killed
+// the process with zero trace — lazy, the failure surfaces as a logged `spawn-failed` reply.
 const requireFromHere = createRequire(__filename)
-const pty = requireFromHere('node-pty') as typeof import('node-pty')
+let ptyMod: typeof import('node-pty') | null = null
+function loadPty(): typeof import('node-pty') {
+  if (!ptyMod) ptyMod = requireFromHere('node-pty') as typeof import('node-pty')
+  return ptyMod
+}
 
 const PIPE = process.env.PTYHOST_PIPE
 const TOKEN = process.env.PTYHOST_TOKEN
@@ -148,7 +154,7 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
       }
       let proc: import('node-pty').IPty
       try {
-        proc = pty.spawn(msg.shell, msg.args, {
+        proc = loadPty().spawn(msg.shell, msg.args, {
           name: 'xterm-256color',
           cols: msg.cols,
           rows: msg.rows,
