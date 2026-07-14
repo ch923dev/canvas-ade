@@ -438,7 +438,10 @@ export function Dock(): ReactElement {
           onClick={() => setTool('select')}
         />
         <span style={styles.divider} />
-        {(['terminal', 'browser', 'planning', 'command', 'file'] as const).map((type) => (
+        {/* v19: Kanban is a first-class user-creatable board (arm → click/drag to place). File boards
+            are opened from the File Tree (peek/pin) or a Kanban card's file-ref, so File has no dock
+            tile — Kanban takes its slot. */}
+        {(['terminal', 'browser', 'planning', 'command', 'kanban'] as const).map((type) => (
           <DockBtn key={type} type={type} active={tool === type} onClick={() => setTool(type)} />
         ))}
       </div>

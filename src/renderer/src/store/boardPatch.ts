@@ -46,8 +46,9 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   dataflow: [...COMMON_KEYS, 'sourceBoardId'],
   // v17 kanban board (P4): the persisted plan body — ordered `columns` + the flat `cards` list. Both
   // are patched via updateBoard (human drag/edit in P4.2, MCP move_card/add_card in P3), so both MUST
-  // be listed or the patch is silently dropped (the PATCHABLE_KEYS-for-additive-field gotcha).
-  kanban: [...COMMON_KEYS, 'columns', 'cards']
+  // be listed or the patch is silently dropped (the PATCHABLE_KEYS-for-additive-field gotcha). v19
+  // adds the column-axis pair (`columnAxis`/`axisLabel`) — set by the board-header toggle.
+  kanban: [...COMMON_KEYS, 'columns', 'cards', 'columnAxis', 'axisLabel']
 }
 
 /**

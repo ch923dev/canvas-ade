@@ -12,7 +12,14 @@ import type { Page } from '@playwright/test'
  * state is read as DATA via structured-arg page.evaluate (ids never interpolated into an eval'd
  * string). The base `page` fixture resets the canvas before each test.
  */
-type Card = { id: string; columnId: string; title: string }
+type Card = {
+  id: string
+  columnId: string
+  title: string
+  description?: string
+  tags?: string[]
+  fileRefs?: { path: string; line?: number; endLine?: number }[]
+}
 type Column = { id: string; title: string; wip?: number }
 
 const SEED = {
@@ -82,6 +89,41 @@ test.describe('@planning kanban board interaction (P4.2)', () => {
     await expect
       .poll(async () => (await kanbanCards(page)).find((c) => c.id === 'c1')?.columnId)
       .toBe('review')
+  })
+
+  test('opens the card-detail modal and edits description + tags (v19)', async ({ page }) => {
+    const id = await seedKanban(page)
+    const node = page.locator(`[data-id="${id}"]`)
+    // A click on the card opens the detail modal (rendered in a portal at document.body).
+    await node.locator('[data-testid="kb-card"]', { hasText: 'One' }).click()
+    const modal = page.getByTestId('kanban-card-modal')
+    await expect(modal).toBeVisible()
+
+    // edit the description (commits on blur)
+    const desc = modal.getByTestId('kbm-desc')
+    await desc.fill('Wrote it in the modal')
+    await desc.blur()
+    await expect
+      .poll(async () => (await kanbanCards(page)).find((c) => c.id === 'c1')?.description)
+      .toBe('Wrote it in the modal')
+
+    // add a tag (Enter commits)
+    const tag = modal.getByTestId('kbm-tag-input')
+    await tag.fill('urgent')
+    await tag.press('Enter')
+    await expect
+      .poll(async () => (await kanbanCards(page)).find((c) => c.id === 'c1')?.tags)
+      .toEqual(['urgent'])
+
+    // Esc closes the modal; the edits persist
+    await page.keyboard.press('Escape')
+    await expect(modal).toBeHidden()
+    // the description indicator now shows on the card face
+    await expect(
+      node
+        .locator('[data-testid="kb-card"]', { hasText: 'One' })
+        .locator('[aria-label="Has a description"]')
+    ).toBeVisible()
   })
 
   test('renames a column and deletes one (cards reflow to the neighbour)', async ({ page }) => {

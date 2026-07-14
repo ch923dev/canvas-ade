@@ -91,25 +91,25 @@ describe('KanbanBoard — card interaction', () => {
     expect(useCanvasStore.getState().past).toHaveLength(1) // one undoable step
   })
 
-  it('renames a card via double-click → Enter', () => {
+  it('renames a card via the detail modal title field (blur commits)', () => {
     seed()
     render(<Harness />)
-    fireEvent.doubleClick(screen.getByText('One'))
-    const input = screen.getByLabelText('Card title') as HTMLInputElement
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    const input = screen.getByTestId('kbm-title') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'One!' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.blur(input)
     expect(boardOf().cards.find((c) => c.id === 'c1')?.title).toBe('One!')
   })
 
-  it('Escape cancels a rename (no store write)', () => {
+  it('resyncs a blanked title on blur — blank is a store no-op, the field must not stay empty', () => {
     seed()
     render(<Harness />)
-    fireEvent.doubleClick(screen.getByText('Two'))
-    const input = screen.getByLabelText('Card title') as HTMLInputElement
-    fireEvent.change(input, { target: { value: 'nope' } })
-    fireEvent.keyDown(input, { key: 'Escape' })
-    expect(boardOf().cards.find((c) => c.id === 'c2')?.title).toBe('Two')
-    expect(useCanvasStore.getState().past).toHaveLength(0)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    const input = screen.getByTestId('kbm-title') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+    expect(boardOf().cards.find((c) => c.id === 'c1')?.title).toBe('One') // store keeps the real title
+    expect((screen.getByTestId('kbm-title') as HTMLInputElement).value).toBe('One') // input resynced
   })
 
   it('deletes a card via its × button', () => {
@@ -132,6 +132,274 @@ describe('KanbanBoard — card interaction', () => {
     expect(c1?.columnId).toBe('review')
     // moved card sits at the array tail (bottom of its new column)
     expect(boardOf().cards[boardOf().cards.length - 1].id).toBe('c1')
+  })
+})
+
+describe('KanbanBoard — card detail (v19)', () => {
+  /** Seed one card carrying the v19 detail fields (no WIP, so digit assertions stay unambiguous). */
+  function seedDetail(): void {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [
+        { id: 'backlog', title: 'Backlog' },
+        { id: 'review', title: 'Review' }
+      ],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          tags: ['feature', 'schema'],
+          description: 'a body',
+          fileRefs: [{ path: 'a.ts' }, { path: 'b.ts', line: 4 }]
+        }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+  }
+
+  it('paints tag chips + description + fileref-count indicators on the card face', () => {
+    seedDetail()
+    render(<Harness />)
+    expect(screen.getByText('feature')).toBeTruthy()
+    expect(screen.getByText('schema')).toBeTruthy()
+    expect(screen.getByLabelText('Has a description')).toBeTruthy()
+    expect(screen.getByLabelText('2 file references')).toBeTruthy()
+  })
+
+  it('opens the detail modal on a card-body click and edits the description', () => {
+    seed()
+    render(<Harness />)
+    const card = screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement
+    fireEvent.click(card) // body click (not the title) opens the modal
+    expect(screen.getByTestId('kanban-card-modal')).toBeTruthy()
+    const desc = screen.getByTestId('kbm-desc') as HTMLTextAreaElement
+    fireEvent.change(desc, { target: { value: 'Wrote a description' } })
+    fireEvent.blur(desc)
+    expect(boardOf().cards.find((c) => c.id === 'c1')?.description).toBe('Wrote a description')
+    expect(useCanvasStore.getState().past).toHaveLength(1) // one undoable step
+  })
+
+  it('opens the modal from the title button (keyboard/SR-accessible trigger)', () => {
+    seed()
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'One' })) // the title <button>
+    expect(screen.getByTestId('kanban-card-modal')).toBeTruthy()
+  })
+
+  it('adds a tag and a file ref from the modal', () => {
+    seed()
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    // add a tag
+    const tagInput = screen.getByTestId('kbm-tag-input') as HTMLInputElement
+    fireEvent.change(tagInput, { target: { value: 'urgent' } })
+    fireEvent.keyDown(tagInput, { key: 'Enter' })
+    expect(boardOf().cards.find((c) => c.id === 'c1')?.tags).toEqual(['urgent'])
+    // + Add file & line opens the pick-file-lines modal (path/lines are chosen there, not typed)
+    fireEvent.click(screen.getByTestId('kbm-ref-add'))
+    expect(screen.getByTestId('pick-file-lines')).toBeTruthy()
+  })
+
+  it('opens a file ref via openFileRef and closes the modal', () => {
+    const calls: Array<[string, number | undefined, number | undefined]> = []
+    useCanvasStore.setState({
+      openFileRef: ((p: string, l?: number, e?: number) => {
+        calls.push([p, l, e])
+        return 'fb1'
+      }) as never
+    })
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        { id: 'c1', columnId: 'backlog', title: 'One', fileRefs: [{ path: 'a.ts', line: 9 }] }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    fireEvent.click(screen.getByLabelText('Open file at line'))
+    expect(calls).toEqual([['a.ts', 9, undefined]])
+    expect(screen.queryByTestId('kanban-card-modal')).toBeNull() // modal closed to reveal the file
+  })
+
+  it('renders ref rows (basename + line badge) and removes one via ×', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          fileRefs: [{ path: 'src/a.ts', line: 19, endLine: 21 }, { path: 'b.ts' }]
+        }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    expect(screen.getByText('L19–21')).toBeTruthy()
+    expect(screen.getByText('a.ts')).toBeTruthy() // basename shown
+    fireEvent.click(screen.getAllByLabelText('Remove file reference')[0])
+    expect(boardOf().cards.find((c) => c.id === 'c1')?.fileRefs).toEqual([{ path: 'b.ts' }])
+  })
+
+  it('clicking a ref path opens the picker to edit it', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        { id: 'c1', columnId: 'backlog', title: 'One', fileRefs: [{ path: 'src/a.ts', line: 5 }] }
+      ]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('One').closest('[data-testid="kb-card"]') as HTMLElement)
+    fireEvent.click(screen.getByTitle('Edit this reference'))
+    expect(screen.getByTestId('pick-file-lines')).toBeTruthy()
+  })
+})
+
+describe('KanbanBoard — column axis (v19)', () => {
+  // The axis is chosen ONCE in the New Kanban creation dialog — there is no in-board toggle. A
+  // Flow board shows nothing; a Category board captions its label read-only.
+  it('a Flow board shows no axis caption and no toggle', () => {
+    seed() // no columnAxis ⇒ flow
+    render(<Harness />)
+    expect(screen.queryByTestId('kb-axis-cap')).toBeNull()
+    expect(screen.queryByTestId('kb-axis-flow')).toBeNull()
+    expect(screen.queryByTestId('kb-axis-category')).toBeNull()
+  })
+
+  it('a Category board captions its axis label read-only (no toggle)', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: []
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    expect(within(screen.getByTestId('kb-axis-cap')).getByText('Phase')).toBeTruthy()
+    expect(screen.queryByTestId('kb-axis-category')).toBeNull()
+  })
+
+  it('an empty Category board prompts to add the first lane (opens the add-column input)', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [],
+      cards: []
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    const add = screen.getByTestId('kb-add-first-lane')
+    expect(add.textContent).toContain('Phase')
+    fireEvent.click(add)
+    expect(screen.getByLabelText('New column title')).toBeTruthy()
+  })
+
+  it('the modal column-field label reflects the axis (category → the axis label, not "Status")', () => {
+    const board: KanbanBoardData = {
+      id: 'k1',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [{ id: 'c1', columnId: 'backlog', title: 'One' }]
+    }
+    useCanvasStore.setState({
+      boards: [board],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'One' }))
+    expect(screen.getByLabelText('Phase')).toBeTruthy() // the column <select>, labelled by the axis
+    expect(screen.queryByText('Status')).toBeNull()
   })
 })
 
@@ -192,5 +460,24 @@ describe('KanbanBoard — column authoring', () => {
     fireEvent.change(input, { target: { value: '' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(boardOf().columns.find((c) => c.id === 'progress')?.wip).toBeUndefined()
+  })
+})
+
+describe('KanbanBoard — creation gate (place-first New Kanban dialog)', () => {
+  it('shows the dialog while the board is configPending; Cancel releases it', () => {
+    seed()
+    useCanvasStore.setState({ configPendingId: 'k1' })
+    render(<Harness />)
+    expect(screen.getByRole('button', { name: 'Create Flow board' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(useCanvasStore.getState().configPendingId).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Create Flow board' })).toBeNull()
+  })
+
+  it('renders no dialog for a board that is not configPending', () => {
+    seed()
+    useCanvasStore.setState({ configPendingId: null })
+    render(<Harness />)
+    expect(screen.queryByRole('button', { name: 'Create Flow board' })).toBeNull()
   })
 })

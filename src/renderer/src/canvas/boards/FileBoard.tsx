@@ -159,6 +159,11 @@ export function FileBoard({
   const pendingCaretRef = useRef<{ x: number; y: number } | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const pendingSearchRef = useRef(false)
+  // v19: a one-shot "scroll to this line" request for THIS board (a Kanban card file-ref click set it
+  // via openFileRef). Subscribed narrowly so an unrelated board's request never re-renders this one.
+  const pendingLineFocus = useCanvasStore((s) =>
+    s.pendingFileFocus?.boardId === board.id ? s.pendingFileFocus : null
+  )
   // Split-mode scroll-sync: the source pane (CM6 editor or snapshot) + the preview pane wrappers.
   const sourcePaneRef = useRef<HTMLDivElement | null>(null)
   const previewPaneRef = useRef<HTMLDivElement | null>(null)
@@ -294,26 +299,59 @@ export function FileBoard({
     setSavedText
   })
 
-  const onCreateEditor = useCallback((view: EditorView): void => {
-    viewRef.current = view
-    // Re-run the split-sync effect now that the editor's scrollDOM exists (idempotent; the value/
-    // extensions are stable, so this re-render never recreates the view → no loop).
-    setEditorNonce((n) => n + 1)
-    const at = pendingCaretRef.current
-    pendingCaretRef.current = null
-    const wantSearch = pendingSearchRef.current
-    pendingSearchRef.current = false
-    // Defer one frame so the editor has laid out, then place the caret at the click point
-    // (its rect == the snapshot's, so `posAtCoords` with the original screen coords maps).
-    requestAnimationFrame(() => {
-      if (at) {
-        const pos = view.posAtCoords(at)
-        if (pos != null) view.dispatch({ selection: { anchor: pos } })
-      }
+  // v19: consume a pending "scroll to line" request (openFileRef) — select the 1-based line..endLine
+  // range (the jump highlight) and scroll it into view, then clear the one-shot. Lines are clamped to
+  // the doc so a stale ref past EOF lands on the last line instead of throwing. Reads the request off
+  // the store at call time (not through a stale closure) and only acts when it targets THIS board.
+  const applyLineFocus = useCallback(
+    (view: EditorView): void => {
+      const focus = useCanvasStore.getState().pendingFileFocus
+      if (!focus || focus.boardId !== board.id) return
+      useCanvasStore.setState({ pendingFileFocus: null })
+      const total = view.state.doc.lines
+      const startNo = Math.min(Math.max(1, focus.line), total)
+      const endNo = focus.endLine ? Math.min(Math.max(startNo, focus.endLine), total) : startNo
+      const from = view.state.doc.line(startNo).from
+      const to = view.state.doc.line(endNo).to
+      view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true })
       view.focus()
-      if (wantSearch) openSearchPanel(view)
-    })
-  }, [])
+    },
+    [board.id]
+  )
+
+  const onCreateEditor = useCallback(
+    (view: EditorView): void => {
+      viewRef.current = view
+      // Re-run the split-sync effect now that the editor's scrollDOM exists (idempotent; the value/
+      // extensions are stable, so this re-render never recreates the view → no loop).
+      setEditorNonce((n) => n + 1)
+      const at = pendingCaretRef.current
+      pendingCaretRef.current = null
+      const wantSearch = pendingSearchRef.current
+      pendingSearchRef.current = false
+      // Defer one frame so the editor has laid out, then place the caret at the click point
+      // (its rect == the snapshot's, so `posAtCoords` with the original screen coords maps).
+      requestAnimationFrame(() => {
+        if (at) {
+          const pos = view.posAtCoords(at)
+          if (pos != null) view.dispatch({ selection: { anchor: pos } })
+        }
+        // A file-ref jump takes precedence over the click-caret restore when both are pending
+        // (opening a fresh board from a ref sets only this) — scroll to the requested line last so
+        // it wins the final scroll position.
+        applyLineFocus(view)
+        view.focus()
+        if (wantSearch) openSearchPanel(view)
+      })
+    },
+    [applyLineFocus]
+  )
+
+  // Already-open board: a ref click on a file whose editor is live re-scrolls without a remount. The
+  // narrow `pendingLineFocus` subscription only fires for this board's requests.
+  useEffect(() => {
+    if (pendingLineFocus && viewRef.current) applyLineFocus(viewRef.current)
+  }, [pendingLineFocus, applyLineFocus])
 
   // Split-mode scroll sync (source → preview): scrolling the source pane drives the rendered preview
   // to the same scroll FRACTION, so the two panes track together. Fraction-based ⇒ correct at any

@@ -214,6 +214,129 @@ describe('kanban board (v17)', () => {
   })
 })
 
+describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () => {
+  const withCard = (card: Record<string, unknown>): unknown => ({
+    schemaVersion: SCHEMA_VERSION,
+    minReaderVersion: MIN_READER_VERSION,
+    viewport: null,
+    boards: [
+      {
+        id: 'k',
+        type: 'kanban',
+        x: 0,
+        y: 0,
+        w: 900,
+        h: 520,
+        title: 'Plan',
+        columns: [{ id: 'a', title: 'A' }],
+        cards: [{ id: 'c', columnId: 'a', title: 't', ...card }]
+      }
+    ]
+  })
+
+  it('round-trips description + tags[] + fileRefs[] through toObject/fromObject', () => {
+    const k: KanbanBoard = {
+      id: 'k2',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columns: [{ id: 'a', title: 'A' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'a',
+          title: 'one',
+          description: 'a longer body\nwith two lines',
+          tags: ['feature', 'schema'],
+          fileRefs: [{ path: 'src/a.ts', line: 12, endLine: 20 }, { path: 'src/b.ts' }]
+        }
+      ]
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('keeps the legacy singular `tag` readable (pre-v19 back-compat)', () => {
+    const out = fromObject(withCard({ tag: 'old' }) as CanvasDoc).boards[0] as KanbanBoard
+    expect(out.cards[0].tag).toBe('old')
+  })
+
+  it('rejects a non-array tags', () => {
+    expect(() => fromObject(withCard({ tags: 'nope' }) as CanvasDoc)).toThrow(/tags/)
+  })
+
+  it('rejects a non-string tags entry', () => {
+    expect(() => fromObject(withCard({ tags: ['ok', 5] }) as CanvasDoc)).toThrow(/tags/)
+  })
+
+  it('rejects a non-string description', () => {
+    expect(() => fromObject(withCard({ description: 7 }) as CanvasDoc)).toThrow(/description/)
+  })
+
+  it('rejects a fileRef with a non-string path', () => {
+    expect(() => fromObject(withCard({ fileRefs: [{ path: 3 }] }) as CanvasDoc)).toThrow(/fileRef/)
+  })
+
+  it('rejects a fileRef with a non-positive line', () => {
+    expect(() =>
+      fromObject(withCard({ fileRefs: [{ path: 'a.ts', line: 0 }] }) as CanvasDoc)
+    ).toThrow(/fileRef/)
+  })
+
+  it('round-trips the column axis (columnAxis + axisLabel)', () => {
+    const k: KanbanBoard = {
+      id: 'k',
+      type: 'kanban',
+      x: 0,
+      y: 0,
+      w: 900,
+      h: 520,
+      title: 'Plan',
+      columnAxis: 'category',
+      axisLabel: 'Phase',
+      columns: [{ id: 'a', title: 'A' }],
+      cards: []
+    }
+    expect(fromObject(toObject([k], null)).boards[0]).toEqual(k)
+  })
+
+  it('rejects an invalid columnAxis', () => {
+    const doc = {
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
+      viewport: null,
+      boards: [
+        {
+          id: 'k',
+          type: 'kanban',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 520,
+          title: 'Plan',
+          columnAxis: 'sideways',
+          columns: [{ id: 'a', title: 'A' }],
+          cards: []
+        }
+      ]
+    }
+    expect(() => fromObject(doc as unknown as CanvasDoc)).toThrow(/columnAxis/)
+  })
+
+  it('migrate bumps a v18 doc to current (v19) — additive identity, floor unchanged', () => {
+    const migrated = migrate({
+      schemaVersion: 18,
+      viewport: null,
+      boards: []
+    } as unknown as CanvasDoc)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(SCHEMA_VERSION).toBe(19)
+    expect(MIN_READER_VERSION).toBe(17)
+  })
+})
+
 describe('size constants', () => {
   it('pins the minimum board size to 240x160', () => {
     expect(MIN_BOARD_SIZE).toEqual({ w: 240, h: 160 })
@@ -785,7 +908,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(18)
+    expect(SCHEMA_VERSION).toBe(19)
     expect(MIN_READER_VERSION).toBe(17)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
@@ -1135,14 +1258,14 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 18', () => {
-    expect(SCHEMA_VERSION).toBe(18)
+  it('SCHEMA_VERSION is 19', () => {
+    expect(SCHEMA_VERSION).toBe(19)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 18,
+      schemaVersion: 19,
       minReaderVersion: 17,
       viewport: vp,
       boards: [],
@@ -1328,8 +1451,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 18', () => {
-    expect(SCHEMA_VERSION).toBe(18)
+  it('SCHEMA_VERSION is 19', () => {
+    expect(SCHEMA_VERSION).toBe(19)
   })
 
   it('round-trips a valid image element', () => {
@@ -1382,8 +1505,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 18', () => {
-    expect(SCHEMA_VERSION).toBe(18)
+  it('SCHEMA_VERSION is 19', () => {
+    expect(SCHEMA_VERSION).toBe(19)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {

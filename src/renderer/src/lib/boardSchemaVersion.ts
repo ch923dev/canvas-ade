@@ -72,8 +72,18 @@
  *   this as `17` while main independently shipped the breaking Kanban v17 — re-sequenced to 18 at
  *   the epic-end umbrella→main merge exactly as the claim's re-number hazard note prescribed;
  *   ADR 0007 worktree-skew version-collision class.)
+ * - v19 = optional Kanban CARD detail fields on `KanbanCard` — `description` (plain text), `tags`
+ *   (string list, supersedes the singular `tag` which is still read as a fallback), and `fileRefs`
+ *   ({path, line?, endLine?} — file+line pointers the card-detail modal opens on click) — PLUS the
+ *   optional board-level COLUMN AXIS on `KanbanBoard`: `columnAxis` ('flow' | 'category') + `axisLabel`
+ *   (what the columns group by; drives the modal column-field label). All optional + defaulted-at-read
+ *   (absent ⇒ no description / fall back to `tag` / no refs / axis = 'flow'), so this is ADDITIVE
+ *   (card-detail + column-axis epic): writer-only bump, floor STAYS 17. An older reader ignores the
+ *   unknown optional keys and they survive the `fromObject` structuredClone round-trip;
+ *   `assertKanbanContent` shape-checks them without rejecting the card/board. The migration is identity
+ *   (no data rewrite — a pre-v19 board/card simply carries none of the new fields).
  */
-export const SCHEMA_VERSION = 18
+export const SCHEMA_VERSION = 19
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -106,6 +116,7 @@ export const SCHEMA_VERSION = 18
  * older than 17 has no `kanban` case in `assertBoard`, so it would HARD-FAIL on a doc containing one
  * — pre-17 apps get the clean "update the app to open it" message instead of a `.bak`-fallback. (v16
  * was additive and left the floor at 15; v17 is the next breaking bump, moving BOTH to 17. Floor
- * STAYS 17 through v18 — the Planning element appearance props are ADDITIVE.)
+ * STAYS 17 through v18 AND v19 — the Planning element appearance props (v18) and the Kanban card-detail
+ * fields (v19) are both ADDITIVE.)
  */
 export const MIN_READER_VERSION = 17

@@ -10,9 +10,41 @@
  * refuses the last one). Empty-input commits are treated as no-ops (return the input array unchanged)
  * so the caller can blindly commit on blur without special-casing.
  */
-import type { KanbanBoard, KanbanCard, KanbanColumn } from '../../lib/boardSchema'
+import type { KanbanBoard, KanbanCard, KanbanColumn, KanbanFileRef } from '../../lib/boardSchema'
 
 const newId = (): string => crypto.randomUUID()
+
+/**
+ * Coarse tint bucket for a card's label chip, inferred from its free text (falls back to muted). Pure +
+ * shared by the card face AND the card-detail modal (lives here rather than in a component so both read
+ * one source — and so it stays unit-testable without a DOM).
+ */
+export function tagTint(tag: string): 'ok' | 'warn' | 'accent' | 'muted' {
+  const t = tag.toLowerCase()
+  if (t.includes('ship') || t.includes('done') || t.includes('merged')) return 'ok'
+  if (t.includes('review') || t.includes('block') || t.includes('wait')) return 'warn'
+  if (t.includes('feature') || t.includes('feat')) return 'accent'
+  return 'muted'
+}
+
+/** A card's effective label chips: the v19 `tags` list, else the legacy singular `tag`, else none. */
+export function effectiveTags(card: KanbanCard): string[] {
+  return card.tags ?? (card.tag ? [card.tag] : [])
+}
+
+/** A 1-based line clamped to a positive integer, or `undefined` for anything else (0/NaN/negative). */
+const normLine = (n: number | undefined): number | undefined =>
+  typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+
+/** Structural equality for two (possibly absent) fileRef lists — the no-op guard for setCardFileRefs. */
+function fileRefsEqual(a: KanbanFileRef[] | undefined, b: KanbanFileRef[] | undefined): boolean {
+  const x = a ?? []
+  const y = b ?? []
+  if (x.length !== y.length) return false
+  return x.every(
+    (r, i) => r.path === y[i].path && r.line === y[i].line && r.endLine === y[i].endLine
+  )
+}
 
 // ── card ops (return the new `cards` array) ──────────────────────────────────
 
@@ -46,6 +78,131 @@ export function moveCard(board: KanbanBoard, cardId: string, toColumnId: string)
   if (!card || card.columnId === toColumnId) return board.cards
   if (!board.columns.some((c) => c.id === toColumnId)) return board.cards
   return [...board.cards.filter((c) => c.id !== cardId), { ...card, columnId: toColumnId }]
+}
+
+// ── card-detail ops (v19 — description / tags / fileRefs) ──────────────────────
+// Each edits ONE card in the flat list (the card-detail modal commits them). All follow the return-
+// new-array + ref-stable-no-op discipline above: an unknown card or an unchanged value returns the
+// input array unchanged so the modal can commit blindly on blur. Clearing a field DROPS the key (via
+// rest destructure) rather than persisting an empty value — a card carries only the fields it has.
+
+/**
+ * Set or clear a card's plain-text description. Trimmed; blank ⇒ the key is dropped (no description).
+ * Unknown card or unchanged text ⇒ ref-stable no-op.
+ */
+export function setCardDescription(
+  board: KanbanBoard,
+  cardId: string,
+  description: string
+): KanbanCard[] {
+  const cur = board.cards.find((c) => c.id === cardId)
+  if (!cur) return board.cards
+  const next = description.trim() || undefined
+  if (cur.description === next) return board.cards
+  return board.cards.map((c) => {
+    if (c.id !== cardId) return c
+    const { description: _drop, ...rest } = c
+    return next === undefined ? rest : { ...rest, description: next }
+  })
+}
+
+/**
+ * Replace a card's label chips. Each tag is trimmed; blanks and case-sensitive duplicates are dropped
+ * (first wins, order preserved). Writing `tags` SUPERSEDES the legacy singular `tag` — it is always
+ * dropped here, so editing a pre-v19 card migrates it forward. Empty result ⇒ neither key is kept.
+ * Unknown card, or no effective change (same tags AND no legacy `tag` to shed) ⇒ ref-stable no-op.
+ */
+export function setCardTags(board: KanbanBoard, cardId: string, tags: string[]): KanbanCard[] {
+  const cur = board.cards.find((c) => c.id === cardId)
+  if (!cur) return board.cards
+  const cleaned: string[] = []
+  for (const t of tags) {
+    const v = t.trim()
+    if (v && !cleaned.includes(v)) cleaned.push(v)
+  }
+  const next = cleaned.length ? cleaned : undefined
+  const curTags = cur.tags ?? []
+  const unchanged = curTags.length === cleaned.length && curTags.every((t, i) => t === cleaned[i])
+  // A no-op needs BOTH the same tags AND no legacy `tag` still hanging on (which this op sheds).
+  if (unchanged && cur.tag === undefined) return board.cards
+  return board.cards.map((c) => {
+    if (c.id !== cardId) return c
+    const { tags: _t, tag: _legacy, ...rest } = c
+    return next === undefined ? rest : { ...rest, tags: next }
+  })
+}
+
+/**
+ * Replace a card's file+line references. Each ref is normalized: path trimmed (blank ⇒ dropped); `line`
+ * clamped to a positive integer (else the whole line/endLine pair is dropped — a ref with no line opens
+ * the file at the top); `endLine` kept only when it is a positive integer STRICTLY greater than `line`
+ * (a real range; otherwise it collapses to the single `line`). Empty result ⇒ the key is dropped.
+ * Unknown card or a structurally-identical list ⇒ ref-stable no-op.
+ */
+export function setCardFileRefs(
+  board: KanbanBoard,
+  cardId: string,
+  fileRefs: KanbanFileRef[]
+): KanbanCard[] {
+  const cur = board.cards.find((c) => c.id === cardId)
+  if (!cur) return board.cards
+  const cleaned: KanbanFileRef[] = []
+  for (const r of fileRefs) {
+    const path = r.path.trim()
+    if (!path) continue
+    const ref: KanbanFileRef = { path }
+    const line = normLine(r.line)
+    if (line !== undefined) {
+      ref.line = line
+      const endLine = normLine(r.endLine)
+      if (endLine !== undefined && endLine > line) ref.endLine = endLine
+    }
+    cleaned.push(ref)
+  }
+  const next = cleaned.length ? cleaned : undefined
+  if (fileRefsEqual(cur.fileRefs, next)) return board.cards
+  return board.cards.map((c) => {
+    if (c.id !== cardId) return c
+    const { fileRefs: _drop, ...rest } = c
+    return next === undefined ? rest : { ...rest, fileRefs: next }
+  })
+}
+
+/**
+ * Set or clear a card's assignee (an agent-preset id / free label — the coloured dot). Trimmed; blank ⇒
+ * the key is dropped (unassigned). Unknown card or unchanged ⇒ ref-stable no-op. The card-detail modal
+ * surfaces this existing field for editing (before v19 it was settable only by an agent / hand-edit).
+ */
+export function setCardAssignee(
+  board: KanbanBoard,
+  cardId: string,
+  assignee: string
+): KanbanCard[] {
+  const cur = board.cards.find((c) => c.id === cardId)
+  if (!cur) return board.cards
+  const next = assignee.trim() || undefined
+  if (cur.assignee === next) return board.cards
+  return board.cards.map((c) => {
+    if (c.id !== cardId) return c
+    const { assignee: _drop, ...rest } = c
+    return next === undefined ? rest : { ...rest, assignee: next }
+  })
+}
+
+/**
+ * Set or clear a card's external reference chip (e.g. "PR #271"). Trimmed; blank ⇒ the key is dropped.
+ * Unknown card or unchanged ⇒ ref-stable no-op. Surfaced for editing by the card-detail modal.
+ */
+export function setCardRef(board: KanbanBoard, cardId: string, ref: string): KanbanCard[] {
+  const cur = board.cards.find((c) => c.id === cardId)
+  if (!cur) return board.cards
+  const next = ref.trim() || undefined
+  if (cur.ref === next) return board.cards
+  return board.cards.map((c) => {
+    if (c.id !== cardId) return c
+    const { ref: _drop, ...rest } = c
+    return next === undefined ? rest : { ...rest, ref: next }
+  })
 }
 
 // ── column ops ───────────────────────────────────────────────────────────────
