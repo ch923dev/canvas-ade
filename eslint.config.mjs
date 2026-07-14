@@ -316,8 +316,11 @@ export default tseslint.config(
     // 764→765 (M8, perf-polish): the digestOpen gate + last-digest fallback state must live in
     // CanvasInner next to the digestOpen/digestProjectKey render-adjust block it extends.
     // 765→766 (terminal-copy fix): `selectionKeyCode={null}` is a <ReactFlow> prop — it can
-    // only live on the element in CanvasInner. Ratchet DOWNWARD when Canvas.tsx is next split.
-    rules: { 'max-lines': ['error', { max: 766, skipBlankLines: true, skipComments: true }] }
+    // only live on the element in CanvasInner.
+    // 766→767 (kanban axis-picker, review fix): addCentered must pass `configPending` for a kanban
+    // so the palette/empty-state create paths reach the New Kanban dialog — one hoisted `at` local.
+    // Ratchet DOWNWARD when Canvas.tsx is next split.
+    rules: { 'max-lines': ['error', { max: 767, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],

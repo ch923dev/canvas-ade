@@ -505,7 +505,11 @@ function CanvasInner(): ReactElement {
       const r = el.getBoundingClientRect()
       const c = rf.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
       const size = DEFAULT_BOARD_SIZE[type]
-      useCanvasStore.getState().addBoard(type, { x: c.x - size.w / 2, y: c.y - size.h / 2 })
+      const at = { x: c.x - size.w / 2, y: c.y - size.h / 2 }
+      // A palette/empty-state kanban opens its axis picker too, like a dock-placed one — the in-board
+      // toggle is gone, so this dialog is the only path to Category. The store gates the flag to
+      // terminal/kanban, so it's a harmless no-op for the other types routed through here.
+      useCanvasStore.getState().addBoard(type, at, { configPending: type === 'kanban' })
       // Exit focus mode so the new board (and the rest) aren't born dimmed (#14).
       setFocusedId(null)
     },
