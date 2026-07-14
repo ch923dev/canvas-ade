@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import * as mcpPkg from '@expanse-ade/mcp'
 import {
   buildAddCardOp,
   buildKanbanAxisConfig,
@@ -13,8 +14,17 @@ import {
   sanitizeCardTags,
   sanitizeCardText,
   sanitizeId,
+  MAX_AXIS_LABEL,
+  MAX_CARD_ASSIGNEE,
   MAX_CARD_DESCRIPTION,
-  MAX_CARD_TITLE
+  MAX_CARD_FILE_REF_PATH,
+  MAX_CARD_FILE_REFS,
+  MAX_CARD_ID,
+  MAX_CARD_REF,
+  MAX_CARD_TAG,
+  MAX_CARD_TAGS,
+  MAX_CARD_TITLE,
+  MAX_COLUMN_ID
 } from './mcpKanban'
 
 describe('mcpKanban.sanitizeCardLabel', () => {
@@ -107,6 +117,25 @@ describe('mcpKanban op builders', () => {
       cardId: 'c1',
       patch: { description: 'done', tags: ['shipped'] }
     })
+  })
+
+  it('drops the singular tag when tags is also supplied (add + update) so the confirm matches the applier', () => {
+    // The applier sheds `tag` when `tags` is present; the op must not carry both, else the confirm body
+    // advertises a `tag:` chip that never lands (ADR-0003).
+    const add = buildAddCardOp('m1', {
+      columnId: 'backlog',
+      title: 'T',
+      tag: 'legacy',
+      tags: ['feature']
+    })
+    expect(add.card.tag).toBeUndefined()
+    expect(add.card.tags).toEqual(['feature'])
+    expect(renderKanbanConfirmBody('B', add)).not.toContain('legacy')
+
+    const upd = buildUpdateCardOp('c1', { tag: 'legacy', tags: ['shipped'] })
+    expect(upd.patch.tag).toBeUndefined()
+    expect(upd.patch.tags).toEqual(['shipped'])
+    expect(renderKanbanConfirmBody('B', upd)).not.toContain('legacy')
   })
 })
 
@@ -226,4 +255,38 @@ describe('mcpKanban.renderKanbanAxisConfirmBody', () => {
       renderKanbanAxisConfirmBody('Sprint', { columnAxis: 'category', axisLabel: 'Subsystem' })
     ).toMatch(/column axis of kanban board "Sprint".*axis: category.*label: Subsystem/s)
   })
+})
+
+// Cross-repo caps parity — the MAIN-authoritative caps here MUST equal the @expanse-ade/mcp transport
+// caps. A drift (e.g. the wire cap being LOOSER than the host, as MAX_CARD_FILE_REF_PATH was 512 vs 256)
+// lets a payload ack `true` on the wire then get rejected here — the exact class of bug this asserts away.
+// The package exports its caps from ≥0.20.1; on an older installed package a cap is `undefined` and that
+// entry SKIPS (with a visible reason) rather than failing, so the guard activates the moment the pin bumps.
+describe('mcpKanban ↔ @expanse-ade/mcp caps parity', () => {
+  const pkg = mcpPkg as unknown as Record<string, number | undefined>
+  const pairs: Array<[string, number]> = [
+    ['MAX_CARD_TITLE', MAX_CARD_TITLE],
+    ['MAX_CARD_TAG', MAX_CARD_TAG],
+    ['MAX_CARD_ASSIGNEE', MAX_CARD_ASSIGNEE],
+    ['MAX_CARD_REF', MAX_CARD_REF],
+    ['MAX_CARD_ID', MAX_CARD_ID],
+    ['MAX_COLUMN_ID', MAX_COLUMN_ID],
+    ['MAX_CARD_DESCRIPTION', MAX_CARD_DESCRIPTION],
+    ['MAX_CARD_TAGS', MAX_CARD_TAGS],
+    ['MAX_CARD_FILE_REFS', MAX_CARD_FILE_REFS],
+    ['MAX_CARD_FILE_REF_PATH', MAX_CARD_FILE_REF_PATH],
+    ['MAX_AXIS_LABEL', MAX_AXIS_LABEL]
+  ]
+  for (const [name, hostCap] of pairs) {
+    it(`${name} matches the package transport cap`, ({ skip }) => {
+      const wireCap = pkg[name]
+      if (wireCap === undefined) {
+        skip(
+          `installed @expanse-ade/mcp does not export ${name} (pre-0.20.1) — parity guard dormant`
+        )
+        return
+      }
+      expect(wireCap).toBe(hostCap)
+    })
+  }
 })

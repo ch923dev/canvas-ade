@@ -166,8 +166,8 @@ describe('boardRegistry', () => {
     expect('kanban' in out[1]).toBe(false)
   })
 
-  it('keeps the v19 card-detail fields + board axis, truncates a long description (v19)', () => {
-    const longDesc = 'x'.repeat(600)
+  it('keeps the v19 card-detail fields + board axis, keeps a long description at full fidelity (v19)', () => {
+    const longDesc = 'x'.repeat(600) // >500 planning preview, ≤4000 write cap → mirrored WHOLE
     const out = sanitizeSnapshot([
       {
         id: 'k1',
@@ -196,7 +196,7 @@ describe('boardRegistry', () => {
       }
     ])
     const card = out[0].kanban?.cards[0]
-    expect(card?.description).toHaveLength(500) // TRUNCATED to the preview cap (not dropped)
+    expect(card?.description).toHaveLength(600) // full fidelity (≤4000), NOT truncated to the 500 preview
     expect(card?.tags).toEqual(['feature', 'security'])
     expect(card?.fileRefs).toEqual([
       { path: 'src/x.ts', line: 4, endLine: 9 },
@@ -205,6 +205,78 @@ describe('boardRegistry', () => {
     ])
     expect(out[0].kanban?.columnAxis).toBe('category')
     expect(out[0].kanban?.axisLabel).toBe('Subsystem')
+  })
+
+  it('normalizes mirror fileRef line/endLine (coupled + integer, matching the write gate) (v19)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'a',
+              title: 'One',
+              fileRefs: [
+                { path: 'frac.ts', line: 2.5 }, // fractional line → dropped
+                { path: 'bare.ts', endLine: 9 }, // endLine without line → endLine dropped
+                { path: 'rng.ts', line: 3, endLine: 3 }, // endLine == line → not a range, dropped
+                { path: 'ok.ts', line: 4, endLine: 9 } // real range → kept
+              ]
+            }
+          ]
+        }
+      }
+    ])
+    expect(out[0].kanban?.cards[0]?.fileRefs).toEqual([
+      { path: 'frac.ts' },
+      { path: 'bare.ts' },
+      { path: 'rng.ts', line: 3 },
+      { path: 'ok.ts', line: 4, endLine: 9 }
+    ])
+  })
+
+  it('keeps a long (human-authored) fileRef path >256, drops one over the 1024 mirror cap (v19)', () => {
+    const deepPath = 'src/' + 'nested/'.repeat(40) + 'File.ts' // ~290 chars — a real deep path
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'a',
+              title: 'One',
+              fileRefs: [{ path: deepPath, line: 3 }, { path: 'x/'.repeat(600) + 'huge.ts' }]
+            }
+          ]
+        }
+      }
+    ])
+    expect(deepPath.length).toBeGreaterThan(256)
+    // the deep-but-realistic path survives; the pathological >1024 one is dropped
+    expect(out[0].kanban?.cards[0]?.fileRefs).toEqual([{ path: deepPath, line: 3 }])
+  })
+
+  it('truncates a description over the 4000 write cap (memory bound, not dropped) (v19)', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'k1',
+        type: 'kanban',
+        title: 'K',
+        kanban: {
+          columns: [{ id: 'a', title: 'A' }],
+          cards: [{ id: 'c1', columnId: 'a', title: 'One', description: 'y'.repeat(5000) }]
+        }
+      }
+    ])
+    expect(out[0].kanban?.cards[0]?.description).toHaveLength(4000) // cut to the cap, still present
   })
 
   it('keeps well-formed card attachments, drops malformed ones (#346)', () => {
