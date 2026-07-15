@@ -102,6 +102,34 @@ function cmpTriplet(a, b) {
   return 0
 }
 
+// 2.5 — sync + verify runtime deps BEFORE packaging. electron-builder collects node_modules AS-ON-DISK
+// (depth-1) into the asar, so if a dependency pin was bumped in package.json/lockfile but `pnpm install`
+// never ran, the packaged app silently ships the STALE bundled copy. That is exactly how a build pinned
+// to @expanse-ade/mcp 0.20.0 shipped 0.19.0 and the agent lost the kanban card-detail write params. A
+// frozen install makes node_modules match the lockfile (and fails LOUDLY if the lockfile ≠ package.json);
+// we then assert the key runtime package resolved to its exact pin, pinpointing any drift by name.
+run('pnpm install --frozen-lockfile')
+const mcpPin = pkg.dependencies?.['@expanse-ade/mcp']
+if (mcpPin) {
+  const installedPkg = join(root, 'node_modules', '@expanse-ade', 'mcp', 'package.json')
+  if (!existsSync(installedPkg)) {
+    die(`@expanse-ade/mcp is not installed after a frozen install — ${installedPkg} missing`)
+  }
+  const installed = JSON.parse(readFileSync(installedPkg, 'utf8')).version
+  // An exact pin (X.Y.Z, optionally a prerelease) MUST match byte-for-byte — this is the guard that
+  // catches the stale-bundle bug. A range pin (^/~) is left to the frozen install's lockfile match.
+  const exactPin = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(mcpPin)
+  if (exactPin && installed !== mcpPin) {
+    die(
+      `bundled @expanse-ade/mcp MISMATCH: package.json pins ${mcpPin} but node_modules has ${installed}. ` +
+        `The packaged app would ship ${installed}. Run \`pnpm install\` and re-run this script.`
+    )
+  }
+  process.stdout.write(
+    `[release-local] runtime dep OK: @expanse-ade/mcp ${installed} (pin ${mcpPin})\n`
+  )
+}
+
 // 3 + 4 — build with BOTH gates on, package to C:\ (ReFS/Defender gotcha on M:).
 const gates = { ENABLE_AUTO_UPDATE: '1', LOCAL_UPDATE_CHANNEL: '1' }
 if (existsSync(OUT_DIR)) rmSync(OUT_DIR, { recursive: true, force: true })

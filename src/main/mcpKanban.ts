@@ -36,10 +36,12 @@ export const MAX_COLUMN_ID = 200
 export const MAX_CARD_DESCRIPTION = 4000
 export const MAX_CARD_TAGS = 20
 export const MAX_CARD_FILE_REFS = 50
-// Matches the renderer→MAIN mirror-ingest cap (`boardRegistry.ts` MAX_FIELD_LEN = 256): a path the write
-// gate accepts here MUST survive the mirror round-trip, else it'd be silently dropped from the read-back
-// (`canvas://board/{id}/cards`) after the agent already got `ack: true`. `sanitizeId` rejects over-length
-// LOUDLY, so an over-256 path is a clear write error, not a silent read-time vanish.
+// Agent-content bound for a fileRef path — kept ≤ the renderer→MAIN mirror-ingest cap
+// (`boardRegistry.ts` MAX_KANBAN_FILE_REF_PATH = 1024) so a path the write gate accepts here ALWAYS
+// survives the mirror round-trip, never silently dropped from the read-back (`canvas://board/{id}/cards`)
+// after the agent already got `ack: true`. `sanitizeId` rejects an over-256 path LOUDLY (a clear write
+// error, not a silent read-time vanish). The mirror's cap is larger only so a HUMAN-authored real path
+// (which can exceed 256) also round-trips; agent content stays bounded at 256.
 export const MAX_CARD_FILE_REF_PATH = 256
 /** Max chars for a kanban board's v19 `axisLabel` (a short single-line caption). */
 export const MAX_AXIS_LABEL = 60
@@ -201,7 +203,12 @@ export function buildAddCardOp(id: string, spec: unknown): AddOp {
     columnId: sanitizeId(spec.columnId, MAX_COLUMN_ID, 'columnId'),
     title: sanitizeCardLabel(spec.title, MAX_CARD_TITLE, 'title')
   }
-  if (spec.tag !== undefined) card.tag = sanitizeCardLabel(spec.tag, MAX_CARD_TAG, 'tag')
+  // Drop the singular `tag` when the plural `tags` is also supplied: the applier sheds it (`tags`
+  // wins, kanbanMcpApply), so keeping it here would show the human a `tag:` chip in the confirm body
+  // that never lands (ADR-0003 "sees exactly what will change").
+  if (spec.tag !== undefined && spec.tags === undefined) {
+    card.tag = sanitizeCardLabel(spec.tag, MAX_CARD_TAG, 'tag')
+  }
   if (spec.assignee !== undefined) {
     card.assignee = sanitizeCardLabel(spec.assignee, MAX_CARD_ASSIGNEE, 'assignee')
   }
@@ -228,7 +235,11 @@ export function buildUpdateCardOp(cardId: unknown, patch: unknown): UpdateOp {
   if (!isRecord(patch)) throw new KanbanContentError('card patch is not an object')
   const p: UpdateOp['patch'] = {}
   if (patch.title !== undefined) p.title = sanitizeCardLabel(patch.title, MAX_CARD_TITLE, 'title')
-  if (patch.tag !== undefined) p.tag = sanitizeCardLabel(patch.tag, MAX_CARD_TAG, 'tag')
+  // Drop the singular `tag` when `tags` is also supplied — the applier sheds it, so the confirm body
+  // must not advertise a `tag:` chip that won't land (see buildAddCardOp).
+  if (patch.tag !== undefined && patch.tags === undefined) {
+    p.tag = sanitizeCardLabel(patch.tag, MAX_CARD_TAG, 'tag')
+  }
   if (patch.assignee !== undefined) {
     p.assignee = sanitizeCardLabel(patch.assignee, MAX_CARD_ASSIGNEE, 'assignee')
   }
