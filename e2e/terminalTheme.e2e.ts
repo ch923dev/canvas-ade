@@ -17,14 +17,29 @@ test.describe('@terminal terminal theming', () => {
   })
 
   test('a theme switch applies live, persists, and does NOT respawn the PTY', async ({ page }) => {
-    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    const id = await seed(page, 'terminal', { launchCommand: 'exit' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${J(id)})`, 8000)
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    // Drain the PTY before the direct buffer write (the terminalScrollback discipline): the
+    // shell launches `exit`, and once the bridge's "[process exited]" line lands no further
+    // bytes can arrive. Without this, a slow shell banner — held in the write coalescer until
+    // the first fit under batch load — flushed AFTER the marker write and repainted over row 0,
+    // breaking the position-sensitive selection probe below (the batch-order flake). The xterm
+    // + buffer stay live after exit; the no-respawn contract (themeId must never be a spawn
+    // dep) is provable on a drained term exactly the same way.
+    expect(
+      await pollEval(
+        page,
+        `(window.__canvasE2E.readTerminal(${J(id)}) || '').includes('process exited')`,
+        8000
+      ),
+      'shell exited (PTY drained — no further output)'
+    ).toBe(true)
 
     // An unthemed board resolves to the Canvas default palette (--inset bg).
     expect(await evalIn<string>(page, bgOf(id))).toBe('#0e0e10')
 
-    // Write a unique marker into the LIVE buffer — a respawn would dispose the term and wipe it.
+    // Write a unique marker into the buffer — a respawn would dispose the term and wipe it.
     const MARKER = 'THEMETESTMARKER'
     await evalIn(page, `window.__canvasE2E.resetTerminalWrite(${J(id)}, ${J(MARKER)})`)
     const landed = await pollEval(

@@ -33,6 +33,10 @@ export interface BackgroundResult {
   ok: boolean
   terminals: number
   previews: number
+  /** Busy-aware eviction: dirs auto-closed to honor the resident cap (renderer toasts them). */
+  evicted: string[]
+  /** Residents held ABOVE the cap because every candidate was working (the sweep retries). */
+  deferred: number
 }
 
 /** The one-round-trip payload behind the renderer's switch-away decision (Phase 4). */
@@ -81,11 +85,11 @@ export function registerProjectSessionsHandlers(
   })
 
   ipc.handle('project:background', async (e): Promise<BackgroundResult> => {
-    if (guard(e)) return { ok: false, terminals: 0, previews: 0 }
+    if (guard(e)) return { ok: false, terminals: 0, previews: 0, evicted: [], deferred: 0 }
     const dir = deps.getCurrentDir()
-    if (!dir) return { ok: false, terminals: 0, previews: 0 }
-    const { terminals, previews } = await deps.sessions.backgroundProject(dir)
-    return { ok: true, terminals, previews }
+    if (!dir) return { ok: false, terminals: 0, previews: 0, evicted: [], deferred: 0 }
+    const { terminals, previews, evicted, deferred } = await deps.sessions.backgroundProject(dir)
+    return { ok: true, terminals, previews, evicted, deferred }
   })
 
   ipc.handle('project:listBackground', (e): BackgroundProjectInfo[] => {

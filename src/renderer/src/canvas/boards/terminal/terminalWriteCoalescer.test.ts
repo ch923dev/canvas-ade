@@ -192,6 +192,78 @@ describe('createTerminalWriteCoalescer — clear (restart / teardown)', () => {
   })
 })
 
+describe('createTerminalWriteCoalescer — fit-gate composition (switch-back replay fix)', () => {
+  // The spawn effect composes its isLive as `visible && !backstopInFlight && gridFitted`. The
+  // third term is new: until the term's FIRST real fit, the grid is the constructor-default
+  // 80×24, and an adopt's replayed scrollback written then wraps at 80 cols and is mangled by
+  // the first fit's reflow. These tests pin the wiring contract on the REAL coalescer: bytes
+  // enqueued pre-fit are held, and the fit-time onVisible() releases them in arrival order.
+  function fitGateHarness() {
+    const writes: string[] = []
+    let visible = true
+    let gridFitted = false
+    const pending: Array<() => void> = []
+    const c = createTerminalWriteCoalescer({
+      write: (chunk) => writes.push(chunk),
+      isLive: () => visible && gridFitted,
+      schedule: (flush) => {
+        pending.push(flush)
+        return pending.length
+      },
+      cancel: () => {},
+      holdCap: () => 1_000_000
+    })
+    return {
+      c,
+      writes,
+      runFrame: () => {
+        const due = pending.splice(0)
+        for (const fn of due) fn()
+      },
+      setVisible: (v: boolean) => {
+        visible = v
+      },
+      fit: () => {
+        // Mirrors fitWhole's release: flip the gate, then onVisible() to arm the catch-up flush.
+        gridFitted = true
+        c.onVisible()
+      }
+    }
+  }
+
+  it('holds an adopt replay that arrives BEFORE the first fit; the fit releases it', () => {
+    const h = fitGateHarness()
+    h.c.enqueue('replayed-scrollback') // adoptCore's preface+tail, racing the first layout
+    h.runFrame()
+    expect(h.writes, 'nothing renders into the unfitted 80×24 grid').toEqual([])
+    h.fit()
+    h.runFrame()
+    expect(h.writes, 'the replay lands only once the grid is real').toEqual(['replayed-scrollback'])
+  })
+
+  it('live PTY bytes that stream during the pre-fit window flush AFTER the replay, in order', () => {
+    const h = fitGateHarness()
+    h.c.enqueue('replay')
+    h.c.enqueue('live-tail') // a busy agent keeps producing while the mount is still unfitted
+    h.fit()
+    h.runFrame()
+    expect(h.writes).toEqual(['replaylive-tail'])
+  })
+
+  it('the gate composes with visibility: hidden AND unfitted needs both releases', () => {
+    const h = fitGateHarness()
+    h.setVisible(false)
+    h.c.enqueue('held')
+    h.fit() // fitted, but still hidden — the Lane-A hold must keep gating
+    h.runFrame()
+    expect(h.writes).toEqual([])
+    h.setVisible(true)
+    h.c.onVisible()
+    h.runFrame()
+    expect(h.writes).toEqual(['held'])
+  })
+})
+
 describe('createTerminalWriteCoalescer - flushNow (find-count fix)', () => {
   it('writes pending chunks synchronously when live and cancels the scheduled frame', () => {
     const h = harness()

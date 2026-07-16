@@ -1050,8 +1050,9 @@ app.whenReady().then(async () => {
   })
 
   // C1: arm the background-session idle-TTL sweep (skipped under the headless self-test); it reaps
-  // idle residents via the scoped ring-flush-then-dispose close. Torn down in shutdown().
-  if (!SMOKE) startBackgroundIdleSweep()
+  // idle residents via the scoped ring-flush-then-dispose close — busy-aware (never a working
+  // agent) and two-strike, with the warning/close toasts riding the window. Torn down in shutdown().
+  if (!SMOKE) startBackgroundIdleSweep(() => mainWindow)
 
   // ── Desktop notifications: agent lifecycle → OS notification + in-app toast + on-canvas ────
   // The recap hook fires on Stop / Notification (RECAP_HOOK_EVENTS), each appended to

@@ -21,7 +21,8 @@ import {
   resolveSpawnArgs,
   nextStateAfterAdopt,
   fullViewScale,
-  conptyHint
+  conptyHint,
+  finiteDims
 } from './useTerminalSpawn'
 
 describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
@@ -108,6 +109,20 @@ describe('fullViewScale — Pure A1 full-view fill factor (pure)', () => {
     expect(fullViewScale(420, 0, 1920, 1080)).toBe(1)
     expect(fullViewScale(420, 340, 0, 1080)).toBe(1)
     expect(fullViewScale(420, 340, 1920, Number.NaN)).toBe(1)
+  })
+})
+
+describe('finiteDims — FitAddon proposal gate (pure)', () => {
+  // Shared by the deferred spawn (#34), the deferred respawn (#23), the backstop propose, and
+  // the fit-gate release (switch-back replay fix): an unfitted well must never count as a fit.
+  it('accepts a real layout proposal', () => {
+    expect(finiteDims({ cols: 132, rows: 34 })).toBe(true)
+  })
+
+  it('rejects the not-laid-out shapes: undefined and non-finite dims', () => {
+    expect(finiteDims(undefined)).toBe(false) // proposeDimensions() before layout
+    expect(finiteDims({ cols: NaN, rows: 24 })).toBe(false) // display:none well (0-size math)
+    expect(finiteDims({ cols: 80, rows: Infinity })).toBe(false)
   })
 })
 

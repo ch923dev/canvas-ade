@@ -2658,3 +2658,82 @@ picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board 
   ambient + `mcp:758` fails on a pure #347 base checkout; Linux Docker **285 passed**) · CI check +
   CodeQL + analyze + claude-review green · manual dev check via live HMR (create modal · attachments ·
   links · picker search + icons).
+
+## PR #351 — busy-aware background eviction: never kill a working agent (2026-07-16, v0.19.2)
+
+Squash `c7fa0ed4` (branch `feat/bg-busy-eviction`). Root cause of the "background project abruptly
+removed mid-work, agent redid the work on resume" bug: the C1 cap/idle-TTL machinery evicted on
+wall-clock alone (TTL 10 min / 4 min low-RAM; cap 3/1), blind to running terminals — and the TTL
+reap told nobody (console.info only). Keep/∞ policy never actually protected a resident.
+
+- **Busy-aware eviction:** WORKING = recent PTY output (30s window; background-parked rings now
+  bump `lastActivityAt` in the onData pump) ∥ process-tree CPU delta between sweeps (new
+  `bgBusyProbe.ts`: one full process-table sample per 60s sweep — `Get-CimInstance` / `ps -Ao` —
+  descendant walk from session root PIDs, ≥100ms ⇒ busy; catches SILENT workers, e.g. an agent
+  mid-e2e printing nothing). Working residents are never TTL-reaped and never cap-evicted.
+- **Idle clock = last activity** (not `backgroundedAt`); TTL 10→30 min (low-RAM 4→12). Two-strike
+  reap: warn (toast + OS notification) → 2 min grace → close — the net for zero-CPU waits the probe
+  can't see. Cap picks the oldest IDLE victim; all-busy → set exceeds the cap (`deferred`, toasted),
+  sweep collapses it once someone idles — never onto a resident kept < grace ago. ∞ forever-keeps
+  are TTL-exempt (cap pressure, idle-only, still wins). Every warning/auto-close reaches the user:
+  new `project:bgLifecycle` push → renderer toast + OS notification.
+- **Ratchet held by doctrine split:** `countProjectSessionsCore` moved verbatim from pty.ts to new
+  `ptyProjectStats.ts` (+ `projectActivityAtCore` / `projectSessionPidsCore`).
+- **CI side-fix (`ed928f4d`, repo-wide):** npmjs RETIRED the classic audit endpoints this same day
+  (HTTP 410; `pnpm audit` broken on pnpm 9 AND 10 — every PR's check job red). Same T9 hard gate,
+  new mechanism: `scripts/sca-audit.mjs` enumerates the tree via `pnpm licenses list --json`, POSTs
+  the bulk advisory endpoint in chunks, semver-matches (prerelease-inclusive), blocks at high+,
+  hard-fails on registry errors. Verified 714 pkgs; 1 moderate note (js-yaml), clean at threshold.
+- **Verify:** typecheck/lint/format green · touched units 145/145 · full suite 5203P (5 = the
+  documented ambient-env class, pass sanitized) · FULL e2e matrix green both legs on the PR tree
+  (Win 286P + gitDiff/menuShell rerun-green isolated [real-input flake] + 1 skip · Linux Docker
+  284P/3 skip exit-0 clean) · CI check + CodeQL + analyze green · claude-review 0-crit/0-warn/0-nit
+  ×2 rounds · manual dev check title-stamped `bg-busy-eviction 0.19.2`, user eyeball PASS · plan
+  kanban `17fff237` 10/10 cards done.
+
+## PR #353 — terminal display: switch-back replay corruption + full-view dead space (2026-07-16, v0.19.3)
+
+Squash `77f0728e` (branch `fix/terminal-display-lifecycle`, 4 commits). Fixes the two
+user-reported terminal display defects: a project switch-back breaking the display (worst while
+an agent streams) and full view leaving permanent dead space at the right (worse across an OS
+fullscreen toggle).
+
+- **Switch-back replay corruption (root cause):** the remount's fresh xterm sits at the
+  constructor-default 80×24 while the adopt's replayed scrollback (sidecar preface + ring tail)
+  can arrive BEFORE the first real fit — the replay hard-wraps at 80 cols and the first fit's
+  plain (non-backstop) reflow mangles it; on Win11 the `windowsPty` ConPTY hint disables xterm
+  reflow, so the wrap simply stays. **Fix:** `gridFittedRef` — a third term in the Lane-A write
+  coalescer's hold gate; ALL bytes (replay / restored snapshot / live PTY) queue until `fitWhole`
+  observes a finite `proposeDimensions`, then flush in order at the true column count. Plus an
+  adopt-time PTY↔term grid sync on BOTH orderings (port-attach leg + fit leg — a parked PTY kept
+  its pre-park grid and `term.onResize` used to post into a null portRef), and a `finiteDims`
+  pure-helper dedup across the 4 proposal-gate sites.
+- **Full-view dead space (S3 unfreeze):** Pure A1 froze the grid (a cols resize rode xterm's
+  lossy reflow) and scaled the font by min-fit — letterboxing the non-binding axis; the scale was
+  also read once at render (stale across mid-full-view fullscreen). **Fix:** window size tracked
+  live while full view is open (`fvWinSize` → counterScale recomputes), and the grid now REFITS
+  to the modal at the scaled font THROUGH the lossless S2 backstop — spare width becomes real
+  columns, the TUI gets its SIGWINCH, exit refits back to the exact board grid. The reraster seam
+  refits ONE FRAME deferred on a counterScale change (xterm re-measures cells async off the font
+  write); `useTerminalFullViewFill` reduced to settle+scrollToBottom (the fit owns both axes).
+- **Linux-leg catch (4th commit `071f9720`):** the reraster no-clip font-stepper raced the S3
+  exit refit — it measured the mid-transition grid, "fixed" the overflow by shrinking the FONT
+  (its frozen-grid instinct), and the refit converged at pinned×0.97 with a skewed grid,
+  permanently. Windows cell rounding never exposed it. Now the geometry refit owns every
+  counterScale transition (no-clip skipped there); exit state verified byte-identical to
+  in-canvas in the Linux image.
+- **e2e:** `terminalScrollback.e2e.ts` rewritten freeze-proof → refit-proof (cols GROW in full
+  view, right gutter ≤ ~a cell via `hSlack`, exact grid restore on exit, 120-marker survival ×2
+  round-trips); new switch-back replay-geometry spec in `projectBackgroundContinuity.e2e.ts`
+  (below-LOD remount forced via a far LOD-anchor board); theme + scrollback-config specs hardened
+  with the drain discipline (the hold gate defers slow ConPTY banners past direct
+  `resetTerminalWrite` — correct ordered behavior; position-sensitive specs must drain first).
+- **Verify:** typecheck/lint/format green · terminal zone units 273/273 + new coalescer fit-gate
+  contract tests · full unit suite green (documented ambient-env class only) · FULL e2e matrix
+  green both legs on the merge head (Win 287P/1skip, menuShell rerun-green + gitDiff env-EBUSY
+  teardown accounted · Linux Docker 285P/3skip exit-0 CLEAN) · CI check + CodeQL + analyze green ·
+  claude-review 0-crit/0-warn ×2 rounds (full + incremental) · CodeQL test-only sanitization alert
+  dispositioned inline · manual dev check title-stamped `terminal-display 0.19.3`, user eyeball
+  PASS ×3 (switch-back mid-stream · fullscreen-mid-full-view rescale · full-view right gap gone).
+- **Side-finding (unfixed, own card):** switch-back viewport restore is dead — the remount always
+  lands on a fit-to-content camera (RF init clobbers the restored viewport).

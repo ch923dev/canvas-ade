@@ -24,6 +24,15 @@ const TOAST: Record<
   error: { verb: 'hit an error', kind: 'error', sticky: true }
 }
 
+/** Busy-aware eviction (project:bgLifecycle): copy per sweep-push kind. The warning is the one
+ *  the user can still act on, so it stays sticky until dismissed or superseded by the close. */
+const BG_TOAST: Record<'warned' | 'closed' | 'evicted', (name: string) => string> = {
+  warned: (name) =>
+    `${name} is idle in the background — closing in ~2 min. Switch back to keep it.`,
+  closed: (name) => `Background project ${name} was closed after staying idle.`,
+  evicted: (name) => `Background project ${name} was closed to free memory.`
+}
+
 export function useNotifications(): void {
   useEffect(() => {
     const api = window.api?.notify
@@ -48,6 +57,20 @@ export function useNotifications(): void {
     })
     const offFocus = api.onFocusBoard(({ boardId }) => focus(boardId))
 
+    // Background-session lifecycle (busy-aware eviction): the MAIN sweep warns before an idle
+    // close and reports every auto-close — keyed per dir+kind so a repeat replaces in place,
+    // and the close supersedes its own warning toast (same dir key family).
+    const offBg = window.api?.project?.onBgLifecycle
+      ? window.api.project.onBgLifecycle(({ kind, dir, name }) => {
+          showToast({
+            id: `bg-lifecycle:${dir}`,
+            message: BG_TOAST[kind](name),
+            kind: 'info',
+            sticky: kind === 'warned'
+          })
+        })
+      : (): void => {}
+
     // Attention is unseen-state: selecting a board (click, marquee, focus action, OS click —
     // they all land in `selectedIds`) means the user saw it → drop its mark. clearAttention
     // no-ops without a state change when the board carries none, so this per-change loop is
@@ -60,6 +83,7 @@ export function useNotifications(): void {
     return () => {
       offLifecycle()
       offFocus()
+      offBg()
       offSelect()
     }
   }, [])

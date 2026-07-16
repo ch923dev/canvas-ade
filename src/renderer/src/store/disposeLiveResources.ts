@@ -15,6 +15,10 @@
  * project owns, so closing it never reaps another resident project's background sessions.
  */
 import { flushAllTerminalSnapshots } from './terminalSnapshotRegistry'
+import { showToast } from './toastStore'
+
+/** Display name for a project dir (no node `path` in the sandboxed renderer). */
+const nameOf = (dir: string): string => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir
 
 export async function disposeLiveResources(expectedDir?: string): Promise<void> {
   // S3: snapshot every live terminal's scrollback BEFORE its PTY + xterm buffer are torn down, so a
@@ -44,7 +48,26 @@ export async function backgroundLiveResources(expectedDir?: string): Promise<boo
   const res = await Promise.resolve()
     .then(() => window.api.project.background())
     .catch(() => null)
-  return res?.ok === true
+  if (res?.ok === true) {
+    // Busy-aware eviction: tell the user what the cap did — which idle resident(s) were closed
+    // to make room, or that working residents were spared past the cap (the sweep retries).
+    for (const dir of res.evicted ?? []) {
+      showToast({
+        id: `bg-lifecycle:${dir}`,
+        message: `Background project ${nameOf(dir)} was closed to free memory.`,
+        kind: 'info'
+      })
+    }
+    if ((res.deferred ?? 0) > 0) {
+      showToast({
+        id: 'bg-cap-deferred',
+        message: `${res.deferred} background project${res.deferred === 1 ? ' is' : 's are'} still working — kept beyond the resident cap for now.`,
+        kind: 'info'
+      })
+    }
+    return true
+  }
+  return false
 }
 
 export async function closeActiveLiveResources(expectedDir?: string): Promise<void> {

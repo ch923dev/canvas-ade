@@ -58,6 +58,11 @@ function makeDeps(overrides: Partial<ProjectSessionDeps> = {}): {
     saveForeverKeeps: (dirs) => {
       persisted.dirs = dirs
     },
+    // Busy-aware defaults: nothing ever busy/active, no two-strike grace (immediate close past
+    // the TTL) — the legacy behavior most suites drive; the busy-aware suite overrides these.
+    activityAt: () => 0,
+    isBusy: () => false,
+    graceMs: () => 0,
     ...overrides
   }
   return { deps, calls, persisted }
@@ -70,7 +75,7 @@ describe('createProjectSessions (Phase 1 registry)', () => {
 
     const res = await ps.backgroundProject('C:/work/alpha')
 
-    expect(res).toEqual({ terminals: 2, previews: 1, evicted: [] })
+    expect(res).toEqual({ terminals: 2, previews: 1, evicted: [], deferred: 0 })
     // R5: deleted boards' undo-parks die BEFORE the background park (their undo rail dies
     // with the switch's store replace).
     expect(calls.reapUndoParks).toEqual(['C:/work/alpha'])
@@ -90,7 +95,8 @@ describe('createProjectSessions (Phase 1 registry)', () => {
     await expect(ps.backgroundProject('C:/work/alpha')).resolves.toEqual({
       terminals: 2,
       previews: 1,
-      evicted: []
+      evicted: [],
+      deferred: 0
     })
     expect(calls.parkPtys).toEqual(['C:/work/alpha'])
   })
@@ -329,8 +335,10 @@ describe('createProjectSessions — C1 cap + idle TTL', () => {
     setTime(2000)
     await ps.backgroundProject('/fresh') // 2000 — under TTL
 
-    const closed = await ps.reapIdle(['/active']) // now=2000, TTL=1000
-    expect(closed).toEqual(['/old']) // age 2000 > 1000
+    const res = await ps.reapIdle(['/active']) // now=2000, TTL=1000
+    expect(res.closed).toEqual(['/old']) // age 2000 > 1000
+    expect(res.warned).toEqual([]) // grace 0 → no warning phase
+    expect(res.capEvicted).toEqual([])
     expect(ps.isBackgroundProject('/old')).toBe(false)
     expect(ps.isBackgroundProject('/active')).toBe(true) // protected despite age 1500 > 1000
     expect(ps.isBackgroundProject('/fresh')).toBe(true) // age 0, under TTL
@@ -357,5 +365,177 @@ describe('createProjectSessions — C1 cap + idle TTL', () => {
     await ps.backgroundProject('/kept')
     await ps.closeBackgroundProject('/kept')
     expect(ps.keepForeverDirs()).not.toContain('/kept')
+  })
+})
+
+// Busy-aware eviction: working residents (CPU-busy or recently-streaming) are never reaped or
+// cap-evicted; activity resets the idle clock; the reap is two-strike; ∞ forever-keeps are
+// TTL-exempt. These drive the exact scenario that motivated the feature: an agent mid-run in a
+// backgrounded project must survive any wall-clock TTL.
+describe('createProjectSessions — busy-aware eviction', () => {
+  function busyDeps(overrides: Partial<ProjectSessionDeps> = {}): ReturnType<typeof makeDeps> & {
+    busy: Set<string>
+    activity: Map<string, number>
+    setTime: (v: number) => void
+  } {
+    let t = 0
+    const busy = new Set<string>()
+    const activity = new Map<string, number>()
+    const base = makeDeps({
+      idleTtlMs: () => 60_000,
+      isBusy: (dir) => busy.has(dir),
+      activityAt: (dir) => activity.get(dir) ?? 0,
+      ...overrides,
+      now: () => t // applied LAST so the mutable clock always wins
+    })
+    return {
+      ...base,
+      busy,
+      activity,
+      setTime: (v) => {
+        t = v
+      }
+    }
+  }
+
+  it('a CPU-busy resident survives arbitrarily far past the TTL; reaped once idle', async () => {
+    const { deps, busy, setTime } = busyDeps()
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/work') // t=0
+    busy.add('/work')
+
+    setTime(10 * 60_000) // 10× the TTL — the old registry would have killed this agent mid-run
+    expect((await ps.reapIdle([])).closed).toEqual([])
+    expect(ps.isBackgroundProject('/work')).toBe(true)
+
+    busy.delete('/work')
+    expect((await ps.reapIdle([])).closed).toEqual(['/work'])
+  })
+
+  it('PTY output RESETS the idle clock (idle = since last activity, not since backgrounded)', async () => {
+    const { deps, activity, setTime } = busyDeps()
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a') // t=0, TTL 60s
+
+    // Output landed 50s ago (outside the 30s working window, so no busy skip) — the idle clock
+    // runs from IT, not from backgroundedAt: 50s idle < 60s TTL → survives at t=300s.
+    setTime(300_000)
+    activity.set('/a', 250_000)
+    expect((await ps.reapIdle([])).closed).toEqual([])
+
+    setTime(320_000) // now 70s past the last output → past the TTL → reaped
+    expect((await ps.reapIdle([])).closed).toEqual(['/a'])
+  })
+
+  it('output within the working window skips the reap entirely (streaming agent)', async () => {
+    const { deps, activity, setTime } = busyDeps()
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a') // t=0
+    setTime(300_000)
+    activity.set('/a', 290_000) // 10s ago — inside OUTPUT_BUSY_WINDOW_MS
+    expect((await ps.reapIdle([])).closed).toEqual([])
+  })
+
+  it('two-strike: warn → silent within grace → close after grace', async () => {
+    const { deps, setTime } = busyDeps({ graceMs: () => 120_000 })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a') // t=0, TTL 60s
+
+    setTime(61_000) // past the TTL → strike 1: warned, NOT closed
+    const first = await ps.reapIdle([])
+    expect(first.closed).toEqual([])
+    expect(first.warned).toEqual([{ dir: '/a', closesInMs: 120_000 }])
+    expect(ps.isBackgroundProject('/a')).toBe(true)
+
+    setTime(120_000) // between strikes (59s of the 120s grace) → silent, no re-warn
+    const mid = await ps.reapIdle([])
+    expect(mid.closed).toEqual([])
+    expect(mid.warned).toEqual([])
+
+    setTime(181_001) // grace elapsed → strike 2 closes
+    expect((await ps.reapIdle([])).closed).toEqual(['/a'])
+  })
+
+  it('going busy between strikes clears the strike — a fresh idle spell warns AGAIN', async () => {
+    const { deps, busy, setTime } = busyDeps({ graceMs: () => 120_000 })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a')
+
+    setTime(61_000)
+    expect((await ps.reapIdle([])).warned).toHaveLength(1) // strike 1
+
+    busy.add('/a') // work resumed → the pending strike must die with it
+    setTime(200_000)
+    expect((await ps.reapIdle([])).closed).toEqual([])
+
+    busy.delete('/a') // idle again FAR past warnedAt+grace — must WARN, never instant-close
+    setTime(400_000)
+    const again = await ps.reapIdle([])
+    expect(again.closed).toEqual([])
+    expect(again.warned).toEqual([{ dir: '/a', closesInMs: 120_000 }])
+  })
+
+  it('∞ forever-keeps are exempt from the TTL reap (but still cap-evictable when idle)', async () => {
+    const { deps, setTime } = busyDeps({ loadForeverKeeps: () => ['/kept'] })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/kept') // t=0
+
+    setTime(60 * 60_000) // an hour idle — the user said keep forever, so the TTL never fires
+    expect((await ps.reapIdle([])).closed).toEqual([])
+    expect(ps.isBackgroundProject('/kept')).toBe(true)
+  })
+
+  it('cap: a WORKING resident is never the victim — the set defers past the cap', async () => {
+    const { deps, busy, setTime } = busyDeps({ maxBackground: () => 1 })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a')
+    busy.add('/a') // the only candidate victim is mid-work
+    setTime(1000)
+
+    const res = await ps.backgroundProject('/b') // cap 1, size 2, /a busy → defer, kill nothing
+    expect(res.evicted).toEqual([])
+    expect(res.deferred).toBe(1)
+    expect(ps.backgroundCount()).toBe(2)
+  })
+
+  it('the sweep collapses a deferred over-cap set once the survivor goes idle — and never the freshly-kept project', async () => {
+    const { deps, busy, setTime } = busyDeps({
+      maxBackground: () => 1,
+      idleTtlMs: () => 60 * 60_000, // TTL far away — this test isolates the cap retry
+      graceMs: () => 120_000
+    })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/a')
+    busy.add('/a')
+    setTime(1000)
+    await ps.backgroundProject('/b') // deferred past the cap (/a busy)
+
+    // /b is idle-at-prompt but FRESH (aged 1s < grace) — the retry must NOT collapse onto it
+    // one sweep after the user chose Keep (that would be the original silent-kill bug reborn).
+    setTime(2000)
+    expect((await ps.reapIdle([])).capEvicted).toEqual([])
+    expect(ps.backgroundCount()).toBe(2)
+
+    busy.delete('/a')
+    setTime(150_000) // both aged past the grace; /a (oldest idle) is the victim
+    const res = await ps.reapIdle([])
+    expect(res.capEvicted).toEqual(['/a'])
+    expect(ps.backgroundCount()).toBe(1)
+    expect(ps.isBackgroundProject('/b')).toBe(true)
+  })
+
+  it('cap eviction picks the oldest IDLE resident, skipping a busy older one', async () => {
+    const { deps, busy, setTime } = busyDeps({ maxBackground: () => 2 })
+    const ps = createProjectSessions(deps)
+    await ps.backgroundProject('/oldest-busy') // t=0
+    busy.add('/oldest-busy')
+    setTime(1000)
+    await ps.backgroundProject('/older-idle')
+    setTime(2000)
+
+    const res = await ps.backgroundProject('/new') // cap 2 → victim = /older-idle (not the busy elder)
+    expect(res.evicted).toEqual(['/older-idle'])
+    expect(res.deferred).toBe(0)
+    expect(ps.isBackgroundProject('/oldest-busy')).toBe(true)
   })
 })
