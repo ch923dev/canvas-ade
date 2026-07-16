@@ -12,6 +12,15 @@ import { basename } from 'node:path'
  *
  * Lifetime is the APP RUN only (locked scope decision): quit routes through disposeAllPtys /
  * disposeAllOsr, which kill background resources too — the registry is never persisted.
+ *
+ * Busy-aware eviction (2026-07-16): the cap + idle-TTL machinery no longer runs on wall-clock
+ * alone. A resident is WORKING when its PTYs produced output recently (deps.activityAt, the
+ * OUTPUT_BUSY_WINDOW_MS window) or its process tree is accruing CPU (deps.isBusy — the
+ * bgBusyProbe verdict, which catches silent workers like an agent mid-e2e). Working residents
+ * are never idle-reaped and never cap-evicted; fresh output also RESETS the idle clock, so the
+ * TTL only ever fires on genuinely-abandoned residents. The reap itself is two-strike: an idle
+ * resident is WARNED (returned to the sweep for a toast/OS notification) and closed only if
+ * still idle a grace period later — the net for zero-CPU blocking waits the probe can't see.
  */
 
 /** What the ProjectSwitcher lists per backgrounded project (badges + Close). */
@@ -22,6 +31,10 @@ export interface BackgroundProjectInfo {
   previews: number
   backgroundedAt: number
 }
+
+/** PTY output within this window counts a resident as WORKING (protects a streaming agent even
+ *  before the CPU probe has two samples for a delta). */
+export const OUTPUT_BUSY_WINDOW_MS = 30_000
 
 export interface ProjectSessionDeps {
   /** pty.reapUndoParks — reap `dir`'s undo-parked (deleted-board) sessions BEFORE the park:
@@ -46,11 +59,13 @@ export interface ProjectSessionDeps {
   /**
    * C1: max background projects to keep resident. A GETTER (not a constant) so Low-RAM mode can
    * lower it live without rebuilding the registry (index.ts wires the config read; default 3).
-   * Backgrounding past this auto-closes the LONGEST-backgrounded resident.
+   * Backgrounding past this auto-closes the LONGEST-backgrounded IDLE resident — a WORKING
+   * resident is never the victim; when every other resident is working, the set temporarily
+   * exceeds the cap (`deferred`) and the sweep collapses it once someone goes idle.
    */
   maxBackground(): number
-  /** C1: idle TTL (ms) for a background park — a resident idle (backgrounded, never switched
-   *  back to) longer than this is reaped by the sweep. A getter so Low-RAM can shorten it live. */
+  /** C1: idle TTL (ms) for a background park — a resident idle (no switch-back AND no PTY
+   *  activity) longer than this is reaped by the sweep. A getter so Low-RAM can shorten it. */
   idleTtlMs(): number
   /**
    * C1: flush `dir`'s background terminal ring tails to their snapshot sidecar BEFORE its
@@ -66,25 +81,44 @@ export interface ProjectSessionDeps {
    */
   loadForeverKeeps(): string[]
   saveForeverKeeps(dirs: string[]): void
+  /** Busy-aware eviction: most recent PTY output for `dir` (pty.projectActivityAt). 0 = never —
+   *  a 0 is NEVER "recent" (the working check special-cases it), whatever the clock reads. */
+  activityAt(dir: string): number
+  /** Busy-aware eviction: the CPU-probe verdict for `dir` (bgBusyProbe, refreshed per sweep). */
+  isBusy(dir: string): boolean
+  /** Two-strike grace between the idle WARNING and the close. <= 0 disables the warning phase
+   *  (immediate close once past the TTL — what most unit tests use). */
+  graceMs(): number
+}
+
+/** One sweep's outcome (reapIdle): what closed, what got its first-strike warning, and which
+ *  over-cap residents the deferred cap-eviction retry collapsed (idle ones only). */
+export interface ReapResult {
+  closed: string[]
+  warned: { dir: string; closesInMs: number }[]
+  capEvicted: string[]
 }
 
 export interface ProjectSessions {
   /**
    * Park + freeze everything `dir` owns and register it as backgrounded. C1: enforces the
-   * `maxBackground` cap AFTER registering — auto-closing the longest-backgrounded OTHER
-   * resident(s) via the scoped close. `evicted` is the dirs auto-closed (usually [] or one) so
-   * the caller can toast "closed X to free memory".
+   * `maxBackground` cap AFTER registering — auto-closing the longest-backgrounded IDLE other
+   * resident(s) via the scoped close. `evicted` is the dirs auto-closed; `deferred` counts
+   * residents held ABOVE the cap because every candidate was working (the sweep retries).
    */
   backgroundProject(
     dir: string
-  ): Promise<{ terminals: number; previews: number; evicted: string[] }>
+  ): Promise<{ terminals: number; previews: number; evicted: string[]; deferred: number }>
   /**
-   * C1: reap background projects idle (backgrounded, never switched back to) longer than the
-   * TTL. `protectedDirs` — the ACTIVE project + any pending switch target — are never reaped.
-   * Returns the dirs closed. Safe on an interval; a no-op when nothing is stale. Uses the SAME
-   * scoped close (ring-tail flush → disposeOsr → disposePtys) so no resident's output is lost.
+   * C1: the sweep tick. Reaps residents idle past the TTL — where idle means no PTY activity
+   * (the activity clock, not just backgroundedAt), not CPU-busy, not forever-kept, and not in
+   * `protectedDirs` (the ACTIVE project + any pending switch target). Two-strike when graceMs
+   * > 0: first pass returns the dir in `warned`, the close lands only if it is STILL idle a
+   * grace later. Also collapses an over-cap resident set (idle victims only — the deferred
+   * cap-eviction retry). Uses the SAME scoped close (ring-tail flush → disposeOsr →
+   * disposePtys) everywhere so no resident's output is lost.
    */
-  reapIdle(protectedDirs: Iterable<string>): Promise<string[]>
+  reapIdle(protectedDirs: Iterable<string>): Promise<ReapResult>
   /**
    * Un-register `dir` and un-throttle its previews. Called on EVERY project open (idempotent
    * no-op for a never-backgrounded dir) so a switch-back clears the backgrounded flag before
@@ -118,6 +152,10 @@ export interface ProjectSessions {
 
 export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions {
   const registry = new Map<string, { name: string; backgroundedAt: number }>()
+  // Two-strike reap state: dir → epoch ms of its first-strike warning. Cleared whenever the dir
+  // stops qualifying (goes busy / gets activity / foregrounds / closes) so a survivor that goes
+  // idle AGAIN gets a fresh warning, never a stale instant close.
+  const pendingReap = new Map<string, number>()
   // Phase 4 keep policies. Session keeps die with the run (never persisted); forever keeps
   // hydrate from + write through the injected userData store. A dir is 'keep' if EITHER holds.
   // Hydration is LAZY (first policy access) — the factory runs at module scope, before the
@@ -148,6 +186,14 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
     return hadSession || hadForever
   }
 
+  // Busy-aware eviction: is `dir` WORKING right now? CPU-probe verdict OR recent PTY output.
+  // activityAt 0 = "never produced output" and is never recent (test clocks start near 0).
+  const isWorking = (dir: string): boolean => {
+    if (deps.isBusy(dir)) return true
+    const at = deps.activityAt(dir)
+    return at > 0 && deps.now() - at < OUTPUT_BUSY_WINDOW_MS
+  }
+
   // C1: the ONE scoped close, shared by the manual close, the cap eviction, and the TTL reap.
   // Registry-guarded (never disposes an unregistered dir) and dir-scoped (disposeOsr/disposePtys
   // touch only `dir` — closing project B can never reap resident project A). Flushes the ring
@@ -158,6 +204,7 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
   const closeBg = async (dir: string, resetPolicy: boolean): Promise<boolean> => {
     if (!registry.has(dir)) return false
     registry.delete(dir)
+    pendingReap.delete(dir)
     if (resetPolicy) forgetPolicy(dir)
     deps.persistRingTails(dir) // data-loss fix — BEFORE dispose (disposePtys does not flush tails)
     deps.disposeOsr(dir)
@@ -166,13 +213,23 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
   }
 
   // C1: the longest-backgrounded resident (smallest backgroundedAt), excluding `exclude` (the
-  // just-backgrounded dir — never evict the one the user just switched away from). Mirrors
+  // just-backgrounded dir — never evict the one the user just switched away from) and — busy-aware
+  // eviction — any WORKING resident: a running agent is never the cap victim. Mirrors
   // previewOsr.pickOsrEvictions' oldest-first ordering so H4's OSR trim and C1 agree.
-  const pickLongestBackgrounded = (exclude: string): string | null => {
+  // `backgroundedBefore` (sweep cap-retry only): a candidate must have been resident since before
+  // this stamp — protects the FRESHLY-kept project (there is no `justAddedDir` at sweep time) from
+  // being collapsed seconds after the user chose Keep.
+  const pickOldestIdle = (
+    exclude: string | null,
+    excludeSet?: Set<string>,
+    backgroundedBefore = Infinity
+  ): string | null => {
     let oldest: string | null = null
     let oldestAt = Infinity
     for (const [dir, r] of registry) {
-      if (dir === exclude) continue
+      if (dir === exclude || excludeSet?.has(dir)) continue
+      if (r.backgroundedAt > backgroundedBefore) continue
+      if (isWorking(dir)) continue
       if (r.backgroundedAt < oldestAt) {
         oldestAt = r.backgroundedAt
         oldest = dir
@@ -182,18 +239,24 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
   }
 
   // C1: after a background push the resident set over the budget, close the longest-backgrounded
-  // OTHER resident(s). Loops so a live cap DROP (Low-RAM lowering maxBackground while several are
-  // resident) collapses in one call; never evicts `justAddedDir` (pickLongestBackgrounded excludes
-  // it), so the just-kept project always survives even at cap 1.
-  const enforceCap = async (justAddedDir: string): Promise<string[]> => {
+  // IDLE other resident(s). Loops so a live cap DROP (Low-RAM lowering maxBackground while several
+  // are resident) collapses in one call; never evicts `justAddedDir` (pickOldestIdle excludes it),
+  // so the just-kept project always survives even at cap 1. When every candidate is WORKING the
+  // loop stops short: the overflow is reported as `deferred` (the sweep's cap retry collapses it
+  // once someone goes idle) — a busy agent is never silently killed for memory.
+  const enforceCap = async (
+    justAddedDir: string
+  ): Promise<{ evicted: string[]; deferred: number }> => {
     const evicted: string[] = []
     const max = Math.max(1, deps.maxBackground())
     while (registry.size > max) {
-      const victim = pickLongestBackgrounded(justAddedDir)
-      if (!victim) break
-      if (await closeBg(victim, false)) evicted.push(victim) // involuntary — preserve keep policy
+      const victim = pickOldestIdle(justAddedDir)
+      if (!victim) break // every other resident is working — defer, never kill busy
+      if (await closeBg(victim, false))
+        evicted.push(victim) // involuntary — preserve keep policy
+      else break
     }
-    return evicted
+    return { evicted, deferred: Math.max(0, registry.size - max) }
   }
 
   return {
@@ -204,14 +267,16 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
       const terminals = deps.parkPtys(dir)
       const previews = deps.backgroundOsr(dir)
       registry.set(dir, { name: basename(dir), backgroundedAt: deps.now() })
+      pendingReap.delete(dir) // a fresh background is never mid-strike
       // C1: enforce the cap AFTER registering `dir` (so it counts + is protected from its own
-      // eviction). Auto-closes the longest-backgrounded OTHER resident(s) via the scoped close.
-      const evicted = await enforceCap(dir)
-      return { terminals, previews, evicted }
+      // eviction). Auto-closes the longest-backgrounded IDLE other resident(s).
+      const { evicted, deferred } = await enforceCap(dir)
+      return { terminals, previews, evicted, deferred }
     },
 
     foregroundProject(dir) {
       registry.delete(dir)
+      pendingReap.delete(dir)
       deps.foregroundOsr(dir)
     },
 
@@ -222,18 +287,50 @@ export function createProjectSessions(deps: ProjectSessionDeps): ProjectSessions
     async reapIdle(protectedDirs) {
       const guarded = new Set(protectedDirs)
       const ttl = deps.idleTtlMs()
+      const grace = deps.graceMs()
       const now = deps.now()
-      // Snapshot the stale set first (closeBg mutates the registry mid-iteration). "Idle" = time
-      // since backgrounded with no switch-back (foregroundProject deletes the entry, so
-      // backgroundedAt IS the idle clock).
-      const stale = [...registry.entries()]
-        .filter(([dir, r]) => !guarded.has(dir) && now - r.backgroundedAt > ttl)
-        .map(([dir]) => dir)
       const closed: string[] = []
-      for (const dir of stale) {
+      const warned: { dir: string; closesInMs: number }[] = []
+      const keepForever = forever()
+      // Snapshot the entries first (closeBg mutates the registry mid-iteration). "Idle" = time
+      // since the LAST of {backgrounded, PTY output} — activity RESETS the clock — with a busy
+      // (CPU) resident never idle at all. ∞ forever-keeps are exempt from the TTL entirely (the
+      // user explicitly said keep; only cap pressure may still evict them, and only when idle).
+      for (const [dir, r] of [...registry.entries()]) {
+        if (guarded.has(dir) || keepForever.has(dir) || isWorking(dir)) {
+          pendingReap.delete(dir)
+          continue
+        }
+        const idleSince = Math.max(r.backgroundedAt, deps.activityAt(dir))
+        if (now - idleSince <= ttl) {
+          pendingReap.delete(dir)
+          continue
+        }
+        if (grace > 0) {
+          const warnedAt = pendingReap.get(dir)
+          if (warnedAt === undefined) {
+            // Strike 1: warn only. The sweep surfaces this (toast + OS notification) so the
+            // zero-CPU blocking wait the probe can't see still gets a human-visible net.
+            pendingReap.set(dir, now)
+            warned.push({ dir, closesInMs: grace })
+            continue
+          }
+          if (now - warnedAt < grace) continue // between strikes — silent
+        }
         if (await closeBg(dir, false)) closed.push(dir) // involuntary — preserve keep policy
       }
-      return closed
+      // Deferred cap-eviction retry: collapse an over-cap resident set (an all-busy defer at
+      // background time) — IDLE victims only (a defer must never turn into a busy kill here),
+      // and only residents older than the grace window (the freshly-kept project is protected).
+      const capEvicted: string[] = []
+      const max = Math.max(1, deps.maxBackground())
+      while (registry.size > max) {
+        const victim = pickOldestIdle(null, guarded, now - Math.max(0, grace))
+        if (!victim) break
+        if (await closeBg(victim, false)) capEvicted.push(victim)
+        else break
+      }
+      return { closed, warned, capEvicted }
     },
 
     isBackgroundProject(dir) {
