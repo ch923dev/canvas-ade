@@ -37,10 +37,45 @@ function enqueueSpeak(clause: string): void {
     .catch(() => {})
 }
 
+/**
+ * J4: map a spoken final to a confirm answer for the PENDING act-card. Deliberately
+ * exact-match on short affirmatives/negatives (after trimming punctuation) — "no, put it
+ * on the other board" must NOT read as a deny; it supersedes the turn instead, which
+ * auto-denies fail-closed (sendTurn). Exported for units.
+ */
+export function matchConfirmSpeech(text: string): boolean | null {
+  const t = text
+    .toLowerCase()
+    .replace(/[.,!?…]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const YES = [
+    'yes',
+    'yeah',
+    'yep',
+    'yup',
+    'sure',
+    'confirm',
+    'approve',
+    'do it',
+    'go ahead',
+    'ok',
+    'okay'
+  ]
+  const NO = ['no', 'nope', 'cancel', 'deny', 'stop', "don't", 'do not', 'never mind', 'nevermind']
+  if (YES.includes(t)) return true
+  if (NO.includes(t)) return false
+  return null
+}
+
 /** Send one user utterance to the brain (the registered final consumer's body). */
 export function sendTurn(text: string): void {
   const trimmed = text.trim()
   if (!trimmed) return
+  // J4 fail-closed supersede: a NEW utterance while an act-card awaits its ✓/✗ answers
+  // that gate `false` BEFORE the new turn starts — MAIN's blocked tool call resolves
+  // denied and the dead turn unwinds; nothing executes off a question the user talked past.
+  useJarvisStore.getState().answerPendingConfirm(false)
   speakEpoch++ // a new turn must never speak a superseded turn's queued clauses
   // TURN-1: null synchronously — during the startTurn round-trip the superseded turn's
   // late deltas would otherwise still match the stale id and speak under the new epoch.
@@ -85,6 +120,9 @@ export async function setConverseMode(on: boolean): Promise<void> {
     currentTurnId = null
     speakEpoch++ // queued clauses die with the conversation
     chunker.reset()
+    // J4: a pending act-card dies with the conversation — DENIED (fail-closed; MAIN's
+    // blocked tool call resolves instead of waiting out the 10-minute backstop).
+    jarvis.answerPendingConfirm(false)
     useVoiceStore.getState().setComposerSuppressed(false)
     jarvis.setConverseMode(false)
     void window.api.jarvis.cancelTurn().catch(() => {})
@@ -124,7 +162,18 @@ export async function setConverseMode(on: boolean): Promise<void> {
   unregisterConsumer?.()
   unregisterConsumer = setFinalConsumer((text) => {
     // Only consume while converse mode is live (a stale registration never eats dictation).
-    if (!useJarvisStore.getState().converseMode) return false
+    const live = useJarvisStore.getState()
+    if (!live.converseMode) return false
+    // J4: while an act-card awaits its answer, an exact spoken yes/no answers THAT gate
+    // (bound to the parked reply — a later confirm gets its own slot/channel). Anything
+    // else falls through to sendTurn, which auto-denies the gate before superseding.
+    if (live.pendingConfirm) {
+      const answer = matchConfirmSpeech(text)
+      if (answer !== null) {
+        live.answerPendingConfirm(answer)
+        return true
+      }
+    }
     sendTurn(text)
     return true
   })
@@ -198,6 +247,15 @@ export function useJarvisController(): void {
       if (ev.kind === 'delta') {
         s.deltaReceived(ev.text)
         if (s.speechReady) for (const clause of chunker.push(ev.text)) enqueueSpeak(clause)
+      } else if (ev.kind === 'act') {
+        // J4: tool-call lifecycle → the transcript's act rows (pending card / chips).
+        s.actEvent({
+          actId: ev.actId,
+          name: ev.name,
+          summary: ev.summary,
+          phase: ev.phase,
+          gated: ev.gated
+        })
       } else if (ev.kind === 'done') {
         const rest = chunker.flush()
         if (rest && !ev.cancelled && s.speechReady) enqueueSpeak(rest)

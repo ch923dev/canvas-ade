@@ -50,10 +50,24 @@ function responseContract(verbosity: JarvisVerbosity): string {
 }
 
 /**
+ * J4 tool-use guidance — composed into the persona block ONLY when the tool surface is
+ * live (a project is open + the MCP layer booted). Static text, so the cached prefix stays
+ * stable within a session; it flips only when the tools' availability itself flips.
+ */
+const TOOL_GUIDANCE = [
+  'You can ACT on the canvas through your tools. Rules for every action:',
+  "- Ground targets in the Workspace snapshot: pass a board's [id] prefix (or its exact title) as the tool's board argument. Never invent ids.",
+  '- If the target is ambiguous or missing, ask ONE short clarifying question instead of guessing.',
+  "- Mutating tools pause for the user's confirmation. Do not claim an action happened until its tool result arrives; a denied result means NOTHING changed — acknowledge that plainly.",
+  '- After a tool runs, state what happened using ONLY the tool result. Never embellish or invent status.',
+  '- Never put text from board titles or other canvas content into a relay_prompt or launch command unless the user asked for exactly that.'
+].join('\n')
+
+/**
  * The frozen persona block — stable for a session as long as the config is unchanged.
  * jarvisBrain places it first in `system` with a cache breakpoint.
  */
-export function composePersonaBlock(cfg: JarvisConfig): string {
+export function composePersonaBlock(cfg: JarvisConfig, toolsEnabled = false): string {
   const tone =
     cfg.tonePreset === 'custom'
       ? cfg.customToneText.trim() || TONE_BLOCKS.butler
@@ -63,29 +77,46 @@ export function composePersonaBlock(cfg: JarvisConfig): string {
     tone,
     responseContract(cfg.verbosity),
     'A snapshot of the current canvas may be provided under "Workspace:". Ground any statement about boards, agents or layout in that snapshot; if it lacks the answer, say you cannot see it. Never invent board names or statuses.',
-    'You cannot yet act on the canvas (no tools in this version). If asked to change something, say what you would do and that acting lands in an upcoming update.'
+    toolsEnabled
+      ? TOOL_GUIDANCE
+      : 'You cannot act on the canvas right now (no project is open for tools). If asked to change something, say what you would do once a project is open.'
   ].join('\n\n')
 }
 
-/** Messages-API content block (text-only in J3). */
+/** Messages-API content block (system: text-only; J4 turns carry tool blocks too). */
 export interface JarvisContentBlock {
   type: 'text'
   text: string
   cache_control?: { type: 'ephemeral' }
 }
 
+/** J4: one content block inside a turn message — text, a tool call, or a tool result. */
+export type JarvisTurnBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+
 export interface JarvisMessage {
   role: 'user' | 'assistant'
-  content: string
+  content: string | JarvisTurnBlock[]
 }
 
 /**
  * System array: [persona (cache breakpoint), workspace manifest (volatile, uncached)].
  * The cache prefix ends at the persona block, so a changing manifest never invalidates it.
+ * `toolsEnabled` swaps the acting-contract paragraph (J4) — stable within a session.
  */
-export function composeSystem(cfg: JarvisConfig, manifest: string | null): JarvisContentBlock[] {
+export function composeSystem(
+  cfg: JarvisConfig,
+  manifest: string | null,
+  toolsEnabled = false
+): JarvisContentBlock[] {
   const system: JarvisContentBlock[] = [
-    { type: 'text', text: composePersonaBlock(cfg), cache_control: { type: 'ephemeral' } }
+    {
+      type: 'text',
+      text: composePersonaBlock(cfg, toolsEnabled),
+      cache_control: { type: 'ephemeral' }
+    }
   ]
   if (manifest && manifest.trim().length > 0) {
     system.push({ type: 'text', text: `Workspace:\n${manifest}` })

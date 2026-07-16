@@ -626,7 +626,17 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         turnCount: s.turns.length,
         lastAssistantText: lastAssistant?.text ?? '',
         panelOpen: s.panelOpen,
-        lastError: s.lastError
+        lastError: s.lastError,
+        acts: s.acts.map((a) => ({
+          actId: a.actId,
+          name: a.name,
+          phase: a.phase,
+          summary: a.summary
+        })),
+        pendingConfirm: s.pendingConfirm
+          ? { title: s.pendingConfirm.title, body: s.pendingConfirm.body }
+          : null,
+        actChipCount: s.turns.filter((t) => t.role === 'act').length
       }
     },
     async openProjectFromDisk(dir) {

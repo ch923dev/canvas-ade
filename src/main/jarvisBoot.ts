@@ -8,11 +8,18 @@
  * the lazy MCP boot — ensureMcp is a whenReady-scope closure in index.ts, so it is
  * injected rather than imported (first Jarvis turn pays the one-time ensureMcp, like
  * first orchestration).
+ *
+ * J4 (hands): the same lazy boot now also supplies the tool executor's canvas facet —
+ * the widened RunningMcp slice (cards/plan/viewport/spawn/dispatch) — plus the
+ * Jarvis-side confirm (requestConfirm: the spawn_board pre-gate; the orchestrator's own
+ * gates ride the registry binding). jarvisIpc wraps execution in the ALS origin marker,
+ * so every confirm raised inside a tool call renders on the panel.
  */
 import type { BrowserWindow, IpcMain } from 'electron'
-import type { AppModel } from './appModel'
+import type { RunningMcp } from './mcp'
 import { registerJarvisHandlers, type JarvisIpcDeps } from './jarvisIpc'
 import { registerLlmHandlers } from './llmIpc'
+import { requestConfirm } from './mcpConfirm'
 
 interface LlmJarvisBootDeps {
   llmDataDir: string
@@ -20,7 +27,7 @@ interface LlmJarvisBootDeps {
   /** MAIN's getCurrentDir — history keying (null = no project). */
   getCurrentDir: JarvisIpcDeps['getProjectKey']
   /** The memoized lazy MCP boot from index.ts (M11). */
-  ensureMcp: () => Promise<{ describeApp(): Promise<AppModel> } | null | undefined>
+  ensureMcp: () => Promise<RunningMcp | null | undefined>
 }
 
 export function wireLlmJarvis(
@@ -41,6 +48,19 @@ export function wireLlmJarvis(
       } catch {
         return null
       }
-    }
+    },
+    // J4: the tool executor's canvas facet — RunningMcp IS the facet (structural subset);
+    // null (no project / MCP bind failure) runs the turn toolless.
+    getFacet: async () => {
+      try {
+        return (await deps.ensureMcp()) ?? null
+      } catch {
+        return null
+      }
+    },
+    // J4: the Jarvis-side pre-gate (spawn_board). Same fail-closed requestConfirm as every
+    // MCP gate; the ALS origin marker (set around the executor in jarvisIpc) routes it to
+    // the panel act card.
+    confirm: (req) => requestConfirm(ipcMain, getWin, req)
   })
 }

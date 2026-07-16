@@ -2,6 +2,7 @@ import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
+import type { FocusOutcome } from './mcpFocus'
 import { getCurrentDir } from './projectStore'
 import { recordBoardProject } from './mcpBoardProjects'
 import {
@@ -155,6 +156,30 @@ export interface RunningMcp {
   /** Phase C / C1: gated Ctrl-C into a board's PTY (same gate, terminator `\x03`, no sanitize). */
   interrupt(boardId: string): Promise<void>
   /**
+   * J4 (Jarvis hands): the curated in-process card/plan/viewport slice the Jarvis tool executor
+   * drives (jarvisTools.ts) — the SAME orchestrator methods the MCP tools route to, so every
+   * confirm gate / sanitize / audit is paid identically. Read the tier notes in jarvisTools.ts;
+   * nothing destructive is exposed (no closeBoard / removeCard pass-through here).
+   */
+  addCard(
+    boardId: string,
+    spec: { columnId: string; title: string; tag?: string; description?: string }
+  ): Promise<{ id: string }>
+  updateCard(
+    boardId: string,
+    cardId: string,
+    patch: { title?: string; tag?: string; description?: string }
+  ): Promise<void>
+  moveCard(boardId: string, cardId: string, toColumnId: string): Promise<void>
+  visualizePlan(spec: {
+    items: Array<{ title: string; status?: string; note?: string }>
+    suggested?: 'kanban' | 'grid' | 'checklist' | 'columns'
+    title?: string
+  }): Promise<{ id: string; queuedFor?: string }>
+  focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
+  tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
+  boardCards(boardId: string): Promise<unknown>
+  /**
    * FIND-015: revoke every live `connected`-tier token (across all boards). Called on orchestration
    * consent REVOKE so a bearer left on disk in a CLI config is dead immediately — not only after
    * the next app restart. Per-board accretion is separately bounded by rotate-on-respawn in
@@ -243,6 +268,16 @@ export async function startMcpServer(
       handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
       awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),
       interrupt: (boardId) => orchestrator.interrupt(boardId),
+      // J4 Jarvis-hands slice — straight pass-throughs, the gates live in the orchestrator.
+      // (focusViewport narrows the package's `unknown` to the host-owned FocusOutcome —
+      // createFocusMethod is what actually built it, same discipline as describeApp.)
+      addCard: (boardId, spec) => orchestrator.addCard(boardId, spec),
+      updateCard: (boardId, cardId, patch) => orchestrator.updateCard(boardId, cardId, patch),
+      moveCard: (boardId, cardId, to) => orchestrator.moveCard(boardId, cardId, to),
+      visualizePlan: (spec) => orchestrator.visualizePlan(spec),
+      focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
+      tidyCanvas: (input) => orchestrator.tidyCanvas(input),
+      boardCards: (boardId) => orchestrator.boardCards(boardId),
       revokeAllConnected: () => connected.revokeAll(),
       close: () => {
         // Clear the seam minter so a post-close `mintTerminalToken` fails loud (no bogus token).

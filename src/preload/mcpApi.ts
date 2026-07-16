@@ -19,6 +19,9 @@ export interface ConfirmRequest {
   denyLabel?: string
   /** P5: layout chooser (mirrors main `ConfirmChoices`); when set the modal renders it and the reply carries the picked `choice`. */
   choices?: { label?: string; options: Array<{ id: string; label: string }>; default: string }
+  /** J4: MAIN-stamped Jarvis-tool origin — routes the confirm to the panel act card
+   *  (presentation only; the reply protocol and fail-closed paths are identical). */
+  origin?: 'jarvis'
 }
 
 /** The modal's reply to a confirm request; P5 adds the optional chooser `choice`. */

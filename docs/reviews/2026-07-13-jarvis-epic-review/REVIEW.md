@@ -24,11 +24,32 @@ NIT-1, NIT-2. HIST-1 decision: **read-back hydrate** on panel mount (App gates t
 reload/switch-back shows the turns the model actually remembers; hydrated turns carry `at: 0`
 (MAIN keeps no timestamps) and render without time/day labels.
 
+**FIXED in J4 (feat/jarvis-j4, 0.21.0 — the hands slice):**
+- **BRAIN-5 — CLOSED via the J4 injection audit** (`jarvisManifest.ts` `neutralize()`: every
+  C0/C1 control + U+2028/U+2029 in board titles AND group names flattens to a space before the
+  length clip, so one board = exactly one manifest line; regression tests forge a manifest line
+  through a title/group name and assert the block structure stays host-owned). Full audit
+  record for the seam the tools opened:
+  1. **Prompt inputs:** manifest titles/groups neutralized (above); board `status`/`region`/`id8`
+     are host-derived; persona free-text stays length-capped (`MAX_CUSTOM_TONE_LEN`, unchanged).
+  2. **Tool args are MODEL output = untrusted:** `jarvisTools.ts` type-checks + length-caps every
+     arg MAIN-side, resolves board/column/card references against the LIVE model only (unique
+     id-prefix ≥6 or exact title; ambiguity refuses and asks), and every mutating tool pays a
+     human confirm — the orchestrator gates (cards/dispatch/visualize: sanitize→confirm→audit
+     unchanged) or the Jarvis-side spawn pre-confirm — where the human sees the exact resolved
+     action. Destructive tools (close/remove) are NOT in the catalog.
+  3. **Browser-board/preview content cannot reach tool args unvetted:** page content has no path
+     into the prompt (`AppModelBoard` = id/type/title/status/geometry only), so its only influence
+     channel is a board TITLE — neutralized in the manifest and re-exposed verbatim to the human
+     at the gate; the persona tool guidance additionally forbids relaying canvas text unasked.
+  4. **Confirm origin routing is presentation-only:** the ALS origin stamp (`jarvisToolContext` →
+     `mcpConfirm`) is set by MAIN only (a caller-supplied `origin` is stripped — regression test);
+     reply protocol/fail-closed paths byte-identical; supersede/teardown auto-deny.
+
 **DEFERRED (open):**
-- **BRAIN-5 → J4 injection audit (hard MUST — do not lose).**
 - BRAIN-3 (typed stall reason), TTS-5 (sid clamp), TTS-6 (addon-load misreport), TTS-7 (worker
   cache eviction), MIC-3 (mic strip vs OS denial), BADGE-1 (stale attention chips), PANE-1
-  (config-changed subscription) → J4/J5 follow-up lanes.
+  (config-changed subscription) → J5 follow-up lanes.
 - E2E-1 partially addressed in-wave (double-tap hotkey drill + scoped-Esc spec landed); the
   Settings-disable-while-open, mic-strip disarm/re-arm and badge/chip specs remain open.
 

@@ -90,7 +90,7 @@ describe('streamJarvisReply', () => {
     const deps = depsWith(async () => ({ ok: true, status: 200, body: chunks(payload) }))
     const seen: string[] = []
     const r = await streamJarvisReply(REQ, deps, new AbortController().signal, (t) => seen.push(t))
-    expect(r).toEqual({ ok: true, text: 'Good day.', cancelled: false })
+    expect(r).toMatchObject({ ok: true, text: 'Good day.', cancelled: false, toolUses: [] })
     expect(seen).toEqual(['Good ', 'day.'])
   })
 
@@ -117,7 +117,7 @@ describe('streamJarvisReply', () => {
       })()
     }))
     const r = await streamJarvisReply(REQ, deps, abort.signal, () => {})
-    expect(r).toEqual({ ok: true, text: 'partial', cancelled: true })
+    expect(r).toMatchObject({ ok: true, text: 'partial', cancelled: true })
   })
 
   it('a MID-stream stall (silent, unclosed body) aborts via the re-armed watchdog', async () => {
@@ -165,7 +165,7 @@ describe('streamJarvisReply', () => {
     const abort = new AbortController()
     abort.abort()
     const r = await streamJarvisReply(REQ, deps, abort.signal, () => {})
-    expect(r).toEqual({ ok: true, text: '', cancelled: true })
+    expect(r).toMatchObject({ ok: true, text: '', cancelled: true })
     expect(fetched).toBe(false)
   })
 
@@ -179,7 +179,7 @@ describe('streamJarvisReply', () => {
       abort.signal,
       (t) => seen.push(t)
     )
-    expect(r).toEqual({ ok: true, text: '', cancelled: true })
+    expect(r).toMatchObject({ ok: true, text: '', cancelled: true })
     expect(seen).toEqual([])
   })
 
@@ -198,5 +198,145 @@ describe('streamJarvisReply', () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.text).toBe(mockJarvisReply('hello'))
     expect(seen.length).toBeGreaterThan(1) // streamed in pieces
+  })
+})
+
+// ── J4 (hands): tool_use parsing, stream assembly, the mock tool script ──
+
+describe('J4 tool_use parsing', () => {
+  it('parses the tool block family + the message_delta stop_reason', () => {
+    const p = createSseParser()
+    const events = p.push(
+      sse(
+        '{"type":"content_block_start","content_block":{"type":"tool_use","id":"tu_1","name":"add_card","input":{}}}',
+        '{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"board\\":"}}',
+        '{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"\\"abc\\"}"}}',
+        '{"type":"content_block_stop"}',
+        '{"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+        '{"type":"message_stop"}'
+      )
+    )
+    expect(events).toEqual([
+      { kind: 'tool_start', id: 'tu_1', name: 'add_card' },
+      { kind: 'tool_input', partial: '{"board":' },
+      { kind: 'tool_input', partial: '"abc"}' },
+      { kind: 'tool_stop' },
+      { kind: 'stop_reason', reason: 'tool_use' },
+      { kind: 'stop' }
+    ])
+  })
+
+  it('assembles a complete tool call (text + tool_use) from the stream', async () => {
+    const payload = sse(
+      '{"type":"content_block_delta","delta":{"type":"text_delta","text":"On it."}}',
+      '{"type":"content_block_start","content_block":{"type":"tool_use","id":"tu_9","name":"focus_viewport","input":{}}}',
+      '{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"board\\":\\"abcdef12\\"}"}}',
+      '{"type":"content_block_stop"}',
+      '{"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+      '{"type":"message_stop"}'
+    )
+    const deps = depsWith(async () => ({ ok: true, status: 200, body: chunks(payload) }))
+    const r = await streamJarvisReply(REQ, deps, new AbortController().signal, () => {})
+    expect(r).toMatchObject({
+      ok: true,
+      text: 'On it.',
+      stopReason: 'tool_use',
+      toolUses: [{ id: 'tu_9', name: 'focus_viewport', input: { board: 'abcdef12' } }]
+    })
+  })
+
+  it('a garbled tool input settles as {} instead of throwing', async () => {
+    const payload = sse(
+      '{"type":"content_block_start","content_block":{"type":"tool_use","id":"tu_2","name":"add_card","input":{}}}',
+      '{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{oops"}}',
+      '{"type":"content_block_stop"}',
+      '{"type":"message_stop"}'
+    )
+    const deps = depsWith(async () => ({ ok: true, status: 200, body: chunks(payload) }))
+    const r = await streamJarvisReply(REQ, deps, new AbortController().signal, () => {})
+    expect(r).toMatchObject({ ok: true, toolUses: [{ id: 'tu_2', name: 'add_card', input: {} }] })
+  })
+
+  it('buildJarvisRequest passes tools through (and omits the key when absent)', () => {
+    const withTools = buildJarvisRequest(
+      'claude-opus-4-8',
+      'k',
+      [],
+      [{ role: 'user', content: 'x' }],
+      [{ name: 't', description: 'd', input_schema: { type: 'object' } }]
+    )
+    expect((JSON.parse(withTools.body) as { tools: unknown[] }).tools).toHaveLength(1)
+    expect(JSON.parse(REQ.body)).not.toHaveProperty('tools')
+  })
+})
+
+describe('J4 mock tool script (mockJarvisTurn via the mock stream)', () => {
+  const mockDeps: JarvisStreamDeps = {
+    fetch: async () => ({ ok: true, status: 200, body: null }),
+    env: { CANVAS_LLM_MOCK: '1' }
+  }
+
+  it('"add a card … to board …" scripts an add_card tool call', async () => {
+    const req = buildJarvisRequest(
+      'm',
+      'k',
+      [],
+      [{ role: 'user', content: 'add a card smoke test to board abcdef12' }]
+    )
+    const r = await streamJarvisReply(req, mockDeps, new AbortController().signal, () => {})
+    expect(r).toMatchObject({
+      ok: true,
+      stopReason: 'tool_use',
+      toolUses: [{ name: 'add_card', input: { board: 'abcdef12', title: 'smoke test' } }]
+    })
+  })
+
+  it('a tool_result hop answers GROUNDED in the result content', async () => {
+    const req = buildJarvisRequest(
+      'm',
+      'k',
+      [],
+      [
+        { role: 'user', content: 'add a card x to board y' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'add_card', input: {} }]
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 't1', content: '{"cardId":"c-77"}' }]
+        }
+      ]
+    )
+    const r = await streamJarvisReply(req, mockDeps, new AbortController().signal, () => {})
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.text).toContain('c-77') // quoted FROM the tool result, not invented
+      expect(r.stopReason).toBe('end_turn')
+    }
+  })
+
+  it('a denied/error tool_result hop says nothing changed', async () => {
+    const req = buildJarvisRequest(
+      'm',
+      'k',
+      [],
+      [
+        { role: 'user', content: 'add a card x to board y' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'add_card', input: {} }]
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 't1', content: 'the user declined', is_error: true }
+          ]
+        }
+      ]
+    )
+    const r = await streamJarvisReply(req, mockDeps, new AbortController().signal, () => {})
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.text).toContain('Nothing was changed')
   })
 })

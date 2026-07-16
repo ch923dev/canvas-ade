@@ -137,3 +137,57 @@ describe('disarm stops the mic unconditionally (MIC-2)', () => {
     expect(voiceStop.mock.calls.length).toBeGreaterThan(stopsAtClose) // stop #2 after start settled
   })
 })
+
+// ── J4: the voice answer to a pending act-card (confirm-bound, fail-closed supersede) ──
+import { matchConfirmSpeech } from './jarvisSession'
+
+describe('matchConfirmSpeech (J4)', () => {
+  it('exact short affirmatives/negatives only', () => {
+    expect(matchConfirmSpeech('Yes.')).toBe(true)
+    expect(matchConfirmSpeech('go ahead')).toBe(true)
+    expect(matchConfirmSpeech('No')).toBe(false)
+    expect(matchConfirmSpeech('never mind')).toBe(false)
+    // Anything longer is a NEW utterance, not an answer — supersede handles it.
+    expect(matchConfirmSpeech('no, put it on the other board')).toBeNull()
+    expect(matchConfirmSpeech('yes and also tidy the canvas')).toBeNull()
+  })
+})
+
+describe('pending act-card answers (J4)', () => {
+  it('a spoken "yes" answers THE parked confirm; the final never becomes a turn', async () => {
+    await setConverseMode(true)
+    const reply = vi.fn()
+    useJarvisStore.getState().confirmRequested({ title: 'T', body: 'B' }, reply)
+    expect(consumeFinal('yes')).toBe(true)
+    expect(reply).toHaveBeenCalledWith({ approved: true })
+    expect(useJarvisStore.getState().pendingConfirm).toBeNull()
+    expect(startTurn).not.toHaveBeenCalled()
+  })
+
+  it('a spoken "no" denies it', async () => {
+    await setConverseMode(true)
+    const reply = vi.fn()
+    useJarvisStore.getState().confirmRequested({ title: 'T', body: 'B' }, reply)
+    expect(consumeFinal('cancel')).toBe(true)
+    expect(reply).toHaveBeenCalledWith({ approved: false })
+  })
+
+  it('any OTHER utterance supersedes: auto-denies the gate, then starts the new turn', async () => {
+    startTurn.mockResolvedValue({ ok: true, id: 7 })
+    await setConverseMode(true)
+    const reply = vi.fn()
+    useJarvisStore.getState().confirmRequested({ title: 'T', body: 'B' }, reply)
+    expect(consumeFinal('actually focus the tests board')).toBe(true)
+    expect(reply).toHaveBeenCalledWith({ approved: false }) // fail-closed BEFORE the new turn
+    await vi.waitFor(() => expect(startTurn).toHaveBeenCalled())
+  })
+
+  it('converse teardown denies a parked confirm (panel close = no dangling gate)', async () => {
+    await setConverseMode(true)
+    const reply = vi.fn()
+    useJarvisStore.getState().confirmRequested({ title: 'T', body: 'B' }, reply)
+    closeJarvisPanel()
+    expect(reply).toHaveBeenCalledWith({ approved: false })
+    expect(useJarvisStore.getState().pendingConfirm).toBeNull()
+  })
+})

@@ -37,7 +37,13 @@ interface StubSession {
   onEos: (() => void) | null
 }
 
-export function createStubVoiceEngine(): VoiceEngineHandle {
+export function createStubVoiceEngine(
+  script: ReadonlyArray<{
+    atFrame: number
+    t: 'partial' | 'final'
+    text: string
+  }> = VOICE_STUB_SCRIPT
+): VoiceEngineHandle {
   let session: StubSession | null = null
 
   /** Signal teardown to the renderer end; close only after the eos drain (or timeout). */
@@ -79,7 +85,7 @@ export function createStubVoiceEngine(): VoiceEngineHandle {
         const m = e.data as { t?: string } | null
         if (m?.t === 'frame') {
           s.frames++
-          for (const step of VOICE_STUB_SCRIPT) {
+          for (const step of script) {
             if (step.atFrame === s.frames) s.port.postMessage({ t: step.t, text: step.text })
           }
         } else if (m?.t === 'eos') {
@@ -122,9 +128,21 @@ export function currentVoiceStubEngine(): VoiceEngineHandle | null {
   return active
 }
 
-export function setVoiceStubEnabled(on: boolean): void {
+/**
+ * J4: an optional CUSTOM script replaces the canned one (the jarvis tool e2e speaks
+ * "add a card …" instead of the dictation line). Passing a script while a stub is live
+ * swaps it (dispose + recreate) so a spec can re-script between captures.
+ */
+export function setVoiceStubEnabled(
+  on: boolean,
+  script?: ReadonlyArray<{ atFrame: number; t: 'partial' | 'final'; text: string }>
+): void {
   if (on) {
-    active ??= createStubVoiceEngine()
+    if (active && script) {
+      active.dispose()
+      active = null
+    }
+    active ??= createStubVoiceEngine(script)
     return
   }
   active?.dispose()

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import { isJarvisToolCall } from './jarvisToolContext'
 
 /**
  * 🔒 Human-confirm gate (T4.2). The reusable "are you sure?" used by every dangerous
@@ -50,6 +51,15 @@ export interface ConfirmRequest {
   denyLabel?: string
   /** 🔒 P5: an optional layout chooser — when set, the modal renders the options + returns `choice`. */
   choices?: ConfirmChoices
+  /**
+   * 🔒 J4: set by MAIN (never a caller) when the request was raised inside a Jarvis tool
+   * call (`isJarvisToolCall`), so the renderer can render it as the panel's turn-act card
+   * instead of the center modal. PRESENTATION ONLY: the reply protocol, the fail-closed
+   * paths and the decision authority are byte-identical either way, and a chooser request
+   * keeps the modal regardless (the panel card is approve/deny only — user-decided
+   * 2026-07-16).
+   */
+  origin?: 'jarvis'
 }
 
 export interface ConfirmDecision {
@@ -169,7 +179,12 @@ export function requestConfirm(
     wc.once('destroyed', onGone)
     wc.once('render-process-gone', onGone)
     try {
-      wc.send('mcp:confirm', { request, replyChannel })
+      // 🔒 J4 origin stamp: MAIN's ALS marker (never caller input) tags a Jarvis-raised
+      // confirm so the renderer routes it to the panel act card. Stamped at send time —
+      // the caller-supplied request object cannot carry it in (stripped by the spread).
+      const { origin: _ignored, ...rest } = request
+      const stamped: ConfirmRequest = isJarvisToolCall() ? { ...rest, origin: 'jarvis' } : rest
+      wc.send('mcp:confirm', { request: stamped, replyChannel })
     } catch {
       finish(DENIED) // couldn't even show the modal → deny
     }
