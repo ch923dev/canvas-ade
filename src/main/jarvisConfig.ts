@@ -3,7 +3,8 @@
  * voiceConfig.ts: pure file I/O keyed by an explicit userDataDir (testable without
  * Electron's `app`), atomic write, and one repair funnel BOTH read and write pass
  * through so on-disk state can never diverge from the type — even a hand-edited file.
- * The API key is NOT here — Jarvis reuses the llmKeyStore `anthropic` slot (D1).
+ * The brain's provider/model/key/budget are NOT here — Jarvis rides the shared
+ * Context·LLM config (llmConfig + llmKeyStore + llmBudget); this file is persona-only.
  */
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -22,11 +23,6 @@ export type JarvisHistoryMode = 'project' | 'session' | 'off'
 export const MAX_CUSTOM_TONE_LEN = 1000
 export const MAX_PERSONA_NAME_LEN = 40
 
-/** The two offered brains (mock: Brain › Model). Any string persists (a future model id
- *  survives a downgrade), but the picker offers these. */
-export const JARVIS_MODELS = ['claude-opus-4-8', 'claude-haiku-4-5'] as const
-export const DEFAULT_JARVIS_MODEL = 'claude-opus-4-8'
-
 export interface JarvisConfig {
   /** Whether the Jarvis surface (panel + edge tab) renders at all (Settings toggle, live-apply). */
   enabled: boolean
@@ -42,16 +38,16 @@ export interface JarvisConfig {
    *  (kokoro af_sky). Preserved even if out of range — the engine clamps at use time. */
   voiceSid?: number
   announcePolicy: JarvisAnnouncePolicy
-  /** Claude model id for the brain session. */
-  model: string
   historyMode: JarvisHistoryMode
   /** J5 D3: the opt-in wake word (OFF by default). Its SOLE power is opening the panel
    *  (KICKOFF-PANEL §3 carve-out) — turns still require the open panel. */
   wakeWordEnabled: boolean
 }
 /* Retired (panel surface rev, 2026-07-13): `islandPosition` — the island is gone and the
- * panel docks. The repair funnel silently accepts old files that still carry it (unknown
- * keys are simply not emitted), so the field drops on the next write with no migration. */
+ * panel docks. Retired (shared Context·LLM rewire, 2026-07-17): `model` — the brain now
+ * rides the shared llmConfig provider+model, so Jarvis keeps no model of its own. The
+ * repair funnel silently accepts old files that still carry either key (unknown keys are
+ * simply not emitted), so the fields drop on the next write with no migration. */
 
 function fileFor(userDataDir: string): string {
   return join(userDataDir, 'jarvis-config.json')
@@ -66,7 +62,6 @@ export function jarvisDefaults(): JarvisConfig {
     speakingRate: 1.05,
     verbosity: 'concise',
     announcePolicy: 'attention',
-    model: DEFAULT_JARVIS_MODEL,
     historyMode: 'session',
     wakeWordEnabled: false
   }
@@ -111,9 +106,6 @@ export function repairJarvisConfig(p: unknown): JarvisConfig {
       ['all', 'attention', 'chips-only'] as const,
       d.announcePolicy
     ),
-    // Any non-empty string persists (scene-id discipline: an id from a future build is
-    // preserved; the request builder falls back at use time if the API rejects it).
-    model: typeof o.model === 'string' && o.model.length > 0 ? o.model.slice(0, 256) : d.model,
     historyMode: optEnum(o.historyMode, ['project', 'session', 'off'] as const, d.historyMode),
     wakeWordEnabled: o.wakeWordEnabled === true // opt-in: anything but true is false
   }

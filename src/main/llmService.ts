@@ -44,6 +44,30 @@ function chatMessages(input: SummarizeInput): { role: string; content: string }[
   return msgs
 }
 
+/**
+ * The API base for an OpenAI-shape provider (openrouter / openai / local). Exported so the
+ * Jarvis brain's streaming request builder shares the SAME BUG-001 SSRF last-line defense and
+ * BUG-041 trailing-slash normalization — one egress-guard implementation for both callers.
+ * Throws on a missing or non-loopback `local` baseUrl.
+ */
+export function openAiShapeBase(
+  provider: Exclude<ProviderName, 'anthropic'>,
+  config: LlmConfig
+): string {
+  if (provider === 'local') {
+    if (!config.baseUrl) throw new Error('local provider requires a baseUrl in config')
+    // BUG-001 (SSRF): last-line defense — never egress to a non-loopback http(s) URL even if a
+    // poisoned baseUrl slipped past the write/read guards. The `local` server is always local.
+    if (!isLoopbackBaseUrl(config.baseUrl))
+      throw new Error('local provider baseUrl must be a loopback http(s) URL')
+    // BUG-041: normalize trailing slashes so 'http://127.0.0.1:1234/v1/' produces
+    // '.../v1/chat/completions' not '.../v1//chat/completions'. LM Studio and most
+    // OpenAI-compatible shims do not collapse '//' and return 404.
+    return config.baseUrl.replace(/\/+$/, '')
+  }
+  return OPENAI_SHAPE_BASE[provider]
+}
+
 /** Pure: map (provider, config, key, input) → the exact HTTP request to send. */
 export function buildRequest(
   provider: ProviderName,
@@ -68,21 +92,7 @@ export function buildRequest(
     }
   }
   // OpenAI-compatible shape (openrouter / openai / local)
-  let base: string
-  if (provider === 'local') {
-    if (!config.baseUrl) throw new Error('local provider requires a baseUrl in config')
-    // BUG-001 (SSRF): last-line defense — never egress to a non-loopback http(s) URL even if a
-    // poisoned baseUrl slipped past the write/read guards. The `local` server is always local.
-    if (!isLoopbackBaseUrl(config.baseUrl))
-      throw new Error('local provider baseUrl must be a loopback http(s) URL')
-    // BUG-041: normalize trailing slashes so 'http://127.0.0.1:1234/v1/' produces
-    // '.../v1/chat/completions' not '.../v1//chat/completions'. LM Studio and most
-    // OpenAI-compatible shims do not collapse '//' and return 404.
-    base = config.baseUrl.replace(/\/+$/, '')
-  } else {
-    base = OPENAI_SHAPE_BASE[provider]
-  }
-  const chatUrl = `${base}/chat/completions`
+  const chatUrl = `${openAiShapeBase(provider, config)}/chat/completions`
   return {
     url: chatUrl,
     headers: {

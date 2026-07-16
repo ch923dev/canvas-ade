@@ -2,9 +2,11 @@
  * Jarvis J3 — IPC layer for the brain session. Owns the frame guard, the per-project
  * rolling history (MAIN memory; D4′ 'project' mode persists it through jarvisHistoryStore
  * behind a one-time per-project consent), the single in-flight turn (AbortController —
- * barge-in cancels it), and the config get/set/changed-push (voiceIpc pattern). The
- * API key rides the EXISTING llmKeyStore `anthropic` slot (written via llm:setKey);
- * this module only ever reads it, key material never crosses IPC outbound.
+ * barge-in cancels it), and the config get/set/changed-push (voiceIpc pattern). The brain
+ * rides the SHARED Context·LLM configuration end to end: provider+model from llmConfig,
+ * the key from the llmKeyStore slot of THAT provider (written via llm:setKey), and every
+ * streamed hop reserves one call against the shared llmBudget daily cap. This module only
+ * ever reads the key; key material never crosses IPC outbound.
  *
  * J4 (hands): a turn is now a LOOP — stream → assembled tool calls → execute each through
  * jarvisTools (validation + the human confirm gates) → append tool_result blocks → stream
@@ -16,7 +18,9 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
-import { keyForProvider } from './llmService'
+import { keyForProvider, shouldEnforceBudget } from './llmService'
+import { readLlmConfig, type LlmConfig, type ProviderName } from './llmConfig'
+import { createBudgetStore, DEFAULT_MAX_CALLS_PER_DAY, type BudgetStore } from './llmBudget'
 import {
   readJarvisConfig,
   repairJarvisConfig,
@@ -84,7 +88,15 @@ export type JarvisTurnEvent =
 
 /** Status surfaced to the renderer — presence/availability only, never key material. */
 export interface JarvisStatus {
+  /** Brain readiness under the SHARED Context·LLM config: mock, or a key for the configured
+   *  provider (local: a baseUrl). Field keeps its historic name across the preload surface. */
   hasKey: boolean
+  /** The shared Context·LLM provider/model the brain will use (Settings display only). */
+  provider: ProviderName
+  model: string
+  /** True when the brain is NOT ready for the configured provider but an Anthropic key is
+   *  stored (the pre-rewire Jarvis key) — Settings offers the switch/move hint. */
+  anthropicKeyHint: boolean
   encryptionAvailable: boolean
   mockEnabled: boolean
   config: JarvisConfig
@@ -94,6 +106,9 @@ export interface JarvisIpcDeps {
   getUserData?: () => string
   /** The llm-keys encryptor (safeStorage in real wiring). Absent → env-var key only. */
   encryptor?: Encryptor
+  /** Shared daily call budget (llmBudget). Default: a store over the same userData file the
+   *  LLM handlers use — the file is the single source, so both stores stay coherent. */
+  budget?: BudgetStore
   /** In-process AppModel read (RunningMcp.describeApp via lazy ensureMcp); null = no canvas. */
   getAppModel?: () => Promise<AppModel | null>
   /**
@@ -219,20 +234,45 @@ export function registerJarvisHandlers(
     }
   }
 
-  const anthropicKey = (): string | undefined =>
-    keyForProvider('anthropic', streamDeps.env, keyStore)
+  // Shared Context·LLM plumbing: the SAME config file, key slots and budget file the LLM
+  // handlers use — Jarvis is one more consumer, not a second configuration.
+  const budget = deps.budget ?? createBudgetStore(getUserData(), () => new Date())
+  const sharedConfig = (): LlmConfig => readLlmConfig(getUserData())
+  const providerKey = (cfg: LlmConfig): string | undefined =>
+    keyForProvider(cfg.provider, streamDeps.env, keyStore)
+  /** Mirrors llmService.getProvider's readiness: mock always; `local` needs a baseUrl
+   *  (keyless is fine); every other provider needs a stored/env key. */
+  const brainReady = (cfg: LlmConfig): boolean =>
+    isJarvisMockEnabled(streamDeps.env) ||
+    (cfg.provider === 'local' ? cfg.baseUrl !== undefined : providerKey(cfg) !== undefined)
+  /** Session cache: models that rejected tool defs (4xx with tools attached) run toolless
+   *  for the rest of the session instead of paying a failed hop every turn. */
+  const toollessModels = new Set<string>()
 
   ipcMain.handle('jarvis:status', (e): JarvisStatus => {
     if (guard(e)) {
       return {
         hasKey: false,
+        provider: 'openrouter',
+        model: '',
+        anthropicKeyHint: false,
         encryptionAvailable: false,
         mockEnabled: false,
         config: repairJarvisConfig(null)
       }
     }
+    const shared = sharedConfig()
+    const ready = brainReady(shared)
     return {
-      hasKey: anthropicKey() !== undefined,
+      hasKey: ready,
+      provider: shared.provider,
+      model: shared.model,
+      // The pre-rewire Jarvis key lives in the `anthropic` slot; if the configured provider
+      // is not ready but that key exists, Settings can point the user at the switch.
+      anthropicKeyHint:
+        !ready &&
+        shared.provider !== 'anthropic' &&
+        keyForProvider('anthropic', streamDeps.env, keyStore) !== undefined,
       encryptionAvailable: deps.encryptor?.isEncryptionAvailable() ?? false,
       mockEnabled: isJarvisMockEnabled(streamDeps.env),
       config: readJarvisConfig(getUserData())
@@ -340,8 +380,8 @@ export function registerJarvisHandlers(
       const text = typeof p?.text === 'string' ? p.text.trim() : ''
       if (!text || text.length > MAX_TURN_TEXT_LEN) return { ok: false, reason: 'invalid-text' }
       const cfg = readJarvisConfig(getUserData())
-      const key = anthropicKey()
-      if (!key && !isJarvisMockEnabled(streamDeps.env)) return { ok: false, reason: 'no-key' }
+      const shared = sharedConfig()
+      if (!brainReady(shared)) return { ok: false, reason: 'no-key' }
 
       activeAbort?.abort() // the user spoke again — the previous turn yields
       const abort = new AbortController()
@@ -366,28 +406,71 @@ export function registerJarvisHandlers(
           push({ id, kind: 'done', text: '', cancelled: true })
           return
         }
-        const toolsEnabled = facet !== null
+        // Tool availability: the canvas facet must be live AND the configured model must
+        // not be a known tool-rejecter (session cache — see the degrade path below).
+        const modelKey = `${shared.provider}:${shared.model}`
+        let toolsAttached = facet !== null && !toollessModels.has(modelKey)
         // D4′: the rolling summary of compressed-away turns rides the system prompt.
         const summary =
           cfg.historyMode === 'off' ? null : (summaries.get(getProjectKey() ?? NO_PROJECT) ?? null)
-        const system = composeSystem(cfg, manifest, toolsEnabled, summary)
-        const tools = toolsEnabled ? buildJarvisToolDefs() : undefined
+        let system = composeSystem(cfg, manifest, toolsAttached, summary)
+        let tools = toolsAttached ? buildJarvisToolDefs() : undefined
         const messages: JarvisMessage[] = composeMessages(
           cfg.historyMode === 'off' ? [] : history,
           text
         )
+        const key = providerKey(shared) ?? ''
+        // Under the mock seam the deterministic turn grammar parses the Anthropic body
+        // shape; nothing egresses, so the request shape is moot — pin it for the mock.
+        const requestCfg: LlmConfig = isJarvisMockEnabled(streamDeps.env)
+          ? { ...shared, provider: 'anthropic' }
+          : shared
         // J4 turn loop: stream → tools → tool_results → stream again (bounded).
         let actSeq = 0
         const nextActId = (): number => ++actSeq
         const spokenParts: string[] = []
         let cancelled = false
         let hops = 0
+        let toollessRetry = false
         for (;;) {
-          const req = buildJarvisRequest(cfg.model, key ?? '', system, messages, tools)
+          const req = buildJarvisRequest(requestCfg, key, system, messages, tools)
+          // Shared daily budget: every streamed hop is one provider call, reserved against
+          // the SAME cap the Context subsystem pays (mock stays uncapped unless a cap is
+          // explicitly configured — shouldEnforceBudget). Reserved before egress, never
+          // refunded on failure (llmService fail-closed discipline).
+          if (shouldEnforceBudget(shared, streamDeps.env)) {
+            const cap = shared.maxCallsPerDay ?? DEFAULT_MAX_CALLS_PER_DAY
+            if (!budget.tryConsume(cap)) {
+              if (activeAbort === abort) activeAbort = null
+              push({ id, kind: 'error', reason: 'budget-exceeded' })
+              return
+            }
+          }
           const result = await streamJarvisReply(req, streamDeps, abort.signal, (delta) =>
             push({ id, kind: 'delta', text: delta })
           )
           if (!result.ok) {
+            // Tool-shape degrade: a 4xx on the FIRST hop with tools attached usually means
+            // the configured model/provider rejects tool definitions. Retry the hop ONCE
+            // toolless (honest toolless system prompt), announce the downgrade out loud,
+            // and — if the retry succeeds — remember the model for the session.
+            if (
+              result.reason === 'provider-error' &&
+              tools !== undefined &&
+              hops === 0 &&
+              !toollessRetry &&
+              /HTTP 4\d\d/.test(result.message)
+            ) {
+              toollessRetry = true
+              toolsAttached = false
+              tools = undefined
+              system = composeSystem(cfg, manifest, false, summary)
+              const announce =
+                'The configured model does not support tools, so I can answer but not act. '
+              push({ id, kind: 'delta', text: announce })
+              spokenParts.push(announce)
+              continue
+            }
             if (activeAbort === abort) activeAbort = null
             push({
               id,
@@ -396,11 +479,12 @@ export function registerJarvisHandlers(
             })
             return
           }
+          if (toollessRetry) toollessModels.add(modelKey)
           if (result.text.trim().length > 0) spokenParts.push(result.text)
           cancelled = result.cancelled
           const wantsTools =
             !cancelled && result.stopReason === 'tool_use' && result.toolUses.length > 0
-          if (!wantsTools || facet === null || ++hops > MAX_TOOL_HOPS) break
+          if (!wantsTools || facet === null || !toolsAttached || ++hops > MAX_TOOL_HOPS) break
           // Assistant hop (its text + the tool_use blocks), then the results as user blocks.
           const assistantBlocks: JarvisTurnBlock[] = [
             ...(result.text.trim().length > 0

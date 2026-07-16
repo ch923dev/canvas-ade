@@ -34,6 +34,8 @@ function makeHarness(
     getProjectKey?: () => string | null
     stream?: JarvisStreamDeps
     getAppModel?: JarvisIpcDeps['getAppModel']
+    getFacet?: JarvisIpcDeps['getFacet']
+    budget?: JarvisIpcDeps['budget']
     win?: (mainFrame: object, sent: Array<{ channel: string; payload: unknown }>) => BrowserWindow
     /** D4′ tests: the consent-ask seam (default deps.confirm denies). */
     confirm?: JarvisIpcDeps['confirm']
@@ -64,6 +66,8 @@ function makeHarness(
     getUserData: () => dir,
     getProjectKey: over.getProjectKey ?? (() => 'M:/proj'),
     getAppModel: over.getAppModel,
+    getFacet: over.getFacet,
+    budget: over.budget,
     confirm: over.confirm,
     stream: over.stream ?? { fetch: vi.fn(), env: { CANVAS_LLM_MOCK: '1' } }
   })
@@ -219,8 +223,10 @@ describe('jarvisIpc', () => {
       releaseModel = () => res(null)
     })
     const fetchSpy = vi.fn()
+    // Shared-config rewire: the default llmConfig provider is openrouter, so the env key
+    // that makes the brain "ready" without a keystore is OPENROUTER_API_KEY.
     const hb = makeHarness({
-      stream: { fetch: fetchSpy as never, env: { ANTHROPIC_API_KEY: 'test-key' } },
+      stream: { fetch: fetchSpy as never, env: { OPENROUTER_API_KEY: 'test-key' } },
       getAppModel: () => modelGate
     })
     const r = hb.invoke('jarvis:turn:start', { text: 'hello' }) as { ok: boolean; id: number }
@@ -279,6 +285,103 @@ describe('jarvisIpc', () => {
 })
 
 // ── D4′ (J5): project-mode persistence — consent ask, restore-on-relaunch, clear ──
+
+// ── Shared Context·LLM rewire: provider readiness, budget accounting, tool degrade ──
+
+describe('jarvisIpc shared Context·LLM config', () => {
+  /** One-frame chat/completions text stream (openai shape — the default provider). */
+  const openAiStream = (text: string): string =>
+    [
+      `data: {"choices":[{"delta":{"content":${JSON.stringify(text)}}}]}`,
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+      'data: [DONE]',
+      ''
+    ].join('\n\n')
+  async function* bytes(s: string): AsyncIterable<Uint8Array> {
+    yield new TextEncoder().encode(s)
+  }
+
+  it('no key for the configured provider → turn refuses with no-key; status carries the hint', () => {
+    // Non-mock, no keys at all: default provider openrouter is not ready.
+    const h0 = makeHarness({ stream: { fetch: vi.fn(), env: {} } })
+    expect(h0.invoke('jarvis:turn:start', { text: 'hi' })).toEqual({
+      ok: false,
+      reason: 'no-key'
+    })
+    expect(h0.invoke('jarvis:status')).toMatchObject({
+      hasKey: false,
+      provider: 'openrouter',
+      anthropicKeyHint: false
+    })
+    rmSync(h0.dir, { recursive: true, force: true })
+    // An Anthropic key (the pre-rewire Jarvis slot) exists but openrouter is configured:
+    // still not ready, but the status offers the switch hint.
+    const h1 = makeHarness({ stream: { fetch: vi.fn(), env: { ANTHROPIC_API_KEY: 'sk-old' } } })
+    expect(h1.invoke('jarvis:status')).toMatchObject({ hasKey: false, anthropicKeyHint: true })
+    rmSync(h1.dir, { recursive: true, force: true })
+  })
+
+  it('every streamed hop reserves one shared-budget call; exhaustion errors the turn', async () => {
+    let consumed = 0
+    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, body: bytes(openAiStream('ok')) }))
+    const hb = makeHarness({
+      stream: { fetch: fetchSpy as never, env: { OPENROUTER_API_KEY: 'k' } },
+      budget: {
+        tryConsume: () => {
+          consumed++
+          return true
+        },
+        peek: () => ({ day: '2026-07-17', calls: consumed })
+      }
+    })
+    const r = hb.invoke('jarvis:turn:start', { text: 'hello' }) as { ok: boolean; id: number }
+    expect(r.ok).toBe(true)
+    const events = await waitForDone(hb, r.id)
+    expect(events.some((ev) => ev.kind === 'done')).toBe(true)
+    expect(consumed).toBe(1) // one hop = one reserved call
+    rmSync(hb.dir, { recursive: true, force: true })
+
+    const hx = makeHarness({
+      stream: { fetch: vi.fn() as never, env: { OPENROUTER_API_KEY: 'k' } },
+      budget: { tryConsume: () => false, peek: () => ({ day: '2026-07-17', calls: 200 }) }
+    })
+    const rx = hx.invoke('jarvis:turn:start', { text: 'hello' }) as { ok: boolean; id: number }
+    const ex = await waitForDone(hx, rx.id)
+    expect(ex.find((ev) => ev.kind === 'error')).toMatchObject({ reason: 'budget-exceeded' })
+    rmSync(hx.dir, { recursive: true, force: true })
+  })
+
+  it('a 4xx with tools attached degrades to a toolless retry with a spoken announce, then caches', async () => {
+    const calls: string[] = []
+    const fetchSpy = vi.fn(async (_url: string, init: { body: string }) => {
+      calls.push(init.body)
+      const hasTools = (JSON.parse(init.body) as { tools?: unknown[] }).tools !== undefined
+      if (hasTools) return { ok: false, status: 400, body: null }
+      return { ok: true, status: 200, body: bytes(openAiStream('plain answer')) }
+    })
+    const facet = { describeApp: async () => null } as never
+    const hb = makeHarness({
+      stream: { fetch: fetchSpy as never, env: { OPENROUTER_API_KEY: 'k' } },
+      getFacet: async () => facet
+    })
+    const r = hb.invoke('jarvis:turn:start', { text: 'hello' }) as { ok: boolean; id: number }
+    const events = await waitForDone(hb, r.id)
+    const done = events.find((ev) => ev.kind === 'done') as Extract<
+      JarvisTurnEvent,
+      { kind: 'done' }
+    >
+    expect(done.text).toContain('does not support tools')
+    expect(done.text).toContain('plain answer')
+    expect(calls).toHaveLength(2) // tools attempt, then the toolless retry
+
+    // The session cache skips tools on the NEXT turn — one call, no tools in the body.
+    const r2 = hb.invoke('jarvis:turn:start', { text: 'again' }) as { id: number }
+    await waitForDone(hb, r2.id)
+    expect(calls).toHaveLength(3)
+    expect((JSON.parse(calls[2]) as { tools?: unknown[] }).tools).toBeUndefined()
+    rmSync(hb.dir, { recursive: true, force: true })
+  })
+})
 
 describe('jarvisIpc D4′ project-mode persistence', () => {
   const mkProject = (): string => mkdtempSync(join(tmpdir(), 'jarvisproj-'))

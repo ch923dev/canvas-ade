@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { registerJarvisHandlers, type JarvisIpcDeps, type JarvisTurnEvent } from './jarvisIpc'
+import { writeLlmConfig } from './llmConfig'
 import type { JarvisCanvasFacet } from './jarvisTools'
 import type { AppModel } from './appModel'
 
@@ -215,6 +216,9 @@ describe('MAX_TOOL_HOPS runaway cap', () => {
       }
     } as unknown as BrowserWindow
     const dir = mkdtempSync(join(tmpdir(), 'jarvisipc-hops-'))
+    // Shared-config rewire: the fake fetch streams the ANTHROPIC SSE shape, so pin the
+    // shared provider to anthropic (the env key below makes it ready).
+    writeLlmConfig(dir, { provider: 'anthropic', model: 'claude-opus-4-8' })
     try {
       registerJarvisHandlers(ipcMain, () => win, {
         getUserData: () => dir,

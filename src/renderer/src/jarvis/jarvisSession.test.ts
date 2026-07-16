@@ -21,10 +21,17 @@ const CONFIG = {
   speakingRate: 1.05,
   verbosity: 'concise',
   announcePolicy: 'attention',
-  model: 'claude-opus-4-8',
   historyMode: 'session'
 }
-const STATUS_OK = { hasKey: true, encryptionAvailable: true, mockEnabled: false, config: CONFIG }
+const STATUS_OK = {
+  hasKey: true,
+  provider: 'openrouter',
+  model: 'google/gemini-2.5-flash',
+  anthropicKeyHint: false,
+  encryptionAvailable: true,
+  mockEnabled: false,
+  config: CONFIG
+}
 
 const status = vi.fn()
 const ttsStatus = vi.fn()
