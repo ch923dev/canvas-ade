@@ -177,6 +177,14 @@ export function PersonaPane(): ReactElement | null {
         status: r.ok ? 'ready' : k.status,
         error: r.ok ? null : (r.error ?? 'download failed')
       }))
+      // The listener reconciles on CONFIG changes only — a wake.start() that declined
+      // while the model was absent has nothing to re-arm it once the download lands
+      // (found live in the J5 dev check: enable → download → never wakes). Re-assert
+      // the flag; the no-op patch round-trips MAIN's jarvis:config:changed push, which
+      // useWakeWord treats as the re-arm gesture.
+      if (r.ok && cfg?.wakeWordEnabled) {
+        void window.api.jarvis.config.set({ wakeWordEnabled: true }).catch(() => {})
+      }
     } catch {
       setKws((k) => ({ ...k, pct: null, error: 'download failed' }))
     }
