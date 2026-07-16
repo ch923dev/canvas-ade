@@ -91,6 +91,28 @@ describe('setConverseMode arm/close races (MIC-1)', () => {
     expect(useJarvisStore.getState().converseMode).toBe(true)
     expect(voiceStart).toHaveBeenCalledTimes(1) // only the surviving arm started capture
   })
+
+  it('a stale arm resolving after a superseding LIVE arm does not stop the successor mic (#349 review)', async () => {
+    // Arm A blocks inside its voice:start round-trip…
+    let resolveStartA: (v: unknown) => void = () => {}
+    voiceStart.mockReturnValueOnce(new Promise((r) => (resolveStartA = r)))
+    const armA = setConverseMode(true)
+    await vi.waitFor(() => expect(voiceStart).toHaveBeenCalledTimes(1))
+    // …a close disarms it (staleness by disarm), then a reopen arms B to completion —
+    // B now owns the live, legitimate session.
+    closeJarvisPanel()
+    useJarvisStore.getState().setPanelOpen(true)
+    await setConverseMode(true)
+    expect(useJarvisStore.getState().converseMode).toBe(true)
+    const stopsAfterB = voiceStop.mock.calls.length
+    // A's start finally settles: staleness == superseded, NOT disarmed. The re-stop
+    // must not fire — voice:session:stop is a global stop and would kill B's mic
+    // while the panel still shows converse armed.
+    resolveStartA({ ok: true, micStatus: 'granted', modelStatus: 'ready' })
+    await armA
+    expect(voiceStop.mock.calls.length).toBe(stopsAfterB)
+    expect(useJarvisStore.getState().converseMode).toBe(true)
+  })
 })
 
 describe('disarm stops the mic unconditionally (MIC-2)', () => {

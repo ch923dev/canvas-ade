@@ -135,7 +135,15 @@ export async function setConverseMode(on: boolean): Promise<void> {
     // A disarm racing the voice:start round-trip may have issued its stop BEFORE the
     // session finished starting — re-stop now that it has (the disarm already unwound
     // everything else; without this the mic would arm behind the closed panel).
-    if (armStale()) void stopVoice()
+    // Staleness alone is NOT enough to stop: a SUPERSEDING arm may now own a live,
+    // legitimate session (voice:session:stop is a global stop with no per-arm guard in
+    // MAIN — stopping here would silently kill the successor's mic while the panel
+    // still shows it armed). Stop only when the current state says nobody should be
+    // capturing — i.e. the staleness came from a disarm/close, not a newer arm.
+    if (armStale()) {
+      const live = useJarvisStore.getState()
+      if (!(live.converseMode && live.panelOpen)) void stopVoice()
+    }
   }
 }
 
