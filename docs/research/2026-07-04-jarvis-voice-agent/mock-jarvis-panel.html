@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Mock: Jarvis panel rev 1 (right-tab home · mic-gated on open · island retired)</title>
+<title>Mock: Jarvis panel rev 2 (J4 hands — turn-act confirm gate in the transcript)</title>
 <style>
   /* Tokens: faithful copy of src/renderer/src/styles/tokens.css (DESIGN.md §2-4).
      Fonts fall back to system stacks when viewed outside the repo (artifact CSP). */
@@ -112,6 +112,36 @@
   .turn-j { font-size: 12px; line-height: 18px; color: var(--text); }
   .turn-t { font-family: var(--mono); font-size: 8.5px; color: var(--text-faint); margin-left: 6px; }
   .turn-act { font-family: var(--mono); font-size: 9.5px; color: var(--text-3); padding: 3px 8px; background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); width: max-content; }
+  .turn-act.ok { color: var(--ok); border-color: rgba(62,207,142,0.25); }
+  .turn-act.ok .act-detail { color: var(--text-3); }
+  .turn-act.denied { color: var(--text-faint); text-decoration: none; }
+  .turn-act.err { color: var(--err); border-color: rgba(242,84,91,0.25); }
+
+  /* ── J4: the confirm-gate card — a turn-act row while an action AWAITS the human ── */
+  .act-card {
+    background: var(--inset); border: 1px solid rgba(79,140,255,0.45); border-radius: var(--r-inner);
+    padding: 8px 10px 9px; display: flex; flex-direction: column; gap: 7px; max-width: 100%;
+  }
+  .act-card .ac-hd { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent-hover); }
+  .act-card .ac-hd i { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); animation: blink 1.2s steps(2) infinite; }
+  .act-card .ac-body { font-size: 11.5px; line-height: 16px; color: var(--text); word-break: break-word; }
+  .act-card .ac-body code { font-family: var(--mono); font-size: 10.5px; color: var(--text-2); background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 3px; padding: 0 4px; }
+  .act-card .ac-btns { display: flex; align-items: center; gap: 8px; }
+  .act-card .ac-yes {
+    font-family: var(--mono); font-size: 10px; padding: 4px 12px; cursor: pointer;
+    background: var(--accent); color: #0a0a0b; border: 0; border-radius: var(--r-ctl); font-weight: 600;
+  }
+  .act-card .ac-yes:hover { background: var(--accent-hover); }
+  .act-card .ac-no {
+    font-family: var(--mono); font-size: 10px; padding: 4px 12px; cursor: pointer;
+    background: transparent; color: var(--text-2); border: 1px solid var(--border); border-radius: var(--r-ctl);
+  }
+  .act-card .ac-no:hover { color: var(--text); border-color: var(--border-strong); }
+  .act-card .ac-voice { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--text-faint); }
+  .act-card .ac-voice b { color: var(--text-3); font-weight: 500; }
+  .act-card.running { border-color: var(--border-subtle); }
+  .act-card.running .ac-hd { color: var(--text-3); }
+  .act-card.running .ac-hd i { background: var(--warn); }
   .caret { display: inline-block; width: 1px; height: 13px; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(2) infinite; }
   @keyframes blink { 0%,100% { opacity: 0.25; } 40% { opacity: 1; } }
 
@@ -170,7 +200,7 @@
 </style>
 </head>
 <body>
-  <div class="page-hd">MOCK · JARVIS PANEL · REV 1 · docs/research/2026-07-04-jarvis-voice-agent · tokens per DESIGN.md §2-4</div>
+  <div class="page-hd">MOCK · JARVIS PANEL · REV 2 (J4 HANDS) · docs/research/2026-07-04-jarvis-voice-agent · tokens per DESIGN.md §2-4</div>
   <div class="page-sub">Surface revision (2026-07-13, user-directed): Jarvis moves from a floating island + tail into a
   <b>right-side panel</b> (Context/Library family). The floating island and transcript tail RETIRE. The privacy contract
   becomes structural: <b>the microphone can only listen while this panel is open</b>. Closing the panel hard-stops the mic
@@ -289,6 +319,57 @@
         </div>
         <div class="spec-note">Same five-state machine and tuning table as the island core — one renderer, two sizes
         (44px header, 18px edge tab). ‘acting’ (J4) adds the accent arc.</div>
+      </div>
+
+      <div class="spec">
+        <div class="spec-lbl">F · J4: the turn-act confirm gate (rev 2 addition)</div>
+        <div class="jpanel solo" style="height:auto">
+          <div class="jp-hd">
+            <span class="jp-core"><canvas data-core="acting" data-d="88"></canvas></span>
+            <span class="jp-id">
+              <span class="jp-name">Jarvis</span>
+              <span class="jp-meta">butler · kokoro af_sky · opus-4-8</span>
+            </span>
+            <span class="jp-state"><i></i>confirm</span>
+            <button class="jp-x">✕</button>
+          </div>
+          <div class="jp-mic"><i></i>mic live — only while this panel is open<span class="key">⌃⇧J</span></div>
+          <div class="jp-body" style="flex:none">
+            <div>
+              <div class="turn-you"><b>You</b> · spin up a terminal for the migration and start claude<span class="turn-t">10:02</span></div>
+              <div class="turn-j" style="margin-bottom:7px">Certainly. One migration terminal, claude at the helm:</div>
+              <!-- 1 · PENDING: the one-tap gate. Approve/deny buttons + the voice answer. -->
+              <div class="act-card">
+                <span class="ac-hd"><i></i>spawn_board · needs your ok</span>
+                <span class="ac-body">Spawn a <code>terminal</code> board “migration” running <code>claude</code></span>
+                <span class="ac-btns">
+                  <button class="ac-yes">✓ do it</button>
+                  <button class="ac-no">✗ cancel</button>
+                  <span class="ac-voice">or say <b>“yes”</b> / <b>“no”</b></span>
+                </span>
+              </div>
+            </div>
+            <!-- 2 · RUNNING: approved, executing (border cools, dot goes warn). -->
+            <div class="act-card running">
+              <span class="ac-hd"><i></i>spawn_board · running</span>
+              <span class="ac-body">Spawn a <code>terminal</code> board “migration” running <code>claude</code></span>
+            </div>
+            <!-- 3 · RESOLVED: collapses to the rev-1 chip, tinted by outcome. -->
+            <div class="turn-act ok">✓ spawn_board · terminal “migration” <span class="act-detail">· a3d1c2f0</span></div>
+            <div class="turn-j">Done. The migration terminal is up, bottom right, claude booting.</div>
+            <!-- 4 · DENIED: the chip states nothing changed; the reply stays grounded. -->
+            <div class="turn-act denied">✗ relay_prompt · denied — nothing was sent</div>
+            <div class="turn-j">Understood, cancelled. The tests terminal was not touched.</div>
+          </div>
+          <div class="jp-ft"><span><b>speak</b> to interrupt</span><span class="end">grounded in tool results</span></div>
+        </div>
+        <div class="spec-note" style="max-width:340px">One gate, rendered in the transcript: a mutating tool call
+        (spawn / relay / card writes / visualize) pauses as a <b>pending act-card</b> — ✓/✗ one-tap, or answer by
+        voice (“yes” / “no” finals resolve THIS pending action by id; any other utterance supersedes the turn and
+        auto-denies, fail-closed). Read-only tools (state reads, focus_viewport, tidy) run without a gate.
+        <b>visualize_plan</b> keeps its layout-chooser in the existing center ConfirmModal (the chooser needs tiles);
+        everything else confirms here. While a gate is pending the core shows the ‘acting’ arc and the state label
+        reads <b>confirm</b>. Denied acts change nothing; replies speak only what the tool result reports.</div>
       </div>
 
       <div class="spec">

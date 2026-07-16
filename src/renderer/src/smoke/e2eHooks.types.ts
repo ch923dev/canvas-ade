@@ -393,6 +393,11 @@ export interface CanvasE2E {
     lastAssistantText: string
     panelOpen: boolean
     lastError: string | null
+    /** J4: the ACTIVE turn's tool-act rows + whether a confirm gate is parked. */
+    acts: Array<{ actId: number; name: string; phase: string; summary: string }>
+    pendingConfirm: { title: string; body: string } | null
+    /** J4: resolved act rows folded into the transcript (role === 'act'). */
+    actChipCount: number
   }
   setAuthStatus: (status: {
     isLoggedIn: boolean

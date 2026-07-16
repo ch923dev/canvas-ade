@@ -8,11 +8,12 @@
  * conversation, it can't hear you. Speaking is NOT gated (announcements need no mic).
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { useJarvisStore, type JarvisDisplayTurn } from '../store/jarvisStore'
+import { useJarvisStore, type JarvisActRow, type JarvisDisplayTurn } from '../store/jarvisStore'
 import { useTtsStore } from '../store/ttsStore'
 import { useVoiceStore } from '../store/voiceStore'
 import { useAttentionStore, type AttentionKind } from '../store/attentionStore'
 import { useCanvasStore } from '../store/canvasStore'
+import { speakText } from '../voice/ttsSession'
 import { startNeuralCore, paintNeuralCoreFrame, type CoreMode } from './neuralCore'
 import {
   closeJarvisPanel,
@@ -47,8 +48,11 @@ export function deriveCoreMode(s: {
   streaming: boolean
   awaiting: boolean
   capturing: boolean
+  /** J4: a turn-act awaits its ✓/✗ (or a tool is executing) — the 'acting' arc wins. */
+  acting?: boolean
 }): CoreMode {
   if (!s.converse) return 'idle'
+  if (s.acting) return 'acting'
   if (s.speaking || s.streaming) return 'speaking'
   if (s.awaiting) return 'thinking'
   if (s.capturing) return 'listening'
@@ -77,6 +81,25 @@ const EVENT_MSG: Record<AttentionKind, string> = {
   error: 'Agent hit an error'
 }
 
+/** D8 spoken-announce copy — grounded in the EVENT (board title + kind), nothing else. */
+const ANNOUNCE_MSG: Record<AttentionKind, string> = {
+  done: 'finished',
+  'needs-input': 'needs your input',
+  error: 'hit an error'
+}
+
+/** A RESOLVED turn-act chip (mock rev 2 exhibit F rows 3–4). */
+function ActChip({ act }: { act: JarvisActRow }): ReactElement {
+  const mark = act.phase === 'ok' ? '✓' : act.phase === 'denied' ? '✗' : '⚠'
+  const cls = act.phase === 'ok' ? ' ok' : act.phase === 'denied' ? ' denied' : ' err'
+  return (
+    <div className={`jp-act${cls}`} data-test="jarvis-act-chip" data-phase={act.phase}>
+      {mark} {act.summary}
+      {act.phase === 'denied' && ' — nothing changed'}
+    </div>
+  )
+}
+
 export function JarvisPanel(): ReactElement | null {
   // Same gate as the island had: no jarvis preload (non-electron test runtimes) or the
   // win-arm64 voice gate ⇒ the whole surface stays dormant.
@@ -88,6 +111,8 @@ export function JarvisPanel(): ReactElement | null {
   const streamText = useJarvisStore((s) => s.streamText)
   const lastUserText = useJarvisStore((s) => s.lastUserText)
   const turns = useJarvisStore((s) => s.turns)
+  const acts = useJarvisStore((s) => s.acts)
+  const pendingConfirm = useJarvisStore((s) => s.pendingConfirm)
   const lastError = useJarvisStore((s) => s.lastError)
   const personaName = useJarvisStore((s) => s.personaName)
   const speechReady = useJarvisStore((s) => s.speechReady)
@@ -100,6 +125,9 @@ export function JarvisPanel(): ReactElement | null {
 
   const [show, setShow] = useState(true)
   const [toneMeta, setToneMeta] = useState('butler')
+  const [announcePolicy, setAnnouncePolicy] = useState<'all' | 'attention' | 'chips-only'>(
+    'chips-only'
+  )
   const coreRef = useRef<HTMLCanvasElement | null>(null)
   const tabCoreRef = useRef<HTMLCanvasElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
@@ -114,7 +142,9 @@ export function JarvisPanel(): ReactElement | null {
     speaking: ttsSpeaking,
     streaming: streaming && !awaiting,
     awaiting,
-    capturing
+    capturing,
+    acting:
+      pendingConfirm !== null || acts.some((a) => a.phase === 'confirm' || a.phase === 'running')
   })
   // Ref write in an effect (not render — React 19 lint rule); the core renderer reads it
   // per animation frame, which always runs after the commit.
@@ -132,6 +162,7 @@ export function JarvisPanel(): ReactElement | null {
         if (!alive) return
         setShow(cfg.enabled)
         setToneMeta(cfg.tonePreset === 'custom' ? 'custom tone' : cfg.tonePreset.replace('-', ' '))
+        setAnnouncePolicy(cfg.announcePolicy)
         useJarvisStore.getState().setPersonaName(cfg.name)
       })
       .catch(() => {})
@@ -147,6 +178,7 @@ export function JarvisPanel(): ReactElement | null {
     return window.api.jarvis.config.onChanged((cfg) => {
       setShow(cfg.enabled)
       setToneMeta(cfg.tonePreset === 'custom' ? 'custom tone' : cfg.tonePreset.replace('-', ' '))
+      setAnnouncePolicy(cfg.announcePolicy)
       if (!cfg.enabled && useJarvisStore.getState().panelOpen) closeJarvisPanel()
     })
   }, [enabled])
@@ -214,7 +246,39 @@ export function JarvisPanel(): ReactElement | null {
   useEffect(() => {
     const el = bodyRef.current
     if (el && panelOpen) el.scrollTop = el.scrollHeight
-  }, [panelOpen, turns.length, streamText, lastError])
+  }, [panelOpen, turns.length, streamText, lastError, acts, pendingConfirm])
+
+  // D8 spoken announce (J4): a NEW attention mark may speak — grounded in the event
+  // (board title + kind), per the persisted policy: 'all' speaks every event,
+  // 'attention' only needs-input/error, 'chips-only' never speaks. Speaking is NOT
+  // mic-gated (KICKOFF-PANEL §3): this runs with the panel closed too — the surface
+  // (this component) is mounted whenever Jarvis is enabled. A missing TTS model just
+  // rejects; the chip/badge remain the visual truth either way.
+  const announcedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const seen = announcedRef.current
+    for (const [boardId, kind] of Object.entries(attention)) {
+      const key = `${boardId}:${kind}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      if (announcePolicy === 'chips-only') continue
+      if (announcePolicy === 'attention' && kind === 'done') continue
+      const title =
+        useCanvasStore
+          .getState()
+          .boards.find((b) => b.id === boardId)
+          ?.title?.trim() || 'An agent board'
+      speakText(`${title}: ${ANNOUNCE_MSG[kind]}.`).catch(() => {})
+    }
+    // Cleared marks may re-announce later (a re-mark IS a new event).
+    for (const key of [...seen]) {
+      const [boardId, kind] = [
+        key.slice(0, key.lastIndexOf(':')),
+        key.slice(key.lastIndexOf(':') + 1)
+      ]
+      if (attention[boardId] !== kind) seen.delete(key)
+    }
+  }, [attention, announcePolicy])
 
   if (!enabled || !show) return null
 
@@ -342,6 +406,8 @@ export function JarvisPanel(): ReactElement | null {
                     <b>You</b> · {t.text}
                     {t.at > 0 && <span className="jp-t">{timeLabel(t.at)}</span>}
                   </div>
+                ) : t.role === 'act' && t.act ? (
+                  <ActChip act={t.act} />
                 ) : (
                   <div className="jp-reply">
                     {t.text}
@@ -360,6 +426,53 @@ export function JarvisPanel(): ReactElement | null {
                 {streamText}
                 <span className="jp-caret" />
               </div>
+              {/* J4 turn-act rows (exhibit F): resolved acts collapse to chips; the act
+                  awaiting its gate renders the pending card (✓/✗ + the voice answer). A
+                  gated act whose routed request hasn't landed yet paints card-without-
+                  buttons for the ~one-frame gap. */}
+              {acts.map((a) =>
+                a.phase === 'ok' || a.phase === 'denied' || a.phase === 'error' ? (
+                  <ActChip key={a.actId} act={a} />
+                ) : (
+                  <div
+                    key={a.actId}
+                    className={`jp-act-card${a.phase === 'running' ? ' running' : ''}`}
+                    data-test="jarvis-act-card"
+                    data-phase={a.phase}
+                  >
+                    <span className="jp-ac-hd">
+                      <i />
+                      {a.name} · {a.phase === 'running' ? 'running' : 'needs your ok'}
+                    </span>
+                    <span className="jp-ac-body">
+                      {a.phase === 'confirm' && pendingConfirm ? pendingConfirm.body : a.summary}
+                    </span>
+                    {a.phase === 'confirm' && pendingConfirm && (
+                      <span className="jp-ac-btns">
+                        <button
+                          type="button"
+                          className="jp-ac-yes"
+                          data-test="jarvis-act-approve"
+                          onClick={() => useJarvisStore.getState().answerPendingConfirm(true)}
+                        >
+                          ✓ do it
+                        </button>
+                        <button
+                          type="button"
+                          className="jp-ac-no"
+                          data-test="jarvis-act-deny"
+                          onClick={() => useJarvisStore.getState().answerPendingConfirm(false)}
+                        >
+                          ✗ cancel
+                        </button>
+                        <span className="jp-ac-voice">
+                          or say <b>“yes”</b> / <b>“no”</b>
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                )
+              )}
             </div>
           )}
           {!streaming && mode === 'listening' && partial && (
@@ -400,9 +513,10 @@ export function JarvisPanel(): ReactElement | null {
           <span>
             <b>speak</b> to interrupt
           </span>
-          <span className="end">
+          <span>
             <b>esc</b> closes · mic off
           </span>
+          <span className="end">grounded in tool results</span>
         </div>
       </aside>
     </>

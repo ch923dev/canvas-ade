@@ -2,17 +2,46 @@
  * Jarvis — ephemeral conversation/panel state (the voiceStore discipline: session-state
  * ONLY, never serialized, never routed into boardSchema or a board patch key). The
  * jarvisSession controller writes it; the panel + edge tab read it.
+ *
+ * J4 (hands): the transcript grows `act` rows (tool-call lifecycle — mock rev 2 exhibit F)
+ * and the store owns the SINGLE pending-confirm slot: MAIN blocks a gated tool call on a
+ * human decision; the routed request parks here (title/body + the reply closure) and the
+ * panel renders it as the pending act-card. Fail-closed everywhere: a supersede, a panel
+ * close, or a converse teardown answers `false` — approval only ever comes from the ✓ tap
+ * or an exact spoken yes.
  */
 import { create } from 'zustand'
 
-/** One display turn (the renderer mirror; MAIN keeps the canonical history). */
+/** One turn-act lifecycle phase (mirrors MAIN's JarvisActPhase). */
+export type JarvisActPhase = 'confirm' | 'running' | 'ok' | 'denied' | 'error'
+
+/** One tool-call row in the transcript (the J4 turn-act record). */
+export interface JarvisActRow {
+  actId: number
+  name: string
+  summary: string
+  phase: JarvisActPhase
+  gated: boolean
+}
+
+/** One display row (the renderer mirror; MAIN keeps the canonical text history). */
 export interface JarvisDisplayTurn {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'act'
   text: string
   /** Barge-in truncated this reply (rendered with an interrupted marker). */
   interrupted?: boolean
   /** Epoch ms for the history view's time stamps. */
   at: number
+  /** The act payload when role === 'act' (resolved rows folded into the transcript). */
+  act?: JarvisActRow
+}
+
+/** The parked human-confirm decision a gated Jarvis tool call is blocked on. */
+export interface JarvisPendingConfirm {
+  title: string
+  body: string
+  /** Resolve MAIN's gate. Idempotence is the store's job (answer clears the slot). */
+  reply: (decision: { approved: boolean }) => void
 }
 
 interface JarvisState {
@@ -28,6 +57,10 @@ interface JarvisState {
   lastUserText: string
   /** Display transcript, oldest first (session mirror of MAIN's history). */
   turns: JarvisDisplayTurn[]
+  /** Tool-call rows of the ACTIVE turn (folded into `turns` when the turn settles). */
+  acts: JarvisActRow[]
+  /** The single parked confirm (at most one — MAIN executes tools sequentially). */
+  pendingConfirm: JarvisPendingConfirm | null
   /** The right-side panel is open — THE mic-gate bit: converse mode can only arm while
    *  this is true, and flipping it false always rides the full converse teardown
    *  (closeJarvisPanel). The collapsed edge tab renders while false. */
@@ -43,6 +76,15 @@ interface JarvisState {
   deltaReceived: (text: string) => void
   turnDone: (text: string, cancelled: boolean) => void
   turnFailed: (reason: string) => void
+  /** Upsert one act row by actId (MAIN's `act` turn events). */
+  actEvent: (act: JarvisActRow) => void
+  /** Park a routed Jarvis confirm (ConfirmModal routes origin:'jarvis' here). */
+  confirmRequested: (
+    req: { title: string; body: string },
+    reply: JarvisPendingConfirm['reply']
+  ) => void
+  /** Answer + clear the parked confirm. Safe no-op when none is pending. */
+  answerPendingConfirm: (approved: boolean) => void
   setPanelOpen: (open: boolean) => void
   setPersonaName: (name: string) => void
   setSpeechReady: (ready: boolean) => void
@@ -50,13 +92,15 @@ interface JarvisState {
   clearTurns: () => void
 }
 
-export const useJarvisStore = create<JarvisState>((set) => ({
+export const useJarvisStore = create<JarvisState>((set, get) => ({
   converseMode: false,
   activeTurnId: null,
   awaitingReply: false,
   streamText: '',
   lastUserText: '',
   turns: [],
+  acts: [],
+  pendingConfirm: null,
   panelOpen: false,
   lastError: null,
   personaName: 'Jarvis',
@@ -71,7 +115,8 @@ export const useJarvisStore = create<JarvisState>((set) => ({
       awaitingReply: true,
       streamText: '',
       lastUserText: userText,
-      lastError: null
+      lastError: null,
+      acts: []
     }),
   deltaReceived: (text) => set((s) => ({ streamText: s.streamText + text, awaitingReply: false })),
   turnDone: (text, cancelled) =>
@@ -79,14 +124,46 @@ export const useJarvisStore = create<JarvisState>((set) => ({
       activeTurnId: null,
       awaitingReply: false,
       streamText: '',
+      acts: [],
       turns: [
         ...s.turns,
         { role: 'user' as const, text: s.lastUserText, at: Date.now() },
+        // Resolved act rows fold into the transcript between the user line and the reply
+        // (exhibit F: the chip is part of the turn's record, not transient chrome).
+        ...s.acts.map(
+          (a): JarvisDisplayTurn => ({ role: 'act', text: a.summary, at: Date.now(), act: a })
+        ),
         { role: 'assistant' as const, text, interrupted: cancelled, at: Date.now() }
       ]
     })),
   turnFailed: (reason) =>
-    set({ activeTurnId: null, awaitingReply: false, streamText: '', lastError: reason }),
+    set({ activeTurnId: null, awaitingReply: false, streamText: '', acts: [], lastError: reason }),
+  actEvent: (act) =>
+    set((s) => {
+      const i = s.acts.findIndex((a) => a.actId === act.actId)
+      const acts = i >= 0 ? s.acts.map((a, j) => (j === i ? act : a)) : [...s.acts, act]
+      return { acts }
+    }),
+  confirmRequested: (req, reply) =>
+    set((s) => {
+      // 🔒 A second confirm while one is parked cannot happen from MAIN's sequential tool
+      // loop, but fail closed anyway: deny the OLD one (never leave a gate un-answerable).
+      s.pendingConfirm?.reply({ approved: false })
+      return { pendingConfirm: { title: req.title, body: req.body, reply } }
+    }),
+  answerPendingConfirm: (approved) => {
+    const pending = get().pendingConfirm
+    if (!pending) return
+    set((s) => ({
+      pendingConfirm: null,
+      // Optimistic hint: an approved gate is now executing — flip the parked 'confirm'
+      // act row to 'running' until MAIN's outcome event lands (denied paints from MAIN).
+      acts: approved
+        ? s.acts.map((a) => (a.phase === 'confirm' ? { ...a, phase: 'running' as const } : a))
+        : s.acts
+    }))
+    pending.reply({ approved })
+  },
   setPanelOpen: (open) => set((s) => (s.panelOpen === open ? s : { panelOpen: open })),
   setPersonaName: (personaName) =>
     set((s) => (s.personaName === personaName ? s : { personaName })),

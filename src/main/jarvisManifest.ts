@@ -11,8 +11,23 @@ import type { AppModel, AppModelBoard } from './appModel'
 export const MANIFEST_MAX_BOARDS = 40
 const TITLE_MAX = 48
 
+/**
+ * 🔒 BRAIN-5 (J4 injection audit): board titles and group names are USER/AGENT-authored free
+ * text that embeds into the SYSTEM prompt. A title carrying a newline could forge extra
+ * manifest lines ("fake boards"), or break out of the Workspace block entirely and inject
+ * persona-level instructions — inert while the brain was toolless, an action seam now that J4
+ * ships tools. Neutralize every C0/C1 control (incl. \r\n\t) plus the Unicode line/paragraph
+ * separators to a plain space BEFORE clipping, so one board = exactly one manifest line and
+ * the block's structure is host-owned. Length caps alone (the old clip) do not do this.
+ */
+function neutralize(s: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping control chars is the point here
+  return s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
+}
+
 function clip(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + '…'
+  const flat = neutralize(s)
+  return flat.length <= max ? flat : flat.slice(0, max - 1) + '…'
 }
 
 /** Coarse screen-region word for a board's center within the canvas bounding box. */

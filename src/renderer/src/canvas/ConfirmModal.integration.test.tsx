@@ -130,3 +130,53 @@ describe('ConfirmModal (integration)', () => {
     expect(screen.getByText('Cancel')).toBeTruthy()
   })
 })
+
+// ── J4: origin routing — a MAIN-stamped Jarvis confirm parks on the panel store ──
+import { useJarvisStore } from '../store/jarvisStore'
+
+describe('J4 origin routing', () => {
+  afterEach(() => {
+    useJarvisStore.getState().answerPendingConfirm(false)
+    useJarvisStore.setState({ panelOpen: false })
+  })
+
+  it('origin:"jarvis" + open panel → routes to the panel store, NO modal', () => {
+    stubOnConfirm()
+    render(<ConfirmModal />)
+    useJarvisStore.setState({ panelOpen: true })
+    const reply = pushRequest({
+      title: 'Jarvis: spawn a board',
+      body: 'Spawn a terminal',
+      origin: 'jarvis'
+    } as never)
+    expect(screen.queryByTestId('confirm-modal')).toBeNull()
+    const pending = useJarvisStore.getState().pendingConfirm
+    expect(pending?.body).toBe('Spawn a terminal')
+    useJarvisStore.getState().answerPendingConfirm(true)
+    expect(reply).toHaveBeenCalledWith({ approved: true })
+  })
+
+  it('a CHOOSER request keeps the modal even with origin:"jarvis"', () => {
+    stubOnConfirm()
+    render(<ConfirmModal />)
+    useJarvisStore.setState({ panelOpen: true })
+    pushRequest({
+      title: 'Visualize',
+      body: 'plan',
+      origin: 'jarvis',
+      choices: { options: [{ id: 'kanban', label: 'Kanban' }], default: 'kanban' }
+    } as never)
+    expect(screen.getByTestId('confirm-modal')).toBeTruthy()
+    expect(useJarvisStore.getState().pendingConfirm).toBeNull()
+    fireEvent.click(screen.getByTestId('confirm-deny'))
+  })
+
+  it('a CLOSED panel falls back to the modal (no dead gates)', () => {
+    stubOnConfirm()
+    render(<ConfirmModal />)
+    useJarvisStore.setState({ panelOpen: false })
+    pushRequest({ title: 'Jarvis: spawn a board', body: 'x', origin: 'jarvis' } as never)
+    expect(screen.getByTestId('confirm-modal')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('confirm-deny'))
+  })
+})

@@ -31,6 +31,15 @@ export type JarvisTurnEventView =
   | { id: number; kind: 'delta'; text: string }
   | { id: number; kind: 'done'; text: string; cancelled: boolean }
   | { id: number; kind: 'error'; reason: string }
+  | {
+      id: number
+      kind: 'act'
+      actId: number
+      name: string
+      summary: string
+      phase: 'confirm' | 'running' | 'ok' | 'denied' | 'error'
+      gated: boolean
+    }
 
 export interface JarvisTurnView {
   role: 'user' | 'assistant'
