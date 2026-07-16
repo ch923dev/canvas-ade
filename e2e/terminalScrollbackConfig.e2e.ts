@@ -33,6 +33,11 @@ const clearSticky = (page: Page) =>
 async function seedMounted(page: Page): Promise<string> {
   const id = await seed(page, 'terminal', { launchCommand: 'exit' })
   await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+  // Drain the PTY before any direct buffer write (the terminalScrollback discipline): wait for
+  // the bridge's "[process exited]" line so no late ConPTY banner — held in the write coalescer
+  // until the first fit under batch load — can flush AFTER a spec's resetTerminalWrite and clear
+  // the sentinel with its screen-repaint sequences (the batch-order flake).
+  await pollEval(page, `(${readBuf(id)} || '').includes('process exited')`, 8000)
   return id
 }
 
