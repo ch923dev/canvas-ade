@@ -2658,3 +2658,35 @@ picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board 
   ambient + `mcp:758` fails on a pure #347 base checkout; Linux Docker **285 passed**) · CI check +
   CodeQL + analyze + claude-review green · manual dev check via live HMR (create modal · attachments ·
   links · picker search + icons).
+
+## PR #351 — busy-aware background eviction: never kill a working agent (2026-07-16, v0.19.2)
+
+Squash `c7fa0ed4` (branch `feat/bg-busy-eviction`). Root cause of the "background project abruptly
+removed mid-work, agent redid the work on resume" bug: the C1 cap/idle-TTL machinery evicted on
+wall-clock alone (TTL 10 min / 4 min low-RAM; cap 3/1), blind to running terminals — and the TTL
+reap told nobody (console.info only). Keep/∞ policy never actually protected a resident.
+
+- **Busy-aware eviction:** WORKING = recent PTY output (30s window; background-parked rings now
+  bump `lastActivityAt` in the onData pump) ∥ process-tree CPU delta between sweeps (new
+  `bgBusyProbe.ts`: one full process-table sample per 60s sweep — `Get-CimInstance` / `ps -Ao` —
+  descendant walk from session root PIDs, ≥100ms ⇒ busy; catches SILENT workers, e.g. an agent
+  mid-e2e printing nothing). Working residents are never TTL-reaped and never cap-evicted.
+- **Idle clock = last activity** (not `backgroundedAt`); TTL 10→30 min (low-RAM 4→12). Two-strike
+  reap: warn (toast + OS notification) → 2 min grace → close — the net for zero-CPU waits the probe
+  can't see. Cap picks the oldest IDLE victim; all-busy → set exceeds the cap (`deferred`, toasted),
+  sweep collapses it once someone idles — never onto a resident kept < grace ago. ∞ forever-keeps
+  are TTL-exempt (cap pressure, idle-only, still wins). Every warning/auto-close reaches the user:
+  new `project:bgLifecycle` push → renderer toast + OS notification.
+- **Ratchet held by doctrine split:** `countProjectSessionsCore` moved verbatim from pty.ts to new
+  `ptyProjectStats.ts` (+ `projectActivityAtCore` / `projectSessionPidsCore`).
+- **CI side-fix (`ed928f4d`, repo-wide):** npmjs RETIRED the classic audit endpoints this same day
+  (HTTP 410; `pnpm audit` broken on pnpm 9 AND 10 — every PR's check job red). Same T9 hard gate,
+  new mechanism: `scripts/sca-audit.mjs` enumerates the tree via `pnpm licenses list --json`, POSTs
+  the bulk advisory endpoint in chunks, semver-matches (prerelease-inclusive), blocks at high+,
+  hard-fails on registry errors. Verified 714 pkgs; 1 moderate note (js-yaml), clean at threshold.
+- **Verify:** typecheck/lint/format green · touched units 145/145 · full suite 5203P (5 = the
+  documented ambient-env class, pass sanitized) · FULL e2e matrix green both legs on the PR tree
+  (Win 286P + gitDiff/menuShell rerun-green isolated [real-input flake] + 1 skip · Linux Docker
+  284P/3 skip exit-0 clean) · CI check + CodeQL + analyze green · claude-review 0-crit/0-warn/0-nit
+  ×2 rounds · manual dev check title-stamped `bg-busy-eviction 0.19.2`, user eyeball PASS · plan
+  kanban `17fff237` 10/10 cards done.
