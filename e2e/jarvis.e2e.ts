@@ -44,7 +44,12 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
   })
   test.afterEach(async ({ page, electronApp }) => {
     // End any live capture so no session/consumer leaks into the next spec (resetAll
-    // also force-disarms converse mode + closes the panel renderer-side).
+    // also force-disarms converse mode + closes the panel renderer-side). The wake-word
+    // opt-in persists in userData — force it back off so no later spec inherits a live
+    // closed-panel listener.
+    await page
+      .evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: false }))
+      .catch(() => {})
     await page.evaluate(() => (globalThis as any).api.voice.stop()).catch(() => {})
     await mainCall(electronApp, 'setLlmMock', false)
     await mainCall(electronApp, 'voiceStubSet', false)
@@ -212,6 +217,49 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     await expect.poll(() => evalIn(page, 'window.__canvasE2E.getSelection()')).toEqual([id])
     await expect(page.locator('[data-test="jarvis-events"]')).toHaveCount(0)
     await page.keyboard.press('Escape') // teardown: close the panel again
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+  })
+
+  test('wake word (D3): opt-in only, and its sole power is opening the panel', async ({
+    page,
+    electronApp
+  }) => {
+    // OFF BY DEFAULT: with the panel closed and the feature untouched, there is no wake
+    // session to fire into — the carve-out's ground state.
+    expect(await mainCall(electronApp, 'voiceStubWake')).toBe(false)
+
+    // Opt in: the closed-panel listener arms (stub engine holds the wake port).
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: true }))
+    await expect
+      .poll(async () => mainCall(electronApp, 'voiceStubWake'), { timeout: 10_000 })
+      .toBe(true)
+
+    // THE ONE POWER: the detection opened the panel and armed the mic through the
+    // existing gesture — same end state as an edge-tab click.
+    await expect
+      .poll(async () => (await jarvisState(page)).panelOpen, { timeout: 10_000 })
+      .toBe(true)
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+
+    // Panel open ⇒ the wake listener stands down (converse capture owns the mic): a
+    // second fire finds no wake session.
+    await expect
+      .poll(async () => mainCall(electronApp, 'voiceStubWake'), { timeout: 10_000 })
+      .toBe(false)
+
+    // Close the panel — the listener re-arms on the closed panel (feature still on).
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+    await expect.poll(async () => voiceCapturing(page), { timeout: 10_000 }).toBe(false)
+    await expect
+      .poll(async () => mainCall(electronApp, 'voiceStubWake'), { timeout: 10_000 })
+      .toBe(true)
+    // (That re-armed fire re-opened the panel — tidy up through the teardown path.)
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(true)
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: false }))
+    await page.keyboard.press('Escape')
     await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
   })
 

@@ -15,7 +15,7 @@ import {
   type OfflineTtsLike,
   type TtsOutMsg,
   type TtsSpeakReq
-} from './voiceEngineHost'
+} from './voiceTtsRunner'
 
 interface FakeCall {
   text: string

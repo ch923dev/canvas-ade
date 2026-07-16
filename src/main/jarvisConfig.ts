@@ -45,6 +45,9 @@ export interface JarvisConfig {
   /** Claude model id for the brain session. */
   model: string
   historyMode: JarvisHistoryMode
+  /** J5 D3: the opt-in wake word (OFF by default). Its SOLE power is opening the panel
+   *  (KICKOFF-PANEL §3 carve-out) — turns still require the open panel. */
+  wakeWordEnabled: boolean
 }
 /* Retired (panel surface rev, 2026-07-13): `islandPosition` — the island is gone and the
  * panel docks. The repair funnel silently accepts old files that still carry it (unknown
@@ -64,7 +67,8 @@ export function jarvisDefaults(): JarvisConfig {
     verbosity: 'concise',
     announcePolicy: 'attention',
     model: DEFAULT_JARVIS_MODEL,
-    historyMode: 'session'
+    historyMode: 'session',
+    wakeWordEnabled: false
   }
 }
 
@@ -110,7 +114,8 @@ export function repairJarvisConfig(p: unknown): JarvisConfig {
     // Any non-empty string persists (scene-id discipline: an id from a future build is
     // preserved; the request builder falls back at use time if the API rejects it).
     model: typeof o.model === 'string' && o.model.length > 0 ? o.model.slice(0, 256) : d.model,
-    historyMode: optEnum(o.historyMode, ['project', 'session', 'off'] as const, d.historyMode)
+    historyMode: optEnum(o.historyMode, ['project', 'session', 'off'] as const, d.historyMode),
+    wakeWordEnabled: o.wakeWordEnabled === true // opt-in: anything but true is false
   }
 }
 

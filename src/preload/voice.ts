@@ -50,6 +50,10 @@ export interface VoiceConfigView {
  *  lazily re-opens the session. */
 export type VoiceTtsEvent = { kind: 'error'; reason?: string }
 
+/** J5: wake-side failure push (KWS worker death) — the listener disarms; the next arm
+ *  respawns the worker lazily. */
+export type VoiceWakeEvent = { kind: 'error'; reason?: string }
+
 /** V5 engine-failure push (SPEC §3 `error` state). 'restarted' = MAIN transparently
  *  re-brokered the session after a crash (a fresh voice:port follows); 'error' = the
  *  restart budget is spent — stop capturing, keep the draft, offer Restart. */
@@ -119,6 +123,21 @@ export const voiceApi = {
     },
     models: modelCatalogApi('voice:tts:models')
   },
+  // ── J5 wake word (D3, opt-in): control plane for the closed-panel keyword listener.
+  // Frames flow over the voice:wake:port MessagePort; a detection arrives on that port
+  // as {t:'wake', keyword}. start() fails with modelStatus 'absent' until the KWS model
+  // is downloaded (Settings › Persona row drives the CTA).
+  wake: {
+    start: (): Promise<{ ok: boolean; modelStatus: 'ready' | 'absent' }> =>
+      ipcRenderer.invoke('voice:wake:start'),
+    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('voice:wake:stop'),
+    onEvent: (cb: (ev: VoiceWakeEvent) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: VoiceWakeEvent): void => cb(ev)
+      ipcRenderer.on('voice:wake:event', listener)
+      return () => ipcRenderer.removeListener('voice:wake:event', listener)
+    },
+    models: modelCatalogApi('voice:kws:models')
+  },
   // App-level voice config (userData/voice-config.json). set() is a merge-patch; MAIN
   // sanitizes through repairVoiceConfig and pushes the repaired result back on
   // voice:config:changed so consumers (pill visibility/hotkey) apply LIVE (V4).
@@ -149,5 +168,12 @@ export function forwardVoicePort(): void {
 export function forwardVoiceTtsPort(): void {
   ipcRenderer.on('voice:tts:port', (e) => {
     window.postMessage({ __voiceTtsPort: true }, window.location.origin, e.ports)
+  })
+}
+
+/** J5: the wake-word capture/detection port, forwarded exactly like the capture port. */
+export function forwardVoiceWakePort(): void {
+  ipcRenderer.on('voice:wake:port', (e) => {
+    window.postMessage({ __voiceWakePort: true }, window.location.origin, e.ports)
   })
 }

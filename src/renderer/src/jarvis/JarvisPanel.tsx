@@ -22,6 +22,7 @@ import {
   toggleJarvisPanel,
   useJarvisController
 } from './jarvisSession'
+import { useWakeWord } from './useWakeWord'
 
 /** Header core = the island core scaled up; edge-tab mini core (mock exhibits B/C). */
 const HEADER_CORE_PX = 44
@@ -137,6 +138,9 @@ export function JarvisPanel(): ReactElement | null {
   const modeRef = useRef<CoreMode>('idle')
 
   useJarvisController()
+  // J5 D3: the opt-in wake-word listener lives with the panel surface (same project
+  // scope); it only ever OPENS the panel, and stands down whenever the panel is open.
+  useWakeWord()
 
   const streaming = activeTurnId !== null
   const mode = deriveCoreMode({

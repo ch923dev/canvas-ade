@@ -33,7 +33,7 @@ import {
   debugWriteTerminal,
   disposeAllPtys
 } from './pty'
-import { setVoiceStubEnabled } from './voiceEngineStub'
+import { setVoiceStubEnabled, stubKwsWake } from './voiceEngineStub'
 import { isTrayResident, reopenFromTray } from './trayResidency'
 import { createLifecycleDeliver, type LifecycleBoard } from './lifecycleNotifications'
 import { DEFAULT_NOTIFICATIONS, type NotificationsConfig } from './notificationsConfig'
@@ -296,6 +296,9 @@ export interface E2EMain {
     on: boolean,
     script?: Array<{ atFrame: number; t: 'partial' | 'final'; text: string }>
   ): void
+  /** J5: fire a deterministic wake detection through the live stub's kws port (false =
+   *  no stub / no armed wake session — the spec must arm first). */
+  voiceStubWake(keyword?: string): boolean
   /**
    * Desktop-notifications P5: drive a normalized lifecycle signal through the REAL MAIN delivery
    * pipeline (`createLifecycleDeliver` — the SAME gate + `notify:lifecycle` IPC push production
@@ -674,6 +677,9 @@ export function installE2EMain(
     },
     voiceStubSet(on, script) {
       setVoiceStubEnabled(on, script)
+    },
+    voiceStubWake(keyword) {
+      return stubKwsWake(keyword)
     },
     notifyDeliver(boardId, event) {
       notifyProbe.deliver(boardId, event)

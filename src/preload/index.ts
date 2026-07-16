@@ -8,7 +8,7 @@ import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
 import { closeGuardApi } from './closeGuardApi'
-import { forwardVoicePort, forwardVoiceTtsPort, voiceApi } from './voice'
+import { forwardVoicePort, forwardVoiceTtsPort, forwardVoiceWakePort, voiceApi } from './voice'
 import { jarvisApi } from './jarvis'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
@@ -943,6 +943,7 @@ const api = {
 forwardPtyPort()
 forwardVoicePort()
 forwardVoiceTtsPort()
+forwardVoiceWakePort()
 
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('api', api)

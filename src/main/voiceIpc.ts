@@ -45,6 +45,15 @@ import {
   ttsModelStatus,
   type TtsModelStatus
 } from './voiceTtsModels'
+import {
+  DEFAULT_KWS_MODEL_ID,
+  KWS_MODEL_CATALOG,
+  deleteKwsModel,
+  downloadKwsModel,
+  kwsModelPaths,
+  kwsModelStatus,
+  type KwsModelStatus
+} from './voiceKwsModels'
 
 export interface VoiceStartResult {
   ok: boolean
@@ -125,7 +134,25 @@ export interface VoiceIpcDeps {
     download: typeof downloadTtsModel
     remove: typeof deleteTtsModel
   }
+  /** J5: wake-word catalog ops, injectable like the others. */
+  kwsModelOps?: {
+    status: typeof kwsModelStatus
+    paths: typeof kwsModelPaths
+    download: typeof downloadKwsModel
+    remove: typeof deleteKwsModel
+  }
 }
+
+/** J5: `voice:wake:start` result — a session only brokers when the model is installed
+ *  (or the e2e stub is live). */
+export interface VoiceWakeStartResult {
+  ok: boolean
+  modelStatus: KwsModelStatus
+}
+
+/** J5: renderer push for wake-side failures (worker death — the listener disarms; the
+ *  next arm respawns the worker lazily). */
+export type VoiceWakeEvent = { kind: 'error'; reason?: string }
 
 /** J2: `voice:tts:start` result — a session only brokers when the model is installed. */
 export interface VoiceTtsStartResult {
@@ -173,6 +200,12 @@ export function registerVoiceHandlers(
     paths: ttsModelPaths,
     download: downloadTtsModel,
     remove: deleteTtsModel
+  }
+  const kwsOps = deps.kwsModelOps ?? {
+    status: kwsModelStatus,
+    paths: kwsModelPaths,
+    download: downloadKwsModel,
+    remove: deleteKwsModel
   }
   // Resolution order: explicit test injection → the e2e runtime stub (dormant null in
   // every normal run — only settable through e2eMain's gated registry) → the real host.
@@ -285,6 +318,58 @@ export function registerVoiceHandlers(
     // Components of a model still downloading join the delete keep-set (TTS-2): deleting
     // the sibling mid-flight must not rm the shared espeak dir the install skipped.
     remove: (userData, id, inFlightIds) => ttsOps.remove(userData, id, { inFlightIds })
+  })
+  registerModelCatalogIpc(ipcMain, getWin, getUserData, {
+    prefix: 'voice:kws:models',
+    catalog: KWS_MODEL_CATALOG,
+    defaultId: DEFAULT_KWS_MODEL_ID,
+    status: kwsOps.status,
+    download: (userData, id, deps) => kwsOps.download(userData, id, deps),
+    remove: (userData, id, _inFlightIds) => kwsOps.remove(userData, id)
+  })
+
+  // ── J5 wake word (D3): the ONE sanctioned closed-panel listener. Renderer capture
+  // frames flow over a dedicated voice:wake:port; a detection comes back on the same
+  // port as {t:'wake', keyword}. MAIN never grants the mic — getUserMedia consent stays
+  // renderer/OS-side; this only brokers the port and gates on the installed model.
+  let wakeActive = false
+
+  const onKwsFailure = (reason: string): void => {
+    if (!wakeActive) return
+    wakeActive = false
+    getWin()?.webContents.send('voice:wake:event', {
+      kind: 'error',
+      reason
+    } satisfies VoiceWakeEvent)
+  }
+
+  ipcMain.handle('voice:wake:start', async (e): Promise<VoiceWakeStartResult> => {
+    if (isForeignSender(e, getWin) || !isVoicePlatformSupported()) {
+      return { ok: false, modelStatus: 'absent' }
+    }
+    const win = getWin()
+    if (!win) return { ok: false, modelStatus: 'absent' }
+    const userData = getUserData()
+    // Stub sessions are model-live by design (the spec fires the wake itself).
+    const stubActive = !deps.engine && currentVoiceStubEngine() !== null
+    const status = stubActive ? 'ready' : await kwsOps.status(userData, DEFAULT_KWS_MODEL_ID)
+    // No degraded mode: a wake listener without a spotter hears nothing — fail fast and
+    // let the Settings row drive the download CTA (the TTS posture).
+    if (status !== 'ready') return { ok: false, modelStatus: status }
+    const paths = stubActive ? null : kwsOps.paths(userData, DEFAULT_KWS_MODEL_ID)
+    engine().onKwsFailure(onKwsFailure)
+    const { port1, port2 } = new MessageChannelMain()
+    engine().startKwsSession(port1, paths)
+    win.webContents.postMessage('voice:wake:port', {}, [port2])
+    wakeActive = true
+    return { ok: true, modelStatus: status }
+  })
+
+  ipcMain.handle('voice:wake:stop', async (e): Promise<{ ok: boolean }> => {
+    if (isForeignSender(e, getWin)) return { ok: false }
+    wakeActive = false
+    await engine().stopKwsSession()
+    return { ok: true }
   })
 
   // App voice config (SPEC §5). set() is a merge-patch funneled through repairVoiceConfig

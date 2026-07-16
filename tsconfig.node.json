@@ -18,6 +18,7 @@
   "include": [
     "src/main/**/*",
     "src/shared/**/*",
+    "src/vendor/seek-bzip/**/*",
     "electron.vite.config.ts",
     "e2e/**/*",
     "playwright.config.ts"

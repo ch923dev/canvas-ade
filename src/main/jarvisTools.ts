@@ -303,11 +303,17 @@ export function resolveBoardRef(
   const hits = byTitle
   if (hits.length === 0) throw new ToolArgError(`no board matches "${clip(r, 40)}"`)
   if (hits.length > 1) {
+    // J5 numbered disambiguation: candidates carry stable ORDINALS so a spoken answer
+    // like "the second one" maps deterministically — the model reads this list aloud
+    // with the numbers and retries with the chosen candidate's [id] prefix.
     const names = hits
       .slice(0, 4)
-      .map((b) => `[${b.id.slice(0, 8)}] "${clip(b.title, 30)}"`)
-      .join(', ')
-    throw new ToolArgError(`"${clip(r, 40)}" is ambiguous (${names}) — ask the user which one`)
+      .map((b, i) => `${i + 1}. [${b.id.slice(0, 8)}] "${clip(b.title, 30)}"`)
+      .join('  ')
+    throw new ToolArgError(
+      `"${clip(r, 40)}" is ambiguous — candidates: ${names}. Read the numbered list to the ` +
+        `user, ask which NUMBER, then retry with that candidate's [id] prefix.`
+    )
   }
   const hit = hits[0]
   if (wantType && hit.type !== wantType) {

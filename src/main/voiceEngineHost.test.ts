@@ -7,9 +7,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   attachSession,
+  buildKwsConfig,
   buildRecognizerConfig,
   buildVadConfig,
   createFrameProcessor,
+  createKwsProcessor,
   int16ToFloat32,
   type RecognizerLike,
   type SessionPortLike,
@@ -344,5 +346,78 @@ describe('buildVadConfig', () => {
       numThreads: 1,
       provider: 'cpu'
     })
+  })
+})
+
+describe('createKwsProcessor (J5 wake word)', () => {
+  interface FakeKws {
+    accepted: number[]
+    resets: number
+    queue: string[] // getResult answers, consumed decode-by-decode
+  }
+  const makeFakeSpotter = (): {
+    spotter: import('./voiceEngineHost').KeywordSpotterLike
+    state: FakeKws
+  } => {
+    const state: FakeKws = { accepted: 0 as unknown as number[], resets: 0, queue: [] }
+    let pending = 0
+    let accepted = 0
+    const spotter: import('./voiceEngineHost').KeywordSpotterLike = {
+      createStream: () => ({
+        acceptWaveform: (w: { samples: Float32Array }) => {
+          accepted += w.samples.length
+          pending++
+        }
+      }),
+      isReady: () => pending > 0,
+      decode: () => {
+        pending--
+      },
+      reset: () => {
+        state.resets++
+      },
+      getResult: () => ({ keyword: state.queue.shift() ?? '' })
+    }
+    Object.defineProperty(state, 'accepted', { get: () => accepted })
+    return { spotter, state }
+  }
+
+  it('posts {t:"wake"} on a detection and resets the stream, then keeps listening', () => {
+    const { spotter, state } = makeFakeSpotter()
+    const posted: Array<{ t: string; keyword: string }> = []
+    const proc = createKwsProcessor(spotter, (m) => posted.push(m))
+    state.queue.push('', 'HEY JARVIS', '')
+    proc.push(new Int16Array(1920).buffer)
+    proc.push(new Int16Array(1920).buffer)
+    proc.push(new Int16Array(1920).buffer)
+    expect(posted).toEqual([{ t: 'wake', keyword: 'HEY JARVIS' }])
+    expect(state.resets).toBe(1)
+    expect(proc.frames()).toBe(3)
+  })
+
+  it('a null spotter counts frames only (model-less degrade)', () => {
+    const posted: unknown[] = []
+    const proc = createKwsProcessor(null, (m) => posted.push(m))
+    proc.push(new Int16Array(1920).buffer)
+    expect(proc.frames()).toBe(1)
+    expect(posted).toEqual([])
+  })
+
+  it('buildKwsConfig wires the transducer trio + the keywords file', () => {
+    const cfg = buildKwsConfig({
+      encoder: 'e.onnx',
+      decoder: 'd.onnx',
+      joiner: 'j.onnx',
+      tokens: 't.txt',
+      keywords: 'k.txt'
+    }) as {
+      modelConfig: { transducer: { encoder: string }; tokens: string }
+      keywordsFile: string
+      keywordsThreshold: number
+    }
+    expect(cfg.modelConfig.transducer.encoder).toBe('e.onnx')
+    expect(cfg.modelConfig.tokens).toBe('t.txt')
+    expect(cfg.keywordsFile).toBe('k.txt')
+    expect(cfg.keywordsThreshold).toBeCloseTo(0.25)
   })
 })

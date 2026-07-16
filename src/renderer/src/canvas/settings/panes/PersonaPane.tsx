@@ -95,6 +95,14 @@ export function PersonaPane(): ReactElement | null {
    *  the LAST parked push applies once the in-flight count settles to zero. */
   const inflight = useRef(0)
   const parkedPush = useRef<JarvisConfigView | null>(null)
+  /** J5 D3: the wake-word model row (opt-in listener; ~17 MB one-time download). */
+  const [kws, setKws] = useState<{
+    id: string | null
+    label: string
+    status: 'ready' | 'absent' | 'unknown'
+    pct: number | null
+    error: string | null
+  }>({ id: null, label: '', status: 'unknown', pct: null, error: null })
 
   useEffect(() => {
     if (!window.api?.jarvis) return
@@ -128,6 +136,51 @@ export function PersonaPane(): ReactElement | null {
       setCfg(next)
     })
   }, [])
+
+  // J5 D3: wake-word model install state + download progress (voice:kws:models catalog).
+  useEffect(() => {
+    const wake = window.api?.voice?.wake
+    if (!wake || window.api.voice.supported === false) return
+    let cancelled = false
+    void wake.models
+      .list()
+      .then((l) => {
+        if (cancelled || !l[0]) return
+        setKws((k) => ({ ...k, id: l[0].id, label: l[0].label, status: l[0].status }))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  useEffect(() => {
+    const wake = window.api?.voice?.wake
+    if (!wake || window.api.voice.supported === false) return
+    return wake.models.onDownloadProgress((p) => {
+      setKws((k) =>
+        k.id === p.id
+          ? { ...k, pct: Math.min(100, Math.round((p.receivedBytes / p.totalBytes) * 100)) }
+          : k
+      )
+    })
+  }, [])
+
+  const downloadKws = async (): Promise<void> => {
+    const wake = window.api?.voice?.wake
+    if (!wake || !kws.id) return
+    setKws((k) => ({ ...k, pct: 0, error: null }))
+    try {
+      const r = await wake.models.download(kws.id)
+      setKws((k) => ({
+        ...k,
+        pct: null,
+        status: r.ok ? 'ready' : k.status,
+        error: r.ok ? null : (r.error ?? 'download failed')
+      }))
+    } catch {
+      setKws((k) => ({ ...k, pct: null, error: 'download failed' }))
+    }
+  }
 
   if (!window.api?.jarvis || !cfg) return null
 
@@ -342,6 +395,56 @@ export function PersonaPane(): ReactElement | null {
           what {cfg.name} speaks from agent events (arrives with the Hands update)
         </span>
       </label>
+
+      {window.api?.voice?.wake && window.api.voice.supported !== false && (
+        <>
+          <div style={pane.setrow}>
+            <div style={{ flex: 1 }}>
+              <div style={pane.rowTitle}>Wake word — “Hey Jarvis”</div>
+              <div style={pane.rowSub}>
+                Listens locally for the wake phrase while the panel is closed; hearing it only OPENS
+                the panel. No transcription, nothing leaves this machine.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={cfg.wakeWordEnabled}
+              aria-label="Enable the wake word"
+              data-test="persona-wake-toggle"
+              onClick={() => patch({ wakeWordEnabled: !cfg.wakeWordEnabled })}
+              style={{
+                ...pane.toggle,
+                background: cfg.wakeWordEnabled ? 'var(--accent)' : 'var(--surface-overlay)',
+                cursor: 'pointer'
+              }}
+            >
+              <span style={{ ...pane.toggleKnob, left: cfg.wakeWordEnabled ? 17 : 2 }} />
+            </button>
+          </div>
+          {cfg.wakeWordEnabled && kws.status !== 'ready' && (
+            <div style={pane.row} data-test="persona-wake-model">
+              <span style={pane.hint}>
+                {kws.pct !== null
+                  ? `downloading the listener model… ${kws.pct}%`
+                  : `needs the ${kws.label || 'wake-word'} model (~17 MB, one time)`}
+              </span>
+              <div style={{ flex: 1 }} />
+              <button
+                className="ca-btn-ghost"
+                disabled={kws.pct !== null || !kws.id}
+                onClick={() => void downloadKws()}
+              >
+                Download
+              </button>
+            </div>
+          )}
+          {kws.error && (
+            <div role="alert" style={pane.error}>
+              {kws.error}
+            </div>
+          )}
+        </>
+      )}
 
       <div style={pane.divider} />
       <div style={pane.head}>Brain</div>

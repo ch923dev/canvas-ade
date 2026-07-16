@@ -18,6 +18,7 @@ export interface JarvisConfigView {
   announcePolicy: 'all' | 'attention' | 'chips-only'
   model: string
   historyMode: 'project' | 'session' | 'off'
+  wakeWordEnabled: boolean
 }
 
 export interface JarvisStatusView {
