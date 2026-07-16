@@ -180,3 +180,86 @@ describe('jarvisIpc J4 turn loop', () => {
     }
   })
 })
+
+describe('MAX_TOOL_HOPS runaway cap', () => {
+  it('a model that returns tool_use on EVERY hop terminates after exactly 4 tool rounds', async () => {
+    // Real stream path (no mock): every request answers one auto-allow tool call +
+    // stop_reason 'tool_use' — an infinite loop if the cap regresses. 4 rounds execute,
+    // the 5th request's calls are NOT executed (the cap breaks first), the turn settles.
+    const frame = (j: object): string => `data: ${JSON.stringify(j)}\n\n`
+    let requests = 0
+    const payload = [
+      frame({
+        type: 'content_block_start',
+        content_block: { type: 'tool_use', id: 'tu', name: 'tidy_canvas', input: {} }
+      }),
+      frame({ type: 'content_block_stop' }),
+      frame({ type: 'message_delta', delta: { stop_reason: 'tool_use' } }),
+      frame({ type: 'message_stop' })
+    ].join('')
+    const facet = makeFacet()
+    const handlers: Record<string, Handler> = {}
+    const ipcMain = {
+      handle: (channel: string, fn: Handler): void => {
+        handlers[channel] = fn
+      }
+    } as unknown as IpcMain
+    const sent: Array<{ channel: string; payload: unknown }> = []
+    const mainFrame = { id: 'main' }
+    const win = {
+      isDestroyed: () => false,
+      webContents: {
+        isDestroyed: () => false,
+        mainFrame,
+        send: (channel: string, payload: unknown) => sent.push({ channel, payload })
+      }
+    } as unknown as BrowserWindow
+    const dir = mkdtempSync(join(tmpdir(), 'jarvisipc-hops-'))
+    try {
+      registerJarvisHandlers(ipcMain, () => win, {
+        getUserData: () => dir,
+        getProjectKey: () => 'M:/proj',
+        getFacet: async () => facet,
+        stream: {
+          fetch: async () => {
+            requests++
+            return {
+              ok: true,
+              status: 200,
+              body: (async function* (): AsyncIterable<Uint8Array> {
+                yield new TextEncoder().encode(payload)
+              })()
+            }
+          },
+          env: { ANTHROPIC_API_KEY: 'sk-test' } // real path, no CANVAS_LLM_MOCK
+        }
+      })
+      const ownEvent = { senderFrame: mainFrame } as unknown as IpcMainInvokeEvent
+      const r = handlers['jarvis:turn:start'](ownEvent, { text: 'tidy everything forever' }) as {
+        ok: boolean
+        id: number
+      }
+      expect(r.ok).toBe(true)
+      for (let i = 0; i < 400; i++) {
+        const done = sent
+          .filter((s) => s.channel === 'jarvis:turn:event')
+          .map((s) => s.payload as JarvisTurnEvent)
+          .some((ev) => ev.id === r.id && (ev.kind === 'done' || ev.kind === 'error'))
+        if (done) break
+        await new Promise((res) => setTimeout(res, 5))
+      }
+      // Exactly 4 executed tool rounds (the cap), 5 paid requests (1 + one per round),
+      // and a settled turn — never a runaway.
+      expect(facet.tidyCanvas).toHaveBeenCalledTimes(4)
+      expect(requests).toBe(5)
+      const evs = sent
+        .filter((s) => s.channel === 'jarvis:turn:event')
+        .map((s) => s.payload as JarvisTurnEvent)
+        .filter((ev) => ev.id === r.id)
+      expect(evs.some((ev) => ev.kind === 'done')).toBe(true)
+      expect(evs.filter((ev) => ev.kind === 'act' && ev.phase === 'ok').length).toBe(4)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
