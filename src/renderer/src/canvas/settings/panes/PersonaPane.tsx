@@ -372,6 +372,7 @@ export function PersonaPane(): ReactElement | null {
             value={cfg.historyMode}
             testId="persona-history"
             options={[
+              { id: 'project', label: 'Per project' },
               { id: 'session', label: 'Session only' },
               { id: 'off', label: 'Off' }
             ]}
@@ -385,7 +386,8 @@ export function PersonaPane(): ReactElement | null {
           </button>
         </span>
         <span style={pane.hint}>
-          per-project persistence (.canvas/memory/jarvis) arrives in a later update
+          per project persists under the project&apos;s .canvas/memory/jarvis (asked once per
+          project, git-ignored); Clear wipes the open project&apos;s history
         </span>
       </label>
 

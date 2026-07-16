@@ -59,9 +59,13 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
         voiceSid: -2,
         announcePolicy: 'loud',
         model: '',
-        historyMode: 'project' // J5 value — repairs to 'session' until the union widens
+        historyMode: 'nowhere' // not in the union → default
       })
     ).toEqual(jarvisDefaults())
+  })
+
+  it("historyMode 'project' is a first-class value (D4′ J5) and survives repair", () => {
+    expect(repairJarvisConfig({ historyMode: 'project' }).historyMode).toBe('project')
   })
 
   it('clamps speakingRate into [0.5, 2] and trims/caps the name', () => {

@@ -17,7 +17,7 @@ export interface JarvisConfigView {
   voiceSid?: number
   announcePolicy: 'all' | 'attention' | 'chips-only'
   model: string
-  historyMode: 'session' | 'off'
+  historyMode: 'project' | 'session' | 'off'
 }
 
 export interface JarvisStatusView {

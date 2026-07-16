@@ -59,6 +59,19 @@ describe('jarvisPersona (J3 prompt composition)', () => {
     expect(composeSystem(cfg(), '  ')).toHaveLength(1)
   })
 
+  it('system: a rolling history summary rides between persona and manifest (D4′)', () => {
+    const system = composeSystem(cfg(), 'Boards (1):', false, 'User: earlier ask')
+    expect(system).toHaveLength(3)
+    expect(system[0].cache_control).toEqual({ type: 'ephemeral' }) // prefix unchanged
+    expect(system[1].text).toContain('Earlier conversation')
+    expect(system[1].text).toContain('User: earlier ask')
+    expect(system[1].cache_control).toBeUndefined()
+    expect(system[2].text).toContain('Workspace:')
+    // Empty/blank summary adds nothing.
+    expect(composeSystem(cfg(), null, false, '')).toHaveLength(1)
+    expect(composeSystem(cfg(), null, false, '  ')).toHaveLength(1)
+  })
+
   it('messages: history window + the new user turn, oldest first', () => {
     const history: JarvisTurn[] = [
       { role: 'user', text: 'one' },
