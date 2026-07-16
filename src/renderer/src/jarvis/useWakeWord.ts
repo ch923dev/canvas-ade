@@ -106,11 +106,19 @@ export function useWakeWord(): void {
     let wakeEnabled = false
     /** A kws engine failure disarms until the next config change (no crash loops). */
     let broken = false
+    /**
+     * Generation stamp for the async start() continuation — the MIC-1-class guard
+     * (jarvisSession's armGeneration, applied to this seam): a stale start's settle
+     * must never clobber `listening` for a NEWER start, or a later disable would
+     * early-return out of reconcile() and leave that newer capture live (hot mic).
+     */
+    let startGen = 0
 
     const shouldListen = (): boolean =>
       alive && jarvisEnabled && wakeEnabled && !broken && !useJarvisStore.getState().panelOpen
 
     const stop = (): void => {
+      startGen++ // invalidate any in-flight start() continuation
       listening = false
       capture?.dispose()
       capture = null
@@ -124,15 +132,16 @@ export function useWakeWord(): void {
         return
       }
       listening = true
+      const gen = ++startGen
       void window.api.voice.wake
         .start()
         .then((r) => {
           // Model absent (Settings row drives the download) or refused: stand down —
           // a later config/panel change re-attempts through this reconcile.
-          if (!r.ok && listening) listening = false
+          if (!r.ok && gen === startGen && listening) listening = false
         })
         .catch(() => {
-          listening = false
+          if (gen === startGen) listening = false
         })
     }
 

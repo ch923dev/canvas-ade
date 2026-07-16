@@ -212,6 +212,29 @@ describe('executeJarvisTool', () => {
     })
   })
 
+  it('spawn_board refuses kanban BEFORE the confirm gate (visualize_plan owns that path)', async () => {
+    const facet = makeFacet()
+    const confirm = vi.fn(approve)
+    const r = await executeJarvisTool(
+      'spawn_board',
+      { type: 'kanban', title: 'bug tracker' },
+      { facet, confirm }
+    )
+    expect(r.isError).toBe(true)
+    expect(r.content).toContain('visualize_plan')
+    // The human is never asked to approve a structurally impossible spawn.
+    expect(confirm).not.toHaveBeenCalled()
+    expect(facet.spawnBoard).not.toHaveBeenCalled()
+  })
+
+  it('spawn_board no longer advertises kanban (schema mirrors the SPAWNABLE allowlist)', () => {
+    const def = buildJarvisToolDefs().find((t) => t.name === 'spawn_board')
+    expect(def).toBeDefined()
+    const props = def!.input_schema.properties as Record<string, { enum?: string[] }>
+    expect(props.type.enum).toEqual(['terminal', 'browser', 'planning'])
+    expect(def!.description).toContain('visualize_plan')
+  })
+
   it('relay_prompt requires a TERMINAL target and reports delivery', async () => {
     const facet = makeFacet()
     const r = await executeJarvisTool(

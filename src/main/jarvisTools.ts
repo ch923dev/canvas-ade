@@ -132,11 +132,11 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
     {
       name: 'spawn_board',
       description:
-        'Create a new board. type: terminal | browser | planning | kanban. For a terminal, launch_command (e.g. "claude") becomes its first shell line and cwd its directory; url is browser-only. Requires user confirmation.',
+        'Create a new board. type: terminal | browser | planning (kanban boards are created via visualize_plan). For a terminal, launch_command (e.g. "claude") becomes its first shell line and cwd its directory; url is browser-only. Requires user confirmation.',
       input_schema: {
         type: 'object',
         properties: {
-          type: { type: 'string', enum: ['terminal', 'browser', 'planning', 'kanban'] },
+          type: { type: 'string', enum: ['terminal', 'browser', 'planning'] },
           title: { type: 'string', maxLength: MAX_TITLE },
           launch_command: { type: 'string', maxLength: 400 },
           cwd: { type: 'string', maxLength: 400 },
@@ -431,7 +431,14 @@ export async function executeJarvisTool(
       }
       case 'spawn_board': {
         const type = reqStr(input, 'type', 20)
-        if (!['terminal', 'browser', 'planning', 'kanban'].includes(type)) {
+        if (type === 'kanban') {
+          // The spawn seam (mcpLifecycle SPAWNABLE) cannot create kanban boards — that
+          // path is visualize_plan's, where the user picks the final shape. Refuse
+          // BEFORE the confirm gate: never ask the human to approve an action that is
+          // structurally impossible to perform.
+          return fail(name, 'kanban boards are created via visualize_plan, not spawn_board')
+        }
+        if (!['terminal', 'browser', 'planning'].includes(type)) {
           return fail(name, `unsupported board type "${clip(type, 20)}"`)
         }
         const title = optStr(input, 'title', MAX_TITLE)
