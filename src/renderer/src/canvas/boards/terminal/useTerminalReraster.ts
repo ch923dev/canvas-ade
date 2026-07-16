@@ -15,9 +15,10 @@
  *     Effective render font = pinned × counterScale. In-canvas counterScale is 1, so the render
  *     font is just the pin (constant across zoom — the DOM renderer handles crispness). In FULL
  *     VIEW counterScale is the modal-FILL factor (fullViewScale, Pure A1 #235): the board is
- *     portaled OUTSIDE React Flow with no camera, so the frozen grid is enlarged by the render
- *     font ALONE (pinned × fullViewScale) — no col refit ⇒ no scrollback reflow. A PIN change
- *     reflows the grid (fitWhole → PTY resize); a full-view enter/exit changes only the font.
+ *     portaled OUTSIDE React Flow with no camera, so the grid is enlarged by the render font
+ *     (pinned × fullViewScale) and — since S3 — REFIT to the modal at that font through the
+ *     lossless S2 backstop (a cols change no longer corrupts scrollback; spare width becomes
+ *     columns). A PIN change refits immediately; a counterScale change refits one frame later.
  *     useLayoutEffect so the font lands in the same paint as the host style.
  *     Plus the NO-CLIP correction (full-view safety net): xterm cell dims quantize to whole px,
  *     so the frozen grid at pinned × fullViewScale can land one cell-step wider/taller than the
@@ -79,6 +80,9 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
   }, [isFullView, termRef])
 
   const prevPinRef = useRef<number>(clampTerminalFont(pinnedFontSize ?? bornFont))
+  // S3 unfreeze: the previous counterScale, so a cs change (full-view enter/exit, the live
+  // mid-full-view fullscreen rescale) can trigger its own DEFERRED refit — see below.
+  const prevCsRef = useRef(1)
   // Monotonic token: each seam run supersedes any older no-clip correction loop, so a
   // stale rAF chain from a previous settle can never fight the current one.
   const correctTokenRef = useRef(0)
@@ -97,8 +101,18 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
     if (term.options.fontSize !== effective) term.options.fontSize = effective
     // A bigger PIN means taller cells -> the row count must drop; whole-cell fit keeps it
     // clip-free. (Unfitted well: fitWhole swallows the not-laid-out throw; next RO fit
-    // applies.) Zoom-driven effective changes skip this — FREEZE.
+    // applies.)
     if (pinChanged) fitWhole()
+    // S3 unfreeze: a counterScale change (full-view enter/exit, live fullscreen rescale) also
+    // refits — the grid is no longer frozen; fitWhole routes the cols change through the
+    // lossless S2 backstop. Deferred ONE FRAME (unlike the pin path): xterm re-measures cell
+    // metrics off the options.fontSize write asynchronously, so an immediate propose would use
+    // the OLD cell size. The portal resize's own RO fit may still land first with stale
+    // metrics — the backstop's in-flight gate coalesces the two into sequential fits that
+    // converge on the final grid.
+    const csChanged = prevCsRef.current !== counterScale
+    prevCsRef.current = counterScale
+    const refitRaf = csChanged && !pinChanged ? requestAnimationFrame(() => fitWhole()) : 0
 
     // No-clip correction. xterm quantizes cell dims to WHOLE px (letterSpacing and
     // lineHeight quantize too — measured, see the research doc §quantization), so the
@@ -138,6 +152,9 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
       // cleanup time (a captured copy would defeat the rAF callbacks' supersede check).
       // eslint-disable-next-line react-hooks/exhaustive-deps
       correctTokenRef.current++
+      // A superseded cs-refit must not fire under the NEXT seam run's just-written font
+      // (the re-run schedules its own; fitWhole itself stays idempotent either way).
+      if (refitRaf) cancelAnimationFrame(refitRaf)
     }
     // termRef/fitWhole/liveFontRef are stable (refs + a []-useCallback from useTerminalSpawn);
     // listed because exhaustive-deps no longer treats destructured hook refs as stable (#98).
@@ -146,10 +163,10 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
   return useMemo<CSSProperties>(
     () =>
       // Identity in BOTH live cases: in-canvas cs === 1 (the DOM renderer rides the camera, no
-      // counter-scale), and full view (the scale-up is the bigger render font ALONE, no camera —
-      // an in-canvas `scale(1/cs)` would shrink the grid; xterm paints the frozen grid at the big
-      // font top-left, the rest is same-bg gutter that reads as letterbox). The `scale(1/cs)`
-      // branch below is retained as defense but unreachable today.
+      // counter-scale), and full view (the scale-up is the bigger render font — no camera; an
+      // in-canvas `scale(1/cs)` would shrink the grid — and the S3 backstop refit fills the
+      // modal with real columns/rows at that font). The `scale(1/cs)` branch below is retained
+      // as defense but unreachable today.
       isFullView || counterScale === 1
         ? identityStyle
         : {

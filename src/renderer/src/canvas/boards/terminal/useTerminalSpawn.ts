@@ -132,21 +132,19 @@ export function conptyHint(
 }
 
 /**
- * Pure A1 full-view scale (terminal-scrollback fix, docs/research/2026-06-23-terminal-scrollback-reflow).
- * Full view portals the board OUTSIDE React Flow at native scale (no camera). Letting `fitWhole`
- * re-propose columns from the bigger modal would change `term.cols`, which drives xterm's lossy
- * scrollback reflow (the truncation/duplication bug). Instead we keep the FROZEN in-canvas grid and
- * scale it up VISUALLY: counterScale becomes the factor that fits the existing grid into the modal,
- * the font seam renders at pinned × cs (natively crisp, no bitmap upscale), and `fitWhole` is frozen
- * in full view. We divide the modal by the OUTER board box (board.w/board.h) — deliberately an
- * over-estimate of the grid's content box (it includes the fixed title bar + 12px well padding),
- * which makes the scale-up CONSERVATIVE: the scaled grid always under-fills slightly and never
- * clips (the unscaled chrome only widens the gutter). We letterbox (min of the width/height fits)
- * for the same reason. The no-clip rAF loop in useTerminalReraster is the sub-cell safety net for
- * any residual overflow. Caveat: counterScale is read from window dims at render time and nothing
- * re-renders this hook on a bare window resize, so resizing the OS window WHILE a terminal is
- * maximized leaves the factor stale until the next render/exit — an accepted minor gap (the
- * common toggle flow is fully correct; window-resize-while-maximized is rare).
+ * Full-view font scale (Pure A1, docs/research/2026-06-23-terminal-scrollback-reflow; grid
+ * unfrozen in S3). Full view portals the board OUTSIDE React Flow at native scale (no camera).
+ * counterScale is the factor that fits the IN-CANVAS grid into the modal — the font seam renders
+ * at pinned × cs (natively crisp, no bitmap upscale), so full view reads bigger. Since S3 the
+ * grid is no longer frozen at that size: `fitWhole` refits cols/rows to the modal at the scaled
+ * font THROUGH the lossless S2 backstop, so the axis this min-fit letterboxes is filled with real
+ * columns/rows instead of dead space (cs keeps only its font-magnification role). We divide the
+ * modal by the OUTER board box (board.w/board.h) — deliberately an over-estimate of the grid's
+ * content box (it includes the fixed title bar + 12px well padding), which keeps the scale-up
+ * CONSERVATIVE (never clips; min of the width/height fits for the same reason). The no-clip rAF
+ * loop in useTerminalReraster is the sub-cell safety net for any residual overflow. Window dims
+ * are tracked LIVE while full view is open (fvWinSize state in useTerminalSpawn — the stale-scale
+ * fix): an OS fullscreen/maximize toggle mid-full-view recomputes the factor.
  */
 export function fullViewScale(
   boardW: number,
@@ -280,9 +278,10 @@ export interface TerminalSpawnApi {
   fitWhole: () => void
   restart: () => void
   /**
-   * FULL-VIEW font scale-up factor (Pure A1 #235): in full view the board is portaled
-   * OUTSIDE React Flow (no camera), so the frozen grid is enlarged by the render font
-   * alone (pinned × counterScale = fullViewScale) — no col refit, no scrollback reflow.
+   * FULL-VIEW font scale-up factor (Pure A1 #235; S3 unfroze the grid): in full view the
+   * board is portaled OUTSIDE React Flow (no camera); the render font is enlarged
+   * (pinned × counterScale = fullViewScale) and the grid then refits to the modal at that
+   * font through the lossless S2 backstop (no reflow corruption; spare width → columns).
    * In-canvas it is 1: the DOM renderer re-rasters crisp at the live camera scale, so no
    * counter-scale wrapper is needed (the host rides the camera transform directly).
    */
@@ -361,11 +360,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   useEffect(() => {
     if (findOpen) findApi.flushPending()
   }, [findOpen, findApi])
-  // True once the grid has had a real IN-CANVAS fit, i.e. it carries an established column
-  // count. The full-view freeze applies ONLY to an established grid: a FRESH mount that happens
-  // while maximized (e.g. reconfigure-while-full-view respawns the term) must still take its
-  // initial fit — a fresh term has no scrollback to corrupt, and skipping its fit would spawn a
-  // wrong-width PTY (#regression). Reset on each new term in the spawn closure.
+  // True once the grid has had a real fit, i.e. it carries an established column count with
+  // scrollback worth protecting: an established grid's cols change routes through the lossless
+  // S2 backstop, while a FRESH mount takes the plain initial fit (nothing to corrupt, and
+  // skipping it would spawn a wrong-width PTY — #regression). Since S3 a full-view fit also
+  // establishes (the exit refit must ride the backstop too). Reset per new term in spawn().
   const establishedRef = useRef(false)
   // Switch-back replay fix: true once THIS term's grid reflects a real layout (a fit whose
   // proposeDimensions was finite). Until then the term sits at the constructor-default 80×24,
@@ -481,28 +480,51 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // effect / respawn the PTY.
   const isFullView = useContext(BoardFullViewContext)
   const fullViewRef = useRef(isFullView)
-  // useLayoutEffect (not useEffect): `fitWhole` reads fullViewRef to FREEZE the grid in full view,
-  // and the portal relocation that flips full view also resizes the well → fires the spawn effect's
-  // ResizeObserver. A passive effect could land AFTER that RO callback, so fitWhole would see a
-  // stale `false`, refit, change cols, and reflow (the bug) for one frame. A layout effect commits
-  // the ref synchronously (children before parents) before the post-layout RO delivery — no race.
+  // Layout effect (kept from the freeze era): the only remaining reader is `getZoom` (the
+  // selection shim's camera correction), but committing the ref synchronously — before the
+  // portal relocation's post-layout RO delivery — is still the tightest ordering and costs
+  // nothing. (S3 removed the fitWhole/RO freeze reads; the grid now refits via the backstop.)
   useLayoutEffect(() => {
     fullViewRef.current = isFullView
   }, [isFullView])
 
-  // ── Full-view font scale-up (Pure A1 #235) ───────────────────────────────────
+  // ── Full-view font scale-up (Pure A1 #235; grid unfrozen in S3) ───────────────
   // The live terminal runs on xterm's DOM renderer, which Chromium re-rasters crisp at the
   // live camera scale — so IN-CANVAS there is NO counter-scale: counterScale is 1 and the
   // host rides the camera `scale(z)` transform directly (like the whiteboard). counterScale
   // is != 1 ONLY in full view, where the board is portaled OUTSIDE React Flow (no camera):
-  // the frozen grid is enlarged by the render font alone (pinned × fullViewScale), so
-  // cols/rows never change => no reflow => no scrollback truncation/duplication on the
-  // toggle. cols/rows are likewise FROZEN across in-canvas zoom (a camera zoom is a CSS
-  // transform on an ancestor and never resizes the host's border box; see the ResizeObserver
-  // gate below), so the PTY/TUI never reflows on zoom.
-  const counterScale = isFullView
-    ? fullViewScale(board.w, board.h, window.innerWidth, window.innerHeight)
-    : 1
+  // the render font is enlarged (pinned × fullViewScale) so full view reads BIGGER, and —
+  // since S3 — the grid then REFITS to the modal at that font through the lossless S2
+  // backstop, so the min-fit letterbox's spare axis becomes real columns/rows instead of
+  // dead space. cols/rows stay FROZEN across in-canvas zoom (a camera zoom is a CSS
+  // transform on an ancestor and never resizes the host's border box), so the PTY/TUI
+  // never reflows on zoom.
+  //
+  // LIVE window size while in full view (stale-scale fix): fullViewScale used to read
+  // window.innerWidth/Height once at render, so toggling OS fullscreen / maximize WHILE in
+  // full view left the factor stale (the shipped-A1 "accepted minor gap" — measured real:
+  // the modal grows but the grid keeps its old scale, reading as dead space). Track the
+  // window size in state while full view is open: a resize re-renders → counterScale
+  // recomputes → the useTerminalReraster font seam re-applies pinned × scale → the
+  // row-fill hook (keyed on the scale) re-fills the modal height. Cols still never change.
+  const [fvWinSize, setFvWinSize] = useState(() => ({
+    w: window.innerWidth,
+    h: window.innerHeight
+  }))
+  useEffect(() => {
+    if (!isFullView) return undefined
+    const update = (): void => {
+      setFvWinSize((s) =>
+        s.w === window.innerWidth && s.h === window.innerHeight
+          ? s
+          : { w: window.innerWidth, h: window.innerHeight }
+      )
+    }
+    update() // enter: catch a resize that happened while in-canvas (state would be stale)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [isFullView])
+  const counterScale = isFullView ? fullViewScale(board.w, board.h, fvWinSize.w, fvWinSize.h) : 1
   // Ref mirror for the spawn closure (initial font) — NEVER a spawn dep, so a full-view
   // toggle cannot respawn the PTY (mirrors fontSizeRef).
   const counterScaleRef = useRef(counterScale)
@@ -548,15 +570,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const fit = fitRef.current
     const term = termRef.current
     if (!fit || !term) return
-    // Pure A1 (terminal-scrollback fix): never refit an ESTABLISHED grid in full view. The portal to
-    // the bigger modal would otherwise re-propose a different column count → term.resize(cols≠current)
-    // → xterm's lossy scrollback reflow (truncation + duplication). Full view scales the FROZEN grid
-    // via counterScale (fullViewScale → font = pinned × cs) instead, so cols/rows stay exactly as
-    // in-canvas across the enter+exit round-trip (zero buffer mutation). A FRESH mount that happens
-    // while maximized (establishedRef still false — e.g. a reconfigure-while-full-view respawn) is the
-    // exception: it has no scrollback to corrupt and DOES need an initial fit, so we don't freeze it.
-    // Read off the refs (fullViewRef is kept current by a layout effect).
-    if (fullViewRef.current && establishedRef.current) return
+    // Full-view UNFREEZE (S3, terminal-display fix): Pure A1 used to freeze an ESTABLISHED grid
+    // here — a cols-changing refit rode xterm's lossy reflow (truncation/duplication), so full
+    // view scaled the font only and LETTERBOXED the non-binding axis (the "dead space at the
+    // right" complaint). The S2 backstop (below) has since made a cols change LOSSLESS
+    // (snapshot → resize → reset → re-write), so full view now refits THROUGH it: the portal's
+    // well resize proposes the modal grid at the scaled font (pinned × counterScale) and the
+    // spare width becomes real columns; the exit resize refits back to the board grid the same
+    // way. The PTY gets its SIGWINCH both ways, so a TUI agent reflows to the wide grid.
     // Phase 5 · S2 — lossless drag-resize. An ESTABLISHED grid whose COLS change (a real board
     // drag-resize — the last live reflow path now that zoom rides counterScale and full view is
     // frozen) would hit xterm's lossy buffer reflow (#5319). Snapshot → resize → reset → re-write so
@@ -630,10 +651,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       overflow -= cellH // each shed lifts the (top-aligned) grid bottom by one cell
     }
     if (rows !== term.rows) term.resize(term.cols, rows) // single PTY resize
-    // Mark the grid established ONLY on an in-canvas fit (the freeze base is an in-canvas column
-    // count). A fresh mount fitting to the modal while full view is active (the establishedRef-false
-    // exception above) must NOT set this, or its later exit fit would be wrongly frozen.
-    if (!fullViewRef.current) establishedRef.current = true
+    // Any real fit establishes the grid (S3): with the full-view freeze gone, a session born in
+    // full view must ALSO establish, so its exit refit rides the lossless backstop instead of a
+    // plain reflow. (Pre-S3 this was in-canvas-only — the freeze keyed off an in-canvas base.)
+    establishedRef.current = true
   }, [screenRef])
 
   // Route the in-spawn fit calls through a ref so `spawn`'s dependency array stays byte-identical
@@ -1137,16 +1158,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // key unchanged and is skipped wholesale.
     let lastWrapKey: string | null = null
     const ro = new ResizeObserver(() => {
-      // Pure A1 full-view freeze (terminal-scrollback fix): for an ESTABLISHED grid, ignore the
-      // full-view portal's resize ENTIRELY and do NOT advance lastWrapKey. The well grows to the
-      // modal on enter and shrinks back to the SAME board size on exit, so leaving lastWrapKey at
-      // the pre-full-view (board) key makes the symmetric EXIT fire compare equal and skip too. Net:
-      // the grid keeps its exact in-canvas cols/rows across the whole round-trip — no enter refit and,
-      // crucially, no EXIT refit (an exit refit would race the font transition back to pinned, change
-      // rows, and term.resize → the PTY gets a SIGWINCH → the shell redraws over the bottom rows,
-      // wiping recent output). The font scales via counterScale instead. A FRESH mount in full view
-      // (establishedRef false) still needs its initial fit, so it falls through.
-      if (fullViewRef.current && establishedRef.current) return
+      // Full-view portal resizes are NO LONGER frozen out here (S3 unfreeze): the well growing to
+      // the modal on enter / shrinking back on exit is exactly the refit signal, and fitWhole
+      // routes an established grid's cols change through the lossless S2 backstop. The enter fire
+      // may land before the font seam has applied the full-view render font — that first fit
+      // proposes at the old metrics, and the seam's own post-apply fitWhole converges the grid one
+      // backstop later (the in-flight gate coalesces overlapping fits, so they run sequentially).
       // A detached `el` (no parent) yields no key: fall through to the (cheap, guarded)
       // refit rather than skip — a null key must never satisfy the gate, or two fires
       // while detached would compare null === null and silently drop a real refit.
