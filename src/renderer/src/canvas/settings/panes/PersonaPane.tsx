@@ -181,9 +181,14 @@ export function PersonaPane(): ReactElement | null {
       // while the model was absent has nothing to re-arm it once the download lands
       // (found live in the J5 dev check: enable → download → never wakes). Re-assert
       // the flag; the no-op patch round-trips MAIN's jarvis:config:changed push, which
-      // useWakeWord treats as the re-arm gesture.
-      if (r.ok && cfg?.wakeWordEnabled) {
-        void window.api.jarvis.config.set({ wakeWordEnabled: true }).catch(() => {})
+      // useWakeWord treats as the re-arm gesture. MAIN's config is read FRESH here —
+      // this closure's `cfg` is stale by a 17 MB download, and a user who toggled the
+      // feature OFF mid-download must not have it silently re-enabled (review).
+      if (r.ok) {
+        const fresh = await window.api.jarvis.config.get().catch(() => null)
+        if (fresh?.wakeWordEnabled) {
+          void window.api.jarvis.config.set({ wakeWordEnabled: true }).catch(() => {})
+        }
       }
     } catch {
       setKws((k) => ({ ...k, pct: null, error: 'download failed' }))

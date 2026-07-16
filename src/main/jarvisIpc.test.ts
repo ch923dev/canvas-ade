@@ -367,3 +367,40 @@ describe('jarvisIpc D4′ project-mode persistence', () => {
     rmSync(project, { recursive: true, force: true })
   })
 })
+
+describe('jarvisIpc D4′ consent re-ask (review: a decline must not be permanent)', () => {
+  it("re-choosing 'Per project' in Settings drops a stored decline and re-asks", async () => {
+    const project = mkdtempSync(join(tmpdir(), 'jarvisproj-'))
+    const confirm = vi.fn(async () => ({ approved: false }))
+    const hp = makeHarness({ getProjectKey: () => project, confirm })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+
+    const r1 = hp.invoke('jarvis:turn:start', { text: 'first ask' }) as { id: number }
+    await waitForDone(hp, r1.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistoryConsent(hp.dir, project)).toBe('declined')
+    })
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    // Staying in project mode never re-asks…
+    const r2 = hp.invoke('jarvis:turn:start', { text: 'no re-ask' }) as { id: number }
+    await waitForDone(hp, r2.id)
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    // …but the explicit re-choose gesture (off → back to 'project') clears the decline.
+    hp.invoke('jarvis:config:set', { historyMode: 'session' })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+    expect(readJarvisHistoryConsent(hp.dir, project)).toBeUndefined()
+
+    confirm.mockImplementation(async () => ({ approved: true }))
+    const r3 = hp.invoke('jarvis:turn:start', { text: 'asked again' }) as { id: number }
+    await waitForDone(hp, r3.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistoryConsent(hp.dir, project)).toBe('enabled')
+      expect(existsSync(jarvisHistoryFileFor(project))).toBe(true)
+    })
+    expect(confirm).toHaveBeenCalledTimes(2)
+    rmSync(hp.dir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+})

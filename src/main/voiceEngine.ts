@@ -127,6 +127,9 @@ export function createVoiceEngine(
         settleKwsStop(0)
         c.kill()
         failCb?.(msg.error ?? 'voice decoder failed')
+        // A dead host takes any live KWS wake session with it (review: the wake
+        // listener would otherwise keep a dead capture with no re-arm signal).
+        kwsFailCb?.(msg.error ?? 'voice decoder failed')
       }
     })
     c.on('exit', () => {
@@ -138,6 +141,7 @@ export function createVoiceEngine(
       settleStop(0)
       settleKwsStop(0)
       failCb?.('voice engine host exited unexpectedly')
+      kwsFailCb?.('voice engine host exited unexpectedly')
     })
     child = c
     return c

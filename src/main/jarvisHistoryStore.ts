@@ -171,6 +171,17 @@ export function readJarvisHistoryConsent(
   return readAllConsents(userDataDir)[canonicalizeProjectPath(projectPath)]
 }
 
+/** Drop a project's stored decision so the next persist RE-ASKS (the Settings
+ *  re-choose-'Per project' gesture — a decline must not be permanent). */
+export function deleteJarvisHistoryConsent(userDataDir: string, projectPath: string): void {
+  const all = readAllConsents(userDataDir)
+  const key = canonicalizeProjectPath(projectPath)
+  if (!(key in all)) return
+  delete all[key]
+  mkdirSync(userDataDir, { recursive: true })
+  writeFileAtomic.sync(consentFileFor(userDataDir), JSON.stringify(all, null, 2), 'utf8')
+}
+
 export function writeJarvisHistoryConsent(
   userDataDir: string,
   projectPath: string,

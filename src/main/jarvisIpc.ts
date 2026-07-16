@@ -49,6 +49,7 @@ import { runAsJarvisToolCall } from './jarvisToolContext'
 import {
   clearJarvisHistory,
   compressJarvisHistory,
+  deleteJarvisHistoryConsent,
   readJarvisHistory,
   readJarvisHistoryConsent,
   writeJarvisHistory,
@@ -246,7 +247,17 @@ export function registerJarvisHandlers(
   ipcMain.handle('jarvis:config:set', (e, patch: unknown): { ok: boolean } => {
     if (guard(e) || typeof patch !== 'object' || patch === null) return { ok: false }
     const userData = getUserData()
-    const next = repairJarvisConfig({ ...readJarvisConfig(userData), ...patch })
+    const prev = readJarvisConfig(userData)
+    const next = repairJarvisConfig({ ...prev, ...patch })
+    // A decline must not be permanent (review): explicitly RE-choosing 'Per project'
+    // in Settings drops a stored 'declined' for the open project, so the next persist
+    // asks again. A stored 'enabled' is untouched.
+    if (next.historyMode === 'project' && prev.historyMode !== 'project') {
+      const key = getProjectKey()
+      if (key && readJarvisHistoryConsent(userData, key) === 'declined') {
+        deleteJarvisHistoryConsent(userData, key)
+      }
+    }
     writeJarvisConfig(userData, next)
     getWin()?.webContents.send('jarvis:config:changed', next)
     return { ok: true }

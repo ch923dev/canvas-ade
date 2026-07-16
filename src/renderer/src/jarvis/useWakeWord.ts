@@ -95,8 +95,6 @@ function createWakeCapture(port: MessagePort, onWake: () => void): WakeCapture {
  * in the same breath.
  */
 export function useWakeWord(): void {
-  const panelOpen = useJarvisStore((s) => s.panelOpen)
-
   useEffect(() => {
     if (!window.api?.jarvis || !window.api?.voice || window.api.voice.supported === false) {
       return undefined
@@ -181,7 +179,16 @@ export function useWakeWord(): void {
       stop()
     })
 
-    // Panel transitions re-enter the effect via the subscribed selector below.
+    // Panel transitions reconcile through a plain store subscription — the effect mounts
+    // ONCE (review: a [panelOpen] dependency tore down and rebuilt everything, refetching
+    // config and resubscribing IPC on every open/close).
+    let prevOpen = useJarvisStore.getState().panelOpen
+    const offPanel = useJarvisStore.subscribe((state) => {
+      if (state.panelOpen === prevOpen) return
+      prevOpen = state.panelOpen
+      reconcile()
+    })
+
     reconcile()
 
     return () => {
@@ -189,8 +196,8 @@ export function useWakeWord(): void {
       window.removeEventListener('message', onWinMsg)
       offConfig()
       offWakeEvent()
+      offPanel()
       stop()
     }
-    // panelOpen drives re-mount of this effect — the reconcile above sees the new state.
-  }, [panelOpen])
+  }, [])
 }
