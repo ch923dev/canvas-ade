@@ -17,9 +17,13 @@ import {
   attachPortInput,
   parkProjectSessionsCore,
   disposeProjectPtysCore,
-  countProjectSessionsCore,
   persistBackgroundRingTailsCore
 } from './pty'
+import {
+  countProjectSessionsCore,
+  projectActivityAtCore,
+  projectSessionPidsCore
+} from './ptyProjectStats'
 import { isValidResize, clampSpawnDim } from './ptyResize'
 import {
   canonicalizeShellPath,
@@ -950,6 +954,34 @@ describe('countProjectSessionsCore (dialog + badge counts)', () => {
     expect(countProjectSessionsCore('A', sessions, parked)).toEqual({ running: 2 })
     expect(countProjectSessionsCore('B', sessions, parked)).toEqual({ running: 2 })
     expect(countProjectSessionsCore('C', sessions, parked)).toEqual({ running: 0 })
+  })
+})
+
+describe('projectActivityAtCore / projectSessionPidsCore (busy-aware eviction)', () => {
+  const sessions = new Map<string, any>([
+    ['l1', { state: 'running', projectDir: 'A', lastActivityAt: 500, proc: { pid: 11 } }],
+    ['l2', { state: 'exited', projectDir: 'A', lastActivityAt: 900, proc: { pid: 12 } }],
+    ['l3', { state: 'running', projectDir: 'B', lastActivityAt: 100, proc: { pid: 13 } }]
+  ])
+  const parked = new Map<string, any>([
+    ['p1', { kind: 'background', owningDir: 'A', lastActivityAt: 800, proc: { pid: 21 } }],
+    // Undo park (deleted board): its activity + pid never count toward a project's busy-ness.
+    ['p2', { kind: 'undo', owningDir: 'A', lastActivityAt: 9999, proc: { pid: 22 } }],
+    ['p3', { kind: 'background', owningDir: 'B', proc: { pid: 23 } }] // no activity recorded
+  ])
+
+  it('activity = max across live + background parks; undo parks and other dirs excluded', () => {
+    // A: live l2 (exited but still briefly in the map) wins at 900 over the parked 800 —
+    // an exited session's stamp is stale-but-harmless; the undo park's 9999 must NOT leak in.
+    expect(projectActivityAtCore('A', sessions, parked)).toBe(900)
+    expect(projectActivityAtCore('B', sessions, parked)).toBe(100) // parked p3 has none
+    expect(projectActivityAtCore('C', sessions, parked)).toBe(0) // never active
+  })
+
+  it('pids = live RUNNING roots + background-parked roots (undo parks excluded)', () => {
+    expect(projectSessionPidsCore('A', sessions, parked)).toEqual([11, 21]) // l2 exited → out
+    expect(projectSessionPidsCore('B', sessions, parked)).toEqual([13, 23])
+    expect(projectSessionPidsCore('C', sessions, parked)).toEqual([])
   })
 })
 

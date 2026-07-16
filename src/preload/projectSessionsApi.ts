@@ -1,4 +1,4 @@
-import { ipcRenderer } from 'electron'
+import { ipcRenderer, type IpcRendererEvent } from 'electron'
 
 /**
  * Background project sessions (Phase 2 + the Phase-4 keep-policy plane) — the `project.*`
@@ -24,6 +24,14 @@ export interface AskOnSwitchInfo {
   previews: number
 }
 
+/** MAIN's sweep push (busy-aware eviction): a background project got its idle warning, was
+ *  idle-closed, or was cap-evicted. The renderer toasts it (useNotifications). */
+export interface BgLifecycleEvent {
+  kind: 'warned' | 'closed' | 'evicted'
+  dir: string
+  name: string
+}
+
 export const projectSessionsApi = {
   /** ACTIVE project's switch policy + live counts (the ask-on-switch dialog decision). */
   askOnSwitchInfo: (): Promise<AskOnSwitchInfo | null> =>
@@ -36,9 +44,23 @@ export const projectSessionsApi = {
     ipcRenderer.invoke('project:forgetKeepPolicy', dir),
   /** Dirs with the persisted forever flag (∞ badges on switcher rows / dock cards). */
   keepForeverDirs: (): Promise<string[]> => ipcRenderer.invoke('project:keepForeverDirs'),
-  /** Background the ACTIVE project (dir resolved MAIN-side): park PTYs, freeze previews. */
-  background: (): Promise<{ ok: boolean; terminals: number; previews: number }> =>
-    ipcRenderer.invoke('project:background'),
+  /** Background the ACTIVE project (dir resolved MAIN-side): park PTYs, freeze previews.
+   *  `evicted`/`deferred` = the cap outcome (busy-aware): dirs auto-closed / residents held
+   *  above the cap because every candidate was working. */
+  background: (): Promise<{
+    ok: boolean
+    terminals: number
+    previews: number
+    evicted: string[]
+    deferred: number
+  }> => ipcRenderer.invoke('project:background'),
+  /** Subscribe to MAIN's background-lifecycle pushes (idle warning / idle close / cap evict).
+   *  Returns the unsubscribe fn (the closeGuardApi listener pattern). */
+  onBgLifecycle: (handler: (ev: BgLifecycleEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, ev: BgLifecycleEvent): void => handler(ev)
+    ipcRenderer.on('project:bgLifecycle', listener)
+    return () => ipcRenderer.removeListener('project:bgLifecycle', listener)
+  },
   listBackground: (): Promise<BackgroundProjectInfo[]> =>
     ipcRenderer.invoke('project:listBackground'),
   /** Kill a BACKGROUNDED project's resources (registry-validated in MAIN). */

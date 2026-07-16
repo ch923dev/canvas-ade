@@ -27,10 +27,14 @@ jobs:
       # SCA / supply-chain gate — HARD as of T9. The tree is clean at high+:
       # Electron 33→42 (off EOL), vitest 2→4 (cleared the dev-server CVE), and a
       # pnpm `overrides` pin of tar ≥7.5.8 (the electron-builder squirrel-windows
-      # sub-chain still dragged tar 6.2.1). A new HIGH/critical advisory now BLOCKS
-      # the PR. One moderate (PostCSS) remains, below the --audit-level=high threshold.
-      - name: pnpm audit (SCA)
-        run: pnpm audit --audit-level=high
+      # sub-chain still dragged tar 6.2.1). A new HIGH/critical advisory still BLOCKS
+      # the PR; findings below `high` print as non-blocking notes.
+      # 2026-07-16: npmjs RETIRED the classic audit endpoints (HTTP 410 — `pnpm audit`
+      # is broken on EVERY pnpm version, 9 and 10 alike). Same gate, new mechanism:
+      # scripts/sca-audit.mjs queries the replacement BULK advisory endpoint directly
+      # and fails at high+ exactly like `pnpm audit --audit-level=high` did.
+      - name: SCA audit (bulk advisory endpoint)
+        run: node scripts/sca-audit.mjs --audit-level=high
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check

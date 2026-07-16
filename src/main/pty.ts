@@ -33,6 +33,11 @@ import { attachPortInput, clampSpawnDim } from './ptyResize'
 import type { PtyLifecycleEmitter } from './ptyLifecycle'
 import * as ptyLC from './ptyLifecycleMonitor'
 import * as residue from './ptyExitResidue'
+import {
+  countProjectSessionsCore,
+  projectActivityAtCore,
+  projectSessionPidsCore
+} from './ptyProjectStats'
 
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
 // Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
@@ -183,6 +188,10 @@ interface ParkedLike {
   /** M9: the session's micro-batch drain, carried across park→adopt so the adopted session's
    *  eventual cleanup can still flush a same-tick buffered chunk (see SessionLike.flushData). */
   flushData?: () => void
+  /** Busy-aware eviction: epoch ms of the last PTY output — seeded from the live session's
+   *  `lastActivityAt` at park time, bumped by the spawn-time onData listener while parked. Lets
+   *  the background registry's idle clock see a parked agent that is still streaming. */
+  lastActivityAt?: number
 }
 
 const sessions = new Map<string, SessionLike>()
@@ -350,7 +359,8 @@ export function parkCore(
     // Undo parks (nothing was flushed at delete) keep the park-time value; it is unused.
     watermark:
       kind === 'background' && s.flushWatermark !== undefined ? s.flushWatermark : s.buf.written,
-    flushData: s.flushData // M9: survives the round-trip for the adopted session's cleanup
+    flushData: s.flushData, // M9: survives the round-trip for the adopted session's cleanup
+    lastActivityAt: s.lastActivityAt // busy-aware eviction: the idle clock crosses the park
   })
 }
 
@@ -596,7 +606,14 @@ function bindProcPump(id: string, proc: pty.IPty, buf: OutputRing): () => void {
     // ~1s after kill() (node-pty's flush window), and without this check those
     // late bytes would bleed into a freshly-restarted session under the same id.
     const live = sessions.get(id)
-    if (!live || live.proc !== proc) return
+    if (!live || live.proc !== proc) {
+      // Busy-aware eviction: a PARKED background session's output is still activity — bump the
+      // parked entry (same proc-identity guard) so the registry's idle-TTL clock resets while a
+      // backgrounded agent works. Undo parks get the bump too, harmlessly (never read for them).
+      const pk = parked.get(id)
+      if (pk && pk.proc === proc) pk.lastActivityAt = Date.now()
+      return
+    }
     live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
     ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
     // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
@@ -1098,30 +1115,22 @@ export function disposeProjectPtys(dir: string | null): Promise<void> {
   return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, (id) => boardCwds.delete(id))
 }
 
-/**
- * Core of `countProjectSessions`: how many of `dir`'s terminals are RUNNING — live sessions
- * still in 'running' plus background-parked sessions (their procs run headless; an exited
- * parked proc is dropped from the map by its onExit, so parked ≈ running). Undo-parked
- * sessions are excluded: they are deleted boards, not running terminals of a project.
- */
-export function countProjectSessionsCore(
-  dir: string | null,
-  sessionsMap: Map<string, Pick<SessionLike, 'state' | 'projectDir'>>,
-  parkedMap: Map<string, Pick<ParkedLike, 'kind' | 'owningDir'>>
-): { running: number } {
-  let running = 0
-  for (const s of sessionsMap.values()) {
-    if ((s.projectDir ?? null) === dir && s.state === 'running') running++
-  }
-  for (const p of parkedMap.values()) {
-    if ((p.owningDir ?? null) === dir && p.kind === 'background') running++
-  }
-  return { running }
-}
+// countProjectSessionsCore moved to ptyProjectStats.ts (busy-aware eviction split — pty.ts is
+// at its max-lines ratchet; the read-only stat projections live there, the wrappers stay here).
 
 /** Running-terminal count for `dir` (switch dialog + switcher badges). */
 export function countProjectSessions(dir: string | null): { running: number } {
   return countProjectSessionsCore(dir, sessions, parked)
+}
+
+/** Most recent PTY output for `dir`, live + parked (the background registry's idle clock). */
+export function projectActivityAt(dir: string | null): number {
+  return projectActivityAtCore(dir, sessions, parked)
+}
+
+/** Root shell PIDs for `dir` (the CPU busy-probe's process-tree roots). */
+export function projectSessionPids(dir: string | null): number[] {
+  return projectSessionPidsCore(dir, sessions, parked)
 }
 
 /**
