@@ -22,6 +22,7 @@ import {
   toggleJarvisPanel,
   useJarvisController
 } from './jarvisSession'
+import { useWakeWord } from './useWakeWord'
 
 /** Header core = the island core scaled up; edge-tab mini core (mock exhibits B/C). */
 const HEADER_CORE_PX = 44
@@ -119,6 +120,8 @@ export function JarvisPanel(): ReactElement | null {
   const ttsSpeaking = useTtsStore((s) => s.speaking)
   const capturing = useVoiceStore((s) => s.capturing)
   const partial = useVoiceStore((s) => s.partial)
+  const micStatus = useVoiceStore((s) => s.micStatus)
+  const micSilent = useVoiceStore((s) => s.micSilent)
   const attention = useAttentionStore((s) => s.byId)
   // Subscribed (not getState) so a board retitle re-renders the D8 chips (NIT-2).
   const boards = useCanvasStore((s) => s.boards)
@@ -135,6 +138,9 @@ export function JarvisPanel(): ReactElement | null {
   const modeRef = useRef<CoreMode>('idle')
 
   useJarvisController()
+  // J5 D3: the opt-in wake-word listener lives with the panel surface (same project
+  // scope); it only ever OPENS the panel, and stands down whenever the panel is open.
+  useWakeWord()
 
   const streaming = activeTurnId !== null
   const mode = deriveCoreMode({
@@ -282,7 +288,27 @@ export function JarvisPanel(): ReactElement | null {
 
   if (!enabled || !show) return null
 
-  const eventEntries = Object.entries(attention)
+  // MIC-3: the strip claims what the mic is DOING, not what the toggle asked for — an
+  // OS-denied mic (permission 'denied', or the silent-zeros watchdog: a live stream the
+  // OS feeds only zeros, electron#42714) must never read "mic live". The denial CTA the
+  // dictation flyout shows is composer-suppressed in converse mode, so this strip is the
+  // only surface left to say it.
+  const micDenied = converse && (micStatus === 'denied' || micSilent)
+  const micLabel = !converse
+    ? 'mic off — click to arm'
+    : micDenied
+      ? 'mic blocked by the OS — check system microphone permissions'
+      : !capturing
+        ? 'mic arming…'
+        : 'mic live — only while this panel is open'
+
+  // BADGE-1: attention marks can outlive their board (delete / project switch) — a chip
+  // for a dead id would focus nothing and the badge would count ghosts. Render only
+  // marks whose board still exists; the stale store entries stay inert (bounded, and
+  // cleared anyway the next time that id is marked or the store resets).
+  const eventEntries = Object.entries(attention).filter(([boardId]) =>
+    boards.some((b) => b.id === boardId)
+  )
   const focusBoard = (boardId: string): void => {
     // The useNotifications focus intent: camera-fit + select (selecting clears the mark).
     useCanvasStore.setState({ pendingFocusId: boardId })
@@ -373,14 +399,15 @@ export function JarvisPanel(): ReactElement | null {
         {/* The mic-gate strip: THE standing contract, on screen exactly while the mic can
             hear. Also the in-panel arm control (a failed arm — no key — lands here off). */}
         <button
-          className={`jp-mic${converse ? '' : ' off'}`}
+          className={`jp-mic${converse ? (micDenied ? ' denied' : '') : ' off'}`}
           data-test="jarvis-mic"
+          data-mic={!converse ? 'off' : micDenied ? 'denied' : capturing ? 'live' : 'arming'}
           onClick={toggleConverse}
           aria-pressed={converse}
           title={converse ? 'Click to stop the microphone' : 'Click to arm the microphone'}
         >
           <i />
-          {converse ? 'mic live — only while this panel is open' : 'mic off — click to arm'}
+          {micLabel}
           <span className="key">{HOTKEY_LABEL}</span>
         </button>
 

@@ -5,13 +5,18 @@
  * everything injected, so a tiny fake IpcMain/BrowserWindow harness suffices.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { registerJarvisHandlers, type JarvisIpcDeps, type JarvisTurnEvent } from './jarvisIpc'
 import { mockJarvisReply, type JarvisStreamDeps } from './jarvisBrain'
 import { jarvisDefaults } from './jarvisConfig'
+import {
+  jarvisHistoryFileFor,
+  readJarvisHistory,
+  readJarvisHistoryConsent
+} from './jarvisHistoryStore'
 
 type Handler = (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown
 
@@ -30,6 +35,10 @@ function makeHarness(
     stream?: JarvisStreamDeps
     getAppModel?: JarvisIpcDeps['getAppModel']
     win?: (mainFrame: object, sent: Array<{ channel: string; payload: unknown }>) => BrowserWindow
+    /** D4′ tests: the consent-ask seam (default deps.confirm denies). */
+    confirm?: JarvisIpcDeps['confirm']
+    /** D4′ tests: reuse a userData dir across registrations (relaunch simulation). */
+    dir?: string
   } = {}
 ): Harness {
   const handlers: Record<string, Handler> = {}
@@ -50,11 +59,12 @@ function makeHarness(
           send: (channel: string, payload: unknown) => sent.push({ channel, payload })
         }
       } as unknown as BrowserWindow)
-  const dir = mkdtempSync(join(tmpdir(), 'jarvisipc-'))
+  const dir = over.dir ?? mkdtempSync(join(tmpdir(), 'jarvisipc-'))
   registerJarvisHandlers(ipcMain, () => win, {
     getUserData: () => dir,
     getProjectKey: over.getProjectKey ?? (() => 'M:/proj'),
     getAppModel: over.getAppModel,
+    confirm: over.confirm,
     stream: over.stream ?? { fetch: vi.fn(), env: { CANVAS_LLM_MOCK: '1' } }
   })
   const ownEvent = { senderFrame: mainFrame } as unknown as IpcMainInvokeEvent
@@ -265,5 +275,132 @@ describe('jarvisIpc', () => {
     expect(kinds).toContain('delta')
     expect(kinds).not.toContain('done')
     rmSync(hb.dir, { recursive: true, force: true })
+  })
+})
+
+// ── D4′ (J5): project-mode persistence — consent ask, restore-on-relaunch, clear ──
+
+describe('jarvisIpc D4′ project-mode persistence', () => {
+  const mkProject = (): string => mkdtempSync(join(tmpdir(), 'jarvisproj-'))
+
+  it('first persist asks consent ONCE; approved → history lands on disk and grows', async () => {
+    const project = mkProject()
+    const confirm = vi.fn(async () => ({ approved: true }))
+    const hp = makeHarness({ getProjectKey: () => project, confirm })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+
+    const r1 = hp.invoke('jarvis:turn:start', { text: 'persist me' }) as { id: number }
+    await waitForDone(hp, r1.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistory(project).turns).toHaveLength(2)
+    })
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    const r2 = hp.invoke('jarvis:turn:start', { text: 'and me' }) as { id: number }
+    await waitForDone(hp, r2.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistory(project).turns).toHaveLength(4)
+    })
+    expect(confirm).toHaveBeenCalledTimes(1) // the stored grant is never re-asked
+    rmSync(hp.dir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+
+  it('declined consent → nothing on disk, decision stored, never re-asked', async () => {
+    const project = mkProject()
+    const confirm = vi.fn(async () => ({ approved: false }))
+    const hp = makeHarness({ getProjectKey: () => project, confirm })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+
+    const r1 = hp.invoke('jarvis:turn:start', { text: 'do not persist' }) as { id: number }
+    await waitForDone(hp, r1.id)
+    const r2 = hp.invoke('jarvis:turn:start', { text: 'still no' }) as { id: number }
+    await waitForDone(hp, r2.id)
+    await new Promise((r) => setTimeout(r, 20)) // give a wrong write every chance to land
+
+    expect(existsSync(jarvisHistoryFileFor(project))).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(readJarvisHistoryConsent(hp.dir, project)).toBe('declined')
+    // In-memory session behavior is unchanged by the decline.
+    expect(hp.invoke('jarvis:history:get')).toHaveLength(4)
+    rmSync(hp.dir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+
+  it('restore-on-relaunch: a fresh registration hydrates the persisted transcript', async () => {
+    const project = mkProject()
+    const confirm = vi.fn(async () => ({ approved: true }))
+    const hp = makeHarness({ getProjectKey: () => project, confirm })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+    const r = hp.invoke('jarvis:turn:start', { text: 'remember across restarts' }) as {
+      id: number
+    }
+    await waitForDone(hp, r.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistory(project).turns).toHaveLength(2)
+    })
+
+    // "Relaunch": new handler registration, SAME userData (consent + config) + project.
+    const hp2 = makeHarness({ getProjectKey: () => project, confirm, dir: hp.dir })
+    const restored = hp2.invoke('jarvis:history:get') as Array<{ role: string; text: string }>
+    expect(restored).toHaveLength(2)
+    expect(restored[0]).toEqual({ role: 'user', text: 'remember across restarts' })
+    rmSync(hp.dir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+
+  it('history:clear wipes the disk copy too', async () => {
+    const project = mkProject()
+    const confirm = vi.fn(async () => ({ approved: true }))
+    const hp = makeHarness({ getProjectKey: () => project, confirm })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+    const r = hp.invoke('jarvis:turn:start', { text: 'soon gone' }) as { id: number }
+    await waitForDone(hp, r.id)
+    await vi.waitFor(() => {
+      expect(existsSync(jarvisHistoryFileFor(project))).toBe(true)
+    })
+
+    expect(hp.invoke('jarvis:history:clear')).toEqual({ ok: true })
+    expect(hp.invoke('jarvis:history:get')).toEqual([])
+    expect(existsSync(jarvisHistoryFileFor(project))).toBe(false)
+    rmSync(hp.dir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+})
+
+describe('jarvisIpc D4′ consent re-ask (review: a decline must not be permanent)', () => {
+  it("re-choosing 'Per project' in Settings drops a stored decline and re-asks", async () => {
+    const project = mkdtempSync(join(tmpdir(), 'jarvisproj-'))
+    const confirm = vi.fn(async () => ({ approved: false }))
+    const hp = makeHarness({ getProjectKey: () => project, confirm })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+
+    const r1 = hp.invoke('jarvis:turn:start', { text: 'first ask' }) as { id: number }
+    await waitForDone(hp, r1.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistoryConsent(hp.dir, project)).toBe('declined')
+    })
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    // Staying in project mode never re-asks…
+    const r2 = hp.invoke('jarvis:turn:start', { text: 'no re-ask' }) as { id: number }
+    await waitForDone(hp, r2.id)
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    // …but the explicit re-choose gesture (off → back to 'project') clears the decline.
+    hp.invoke('jarvis:config:set', { historyMode: 'session' })
+    hp.invoke('jarvis:config:set', { historyMode: 'project' })
+    expect(readJarvisHistoryConsent(hp.dir, project)).toBeUndefined()
+
+    confirm.mockImplementation(async () => ({ approved: true }))
+    const r3 = hp.invoke('jarvis:turn:start', { text: 'asked again' }) as { id: number }
+    await waitForDone(hp, r3.id)
+    await vi.waitFor(() => {
+      expect(readJarvisHistoryConsent(hp.dir, project)).toBe('enabled')
+      expect(existsSync(jarvisHistoryFileFor(project))).toBe(true)
+    })
+    expect(confirm).toHaveBeenCalledTimes(2)
+    rmSync(hp.dir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
   })
 })

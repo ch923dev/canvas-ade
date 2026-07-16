@@ -142,15 +142,25 @@ describe('streamJarvisReply', () => {
     }
     const r = await streamJarvisReply(REQ, deps, new AbortController().signal, () => {})
     expect(r.ok).toBe(false) // watchdog abort, NOT a silent forever-hang
-    if (!r.ok) expect(r.reason).toBe('provider-error')
+    if (!r.ok) {
+      expect(r.reason).toBe('provider-error')
+      // BRAIN-3: the watchdog abort carries its TYPED reason — never the transport's
+      // generic abort string.
+      if (r.reason === 'provider-error') expect(r.message).toContain('stream stalled')
+    }
   }, 5000)
 
-  it('a thrown transport error surfaces as provider-error, not a rejection', async () => {
+  it('a thrown transport error surfaces as an OPAQUE provider-error (BRAIN-3)', async () => {
     const deps = depsWith(async () => {
-      throw new Error('boom')
+      throw new Error('boom: key=sk-secret quoted in a transport trace')
     })
     const r = await streamJarvisReply(REQ, deps, new AbortController().signal, () => {})
-    expect(r).toEqual({ ok: false, reason: 'provider-error', message: 'boom' })
+    // BUG-003: the raw message never crosses to the renderer.
+    expect(r).toEqual({
+      ok: false,
+      reason: 'provider-error',
+      message: 'anthropic: transport error'
+    })
   })
 
   it('a PRE-aborted signal returns cancelled without fetching (BRAIN-1)', async () => {

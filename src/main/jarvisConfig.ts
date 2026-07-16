@@ -13,9 +13,10 @@ export type JarvisTonePreset = 'butler' | 'mission-control' | 'pair-programmer' 
 export type JarvisVerbosity = 'concise' | 'normal' | 'narrative'
 /** D8 spoken-announce policy (persisted now; the announce path itself lands in J4). */
 export type JarvisAnnouncePolicy = 'all' | 'attention' | 'chips-only'
-/** D4′ v1: in-memory per-project history ('session') or none. 'project' (persisted under
- *  .canvas/memory/jarvis/) is the J5 slice — the union widens then, no repair change needed. */
-export type JarvisHistoryMode = 'session' | 'off'
+/** D4′: 'project' persists per-project history under .canvas/memory/jarvis/ (J5 — consent-
+ *  gated per project, jarvisHistoryStore); 'session' keeps it in MAIN memory only; 'off'
+ *  sends no history to the model at all. */
+export type JarvisHistoryMode = 'project' | 'session' | 'off'
 
 /** Persona free-text cap — user-trusted but still bounded (PLAN §7 Security). */
 export const MAX_CUSTOM_TONE_LEN = 1000
@@ -44,6 +45,9 @@ export interface JarvisConfig {
   /** Claude model id for the brain session. */
   model: string
   historyMode: JarvisHistoryMode
+  /** J5 D3: the opt-in wake word (OFF by default). Its SOLE power is opening the panel
+   *  (KICKOFF-PANEL §3 carve-out) — turns still require the open panel. */
+  wakeWordEnabled: boolean
 }
 /* Retired (panel surface rev, 2026-07-13): `islandPosition` — the island is gone and the
  * panel docks. The repair funnel silently accepts old files that still carry it (unknown
@@ -63,7 +67,8 @@ export function jarvisDefaults(): JarvisConfig {
     verbosity: 'concise',
     announcePolicy: 'attention',
     model: DEFAULT_JARVIS_MODEL,
-    historyMode: 'session'
+    historyMode: 'session',
+    wakeWordEnabled: false
   }
 }
 
@@ -109,7 +114,8 @@ export function repairJarvisConfig(p: unknown): JarvisConfig {
     // Any non-empty string persists (scene-id discipline: an id from a future build is
     // preserved; the request builder falls back at use time if the API rejects it).
     model: typeof o.model === 'string' && o.model.length > 0 ? o.model.slice(0, 256) : d.model,
-    historyMode: optEnum(o.historyMode, ['session', 'off'] as const, d.historyMode)
+    historyMode: optEnum(o.historyMode, ['project', 'session', 'off'] as const, d.historyMode),
+    wakeWordEnabled: o.wakeWordEnabled === true // opt-in: anything but true is false
   }
 }
 

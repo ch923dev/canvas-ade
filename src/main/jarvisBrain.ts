@@ -291,17 +291,23 @@ export async function streamJarvisReply(
     toolUses.push({ id: pendingTool.id, name: pendingTool.name, input })
     pendingTool = null
   }
+  // Stall watchdog composed onto the caller's barge-in signal. Re-armed on EVERY
+  // received chunk (review finding on PR #339): a one-shot timer only guarded
+  // time-to-first-byte — a server that goes silent MID-stream without closing would
+  // otherwise hang the `for await` forever. `stalled` types the reason (BRAIN-3): the
+  // catch below must tell a watchdog abort from a transport throw.
+  const stall = new AbortController()
+  let stalled = false
   try {
-    // Stall watchdog composed onto the caller's barge-in signal. Re-armed on EVERY
-    // received chunk (review finding on PR #339): a one-shot timer only guarded
-    // time-to-first-byte — a server that goes silent MID-stream without closing would
-    // otherwise hang the `for await` forever.
-    const stall = new AbortController()
     const stallMs = deps.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS
-    let timer = setTimeout(() => stall.abort(), stallMs)
+    const fireStall = (): void => {
+      stalled = true
+      stall.abort()
+    }
+    let timer = setTimeout(fireStall, stallMs)
     const rearm = (): void => {
       clearTimeout(timer)
-      timer = setTimeout(() => stall.abort(), stallMs)
+      timer = setTimeout(fireStall, stallMs)
     }
     const onOuterAbort = (): void => stall.abort()
     signal.addEventListener('abort', onOuterAbort, { once: true })
@@ -350,10 +356,16 @@ export async function streamJarvisReply(
     }
   } catch (err) {
     if (signal.aborted) return { ok: true, text, cancelled: true, toolUses: [], stopReason }
+    // BRAIN-3 / BUG-003: raw transport messages never cross to the renderer — they can
+    // quote request detail. The stall gets its typed reason; everything else is opaque
+    // (the raw error stays observable in MAIN's log only).
+    console.error('[jarvis] stream transport error:', err)
     return {
       ok: false,
       reason: 'provider-error',
-      message: err instanceof Error ? err.message : String(err)
+      message: stalled
+        ? `anthropic: stream stalled (no data for ${Math.round((deps.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS) / 1000)}s)`
+        : 'anthropic: transport error'
     }
   }
 }

@@ -415,6 +415,9 @@ export interface CanvasE2E {
   /** desktop-notifications P5 — the on-canvas attention ring's `data-kind` rendered in the board
    *  node DOM (proves the BoardAttention overlay mounted on-canvas), or null. */
   attentionRingKind: (id: string) => 'done' | 'needs-input' | 'error' | null
+  /** J5 BADGE-1 — test-only attention mark injector (production writers = agent lifecycle
+   *  events); drives the Jarvis edge-tab badge / event-chip specs deterministically. */
+  setAttention: (id: string, kind: 'done' | 'needs-input' | 'error') => void
 }
 
 declare global {

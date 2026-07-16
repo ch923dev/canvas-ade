@@ -41,10 +41,18 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
       voiceSid: 3,
       announcePolicy: 'all',
       model: 'claude-haiku-4-5',
-      historyMode: 'off'
+      historyMode: 'off',
+      wakeWordEnabled: true
     }
     writeJarvisConfig(dir, cfg)
     expect(readJarvisConfig(dir)).toEqual(cfg)
+  })
+
+  it('wakeWordEnabled is STRICTLY opt-in: anything but true repairs to false (D3)', () => {
+    expect(repairJarvisConfig({ wakeWordEnabled: 'yes' }).wakeWordEnabled).toBe(false)
+    expect(repairJarvisConfig({ wakeWordEnabled: 1 }).wakeWordEnabled).toBe(false)
+    expect(repairJarvisConfig({}).wakeWordEnabled).toBe(false)
+    expect(repairJarvisConfig({ wakeWordEnabled: true }).wakeWordEnabled).toBe(true)
   })
 
   it('repairs every malformed field to its default', () => {
@@ -59,9 +67,13 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
         voiceSid: -2,
         announcePolicy: 'loud',
         model: '',
-        historyMode: 'project' // J5 value — repairs to 'session' until the union widens
+        historyMode: 'nowhere' // not in the union → default
       })
     ).toEqual(jarvisDefaults())
+  })
+
+  it("historyMode 'project' is a first-class value (D4′ J5) and survives repair", () => {
+    expect(repairJarvisConfig({ historyMode: 'project' }).historyMode).toBe('project')
   })
 
   it('clamps speakingRate into [0.5, 2] and trims/caps the name', () => {

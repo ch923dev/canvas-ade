@@ -13,8 +13,9 @@ export interface JarvisTurn {
   text: string
 }
 
-/** Rolling-history prompt window: the most recent turns sent to the model. Older turns
- *  simply fall off in v1; J5 adds the rolling-summary compression (D4′). */
+/** Rolling-history prompt window: the most recent turns sent to the model in full. Older
+ *  turns fold into the rolling summary (J5 D4′ — jarvisHistoryStore.compressJarvisHistory)
+ *  which rides the system prompt via composeSystem's historySummary block. */
 export const HISTORY_PROMPT_WINDOW = 24
 
 /** Hand-tuned tone blocks (PLAN §3.5). Each pairs with the mock's preview line. */
@@ -102,14 +103,17 @@ export interface JarvisMessage {
 }
 
 /**
- * System array: [persona (cache breakpoint), workspace manifest (volatile, uncached)].
- * The cache prefix ends at the persona block, so a changing manifest never invalidates it.
+ * System array: [persona (cache breakpoint), rolling history summary (J5 D4′ — changes
+ * only when compression folds turns), workspace manifest (volatile, uncached)].
+ * The cache prefix ends at the persona block, so nothing after it invalidates it; the
+ * summary sits before the manifest because it changes less often.
  * `toolsEnabled` swaps the acting-contract paragraph (J4) — stable within a session.
  */
 export function composeSystem(
   cfg: JarvisConfig,
   manifest: string | null,
-  toolsEnabled = false
+  toolsEnabled = false,
+  historySummary: string | null = null
 ): JarvisContentBlock[] {
   const system: JarvisContentBlock[] = [
     {
@@ -118,6 +122,12 @@ export function composeSystem(
       cache_control: { type: 'ephemeral' }
     }
   ]
+  if (historySummary && historySummary.trim().length > 0) {
+    system.push({
+      type: 'text',
+      text: `Earlier conversation (older turns, compressed to one line each — the recent turns follow in full):\n${historySummary}`
+    })
+  }
   if (manifest && manifest.trim().length > 0) {
     system.push({ type: 'text', text: `Workspace:\n${manifest}` })
   }

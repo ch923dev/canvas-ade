@@ -126,6 +126,14 @@
 .jp-mic.off i {
   background: var(--text-faint);
 }
+/* MIC-3: armed but the OS denied the mic — the strip says so, never "live". */
+.jp-mic.denied {
+  background: rgba(242, 84, 91, 0.08);
+  color: var(--err);
+}
+.jp-mic.denied i {
+  background: var(--err);
+}
 
 /* ── body: the conversation (Exhibit-F view relocated) ── */
 .jp-body {

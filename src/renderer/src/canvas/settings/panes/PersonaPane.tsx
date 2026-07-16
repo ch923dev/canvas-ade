@@ -5,7 +5,7 @@
  * key row is the one explicit-commit control (LlmPane posture: write-only into MAIN) and
  * writes the EXISTING llmKeyStore `anthropic` slot via window.api.llm — no second store.
  */
-import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { pane } from '../paneStyles'
 import type { JarvisConfigView } from '../../../../../preload/jarvis'
 
@@ -90,6 +90,19 @@ export function PersonaPane(): ReactElement | null {
   const [key, setKey] = useState('')
   const [keyBusy, setKeyBusy] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
+  /** PANE-1 echo suppression: pushes arriving while our own set() round-trips are in
+   *  flight are parked (applying them mid-typing would snap the input back a keystroke);
+   *  the LAST parked push applies once the in-flight count settles to zero. */
+  const inflight = useRef(0)
+  const parkedPush = useRef<JarvisConfigView | null>(null)
+  /** J5 D3: the wake-word model row (opt-in listener; ~17 MB one-time download). */
+  const [kws, setKws] = useState<{
+    id: string | null
+    label: string
+    status: 'ready' | 'absent' | 'unknown'
+    pct: number | null
+    error: string | null
+  }>({ id: null, label: '', status: 'unknown', pct: null, error: null })
 
   useEffect(() => {
     if (!window.api?.jarvis) return
@@ -110,12 +123,94 @@ export function PersonaPane(): ReactElement | null {
     }
   }, [])
 
+  // PANE-1: subscribe the live push — MAIN's repaired values (name fallback, rate clamps)
+  // and edits from the panel/other surfaces reach the pane without a remount. The panel
+  // header already renders the repaired value; the pane must not diverge from it.
+  useEffect(() => {
+    if (!window.api?.jarvis) return
+    return window.api.jarvis.config.onChanged((next) => {
+      if (inflight.current > 0) {
+        parkedPush.current = next
+        return
+      }
+      setCfg(next)
+    })
+  }, [])
+
+  // J5 D3: wake-word model install state + download progress (voice:kws:models catalog).
+  useEffect(() => {
+    const wake = window.api?.voice?.wake
+    if (!wake || window.api.voice.supported === false) return
+    let cancelled = false
+    void wake.models
+      .list()
+      .then((l) => {
+        if (cancelled || !l[0]) return
+        setKws((k) => ({ ...k, id: l[0].id, label: l[0].label, status: l[0].status }))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  useEffect(() => {
+    const wake = window.api?.voice?.wake
+    if (!wake || window.api.voice.supported === false) return
+    return wake.models.onDownloadProgress((p) => {
+      setKws((k) =>
+        k.id === p.id
+          ? { ...k, pct: Math.min(100, Math.round((p.receivedBytes / p.totalBytes) * 100)) }
+          : k
+      )
+    })
+  }, [])
+
+  const downloadKws = async (): Promise<void> => {
+    const wake = window.api?.voice?.wake
+    if (!wake || !kws.id) return
+    setKws((k) => ({ ...k, pct: 0, error: null }))
+    try {
+      const r = await wake.models.download(kws.id)
+      setKws((k) => ({
+        ...k,
+        pct: null,
+        status: r.ok ? 'ready' : k.status,
+        error: r.ok ? null : (r.error ?? 'download failed')
+      }))
+      // The listener reconciles on CONFIG changes only — a wake.start() that declined
+      // while the model was absent has nothing to re-arm it once the download lands
+      // (found live in the J5 dev check: enable → download → never wakes). Re-assert
+      // the flag; the no-op patch round-trips MAIN's jarvis:config:changed push, which
+      // useWakeWord treats as the re-arm gesture. MAIN's config is read FRESH here —
+      // this closure's `cfg` is stale by a 17 MB download, and a user who toggled the
+      // feature OFF mid-download must not have it silently re-enabled (review).
+      if (r.ok) {
+        const fresh = await window.api.jarvis.config.get().catch(() => null)
+        if (fresh?.wakeWordEnabled) {
+          void window.api.jarvis.config.set({ wakeWordEnabled: true }).catch(() => {})
+        }
+      }
+    } catch {
+      setKws((k) => ({ ...k, pct: null, error: 'download failed' }))
+    }
+  }
+
   if (!window.api?.jarvis || !cfg) return null
 
   /** Immediate-apply merge patch; MAIN repairs + pushes jarvis:config:changed live. */
   const patch = (p: Partial<JarvisConfigView>): void => {
     setCfg((c) => (c ? { ...c, ...p } : c))
-    void window.api.jarvis.config.set(p).catch(() => {})
+    inflight.current++
+    void window.api.jarvis.config
+      .set(p)
+      .catch(() => {})
+      .finally(() => {
+        inflight.current--
+        if (inflight.current === 0 && parkedPush.current) {
+          setCfg(parkedPush.current)
+          parkedPush.current = null
+        }
+      })
   }
 
   const saveKey = async (): Promise<void> => {
@@ -314,6 +409,56 @@ export function PersonaPane(): ReactElement | null {
         </span>
       </label>
 
+      {window.api?.voice?.wake && window.api.voice.supported !== false && (
+        <>
+          <div style={pane.setrow}>
+            <div style={{ flex: 1 }}>
+              <div style={pane.rowTitle}>Wake word — “Hey Jarvis”</div>
+              <div style={pane.rowSub}>
+                Listens locally for the wake phrase while the panel is closed; hearing it only OPENS
+                the panel. No transcription, nothing leaves this machine.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={cfg.wakeWordEnabled}
+              aria-label="Enable the wake word"
+              data-test="persona-wake-toggle"
+              onClick={() => patch({ wakeWordEnabled: !cfg.wakeWordEnabled })}
+              style={{
+                ...pane.toggle,
+                background: cfg.wakeWordEnabled ? 'var(--accent)' : 'var(--surface-overlay)',
+                cursor: 'pointer'
+              }}
+            >
+              <span style={{ ...pane.toggleKnob, left: cfg.wakeWordEnabled ? 17 : 2 }} />
+            </button>
+          </div>
+          {cfg.wakeWordEnabled && kws.status !== 'ready' && (
+            <div style={pane.row} data-test="persona-wake-model">
+              <span style={pane.hint}>
+                {kws.pct !== null
+                  ? `downloading the listener model… ${kws.pct}%`
+                  : `needs the ${kws.label || 'wake-word'} model (~17 MB, one time)`}
+              </span>
+              <div style={{ flex: 1 }} />
+              <button
+                className="ca-btn-ghost"
+                disabled={kws.pct !== null || !kws.id}
+                onClick={() => void downloadKws()}
+              >
+                Download
+              </button>
+            </div>
+          )}
+          {kws.error && (
+            <div role="alert" style={pane.error}>
+              {kws.error}
+            </div>
+          )}
+        </>
+      )}
+
       <div style={pane.divider} />
       <div style={pane.head}>Brain</div>
 
@@ -343,6 +488,7 @@ export function PersonaPane(): ReactElement | null {
             value={cfg.historyMode}
             testId="persona-history"
             options={[
+              { id: 'project', label: 'Per project' },
               { id: 'session', label: 'Session only' },
               { id: 'off', label: 'Off' }
             ]}
@@ -356,7 +502,8 @@ export function PersonaPane(): ReactElement | null {
           </button>
         </span>
         <span style={pane.hint}>
-          per-project persistence (.canvas/memory/jarvis) arrives in a later update
+          per project persists under the project&apos;s .canvas/memory/jarvis (asked once per
+          project, git-ignored); Clear wipes the open project&apos;s history
         </span>
       </label>
 

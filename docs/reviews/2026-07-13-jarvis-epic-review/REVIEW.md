@@ -46,15 +46,34 @@ reload/switch-back shows the turns the model actually remembers; hydrated turns 
      `mcpConfirm`) is set by MAIN only (a caller-supplied `origin` is stripped — regression test);
      reply protocol/fail-closed paths byte-identical; supersede/teardown auto-deny.
 
-**DEFERRED (open):**
-- BRAIN-3 (typed stall reason), TTS-5 (sid clamp), TTS-6 (addon-load misreport), TTS-7 (worker
-  cache eviction), MIC-3 (mic strip vs OS denial), BADGE-1 (stale attention chips), PANE-1
-  (config-changed subscription) → J5 follow-up lanes.
-- E2E-1 partially addressed in-wave (double-tap hotkey drill + scoped-Esc spec landed); the
-  Settings-disable-while-open, mic-strip disarm/re-arm and badge/chip specs remain open.
+**DEFERRED TAIL — ✅ CLOSED IN J5 (2026-07-17):**
+- BRAIN-3 FIXED — stall aborts carry a typed `anthropic: stream stalled (no data for Ns)`
+  message; every other transport throw crosses as the opaque `anthropic: transport error`
+  (raw error stays in MAIN's log only). Regression tests in `jarvisBrain.test.ts`.
+- TTS-5 FIXED — `clampSid` bounds the speaker id against the LIVE engine's `numSpeakers`
+  at `generateAsync` time (single choke point in `createTtsRunner`); non-positive/garbled
+  counts pass through. Unit-covered.
+- TTS-6 FIXED — a requested model with the ADDON unavailable now reports
+  `session:ready ok:false` (escalates host → MAIN → renderer tts error event) instead of
+  the no-model `ok:true, live:false` degrade.
+- TTS-7 FIXED — `evictAllBut` unpins every non-live cache entry on model switch in all
+  three worker caches (recognizer / VAD / OfflineTts); the mic-toggle fast path keeps the
+  current model only. Unit-covered.
+- MIC-3 FIXED — the mic strip reports what the mic is DOING (`off / arming… / live /
+  denied`, `data-mic` attr): OS permission-denied or the silent-zeros watchdog render the
+  denied state in-panel (red strip), never "mic live".
+- BADGE-1 FIXED — edge-tab badge + event chips render only marks whose board still exists;
+  stale `attentionStore` entries for deleted boards are inert again (store docblock
+  updated to match).
+- PANE-1 FIXED — PersonaPane subscribes `jarvis:config:changed` with in-flight echo
+  suppression (parked pushes apply at settle, so typing never snaps back a keystroke).
+- E2E-1 CLOSED — J5 adds the Settings-disable-while-open, mic-strip disarm/re-arm and
+  badge/chip specs (`jarvis.e2e.ts`); the double-tap hotkey drill + scoped-Esc landed
+  in-wave; the structural refuse stays covered by the jarvisSession unit + the double-tap
+  drill.
 
-This doc stays live until the deferred tail lands; collapse to a dated summary then
-(docs/reviews README convention).
+All findings in this review are now fixed or explicitly dispositioned — collapse to a
+dated summary rides the epic-end doc collapse (docs/reviews README convention).
 
 ## P0 — fix before anything else
 

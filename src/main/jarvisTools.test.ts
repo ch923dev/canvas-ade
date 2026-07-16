@@ -121,6 +121,18 @@ describe('resolveBoardRef', () => {
     expect(() => resolveBoardRef(m, 'auth api')).toThrow(/ambiguous/)
   })
 
+  it('ambiguity candidates are NUMBERED so "the second one" answers deterministically (J5)', () => {
+    try {
+      resolveBoardRef(m, 'auth api')
+      expect.unreachable('should have thrown')
+    } catch (err) {
+      const msg = (err as Error).message
+      expect(msg).toMatch(/1\. \[/)
+      expect(msg).toMatch(/2\. \[/)
+      expect(msg).toContain('which NUMBER')
+    }
+  })
+
   it('a short prefix does not resolve (guessing surface)', () => {
     expect(() => resolveBoardRef(m, 'ab')).toThrow(/no board/)
   })

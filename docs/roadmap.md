@@ -223,6 +223,15 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
   fallback). Companion lane to the Jarvis epic (managed-agent threads need survivable sessions);
   plan: `research/2026-07-04-jarvis-voice-agent/PLAN.md` §10. Spike ConPTY reattach + daemon
   security posture first.
+- **Jarvis voice-agent epic (J0–J5) — CODE-COMPLETE on `feat/jarvis-umbrella` (2026-07-17):**
+  Lane H tools (#328 on main) · J1 TTS · J2 playback/duplex · J3 brain+persona · panel surface ·
+  review-wave hardening · J4 hands (tool use behind the confirm gate) · **J5 polish** (opt-in
+  wake word via local KeywordSpotter, per-project persistent history under
+  `.canvas/memory/jarvis/`, the epic review's deferred tail closed, numbered disambiguation,
+  win-arm64 gate parity). Plan: `research/2026-07-04-jarvis-voice-agent/PLAN.md`. Remaining:
+  the epic-end umbrella→main PR (full e2e matrix both legs + doc collapse). Follow-up filed:
+  visual numbered badges on candidate boards (needs a design mock) · runtime wake-phrase
+  re-encoding for renamed personas (needs a JS sentencepiece).
 
 **Performance wave (2026-06-23) — ✅ SHIPPED (#219):**
 - A codebase-wide, measurement-grounded perf review (8 parallel discovery zones → adversarial

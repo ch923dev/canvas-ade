@@ -1,6 +1,7 @@
 /**
  * Jarvis J3 — IPC layer for the brain session. Owns the frame guard, the per-project
- * rolling history (MAIN memory, D4′ v1), the single in-flight turn (AbortController —
+ * rolling history (MAIN memory; D4′ 'project' mode persists it through jarvisHistoryStore
+ * behind a one-time per-project consent), the single in-flight turn (AbortController —
  * barge-in cancels it), and the config get/set/changed-push (voiceIpc pattern). The
  * API key rides the EXISTING llmKeyStore `anthropic` slot (written via llm:setKey);
  * this module only ever reads it, key material never crosses IPC outbound.
@@ -45,6 +46,15 @@ import {
   type JarvisCanvasFacet
 } from './jarvisTools'
 import { runAsJarvisToolCall } from './jarvisToolContext'
+import {
+  clearJarvisHistory,
+  compressJarvisHistory,
+  deleteJarvisHistoryConsent,
+  readJarvisHistory,
+  readJarvisHistoryConsent,
+  writeJarvisHistory,
+  writeJarvisHistoryConsent
+} from './jarvisHistoryStore'
 import type { AppModel } from './appModel'
 
 /** Transcript text bound (a spoken utterance; far under the summarize caps). */
@@ -115,16 +125,81 @@ export function registerJarvisHandlers(
     deps.confirm ?? (async (): Promise<{ approved: boolean }> => ({ approved: false }))
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
-  // D4′ v1: per-project rolling history, MAIN memory only (J5 adds .canvas/memory/jarvis/).
+  // D4′: per-project rolling history. MAIN memory is always the live copy; in 'project'
+  // mode it hydrates from / persists to <project>/.canvas/memory/jarvis/history.json
+  // (jarvisHistoryStore) once the per-project consent is granted.
   const histories = new Map<string, JarvisTurn[]>()
+  const summaries = new Map<string, string>()
+  /** Projects whose disk hydrate already ran this app session (either way). */
+  const hydrated = new Set<string>()
+  const NO_PROJECT = '(no-project)'
+
   const historyFor = (): JarvisTurn[] => {
-    const key = getProjectKey() ?? '(no-project)'
+    const key = getProjectKey() ?? NO_PROJECT
+    // Restore-on-relaunch: the first history touch in 'project' mode (a turn OR the
+    // panel-mount history:get) pulls the persisted transcript into the live map. Only a
+    // previously GRANTED project hydrates — an undecided one gets asked at persist time.
+    if (
+      key !== NO_PROJECT &&
+      !hydrated.has(key) &&
+      readJarvisConfig(getUserData()).historyMode === 'project' &&
+      readJarvisHistoryConsent(getUserData(), key) === 'enabled'
+    ) {
+      hydrated.add(key)
+      try {
+        const disk = readJarvisHistory(key)
+        if (!histories.has(key) && (disk.turns.length > 0 || disk.summary.length > 0)) {
+          histories.set(key, disk.turns.slice())
+          summaries.set(key, disk.summary)
+        }
+      } catch {
+        /* unreadable history never blocks the conversation */
+      }
+    }
     let h = histories.get(key)
     if (!h) {
       h = []
       histories.set(key, h)
     }
     return h
+  }
+
+  /**
+   * Persist the project's history (D4′ 'project' mode). First persist for an undecided
+   * project asks through the SAME fail-closed confirm as every gate (center modal — an
+   * app-level grant, not a turn act); the decision is stored either way, so the user is
+   * asked exactly once per project. Compression folds turns past the trigger before the
+   * write, and the folded state replaces the live map (the prompt window reads it).
+   */
+  const persistHistory = async (): Promise<void> => {
+    const key = getProjectKey() ?? NO_PROJECT
+    if (key === NO_PROJECT) return
+    let decision = readJarvisHistoryConsent(getUserData(), key)
+    if (decision === undefined) {
+      const name = readJarvisConfig(getUserData()).name
+      const { approved } = await confirm({
+        title: `Save ${name}'s conversation history in this project?`,
+        body:
+          `Keeps your ${name} conversations in the project's .canvas/memory/jarvis folder ` +
+          `so they survive a restart (git-ignored by default). Decline keeps history ` +
+          `session-only for this project.`
+      })
+      decision = approved ? 'enabled' : 'declined'
+      writeJarvisHistoryConsent(getUserData(), key, decision)
+    }
+    if (decision !== 'enabled') return
+    hydrated.add(key) // a fresh grant must not clobber what we just wrote with a re-read
+    const compressed = compressJarvisHistory({
+      turns: histories.get(key) ?? [],
+      summary: summaries.get(key) ?? ''
+    })
+    histories.set(key, compressed.turns.slice())
+    summaries.set(key, compressed.summary)
+    try {
+      writeJarvisHistory(key, compressed)
+    } catch (err) {
+      console.error('[jarvis] history persist failed:', err) // never blocks the turn
+    }
   }
 
   // One turn in flight at a time; a new start (the user spoke again) aborts the previous.
@@ -172,7 +247,17 @@ export function registerJarvisHandlers(
   ipcMain.handle('jarvis:config:set', (e, patch: unknown): { ok: boolean } => {
     if (guard(e) || typeof patch !== 'object' || patch === null) return { ok: false }
     const userData = getUserData()
-    const next = repairJarvisConfig({ ...readJarvisConfig(userData), ...patch })
+    const prev = readJarvisConfig(userData)
+    const next = repairJarvisConfig({ ...prev, ...patch })
+    // A decline must not be permanent (review): explicitly RE-choosing 'Per project'
+    // in Settings drops a stored 'declined' for the open project, so the next persist
+    // asks again. A stored 'enabled' is untouched.
+    if (next.historyMode === 'project' && prev.historyMode !== 'project') {
+      const key = getProjectKey()
+      if (key && readJarvisHistoryConsent(userData, key) === 'declined') {
+        deleteJarvisHistoryConsent(userData, key)
+      }
+    }
     writeJarvisConfig(userData, next)
     getWin()?.webContents.send('jarvis:config:changed', next)
     return { ok: true }
@@ -282,7 +367,10 @@ export function registerJarvisHandlers(
           return
         }
         const toolsEnabled = facet !== null
-        const system = composeSystem(cfg, manifest, toolsEnabled)
+        // D4′: the rolling summary of compressed-away turns rides the system prompt.
+        const summary =
+          cfg.historyMode === 'off' ? null : (summaries.get(getProjectKey() ?? NO_PROJECT) ?? null)
+        const system = composeSystem(cfg, manifest, toolsEnabled, summary)
         const tools = toolsEnabled ? buildJarvisToolDefs() : undefined
         const messages: JarvisMessage[] = composeMessages(
           cfg.historyMode === 'off' ? [] : history,
@@ -353,6 +441,9 @@ export function registerJarvisHandlers(
             history.splice(0, history.length - MAX_HISTORY_TURNS)
         }
         push({ id, kind: 'done', text: spoken, cancelled })
+        // D4′ 'project' mode: persist AFTER the done push — the one-time consent ask
+        // blocks on the human, and the settled reply must never wait behind a modal.
+        if (cfg.historyMode === 'project' && spoken.trim().length > 0) await persistHistory()
       })().catch(() => {
         // BRAIN-2: the turn body is void'd — without this catch any unexpected throw
         // (push used to throw on a destroyed window) became an unhandledRejection →
@@ -380,6 +471,11 @@ export function registerJarvisHandlers(
   ipcMain.handle('jarvis:history:clear', (e): { ok: boolean } => {
     if (guard(e)) return { ok: false }
     historyFor().length = 0
+    const key = getProjectKey() ?? NO_PROJECT
+    summaries.delete(key)
+    // Clear wipes the persisted copy too (regardless of mode/consent — deleting what we
+    // may have written earlier is always the safe direction).
+    if (key !== NO_PROJECT) clearJarvisHistory(key)
     return { ok: true }
   })
 }

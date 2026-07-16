@@ -797,6 +797,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     attentionKind(id) {
       return useAttentionStore.getState().byId[id] ?? null
     },
+    setAttention(id, kind) {
+      // Test-only mark injector (the production writers are agent lifecycle events) —
+      // drives the Jarvis edge-tab badge / panel event-chip specs deterministically.
+      useAttentionStore.getState().setAttention(id, kind)
+    },
     attentionRingKind(id) {
       // The on-canvas BoardAttention overlay's data-kind, read off the live node DOM — proves the
       // ring/badge actually rendered on the board (not just that the store was set).

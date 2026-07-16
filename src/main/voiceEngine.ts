@@ -20,6 +20,7 @@ import { join } from 'path'
 import type { SpikeResult, TtsSpeakReq } from './voiceEngineHost'
 import type { VoiceModelPaths } from './voiceModels'
 import type { TtsModelPaths } from './voiceTtsModels'
+import type { KwsModelPaths } from './voiceKwsModels'
 
 export function spawnEngineHost(): UtilityProcess {
   const child = utilityProcess.fork(join(__dirname, 'voiceEngineHost.js'), [], {
@@ -68,6 +69,17 @@ export interface VoiceEngineHandle {
    * onEngineFailure. One listener; null clears it.
    */
   onTtsFailure(cb: ((reason: string) => void) | null): void
+  /** J5: transfer the wake-word channel's engine end to the host (spawns it if needed) —
+   *  the host lazily builds its KWS worker + KeywordSpotter off-loop. */
+  startKwsSession(port: MessagePortMain, model: KwsModelPaths | null): void
+  /** J5: stop the wake-word session; resolves with the host's received-frame count. */
+  stopKwsSession(timeoutMs?: number): Promise<{ frames: number }>
+  /**
+   * J5: observe KWS-ONLY failures ({t:'kws:engine:error'} — the KWS worker died or its
+   * session init failed). The host stays up (STT/TTS unaffected); the next
+   * startKwsSession respawns the worker. One listener; null clears it.
+   */
+  onKwsFailure(cb: ((reason: string) => void) | null): void
   /** Kill the host outright (app quit). Safe when never spawned. */
   dispose(): void
 }
@@ -77,12 +89,19 @@ export function createVoiceEngine(
 ): VoiceEngineHandle {
   let child: EngineChildLike | null = null
   let pendingStop: ((r: { frames: number }) => void) | null = null
+  let pendingKwsStop: ((r: { frames: number }) => void) | null = null
   let failCb: ((reason: string) => void) | null = null
   let ttsFailCb: ((reason: string) => void) | null = null
+  let kwsFailCb: ((reason: string) => void) | null = null
 
   const settleStop = (frames: number): void => {
     const resolve = pendingStop
     pendingStop = null
+    resolve?.({ frames })
+  }
+  const settleKwsStop = (frames: number): void => {
+    const resolve = pendingKwsStop
+    pendingKwsStop = null
     resolve?.({ frames })
   }
 
@@ -92,17 +111,25 @@ export function createVoiceEngine(
     c.on('message', (m: unknown) => {
       const msg = m as { t?: string; frames?: number; error?: string } | null
       if (msg?.t === 'session:stopped') settleStop(msg.frames ?? 0)
+      else if (msg?.t === 'kws:session:stopped') settleKwsStop(msg.frames ?? 0)
       else if (msg?.t === 'tts:engine:error' && child === c) {
         // TTS-only degradation: the host (and any live STT session) keeps running.
         ttsFailCb?.(msg.error ?? 'voice tts failed')
+      } else if (msg?.t === 'kws:engine:error' && child === c) {
+        // KWS-only degradation: the host keeps running; the next arm respawns the worker.
+        kwsFailCb?.(msg.error ?? 'voice kws failed')
       } else if (msg?.t === 'decoder:error' && child === c) {
         // The decode thread died inside a still-running host — the host is degraded
         // (frames count but nothing transcribes). Kill it and escalate; clearing `child`
         // FIRST makes the kill's own 'exit' event a no-op below (identity guard).
         child = null
         settleStop(0)
+        settleKwsStop(0)
         c.kill()
         failCb?.(msg.error ?? 'voice decoder failed')
+        // A dead host takes any live KWS wake session with it (review: the wake
+        // listener would otherwise keep a dead capture with no re-arm signal).
+        kwsFailCb?.(msg.error ?? 'voice decoder failed')
       }
     })
     c.on('exit', () => {
@@ -112,7 +139,9 @@ export function createVoiceEngine(
       if (child !== c) return
       child = null
       settleStop(0)
+      settleKwsStop(0)
       failCb?.('voice engine host exited unexpectedly')
+      kwsFailCb?.('voice engine host exited unexpectedly')
     })
     child = c
     return c
@@ -142,6 +171,25 @@ export function createVoiceEngine(
     onTtsFailure(cb): void {
       ttsFailCb = cb
     },
+    startKwsSession(port, model): void {
+      ensureChild().postMessage({ t: 'kws:session:start', kwsModel: model }, [port])
+    },
+    stopKwsSession(timeoutMs = 10000): Promise<{ frames: number }> {
+      if (!child) return Promise.resolve({ frames: 0 })
+      const c = child
+      settleKwsStop(0) // single kws session — a second stop settles the first with 0
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => settleKwsStop(0), timeoutMs)
+        pendingKwsStop = (r) => {
+          clearTimeout(timer)
+          resolve(r)
+        }
+        c.postMessage({ t: 'kws:session:stop' })
+      })
+    },
+    onKwsFailure(cb): void {
+      kwsFailCb = cb
+    },
     // 10 s = the eos drain (≤1 s) plus a wide margin. The V3-era 30 s stopgap existed
     // because a COLD recognizer init (>10 s under machine load) blocked the host loop
     // before session:stop was even processed; V5 moved init onto the decoder worker
@@ -162,6 +210,7 @@ export function createVoiceEngine(
     },
     dispose(): void {
       settleStop(0)
+      settleKwsStop(0)
       const c = child
       child = null // identity guard: the kill's 'exit' must not report a failure
       c?.kill()

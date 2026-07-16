@@ -44,7 +44,12 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
   })
   test.afterEach(async ({ page, electronApp }) => {
     // End any live capture so no session/consumer leaks into the next spec (resetAll
-    // also force-disarms converse mode + closes the panel renderer-side).
+    // also force-disarms converse mode + closes the panel renderer-side). The wake-word
+    // opt-in persists in userData — force it back off so no later spec inherits a live
+    // closed-panel listener.
+    await page
+      .evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: false }))
+      .catch(() => {})
     await page.evaluate(() => (globalThis as any).api.voice.stop()).catch(() => {})
     await mainCall(electronApp, 'setLlmMock', false)
     await mainCall(electronApp, 'voiceStubSet', false)
@@ -139,6 +144,123 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
     await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
     expect(await evalIn(page, 'window.__canvasE2E.getSelection()')).toEqual([id])
+  })
+
+  test('mic strip disarms and re-arms without closing the panel (E2E-1)', async ({ page }) => {
+    await page.locator('[data-test="jarvis-edge-tab"]').click()
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+    const mic = page.locator('[data-test="jarvis-mic"]')
+    await expect(mic).toHaveAttribute('data-mic', 'live', { timeout: 10_000 })
+
+    // Disarm via the strip: converse + capture die, the panel STAYS open.
+    await mic.click()
+    await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
+    await expect.poll(async () => voiceCapturing(page), { timeout: 10_000 }).toBe(false)
+    expect((await jarvisState(page)).panelOpen).toBe(true)
+    await expect(mic).toHaveAttribute('data-mic', 'off')
+    await expect(mic).toContainText('mic off')
+
+    // Re-arm via the same strip: the full arm chain runs again inside the open panel.
+    await mic.click()
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+    await expect(mic).toHaveAttribute('data-mic', 'live', { timeout: 10_000 })
+    await expect.poll(async () => voiceCapturing(page), { timeout: 10_000 }).toBe(true)
+  })
+
+  test('Settings-disable while the panel is open runs the full teardown (E2E-1)', async ({
+    page
+  }) => {
+    await page.locator('[data-test="jarvis-edge-tab"]').click()
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+    // The Settings › Persona toggle's IPC — MAIN pushes jarvis:config:changed and the
+    // panel must close through the SAME teardown as ✕/Esc (mic never outlives the surface).
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ enabled: false }))
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+    await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
+    await expect.poll(async () => voiceCapturing(page), { timeout: 10_000 }).toBe(false)
+    // Disabled = the whole surface dormant: no edge tab either.
+    await expect(page.locator('[data-test="jarvis-edge-tab"]')).toHaveCount(0)
+
+    // Re-enable: the collapsed home returns (tab only, panel closed, mic still off).
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ enabled: true }))
+    await expect(page.locator('[data-test="jarvis-edge-tab"]')).toBeVisible()
+    expect((await jarvisState(page)).converseMode).toBe(false)
+  })
+
+  test('edge-tab badge + event chips render live boards only (E2E-1/BADGE-1)', async ({ page }) => {
+    // A real board gets a mark; a DEAD id gets one too — only the live board may render.
+    const id = await seed(page, 'planning', {})
+    await evalIn(
+      page,
+      `window.__canvasE2E.setAttention(${JSON.stringify(id)}, 'needs-input');
+       window.__canvasE2E.setAttention('ghost-board-id', 'error')`
+    )
+    // Collapsed home: the badge counts ONE (the ghost is filtered), not two.
+    await expect(page.locator('[data-test="jarvis-badge"]')).toHaveText('1')
+
+    // Open panel: one chip, for the live board, with the needs-input copy.
+    await page.locator('[data-test="jarvis-edge-tab"]').click()
+    await expect(page.locator('[data-test="jarvis-panel"]')).toHaveAttribute('data-open', 'true')
+    const chips = page.locator('[data-test="jarvis-events"] .jp-notif')
+    await expect(chips).toHaveCount(1)
+    await expect(chips.first()).toContainText('Agent needs your input')
+
+    // Chip click focuses + selects the board — the selection clears the mark and the
+    // chip strip empties (the useNotifications wiring, driven from the panel surface).
+    await chips.first().click()
+    await expect.poll(() => evalIn(page, 'window.__canvasE2E.getSelection()')).toEqual([id])
+    await expect(page.locator('[data-test="jarvis-events"]')).toHaveCount(0)
+    await page.keyboard.press('Escape') // teardown: close the panel again
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+  })
+
+  test('wake word (D3): opt-in only, and its sole power is opening the panel', async ({
+    page,
+    electronApp
+  }) => {
+    // OFF BY DEFAULT: with the panel closed and the feature untouched, there is no wake
+    // session to fire into — the carve-out's ground state.
+    expect(await mainCall(electronApp, 'voiceStubWake')).toBe(false)
+
+    // Opt in: the closed-panel listener arms (stub engine holds the wake port).
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: true }))
+    await expect
+      .poll(async () => mainCall(electronApp, 'voiceStubWake'), { timeout: 10_000 })
+      .toBe(true)
+
+    // THE ONE POWER: the detection opened the panel and armed the mic through the
+    // existing gesture — same end state as an edge-tab click.
+    await expect
+      .poll(async () => (await jarvisState(page)).panelOpen, { timeout: 10_000 })
+      .toBe(true)
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+
+    // Panel open ⇒ the wake listener stands down (converse capture owns the mic): a
+    // second fire finds no wake session.
+    await expect
+      .poll(async () => mainCall(electronApp, 'voiceStubWake'), { timeout: 10_000 })
+      .toBe(false)
+
+    // Close the panel — the listener re-arms on the closed panel (feature still on).
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+    await expect.poll(async () => voiceCapturing(page), { timeout: 10_000 }).toBe(false)
+    await expect
+      .poll(async () => mainCall(electronApp, 'voiceStubWake'), { timeout: 10_000 })
+      .toBe(true)
+    // (That re-armed fire re-opened the panel — tidy up through the teardown path.)
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(true)
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: false }))
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
   })
 
   test('MAIN history follows the mode: recorded per project, cleared on demand', async ({

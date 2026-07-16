@@ -204,3 +204,50 @@ describe('runEngineSpike (mocked utilityProcess.fork)', () => {
     await expect(pending).resolves.toEqual({ ok: false, error: 'host exited (3) before result' })
   })
 })
+
+describe('J5 KWS session (wake word)', () => {
+  const makeEngine = (): {
+    engine: ReturnType<typeof createVoiceEngine>
+    child: InstanceType<typeof h.FakeChild>
+  } => {
+    const child = new h.FakeChild()
+    const engine = createVoiceEngine(vi.fn(() => child as unknown as EngineChildLike))
+    return { engine, child }
+  }
+
+  it('starts/stops the kws session and round-trips its frame count', async () => {
+    const { engine, child } = makeEngine()
+    engine.startKwsSession({} as MessagePortMain, null)
+    expect(child.posted[0].msg).toMatchObject({ t: 'kws:session:start' })
+    const p = engine.stopKwsSession()
+    child.emit('message', { t: 'kws:session:stopped', frames: 7 })
+    expect(await p).toEqual({ frames: 7 })
+  })
+
+  it('a whole-host failure fires onKwsFailure too — the wake listener must not keep a dead capture (review)', () => {
+    const { engine, child } = makeEngine()
+    const kwsFail = vi.fn()
+    engine.onKwsFailure(kwsFail)
+    engine.startKwsSession({} as MessagePortMain, null)
+    child.emit('exit', 1)
+    expect(kwsFail).toHaveBeenCalledWith('voice engine host exited unexpectedly')
+
+    // decoder:error (host degraded -> killed) escalates to the kws side as well.
+    const second = makeEngine()
+    const kwsFail2 = vi.fn()
+    second.engine.onKwsFailure(kwsFail2)
+    second.engine.startKwsSession({} as MessagePortMain, null)
+    second.child.emit('message', { t: 'decoder:error', error: 'decoder died' })
+    expect(kwsFail2).toHaveBeenCalledWith('decoder died')
+  })
+
+  it('a kws:engine:error (worker-only death) fires onKwsFailure without killing the host', () => {
+    const { engine, child } = makeEngine()
+    const kwsFail = vi.fn()
+    engine.onKwsFailure(kwsFail)
+    engine.startKwsSession({} as MessagePortMain, null)
+    child.emit('message', { t: 'kws:engine:error', error: 'spotter init failed' })
+    expect(kwsFail).toHaveBeenCalledWith('spotter init failed')
+    expect(child.killed).toBe(false)
+  })
+})
