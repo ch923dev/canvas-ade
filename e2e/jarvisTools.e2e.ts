@@ -93,11 +93,17 @@ test.describe('@voice jarvis hands (voice → tool call → confirm gate → can
       .toContain('smoke test')
 
     // The resolved chip + the GROUNDED spoken confirmation (quotes the tool result JSON,
-    // which carries the minted card id — never an invented status).
+    // which carries the minted card id — never an invented status). The active-turn acts
+    // FOLD into the transcript the moment the turn settles (turnDone clears `acts`), so
+    // accept either home — the live 'ok' row or the folded chip.
     await expect
-      .poll(async () => (await jarvisState(page)).acts.some((a) => a.phase === 'ok'), {
-        timeout: 15_000
-      })
+      .poll(
+        async () => {
+          const s = await jarvisState(page)
+          return s.acts.some((a) => a.phase === 'ok') || s.actChipCount >= 1
+        },
+        { timeout: 15_000 }
+      )
       .toBe(true)
     await expect
       .poll(async () => (await jarvisState(page)).lastAssistantText, { timeout: 15_000 })
