@@ -376,10 +376,27 @@ describe('W4 assets pipeline', () => {
     }
   })
 
-  it('writeAsset rejects an unsupported ext', async () => {
+  it('writeAsset rejects an UNSAFE ext (traversal / non-slug) — #346 gate is SAFE_EXT_RE', async () => {
     const dir = tmp()
     try {
-      await expect(writeAsset(dir, bytes('x'), 'exe')).rejects.toThrow(/ext/)
+      // A `.`/`/`/`\` in the ext could escape the sha1-stem filename — rejected before any write.
+      await expect(writeAsset(dir, bytes('x'), '../evil')).rejects.toThrow(/unsafe ext/)
+      await expect(writeAsset(dir, bytes('x'), 'p.n')).rejects.toThrow(/unsafe ext/)
+      await expect(writeAsset(dir, bytes('x'), '')).rejects.toThrow(/unsafe ext/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('writeAsset accepts ANY safe-slug ext (#346 any-file attachments — pdf/mp3/exe)', async () => {
+    const dir = tmp()
+    try {
+      // Attachments are any-file: a bounded alphanumeric ext is stored as-is (bytes never executed).
+      for (const ext of ['pdf', 'mp3', 'exe', 'zip']) {
+        const { assetId } = await writeAsset(dir, bytes(`file-${ext}`), ext)
+        expect(assetId).toMatch(new RegExp(`^assets/[a-f0-9]{40}\\.${ext}$`))
+        expect(readAsset(dir, assetId)).toEqual(bytes(`file-${ext}`))
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

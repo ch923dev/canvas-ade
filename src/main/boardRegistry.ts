@@ -78,7 +78,23 @@ export interface KanbanColumnMirror {
   wip?: number
 }
 
-/** One card in a Kanban board's mirror projection (P3b) — flat, bound to a column by `columnId`. */
+/** One file+line ref on a Kanban card's mirror projection (v19) — path + optional 1-based line/endLine. */
+export interface KanbanCardFileRefMirror {
+  path: string
+  line?: number
+  endLine?: number
+}
+
+/** One attachment on a Kanban card's mirror projection (#346) — a blob REF (assetId) + display metadata. */
+export interface KanbanAttachmentMirror {
+  assetId: string
+  name: string
+  kind: string
+  mime?: string
+  size?: number
+}
+
+/** One card in a Kanban board's mirror projection (P3b→v19→#346) — flat, bound to a column by `columnId`. */
 export interface KanbanCardMirror {
   id: string
   columnId: string
@@ -86,12 +102,27 @@ export interface KanbanCardMirror {
   tag?: string
   assignee?: string
   ref?: string
+  /** v19 card-detail: long-form description, TRUNCATED to a preview on ingest (identification, not fidelity). */
+  description?: string
+  /** v19 card-detail: label chips (the plural that supersedes `tag`). */
+  tags?: string[]
+  /** v19 card-detail: file+line references the card touches. */
+  fileRefs?: KanbanCardFileRefMirror[]
+  /** #346 attachments: blob refs (assetId + metadata) the card carries; read-only. Absent until a card has any. */
+  attachments?: KanbanAttachmentMirror[]
 }
 
-/** A Kanban board's bounded columns + cards on the mirror (P3b). The host groups it on read. */
+/**
+ * A Kanban board's bounded columns + cards on the mirror (P3b→v19). The host groups it on read. v19 adds
+ * the board's optional COLUMN AXIS (what the lanes group by) + its display name.
+ */
 export interface KanbanMirror {
   columns: KanbanColumnMirror[]
   cards: KanbanCardMirror[]
+  /** v19: 'flow' (workflow stages) | 'category' (buckets); absent ⇒ 'flow' at read. */
+  columnAxis?: 'flow' | 'category'
+  /** v19: display name of the column axis (e.g. "Phase"/"Subsystem"). */
+  axisLabel?: string
 }
 
 /** One checklist item in a Planning board's mirror projection (S6) — id + label + done. */
@@ -304,7 +335,23 @@ const MAX_FILEREFS = 500
 /** Cap a single kanban board's mirrored lanes + cards (P3b) so a forged push can't grow MAIN memory. */
 const MAX_KANBAN_COLUMNS = 50
 const MAX_KANBAN_CARDS = 300
+/** Cap a single card's mirrored v19 detail lists (tags / fileRefs / attachments) so a forged push can't grow memory. */
+const MAX_KANBAN_CARD_TAGS = 20
+const MAX_KANBAN_CARD_FILE_REFS = 50
+const MAX_KANBAN_CARD_ATTACHMENTS = 50
 const MAX_FIELD_LEN = 256
+/** A card fileRef `path` mirrors with a GENEROUS cap (a real, HUMAN-authored project-relative path can
+ *  exceed the 256 chip cap; dropping it would make the ref vanish from `canvas://board/{id}/cards` even
+ *  though the human sees it in the UI). Agent-written paths stay bounded at 256 by the write gate
+ *  (`mcpKanban.ts`), which is ≤ this, so an agent-accepted path always survives read-back. */
+const MAX_KANBAN_FILE_REF_PATH = 1024
+/** A kanban card's description mirrors at FULL fidelity (up to the host write cap `mcpKanban.ts`
+ *  MAX_CARD_DESCRIPTION = 4000), NOT the 500-char planning preview: `canvas://board/{id}/cards` is the
+ *  agent's read-before-write source, so a &gt;500-char description an agent wrote must read back whole or the
+ *  mandated read→update loop silently loses the tail. Still bounded (truncate, not drop) as a memory cap. */
+const MAX_KANBAN_CARD_DESCRIPTION = 4000
+/** The attachment `kind` values #346 mints (a card-store enum); an off-value is dropped on ingest. */
+const ATTACHMENT_KINDS: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'file'])
 /** Cap a single planning board's mirrored elements + items (S6) so a forged push can't grow MAIN memory. */
 const MAX_PLANNING_ELEMENTS = 300
 const MAX_PLANNING_ITEMS = 100
@@ -338,17 +385,25 @@ function sanitizeFileRefs(input: unknown): FileRefMirror[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
-/** A non-empty, length-capped string, or undefined (a bad/over-length/empty value drops the field). */
-function boundedStr(v: unknown): string | undefined {
-  if (typeof v !== 'string' || v.length === 0 || v.length > MAX_FIELD_LEN) return undefined
+/** A non-empty, length-capped string, or undefined (a bad/over-length/empty value drops the field).
+ *  `max` defaults to {@link MAX_FIELD_LEN}; a path field passes a larger cap (a real file path can be
+ *  longer than a chip). Over-length DROPS (never truncates) — a truncated path is a wrong reference. */
+function boundedStr(v: unknown, max: number = MAX_FIELD_LEN): string | undefined {
+  if (typeof v !== 'string' || v.length === 0 || v.length > max) return undefined
   return v
 }
 
-/** A non-empty free-text PREVIEW, TRUNCATED to {@link MAX_PLANNING_PREVIEW} (S6) — unlike {@link boundedStr}
- *  an over-length value is cut, not dropped, so a long note stays identifiable by its opening text. */
-function boundedPreview(v: unknown): string | undefined {
+/** A non-empty free-text value, TRUNCATED to `max` — unlike {@link boundedStr} an over-length value is
+ *  cut, not dropped, so long content stays identifiable/usable rather than vanishing. */
+function boundedText(v: unknown, max: number): string | undefined {
   if (typeof v !== 'string' || v.length === 0) return undefined
-  return v.length > MAX_PLANNING_PREVIEW ? v.slice(0, MAX_PLANNING_PREVIEW) : v
+  return v.length > max ? v.slice(0, max) : v
+}
+
+/** A note/text/diagram/label PREVIEW, TRUNCATED to {@link MAX_PLANNING_PREVIEW} (S6) — identification,
+ *  not fidelity (the edit itself supplies full content). */
+function boundedPreview(v: unknown): string | undefined {
+  return boundedText(v, MAX_PLANNING_PREVIEW)
 }
 
 /**
@@ -400,6 +455,76 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
   return out.length > 0 ? { elements: out } : undefined
 }
 
+/** Keep only well-formed card `tags` (v19) — non-empty length-capped strings, count-capped; else undefined. */
+function sanitizeCardTags(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: string[] = []
+  for (const t of input) {
+    if (out.length >= MAX_KANBAN_CARD_TAGS) break
+    const v = boundedStr(t)
+    if (v !== undefined) out.push(v)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * Keep only well-formed card `fileRefs` (v19) — each a `{path, line?, endLine?}` with a non-empty
+ * length-capped `path` and finite positive `line`/`endLine`. Count-capped ({@link MAX_KANBAN_CARD_FILE_REFS});
+ * a malformed entry is dropped. Returns `undefined` when nothing survives, so the card omits the field.
+ */
+function sanitizeCardFileRefs(input: unknown): KanbanCardFileRefMirror[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: KanbanCardFileRefMirror[] = []
+  for (const r of input) {
+    if (out.length >= MAX_KANBAN_CARD_FILE_REFS) break
+    if (!r || typeof r !== 'object') continue
+    const path = boundedStr((r as KanbanCardFileRefMirror).path, MAX_KANBAN_FILE_REF_PATH)
+    if (path === undefined) continue
+    const ref: KanbanCardFileRefMirror = { path }
+    const { line, endLine } = r as KanbanCardFileRefMirror
+    // Coupled + integer, matching the write gate (`mcpKanban.ts` sanitizeCardFileRefs) and the human
+    // path (`kanbanEdit.ts` normLine): `line` is a positive INTEGER; `endLine` is kept ONLY when a
+    // `line` is present AND it is a real range (endLine > line). A fractional line, a bare endLine, or
+    // endLine ≤ line (shapes no legitimate producer emits — only a hand-edited/adversarial doc) is dropped.
+    if (typeof line === 'number' && Number.isInteger(line) && line > 0) {
+      ref.line = line
+      if (typeof endLine === 'number' && Number.isInteger(endLine) && endLine > line) {
+        ref.endLine = endLine
+      }
+    }
+    out.push(ref)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * Keep only well-formed card `attachments` (#346) — each a `{assetId, name, kind, mime?, size?}` blob
+ * ref. `assetId`/`name` are non-empty length-capped strings; `kind` is a known {@link ATTACHMENT_KINDS}
+ * value; `mime` a length-capped string; `size` a finite positive number. Count-capped; a malformed entry
+ * is dropped. Returns `undefined` when nothing survives, so the card omits the field. NEVER the blob —
+ * only the logical ref + display metadata (ADR 0009: the card carries the assetId, not the bytes).
+ */
+function sanitizeCardAttachments(input: unknown): KanbanAttachmentMirror[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: KanbanAttachmentMirror[] = []
+  for (const a of input) {
+    if (out.length >= MAX_KANBAN_CARD_ATTACHMENTS) break
+    if (!a || typeof a !== 'object') continue
+    const rec = a as Record<string, unknown>
+    const assetId = boundedStr(rec.assetId)
+    const name = boundedStr(rec.name)
+    if (assetId === undefined || name === undefined) continue
+    if (typeof rec.kind !== 'string' || !ATTACHMENT_KINDS.has(rec.kind)) continue
+    const att: KanbanAttachmentMirror = { assetId, name, kind: rec.kind }
+    const mime = boundedStr(rec.mime)
+    if (mime !== undefined) att.mime = mime
+    if (typeof rec.size === 'number' && Number.isFinite(rec.size) && rec.size > 0)
+      att.size = rec.size
+    out.push(att)
+  }
+  return out.length > 0 ? out : undefined
+}
+
 /**
  * Keep only well-formed Kanban lanes + cards; drop anything else (P3b). Bounded like the other
  * snapshot fields — `mcp:boards` is an IPC channel, so trust nothing: cap columns
@@ -411,7 +536,12 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
  */
 function sanitizeKanban(input: unknown): KanbanMirror | undefined {
   if (!input || typeof input !== 'object') return undefined
-  const { columns, cards } = input as { columns?: unknown; cards?: unknown }
+  const {
+    columns,
+    cards,
+    columnAxis: rawAxis,
+    axisLabel: rawLabel
+  } = input as { columns?: unknown; cards?: unknown; columnAxis?: unknown; axisLabel?: unknown }
   const cols: KanbanColumnMirror[] = []
   if (Array.isArray(columns)) {
     for (const c of columns) {
@@ -442,10 +572,38 @@ function sanitizeKanban(input: unknown): KanbanMirror | undefined {
       if (assignee !== undefined) card.assignee = assignee
       const ref = boundedStr((c as KanbanCardMirror).ref)
       if (ref !== undefined) card.ref = ref
+      // v19 card-detail: description mirrors at FULL fidelity (truncated only at the 4000 write cap, not
+      // the 500 planning preview) so the agent read→update loop is lossless; tags/fileRefs are bounded
+      // lists (count + per-field capped).
+      const rec = c as Record<string, unknown>
+      const description = boundedText(rec.description, MAX_KANBAN_CARD_DESCRIPTION)
+      if (description !== undefined) card.description = description
+      const tags = sanitizeCardTags(rec.tags)
+      if (tags !== undefined) card.tags = tags
+      const fileRefs = sanitizeCardFileRefs(rec.fileRefs)
+      if (fileRefs !== undefined) card.fileRefs = fileRefs
+      // #346 attachments: blob refs (assetId + metadata) — validated/count-capped, read-only.
+      const attachments = sanitizeCardAttachments(rec.attachments)
+      if (attachments !== undefined) card.attachments = attachments
       out.push(card)
     }
   }
-  return cols.length > 0 || out.length > 0 ? { columns: cols, cards: out } : undefined
+  // v19 board axis: keep only the two-value enum + a bounded single-line label (bad/absent ⇒ dropped,
+  // read as 'flow' downstream). The mirror carries them so canvas://board/{id}/cards can project them.
+  const columnAxis = rawAxis === 'flow' || rawAxis === 'category' ? rawAxis : undefined
+  const axisLabel = boundedStr(rawLabel)
+  if (
+    cols.length === 0 &&
+    out.length === 0 &&
+    columnAxis === undefined &&
+    axisLabel === undefined
+  ) {
+    return undefined
+  }
+  const mirror: KanbanMirror = { columns: cols, cards: out }
+  if (columnAxis !== undefined) mirror.columnAxis = columnAxis
+  if (axisLabel !== undefined) mirror.axisLabel = axisLabel
+  return mirror
 }
 
 /**

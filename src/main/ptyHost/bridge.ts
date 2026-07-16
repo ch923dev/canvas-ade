@@ -211,10 +211,13 @@ export async function acquireProc(
         meta
       })
     } catch (err) {
+      // Stable dedupe key: the message embeds run-variable detail (the fresh-spawn pipe name
+      // changes per attempt), which used to defeat notifyOnce and re-toast on every spawn.
       reportPtyHostFailure(
         `Terminal host unavailable — sessions will not survive restarts (${
           err instanceof Error ? err.message : String(err)
-        })`
+        })`,
+        'daemon-unavailable'
       )
     }
   }

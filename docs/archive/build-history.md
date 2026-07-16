@@ -2518,3 +2518,143 @@ mouse-mode hint badge) documented in the research package.
   inline-dispositioned; rounds 2–3 clean; all 4 checks green ×3 rounds; CodeQL clean.
   One CI red en route: the new keepable unit failed on the Linux runner (POSIX
   `path.basename` vs a Windows path) — fixed platform-agnostic in `109462d4`.
+
+## PR #342 — project switching: window-scoped hotkey + running-projects switcher (2026-07-13, v0.17.0)
+
+Fixes three reported project-switch defects and reshapes the switch key into an Alt-Tab-style
+picker (branch `feat/project-switcher`; overlay mock signed off; plan-viz board driven live).
+
+- **#1 fired while unfocused (fix).** `globalHotkey.ts` no longer registers an OS-wide
+  `globalShortcut` (which fired from any app AND yanked the window forward on every press). It
+  binds a MAIN-window `before-input-event` listener instead — that only reaches a focused
+  webContents, so the chord fires ONLY when Expanse is focused: no cross-app fire, no
+  foreground-steal, no system-wide accelerator reservation. Accelerators are parsed + matched live
+  per keystroke (exact chord; `CommandOrControl`→Ctrl off-mac / Cmd on-mac; auto-repeat + key-up
+  ignored), so a Settings rebind needs no re-attach; the listener is attached lazily on first focus
+  (mirrors the recap re-ensure wiring). A window binding cannot fail to register → `hotkey:failures`
+  now always answers `[]` (endpoint kept for the preload/renderer contract; the renderer
+  failure-pull toast is removed).
+- **#2 no picker (feature).** New running-projects switcher overlay (`RunningProjectSwitcher.tsx` +
+  `runningSwitcherStore.ts` + `styles/screens/running-switcher.css`), mounted at the App root — a
+  centered panel over a frosted, dimmed whole-app backdrop (Alt-Tab framing, deliberately NOT a
+  full-screen takeover; the resident cap makes a Task-View a misfit). Cards = active first, then
+  backgrounded residents (the shared `dockCards` order) with canvas thumbnail + live badge + status
+  dot. Tab / `]` / arrows advance, Shift+Tab / `[` go back, Enter or click opens, Esc cancels; the
+  commit runs the UNCHANGED `performProjectSwitch` pipeline. The hotkey opens the overlay, or
+  advances the highlight when it's already up.
+- **#3 churned / jumped to non-open projects (fix).** The old renderer path re-read the MRU recents
+  every press and `project.open`→`touchRecent` reordered it, so the cycle was non-deterministic and
+  lost its origin — and it walked ALL history (cold recents), not the running set. The overlay
+  SNAPSHOTS the running set ONCE per interaction and navigates that frozen list → stable, always
+  returns to the origin; the universe is running projects only (active + residents), so a single
+  running project shows an empty-state hint and never dives into recents (cold recents stay
+  reachable from the ProjectSwitcher pill). `useProjectSwitchHotkey` drops the recents-ring cycle.
+- **Verified:** trio (typecheck · lint 0-err · format) · units +17 (`globalHotkey.test.ts`:
+  accelerator parse + exact-chord matcher + mac/win resolution + disabled + key-up/auto-repeat;
+  `runningSwitcherStore.test.ts`: snapshot order + running-only universe + single/empty + stable
+  frozen round-trip) · build (plain + `CANVAS_E2E`) · NEW `projectSwitcher.e2e.ts` (@chrome — real
+  `project:cycleHotkey` channel → overlay membership, Tab nav, Esc dismiss, single-project empty
+  state) green · LIVE app check via the `_electron` harness (2 running → overlay + "2 running",
+  Tab advances, Esc closes, close resident → 1 card + empty note; screenshots).
+
+## PR #344 — fix(ptyhost): self-contained daemon bundle — staged daemon crashed on boot (2026-07-14, v0.17.1)
+
+- **Squash `ee8164ae`.** Root cause (proven by running the staged daemon manually): as a Rollup
+  entry sharing the main build's module graph, the daemon's `protocol.ts` import (shared with
+  `client.ts`) was chunk-split into `out/main/chunks/protocol-<hash>.js`, but `runtimeStage.ts`
+  stages ONLY `ptyHostDaemon.js` — the staged (= packaged-only) daemon died on its first require
+  (`Cannot find module './chunks/protocol-…'`, exit 1), silently (`stdio: 'ignore'`, no child
+  error/exit observation). Every terminal spawn then burned the full 40×250 ms connect-retry
+  ladder (~10 s) before falling back in-proc, re-paid it on EVERY spawn (`ready` resets on
+  failure), and re-toasted "Terminal host unavailable" per spawn (dedupe key embedded the
+  per-attempt random pipe suffix). Dev never hit it — the in-place daemon sits beside
+  `out/main/chunks/`; the staged path had ZERO coverage (`CANVAS_PTYHOST_STAGE` referenced only
+  in `client.ts`, never set by any test).
+- **Fix:** daemon now esbuild-bundled SELF-CONTAINED (`daemonBundle.ts` + a `writeBundle` plugin
+  in `electron.vite.config.ts`; `external: ['node-pty']`, target node24, metafile inputs
+  registered as watch files); `client.ts` hardening — daemon stderr → `ptyhost-boot.err`, child
+  error/early-exit aborts the connect ladder via AbortSignal (~300 ms fail, not 10 s), per-run
+  `daemonDisabled` circuit breaker, stable notification dedupe key; `daemonMain.ts` loads
+  node-pty lazily (broken stage → logged `spawn-failed`, not a silent pre-log death).
+- **Coverage the gap cost us:** `ptyhostReattach.e2e.ts` now runs with `CANVAS_PTYHOST_STAGE=1`
+  (real stage-and-boot path); `daemonBundle.test.ts` pins the bundle chunk-free + electron-free;
+  MANUAL-CHECKS.md gains the staged-daemon packaged row.
+- **Verify:** typecheck/lint/unit green · bundle 9.8 KB, zero chunk requires · standalone staged
+  boot (`listening`) · packed `Expanse.exe` + asar-extracted bundle boots · staged-mode e2e
+  reattach green · FULL pre-push matrix 281 passed / 1 known-flaky / 3 skipped (5.7 m) · CI
+  check + CodeQL + claude-review green (1 warning dispositioned inline: unit tier for the
+  connect state machine filed as follow-up). Dev eyeball check waived by the user for this PR
+  (packed-exe boot verify stood in).
+
+## PR #347 — feat(mcp): agent read/write of v19 kanban card-detail fields over MCP (2026-07-15, v0.18.1)
+
+- **Merge `88a29a06`** (commits `e78252ec` wiring+tests · `468c4b02` pin · `f7492c1f` live e2e ·
+  `d94f0ebd` attachment-read · `53829f11` review-fix). **Cross-repo, package-first:** the MCP
+  tool/resource schema lives in the sibling `canvas-ade-mcp` repo — `@expanse-ade/mcp@0.20.0` was
+  published FIRST (`a3952c6` + tag `v0.20.0`, tag-triggered npm OIDC), then this app pinned it.
+- **What:** lets an AGENT (not just the #345 human UI) read + write the v19 kanban card-detail
+  fields over the `canvas-ade` MCP — `add_card`/`update_card` gain `description` / `tags[]` /
+  `fileRefs[]`; `configure_board` gains `columnAxis` (flow|category) / `axisLabel`. All
+  optional/additive over the schema #345 already shipped ⇒ **no schema bump**.
+- **Chain:** MAIN-authoritative sanitize on BOTH the write ingest (`mcpKanban.ts` — multi-line-safe
+  description, dedup tags, positive-int fileRef lines) and the renderer→MAIN mirror
+  (`boardRegistry.ts`, defensive re-sanitize); writes reuse the existing `kanbanEdit` ops (ONE undo
+  step) behind the ADR-0003 human-confirm gate + audit; read projection `deriveKanban` →
+  `buildBoardCards` → `canvas://board/{id}/cards`. `LifecycleOrchestrator` Omit-and-redeclares the
+  widened methods host-side, so the app typechecks the new fields WITHOUT waiting on the package bump.
+- **Attachments (#346):** agent-READ only — `{assetId, name, kind, mime?, size?}` projected
+  read-only into `canvas://board/{id}/cards`, DORMANT/forward-compatible (the `attachments` field
+  lands with #346; a no-op until then, then it lights up automatically). No write tool — `assetId`
+  is a real blob ref (security surface) and agents can't author blobs over the MCP text channel.
+- **Reviewer (2 findings, both fixed + verified, no new findings on re-review):** 1 `[critical]` —
+  the write-gate fileRef-path cap (512) exceeded the mirror-ingest cap (256), so a 257–512-char path
+  ack'd `true` on write then silently vanished on read-back; fixed by lowering the write cap to 256
+  so `sanitizeId` rejects LOUDLY. 1 `[warning]` — `mergeCard`'s legacy `tag`/`tags` shedding was
+  one-directional (a later legacy-`tag`-only update left a card carrying both); fixed bidirectional.
+  Both dispositioned inline (the disposition-aware reviewer stops the re-flag loop).
+- **Verify:** typecheck/lint/unit green (new suites: `mcpKanban` · `boardRegistry` · `mcpBoardCards`
+  · `boardStatus` · `kanbanMcpApply` · `mcpOrchestrator.kanban`) · LIVE e2e round-trip (`mcp.e2e.ts`
+  — `add_card` writes description/tags/fileRefs through the gate → read back in
+  `canvas://board/{id}/cards` → `configure_board` sets the axis; worker denied) · FULL pre-push
+  matrix green (Win 284 / Linux 282) · manual dev check clean · CI check + CodeQL + claude-review green.
+
+## PR #346 — feat(kanban): add-card create modal + card attachments (2026-07-15, v0.19.0)
+
+- **Merge `3679ddf7`** (commits `9446b046` schema+create-modal · `e20e20bb` parity-test nit ·
+  `57d44c4a` links+picker-search+icon-redesign · `d2339c59` #347 MCP-snapshot integration ·
+  `f1ed6e5d` review-fix). Rebased onto main AFTER #347 landed: version conflict → 0.19.0; #347's
+  local `BoardSnapshotInput`/`KanbanAttachmentSummary` were frozen at the file-only attachment shape
+  (`assetId` required), so this relaxed them to the `KanbanAttachment` union (optional `assetId` +
+  `url`) — link attachments are intentionally NOT agent-mirrored yet (deliberate follow-up, test-pinned).
+- **Create-mode modal:** `+ Add card` no longer opens a bare inline title box — it opens the existing
+  `KanbanCardModal` in a new CREATE mode (empty draft, target column pre-picked) that commits
+  title+description+tags+fileRefs+attachments as ONE new card in one undo step (`addCardDetailed`). The
+  #345 remount discipline holds (keyed by `cardId` / a create token, no prop→state sync effect).
+- **Attachments (image · video · audio · any file · link):** an Attachments block on every card —
+  BUTTON (native picker over a hidden `<input type=file multiple>`) · DRAG-DROP · clipboard PASTE,
+  persisted to the SAME content-addressed store the whiteboard uses (`.canvas/assets/<sha1>.<ext>`) via
+  the generalized `asset:write` IPC. MAIN's `writeAsset` ext-gate widened from the 8-ext media allow-list
+  to a safe alphanumeric slug (`SAFE_EXT_RE`) — the sha1 stem is MAIN-computed, so no traversal/exec
+  surface (`ASSET_EXTS` stays the backdrop-picker media drift guard). Media renders via `blob:` URLs
+  in-sandbox: image→lightbox, `<video>`/`<audio>` players, other file→a chip that opens externally; a
+  LINK carries a `url` (no blob) and opens in the OS browser (scheme-gated `shell:openExternal`, bare
+  host → https://). Card face gains an attachment-count indicator. Schema additive on the unreleased v19
+  (`KanbanCard.attachments` + a `KanbanAttachment` file|link union) — no bump; rides the `cards` patch key.
+- **Also:** recursive file-picker search (Pick file & lines — a flat all-project match list, empty
+  folders pruned, heavy trees skipped, capped 500, listings cached, debounced) replacing the shallow
+  same-dir filter; a VS-Code-style file-tree icon redesign (self-contained inline SVG, calm one-accent —
+  folder + per-extension file glyphs recognizable by shape, chevron rotate-on-expand; via the impeccable
+  skill against the existing DESIGN.md tokens); + a `min-height:0` overflow fix carried from #345 (the
+  tree spilled out of the modal card on a large project).
+- **Reviewer (clean across all rounds; 2 `[warning]`s fixed + inline-replied):** (1) client-side 256 MB
+  size cap checked BEFORE `arrayBuffer()` buffers a file into renderer memory (multi-GB drop → OOM
+  guard); (2) create-mode commit-vs-write race — "Add card" is now disabled (`onPendingChange`) while an
+  `asset.write` is in flight, so a commit can't drop the attachment (orphaned blob). Both dispositioned
+  inline (the disposition-aware reviewer stops the re-flag loop).
+- **Verify:** typecheck/lint/format green · unit 5163 pass (5 known machine-env flakes — pathSafe
+  junction + pty.recapenv, identical on base) · e2e kanban 7/7 (create-modal add · real file attach to
+  `.canvas/assets/` · link add with https:// prepend) · FULL pre-merge matrix on the final head
+  `f1ed6e5d` (Win kanban green — the 3 gate failures confirmed pre-existing/env: `gitDiff`/`menuShell`
+  ambient + `mcp:758` fails on a pure #347 base checkout; Linux Docker **285 passed**) · CI check +
+  CodeQL + analyze + claude-review green · manual dev check via live HMR (create modal · attachments ·
+  links · picker search + icons).

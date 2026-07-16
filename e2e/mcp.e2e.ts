@@ -755,6 +755,115 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await closeBoardGated(page, mcp, id)
   })
 
+  test('v19 card-detail ROUND-TRIP: add_card writes description/tags/fileRefs through the gate, they read back in canvas://board/{id}/cards, and configure_board sets the axis', async ({
+    page,
+    mcp
+  }) => {
+    // The whole agent write/read loop over the REAL 0.20.0 wire: tool schema (accepts the new args) →
+    // orchestrator sanitize → human confirm → renderer apply → store → mirror → read resource. The
+    // card/axis tools are planningWrite-gated (like add_planning_elements) — present for the orchestrator.
+    expect(mcp.orch.tools).toContain('add_card')
+    expect(mcp.worker.tools).not.toContain('add_card')
+
+    type WireCard = {
+      id: string
+      title: string
+      description?: string
+      tags?: string[]
+      fileRefs?: Array<{ path: string; line?: number; endLine?: number }>
+    }
+    type WireCards = {
+      isKanban: boolean
+      columns: Array<{ id: string; cards: WireCard[] }>
+      columnAxis?: string
+      axisLabel?: string
+    }
+    const findCard = (cards: WireCards, title: string): WireCard | undefined =>
+      cards.columns.flatMap((c) => c.cards).find((x) => x.title === title)
+
+    // A kanban board comes through the renderer seed seam (spawn_board covers terminal/browser/planning).
+    const kid = await seed(page, 'kanban', {
+      columns: [
+        { id: 'backlog', title: 'Backlog' },
+        { id: 'review', title: 'Review' }
+      ],
+      cards: []
+    })
+    // Wait for the renderer→MAIN mirror to carry the new board BEFORE the agent writes to it —
+    // otherwise add_card resolves as "board not found" (rejected, no confirm modal). The mirror is async.
+    await expect
+      .poll(
+        async () => {
+          const boards = await mcp.orch.readJson<Array<{ id: string }>>('canvas://boards')
+          return boards.some((b) => b.id === kid)
+        },
+        { timeout: 8000 }
+      )
+      .toBe(true)
+
+    // add_card carrying the v19 detail fields — a card write is human-confirmed; drive the modal.
+    const addP = mcp.orch.call('add_card', {
+      boardId: kid,
+      columnId: 'backlog',
+      title: 'Wire auth',
+      description: 'token middleware\ncheck expiry with <=',
+      tags: ['feature', 'security'],
+      fileRefs: [{ path: 'src/auth/mw.ts', line: 12, endLine: 20 }, { path: 'src/auth/token.ts' }]
+    })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await addP)).toBe(true)
+
+    // The agent READS the fields back through the resource (the round-trip proof).
+    await expect
+      .poll(
+        async () => {
+          const cards = await mcp.orch.readJson<WireCards>(`canvas://board/${kid}/cards`)
+          const c = findCard(cards, 'Wire auth')
+          return (
+            !!c &&
+            c.description === 'token middleware\ncheck expiry with <=' &&
+            JSON.stringify(c.tags) === JSON.stringify(['feature', 'security']) &&
+            c.fileRefs?.length === 2 &&
+            c.fileRefs[0].path === 'src/auth/mw.ts' &&
+            c.fileRefs[0].line === 12 &&
+            c.fileRefs[0].endLine === 20 &&
+            c.fileRefs[1].path === 'src/auth/token.ts'
+          )
+        },
+        { timeout: 8000 }
+      )
+      .toBe(true)
+
+    // configure_board sets the column axis (axisLabel is renderable content → confirm-gated).
+    const cfgP = mcp.orch.call('configure_board', {
+      id: kid,
+      columnAxis: 'category',
+      axisLabel: 'Subsystem'
+    })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await cfgP)).toBe(true)
+
+    await expect
+      .poll(
+        async () => {
+          const cards = await mcp.orch.readJson<WireCards>(`canvas://board/${kid}/cards`)
+          return cards.columnAxis === 'category' && cards.axisLabel === 'Subsystem'
+        },
+        { timeout: 8000 }
+      )
+      .toBe(true)
+
+    // A worker is denied the write tools server-side (tier split).
+    const workerAdd = await mcp.worker.call('add_card', {
+      boardId: kid,
+      columnId: 'backlog',
+      title: 'nope'
+    })
+    expect(deniedToolNotFound(workerAdd, 'add_card')).toBe(true)
+  })
+
   test('close_board removes a board ONLY through the human gate; deny keeps it; a worker is denied', async ({
     page,
     mcp

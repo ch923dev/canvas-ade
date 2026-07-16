@@ -15,9 +15,61 @@
   gap: var(--space-12);
   align-items: flex-start;
   padding: var(--space-12);
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* ── v19 column axis — chosen once at creation (New Kanban dialog), not toggled on the board. A
+   Category board captions its axis (read-only) so the lanes read as buckets, not a pipeline. ── */
+.kb-axis-cap {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-12);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.kb-axis-cap-k {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kb-axis-cap-v {
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Empty-lanes prompt — a fresh Category board starts with NO columns (you define your own). */
+.kb-lanes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-4);
+}
+.kb-lanes-empty-t {
+  font-size: var(--fs-label);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.kb-lanes-empty-s {
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.kb-lanes-empty-add {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-8);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
 }
 .kb-col {
   display: flex;
@@ -79,11 +131,25 @@
 .kb-dragging {
   opacity: 0.4;
 }
+/* The card title doubles as the accessible "open details" trigger (a real <button>, so keyboard +
+   screen readers reach it); reset the button chrome so it reads as the plain title it replaces. */
 .kb-card-title {
-  padding-right: 14px; /* clear the delete × */
+  display: block;
+  width: 100%;
+  padding: 0 14px 0 0; /* right pad clears the delete × */
+  font-family: inherit;
   font-size: var(--fs-body);
   line-height: var(--lh-body);
+  text-align: left;
   color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.kb-card-title:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-ctl);
 }
 .kb-card-meta {
   display: flex;
@@ -290,4 +356,814 @@
 }
 .kb-col-new {
   padding: var(--space-8) var(--space-4);
+}
+
+/* ── v19 card-detail: face indicators + open affordance ── */
+
+/* A subtle icon that a card carries a description / file refs — never the content itself (Linear rule:
+   the face stays scannable, detail lives in the modal). Muted, non-interactive, sits in the meta row. */
+.kb-ind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-3);
+}
+.kb-ind-n {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  line-height: 1;
+}
+
+/* ── v19 card-detail modal (KanbanCardModal) ── */
+.kbm {
+  display: flex;
+  flex-direction: column;
+  max-height: 82vh;
+  font-family: var(--ui);
+}
+.kbm-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.kbm-crumb {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.kbm-sep {
+  margin: 0 var(--space-6);
+  opacity: 0.6;
+}
+.kbm-spacer {
+  flex: 1;
+}
+.kbm-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.kbm-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.kbm-close:hover {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.kbm-body {
+  display: grid;
+  grid-template-columns: 1fr 264px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.kbm-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  padding: var(--space-20);
+  min-width: 0;
+}
+.kbm-title {
+  padding: var(--space-4) var(--space-6);
+  font-family: inherit;
+  font-size: var(--fs-h);
+  line-height: var(--lh-h);
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.kbm-title:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface);
+}
+.kbm-title:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.kbm-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.kbm-label {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kbm-desc {
+  padding: var(--space-8);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+  outline: none;
+  resize: vertical;
+}
+.kbm-desc:focus {
+  border-color: var(--accent);
+}
+.kbm-desc::placeholder {
+  color: var(--text-3);
+}
+
+/* sidebar */
+.kbm-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  padding: var(--space-20) var(--space-16);
+  background: var(--surface);
+  border-left: 1px solid var(--border-subtle);
+}
+.kbm-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.kbm-input,
+.kbm-select {
+  padding: var(--space-6) var(--space-8);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.kbm-input:focus,
+.kbm-select:focus {
+  border-color: var(--accent);
+}
+.kbm-input::placeholder {
+  color: var(--text-3);
+}
+
+.kbm-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+/* the removable chip reuses .kb-tag; the × sits inline after the label */
+.kbm-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.kbm-tag-x {
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: currentColor;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.kbm-tag-x:hover {
+  opacity: 1;
+}
+.kbm-tag-input {
+  width: 68px;
+  padding: 1px var(--space-6);
+  font-family: inherit;
+  font-size: var(--fs-micro);
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.kbm-tag-input:focus {
+  border-style: solid;
+  border-color: var(--accent);
+}
+.kbm-tag-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* file refs — the white-space feature */
+.kbm-refs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.kbm-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+/* the ref row's path is a button (click to edit in the picker) — basename bright, dir dimmed */
+.kbm-ref-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-6);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  text-align: left;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  overflow: hidden;
+}
+.kbm-ref-path:hover {
+  border-color: var(--accent);
+}
+.kbm-ref-dir {
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kbm-ref-base {
+  flex: 0 0 auto;
+  color: var(--text);
+}
+.kbm-ref-ln {
+  flex: 0 0 auto;
+  padding: 0 var(--space-6);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-radius: var(--r-ctl);
+}
+.kbm-ref-open,
+.kbm-ref-del {
+  flex: 0 0 auto;
+  padding: 0 var(--space-4);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.kbm-ref-open:hover {
+  color: var(--accent);
+}
+.kbm-ref-open:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.kbm-ref-del:hover {
+  color: var(--warn);
+}
+.kbm-ref-add {
+  margin-top: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.kbm-ref-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.kbm-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-12) var(--space-16);
+  border-top: 1px solid var(--border-subtle);
+}
+.kbm-del {
+  color: var(--text-3);
+}
+.kbm-del:hover {
+  color: var(--err);
+}
+/* Create-mode primary "Add card" pins right; the ghost Cancel sits left via the flex spacer. */
+.kbm-addbtn {
+  min-width: 96px;
+}
+
+/* ── v19 / #346 card attachments (KanbanAttachments) — capture dropzone + media grid ── */
+.kba {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-8);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-inner);
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+/* Drag-over cue — mirrors the column drop target's accent frame + wash. */
+.kba-dragover {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-wash);
+}
+.kba-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.kba-tile {
+  position: relative; /* anchors the hover-reveal remove × */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+/* Image tiles tile side-by-side; media/file tiles take their own full-width row (they need
+   the player/name width). */
+.kba-tile-image {
+  flex: 0 0 auto;
+}
+.kba-tile-media,
+.kba-tile-file {
+  flex: 1 1 100%;
+}
+.kba-thumb {
+  display: block;
+  width: 84px;
+  height: 84px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  cursor: pointer;
+  overflow: hidden;
+}
+.kba-thumb:hover {
+  border-color: var(--accent);
+}
+.kba-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+.kba-missing {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-family: var(--mono);
+}
+.kba-missing-media {
+  height: 44px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--r-inner);
+}
+/* Loading placeholder — the missing box's shape, but a neutral SOLID border (no "broken" dashed cue)
+   so a cold read doesn't flash a missing/error look before the media resolves. */
+.kba-loading {
+  border-style: solid;
+  border-color: var(--border-subtle);
+  background: var(--surface);
+}
+.kba-video {
+  width: 100%;
+  max-height: 220px;
+  background: #000;
+  border-radius: var(--r-inner);
+  display: block;
+}
+.kba-audio {
+  width: 100%;
+}
+.kba-media-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.kba-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* File chip — click to open externally (OS default app). */
+.kba-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  padding: var(--space-6) var(--space-8);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  text-align: left;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.kba-file:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.kba-file svg {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+.kba-file:hover svg {
+  color: var(--accent);
+}
+.kba-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kba-file-size {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+/* Remove × — pinned top-right on media/image tiles, inline on chips. Revealed on tile hover. */
+.kba-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  opacity: 0;
+}
+.kba-tile:hover .kba-remove {
+  opacity: 0.85;
+}
+.kba-remove:hover {
+  color: var(--warn);
+  opacity: 1;
+}
+/* The file chip's × sits inline (no absolute overlap on a full-width chip). */
+.kba-tile-file .kba-remove,
+.kba-tile-media .kba-media-foot .kba-remove {
+  position: static;
+  flex: 0 0 auto;
+  opacity: 0.6;
+  background: transparent;
+  border: 0;
+}
+.kba-tile-file {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.kba-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.kba-add {
+  padding: var(--space-4) var(--space-8);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.kba-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.kba-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+/* Paste-a-link input — fills the actions row next to "+ Add file"; Enter/blur adds a link chip. */
+.kba-linkinput {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-4) var(--space-8);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.kba-linkinput:focus {
+  border-color: var(--accent);
+}
+.kba-linkinput::placeholder {
+  color: var(--text-3);
+}
+/* Link chip — the file chip with an accent-tinted link glyph. */
+.kba-link svg {
+  color: var(--accent);
+}
+
+/* Lightbox — full-bleed image over the modal (portal to body). Click / Esc closes. */
+.kba-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9600;
+  display: grid;
+  place-items: center;
+  padding: var(--space-20);
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+.kba-lightbox-img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+}
+
+/* ── v19 Pick file & lines modal (PickFileLinesModal) ── */
+.pfl {
+  display: flex;
+  flex-direction: column;
+  max-height: 84vh;
+  font-family: var(--ui);
+}
+.pfl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.pfl-title {
+  font-size: var(--fs-h);
+  font-weight: 600;
+}
+.pfl-spacer {
+  flex: 1;
+}
+.pfl-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.pfl-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.pfl-close:hover {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.pfl-body {
+  display: grid;
+  grid-template-columns: 236px 1fr;
+  height: 440px;
+  max-height: 60vh;
+}
+
+/* left: lazy file tree + filter */
+.pfl-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Grid items default to min-height:auto (content height) — without this the tall file tree
+     expands the row past the 440px body instead of scrolling, spilling out of the modal card. */
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border-subtle);
+}
+.pfl-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  margin: var(--space-8);
+  padding: 3px var(--space-8);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+}
+.pfl-filter svg {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+.pfl-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+}
+.pfl-filter input::placeholder {
+  color: var(--text-3);
+}
+.pfl-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-4) var(--space-8);
+}
+/* ── v19 / #346 redesign: VS-Code-style rows — chevron + folder/file glyph + name. Calm one-accent:
+   folders carry a soft accent (structure), files stay neutral ink, selection owns the accent. ── */
+.pfl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 24px;
+  padding: 0 var(--space-8);
+  font-size: var(--fs-meta);
+  line-height: 1.3;
+  color: var(--text-2);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pfl-row:hover {
+  background: var(--surface-overlay);
+}
+.pfl-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Icons paint in currentColor. Folder = soft accent (the tree's structure); file glyph = quiet ink. */
+.pfl-ic {
+  flex: 0 0 auto;
+}
+.pfl-ic-folder {
+  color: var(--accent);
+  opacity: 0.9;
+}
+.pfl-ic-file {
+  color: var(--text-3);
+}
+/* Chevron: dim at rest, brightens on hover, rotates ▶→▼ on open (state motion). */
+.pfl-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transition:
+    transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.12s ease;
+}
+.pfl-chevron.open {
+  transform: rotate(90deg);
+}
+.pfl-row.dir:hover .pfl-chevron {
+  color: var(--text-2);
+}
+/* File rows have no chevron — this spacer keeps their glyph + name aligned under the folder rows. */
+.pfl-chevron-gap {
+  flex: 0 0 auto;
+  width: 9px;
+}
+.pfl-row.file {
+  color: var(--text-2);
+}
+.pfl-row.file.sel {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.pfl-row.file.sel .pfl-ic-file {
+  color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pfl-chevron {
+    transition: color 0.12s ease;
+  }
+}
+/* Flat filter-search result rows: file name + the parent dir (dimmed, right-pinned, ellipsized). */
+.pfl-match-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pfl-match-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: var(--space-8);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+/* Search state / cap notes in the left pane. */
+.pfl-note {
+  padding: var(--space-8) var(--space-6);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+
+/* right: code viewer */
+.pfl-code {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.pfl-path {
+  padding: var(--space-8) var(--space-12);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pfl-view {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.pfl-view .cm-editor {
+  height: 100%;
+  font-size: var(--fs-meta);
+}
+.pfl-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-20);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.pfl-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-top: 1px solid var(--border-subtle);
+}
+.pfl-sel {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pfl-sel b {
+  color: var(--accent);
+}
+.pfl-sel-path {
+  color: var(--text-3);
 }

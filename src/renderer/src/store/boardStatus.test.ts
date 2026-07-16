@@ -342,6 +342,105 @@ describe('buildBoardSnapshot', () => {
     })
   })
 
+  it('projects the v19 card-detail fields + the board column axis (agent read)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          columns: [{ id: 'backlog', title: 'Backlog' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'backlog',
+              title: 'One',
+              description: 'why this card',
+              tags: ['feature', 'security'],
+              fileRefs: [{ path: 'src/x.ts', line: 4, endLine: 9 }, { path: 'README.md' }]
+            }
+          ],
+          columnAxis: 'category',
+          axisLabel: 'Subsystem'
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(board.kanban).toEqual({
+      columns: [{ id: 'backlog', title: 'Backlog' }],
+      cards: [
+        {
+          id: 'c1',
+          columnId: 'backlog',
+          title: 'One',
+          description: 'why this card',
+          tags: ['feature', 'security'],
+          fileRefs: [{ path: 'src/x.ts', line: 4, endLine: 9 }, { path: 'README.md' }]
+        }
+      ],
+      columnAxis: 'category',
+      axisLabel: 'Subsystem'
+    })
+  })
+
+  it('projects card attachments onto the mirror read-only (#346)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          columns: [{ id: 'backlog', title: 'Backlog' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'backlog',
+              title: 'One',
+              attachments: [
+                { assetId: 's1', name: 'shot.png', kind: 'image', mime: 'image/png', size: 99 },
+                { assetId: 's2', name: 'doc.txt', kind: 'file' }
+              ]
+            }
+          ]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(board.kanban?.cards[0].attachments).toEqual([
+      { assetId: 's1', name: 'shot.png', kind: 'image', mime: 'image/png', size: 99 },
+      { assetId: 's2', name: 'doc.txt', kind: 'file' }
+    ])
+  })
+
+  it('SKIPS link attachments (url, no assetId) from the mirror — links are not agent-read yet (#346)', () => {
+    const [board] = buildBoardSnapshot(
+      [
+        {
+          id: 'k1',
+          type: 'kanban',
+          title: 'Sprint',
+          columns: [{ id: 'backlog', title: 'Backlog' }],
+          cards: [
+            {
+              id: 'c1',
+              columnId: 'backlog',
+              title: 'One',
+              attachments: [
+                { url: 'https://x.test/y', name: 'x.test/y', kind: 'link' }, // skipped (no assetId)
+                { assetId: 's1', name: 'doc.txt', kind: 'file' } // kept
+              ]
+            }
+          ]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    // Only the file attachment is mirrored; the link is intentionally dropped.
+    expect(board.kanban?.cards[0].attachments).toEqual([
+      { assetId: 's1', name: 'doc.txt', kind: 'file' }
+    ])
+  })
+
   it('omits kanban for every non-kanban board (byte-identical) even if it carries stray columns (P3b)', () => {
     const [plan] = buildBoardSnapshot(
       // A non-kanban board carrying stray `columns`/`cards` must not project a kanban field.

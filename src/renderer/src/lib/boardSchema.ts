@@ -36,8 +36,8 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 // back-reference to BoardCommon is type-only, so there is no runtime import cycle. Re-exported below
 // so every `import { KanbanBoard } from '.../boardSchema'` consumer is unchanged.
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
-import type { KanbanBoard, KanbanColumn, KanbanCard } from './kanbanSchema'
-export type { KanbanBoard, KanbanColumn, KanbanCard }
+import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
+export type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef }
 
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
@@ -705,7 +705,13 @@ const MIGRATIONS: Record<number, Migration> = {
   // element; unknown keys ride through the structuredClone round-trip). z-order is a pure elements[]
   // reorder → no schema. (Re-sequenced from the umbrella's provisional 17 at the epic-end merge —
   // main's Kanban claimed 17 first; boardSchemaVersion.ts.)
-  17: (doc) => ({ ...doc, schemaVersion: 18 })
+  17: (doc) => ({ ...doc, schemaVersion: 18 }),
+  // v19: optional Kanban CARD detail fields — `description` (plain text) + `tags[]` + `fileRefs[]`
+  // (card-detail epic). All optional + defaulted-at-read → identity bump; ADDITIVE so
+  // MIN_READER_VERSION stays 17 (assertKanbanContent shape-checks them without rejecting a card, and
+  // unknown keys ride through the structuredClone round-trip; the legacy singular `tag` is still read
+  // as a fallback into `tags`). No data rewrite — a pre-v19 card just carries none of the new fields.
+  18: (doc) => ({ ...doc, schemaVersion: 19 })
 }
 
 /**

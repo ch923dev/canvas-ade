@@ -316,8 +316,11 @@ export default tseslint.config(
     // 764→765 (M8, perf-polish): the digestOpen gate + last-digest fallback state must live in
     // CanvasInner next to the digestOpen/digestProjectKey render-adjust block it extends.
     // 765→766 (terminal-copy fix): `selectionKeyCode={null}` is a <ReactFlow> prop — it can
-    // only live on the element in CanvasInner. Ratchet DOWNWARD when Canvas.tsx is next split.
-    rules: { 'max-lines': ['error', { max: 766, skipBlankLines: true, skipComments: true }] }
+    // only live on the element in CanvasInner.
+    // 766→767 (kanban axis-picker, review fix): addCentered must pass `configPending` for a kanban
+    // so the palette/empty-state create paths reach the New Kanban dialog — one hoisted `at` local.
+    // Ratchet DOWNWARD when Canvas.tsx is next split.
+    rules: { 'max-lines': ['error', { max: 767, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],
@@ -334,7 +337,10 @@ export default tseslint.config(
     // ratchet DOWNWARD when the store is next split. See docs/contributing/file-size-doctrine.md.
     // 720→725 (M1): the session-sidecar merge threads through applyLoadedDoc + applyOpenResult (the
     // doc-apply choke points that must live here, beside the load-epoch/pendingCheckpoint machinery).
-    rules: { 'max-lines': ['error', { max: 725, skipBlankLines: true, skipComments: true }] }
+    // 725→727 (v19 kanban card-detail): two CanvasState members — the ephemeral `pendingFileFocus`
+    // field + the `openFileRef` signature — must live in the store's own state type (a slice implements
+    // openFileRef but cannot declare it); both are single lines, so the cap moves by exactly two.
+    rules: { 'max-lines': ['error', { max: 727, skipBlankLines: true, skipComments: true }] }
   },
 
   // Disable all formatting rules that would conflict with Prettier. MUST be last.

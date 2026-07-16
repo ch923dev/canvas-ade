@@ -20,24 +20,17 @@ import { useCanvasStore } from '../../store/canvasStore'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import {
-  addCard,
   addColumn,
+  effectiveTags,
   moveCard,
   removeCard,
   removeColumn,
-  renameCard,
   renameColumn,
-  setColumnWip
+  setColumnWip,
+  tagTint
 } from './kanbanEdit'
-
-/** Coarse tint for a card's status/type chip, inferred from its free-text tag (falls back to muted). */
-function tagTint(tag: string): 'ok' | 'warn' | 'accent' | 'muted' {
-  const t = tag.toLowerCase()
-  if (t.includes('ship') || t.includes('done') || t.includes('merged')) return 'ok'
-  if (t.includes('review') || t.includes('block') || t.includes('wait')) return 'warn'
-  if (t.includes('feature') || t.includes('feat')) return 'accent'
-  return 'muted'
-}
+import { KanbanCardModal } from './KanbanCardModal'
+import { NewKanbanDialog } from './NewKanbanDialog'
 
 /**
  * A tiny controlled inline editor reused for every Kanban text edit (card title, add-card, column
@@ -111,14 +104,19 @@ export function KanbanBoard({
 }: BoardViewProps<KanbanBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
-  // Which element is mid-edit (null = none). Ephemeral session state — NEVER serialized.
-  const [editCard, setEditCard] = useState<string | null>(null)
-  const [addIn, setAddIn] = useState<string | null>(null) // column showing its add-card input
+  // Place-first creation: a freshly-dropped Kanban is "held" (configPendingId) until the New Kanban
+  // dialog picks its column axis. While held, render the dialog over the (flow-template) board.
+  const configPending = useCanvasStore((s) => s.configPendingId === board.id)
+  const clearConfigPending = useCanvasStore((s) => s.clearConfigPending)
+  // Which element is mid-edit (null = none). Ephemeral session state — NEVER serialized. (Card rename
+  // lives in the detail modal now, so there is no card-edit state — only column/add editors.)
+  const [createCol, setCreateCol] = useState<string | null>(null) // column the create-card modal targets
   const [editCol, setEditCol] = useState<string | null>(null)
   const [wipCol, setWipCol] = useState<string | null>(null)
   const [addingCol, setAddingCol] = useState(false)
   const [dragCard, setDragCard] = useState<string | null>(null) // card being dragged (opacity cue)
   const [dragOver, setDragOver] = useState<string | null>(null) // column under the drag (drop cue)
+  const [detailCard, setDetailCard] = useState<string | null>(null) // card open in the detail modal
 
   // Group cards by column once per board change; within-column order is array order (the schema
   // contract), so a plain per-column filter preserves it — no sort needed.
@@ -142,14 +140,6 @@ export function KanbanBoard({
     updateBoard(board.id, { columns })
   }
 
-  const commitAddCard = (colId: string, title: string): void => {
-    patchCards(addCard(board, colId, title))
-    setAddIn(null)
-  }
-  const commitRenameCard = (id: string, title: string): void => {
-    patchCards(renameCard(board, id, title))
-    setEditCard(null)
-  }
   const commitAddCol = (title: string): void => {
     patchCols(addColumn(board, title))
     setAddingCol(false)
@@ -169,6 +159,11 @@ export function KanbanBoard({
     beginChange()
     updateBoard(board.id, next)
   }
+
+  // v19 column axis (board.columnAxis / axisLabel) is chosen ONCE at creation in the New Kanban
+  // dialog and is not editable on the board — the card modal reads it for its lane-field label. The
+  // category label (below) captions the board so the lanes' MEANING stays legible at a glance.
+  const axisCaption = board.columnAxis === 'category' ? board.axisLabel?.trim() || 'Category' : null
 
   // ── HTML5 drag: card → column. The dragged id rides in dataTransfer (source of truth on drop);
   //    `dragCard` drives only the visual cues. A foreign card (another board's) never sets THIS
@@ -203,37 +198,93 @@ export function KanbanBoard({
     }
 
   const renderCard = (card: KanbanCard): ReactElement => {
-    const editing = editCard === card.id
-    const hasMeta = !editing && !!(card.tag || card.assignee || card.ref)
+    const tags = effectiveTags(card)
+    const refCount = card.fileRefs?.length ?? 0
+    const attachCount = card.attachments?.length ?? 0
+    const hasMeta =
+      tags.length > 0 ||
+      !!card.assignee ||
+      !!card.ref ||
+      !!card.description ||
+      refCount > 0 ||
+      attachCount > 0
     return (
       <div
         className={'kb-card nodrag nopan' + (dragCard === card.id ? ' kb-dragging' : '')}
         key={card.id}
         data-testid="kb-card"
-        draggable={!editing}
+        draggable
         onDragStart={onCardDragStart(card.id)}
         onDragEnd={clearDrag}
+        onClick={(e) => {
+          // Mouse convenience: a click anywhere on the card EXCEPT a control opens the detail modal
+          // (rename / description / tags / file refs all live there). The title <button> is the
+          // keyboard- + screen-reader-accessible trigger; a drag fires `dragstart`, never `click`.
+          if (!(e.target as HTMLElement).closest('button')) setDetailCard(card.id)
+        }}
       >
-        {editing ? (
-          <InlineInput
-            initial={card.title}
-            ariaLabel="Card title"
-            testid="kb-card-edit"
-            onCommit={(v) => commitRenameCard(card.id, v)}
-            onCancel={() => setEditCard(null)}
-          />
-        ) : (
-          <div
-            className="kb-card-title"
-            title="Double-click to edit"
-            onDoubleClick={() => setEditCard(card.id)}
-          >
-            {card.title}
-          </div>
-        )}
+        <button
+          className="kb-card-title nodrag nopan"
+          data-testid="kb-card-open"
+          title="Open card details"
+          onClick={() => setDetailCard(card.id)}
+        >
+          {card.title}
+        </button>
         {hasMeta && (
           <div className="kb-card-meta">
-            {card.tag && <span className={`kb-tag kb-tag-${tagTint(card.tag)}`}>{card.tag}</span>}
+            {tags.map((t) => (
+              <span key={t} className={`kb-tag kb-tag-${tagTint(t)}`}>
+                {t}
+              </span>
+            ))}
+            {card.description && (
+              <span className="kb-ind" title="Has a description" aria-label="Has a description">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path
+                    d="M2 3h8M2 6h8M2 9h5"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </span>
+            )}
+            {refCount > 0 && (
+              <span
+                className="kb-ind"
+                title={`${refCount} file reference${refCount > 1 ? 's' : ''}`}
+                aria-label={`${refCount} file references`}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path
+                    d="M3 1.5h4L9.5 4v6a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5V2a.5.5 0 0 1 .5-.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.1"
+                  />
+                  <path d="M7 1.5V4h2.5" stroke="currentColor" strokeWidth="1.1" />
+                </svg>
+                <span className="kb-ind-n">{refCount}</span>
+              </span>
+            )}
+            {attachCount > 0 && (
+              <span
+                className="kb-ind"
+                title={`${attachCount} attachment${attachCount > 1 ? 's' : ''}`}
+                aria-label={`${attachCount} attachments`}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path
+                    d="M7.5 3 3.9 6.6a1.4 1.4 0 0 0 2 2L9 5.5a2.3 2.3 0 0 0-3.3-3.3L2.4 5.6a3.2 3.2 0 0 0 4.5 4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="kb-ind-n">{attachCount}</span>
+              </span>
+            )}
             {card.assignee && (
               <span className="kb-assignee">
                 <i className="kb-dot" />
@@ -243,18 +294,19 @@ export function KanbanBoard({
             {card.ref && <span className="kb-ref">{card.ref}</span>}
           </div>
         )}
-        {!editing && (
-          <button
-            className="kb-card-del nodrag nopan"
-            aria-label="Delete card"
-            data-testid="kb-card-del"
-            title="Delete card"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => patchCards(removeCard(board, card.id))}
-          >
-            ×
-          </button>
-        )}
+        <button
+          className="kb-card-del nodrag nopan"
+          aria-label="Delete card"
+          data-testid="kb-card-del"
+          title="Delete card"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            patchCards(removeCard(board, card.id))
+          }}
+        >
+          ×
+        </button>
       </div>
     )
   }
@@ -276,7 +328,38 @@ export function KanbanBoard({
       onStartConnect={onStartConnect}
     >
       <div className="kb-root">
+        {/* v19: a Category board captions its axis (read-only) so the lanes read as buckets, not a
+            workflow — the axis is chosen once at creation (New Kanban dialog), not toggled here. A
+            Flow board needs no caption (its lanes are self-evidently a pipeline). */}
+        {axisCaption && (
+          <div
+            className="kb-axis-cap nodrag nopan"
+            data-testid="kb-axis-cap"
+            title={`Columns are categories, grouped by ${axisCaption}`}
+          >
+            <span className="kb-axis-cap-k">Grouped by</span>
+            <span className="kb-axis-cap-v">{axisCaption}</span>
+          </div>
+        )}
         <div className="kb-cols nowheel">
+          {board.columns.length === 0 && !addingCol && (
+            <div className="kb-lanes-empty">
+              <div className="kb-lanes-empty-t">No {axisCaption ?? 'column'} lanes yet</div>
+              <div className="kb-lanes-empty-s">
+                {axisCaption
+                  ? `Add a lane per ${axisCaption} and file cards into it.`
+                  : 'Add a column to start.'}
+              </div>
+              <button
+                className="kb-lanes-empty-add nodrag nopan"
+                data-testid="kb-add-first-lane"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setAddingCol(true)}
+              >
+                + Add your first {axisCaption ?? 'column'}
+              </button>
+            </div>
+          )}
           {board.columns.map((col) => {
             const cards = cardsByColumn.get(col.id) ?? []
             const atLimit = col.wip !== undefined && cards.length >= col.wip
@@ -348,31 +431,20 @@ export function KanbanBoard({
                   )}
                 </div>
                 <div className="kb-cards nowheel">
-                  {cards.length === 0 && addIn !== col.id ? (
+                  {cards.length === 0 ? (
                     <div className="kb-col-empty">No cards</div>
                   ) : (
                     cards.map((card) => renderCard(card))
                   )}
-                  {addIn === col.id ? (
-                    <InlineInput
-                      initial=""
-                      ariaLabel={`New card in ${col.title}`}
-                      testid="kb-add-card-input"
-                      placeholder="Card title…"
-                      onCommit={(v) => commitAddCard(col.id, v)}
-                      onCancel={() => setAddIn(null)}
-                    />
-                  ) : (
-                    <button
-                      className="kb-add nodrag nopan"
-                      aria-label={`Add card to ${col.title}`}
-                      data-testid="kb-add-card"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => setAddIn(col.id)}
-                    >
-                      + Add card
-                    </button>
-                  )}
+                  <button
+                    className="kb-add nodrag nopan"
+                    aria-label={`Add card to ${col.title}`}
+                    data-testid="kb-add-card"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => setCreateCol(col.id)}
+                  >
+                    + Add card
+                  </button>
                 </div>
               </div>
             )
@@ -402,6 +474,23 @@ export function KanbanBoard({
           )}
         </div>
       </div>
+      {detailCard && board.cards.some((c) => c.id === detailCard) && (
+        <KanbanCardModal
+          key={detailCard}
+          board={board}
+          cardId={detailCard}
+          onClose={() => setDetailCard(null)}
+        />
+      )}
+      {createCol && board.columns.some((c) => c.id === createCol) && (
+        <KanbanCardModal
+          key={'create-' + createCol}
+          board={board}
+          createInColumnId={createCol}
+          onClose={() => setCreateCol(null)}
+        />
+      )}
+      {configPending && <NewKanbanDialog board={board} onClose={clearConfigPending} />}
     </BoardFrame>
   )
 }

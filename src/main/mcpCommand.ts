@@ -7,6 +7,7 @@ import type {
   PlanningOp,
   PlanningOpTint,
   KanbanOp,
+  KanbanOpFileRef,
   PlanItem,
   Visualization
 } from '../shared/mcpTypes'
@@ -25,6 +26,7 @@ export type {
   PlanningOp,
   PlanningOpTint,
   KanbanOp,
+  KanbanOpFileRef,
   PlanItem,
   Visualization
 }

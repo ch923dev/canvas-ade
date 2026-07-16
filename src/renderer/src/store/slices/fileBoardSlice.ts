@@ -28,7 +28,13 @@ export function createFileBoardSlice(
   get: GetCanvasState
 ): Pick<
   CanvasState,
-  'peekBoardId' | 'openFileBoard' | 'openFileBoards' | 'peekFile' | 'pinBoard' | 'pinFile'
+  | 'peekBoardId'
+  | 'openFileBoard'
+  | 'openFileRef'
+  | 'openFileBoards'
+  | 'peekFile'
+  | 'pinBoard'
+  | 'pinFile'
 > {
   /** World-space TOP-LEFT near the viewport centre for a freshly opened File board. */
   const centerSlot = (): { x: number; y: number } => {
@@ -53,6 +59,24 @@ export function createFileBoardSlice(
         ? existing.id
         : get().addBoard('file', at ?? centerSlot(), { path: relPath })
       if (!at) set({ pendingFocusId: id })
+      return id
+    },
+
+    openFileRef: (relPath, line, endLine) => {
+      // Open/re-focus the board via the tree-click path (dedupe + create + camera focus), then, for a
+      // real 1-based line, arm the one-shot in-file scroll. `openFileBoard` already selected the board,
+      // so its live editor mounts (or already exists) and consumes `pendingFileFocus`. A non-positive/
+      // absent line just opens at the top (no focus armed).
+      const id = get().openFileBoard(relPath)
+      const ln =
+        typeof line === 'number' && Number.isFinite(line) && line > 0 ? Math.floor(line) : null
+      if (ln !== null) {
+        const end =
+          typeof endLine === 'number' && Number.isFinite(endLine) && endLine > ln
+            ? Math.floor(endLine)
+            : undefined
+        set({ pendingFileFocus: { boardId: id, line: ln, endLine: end } })
+      }
       return id
     },
 

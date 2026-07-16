@@ -848,9 +848,10 @@ app.whenReady().then(async () => {
     disposeProjectPtys,
     disposeProjectOsr
   })
-  // Global project-switch hotkey (OS-wide accelerators → foreground + cycle). All wiring +
-  // Settings IPC lives in globalHotkey.ts; register-fail is surfaced, never swallowed. Electron
-  // auto-unregisters global shortcuts on quit, so there is no shutdown() teardown to thread here.
+  // Project-switch hotkey — bound to the MAIN WINDOW (before-input-event), so it fires only when
+  // Expanse is focused (no OS-global reservation, no cross-app fire). All wiring + Settings IPC
+  // lives in globalHotkey.ts. The listener rides the window's webContents (torn down with it), so
+  // there is no shutdown() teardown to thread here.
   wireGlobalHotkey(ipcMain, () => mainWindow, userData)
   // Phase 4b: project-dock thumbnails — capture keyed to the MAIN-resolved active dir, cached
   // in userData/project-thumbs (app cache, never the project folder), served only for the

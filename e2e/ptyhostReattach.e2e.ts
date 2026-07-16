@@ -34,7 +34,11 @@ test.describe('@terminal @ptyhost daemon reattach across app relaunch', () => {
         ...process.env,
         CANVAS_E2E: '1',
         CANVAS_USERDATA: userData,
-        CANVAS_PTYHOST: '1'
+        CANVAS_PTYHOST: '1',
+        // Exercise the STAGED daemon path (runtimeStage copy → boot from the stage dir) —
+        // the packaged app's only path. It shipped broken (chunk-split bundle) while every
+        // dev/e2e run used the in-place path; this flag is the coverage that gap cost us.
+        CANVAS_PTYHOST_STAGE: '1'
       }
     })
     const page = await app.firstWindow()

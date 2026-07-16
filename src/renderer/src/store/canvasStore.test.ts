@@ -61,7 +61,14 @@ describe('New Terminal config-pending flow (v10)', () => {
     expect(get().configPendingId).toBe(id)
   })
 
-  it('ignores configPending for a non-terminal board', () => {
+  it('addBoard with configPending holds a kanban too (New Kanban axis-picker gate)', () => {
+    // Every human-facing kanban create (dock, command palette, empty-state) passes this flag so the
+    // axis picker is reachable — with the in-board toggle removed it is the only path to Category.
+    const id = get().addBoard('kanban', { x: 0, y: 0 }, { configPending: true })
+    expect(get().configPendingId).toBe(id)
+  })
+
+  it('ignores configPending for a board type that has no config dialog (e.g. browser)', () => {
     get().addBoard('browser', { x: 0, y: 0 }, { configPending: true })
     expect(get().configPendingId).toBeNull()
   })

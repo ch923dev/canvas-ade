@@ -1,14 +1,30 @@
 import { describe, it, expect } from 'vitest'
+import * as mcpPkg from '@expanse-ade/mcp'
 import {
   buildAddCardOp,
+  buildKanbanAxisConfig,
   buildMoveCardOp,
   buildRemoveCardOp,
   buildUpdateCardOp,
   KanbanContentError,
+  renderKanbanAxisConfirmBody,
   renderKanbanConfirmBody,
+  sanitizeCardFileRefs,
   sanitizeCardLabel,
+  sanitizeCardTags,
+  sanitizeCardText,
   sanitizeId,
-  MAX_CARD_TITLE
+  MAX_AXIS_LABEL,
+  MAX_CARD_ASSIGNEE,
+  MAX_CARD_DESCRIPTION,
+  MAX_CARD_FILE_REF_PATH,
+  MAX_CARD_FILE_REFS,
+  MAX_CARD_ID,
+  MAX_CARD_REF,
+  MAX_CARD_TAG,
+  MAX_CARD_TAGS,
+  MAX_CARD_TITLE,
+  MAX_COLUMN_ID
 } from './mcpKanban'
 
 describe('mcpKanban.sanitizeCardLabel', () => {
@@ -67,6 +83,120 @@ describe('mcpKanban op builders', () => {
     })
     expect(() => buildUpdateCardOp('c1', {})).toThrow(/no fields/)
   })
+
+  it('buildAddCardOp sanitizes the v19 detail fields (description / tags / fileRefs)', () => {
+    const op = buildAddCardOp('mint-1', {
+      columnId: 'backlog',
+      title: 'Wire auth',
+      description: 'Line one.\nLine two.\x07',
+      tags: [' feature ', 'security', 'feature'], // dup dropped, trimmed
+      fileRefs: [
+        { path: ' src/auth/mw.ts ', line: 12, endLine: 20 },
+        { path: 'src/auth/token.ts', line: 3, endLine: 2 } // endLine <= line ⇒ collapses to line
+      ]
+    })
+    expect(op).toEqual({
+      op: 'add',
+      card: {
+        id: 'mint-1',
+        columnId: 'backlog',
+        title: 'Wire auth',
+        description: 'Line one.\nLine two.', // newline KEPT, control stripped, trimmed
+        tags: ['feature', 'security'],
+        fileRefs: [
+          { path: 'src/auth/mw.ts', line: 12, endLine: 20 },
+          { path: 'src/auth/token.ts', line: 3 }
+        ]
+      }
+    })
+  })
+
+  it('buildUpdateCardOp carries the v19 detail fields', () => {
+    expect(buildUpdateCardOp('c1', { description: 'done', tags: ['shipped'] })).toEqual({
+      op: 'update',
+      cardId: 'c1',
+      patch: { description: 'done', tags: ['shipped'] }
+    })
+  })
+
+  it('drops the singular tag when tags is also supplied (add + update) so the confirm matches the applier', () => {
+    // The applier sheds `tag` when `tags` is present; the op must not carry both, else the confirm body
+    // advertises a `tag:` chip that never lands (ADR-0003).
+    const add = buildAddCardOp('m1', {
+      columnId: 'backlog',
+      title: 'T',
+      tag: 'legacy',
+      tags: ['feature']
+    })
+    expect(add.card.tag).toBeUndefined()
+    expect(add.card.tags).toEqual(['feature'])
+    expect(renderKanbanConfirmBody('B', add)).not.toContain('legacy')
+
+    const upd = buildUpdateCardOp('c1', { tag: 'legacy', tags: ['shipped'] })
+    expect(upd.patch.tag).toBeUndefined()
+    expect(upd.patch.tags).toEqual(['shipped'])
+    expect(renderKanbanConfirmBody('B', upd)).not.toContain('legacy')
+  })
+})
+
+describe('mcpKanban.sanitizeCardText (multi-line description)', () => {
+  it('keeps newlines + tabs, normalizes CRLF, strips C0/C1/DEL, trims, caps', () => {
+    expect(sanitizeCardText('a\r\nb\tc\x07\x9b', MAX_CARD_DESCRIPTION, 'description')).toBe(
+      'a\nb\tc'
+    )
+    expect(() => sanitizeCardText('   ', 100, 'description')).toThrow(/empty/)
+    expect(() => sanitizeCardText('x'.repeat(5), 4, 'description')).toThrow(/limit/)
+    expect(() => sanitizeCardText(5, 4, 'description')).toThrow(/must be a string/)
+  })
+})
+
+describe('mcpKanban.sanitizeCardTags', () => {
+  it('trims, dedups (first wins), rejects a non-array / empty result / over-cap', () => {
+    expect(sanitizeCardTags([' a ', 'b', 'a'])).toEqual(['a', 'b'])
+    expect(() => sanitizeCardTags('nope')).toThrow(/must be an array/)
+    expect(() => sanitizeCardTags(['   '])).toThrow(/empty/)
+    expect(() => sanitizeCardTags(Array.from({ length: 21 }, (_, i) => `t${i}`))).toThrow(/limit/)
+  })
+})
+
+describe('mcpKanban.sanitizeCardFileRefs', () => {
+  it('normalizes path/line/endLine and drops a non-range endLine', () => {
+    expect(
+      sanitizeCardFileRefs([
+        { path: ' a.ts ', line: 5, endLine: 9 },
+        { path: 'b.ts' },
+        { path: 'c.ts', line: 4, endLine: 4 } // endLine === line ⇒ dropped
+      ])
+    ).toEqual([{ path: 'a.ts', line: 5, endLine: 9 }, { path: 'b.ts' }, { path: 'c.ts', line: 4 }])
+  })
+  it('rejects a non-array, a non-integer line, and an empty result', () => {
+    expect(() => sanitizeCardFileRefs('nope')).toThrow(/must be an array/)
+    expect(() => sanitizeCardFileRefs([{ path: 'a.ts', line: 0 }])).toThrow(/positive integer/)
+    expect(() => sanitizeCardFileRefs([{ path: 'a.ts', line: 1.5 }])).toThrow(/positive integer/)
+    expect(() => sanitizeCardFileRefs([{ path: '  ' }])).toThrow(/empty/)
+  })
+  it('rejects an over-cap path LOUDLY (must not survive the write to silently drop on the mirror read)', () => {
+    // MAX_CARD_FILE_REF_PATH === 256 matches the boardRegistry mirror-ingest cap; a longer path is a
+    // clear write error here, never an ack:true that vanishes from canvas://board/{id}/cards on read-back.
+    expect(() => sanitizeCardFileRefs([{ path: 'x'.repeat(257) }])).toThrow(/limit/)
+    expect(sanitizeCardFileRefs([{ path: 'x'.repeat(256) }])).toEqual([{ path: 'x'.repeat(256) }])
+  })
+})
+
+describe('mcpKanban.buildKanbanAxisConfig', () => {
+  it('accepts the two-value enum + a single-line label; requires ≥1 field', () => {
+    expect(buildKanbanAxisConfig({ columnAxis: 'category', axisLabel: '  Subsystem ' })).toEqual({
+      columnAxis: 'category',
+      axisLabel: 'Subsystem'
+    })
+    expect(buildKanbanAxisConfig({ columnAxis: 'flow' })).toEqual({ columnAxis: 'flow' })
+  })
+  it('rejects an off-enum axis, an empty/over-cap label, and an empty config', () => {
+    expect(() => buildKanbanAxisConfig({ columnAxis: 'sideways' })).toThrow(/flow.*category/)
+    expect(() => buildKanbanAxisConfig({ axisLabel: '   ' })).toThrow(/empty/)
+    expect(() => buildKanbanAxisConfig({ axisLabel: 'x'.repeat(61) })).toThrow(/limit/)
+    expect(() => buildKanbanAxisConfig({})).toThrow(/no fields/)
+  })
 })
 
 describe('mcpKanban.renderKanbanConfirmBody', () => {
@@ -87,4 +217,76 @@ describe('mcpKanban.renderKanbanConfirmBody', () => {
       /Remove card c1/
     )
   })
+
+  it('shows the v19 detail fields on indented sub-lines (add)', () => {
+    const body = renderKanbanConfirmBody('Plan', {
+      op: 'add',
+      card: {
+        id: 'c1',
+        columnId: 'backlog',
+        title: 'T',
+        tags: ['feature', 'security'],
+        fileRefs: [{ path: 'a.ts', line: 1, endLine: 9 }, { path: 'b.ts' }],
+        description: 'line one\nline two'
+      }
+    })
+    expect(body).toContain('    tags: feature, security')
+    expect(body).toContain('    files: a.ts:1-9, b.ts')
+    expect(body).toContain('    description: line one')
+    // 🔒 a multi-line description's continuation line is INDENTED, never a forged top-level "• " bullet.
+    expect(body).toContain('\n      line two')
+    expect(body).not.toMatch(/^• line two/m)
+  })
+
+  it('renders an update carrying ONLY detail fields (no inline chips)', () => {
+    const body = renderKanbanConfirmBody('Plan', {
+      op: 'update',
+      cardId: 'c9',
+      patch: { tags: ['shipped'] }
+    })
+    expect(body).toContain('• Update card c9')
+    expect(body).toContain('    tags: shipped')
+  })
+})
+
+describe('mcpKanban.renderKanbanAxisConfirmBody', () => {
+  it('shows the axis + label the human is authorizing', () => {
+    expect(
+      renderKanbanAxisConfirmBody('Sprint', { columnAxis: 'category', axisLabel: 'Subsystem' })
+    ).toMatch(/column axis of kanban board "Sprint".*axis: category.*label: Subsystem/s)
+  })
+})
+
+// Cross-repo caps parity — the MAIN-authoritative caps here MUST equal the @expanse-ade/mcp transport
+// caps. A drift (e.g. the wire cap being LOOSER than the host, as MAX_CARD_FILE_REF_PATH was 512 vs 256)
+// lets a payload ack `true` on the wire then get rejected here — the exact class of bug this asserts away.
+// The package exports its caps from ≥0.20.1; on an older installed package a cap is `undefined` and that
+// entry SKIPS (with a visible reason) rather than failing, so the guard activates the moment the pin bumps.
+describe('mcpKanban ↔ @expanse-ade/mcp caps parity', () => {
+  const pkg = mcpPkg as unknown as Record<string, number | undefined>
+  const pairs: Array<[string, number]> = [
+    ['MAX_CARD_TITLE', MAX_CARD_TITLE],
+    ['MAX_CARD_TAG', MAX_CARD_TAG],
+    ['MAX_CARD_ASSIGNEE', MAX_CARD_ASSIGNEE],
+    ['MAX_CARD_REF', MAX_CARD_REF],
+    ['MAX_CARD_ID', MAX_CARD_ID],
+    ['MAX_COLUMN_ID', MAX_COLUMN_ID],
+    ['MAX_CARD_DESCRIPTION', MAX_CARD_DESCRIPTION],
+    ['MAX_CARD_TAGS', MAX_CARD_TAGS],
+    ['MAX_CARD_FILE_REFS', MAX_CARD_FILE_REFS],
+    ['MAX_CARD_FILE_REF_PATH', MAX_CARD_FILE_REF_PATH],
+    ['MAX_AXIS_LABEL', MAX_AXIS_LABEL]
+  ]
+  for (const [name, hostCap] of pairs) {
+    it(`${name} matches the package transport cap`, ({ skip }) => {
+      const wireCap = pkg[name]
+      if (wireCap === undefined) {
+        skip(
+          `installed @expanse-ade/mcp does not export ${name} (pre-0.20.1) — parity guard dormant`
+        )
+        return
+      }
+      expect(wireCap).toBe(hostCap)
+    })
+  }
 })

@@ -11,18 +11,69 @@
 import type { BoardCommon } from './boardSchema'
 
 /**
- * v17: one card on a Kanban board. A card is bound to a column by `columnId` (a flat card list, not
+ * v19: a file+line reference a card points at (card-detail epic). `path` is project-root-relative
+ * (same convention as the `file` board / `fileref` Planning element); the optional 1-based `line`/
+ * `endLine` open the file scrolled to that spot. No live re-anchoring — an immutable pointer, matching
+ * the industry retreat from re-anchoring code refs (research 2026-07-14). Absent line ⇒ open at top.
+ */
+export interface KanbanFileRef {
+  /** Project-root-relative path of the file this card touches. */
+  path: string
+  /** 1-based start line to open at. Absent ⇒ open at the file's top. */
+  line?: number
+  /** 1-based end line of the range (inclusive). Absent ⇒ a single-line ref. */
+  endLine?: number
+}
+
+/**
+ * v19 (#346): something attached to a card — a file (image / video / audio / any file) OR an external
+ * link. A FILE attachment's bytes live in the SAME content-addressed store the whiteboard paste uses
+ * (`<project>/.canvas/assets/<sha1>.<ext>`, ADR 0009), so the card carries only the logical `assetId`,
+ * never the blob; `kind` (derived from the source MIME) selects the modal renderer (thumbnail /
+ * `<video>` / `<audio>` / file chip) and `mime`/`size` are best-effort display metadata. A LINK
+ * attachment (`kind: 'link'`) has no blob — it carries a `url` and opens in the OS browser instead.
+ * Exactly one of `assetId` (file kinds) / `url` (link) is present. Additive → no schema bump.
+ */
+export interface KanbanAttachment {
+  /** File kinds: logical content-addressed id `assets/<sha1>.<ext>` (read via `window.api.asset.read`). Absent for a link. */
+  assetId?: string
+  /** `kind: 'link'` only: the external URL, opened via `window.api.openExternalUrl`. Absent for file kinds. */
+  url?: string
+  /** Display name — a file's original filename, or a link's label (defaults to the URL). */
+  name: string
+  /** File media class (selects the renderer), or `'link'` for an external URL. */
+  kind: 'image' | 'video' | 'audio' | 'file' | 'link'
+  /** File kinds: source MIME type, when known (types the blob URL for playback). */
+  mime?: string
+  /** File kinds: byte size, when known (>0). */
+  size?: number
+}
+
+/**
+ * v17→v19: one card on a Kanban board. A card is bound to a column by `columnId` (a flat card list, not
  * nested-per-column, so an MCP `move_card` is a single-field patch and within-column order is array
- * order — mirrors Planning's flat `elements[]`). Only `id`/`columnId`/`title` are required; the chips
- * are optional presentation.
+ * order — mirrors Planning's flat `elements[]`). Only `id`/`columnId`/`title` are required; the rest is
+ * optional presentation. v19 (card-detail epic) adds `description` + `tags[]` + `fileRefs[]` — all
+ * additive, defaulted-at-read, so the writer bumps to 19 while the compat floor stays 17.
  */
 export interface KanbanCard {
   id: string
   /** The id of the {@link KanbanColumn} this card sits in. A dangling ref is dropped on read. */
   columnId: string
   title: string
-  /** Free-text status/type chip (e.g. "feature", "research", "needs review", "shipped"). Absent ⇒ none. */
+  /**
+   * @deprecated v19 — the legacy SINGLE free-text chip. Still read (as a fallback into `tags`) so
+   * pre-v19 boards render unchanged, but new edits write `tags`. Absent ⇒ fall through to `tags`.
+   */
   tag?: string
+  /** v19: free-text label chips (supersedes the singular `tag`). Absent ⇒ fall back to `tag`, else none. */
+  tags?: string[]
+  /** v19: long-form plain-text description. Shown in the card-detail modal, NEVER on the card face (Linear rule). Absent ⇒ none. */
+  description?: string
+  /** v19: file+line references this card touches — click a ref to open the file at that line. Absent ⇒ none. */
+  fileRefs?: KanbanFileRef[]
+  /** v19 (#346): attached files (images/video/audio/any file) in the content-addressed asset store. Absent ⇒ none. */
+  attachments?: KanbanAttachment[]
   /** Assignee agent-preset id (mirrors TerminalBoard.agentKind: 'claude'|'codex'|…) — the dot. Absent ⇒ unassigned. */
   assignee?: string
   /** Free-text external reference chip (e.g. "PR #271"). Absent ⇒ none. */
@@ -38,14 +89,29 @@ export interface KanbanColumn {
 }
 
 /**
- * v17: the Kanban board — a dedicated full-board Trello-style plan visualizer. Unlike `command`/
+ * v17→v19: the Kanban board — a dedicated full-board Trello-style plan visualizer. Unlike `command`/
  * `dataflow` (ephemeral bodies), a Kanban board PERSISTS its content: ordered `columns` + a flat
  * `cards` list. A new board type is breaking → schema v17 / floor 17.
+ *
+ * v19 adds the optional COLUMN AXIS — what the columns group BY — so a board declares whether its
+ * lanes are a workflow (progress) or a categorization (grouping). Additive, defaulted-at-read.
  */
 export interface KanbanBoard extends BoardCommon {
   type: 'kanban'
   columns: KanbanColumn[]
   cards: KanbanCard[]
+  /**
+   * v19: what the columns represent. `'flow'` = ordered workflow stages a card PROGRESSES through
+   * (Backlog→Doing→Done; the classic kanban; the modal field reads "Status", WIP limits meaningful).
+   * `'category'` = unordered buckets a card BELONGS TO (subsystem/phase/owner; moving = re-filing, not
+   * progressing; no "done", WIP hidden by default). Absent ⇒ treated as `'flow'` (back-compat).
+   */
+  columnAxis?: 'flow' | 'category'
+  /**
+   * v19: display name of the column axis — the card-detail modal's column-field label AND a board
+   * caption. Absent ⇒ "Status" (flow) / "Category" (category). E.g. "Phase", "Subsystem", "Sprint".
+   */
+  axisLabel?: string
 }
 
 /**
@@ -75,6 +141,14 @@ export function assertKanbanContent(
   isRecord: (v: unknown) => v is Record<string, unknown>,
   isPositiveNum: (v: unknown) => v is number
 ): void {
+  // v19: the optional column AXIS (what the lanes group by) + its display label. Board-level, so
+  // validated here alongside columns/cards; absent ⇒ 'flow' at read. A bad enum value is rejected.
+  if (b.columnAxis !== undefined && b.columnAxis !== 'flow' && b.columnAxis !== 'category') {
+    fail('kanban board columnAxis is not "flow" or "category"')
+  }
+  if (b.axisLabel !== undefined && typeof b.axisLabel !== 'string') {
+    fail('kanban board axisLabel is not a string')
+  }
   // v17: columns + cards are required arrays. A column needs id/title strings (+ optional positive
   // wip — mirrors kanbanEdit.ts's setColumnWip, which only ever persists a finite `wip > 0` and
   // clears it to `undefined` otherwise, so a non-positive value here can only be a hand-edited/
@@ -94,8 +168,63 @@ export function assertKanbanContent(
     if (typeof c.id !== 'string') fail('kanban card has a non-string id')
     if (typeof c.columnId !== 'string') fail('kanban card has a non-string columnId')
     if (typeof c.title !== 'string') fail('kanban card has a non-string title')
-    for (const k of ['tag', 'assignee', 'ref'] as const) {
+    // The singular chips + the v19 plain-text `description` stay string-optional.
+    for (const k of ['tag', 'assignee', 'ref', 'description'] as const) {
       if (c[k] !== undefined && typeof c[k] !== 'string') fail(`kanban card ${k} is not a string`)
+    }
+    // v19 card-detail: `tags` is a string list; `fileRefs` is a list of {path, line?, endLine?}. Same
+    // shape-only discipline as above — a malformed entry fails the doc (an empty list is fine), while a
+    // fileRef with no matching file is NOT checked here (a ref is a free pointer, resolved on click).
+    if (c.tags !== undefined) {
+      if (!Array.isArray(c.tags)) fail('kanban card tags is not an array')
+      for (const t of c.tags as unknown[]) {
+        if (typeof t !== 'string') fail('kanban card tags entry is not a string')
+      }
+    }
+    if (c.fileRefs !== undefined) {
+      if (!Array.isArray(c.fileRefs)) fail('kanban card fileRefs is not an array')
+      for (const r of c.fileRefs as unknown[]) {
+        if (!isRecord(r)) fail('kanban card fileRef is not an object')
+        if (typeof r.path !== 'string') fail('kanban card fileRef has a non-string path')
+        for (const k of ['line', 'endLine'] as const) {
+          if (r[k] !== undefined && !isPositiveNum(r[k])) {
+            fail(`kanban card fileRef ${k} is not a positive number`)
+          }
+        }
+      }
+    }
+    // v19 (#346) attachments: a list of {assetId, name, kind, mime?, size?}. Shape-only (same
+    // discipline): a malformed entry fails the doc; a missing blob is NOT checked here (it resolves
+    // to a "missing" tile at render, like a swept whiteboard image). `size` is positive when present
+    // (the capture path drops a 0-byte size), matching the fileRef line contract.
+    if (c.attachments !== undefined) {
+      if (!Array.isArray(c.attachments)) fail('kanban card attachments is not an array')
+      for (const a of c.attachments as unknown[]) {
+        if (!isRecord(a)) fail('kanban card attachment is not an object')
+        if (typeof a.name !== 'string') fail('kanban card attachment has a non-string name')
+        const isLink = a.kind === 'link'
+        if (
+          a.kind !== 'image' &&
+          a.kind !== 'video' &&
+          a.kind !== 'audio' &&
+          a.kind !== 'file' &&
+          !isLink
+        ) {
+          fail('kanban card attachment kind is not one of image/video/audio/file/link')
+        }
+        // A link carries a `url`; every file kind carries an `assetId`. Each is a string when present.
+        if (isLink) {
+          if (typeof a.url !== 'string') fail('kanban card link attachment has a non-string url')
+        } else if (typeof a.assetId !== 'string') {
+          fail('kanban card attachment has a non-string assetId')
+        }
+        if (a.mime !== undefined && typeof a.mime !== 'string') {
+          fail('kanban card attachment mime is not a string')
+        }
+        if (a.size !== undefined && !isPositiveNum(a.size)) {
+          fail('kanban card attachment size is not a positive number')
+        }
+      }
     }
   }
 }
