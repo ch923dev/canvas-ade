@@ -377,6 +377,28 @@ export interface CanvasE2E {
     flyoutOpen: boolean
     modelStatus: 'ready' | 'absent' | 'unknown'
   }
+  /**
+   * Jarvis — the conversation/panel state (`jarvisStore`, ephemeral). The jarvis e2e
+   * drives a stub-voice final through the mock brain and asserts the turn lifecycle
+   * (thinking → streaming reply → done) + the display transcript + the structural
+   * mic-gate (panel close disarms converse). Evaluate-bridge safe.
+   */
+  jarvisState: () => {
+    converseMode: boolean
+    activeTurnId: number | null
+    awaitingReply: boolean
+    streamText: string
+    lastUserText: string
+    turnCount: number
+    lastAssistantText: string
+    panelOpen: boolean
+    lastError: string | null
+    /** J4: the ACTIVE turn's tool-act rows + whether a confirm gate is parked. */
+    acts: Array<{ actId: number; name: string; phase: string; summary: string }>
+    pendingConfirm: { title: string; body: string } | null
+    /** J4: resolved act rows folded into the transcript (role === 'act'). */
+    actChipCount: number
+  }
   setAuthStatus: (status: {
     isLoggedIn: boolean
     email?: string
@@ -393,6 +415,9 @@ export interface CanvasE2E {
   /** desktop-notifications P5 — the on-canvas attention ring's `data-kind` rendered in the board
    *  node DOM (proves the BoardAttention overlay mounted on-canvas), or null. */
   attentionRingKind: (id: string) => 'done' | 'needs-input' | 'error' | null
+  /** J5 BADGE-1 — test-only attention mark injector (production writers = agent lifecycle
+   *  events); drives the Jarvis edge-tab badge / event-chip specs deterministically. */
+  setAttention: (id: string, kind: 'done' | 'needs-input' | 'error') => void
 }
 
 declare global {

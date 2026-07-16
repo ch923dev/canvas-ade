@@ -46,6 +46,8 @@ import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStor
 import { clearStickyLocalPrefs } from './e2eStickyPrefs'
 import { useCommandStore, commandStoreDefaults } from '../store/commandStore'
 import { useVoiceStore } from '../store/voiceStore'
+import { useJarvisStore } from '../store/jarvisStore'
+import { setConverseMode } from '../jarvis/jarvisSession'
 import { useLibraryStore } from '../store/libraryStore'
 import { useAccountStore } from '../store/accountStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
@@ -557,6 +559,20 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         lastVoiceAt: 0,
         captureStartedAt: 0
       })
+      // Jarvis: converse mode + the display transcript are the same ephemeral-isolation
+      // class — a live conversation would eat the next spec's dictation finals. The
+      // panel closes with it (an open panel occludes right-edge click targets).
+      void setConverseMode(false)
+      useJarvisStore.setState({
+        converseMode: false,
+        activeTurnId: null,
+        awaitingReply: false,
+        streamText: '',
+        lastUserText: '',
+        turns: [],
+        panelOpen: false,
+        lastError: null
+      })
       // Sweep the sticky localStorage prefs (minimap visibility · file-font · P5 inspector
       // collapse state) — extracted to e2eStickyPrefs.ts (max-lines), key literals kept
       // there for the same eager-bundle reason documented in that module.
@@ -596,6 +612,31 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         partial: s.partial,
         flyoutOpen: s.flyoutOpen,
         modelStatus: s.modelStatus
+      }
+    },
+    jarvisState() {
+      const s = useJarvisStore.getState()
+      const lastAssistant = [...s.turns].reverse().find((t) => t.role === 'assistant')
+      return {
+        converseMode: s.converseMode,
+        activeTurnId: s.activeTurnId,
+        awaitingReply: s.awaitingReply,
+        streamText: s.streamText,
+        lastUserText: s.lastUserText,
+        turnCount: s.turns.length,
+        lastAssistantText: lastAssistant?.text ?? '',
+        panelOpen: s.panelOpen,
+        lastError: s.lastError,
+        acts: s.acts.map((a) => ({
+          actId: a.actId,
+          name: a.name,
+          phase: a.phase,
+          summary: a.summary
+        })),
+        pendingConfirm: s.pendingConfirm
+          ? { title: s.pendingConfirm.title, body: s.pendingConfirm.body }
+          : null,
+        actChipCount: s.turns.filter((t) => t.role === 'act').length
       }
     },
     async openProjectFromDisk(dir) {
@@ -755,6 +796,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     attentionKind(id) {
       return useAttentionStore.getState().byId[id] ?? null
+    },
+    setAttention(id, kind) {
+      // Test-only mark injector (the production writers are agent lifecycle events) —
+      // drives the Jarvis edge-tab badge / panel event-chip specs deterministically.
+      useAttentionStore.getState().setAttention(id, kind)
     },
     attentionRingKind(id) {
       // The on-canvas BoardAttention overlay's data-kind, read off the live node DOM — proves the

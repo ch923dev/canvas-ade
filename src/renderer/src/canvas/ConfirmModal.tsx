@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Modal } from './Modal'
+import { useJarvisStore } from '../store/jarvisStore'
 
 /**
  * 🔒 Human-confirm modal (T4.2). MAIN posts a confirm request over `mcp:confirm`
@@ -29,6 +30,8 @@ interface ConfirmRequest {
   confirmLabel?: string
   denyLabel?: string
   choices?: ConfirmChoices
+  /** J4: MAIN-stamped Jarvis-tool origin (see routing note in the subscribe effect). */
+  origin?: 'jarvis'
 }
 type Reply = (decision: { approved: boolean; choice?: string }) => void
 interface Pending extends ConfirmRequest {
@@ -62,6 +65,17 @@ export default function ConfirmModal(): React.ReactElement | null {
     const onConfirm = window.api?.mcp?.onConfirm
     if (!onConfirm) return
     return onConfirm((request, reply) => {
+      // 🔒 J4 routing — this component owns the ONE 'mcp:confirm' subscriber (BUG-029), so
+      // the Jarvis panel cannot subscribe itself; route here instead. A MAIN-stamped
+      // origin:'jarvis' request renders as the panel's turn-act card — SAME reply channel,
+      // same fail-closed discipline (the panel teardown/supersede answers false) — except:
+      // a CHOOSER request (visualize_plan) keeps this modal (the layout tiles need it —
+      // user-decided 2026-07-16), and a closed panel falls back here too (no dead gates).
+      const r = request as ConfirmRequest
+      if (r.origin === 'jarvis' && !r.choices && useJarvisStore.getState().panelOpen) {
+        useJarvisStore.getState().confirmRequested({ title: r.title, body: r.body }, reply)
+        return
+      }
       setQueue((q) => [...q, { ...request, reply, choice: request.choices?.default }])
     })
   }, [])

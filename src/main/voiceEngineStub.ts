@@ -37,8 +37,15 @@ interface StubSession {
   onEos: (() => void) | null
 }
 
-export function createStubVoiceEngine(): VoiceEngineHandle {
+export function createStubVoiceEngine(
+  script: ReadonlyArray<{
+    atFrame: number
+    t: 'partial' | 'final'
+    text: string
+  }> = VOICE_STUB_SCRIPT
+): VoiceEngineHandle & { fireKwsWake: (keyword?: string) => boolean } {
   let session: StubSession | null = null
+  let kwsSession: StubSession | null = null
 
   /** Signal teardown to the renderer end; close only after the eos drain (or timeout). */
   const release = (s: StubSession, onDrained: () => void): void => {
@@ -79,7 +86,7 @@ export function createStubVoiceEngine(): VoiceEngineHandle {
         const m = e.data as { t?: string } | null
         if (m?.t === 'frame') {
           s.frames++
-          for (const step of VOICE_STUB_SCRIPT) {
+          for (const step of script) {
             if (step.atFrame === s.frames) s.port.postMessage({ t: step.t, text: step.text })
           }
         } else if (m?.t === 'eos') {
@@ -98,25 +105,91 @@ export function createStubVoiceEngine(): VoiceEngineHandle {
     onEngineFailure(): void {
       /* the stub never crashes — nothing to observe */
     },
+    // J2 TTS: the stub covers dictation e2e only. TTS never activates through it —
+    // voiceIpc gates tts:start on model status, and the stub runs model-less, so these
+    // are inert no-ops that just satisfy the handle shape.
+    startTtsSession(): void {},
+    ttsSpeak(): void {},
+    ttsCancel(): void {},
+    stopTtsSession(): void {},
+    onTtsFailure(): void {},
+    // J5 KWS: the stub holds the wake port + counts frames like the real host; a spec
+    // fires the detection deterministically via stubKwsWake() (no model, no audio).
+    startKwsSession(port, _model): void {
+      if (kwsSession) {
+        const old = kwsSession
+        kwsSession = null
+        release(old, () => {})
+      }
+      const s: StubSession = { port, frames: 0, eos: false, onEos: null }
+      kwsSession = s
+      port.on('message', (e) => {
+        const m = e.data as { t?: string } | null
+        if (m?.t === 'frame') s.frames++
+        else if (m?.t === 'eos') {
+          s.eos = true
+          s.onEos?.()
+        }
+      })
+      port.start()
+    },
+    stopKwsSession(): Promise<{ frames: number }> {
+      const s = kwsSession
+      kwsSession = null
+      if (!s) return Promise.resolve({ frames: 0 })
+      return new Promise((resolve) => release(s, () => resolve({ frames: s.frames })))
+    },
+    onKwsFailure(): void {},
+    /** Test trigger: post a wake detection on the live kws port (false = no session). */
+    fireKwsWake(keyword = 'HEY JARVIS'): boolean {
+      if (!kwsSession) return false
+      try {
+        kwsSession.port.postMessage({ t: 'wake', keyword })
+        return true
+      } catch {
+        return false
+      }
+    },
     dispose(): void {
       const s = session
       session = null
       if (s) release(s, () => {})
+      const k = kwsSession
+      kwsSession = null
+      if (k) release(k, () => {})
     }
   }
 }
 
 // ── the runtime toggle (only reachable through e2eMain's gated registry) ──
-let active: VoiceEngineHandle | null = null
+let active: (VoiceEngineHandle & { fireKwsWake: (keyword?: string) => boolean }) | null = null
 
 /** The live stub, or null in every normal run (voiceIpc's engine() falls through). */
 export function currentVoiceStubEngine(): VoiceEngineHandle | null {
   return active
 }
 
-export function setVoiceStubEnabled(on: boolean): void {
+/** J5 e2e: fire a deterministic wake detection through the live stub's kws port.
+ *  False when no stub / no armed wake session — the spec asserts the arm first. */
+export function stubKwsWake(keyword?: string): boolean {
+  return active?.fireKwsWake(keyword) ?? false
+}
+
+/**
+ * J4: an optional CUSTOM script replaces the canned one (the jarvis tool e2e speaks
+ * "add a card …" instead of the dictation line). Passing a script while a stub is live
+ * swaps it (dispose + recreate) so a spec can re-script between captures.
+ */
+export function setVoiceStubEnabled(
+  on: boolean,
+  script?: ReadonlyArray<{ atFrame: number; t: 'partial' | 'final'; text: string }>
+): void {
   if (on) {
-    active ??= createStubVoiceEngine()
+    if (active && script) {
+      active.dispose()
+      active = null
+    }
+    active ??= createStubVoiceEngine(script)
     return
   }
   active?.dispose()

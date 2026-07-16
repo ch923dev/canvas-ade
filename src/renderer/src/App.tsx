@@ -23,7 +23,9 @@ import { useAutosave } from './store/useAutosave'
 import { useProjectSwitchHotkey } from './store/useProjectSwitchHotkey'
 import { useNotifications } from './store/useNotifications'
 import { useVoiceCapture } from './voice/useVoiceCapture'
+import { useTtsPlayback } from './voice/useTtsPlayback'
 import { VoicePill } from './voice/VoicePill'
+import { JarvisPanel } from './jarvis/JarvisPanel'
 import { isE2E } from './smoke/e2eRegistry'
 
 /**
@@ -48,6 +50,8 @@ function App(): React.ReactElement {
   // Voice V1: arm the mic-capture controller — the MessagePort MAIN transfers on
   // voice:session:start is the start signal (see useVoiceCapture).
   useVoiceCapture()
+  // Jarvis J2: TTS playback queue + barge-in — adopts the voice:tts:port chunk stream.
+  useTtsPlayback()
   // Desktop notifications: MAIN pushes agent-lifecycle events (done / needs-input / error) → an
   // in-app toast + focus-on-click. The native OS notification is raised in MAIN.
   useNotifications()
@@ -135,6 +139,10 @@ function App(): React.ReactElement {
       {/* Voice V3: pill + flyout — screen-fixed overlay islands (not inside React Flow);
           dictation needs an open canvas (terminal targets), so they gate on it too. */}
       {status === 'open' && <VoicePill />}
+      {/* Jarvis: the right-side panel + collapsed edge tab (surface rev, KICKOFF-PANEL).
+          Conversation grounds in the open canvas (workspace manifest), so it gates on it
+          too — and unmounting on project close runs the structural mic-gate teardown. */}
+      {status === 'open' && <JarvisPanel />}
       <ConfirmModal />
       {/* relay_prompts: the per-row BATCH confirm gate — app-level beside ConfirmModal, its own
           FIFO queue on the mcp:confirm:batch channel. Same click-outside-inert / Esc-denies contract. */}

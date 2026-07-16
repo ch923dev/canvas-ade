@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 import { DEFAULT_VOICE_MODEL_ID } from './voiceModels'
+import { DEFAULT_TTS_MODEL_ID } from './voiceTtsModels'
 
 /** Cap on the persisted voice prompt-history ring. The flyout surfaces a small Recent slice; the
  *  Settings › Voice pane shows the full list up to this bound. Repair enforces it no matter what a
@@ -41,6 +42,16 @@ export interface VoiceConfig {
   showPill: boolean
   /** Screen-fixed px (viewport-clamped again on restore — displays change between runs). */
   pillPosition?: { x: number; y: number }
+  /** J2: key into the pinned TTS catalog (Kokoro default). Same discipline as `modelId`:
+   *  an id that leaves the catalog is PRESERVED on disk; voiceIpc falls back to the
+   *  default at tts session start without rewriting the user's choice. */
+  ttsModelId: string
+  /** J2 barge-in mode (D6). 'full' = transcription-gated interrupt (mic frames keep
+   *  flowing to STT while speaking; a confirmed non-echo partial cancels playback).
+   *  'half' = half-duplex fallback for machines where AEC can't stop self-capture: mic
+   *  frames are suppressed during playback and a sustained elevated-RMS burst is the
+   *  interrupt instead. */
+  ttsDuplex: 'full' | 'half'
   /** Voice prompt history — the prompts the user SENT via dictation, newest first, capped at
    *  MAX_PROMPT_HISTORY. The flyout shows a Recent slice for one-click reuse; Settings › Voice
    *  shows the whole list to browse/copy/delete. Durable *config* in userData (never a project
@@ -60,7 +71,9 @@ function defaults(): VoiceConfig {
     language: 'auto',
     autoSendOnFinal: false,
     showPill: true,
-    promptHistory: []
+    promptHistory: [],
+    ttsModelId: DEFAULT_TTS_MODEL_ID,
+    ttsDuplex: 'full'
   }
 }
 
@@ -104,7 +117,9 @@ export function repairVoiceConfig(p: unknown): VoiceConfig {
     cloudProvider: optStr(o.cloudProvider),
     showPill: typeof o.showPill === 'boolean' ? o.showPill : true,
     pillPosition,
-    promptHistory
+    promptHistory,
+    ttsModelId: optStr(o.ttsModelId) ?? d.ttsModelId,
+    ttsDuplex: o.ttsDuplex === 'half' ? 'half' : 'full'
   }
 }
 

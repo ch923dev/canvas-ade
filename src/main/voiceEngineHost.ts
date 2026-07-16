@@ -46,10 +46,38 @@
  *                     stream reset.
  *   All session-port payloads are plain JSON — NEVER put a transferable in a cross-process
  *   port transfer list (Electron nulls the whole payload silently; see V1).
+ *
+ * J2 TTS seam (parentPort control; chunks flow over a SECOND MessagePort):
+ *   IN  {t:'tts:session:start', ttsModel: TtsModelPaths|null} + ports[0]=tts port —
+ *                     lazily spawns the TTS worker (own thread, same bundle) and builds
+ *                     the OfflineTts there (createAsync >10 s cold — NEVER on this loop).
+ *   IN  {t:'tts:speak', req: TtsSpeakReq} — FIFO into the worker's speak queue.
+ *   IN  {t:'tts:cancel'} — barge-in: active synth cancels via onProgress-return-0, the
+ *                     queue drains with {cancelled:true} dones.
+ *   IN  {t:'tts:session:stop'} — cancel + close the tts port.
+ *   OUT (tts port) TtsOutMsg — tts:chunk (Float32 PCM copy + sampleRate) / tts:done /
+ *                     tts:error, streamed as sherpa finishes each sentence
+ *                     (maxNumSentences:1 = sentence-chunked synthesis).
+ *   OUT {t:'tts:engine:error', error} — TTS worker died or its session init failed. The
+ *                     host stays up (STT unaffected); the next tts:session:start respawns.
  */
 import { Worker, isMainThread, parentPort as nodeWorkerPort, workerData } from 'worker_threads'
 import type { MessagePort as NodeMessagePort } from 'worker_threads'
 import type { VoiceModelPaths } from './voiceModels'
+import type { TtsModelPaths } from './voiceTtsModels'
+import type { KwsModelPaths } from './voiceKwsModels'
+import {
+  createTtsRunner,
+  evictAllBut,
+  type OfflineTtsLike,
+  type TtsOutMsg,
+  type TtsRunner,
+  type TtsSpeakReq
+} from './voiceTtsRunner'
+// Compat re-exports — the runner block moved to voiceTtsRunner.ts (max-lines ratchet);
+// existing consumers (voiceEngine, the integration tests) keep importing from here.
+export { clampSid, createTtsRunner, evictAllBut, floatToPcm16Base64 } from './voiceTtsRunner'
+export type { OfflineTtsLike, TtsOutMsg, TtsRunner, TtsSpeakReq } from './voiceTtsRunner'
 
 export interface SpikeResult {
   t: 'spike:result'
@@ -59,6 +87,8 @@ export interface SpikeResult {
   resolvedPath?: string
   /** V5: whether the decoder worker_thread ALSO loaded the addon (the async-init context). */
   workerOk?: boolean
+  /** J1: whether the addon exposes OfflineTts in this layout (the TTS engine seam). */
+  ttsOk?: boolean
   error?: string
 }
 
@@ -163,9 +193,23 @@ export function createFrameProcessor(
   }
 }
 
+// ── J2 TTS session (speak queue + chunk stream) ────────────────────────────────────────
+
+/** Structural slice of sherpa's KeywordSpotter (J5 wake word — unit-testable with fakes).
+ *  Same decode-loop shape as OnlineRecognizer; getResult().keyword is non-empty on a hit. */
+export interface KeywordSpotterLike {
+  createStream(): StreamLike
+  isReady(s: StreamLike): boolean
+  decode(s: StreamLike): void
+  reset(s: StreamLike): void
+  getResult(s: StreamLike): { keyword: string }
+}
+
 interface SherpaModule {
   OnlineRecognizer: new (config: unknown) => RecognizerLike
   Vad: new (config: unknown, bufferSizeInSeconds: number) => VadLike
+  OfflineTts: { createAsync(config: unknown): Promise<OfflineTtsLike> }
+  KeywordSpotter: new (config: unknown) => KeywordSpotterLike
   version: string
 }
 
@@ -180,7 +224,8 @@ function loadAddon(): { mod: SherpaModule | null; result: Omit<SpikeResult, 't'>
       result: {
         ok: typeof mod?.OnlineRecognizer === 'function',
         version: String(mod?.version ?? 'unknown'),
-        resolvedPath: require.resolve('sherpa-onnx-node')
+        resolvedPath: require.resolve('sherpa-onnx-node'),
+        ttsOk: typeof mod?.OfflineTts === 'function'
       }
     }
   } catch (err) {
@@ -228,6 +273,85 @@ export function buildVadConfig(vadModelPath: string): unknown {
     numThreads: 1,
     provider: 'cpu',
     debug: 0
+  }
+}
+
+/**
+ * OfflineTts config (J1). Thread counts are spike-derived (scripts/tts-spike.mjs run
+ * 2026-07-10 on target hardware): Kokoro fp32 needs 4 threads for sub-second first audio
+ * (t1 is RTF>1 — unusable); Piper is ~10× realtime already at 2. NEVER int8 on CPU (D2 —
+ * int8 is SLOWER than fp32 here). `maxNumSentences: 1` synthesizes sentence-by-sentence,
+ * which is what makes generateAsync's onProgress a chunk stream (the J2 playback/barge-in
+ * seam) instead of one blob at the end.
+ */
+export function buildTtsConfig(model: TtsModelPaths): unknown {
+  const engine =
+    model.engine === 'kokoro'
+      ? {
+          kokoro: {
+            model: model.model,
+            voices: model.voices ?? '',
+            tokens: model.tokens,
+            dataDir: model.dataDir
+          },
+          numThreads: 4
+        }
+      : {
+          vits: { model: model.model, tokens: model.tokens, dataDir: model.dataDir },
+          numThreads: 2
+        }
+  return {
+    model: { ...engine, provider: 'cpu', debug: 0 },
+    maxNumSentences: 1
+  }
+}
+
+/** KeywordSpotter config (J5 D3). Spike-validated 2026-07-17 on the gigaspeech 3.3M
+ *  int8 export: threshold 0.25 detected the SAPI-synthesized wake phrase with zero hits
+ *  on negative speech at the production 120 ms frame size. */
+export function buildKwsConfig(model: KwsModelPaths): unknown {
+  return {
+    featConfig: { sampleRate: 16000, featureDim: 80 },
+    modelConfig: {
+      transducer: { encoder: model.encoder, decoder: model.decoder, joiner: model.joiner },
+      tokens: model.tokens,
+      numThreads: 1,
+      provider: 'cpu',
+      debug: 0
+    },
+    maxActivePaths: 4,
+    keywordsScore: 1.0,
+    keywordsThreshold: 0.25,
+    keywordsFile: model.keywords
+  }
+}
+
+/**
+ * The per-session wake-word decode loop, pure over KeywordSpotterLike so it unit-tests
+ * without the addon (createFrameProcessor's sibling). A hit posts `{t:'wake', keyword}`
+ * and resets the stream — the spotter keeps listening (MAIN decides what a wake does).
+ */
+export function createKwsProcessor(
+  spotter: KeywordSpotterLike | null,
+  post: (msg: { t: 'wake'; keyword: string }) => void
+): FrameProcessor {
+  const stream = spotter?.createStream() ?? null
+  let frames = 0
+  return {
+    frames: () => frames,
+    push(frame: ArrayBuffer): void {
+      frames++
+      if (!spotter || !stream) return
+      stream.acceptWaveform({ samples: int16ToFloat32(frame), sampleRate: 16000 })
+      while (spotter.isReady(stream)) {
+        spotter.decode(stream)
+        const r = spotter.getResult(stream)
+        if (r.keyword) {
+          post({ t: 'wake', keyword: r.keyword })
+          spotter.reset(stream)
+        }
+      }
+    }
   }
 }
 
@@ -369,6 +493,10 @@ function runDecoderWorker(parent: NodeMessagePort): void {
         proc = createFrameProcessor(recognizer, (msg) => parent.postMessage(msg), {
           vad: getVad(m.model.vad)
         })
+        // TTS-7 (STT side): a model SWITCH unpins the previous recognizer/VAD graphs
+        // (~70 MB each) — only the live model stays cached for the mic-toggle fast path.
+        evictAllBut(recognizerCache, m.model.encoder)
+        evictAllBut(vadCache, m.model.vad)
         parent.postMessage({ t: 'session:ready', ok: true, live: recognizer !== null })
       } catch (err) {
         // Model files present but unloadable (corrupt/incompatible) → surface it; MAIN's
@@ -379,6 +507,136 @@ function runDecoderWorker(parent: NodeMessagePort): void {
       }
     } else if (m?.t === 'frame' && m.d instanceof ArrayBuffer) {
       proc?.push(m.d)
+    }
+  })
+}
+
+// ── J5 KWS worker (same bundle, discriminated by workerData.role = 'voice-kws') ────────
+
+/** Host → KWS worker messages. */
+type KwsWorkerInMsg = { t: 'session'; model: KwsModelPaths | null } | { t: 'frame'; d: ArrayBuffer }
+
+/**
+ * The wake-word thread body: owns the sherpa addon + a KeywordSpotter cache (keyed by
+ * encoder path — re-arming the listener on the same model skips re-construction).
+ * Construction (~5 MB int8 graphs, well under a second) still runs HERE, never on the
+ * host loop (the decoder-worker discipline). NOTE the keywords file is generated from a
+ * fixed validated constant (voiceKwsModels) — a malformed one ABORTS the native process,
+ * which the engine-failure escalation upstream treats as a host death.
+ */
+function runKwsWorker(parent: NodeMessagePort): void {
+  const { mod, result } = loadAddon()
+  const kwsOk = typeof mod?.KeywordSpotter === 'function'
+  parent.postMessage({ t: 'worker:ready', ok: kwsOk, error: result.error })
+
+  const spotterCache = new Map<string, KeywordSpotterLike>()
+  let proc: FrameProcessor | null = null
+
+  parent.on('message', (m: KwsWorkerInMsg) => {
+    if (m?.t === 'session') {
+      proc = null
+      if (!m.model) {
+        parent.postMessage({ t: 'session:ready', ok: true, live: false })
+        return
+      }
+      if (!kwsOk || !mod) {
+        // TTS-6 discipline: a requested model with no addon is a real failure, not a degrade.
+        parent.postMessage({
+          t: 'session:ready',
+          ok: false,
+          error: `kws addon unavailable: ${result.error ?? 'sherpa load failed'}`
+        })
+        return
+      }
+      try {
+        const cached = spotterCache.get(m.model.encoder)
+        const spotter = cached ?? new mod.KeywordSpotter(buildKwsConfig(m.model))
+        spotterCache.set(m.model.encoder, spotter)
+        evictAllBut(spotterCache, m.model.encoder) // TTS-7 discipline
+        proc = createKwsProcessor(spotter, (msg) => parent.postMessage(msg))
+        parent.postMessage({ t: 'session:ready', ok: true, live: true })
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err)
+        console.error('[voice-kws] spotter init failed:', error)
+        parent.postMessage({ t: 'session:ready', ok: false, error })
+      }
+    } else if (m?.t === 'frame' && m.d instanceof ArrayBuffer) {
+      proc?.push(m.d)
+    }
+  })
+}
+
+// ── J2 TTS worker (same bundle, discriminated by workerData.role = 'voice-tts') ────────
+
+/** Host → TTS worker messages. */
+type TtsWorkerInMsg =
+  | { t: 'session'; model: TtsModelPaths | null }
+  | { t: 'speak'; req: TtsSpeakReq }
+  | { t: 'cancel' }
+
+/**
+ * The TTS thread body: owns the sherpa addon + an OfflineTts cache (keyed by model path —
+ * re-opening a session on the same model skips the multi-second createAsync). Everything
+ * long-running (createAsync — >10 s cold under load, the V3 lesson — and synthesis)
+ * happens HERE, never on the host loop. Speaks/cancels chain through the init promise so
+ * a request arriving mid-createAsync executes against the session it targeted, in order.
+ */
+function runTtsWorker(parent: NodeMessagePort): void {
+  const { mod, result } = loadAddon()
+  parent.postMessage({ t: 'worker:ready', ok: !!result.ttsOk, error: result.error })
+
+  const ttsCache = new Map<string, OfflineTtsLike>()
+  const post = (m: TtsOutMsg): void => parent.postMessage(m)
+  let runner: Promise<TtsRunner> = Promise.resolve(createTtsRunner(null, post))
+
+  parent.on('message', (m: TtsWorkerInMsg) => {
+    if (m?.t === 'session') {
+      const model = m.model
+      const prev = runner
+      runner = (async () => {
+        ;(await prev).cancel() // a session swap never leaves the old queue speaking
+        if (!model) {
+          parent.postMessage({ t: 'session:ready', ok: true, live: false })
+          return createTtsRunner(null, post)
+        }
+        if (!mod?.OfflineTts) {
+          // TTS-6: a model was requested but the ADDON failed to load — a real failure,
+          // not the designed no-model degrade. ok:false escalates through the host's
+          // session:ready handler → MAIN's tts error event, instead of the renderer
+          // misdiagnosing it as "model not loaded" (STT's count-only degrade has no
+          // TTS equivalent — a session without an engine has nothing to stream).
+          parent.postMessage({
+            t: 'session:ready',
+            ok: false,
+            error: `tts addon unavailable: ${result.error ?? 'sherpa load failed'}`
+          })
+          return createTtsRunner(null, post)
+        }
+        try {
+          const cached = ttsCache.get(model.model)
+          const tts = cached ?? (await mod.OfflineTts.createAsync(buildTtsConfig(model)))
+          ttsCache.set(model.model, tts)
+          evictAllBut(ttsCache, model.model) // TTS-7: the previous model's graph unpins
+          parent.postMessage({
+            t: 'session:ready',
+            ok: true,
+            live: true,
+            sampleRate: tts.sampleRate
+          })
+          return createTtsRunner(tts, post)
+        } catch (err) {
+          // Model files present but unloadable — surface it; MAIN pushes the renderer's
+          // tts error event. The null runner answers any queued speaks with tts:error.
+          const error = err instanceof Error ? err.message : String(err)
+          console.error('[voice-tts] OfflineTts init failed:', error)
+          parent.postMessage({ t: 'session:ready', ok: false, error })
+          return createTtsRunner(null, post)
+        }
+      })()
+    } else if (m?.t === 'speak') {
+      void runner.then((r) => r.speak(m.req))
+    } else if (m?.t === 'cancel') {
+      void runner.then((r) => r.cancel())
     }
   })
 }
@@ -453,6 +711,10 @@ const workerRole = (workerData as { role?: string } | null)?.role
 
 if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
   runDecoderWorker(nodeWorkerPort)
+} else if (!isMainThread && workerRole === 'voice-tts' && nodeWorkerPort) {
+  runTtsWorker(nodeWorkerPort)
+} else if (!isMainThread && workerRole === 'voice-kws' && nodeWorkerPort) {
+  runKwsWorker(nodeWorkerPort)
 } else if (parentPort) {
   const debug = !!process.env.CANVAS_VOICE_DEBUG
   let session: SessionHandle | null = null
@@ -484,12 +746,106 @@ if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
       version: hostAddon.version,
       resolvedPath: hostAddon.resolvedPath,
       workerOk: w.ok,
+      ttsOk: hostAddon.ttsOk,
       error: hostAddon.error ?? w.error
     } satisfies SpikeResult)
   })
 
+  // ── J2 TTS session: lazy worker (spawned on the first tts session start — non-Jarvis
+  // sessions never pay the second addon load), respawned by the next start after a death.
+  // Chunks flow host → renderer over the TTS port; control arrives via parentPort.
+  let ttsPort: SessionPortLike | null = null
+  let ttsWorker: Worker | null = null
+
+  const postTtsFailure = (error: string): void => {
+    try {
+      parentPort.postMessage({ t: 'tts:engine:error', error })
+    } catch {
+      /* parent gone — the host is being torn down anyway */
+    }
+  }
+  const ensureTtsWorker = (): Worker => {
+    if (ttsWorker) return ttsWorker
+    const w = new Worker(__filename, { workerData: { role: 'voice-tts' } })
+    w.on('message', (m: { t?: string; ok?: boolean; error?: string } | null) => {
+      if (m?.t === 'tts:chunk' || m?.t === 'tts:done' || m?.t === 'tts:error') {
+        try {
+          ttsPort?.postMessage(m)
+        } catch {
+          /* renderer end gone — chunks have nowhere to go */
+        }
+      } else if (m?.t === 'session:ready' && !m.ok) {
+        postTtsFailure(`tts session init failed: ${m.error ?? 'unknown'}`)
+      }
+    })
+    // Worker death: clear the handle (the next tts:session:start respawns clean) and
+    // escalate — MAIN pushes the renderer's voice:tts:event. The identity guard keeps a
+    // replaced worker's exit from clobbering its successor. STT is untouched: unlike the
+    // decoder worker, a dead TTS thread never degrades dictation, so the host stays up.
+    const fail = (reason: string): void => {
+      if (ttsWorker !== w) return
+      ttsWorker = null
+      postTtsFailure(reason)
+    }
+    w.on('error', (err) =>
+      fail(`tts worker error: ${err instanceof Error ? err.message : String(err)}`)
+    )
+    w.on('exit', (code) => fail(`tts worker exited (${code})`))
+    ttsWorker = w
+    return w
+  }
+
+  // ── J5 KWS session: lazy worker (spawned on the first wake-word arm — sessions that
+  // never use the wake word never pay the third addon load), respawned after a death.
+  // Frames arrive renderer → kws port → host (attachSession) → worker; a detection flows
+  // back worker → host → kws port ({t:'wake', keyword}). STT/TTS are untouched by a KWS
+  // worker death — the host stays up, MAIN gets kws:engine:error and re-arms lazily.
+  let kwsPort: SessionPortLike | null = null
+  let kwsSession: SessionHandle | null = null
+  let kwsWorker: Worker | null = null
+
+  const postKwsFailure = (error: string): void => {
+    try {
+      parentPort.postMessage({ t: 'kws:engine:error', error })
+    } catch {
+      /* parent gone — the host is being torn down anyway */
+    }
+  }
+  const ensureKwsWorker = (): Worker => {
+    if (kwsWorker) return kwsWorker
+    const w = new Worker(__filename, { workerData: { role: 'voice-kws' } })
+    w.on('message', (m: { t?: string; ok?: boolean; error?: string; keyword?: string } | null) => {
+      if (m?.t === 'wake') {
+        try {
+          kwsPort?.postMessage(m)
+        } catch {
+          /* renderer end gone — the wake has nowhere to go */
+        }
+      } else if (m?.t === 'session:ready' && !m.ok) {
+        postKwsFailure(`kws session init failed: ${m.error ?? 'unknown'}`)
+      }
+    })
+    const fail = (reason: string): void => {
+      if (kwsWorker !== w) return
+      kwsWorker = null
+      postKwsFailure(reason)
+    }
+    w.on('error', (err) =>
+      fail(`kws worker error: ${err instanceof Error ? err.message : String(err)}`)
+    )
+    w.on('exit', (code) => fail(`kws worker exited (${code})`))
+    kwsWorker = w
+    return w
+  }
+
   parentPort.on('message', (e) => {
-    const m = e.data as { t?: string; model?: VoiceModelPaths | null } | null
+    const m = e.data as {
+      t?: string
+      model?: VoiceModelPaths | null
+      ttsModel?: TtsModelPaths | null
+      kwsModel?: KwsModelPaths | null
+      req?: TtsSpeakReq
+    } | null
     if (m?.t === 'session:start' && e.ports[0]) {
       session?.endNow() // restart-idempotent: a second start replaces the live session
       const model = m.model ?? null
@@ -504,6 +860,47 @@ if (!isMainThread && workerRole === 'voice-decoder' && nodeWorkerPort) {
         return
       }
       s.requestStop((frames) => parentPort.postMessage({ t: 'session:stopped', frames }))
+    } else if (m?.t === 'tts:session:start' && e.ports[0]) {
+      try {
+        ttsPort?.close() // restart-idempotent, like session:start
+      } catch {
+        /* already gone */
+      }
+      ttsPort = e.ports[0]
+      ttsPort.start() // renderer never posts on this port today; started for symmetry
+      ensureTtsWorker().postMessage({ t: 'session', model: m.ttsModel ?? null })
+    } else if (m?.t === 'tts:speak' && m.req) {
+      ttsWorker?.postMessage({ t: 'speak', req: m.req })
+    } else if (m?.t === 'tts:cancel') {
+      ttsWorker?.postMessage({ t: 'cancel' })
+    } else if (m?.t === 'tts:session:stop') {
+      ttsWorker?.postMessage({ t: 'cancel' })
+      try {
+        ttsPort?.close()
+      } catch {
+        /* already gone */
+      }
+      ttsPort = null
+    } else if (m?.t === 'kws:session:start' && e.ports[0]) {
+      kwsSession?.endNow() // restart-idempotent, like session:start
+      const model = m.kwsModel ?? null
+      const worker = ensureKwsWorker()
+      worker.postMessage({ t: 'session', model } satisfies KwsWorkerInMsg)
+      kwsPort = e.ports[0]
+      kwsSession = attachSession(
+        e.ports[0],
+        model ? (f) => worker.postMessage({ t: 'frame', d: f } satisfies KwsWorkerInMsg) : null,
+        { debug }
+      )
+    } else if (m?.t === 'kws:session:stop') {
+      const s = kwsSession
+      kwsSession = null
+      kwsPort = null
+      if (!s) {
+        parentPort.postMessage({ t: 'kws:session:stopped', frames: 0 })
+        return
+      }
+      s.requestStop((frames) => parentPort.postMessage({ t: 'kws:session:stopped', frames }))
     }
   })
 }

@@ -8,7 +8,8 @@ import { notifyApi } from './notifyApi'
 import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
 import { closeGuardApi } from './closeGuardApi'
-import { forwardVoicePort, voiceApi } from './voice'
+import { forwardVoicePort, forwardVoiceTtsPort, forwardVoiceWakePort, voiceApi } from './voice'
+import { jarvisApi } from './jarvis'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -928,15 +929,21 @@ const api = {
   // ── Voice dictation V1 (control plane; audio frames flow over a MessagePort) ──
   voice: voiceApi,
 
+  // ── Jarvis J3 (brain session control plane; reply text streams as jarvis:turn:event) ──
+  jarvis: jarvisApi,
+
   // ── PR-2 background sessions: close-modal round trip + Settings › Terminal config rows
   //    (factored to closeGuardApi.ts) ──
   closeGuard: closeGuardApi
 }
 
 // Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):
-// the per-board PTY port (terminalApi.forwardPtyPort) and the voice capture port (voice.ts).
+// the per-board PTY port (terminalApi.forwardPtyPort) and the voice capture + TTS chunk
+// ports (voice.ts).
 forwardPtyPort()
 forwardVoicePort()
+forwardVoiceTtsPort()
+forwardVoiceWakePort()
 
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('api', api)

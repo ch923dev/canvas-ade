@@ -53,6 +53,7 @@ import {
   type VoiceIpcDeps
 } from './voiceIpc'
 import { DEFAULT_VOICE_MODEL_ID, VOICE_MODEL_CATALOG } from './voiceModels'
+import { DEFAULT_TTS_MODEL_ID, TTS_MODEL_CATALOG } from './voiceTtsModels'
 
 describe('applyFakeMediaSwitches', () => {
   it('is a no-op without CANVAS_FAKE_MEDIA', () => {
@@ -89,12 +90,25 @@ interface Harness {
     startSession: ReturnType<typeof vi.fn>
     stopSession: ReturnType<typeof vi.fn>
     onEngineFailure: ReturnType<typeof vi.fn>
+    startTtsSession: ReturnType<typeof vi.fn>
+    ttsSpeak: ReturnType<typeof vi.fn>
+    ttsCancel: ReturnType<typeof vi.fn>
+    stopTtsSession: ReturnType<typeof vi.fn>
+    onTtsFailure: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
     /** The failure callback voiceIpc registered (the V5 crash-policy entry point). */
     fail: (reason: string) => void
+    /** The J2 TTS-only failure callback voiceIpc registered. */
+    ttsFail: (reason: string) => void
   }
   ops: NonNullable<VoiceIpcDeps['modelOps']> & {
     status: ReturnType<typeof vi.fn>
+    download: ReturnType<typeof vi.fn>
+    remove: ReturnType<typeof vi.fn>
+  }
+  ttsOps: NonNullable<VoiceIpcDeps['ttsModelOps']> & {
+    status: ReturnType<typeof vi.fn>
+    paths: ReturnType<typeof vi.fn>
     download: ReturnType<typeof vi.fn>
     remove: ReturnType<typeof vi.fn>
   }
@@ -114,14 +128,23 @@ function makeHarness(overrides: { win?: null } = {}): Harness {
         } as unknown as BrowserWindow)
   const ownEvent = { senderFrame: mainFrame } as IpcMainInvokeEvent
   let failCb: ((reason: string) => void) | null = null
+  let ttsFailCb: ((reason: string) => void) | null = null
   const engine = {
     startSession: vi.fn(),
     stopSession: vi.fn(async () => ({ frames: 0 })),
     onEngineFailure: vi.fn((cb: ((reason: string) => void) | null) => {
       failCb = cb
     }),
+    startTtsSession: vi.fn(),
+    ttsSpeak: vi.fn(),
+    ttsCancel: vi.fn(),
+    stopTtsSession: vi.fn(),
+    onTtsFailure: vi.fn((cb: ((reason: string) => void) | null) => {
+      ttsFailCb = cb
+    }),
     dispose: vi.fn(),
-    fail: (reason: string) => failCb?.(reason)
+    fail: (reason: string) => failCb?.(reason),
+    ttsFail: (reason: string) => ttsFailCb?.(reason)
   }
   const ops = {
     status: vi.fn(async () => 'absent' as const),
@@ -129,6 +152,18 @@ function makeHarness(overrides: { win?: null } = {}): Harness {
     download: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     sweep: vi.fn(async () => {})
+  }
+  const ttsOps = {
+    status: vi.fn(async () => 'absent' as const),
+    paths: vi.fn(() => ({
+      engine: 'kokoro' as const,
+      model: 'M',
+      tokens: 'T',
+      dataDir: 'D',
+      voices: 'V'
+    })),
+    download: vi.fn(async () => {}),
+    remove: vi.fn(async () => {})
   }
   const ipcMain = {
     handle: (ch: string, fn: Handler) => {
@@ -138,9 +173,10 @@ function makeHarness(overrides: { win?: null } = {}): Harness {
   registerVoiceHandlers(ipcMain, () => win, {
     engine: engine as unknown as VoiceEngineHandle,
     getUserData: () => 'C:/test-userdata',
-    modelOps: ops
+    modelOps: ops,
+    ttsModelOps: ttsOps as unknown as VoiceIpcDeps['ttsModelOps']
   })
-  return { handlers, postMessage, send, ownEvent, engine, ops }
+  return { handlers, postMessage, send, ownEvent, engine, ops, ttsOps }
 }
 
 beforeEach(() => {
@@ -287,6 +323,216 @@ describe('V5 crash policy (restart once, then error)', () => {
   })
 })
 
+describe('J2 voice:tts session + speak handlers', () => {
+  it('start fails fast (no broker) while the configured TTS model is absent', async () => {
+    const t = makeHarness()
+    await expect(t.handlers['voice:tts:start'](t.ownEvent)).resolves.toEqual({
+      ok: false,
+      modelStatus: 'absent'
+    })
+    expect(t.engine.startTtsSession).not.toHaveBeenCalled()
+    expect(t.postMessage).not.toHaveBeenCalled()
+    // The default catalog id was consulted (no config file in the test userData).
+    expect(t.ttsOps.status).toHaveBeenCalledWith('C:/test-userdata', DEFAULT_TTS_MODEL_ID)
+  })
+
+  it('start brokers the TTS channel when ready: engine gets port1+paths, port2 → renderer', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockResolvedValue('ready')
+    await expect(t.handlers['voice:tts:start'](t.ownEvent)).resolves.toEqual({
+      ok: true,
+      modelStatus: 'ready'
+    })
+    expect(h.channels).toHaveLength(1)
+    expect(t.engine.startTtsSession).toHaveBeenCalledWith(
+      h.channels[0].port1,
+      t.ttsOps.paths.mock.results[0]!.value
+    )
+    expect(t.postMessage).toHaveBeenCalledWith('voice:tts:port', {}, [h.channels[0].port2])
+  })
+
+  it('speak requires a live session, assigns monotonic ids, defaults sid/speed, clamps speed', async () => {
+    const t = makeHarness()
+    await expect(t.handlers['voice:tts:speak'](t.ownEvent, { text: 'hi' })).resolves.toEqual({
+      ok: false,
+      error: 'no tts session'
+    })
+
+    t.ttsOps.status.mockResolvedValue('ready')
+    await t.handlers['voice:tts:start'](t.ownEvent)
+    await expect(t.handlers['voice:tts:speak'](t.ownEvent, { text: ' hello ' })).resolves.toEqual({
+      ok: true,
+      id: 1
+    })
+    // Kokoro default sid = 4 (af_sky, PLAN §3.5) — the catalog default model's sid.
+    expect(t.engine.ttsSpeak).toHaveBeenCalledWith({ id: 1, text: 'hello', sid: 4, speed: 1.0 })
+
+    await expect(
+      t.handlers['voice:tts:speak'](t.ownEvent, { text: 'fast', sid: 0, speed: 9 })
+    ).resolves.toEqual({ ok: true, id: 2 })
+    expect(t.engine.ttsSpeak).toHaveBeenLastCalledWith({ id: 2, text: 'fast', sid: 0, speed: 2 })
+  })
+
+  it('speak rejects invalid text (empty / non-string / over-cap)', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockResolvedValue('ready')
+    await t.handlers['voice:tts:start'](t.ownEvent)
+    for (const payload of [{ text: '   ' }, { text: 42 }, { text: 'x'.repeat(2001) }, null]) {
+      await expect(t.handlers['voice:tts:speak'](t.ownEvent, payload)).resolves.toEqual({
+        ok: false,
+        error: 'invalid text'
+      })
+    }
+    expect(t.engine.ttsSpeak).not.toHaveBeenCalled()
+  })
+
+  it('cancel routes to the engine; stop closes the session (speak refuses afterwards)', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockResolvedValue('ready')
+    await t.handlers['voice:tts:start'](t.ownEvent)
+    await expect(t.handlers['voice:tts:cancel'](t.ownEvent)).resolves.toEqual({ ok: true })
+    expect(t.engine.ttsCancel).toHaveBeenCalledTimes(1)
+    await expect(t.handlers['voice:tts:stop'](t.ownEvent)).resolves.toEqual({ ok: true })
+    expect(t.engine.stopTtsSession).toHaveBeenCalledTimes(1)
+    await expect(t.handlers['voice:tts:speak'](t.ownEvent, { text: 'hi' })).resolves.toEqual({
+      ok: false,
+      error: 'no tts session'
+    })
+  })
+
+  it('a TTS-only failure pushes voice:tts:event once and closes the session', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockResolvedValue('ready')
+    await t.handlers['voice:tts:start'](t.ownEvent)
+    t.engine.ttsFail('tts worker exited (1)')
+    expect(t.send).toHaveBeenLastCalledWith('voice:tts:event', {
+      kind: 'error',
+      reason: 'tts worker exited (1)'
+    })
+    const sends = t.send.mock.calls.length
+    t.engine.ttsFail('again') // session already closed — silence
+    expect(t.send.mock.calls.length).toBe(sends)
+  })
+
+  it('a WHOLE-host failure also fails a live TTS session (even with STT idle)', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockResolvedValue('ready')
+    await t.handlers['voice:tts:start'](t.ownEvent)
+    t.engine.fail('voice engine host exited unexpectedly')
+    expect(t.send).toHaveBeenCalledWith('voice:tts:event', {
+      kind: 'error',
+      reason: 'voice engine host exited unexpectedly'
+    })
+    await expect(t.handlers['voice:tts:speak'](t.ownEvent, { text: 'hi' })).resolves.toEqual({
+      ok: false,
+      error: 'no tts session'
+    })
+  })
+
+  it('status reports the configured model install state; foreign frames are denied', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockResolvedValue('ready')
+    await expect(t.handlers['voice:tts:status'](t.ownEvent)).resolves.toEqual({
+      modelId: DEFAULT_TTS_MODEL_ID,
+      modelStatus: 'ready',
+      active: false
+    })
+    const foreign = { senderFrame: {} } as IpcMainInvokeEvent
+    await expect(t.handlers['voice:tts:status'](foreign)).resolves.toEqual({
+      modelId: '',
+      modelStatus: 'absent',
+      active: false
+    })
+    await expect(t.handlers['voice:tts:start'](foreign)).resolves.toEqual({
+      ok: false,
+      modelStatus: 'absent'
+    })
+    await expect(t.handlers['voice:tts:speak'](foreign, { text: 'x' })).resolves.toEqual({
+      ok: false
+    })
+  })
+})
+
+describe('J2 voice:tts:models catalog channels (shared registration)', () => {
+  it('list maps the TTS catalog with per-model status and the Kokoro default flag', async () => {
+    const t = makeHarness()
+    t.ttsOps.status.mockImplementation(async (_u: string, id: string) =>
+      id === DEFAULT_TTS_MODEL_ID ? 'ready' : 'absent'
+    )
+    const list = (await t.handlers['voice:tts:models:list'](t.ownEvent)) as Array<{
+      id: string
+      isDefault: boolean
+      status: string
+    }>
+    expect(list).toHaveLength(TTS_MODEL_CATALOG.length)
+    const def = list.find((m) => m.isDefault)!
+    expect(def.id).toBe(DEFAULT_TTS_MODEL_ID)
+    expect(def.status).toBe('ready')
+  })
+
+  it('download pushes progress on the TTS-prefixed channel', async () => {
+    const t = makeHarness()
+    t.ttsOps.download.mockImplementation(
+      async (_u: string, id: string, deps: { onProgress?: (p: DownloadProgress) => void }) => {
+        deps.onProgress?.({ id, receivedBytes: 9, totalBytes: 9, fileIndex: 1, fileCount: 1 })
+      }
+    )
+    await expect(t.handlers['voice:tts:models:download'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: true
+    })
+    expect(t.send).toHaveBeenCalledWith(
+      'voice:tts:models:progress',
+      expect.objectContaining({ id: 'm1' })
+    )
+  })
+
+  it('TTS and STT downloads single-flight independently of each other', async () => {
+    const t = makeHarness()
+    let release!: () => void
+    t.ops.download.mockImplementation(() => new Promise<void>((r) => (release = () => r())))
+    const stt = t.handlers['voice:models:download'](t.ownEvent, 'stt-1') as Promise<unknown>
+    // The STT download in flight does NOT block a TTS download (separate catalogs).
+    await expect(t.handlers['voice:tts:models:download'](t.ownEvent, 'tts-1')).resolves.toEqual({
+      ok: true
+    })
+    release()
+    await expect(stt).resolves.toEqual({ ok: true })
+  })
+
+  it('delete refuses while that TTS model is downloading', async () => {
+    const t = makeHarness()
+    let release!: () => void
+    t.ttsOps.download.mockImplementation(() => new Promise<void>((r) => (release = () => r())))
+    const dl = t.handlers['voice:tts:models:download'](t.ownEvent, 'm1') as Promise<unknown>
+    await expect(t.handlers['voice:tts:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: false,
+      error: 'download in progress'
+    })
+    release()
+    await dl
+    await expect(t.handlers['voice:tts:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
+      ok: true
+    })
+    expect(t.ttsOps.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1', { inFlightIds: [] })
+  })
+
+  it('a cross-model delete during a download hands remove the in-flight set (TTS-2)', async () => {
+    const t = makeHarness()
+    let release!: () => void
+    t.ttsOps.download.mockImplementation(() => new Promise<void>((r) => (release = () => r())))
+    const dl = t.handlers['voice:tts:models:download'](t.ownEvent, 'm1') as Promise<unknown>
+    // Deleting the SIBLING is allowed — but its shared components must be protected.
+    await expect(t.handlers['voice:tts:models:delete'](t.ownEvent, 'm2')).resolves.toEqual({
+      ok: true
+    })
+    expect(t.ttsOps.remove).toHaveBeenCalledWith('C:/test-userdata', 'm2', {
+      inFlightIds: ['m1']
+    })
+    release()
+    await dl
+  })
+})
+
 describe('isVoicePlatformSupported (win-arm64 gate)', () => {
   it('is false ONLY for win32/arm64', () => {
     expect(isVoicePlatformSupported('win32', 'arm64')).toBe(false)
@@ -390,6 +636,8 @@ describe('voice:models handlers', () => {
     await expect(t.handlers['voice:models:delete'](t.ownEvent, 'm1')).resolves.toEqual({
       ok: true
     })
-    expect(t.ops.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1')
+    // The shared registration hands every catalog's remove the live in-flight set
+    // (the TTS keep-set guard); the STT deleteModel simply ignores it.
+    expect(t.ops.remove).toHaveBeenCalledWith('C:/test-userdata', 'm1', [])
   })
 })

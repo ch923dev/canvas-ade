@@ -2737,3 +2737,45 @@ fullscreen toggle).
   PASS ×3 (switch-back mid-stream · fullscreen-mid-full-view rescale · full-view right gap gone).
 - **Side-finding (unfixed, own card):** switch-back viewport restore is dead — the remount always
   lands on a fit-to-content camera (RF init clobbers the restored viewport).
+
+## 2026-07-17 — Jarvis voice-agent epic J0–J5 (feat/jarvis-umbrella → main, PR #355, v0.22.0)
+
+**A hands-free voice agent living in a side panel: hear the canvas, talk to it, let it act —
+behind the human confirm gate.** Local-first duplex voice (STT reuses the voice-to-text engine
+host; TTS = sherpa OfflineTts in the same host's worker), an Anthropic-streamed brain grounded
+in a live board manifest, persona config, a panel surface with attention badges, curated tools
+(spawn/relay/cards/visualize — no destructive tools), opt-in wake word, and per-project
+persistent history. Plan package kept at `docs/research/2026-07-04-jarvis-voice-agent/`
+(PLAN.md + mocks); KICKOFF-J3/KICKOFF-PANEL + the epic-end kickoff deleted in this PR per doc
+lifecycle; the epic deep review collapsed to `docs/reviews/2026-07-13-jarvis-epic-review.md`.
+
+- **Lane H** — orchestration tool groundwork (#328, landed on `main` ahead of the epic).
+- **J1** — TTS engine + models (#329): OfflineTts worker role in the voice host; pinned HF
+  manifest downloads (Piper default · Kokoro alt), staging → hash → atomic rename.
+- **J2** — playback/duplex (#335): renderer `ttsPlayback` (AudioContext queue, utterance ids,
+  duck-and-flush barge-in), converse mode wiring into the capture pipeline.
+- **J3** — brain + persona (#339): `jarvisBrain.ts` Anthropic SSE streaming with stall
+  watchdog + opaque-error contract; `jarvisManifest.ts` live board manifest; persona config
+  (name/tone/rate clamps) + PersonaPane.
+- **Panel** (#341): JarvisPanel surface — edge tab, mic strip, transcript, attention
+  badges/chips, hotkey toggle; island retired.
+- **Review wave** (#343 + #350, 0.17.1): the 2026-07-13 four-pass epic deep review — all P0/P1
+  fixed with regression tests (MIC-1 hot-mic arm/close race · TTS-1 download stream-error
+  app-exit · BRAIN-1/2 · TTS-2/3/4 · ESC-1 · HIST-1 read-back hydrate) + mic-supersede.
+- **J4** — hands (#352, 0.21.0): curated tool defs behind the existing MCP confirm
+  orchestrator (MAIN ALS origin stamp → panel turn-act card; voice yes/no binds to the parked
+  gate; supersede/close auto-deny), tool_use loop with 4-hop cap, BRAIN-5 manifest
+  control-char neutralization + full injection audit, D8 spoken announce.
+- **J5** — polish (#354, 0.22.0): opt-in wake word (local KeywordSpotter, gigaspeech 3.3M,
+  vendored seek-bzip + ustar reader, strict carve-out: closed-panel listener's sole power =
+  open panel), D4' per-project persistent history (`.canvas/memory/jarvis/`, one-time consent,
+  rolling-summary compression, relaunch restore), the review's deferred P2 tail closed,
+  numbered ambiguity candidates, win-arm64 parity, `voiceTtsRunner.ts` extraction.
+- **Umbrella syncs with main** (merge, never rebase — shared pushed branch): `9b882e07` ·
+  `45a58f22` · `8ae1b004` (final, past #351 busy-eviction + #353 terminal display).
+
+**Verified (epic-end gate):** cheap trio · full unit suite · FULL e2e matrix BOTH legs on the
+merged tree (the epic's one cross-OS payment) · title-stamped manual dev check user-eyeballed ·
+per-phase gates + user eyeballs recorded on each J-PR. Follow-ups filed (roadmap): visual
+numbered badges on candidate boards (design mock first) · JS sentencepiece for renamed-persona
+wake phrases.

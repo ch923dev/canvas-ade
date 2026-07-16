@@ -364,3 +364,30 @@ describe('requestConfirmBatch', () => {
     await expect(p).resolves.toEqual(DENY3)
   })
 })
+
+// ── J4: the Jarvis origin stamp (jarvisToolContext ALS → panel routing) ──
+describe('J4 origin stamp', () => {
+  it('stamps origin:"jarvis" ONLY inside runAsJarvisToolCall', async () => {
+    const { runAsJarvisToolCall } = await import('./jarvisToolContext')
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const p = runAsJarvisToolCall(() => requestConfirm(bus, () => win, REQ))
+    await vi.waitFor(() => expect(sent.length).toBe(1))
+    expect(sent[0].payload.request.origin).toBe('jarvis')
+    reply({ senderFrame: mainFrame }, { approved: true })
+    await expect(p).resolves.toEqual({ approved: true })
+  })
+
+  it('outside the marker there is NO origin — and a caller cannot forge one', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const forged = { ...REQ, origin: 'jarvis' } as ConfirmRequest
+    const p = requestConfirm(bus, () => win, forged)
+    await vi.waitFor(() => expect(sent.length).toBe(1))
+    expect(sent[0].payload.request.origin).toBeUndefined()
+    reply({ senderFrame: mainFrame }, { approved: false })
+    await expect(p).resolves.toEqual({ approved: false })
+  })
+})

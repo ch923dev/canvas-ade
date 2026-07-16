@@ -39,12 +39,47 @@ export interface VoiceConfigView {
   /** Sent voice prompts, newest first, capped (MAX_PROMPT_HISTORY in main). The flyout reads a
    *  Recent slice; Settings › Voice reads the whole list. A set() patch replaces it wholesale. */
   promptHistory: string[]
+  /** J2: selected TTS model id (pinned catalog; unknown ids preserved, default at start). */
+  ttsModelId: string
+  /** J2 barge-in mode (D6): 'full' = transcription-gated interrupt; 'half' = mic
+   *  suppressed while speaking, elevated-RMS burst interrupts (AEC-hostile machines). */
+  ttsDuplex: 'full' | 'half'
 }
+
+/** J2: TTS-side failure push (worker/host death) — flush playback; the next speak
+ *  lazily re-opens the session. */
+export type VoiceTtsEvent = { kind: 'error'; reason?: string }
+
+/** J5: wake-side failure push (KWS worker death) — the listener disarms; the next arm
+ *  respawns the worker lazily. */
+export type VoiceWakeEvent = { kind: 'error'; reason?: string }
 
 /** V5 engine-failure push (SPEC §3 `error` state). 'restarted' = MAIN transparently
  *  re-brokered the session after a crash (a fresh voice:port follows); 'error' = the
  *  restart budget is spent — stop capturing, keep the draft, offer Restart. */
 export type VoiceEngineEvent = { kind: 'restarted' } | { kind: 'error'; reason?: string }
+
+/** The four catalog channels + progress push under one prefix — `voice:models` (STT)
+ *  and `voice:tts:models` (J2) are the same surface over different catalogs. */
+function modelCatalogApi(prefix: string): {
+  list: () => Promise<VoiceModelListEntry[]>
+  status: (id: string) => Promise<'ready' | 'absent'>
+  download: (id: string) => Promise<{ ok: boolean; error?: string }>
+  delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+  onDownloadProgress: (cb: (p: VoiceDownloadProgress) => void) => () => void
+} {
+  return {
+    list: () => ipcRenderer.invoke(`${prefix}:list`),
+    status: (id: string) => ipcRenderer.invoke(`${prefix}:status`, id),
+    download: (id: string) => ipcRenderer.invoke(`${prefix}:download`, id),
+    delete: (id: string) => ipcRenderer.invoke(`${prefix}:delete`, id),
+    onDownloadProgress: (cb: (p: VoiceDownloadProgress) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: VoiceDownloadProgress): void => cb(p)
+      ipcRenderer.on(`${prefix}:progress`, listener)
+      return () => ipcRenderer.removeListener(`${prefix}:progress`, listener)
+    }
+  }
+}
 
 /**
  * Control plane (frames flow over a MessagePort, not IPC). start() makes MAIN broker a
@@ -65,19 +100,43 @@ export const voiceApi = {
     ipcRenderer.on('voice:engine:event', listener)
     return () => ipcRenderer.removeListener('voice:engine:event', listener)
   },
-  models: {
-    list: (): Promise<VoiceModelListEntry[]> => ipcRenderer.invoke('voice:models:list'),
-    status: (id: string): Promise<'ready' | 'absent'> =>
-      ipcRenderer.invoke('voice:models:status', id),
-    download: (id: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('voice:models:download', id),
-    delete: (id: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('voice:models:delete', id),
-    onDownloadProgress: (cb: (p: VoiceDownloadProgress) => void): (() => void) => {
-      const listener = (_e: Electron.IpcRendererEvent, p: VoiceDownloadProgress): void => cb(p)
-      ipcRenderer.on('voice:models:progress', listener)
-      return () => ipcRenderer.removeListener('voice:models:progress', listener)
-    }
+  models: modelCatalogApi('voice:models'),
+  // ── J2 TTS: control plane (chunks flow over the voice:tts:port MessagePort). speak()
+  // returns the utterance id chunk/done events carry; cancel() is the barge-in flush
+  // (active synth stops at its next progress callback, the queue drains cancelled).
+  tts: {
+    start: (): Promise<{ ok: boolean; modelStatus: 'ready' | 'absent' }> =>
+      ipcRenderer.invoke('voice:tts:start'),
+    speak: (
+      text: string,
+      opts?: { sid?: number; speed?: number }
+    ): Promise<{ ok: boolean; id?: number; error?: string }> =>
+      ipcRenderer.invoke('voice:tts:speak', { text, ...opts }),
+    cancel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('voice:tts:cancel'),
+    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('voice:tts:stop'),
+    status: (): Promise<{ modelId: string; modelStatus: 'ready' | 'absent'; active: boolean }> =>
+      ipcRenderer.invoke('voice:tts:status'),
+    onEvent: (cb: (ev: VoiceTtsEvent) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: VoiceTtsEvent): void => cb(ev)
+      ipcRenderer.on('voice:tts:event', listener)
+      return () => ipcRenderer.removeListener('voice:tts:event', listener)
+    },
+    models: modelCatalogApi('voice:tts:models')
+  },
+  // ── J5 wake word (D3, opt-in): control plane for the closed-panel keyword listener.
+  // Frames flow over the voice:wake:port MessagePort; a detection arrives on that port
+  // as {t:'wake', keyword}. start() fails with modelStatus 'absent' until the KWS model
+  // is downloaded (Settings › Persona row drives the CTA).
+  wake: {
+    start: (): Promise<{ ok: boolean; modelStatus: 'ready' | 'absent' }> =>
+      ipcRenderer.invoke('voice:wake:start'),
+    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('voice:wake:stop'),
+    onEvent: (cb: (ev: VoiceWakeEvent) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: VoiceWakeEvent): void => cb(ev)
+      ipcRenderer.on('voice:wake:event', listener)
+      return () => ipcRenderer.removeListener('voice:wake:event', listener)
+    },
+    models: modelCatalogApi('voice:kws:models')
   },
   // App-level voice config (userData/voice-config.json). set() is a merge-patch; MAIN
   // sanitizes through repairVoiceConfig and pushes the repaired result back on
@@ -102,5 +161,19 @@ export const voiceApi = {
 export function forwardVoicePort(): void {
   ipcRenderer.on('voice:port', (e) => {
     window.postMessage({ __voicePort: true }, window.location.origin, e.ports)
+  })
+}
+
+/** J2: the TTS chunk-stream port, forwarded exactly like the capture port. */
+export function forwardVoiceTtsPort(): void {
+  ipcRenderer.on('voice:tts:port', (e) => {
+    window.postMessage({ __voiceTtsPort: true }, window.location.origin, e.ports)
+  })
+}
+
+/** J5: the wake-word capture/detection port, forwarded exactly like the capture port. */
+export function forwardVoiceWakePort(): void {
+  ipcRenderer.on('voice:wake:port', (e) => {
+    window.postMessage({ __voiceWakePort: true }, window.location.origin, e.ports)
   })
 }

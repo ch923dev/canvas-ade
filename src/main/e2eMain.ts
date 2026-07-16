@@ -33,7 +33,7 @@ import {
   debugWriteTerminal,
   disposeAllPtys
 } from './pty'
-import { setVoiceStubEnabled } from './voiceEngineStub'
+import { setVoiceStubEnabled, stubKwsWake } from './voiceEngineStub'
 import { isTrayResident, reopenFromTray } from './trayResidency'
 import { createLifecycleDeliver, type LifecycleBoard } from './lifecycleNotifications'
 import { DEFAULT_NOTIFICATIONS, type NotificationsConfig } from './notificationsConfig'
@@ -289,8 +289,16 @@ export interface E2EMain {
    * so the voiceComposer spec gets deterministic partial/final without a model or mic, while
    * voice.e2e.ts keeps exercising the REAL utilityProcess host (workers:1 shares one app across
    * spec files — a launch-env gate could not be per-spec). Always flip back off in the spec.
+   * J4: an optional custom SCRIPT replaces the canned dictation line (the jarvis tool e2e
+   * speaks "add a card …"); passing one while the stub is live swaps the engine in place.
    */
-  voiceStubSet(on: boolean): void
+  voiceStubSet(
+    on: boolean,
+    script?: Array<{ atFrame: number; t: 'partial' | 'final'; text: string }>
+  ): void
+  /** J5: fire a deterministic wake detection through the live stub's kws port (false =
+   *  no stub / no armed wake session — the spec must arm first). */
+  voiceStubWake(keyword?: string): boolean
   /**
    * Desktop-notifications P5: drive a normalized lifecycle signal through the REAL MAIN delivery
    * pipeline (`createLifecycleDeliver` — the SAME gate + `notify:lifecycle` IPC push production
@@ -667,8 +675,11 @@ export function installE2EMain(
       else process.env.CLAUDE_CONFIG_DIR = savedClaudeConfigDir.value
       savedClaudeConfigDir = undefined
     },
-    voiceStubSet(on) {
-      setVoiceStubEnabled(on)
+    voiceStubSet(on, script) {
+      setVoiceStubEnabled(on, script)
+    },
+    voiceStubWake(keyword) {
+      return stubKwsWake(keyword)
     },
     notifyDeliver(boardId, event) {
       notifyProbe.deliver(boardId, event)

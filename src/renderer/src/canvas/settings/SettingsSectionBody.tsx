@@ -9,6 +9,7 @@
  */
 import { type ReactElement } from 'react'
 import { SettingsVoiceSection } from '../SettingsVoiceSection'
+import { SettingsVoiceTtsSection } from '../SettingsVoiceTtsSection'
 import type { SettingsSectionId } from './settingsSections'
 import { AccountPane } from './panes/AccountPane'
 import { BillingPane } from './panes/BillingPane'
@@ -17,6 +18,7 @@ import { TerminalPane } from './panes/TerminalPane'
 import { ShortcutsPane } from './panes/ShortcutsPane'
 import { NotificationsPane } from './panes/NotificationsPane'
 import { LlmPane } from './panes/LlmPane'
+import { PersonaPane } from './panes/PersonaPane'
 import { OrchestrationPane } from './panes/OrchestrationPane'
 import { McpPane } from './panes/McpPane'
 import { AboutPane } from './panes/AboutPane'
@@ -49,8 +51,17 @@ export function SettingsSectionBody({
     case 'voice':
       // `embedded` suppresses SettingsVoiceSection's own divider + "Voice dictation" head (the tab
       // panel already renders a "Voice" section heading). Renders nothing at all when
-      // window.api.voice is absent (non-electron test runtimes).
-      return <SettingsVoiceSection embedded />
+      // window.api.voice is absent (non-electron test runtimes). J2 appends the Speech (TTS)
+      // block — model rows + preview + interrupt mode — under the dictation fields.
+      return (
+        <>
+          <SettingsVoiceSection embedded />
+          <SettingsVoiceTtsSection />
+        </>
+      )
+    case 'persona':
+      // Jarvis J3: persona fields immediate-apply; the key row rides the llm anthropic slot.
+      return <PersonaPane />
     case 'llm':
       return <LlmPane />
     case 'orchestration':
