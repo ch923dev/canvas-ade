@@ -367,10 +367,11 @@ export function TerminalBoard({
     fitWhole
   })
 
-  // Full-view row-fill: in full view, grow/shrink term.rows (rows-only ⇒ cols frozen ⇒ NO reflow) so
-  // the frozen-width grid fills the modal height, and scroll to the bottom so the agent's input prompt
-  // is visible. Removes the letterbox gutter and fixes "Claude input not visible in a long session".
-  useTerminalFullViewFill(termRef)
+  // Full-view prompt-visibility scroll: once the full-view grid settles (font seam + the S3
+  // backstop refit that now fills the modal BOTH axes), scroll to the buffer bottom so a long
+  // session's live agent prompt is visible. Keyed on counterScale so a mid-full-view OS
+  // fullscreen/maximize (live rescale → refit) re-runs the settle+scroll at the new grid.
+  useTerminalFullViewFill(termRef, counterScale)
 
   // Clear the burst timer on unmount.
   useEffect(
