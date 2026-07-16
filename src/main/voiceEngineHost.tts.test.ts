@@ -8,7 +8,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  clampSid,
   createTtsRunner,
+  evictAllBut,
   floatToPcm16Base64,
   type OfflineTtsLike,
   type TtsOutMsg,
@@ -24,11 +26,14 @@ interface FakeCall {
   reject: (err: Error) => void
 }
 
-function makeFakeTts(sampleRate = 24000): { tts: OfflineTtsLike; calls: FakeCall[] } {
+function makeFakeTts(
+  sampleRate = 24000,
+  numSpeakers = 8 // roomy default: the shared `req()` fixture speaks as sid 4 unclamped
+): { tts: OfflineTtsLike; calls: FakeCall[] } {
   const calls: FakeCall[] = []
   const tts: OfflineTtsLike = {
     sampleRate,
-    numSpeakers: 1,
+    numSpeakers,
     generateAsync(req) {
       return new Promise((resolve, reject) => {
         calls.push({
@@ -193,5 +198,54 @@ describe('createTtsRunner', () => {
     runner.speak(req(7))
     expect(posted).toEqual([{ t: 'tts:error', id: 7, error: 'tts model not loaded' }])
     runner.cancel() // safe no-op
+  })
+})
+
+describe('clampSid (TTS-5)', () => {
+  it('bounds the sid to the live engine speaker count', () => {
+    expect(clampSid(4, 1)).toBe(0) // Kokoro sid on a single-speaker Piper swap
+    expect(clampSid(5, 2)).toBe(1)
+    expect(clampSid(1, 8)).toBe(1) // in-range passes untouched
+    expect(clampSid(-3, 2)).toBe(0) // defensive floor
+  })
+
+  it('passes the sid through when the engine reports no usable count', () => {
+    expect(clampSid(4, 0)).toBe(4)
+    expect(clampSid(4, -1)).toBe(4)
+    expect(clampSid(4, NaN)).toBe(4)
+    expect(clampSid(4, 2.5)).toBe(4)
+  })
+
+  it('the runner clamps at generateAsync time (config switch mid-session)', async () => {
+    const { tts, calls } = makeFakeTts(22050, 2) // two-speaker engine
+    const runner = createTtsRunner(tts, () => {})
+    runner.speak({ id: 1, text: 'hi', sid: 47, speed: 1.0 }) // stale Kokoro sid
+    await tick()
+    expect(calls[0].sid).toBe(1) // bounded, never an out-of-range native index
+    calls[0].resolve()
+  })
+})
+
+describe('evictAllBut (TTS-7)', () => {
+  it('drops every entry except the kept key and reports the count', () => {
+    const cache = new Map([
+      ['a', 1],
+      ['b', 2],
+      ['c', 3]
+    ])
+    expect(evictAllBut(cache, 'b')).toBe(2)
+    expect([...cache.keys()]).toEqual(['b'])
+  })
+
+  it('an undefined keep empties the cache (current model has no such file)', () => {
+    const cache = new Map([['a', 1]])
+    expect(evictAllBut(cache, undefined)).toBe(1)
+    expect(cache.size).toBe(0)
+  })
+
+  it('a keep-only cache is a no-op', () => {
+    const cache = new Map([['a', 1]])
+    expect(evictAllBut(cache, 'a')).toBe(0)
+    expect(cache.size).toBe(1)
   })
 })

@@ -240,6 +240,34 @@ export function floatToPcm16Base64(samples: Float32Array): string {
   return Buffer.from(pcm.buffer).toString('base64')
 }
 
+/**
+ * TTS-5: bound the speaker id to the LIVE engine's speaker count — a config switch
+ * mid-session (Kokoro sid 47 → single-speaker Piper) must never push an out-of-range
+ * index into the native addon. A non-positive/garbled count passes the sid through
+ * (some engines report 0 for single-speaker models — the addon treats any sid as 0 there).
+ */
+export function clampSid(sid: number, numSpeakers: number): number {
+  if (!Number.isInteger(numSpeakers) || numSpeakers <= 0) return sid
+  return Math.max(0, Math.min(sid, numSpeakers - 1))
+}
+
+/**
+ * TTS-7: drop every cache entry except `keep` — the model just switched, and a pinned
+ * previous recognizer/OfflineTts is ~hundreds of MB of native ONNX graphs (including
+ * models since deleted from disk). Dropping the ref lets the addon finalizer free it;
+ * an in-flight synthesis keeps its own ref until it settles, so eviction never races it.
+ */
+export function evictAllBut<K, V>(cache: Map<K, V>, keep: K | undefined): number {
+  let evicted = 0
+  for (const k of [...cache.keys()]) {
+    if (k !== keep) {
+      cache.delete(k)
+      evicted++
+    }
+  }
+  return evicted
+}
+
 export interface TtsRunner {
   /** Enqueue a speak; requests synthesize serially (J3's brain streams one clause each). */
   speak(req: TtsSpeakReq): void
@@ -272,7 +300,7 @@ export function createTtsRunner(
       try {
         await tts!.generateAsync({
           text: req.text,
-          sid: req.sid,
+          sid: clampSid(req.sid, tts!.numSpeakers),
           speed: req.speed,
           enableExternalBuffer: false, // Electron cage — see OfflineTtsLike
           onProgress: (info) => {
@@ -556,6 +584,10 @@ function runDecoderWorker(parent: NodeMessagePort): void {
         proc = createFrameProcessor(recognizer, (msg) => parent.postMessage(msg), {
           vad: getVad(m.model.vad)
         })
+        // TTS-7 (STT side): a model SWITCH unpins the previous recognizer/VAD graphs
+        // (~70 MB each) — only the live model stays cached for the mic-toggle fast path.
+        evictAllBut(recognizerCache, m.model.encoder)
+        evictAllBut(vadCache, m.model.vad)
         parent.postMessage({ t: 'session:ready', ok: true, live: recognizer !== null })
       } catch (err) {
         // Model files present but unloadable (corrupt/incompatible) → surface it; MAIN's
@@ -599,14 +631,28 @@ function runTtsWorker(parent: NodeMessagePort): void {
       const prev = runner
       runner = (async () => {
         ;(await prev).cancel() // a session swap never leaves the old queue speaking
-        if (!mod?.OfflineTts || !model) {
+        if (!model) {
           parent.postMessage({ t: 'session:ready', ok: true, live: false })
+          return createTtsRunner(null, post)
+        }
+        if (!mod?.OfflineTts) {
+          // TTS-6: a model was requested but the ADDON failed to load — a real failure,
+          // not the designed no-model degrade. ok:false escalates through the host's
+          // session:ready handler → MAIN's tts error event, instead of the renderer
+          // misdiagnosing it as "model not loaded" (STT's count-only degrade has no
+          // TTS equivalent — a session without an engine has nothing to stream).
+          parent.postMessage({
+            t: 'session:ready',
+            ok: false,
+            error: `tts addon unavailable: ${result.error ?? 'sherpa load failed'}`
+          })
           return createTtsRunner(null, post)
         }
         try {
           const cached = ttsCache.get(model.model)
           const tts = cached ?? (await mod.OfflineTts.createAsync(buildTtsConfig(model)))
           ttsCache.set(model.model, tts)
+          evictAllBut(ttsCache, model.model) // TTS-7: the previous model's graph unpins
           parent.postMessage({
             t: 'session:ready',
             ok: true,

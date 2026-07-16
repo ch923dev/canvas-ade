@@ -5,7 +5,7 @@
  * key row is the one explicit-commit control (LlmPane posture: write-only into MAIN) and
  * writes the EXISTING llmKeyStore `anthropic` slot via window.api.llm — no second store.
  */
-import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { pane } from '../paneStyles'
 import type { JarvisConfigView } from '../../../../../preload/jarvis'
 
@@ -90,6 +90,11 @@ export function PersonaPane(): ReactElement | null {
   const [key, setKey] = useState('')
   const [keyBusy, setKeyBusy] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
+  /** PANE-1 echo suppression: pushes arriving while our own set() round-trips are in
+   *  flight are parked (applying them mid-typing would snap the input back a keystroke);
+   *  the LAST parked push applies once the in-flight count settles to zero. */
+  const inflight = useRef(0)
+  const parkedPush = useRef<JarvisConfigView | null>(null)
 
   useEffect(() => {
     if (!window.api?.jarvis) return
@@ -110,12 +115,36 @@ export function PersonaPane(): ReactElement | null {
     }
   }, [])
 
+  // PANE-1: subscribe the live push — MAIN's repaired values (name fallback, rate clamps)
+  // and edits from the panel/other surfaces reach the pane without a remount. The panel
+  // header already renders the repaired value; the pane must not diverge from it.
+  useEffect(() => {
+    if (!window.api?.jarvis) return
+    return window.api.jarvis.config.onChanged((next) => {
+      if (inflight.current > 0) {
+        parkedPush.current = next
+        return
+      }
+      setCfg(next)
+    })
+  }, [])
+
   if (!window.api?.jarvis || !cfg) return null
 
   /** Immediate-apply merge patch; MAIN repairs + pushes jarvis:config:changed live. */
   const patch = (p: Partial<JarvisConfigView>): void => {
     setCfg((c) => (c ? { ...c, ...p } : c))
-    void window.api.jarvis.config.set(p).catch(() => {})
+    inflight.current++
+    void window.api.jarvis.config
+      .set(p)
+      .catch(() => {})
+      .finally(() => {
+        inflight.current--
+        if (inflight.current === 0 && parkedPush.current) {
+          setCfg(parkedPush.current)
+          parkedPush.current = null
+        }
+      })
   }
 
   const saveKey = async (): Promise<void> => {

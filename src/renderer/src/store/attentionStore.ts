@@ -4,11 +4,13 @@ import { create } from 'zustand'
  * Unseen agent-attention per board (desktop-notifications P2). An agent lifecycle event
  * (done / needs-input / error) marks its board until the user "sees" it — selecting or
  * focusing the board clears the mark (useNotifications owns that wiring). Ephemeral
- * session state: never serialized, and a stale entry for a deleted board is inert (no
- * node renders it; the mirror snapshot only reads ids of live boards).
+ * session state: never serialized. A stale entry for a deleted board stays in `byId`
+ * but every consumer joins against live boards before rendering (the Jarvis panel
+ * filters explicitly — BADGE-1; the mirror snapshot only reads ids of live boards).
  *
  * Consumers: BoardAttention (the on-canvas ring/badge overlay), boardStatus (bucket
- * override → the MCP mirror + `canvas://attention`), TerminalBoard (pill dot re-tint).
+ * override → the MCP mirror + `canvas://attention`), TerminalBoard (pill dot re-tint),
+ * JarvisPanel (edge-tab badge + panel-foot event chips).
  */
 export type AttentionKind = 'done' | 'needs-input' | 'error'
 
