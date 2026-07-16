@@ -43,3 +43,29 @@ describe('readTarEntries', () => {
     expect(readTarEntries(Buffer.alloc(1024))).toEqual([]) // two zero blocks = EOF
   })
 })
+
+describe('long names (the real k2-fsa archives exceed the 100-char name field)', () => {
+  const LONG =
+    'a-very-long-model-directory-name-that-mirrors-the-kws-release-layout-2024/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx'
+
+  it('GNU "L" longname entries resolve to the full path (the live J5 dev-check bug)', () => {
+    const entries = readTarEntries(
+      readFileSync(join(__dirname, '__fixtures__', 'tar-gnu-longname.tar'))
+    )
+    expect(entries.map((e) => e.name)).toContain(LONG)
+    expect(
+      findTarEntry(entries, 'encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx')?.data
+    ).toEqual(Buffer.from('LONGNAME-ENCODER'))
+    expect(findTarEntry(entries, 'tokens.txt')?.data.toString()).toBe('a 1\n')
+  })
+
+  it('pax "x" path= records resolve to the full path', () => {
+    const entries = readTarEntries(
+      readFileSync(join(__dirname, '__fixtures__', 'tar-pax-longname.tar'))
+    )
+    expect(entries.map((e) => e.name)).toContain(LONG)
+    expect(
+      findTarEntry(entries, 'encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx')?.data.toString()
+    ).toBe('LONGNAME-ENCODER')
+  })
+})
