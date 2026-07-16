@@ -2738,7 +2738,7 @@ fullscreen toggle).
 - **Side-finding (unfixed, own card):** switch-back viewport restore is dead — the remount always
   lands on a fit-to-content camera (RF init clobbers the restored viewport).
 
-## 2026-07-17 — Jarvis voice-agent epic J0–J5 (feat/jarvis-umbrella → main, PR #355, v0.22.0)
+## 2026-07-17 — Jarvis voice-agent epic J0–J5 (feat/jarvis-umbrella → main, PR #355 squash `5ade05ec`, v0.22.0)
 
 **A hands-free voice agent living in a side panel: hear the canvas, talk to it, let it act —
 behind the human confirm gate.** Local-first duplex voice (STT reuses the voice-to-text engine
