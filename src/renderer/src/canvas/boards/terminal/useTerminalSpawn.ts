@@ -196,6 +196,19 @@ export function nextStateAfterAdopt(
   return 'spawn'
 }
 
+/**
+ * True only when FitAddon's proposal reflects a REAL layout — finite cols AND rows. An
+ * unfitted well (below-LOD `display:none`, mount before first layout) proposes undefined
+ * or non-finite dims; every consumer of a proposal must gate on this, or it acts on the
+ * constructor-default 80×24 grid. Pure — shared by the deferred spawn (#34), the deferred
+ * respawn (#23), the backstop's propose, and the fit-gate release (switch-back replay fix).
+ */
+export function finiteDims(
+  d: { cols: number; rows: number } | undefined
+): d is { cols: number; rows: number } {
+  return d !== undefined && Number.isFinite(d.cols) && Number.isFinite(d.rows)
+}
+
 export interface TerminalSpawnDeps {
   board: TerminalBoardData
   /** Open project folder — a board with no explicit cwd spawns here, not os.homedir(). */
@@ -354,6 +367,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // initial fit — a fresh term has no scrollback to corrupt, and skipping its fit would spawn a
   // wrong-width PTY (#regression). Reset on each new term in the spawn closure.
   const establishedRef = useRef(false)
+  // Switch-back replay fix: true once THIS term's grid reflects a real layout (a fit whose
+  // proposeDimensions was finite). Until then the term sits at the constructor-default 80×24,
+  // and any bytes written — an adopt's replayed scrollback, a restored snapshot — would wrap at
+  // 80 cols and then be mangled by the first real fit's reflow (plainFit path: a fresh grid has
+  // no backstop). The write coalescer's hold gate reads this ref, so pre-fit bytes queue and
+  // flush AFTER the grid is real. Reset per new term in the spawn closure (beside establishedRef).
+  const gridFittedRef = useRef(false)
   const portRef = useRef<MessagePort | null>(null)
   // #23: when a Restart happens while the well is unfitted (LOD/display:none),
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
@@ -551,9 +571,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       currentCols: () => term.cols,
       propose: () => {
         const p = fit.proposeDimensions()
-        return p && Number.isFinite(p.cols) && Number.isFinite(p.rows)
-          ? { cols: p.cols, rows: p.rows }
-          : undefined
+        return finiteDims(p) ? { cols: p.cols, rows: p.rows } : undefined
       },
       established: () => establishedRef.current,
       plainFit: () => {
@@ -579,6 +597,21 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       }
     })
     if (!didFit) return
+    // Switch-back replay fix: the fit above ran, but plainFit can "succeed" as a silent no-op
+    // when the well has no layout (FitAddon.fit() returns early on an undefined proposal), so
+    // gate the release on a FINITE proposal — the grid now truly reflects the board's width.
+    if (!gridFittedRef.current && finiteDims(fit.proposeDimensions())) {
+      gridFittedRef.current = true
+      // Release the bytes held for the pre-fit window (an adopt's replayed scrollback / a
+      // restored snapshot that raced this first fit) — they now wrap at the true column count.
+      coalescerRef.current?.onVisible()
+      // Heal PTY↔term grid drift: an adopted session's PTY kept its pre-park size, and this
+      // fit may have run BEFORE the reposted port attached (term.onResize posted into a null
+      // portRef). One explicit sync is cheap — a same-size resize is a no-op downstream, and
+      // a real change gives the TUI its SIGWINCH repaint. The port-attach path mirrors this
+      // for the opposite ordering.
+      portRef.current?.postMessage({ t: 'resize', cols: term.cols, rows: term.rows })
+    }
     // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
     // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
     // `screenRef` is the term.open() host; `.closest('.nowheel')` walks up to the screenWrap.
@@ -765,6 +798,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // Browser-board create/route or shell:openExternal) is testable without an xterm link-click.
     if (isE2E()) e2eTerminalLink.set(board.id, activateLink)
     establishedRef.current = false // a fresh grid: not yet fitted in-canvas (full-view freeze base)
+    gridFittedRef.current = false // a fresh grid: constructor-default 80×24 until the first real fit
     // No WebGL/canvas RENDERER addon is loaded (the fit/search/unicode/web-links addons above
     // don't change the render path) => xterm uses its built-in DOM renderer, which Chromium
     // re-rasterizes crisp at any camera scale (the fix for pan/zoom blur).
@@ -899,9 +933,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         scrollAfterRestore = false
         term.write(chunk, () => term.scrollToBottom())
       },
-      // Hold while hidden (Lane A) OR while a resize-backstop snapshot is in flight (S2), so PTY
-      // bytes queue instead of interleaving into the reset buffer; they flush in order on resume.
-      isLive: () => liveRef.current && !resizeBackstopRef.current,
+      // Hold while hidden (Lane A) OR while a resize-backstop snapshot is in flight (S2) OR while
+      // the grid is still the unfitted 80×24 default (switch-back replay fix) — in every case the
+      // bytes queue instead of rendering wrong (interleaved into a reset buffer / wrapped at 80
+      // cols and reflow-mangled by the first fit); they flush in order on resume/fit.
+      isLive: () => liveRef.current && !resizeBackstopRef.current && gridFittedRef.current,
       schedule: (fn) => requestAnimationFrame(fn),
       cancel: (h) => cancelAnimationFrame(h),
       holdCap: () =>
@@ -941,6 +977,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         }
       }
       port.start()
+      // Switch-back replay fix (port-attach leg): if the grid was already fitted before this
+      // port existed — the common visible-mount adopt, where fitWhole ran synchronously at
+      // term.open but term.onResize had no port to post to — sync the PTY to the term's grid
+      // now. An adopted PTY kept its pre-park size; a fresh spawn was born at these dims, so
+      // the message is a no-op there. Mirrors the fit-side sync in fitWhole.
+      if (gridFittedRef.current) {
+        port.postMessage({ t: 'resize', cols: term.cols, rows: term.rows })
+      }
     }
     window.addEventListener('message', onWinMsg)
 
@@ -969,8 +1013,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     pendingRespawnRef.current = false
     const launch = (): void => {
       if (spawned || !spawnAllowed) return
-      const dims = fit.proposeDimensions()
-      if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return
+      if (!finiteDims(fit.proposeDimensions())) return
       spawned = true
       const { cwd, launchCommand } = resolveSpawnArgs(
         { cwd: board.cwd, launchCommand: board.launchCommand },
@@ -1117,12 +1160,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       launch()
       // #23: a Restart issued while the well was unfitted parked a respawn; the
       // first good fit (well now visible) drives it at the board's true width.
-      if (pendingRespawnRef.current) {
-        const dims = fit.proposeDimensions()
-        if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)) {
-          pendingRespawnRef.current = false
-          respawn()
-        }
+      if (pendingRespawnRef.current && finiteDims(fit.proposeDimensions())) {
+        pendingRespawnRef.current = false
+        respawn()
       }
     })
     ro.observe(el)

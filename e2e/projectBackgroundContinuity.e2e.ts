@@ -36,6 +36,9 @@ type RendererGlobal = {
       dir: string,
       keep: boolean
     ): Promise<{ outcome: string; status: string; dir: string | null; boardCount: number }>
+    setZoom(z: number): void
+    getZoom(): number
+    fitView(id?: string): void
   }
 }
 
@@ -213,6 +216,86 @@ test.describe('@terminal background project sessions — Phase 5 scrollback cont
         .toBe(true)
       // …and NOTHING for that board ever lands under B's .canvas (the R2 dir-pin class).
       expect(existsSync(join(dirB, '.canvas', 'terminal', `${id}.snapshot`))).toBe(false)
+    } finally {
+      await teardownProjects(electronApp, [dirA, dirB])
+    }
+  })
+})
+
+test.describe('@terminal background project sessions — switch-back replay geometry', () => {
+  test('replay lands at the board’s true width — never wrapped at the unfitted 80-col default', async ({
+    page,
+    electronApp
+  }) => {
+    // The corruption class this pins: on switch-back a terminal board remounts with a FRESH
+    // xterm at the constructor-default 80×24, and the adopt's replayed scrollback can arrive
+    // BEFORE the first real fit (the well is display:none below LOD — proposeDimensions is
+    // not finite yet). Unfixed, the replay hard-wraps at 80 cols and the first fit's reflow
+    // then mangles it (on Win11 ConPTY the `windowsPty` hint disables xterm reflow entirely,
+    // so the 80-col wrap simply STAYS — the broken display users see). The fix holds the
+    // bytes in the write coalescer until the grid reflects a real layout.
+    //
+    // Premise forcing: A's switch-back remount lands on a content-FIT camera (React Flow's
+    // init fit wins over any parked/persisted viewport — observed live), so the way to mount
+    // the terminal below LOD is GEOMETRY: a far-away dummy board stretches the content
+    // cluster to ~20k world px, and the fit-to-all camera lands near Z_MIN (≪ LOD_ZOOM 0.4).
+    // The terminal therefore mounts with its well at display:none — deterministically
+    // unfitted while the adopt replays, not just on a slow frame.
+    const dirB = await mintProject(electronApp, 'canvas-e2e-rewrap-b-', 'rewrap-b')
+    await openFromDisk(page, dirB)
+    const dirA = await mintProject(electronApp, 'canvas-e2e-rewrap-a-', 'rewrap-a')
+    try {
+      await openFromDisk(page, dirA)
+      // Wide board (~1160px ⇒ well over 110 cols at the default font) so the marker line fits
+      // UNWRAPPED at the true width but MUST wrap on an 80-col default grid.
+      const { id, pid } = await seedLiveTerminal(page, electronApp, { w: 1160, h: 420 })
+      // The LOD anchor: stretches A's content cluster so the switch-back fit-to-all camera
+      // sits far below LOD_ZOOM (see the premise note above).
+      await page.evaluate(() =>
+        (globalThis as unknown as RendererGlobal).__canvasE2E.seedBoard('planning', {
+          x: 20_000,
+          y: 0
+        })
+      )
+
+      // One 110-char output line: 100 filler X's + a concat-built marker (the echoed command
+      // line never contains the literal, keeping the exactly-once count honest).
+      const mark =
+        process.platform === 'win32'
+          ? "echo ('X'*100 + 'WIDE'+'MARKER')\r"
+          : 'printf "X%.0s" $(seq 1 100); echo "WIDE""MARKER"\r'
+      const needle = 'X'.repeat(100) + 'WIDEMARKER'
+      await writePty(electronApp, id, mark)
+      // Unbroken at the true width pre-switch — proves the board is wide enough for the premise.
+      await expect.poll(() => readTerm(page, id), { timeout: 20_000 }).toContain(needle)
+
+      const toB = await switchTo(page, dirB)
+      expect(toB.outcome).toBe('switched')
+
+      // Switch back: the terminal remounts below LOD (unfitted) while the adopt replays.
+      const toA = await switchTo(page, dirA)
+      expect(toA.outcome).toBe('switched')
+      await expect.poll(async () => pidOf(electronApp, id), { timeout: 20_000 }).toBe(pid)
+      // Premise check: A restored with its below-LOD viewport (the unfitted-mount window).
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => (globalThis as unknown as RendererGlobal).__canvasE2E.getZoom()),
+          { timeout: 10_000 }
+        )
+        .toBeLessThan(0.4)
+
+      // Reveal: fit the camera to the board (≥ LOD + on-screen) → first real fit + catch-up flush.
+      await page.evaluate(
+        (bid) => (globalThis as unknown as RendererGlobal).__canvasE2E.fitView(bid),
+        id
+      )
+
+      // The marker must come back as ONE unbroken 110-char run (a translateToString row walk
+      // joins rows with '\n', so an 80-col wrap would split the needle) — and exactly once
+      // (reflow duplication is the other face of the same corruption).
+      await expect.poll(() => readTerm(page, id), { timeout: 20_000 }).toContain(needle)
+      expect(countOf(await readTerm(page, id), needle)).toBe(1)
     } finally {
       await teardownProjects(electronApp, [dirA, dirB])
     }
