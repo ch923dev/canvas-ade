@@ -112,7 +112,6 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
     // converge on the final grid.
     const csChanged = prevCsRef.current !== counterScale
     prevCsRef.current = counterScale
-    const refitRaf = csChanged && !pinChanged ? requestAnimationFrame(() => fitWhole()) : 0
 
     // No-clip correction. xterm quantizes cell dims to WHOLE px (letterSpacing and
     // lineHeight quantize too — measured, see the research doc §quantization), so the
@@ -143,7 +142,21 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
         stepDown(tries - 1)
       })
     }
-    stepDown(4)
+    // S3 ordering: on a counterScale change the no-clip pass is SKIPPED entirely — the deferred
+    // geometry refit owns the transition. The loop's target was the FROZEN full-view grid's
+    // integer-cell-step overflow (font was the only lever); that geometry no longer exists, and
+    // the loop's mid-transition measure is actively harmful: it reads the stale big-font grid
+    // against the small board well on exit, "fixes" the overflow by shrinking the FONT, and the
+    // state settles at pinned×0.97 with drifted gutters — permanently (measured on the Linux
+    // leg both orderings: pre-refit it also skewed the grid to 121×9 vs the 118×8 restore).
+    // fitWhole's row-shed + FitAddon's floor already guarantee the fitted grid stays in-well;
+    // the loop keeps running for the pin-change/no-change seam runs (its shipped no-op cases).
+    let refitRaf = 0
+    if (csChanged && !pinChanged) {
+      refitRaf = requestAnimationFrame(() => fitWhole())
+    } else {
+      stepDown(4)
+    }
     // Cleanup: bump the token so any in-flight rAF chain from THIS run dies on unmount /
     // re-run (the in-callback guards already make it side-effect-free; this makes the
     // cancellation explicit instead of relying on them).
