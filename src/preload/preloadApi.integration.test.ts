@@ -171,6 +171,11 @@ describe('preload api → llm channels (M-brain)', () => {
       'llm.setConfig',
       (a: CanvasApi) => a.llm.setConfig({ provider: 'anthropic', model: 'm' }),
       ['llm:setConfig', { provider: 'anthropic', model: 'm' }]
+    ],
+    [
+      'llm.models.list',
+      (a: CanvasApi) => a.llm.models.list({ provider: 'openrouter', refresh: true }),
+      ['llm:models:list', { provider: 'openrouter', refresh: true }]
     ]
   ] as const)('%s', (_label, call, expected) => {
     call(api)

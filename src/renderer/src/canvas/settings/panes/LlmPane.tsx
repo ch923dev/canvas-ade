@@ -10,6 +10,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { DEFAULT_MODELS } from '../../../lib/llmModels'
 import { pane } from '../paneStyles'
+import { ModelCombobox } from './ModelCombobox'
 
 const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter' },
@@ -168,18 +169,18 @@ export function LlmPane(): ReactElement {
         </select>
       </label>
 
-      <label style={pane.field}>
+      <div style={pane.field}>
         <span style={pane.label}>Model</span>
-        <input
-          aria-label="Model"
+        <ModelCombobox
+          provider={provider}
           value={model}
-          onChange={(e) => {
-            setModel(e.target.value)
+          onChange={(m) => {
+            setModel(m)
             dirty()
           }}
-          style={pane.input}
         />
-      </label>
+        <span style={pane.hint}>Pick from the provider&apos;s list or type any model id.</span>
+      </div>
 
       {provider === 'local' && (
         <label style={pane.field}>
