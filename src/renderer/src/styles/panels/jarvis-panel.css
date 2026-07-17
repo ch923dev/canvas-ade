@@ -521,6 +521,39 @@
   font-weight: 500;
 }
 
+/* Listen-hold composing row: the buffered utterance awaiting its send (jarvisSession
+   utteranceHold). Same quiet mono voice as the partial tail; the bar carries the mode
+   hint + the explicit Send. */
+.jp-composing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.jp-comp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jp-comp-hint {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.jp-comp-send {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 3px 10px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--accent-hover);
+  border: 1px solid rgba(79, 140, 255, 0.45);
+  border-radius: var(--r-ctl);
+}
+.jp-comp-send:hover {
+  background: var(--accent-wash);
+}
+
 /* Focus rings on the app's 1.5px accent convention (library.css precedent). */
 .jarvis-edge-tab:focus-visible,
 .jp-x:focus-visible,
@@ -528,7 +561,8 @@
 .jp-notif:focus-visible,
 .jp-link:focus-visible,
 .jp-ac-yes:focus-visible,
-.jp-ac-no:focus-visible {
+.jp-ac-no:focus-visible,
+.jp-comp-send:focus-visible {
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
 }

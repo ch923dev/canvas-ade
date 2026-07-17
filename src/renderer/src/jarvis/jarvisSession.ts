@@ -12,6 +12,7 @@ import { startVoice, stopVoice } from '../voice/voiceSession'
 import { setFinalConsumer } from '../voice/finalConsumer'
 import { onBargeIn, speakText } from '../voice/ttsSession'
 import { createClauseChunker } from './clauseChunker'
+import { createUtteranceHold, matchSendSpeech, type JarvisListenMode } from './utteranceHold'
 
 let unregisterConsumer: (() => void) | null = null
 let chunker = createClauseChunker()
@@ -27,6 +28,28 @@ let voiceOpts: { sid?: number; speed?: number } = {}
  *  skips — chunker.reset() alone only drops UN-chunked text, not queued clauses
  *  (review finding on PR #339). */
 let speakEpoch = 0
+
+/** Listen-hold config mirror (arm-time status + config:changed pushes keep it fresh). */
+let listenCfg: { mode: JarvisListenMode; holdMs: number } = { mode: 'auto', holdMs: 2500 }
+/** The converse utterance buffer: finals accumulate here until the hold decides the
+ *  prompt is DONE (auto silence window / manual send) — the "Jarvis cut me off" fix. */
+const hold = createUtteranceHold({
+  onSend: (text) => sendTurn(text),
+  onChange: (pending) => useJarvisStore.getState().setComposing(pending)
+})
+
+/** Panel Send button — ship the composing buffer now (no-op when empty). */
+export function sendComposingNow(): void {
+  hold.flush()
+}
+
+function applyListenConfig(cfg: { listenMode?: JarvisListenMode; listenHoldMs?: number }): void {
+  listenCfg = {
+    mode: cfg.listenMode ?? 'auto',
+    holdMs: cfg.listenHoldMs ?? 2500
+  }
+  useJarvisStore.getState().setListenMode(listenCfg.mode)
+}
 
 function enqueueSpeak(clause: string): void {
   const epoch = speakEpoch
@@ -120,6 +143,7 @@ export async function setConverseMode(on: boolean): Promise<void> {
     currentTurnId = null
     speakEpoch++ // queued clauses die with the conversation
     chunker.reset()
+    hold.clear() // the composing buffer dies with the conversation (never auto-sends later)
     // J4: a pending act-card dies with the conversation — DENIED (fail-closed; MAIN's
     // blocked tool call resolves instead of waiting out the 10-minute backstop).
     jarvis.answerPendingConfirm(false)
@@ -138,6 +162,7 @@ export async function setConverseMode(on: boolean): Promise<void> {
     const status = await window.api.jarvis.status()
     if (armStale()) return
     jarvis.setPersonaName(status.config.name)
+    applyListenConfig(status.config)
     voiceOpts = {
       sid: status.config.voiceSid,
       speed: status.config.speakingRate
@@ -174,7 +199,12 @@ export async function setConverseMode(on: boolean): Promise<void> {
         return true
       }
     }
-    sendTurn(text)
+    // Listen-hold: finals BUFFER instead of sending — a ~1 s thinking pause no longer
+    // ships half the prompt (the endpoint rules are dictation-tuned; see utteranceHold).
+    // An exact send word ships the buffer now, in both modes; otherwise 'auto' re-arms
+    // the silence window and 'manual' waits for the send word / panel Send.
+    if (matchSendSpeech(text)) hold.flush()
+    else hold.pushFinal(text, listenCfg.mode, listenCfg.holdMs)
     return true
   })
   useVoiceStore.getState().setComposerSuppressed(true)
@@ -280,13 +310,22 @@ export function useJarvisController(): void {
 
     const offConfig = window.api.jarvis.config.onChanged((cfg) => {
       store.getState().setPersonaName(cfg.name)
+      applyListenConfig(cfg)
       voiceOpts = { sid: cfg.voiceSid, speed: cfg.speakingRate }
+    })
+
+    // Listen-hold: a live partial = the user resumed speaking — cancel the armed hold so
+    // the buffer keeps growing (the final that ends this speech re-arms it). Empty
+    // partials are ignored: the consumer clears the tail after every buffered final.
+    const offPartial = useVoiceStore.subscribe((s, prev) => {
+      if (s.partial !== prev.partial && s.partial.length > 0) hold.touchPartial(true)
     })
 
     return () => {
       offTurn()
       offBarge()
       offConfig()
+      offPartial()
       closeJarvisPanel()
     }
   }, [])

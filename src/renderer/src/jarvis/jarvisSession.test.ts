@@ -8,7 +8,7 @@
  * mic was still arming.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { closeJarvisPanel, setConverseMode } from './jarvisSession'
+import { closeJarvisPanel, sendComposingNow, setConverseMode } from './jarvisSession'
 import { useJarvisStore } from '../store/jarvisStore'
 import { useVoiceStore } from '../store/voiceStore'
 import { consumeFinal } from '../voice/finalConsumer'
@@ -21,7 +21,9 @@ const CONFIG = {
   speakingRate: 1.05,
   verbosity: 'concise',
   announcePolicy: 'attention',
-  historyMode: 'session'
+  historyMode: 'session',
+  listenMode: 'auto',
+  listenHoldMs: 2500
 }
 const STATUS_OK = {
   hasKey: true,
@@ -179,12 +181,18 @@ describe('pending act-card answers (J4)', () => {
     expect(reply).toHaveBeenCalledWith({ approved: false })
   })
 
-  it('any OTHER utterance supersedes: auto-denies the gate, then starts the new turn', async () => {
+  it('any OTHER utterance buffers (listen-hold), then supersedes at SEND: gate denied before the new turn', async () => {
     startTurn.mockResolvedValue({ ok: true, id: 7 })
     await setConverseMode(true)
     const reply = vi.fn()
     useJarvisStore.getState().confirmRequested({ title: 'T', body: 'B' }, reply)
     expect(consumeFinal('actually focus the tests board')).toBe(true)
+    // Listen-hold: the utterance is still composing — the gate stays parked (a thinking
+    // pause must not insta-deny it) and no turn starts yet.
+    expect(reply).not.toHaveBeenCalled()
+    expect(startTurn).not.toHaveBeenCalled()
+    expect(useJarvisStore.getState().composing).toBe('actually focus the tests board')
+    sendComposingNow() // the auto hold window firing lands on this same path
     expect(reply).toHaveBeenCalledWith({ approved: false }) // fail-closed BEFORE the new turn
     await vi.waitFor(() => expect(startTurn).toHaveBeenCalled())
   })
@@ -196,5 +204,36 @@ describe('pending act-card answers (J4)', () => {
     closeJarvisPanel()
     expect(reply).toHaveBeenCalledWith({ approved: false })
     expect(useJarvisStore.getState().pendingConfirm).toBeNull()
+  })
+})
+
+// ── Listen-hold: the converse consumer buffers finals (the "cut me off" fix) ──
+describe('listen-hold consumer wiring', () => {
+  it('fragmented finals join into ONE turn; a spoken send word ships the buffer', async () => {
+    startTurn.mockResolvedValue({ ok: true, id: 9 })
+    await setConverseMode(true)
+    expect(consumeFinal('refactor the preview cap')).toBe(true)
+    expect(consumeFinal('and also bump the version')).toBe(true)
+    expect(startTurn).not.toHaveBeenCalled() // still composing — no fragment ever ships alone
+    expect(useJarvisStore.getState().composing).toBe(
+      'refactor the preview cap and also bump the version'
+    )
+    expect(consumeFinal('send it')).toBe(true) // exact send word — never becomes content
+    await vi.waitFor(() =>
+      expect(startTurn).toHaveBeenCalledExactlyOnceWith(
+        'refactor the preview cap and also bump the version'
+      )
+    )
+    expect(useJarvisStore.getState().composing).toBe('')
+  })
+
+  it('converse teardown discards the composing buffer (never auto-sends later)', async () => {
+    await setConverseMode(true)
+    expect(consumeFinal('half a thought')).toBe(true)
+    expect(useJarvisStore.getState().composing).toBe('half a thought')
+    closeJarvisPanel()
+    expect(useJarvisStore.getState().composing).toBe('')
+    sendComposingNow() // nothing buffered — must not start a turn
+    expect(startTurn).not.toHaveBeenCalled()
   })
 })

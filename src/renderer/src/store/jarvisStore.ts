@@ -71,6 +71,10 @@ interface JarvisState {
   personaName: string
   /** TTS availability probed at converse-enable — false = text-only conversation. */
   speechReady: boolean
+  /** Listen-hold: buffered finals awaiting the send (the panel's composing row). */
+  composing: string
+  /** Listen-mode mirror (auto/manual) — drives the composing row's hint copy. */
+  listenMode: 'auto' | 'manual'
   setConverseMode: (on: boolean) => void
   turnStarted: (id: number, userText: string) => void
   deltaReceived: (text: string) => void
@@ -88,6 +92,8 @@ interface JarvisState {
   setPanelOpen: (open: boolean) => void
   setPersonaName: (name: string) => void
   setSpeechReady: (ready: boolean) => void
+  setComposing: (text: string) => void
+  setListenMode: (mode: 'auto' | 'manual') => void
   hydrateTurns: (turns: JarvisDisplayTurn[]) => void
   clearTurns: () => void
 }
@@ -105,6 +111,8 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   lastError: null,
   personaName: 'Jarvis',
   speechReady: false,
+  composing: '',
+  listenMode: 'auto',
   setConverseMode: (on) =>
     set((s) =>
       s.converseMode === on ? s : { converseMode: on, ...(on ? { lastError: null } : {}) }
@@ -169,6 +177,8 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
     set((s) => (s.personaName === personaName ? s : { personaName })),
   setSpeechReady: (speechReady) =>
     set((s) => (s.speechReady === speechReady ? s : { speechReady })),
+  setComposing: (composing) => set((s) => (s.composing === composing ? s : { composing })),
+  setListenMode: (listenMode) => set((s) => (s.listenMode === listenMode ? s : { listenMode })),
   hydrateTurns: (turns) => set({ turns }),
   clearTurns: () => set({ turns: [] })
 }))

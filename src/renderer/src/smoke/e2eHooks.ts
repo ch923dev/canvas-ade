@@ -627,6 +627,7 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         lastAssistantText: lastAssistant?.text ?? '',
         panelOpen: s.panelOpen,
         lastError: s.lastError,
+        composing: s.composing,
         acts: s.acts.map((a) => ({
           actId: a.actId,
           name: a.name,

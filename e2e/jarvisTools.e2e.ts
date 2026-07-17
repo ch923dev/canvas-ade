@@ -144,13 +144,14 @@ test.describe('@voice jarvis hands (voice → tool call → confirm gate → can
     const boardId = await seed(page, 'kanban', {})
     const id8 = boardId.slice(0, 8)
     // One script: the command final, then — while the act-card is parked — a "yes" final
-    // (~frame 60 ≈ 7 s in; the gate is pending well before it, and it blocks until answered).
+    // (~frame 70 ≈ 8.4 s in; the gate is pending well before it even with the listen-hold
+    // window in front of the turn, and it blocks until answered).
     await mainCall(
       electronApp,
       'voiceStubSet',
       true,
       script(`add a card voice approved to board ${id8}`, [
-        { atFrame: 60, t: 'final', text: 'yes' }
+        { atFrame: 70, t: 'final', text: 'yes' }
       ])
     )
     await openPanel(page)

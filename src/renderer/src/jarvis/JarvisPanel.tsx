@@ -18,6 +18,7 @@ import { startNeuralCore, paintNeuralCoreFrame, type CoreMode } from './neuralCo
 import {
   closeJarvisPanel,
   openJarvisPanel,
+  sendComposingNow,
   toggleConverse,
   toggleJarvisPanel,
   useJarvisController
@@ -117,6 +118,8 @@ export function JarvisPanel(): ReactElement | null {
   const lastError = useJarvisStore((s) => s.lastError)
   const personaName = useJarvisStore((s) => s.personaName)
   const speechReady = useJarvisStore((s) => s.speechReady)
+  const composing = useJarvisStore((s) => s.composing)
+  const listenMode = useJarvisStore((s) => s.listenMode)
   const ttsSpeaking = useTtsStore((s) => s.speaking)
   const capturing = useVoiceStore((s) => s.capturing)
   const partial = useVoiceStore((s) => s.partial)
@@ -252,7 +255,7 @@ export function JarvisPanel(): ReactElement | null {
   useEffect(() => {
     const el = bodyRef.current
     if (el && panelOpen) el.scrollTop = el.scrollHeight
-  }, [panelOpen, turns.length, streamText, lastError, acts, pendingConfirm])
+  }, [panelOpen, turns.length, streamText, lastError, acts, pendingConfirm, composing])
 
   // D8 spoken announce (J4): a NEW attention mark may speak — grounded in the event
   // (board title + kind), per the persisted policy: 'all' speaks every event,
@@ -514,6 +517,32 @@ export function JarvisPanel(): ReactElement | null {
                   </div>
                 )
               )}
+            </div>
+          )}
+          {/* Listen-hold composing row: buffered finals awaiting the send. Rendered
+              whenever the buffer is non-empty (a manual-mode buffer must stay visible
+              even while a superseding reply streams — it is unsent user text). */}
+          {composing && (
+            <div className="jp-composing" data-test="jarvis-composing">
+              <div className="jp-you jp-partial">
+                <b>You</b> · {composing}
+              </div>
+              <div className="jp-comp-bar">
+                <span className="jp-comp-hint">
+                  {listenMode === 'manual'
+                    ? 'say “send it” or press Send'
+                    : 'pausing sends — keep talking to add more'}
+                </span>
+                <button
+                  type="button"
+                  className="jp-comp-send"
+                  data-test="jarvis-send"
+                  onClick={sendComposingNow}
+                  title="Send this to the brain now"
+                >
+                  Send ▸
+                </button>
+              </div>
             </div>
           )}
           {!streaming && mode === 'listening' && partial && (
