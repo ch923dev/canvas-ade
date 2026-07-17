@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import logoUrl from '../../../../build/icon.png'
 import { useVoiceStore } from '../store/voiceStore'
+import { useJarvisStore } from '../store/jarvisStore'
 import { startVoice, stopVoice, toggleVoice } from './voiceSession'
 import { VoiceFlyout } from './VoiceFlyout'
 import { defaultHotkey, hotkeyLabel, matchesHotkey, parseHotkey, type HotkeyChord } from './hotkey'
@@ -173,11 +174,17 @@ export function VoicePill(): ReactElement | null {
   }, [enabled])
 
   // Session babysitter: silence auto-STOP + hard cap. Stop only — never a submit path.
+  // CONVERSE CARVE-OUT: while the Jarvis panel owns the mic (converseMode), the babysitter
+  // stands down entirely — a conversation idles legitimately (listening to the reply,
+  // thinking, editing the composing buffer) and killing capture there strands the panel
+  // at "idle" mid-conversation (found in the listen-hold dev check). The structural
+  // mic-gate is the stop contract for converse: open panel + the "mic live" strip, ended
+  // by Esc/✕/strip/Settings-disable. The babysitter guards unattended DICTATION only.
   useEffect(() => {
     if (!capturing) return
     const iv = window.setInterval(() => {
       const s = useVoiceStore.getState()
-      if (!s.capturing) return
+      if (!s.capturing || useJarvisStore.getState().converseMode) return
       const now = Date.now()
       if (now - s.captureStartedAt > MAX_SESSION_MS) void stopVoice()
       else if (s.lastVoiceAt > 0 && now - s.lastVoiceAt > SILENCE_STOP_MS) void stopVoice()
