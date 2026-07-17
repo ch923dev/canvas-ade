@@ -319,16 +319,30 @@ export function JarvisPanel(): ReactElement | null {
     <div className="jp-error" role="alert" data-test="jarvis-error">
       {reason === 'no-key' ? (
         <>
-          No API key set.{' '}
+          The brain isn&apos;t configured — set a provider and API key.{' '}
           <button
             className="jp-link"
             onClick={() =>
               window.dispatchEvent(
-                new CustomEvent('expanse:open-settings', { detail: { section: 'persona' } })
+                new CustomEvent('expanse:open-settings', { detail: { section: 'llm' } })
               )
             }
           >
-            Open Settings › Persona
+            Open Settings › Context · LLM
+          </button>
+        </>
+      ) : reason === 'budget-exceeded' ? (
+        <>
+          Daily LLM call budget reached.{' '}
+          <button
+            className="jp-link"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent('expanse:open-settings', { detail: { section: 'llm' } })
+              )
+            }
+          >
+            Raise it in Settings › Context · LLM
           </button>
         </>
       ) : (

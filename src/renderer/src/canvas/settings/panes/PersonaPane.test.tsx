@@ -28,7 +28,6 @@ const CFG: JarvisConfigView = {
   speakingRate: 1.05,
   verbosity: 'concise',
   announcePolicy: 'attention',
-  model: 'claude-opus-4-8',
   historyMode: 'session',
   wakeWordEnabled: true
 }
@@ -64,7 +63,14 @@ async function mount(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks()
   mockApi()
-  jarvisStatus.mockResolvedValue({ hasKey: true, encryptionAvailable: true, config: CFG })
+  jarvisStatus.mockResolvedValue({
+    hasKey: true,
+    provider: 'openrouter',
+    model: 'google/gemini-2.5-flash',
+    anthropicKeyHint: false,
+    encryptionAvailable: true,
+    config: CFG
+  })
   wakeList.mockResolvedValue([
     {
       id: 'kws-zipformer-gigaspeech-3.3M',

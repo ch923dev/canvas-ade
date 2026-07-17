@@ -1,19 +1,27 @@
 /**
- * Jarvis J3 — the streaming brain (PLAN §3.4, KICKOFF-J3 §2). Deliberately NOT the
- * @anthropic-ai/sdk: the repo's LLM pattern (llmService.ts) is a hand-built Messages-API
- * request behind an injected transport, and this module extends that with `stream: true`
- * + an incremental SSE parser — zero new deps, unit-testable with a fake byte stream,
- * same CANVAS_LLM_MOCK seam so e2e never egresses. Key material never leaves this module:
- * errors surface as opaque `provider HTTP <status>` strings (llmService BUG-003 rule).
+ * Jarvis — the streaming brain (PLAN §3.4, KICKOFF-J3 §2). Deliberately NOT a provider
+ * SDK: the repo's LLM pattern (llmService.ts) is a hand-built request behind an injected
+ * transport, and this module extends that with `stream: true` + incremental SSE parsers —
+ * zero new deps, unit-testable with a fake byte stream, same CANVAS_LLM_MOCK seam so e2e
+ * never egresses. Key material never leaves this module: errors surface as opaque
+ * `provider HTTP <status>` strings (llmService BUG-003 rule).
  *
- * J4 (hands): the parser also understands `tool_use` content blocks (content_block_start /
- * input_json_delta / content_block_stop) and the `message_delta` stop_reason, so one stream
- * yields BOTH the spoken text deltas and the assembled tool calls. The multi-hop loop
- * (execute tools → append tool_result → stream again) lives in jarvisIpc; this module stays
+ * The brain rides the SHARED Context·LLM config (llmConfig.ts) — provider + model + key +
+ * daily budget are the same ones the Context subsystem uses. Anthropic streams the
+ * Messages-API SSE shape (parsed here); openrouter/openai/local stream the
+ * chat/completions shape (converters + parser in jarvisBrainOpenAi.ts, normalized to the
+ * same SseEvent union so the consumer never branches).
+ *
+ * J4 (hands): the parsers also understand streamed tool calls, so one stream yields BOTH
+ * the spoken text deltas and the assembled tool calls. The multi-hop loop (execute tools →
+ * append tool_result → stream again) lives in jarvisIpc; this module stays
  * one-request-in / one-parsed-stream-out.
  */
 import type { JarvisContentBlock, JarvisMessage } from './jarvisPersona'
 import type { JarvisToolDef } from './jarvisTools'
+import type { LlmConfig, ProviderName } from './llmConfig'
+import { openAiShapeBase } from './llmService'
+import { createOpenAiSseParser, toOpenAiMessages, toOpenAiTools } from './jarvisBrainOpenAi'
 
 /** Anthropic requires max_tokens; replies are spoken-short by contract. */
 const REPLY_MAX_TOKENS = 1024
@@ -24,31 +32,64 @@ export interface JarvisRequest {
   url: string
   headers: Record<string, string>
   body: string
+  /** Which SSE dialect the response streams — picks the parser. */
+  shape: 'anthropic' | 'openai'
+  /** For opaque error labels only ("openrouter HTTP 402") — never key material. */
+  provider: ProviderName
 }
 
-/** Pure: map (model, key, system, messages[, tools]) → the exact streaming HTTP request. */
+/** Pure: map (shared LLM config, key, system, messages[, tools]) → the exact streaming
+ *  HTTP request for the configured provider. Anthropic = Messages API; openrouter/openai/
+ *  local = chat/completions (base resolved through llmService's shared SSRF/slash guard).
+ *  OpenAI's newer models reject `max_tokens` in favor of `max_completion_tokens`; OpenRouter
+ *  and local OpenAI-compat servers speak `max_tokens`. */
 export function buildJarvisRequest(
-  model: string,
+  config: LlmConfig,
   key: string,
   system: JarvisContentBlock[],
   messages: JarvisMessage[],
   tools?: JarvisToolDef[]
 ): JarvisRequest {
+  if (config.provider === 'anthropic') {
+    return {
+      url: 'https://api.anthropic.com/v1/messages',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: REPLY_MAX_TOKENS,
+        stream: true,
+        system,
+        messages,
+        ...(tools && tools.length > 0 ? { tools } : {})
+      }),
+      shape: 'anthropic',
+      provider: 'anthropic'
+    }
+  }
+  const tokenCap =
+    config.provider === 'openai'
+      ? { max_completion_tokens: REPLY_MAX_TOKENS }
+      : { max_tokens: REPLY_MAX_TOKENS }
   return {
-    url: 'https://api.anthropic.com/v1/messages',
+    url: `${openAiShapeBase(config.provider, config)}/chat/completions`,
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01'
+      // `local` may run keyless (LM Studio/Ollama ignore auth by default).
+      ...(key ? { Authorization: `Bearer ${key}` } : {})
     },
     body: JSON.stringify({
-      model,
-      max_tokens: REPLY_MAX_TOKENS,
+      model: config.model,
       stream: true,
-      system,
-      messages,
-      ...(tools && tools.length > 0 ? { tools } : {})
-    })
+      ...tokenCap,
+      messages: toOpenAiMessages(system, messages),
+      ...(tools && tools.length > 0 ? { tools: toOpenAiTools(tools) } : {})
+    }),
+    shape: 'openai',
+    provider: config.provider
   }
 }
 
@@ -320,10 +361,14 @@ export async function streamJarvisReply(
       })
       // BUG-003: never surface the response body — it can echo request/key detail.
       if (!res.ok)
-        return { ok: false, reason: 'provider-error', message: `anthropic HTTP ${res.status}` }
+        return {
+          ok: false,
+          reason: 'provider-error',
+          message: `${req.provider} HTTP ${res.status}`
+        }
       if (!res.body)
-        return { ok: false, reason: 'provider-error', message: 'anthropic: empty stream' }
-      const parser = createSseParser()
+        return { ok: false, reason: 'provider-error', message: `${req.provider}: empty stream` }
+      const parser = req.shape === 'openai' ? createOpenAiSseParser() : createSseParser()
       const decoder = new TextDecoder()
       for await (const chunk of res.body) {
         if (signal.aborted) return { ok: true, text, cancelled: true, toolUses: [], stopReason }
@@ -364,8 +409,8 @@ export async function streamJarvisReply(
       ok: false,
       reason: 'provider-error',
       message: stalled
-        ? `anthropic: stream stalled (no data for ${Math.round((deps.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS) / 1000)}s)`
-        : 'anthropic: transport error'
+        ? `${req.provider}: stream stalled (no data for ${Math.round((deps.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS) / 1000)}s)`
+        : `${req.provider}: transport error`
     }
   }
 }

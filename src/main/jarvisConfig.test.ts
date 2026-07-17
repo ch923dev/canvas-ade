@@ -40,7 +40,6 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
       verbosity: 'narrative',
       voiceSid: 3,
       announcePolicy: 'all',
-      model: 'claude-haiku-4-5',
       historyMode: 'off',
       wakeWordEnabled: true
     }
@@ -83,13 +82,13 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
     expect(repairJarvisConfig({ speakingRate: 0.1 }).speakingRate).toBe(0.5)
   })
 
-  it('caps customToneText and preserves an unknown model id (scene-id discipline)', () => {
+  it('caps customToneText; a retired `model` key is silently dropped (shared-LLM rewire)', () => {
     const r = repairJarvisConfig({
       customToneText: 'y'.repeat(MAX_CUSTOM_TONE_LEN + 50),
-      model: 'claude-something-future'
+      model: 'claude-something-old'
     })
     expect(r.customToneText).toHaveLength(MAX_CUSTOM_TONE_LEN)
-    expect(r.model).toBe('claude-something-future')
+    expect(r).not.toHaveProperty('model')
   })
 
   it('write funnels through repair — junk on the way in never lands on disk', () => {

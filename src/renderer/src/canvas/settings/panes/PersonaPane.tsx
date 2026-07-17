@@ -1,9 +1,10 @@
 /**
  * Settings · Voice · Persona pane (mock-persona-settings.html, user-approved 2026-07-10) —
  * who answers when you talk to Expanse. Persona fields apply IMMEDIATELY (the voice-pane
- * pattern: every change is one jarvis.config.set merge-patch, pushed back live). The API
- * key row is the one explicit-commit control (LlmPane posture: write-only into MAIN) and
- * writes the EXISTING llmKeyStore `anthropic` slot via window.api.llm — no second store.
+ * pattern: every change is one jarvis.config.set merge-patch, pushed back live). The brain
+ * has NO configuration of its own anymore (shared Context·LLM rewire, 2026-07-17): provider,
+ * model, API key and the daily budget all live in Settings › Context · LLM; this pane only
+ * mirrors that config read-only and points the user there.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { pane } from '../paneStyles'
@@ -28,10 +29,13 @@ const TONES: Array<{ id: JarvisConfigView['tonePreset']; name: string; quote: st
   { id: 'custom', name: 'Custom', quote: '' }
 ]
 
-const MODELS = [
-  { id: 'claude-opus-4-8', label: 'claude-opus-4-8 (default)' },
-  { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5 (fast conversation)' }
-]
+/** Display labels for the shared Context·LLM provider ids (read-only mirror). */
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: 'OpenRouter',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  local: 'Local'
+}
 
 const seg: CSSProperties = {
   display: 'inline-flex',
@@ -85,11 +89,13 @@ function Seg<T extends string>({
 
 export function PersonaPane(): ReactElement | null {
   const [cfg, setCfg] = useState<JarvisConfigView | null>(null)
-  const [hasKey, setHasKey] = useState(false)
-  const [encryptionAvailable, setEncryptionAvailable] = useState(true)
-  const [key, setKey] = useState('')
-  const [keyBusy, setKeyBusy] = useState(false)
-  const [keyError, setKeyError] = useState<string | null>(null)
+  /** Read-only mirror of the shared Context·LLM brain config (jarvis:status). */
+  const [brain, setBrain] = useState<{
+    ready: boolean
+    provider: string
+    model: string
+    anthropicKeyHint: boolean
+  } | null>(null)
   /** PANE-1 echo suppression: pushes arriving while our own set() round-trips are in
    *  flight are parked (applying them mid-typing would snap the input back a keystroke);
    *  the LAST parked push applies once the in-flight count settles to zero. */
@@ -112,11 +118,15 @@ export function PersonaPane(): ReactElement | null {
       .then((s) => {
         if (cancelled) return
         setCfg(s.config)
-        setHasKey(s.hasKey)
-        setEncryptionAvailable(s.encryptionAvailable)
+        setBrain({
+          ready: s.hasKey,
+          provider: s.provider,
+          model: s.model,
+          anthropicKeyHint: s.anthropicKeyHint
+        })
       })
       .catch(() => {
-        if (!cancelled) setHasKey(false)
+        // IPC rejection: leave the brain mirror empty — the pane renders without the row.
       })
     return () => {
       cancelled = true
@@ -211,44 +221,6 @@ export function PersonaPane(): ReactElement | null {
           parkedPush.current = null
         }
       })
-  }
-
-  const saveKey = async (): Promise<void> => {
-    const cleanKey = key.replace(/\s+/g, '') // LlmPane BUG-007(4): strip embedded whitespace
-    if (!cleanKey) return
-    setKeyBusy(true)
-    setKeyError(null)
-    try {
-      const r = await window.api.llm.setKey({ provider: 'anthropic', key: cleanKey })
-      if (!r.ok) {
-        setKeyError(
-          r.reason === 'encryption-unavailable'
-            ? 'No system keyring available to encrypt the key. Set ANTHROPIC_API_KEY instead.'
-            : 'Key could not be saved.'
-        )
-        return
-      }
-      setKey('')
-      setHasKey(true)
-    } catch {
-      setKeyError('Key could not be saved — please try again.')
-    } finally {
-      setKeyBusy(false)
-    }
-  }
-
-  const clearKey = async (): Promise<void> => {
-    setKeyBusy(true)
-    setKeyError(null)
-    try {
-      const r = await window.api.llm.clearKey({ provider: 'anthropic' })
-      if (r.ok) setHasKey(false)
-      else setKeyError('Could not clear the key.')
-    } catch {
-      setKeyError('Could not clear the key.')
-    } finally {
-      setKeyBusy(false)
-    }
   }
 
   return (
@@ -462,24 +434,34 @@ export function PersonaPane(): ReactElement | null {
       <div style={pane.divider} />
       <div style={pane.head}>Brain</div>
 
-      <label style={pane.field}>
-        <span style={pane.label}>Model</span>
-        <select
-          aria-label="Brain model"
-          value={cfg.model}
-          style={{ ...pane.input, width: 280 }}
-          onChange={(e) => patch({ model: e.target.value })}
-        >
-          {MODELS.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-          {!MODELS.some((m) => m.id === cfg.model) && (
-            <option value={cfg.model}>{cfg.model}</option>
-          )}
-        </select>
-      </label>
+      {brain && (
+        <div style={pane.setrow} data-test="persona-brain">
+          <div style={{ flex: 1 }}>
+            <div style={pane.rowTitle}>
+              {PROVIDER_LABELS[brain.provider] ?? brain.provider}
+              <span style={{ fontFamily: 'var(--mono)', fontWeight: 400, color: 'var(--text-2)' }}>
+                {' '}
+                · {brain.model}
+              </span>
+              {brain.ready ? (
+                <span style={{ color: 'var(--accent)' }}> · ready</span>
+              ) : (
+                <span style={{ color: 'var(--warn)' }}> · not configured</span>
+              )}
+            </div>
+            <div style={pane.rowSub}>
+              {cfg.name} shares the Context · LLM settings — provider, model, API key and the daily
+              call budget all live there.
+            </div>
+            {brain.anthropicKeyHint && (
+              <div style={pane.rowSub} data-test="persona-brain-anthropic-hint">
+                An Anthropic key is already saved — switch the provider to Anthropic in Context ·
+                LLM, or add a key for {PROVIDER_LABELS[brain.provider] ?? brain.provider}.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <label style={pane.field}>
         <span style={pane.label}>History</span>
@@ -506,52 +488,6 @@ export function PersonaPane(): ReactElement | null {
           project, git-ignored); Clear wipes the open project&apos;s history
         </span>
       </label>
-
-      <label style={pane.field}>
-        <span style={pane.label}>
-          Anthropic API key {hasKey && <span style={{ color: 'var(--accent)' }}>· set</span>}
-        </span>
-        <input
-          aria-label="Anthropic API key"
-          type="password"
-          value={key}
-          placeholder={hasKey ? '•••••••• (leave blank to keep)' : 'Paste your key'}
-          style={pane.input}
-          onChange={(e) => setKey(e.target.value)}
-        />
-        <span style={pane.hint}>
-          encrypted via safeStorage, main process only — shared with Context · LLM&apos;s Anthropic
-          slot
-        </span>
-      </label>
-      {!encryptionAvailable && (
-        <div role="note" style={pane.notice}>
-          No system keyring detected — set the <code>ANTHROPIC_API_KEY</code> environment variable
-          instead.
-        </div>
-      )}
-      {keyError && (
-        <div role="alert" style={pane.error}>
-          {keyError}
-        </div>
-      )}
-      <div style={pane.row}>
-        <button
-          className="ca-btn-ghost"
-          disabled={keyBusy || !hasKey}
-          onClick={() => void clearKey()}
-        >
-          Clear key
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          className="ca-btn-primary"
-          disabled={keyBusy || !key}
-          onClick={() => void saveKey()}
-        >
-          Save key
-        </button>
-      </div>
     </div>
   )
 }

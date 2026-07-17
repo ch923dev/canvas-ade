@@ -16,13 +16,18 @@ export interface JarvisConfigView {
   verbosity: 'concise' | 'normal' | 'narrative'
   voiceSid?: number
   announcePolicy: 'all' | 'attention' | 'chips-only'
-  model: string
   historyMode: 'project' | 'session' | 'off'
   wakeWordEnabled: boolean
 }
 
 export interface JarvisStatusView {
+  /** Brain readiness under the shared Context·LLM config (historic field name). */
   hasKey: boolean
+  /** The shared Context·LLM provider/model the brain uses (display only). */
+  provider: 'openrouter' | 'openai' | 'anthropic' | 'local'
+  model: string
+  /** Provider not ready but an Anthropic key is stored — Settings shows the switch hint. */
+  anthropicKeyHint: boolean
   encryptionAvailable: boolean
   mockEnabled: boolean
   config: JarvisConfigView

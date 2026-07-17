@@ -7,9 +7,17 @@ import {
   type JarvisStreamDeps,
   type StreamFetchLike
 } from './jarvisBrain'
+import type { LlmConfig } from './llmConfig'
+
+/** Shared-config shorthand: the brain rides llmConfig now, not a bare model string. */
+const cfg = (over: Partial<LlmConfig> = {}): LlmConfig => ({
+  provider: 'anthropic',
+  model: 'claude-opus-4-8',
+  ...over
+})
 
 const REQ = buildJarvisRequest(
-  'claude-opus-4-8',
+  cfg(),
   'sk-test',
   [{ type: 'text', text: 'persona', cache_control: { type: 'ephemeral' } }],
   [{ role: 'user', content: 'hello' }]
@@ -269,7 +277,7 @@ describe('J4 tool_use parsing', () => {
 
   it('buildJarvisRequest passes tools through (and omits the key when absent)', () => {
     const withTools = buildJarvisRequest(
-      'claude-opus-4-8',
+      cfg(),
       'k',
       [],
       [{ role: 'user', content: 'x' }],
@@ -277,6 +285,96 @@ describe('J4 tool_use parsing', () => {
     )
     expect((JSON.parse(withTools.body) as { tools: unknown[] }).tools).toHaveLength(1)
     expect(JSON.parse(REQ.body)).not.toHaveProperty('tools')
+  })
+})
+
+// ── Shared Context·LLM rewire: provider-aware request building ──
+
+describe('buildJarvisRequest provider shapes', () => {
+  it('openrouter builds a streaming chat/completions request (Bearer auth, openai shape)', () => {
+    const r = buildJarvisRequest(
+      cfg({ provider: 'openrouter', model: 'google/gemini-2.5-flash' }),
+      'or-key',
+      [{ type: 'text', text: 'persona' }],
+      [{ role: 'user', content: 'hi' }],
+      [{ name: 't', description: 'd', input_schema: { type: 'object' } }]
+    )
+    expect(r.url).toBe('https://openrouter.ai/api/v1/chat/completions')
+    expect(r.headers.Authorization).toBe('Bearer or-key')
+    expect(r.shape).toBe('openai')
+    const body = JSON.parse(r.body) as Record<string, unknown>
+    expect(body.stream).toBe(true)
+    expect(body.model).toBe('google/gemini-2.5-flash')
+    expect(body.max_tokens).toBe(1024)
+    const msgs = body.messages as Array<{ role: string; content: string }>
+    expect(msgs[0]).toEqual({ role: 'system', content: 'persona' })
+    expect(msgs[1]).toEqual({ role: 'user', content: 'hi' })
+    const tools = body.tools as Array<{ type: string; function: { name: string } }>
+    expect(tools[0].type).toBe('function')
+    expect(tools[0].function.name).toBe('t')
+  })
+
+  it('openai uses max_completion_tokens (newer models reject max_tokens)', () => {
+    const r = buildJarvisRequest(cfg({ provider: 'openai', model: 'gpt-4.1-nano' }), 'k', [], [])
+    const body = JSON.parse(r.body) as Record<string, unknown>
+    expect(body.max_completion_tokens).toBe(1024)
+    expect(body).not.toHaveProperty('max_tokens')
+  })
+
+  it('local resolves through the shared loopback guard and may run keyless', () => {
+    const r = buildJarvisRequest(
+      cfg({ provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1/' }),
+      '',
+      [],
+      [{ role: 'user', content: 'x' }]
+    )
+    expect(r.url).toBe('http://127.0.0.1:1234/v1/chat/completions') // BUG-041 slash collapse
+    expect(r.headers).not.toHaveProperty('Authorization')
+    expect(() =>
+      buildJarvisRequest(
+        cfg({ provider: 'local', model: 'm', baseUrl: 'http://169.254.169.254/v1' }),
+        '',
+        [],
+        []
+      )
+    ).toThrow(/loopback/) // BUG-001 SSRF guard shared with llmService
+  })
+
+  it('opaque errors carry the CONFIGURED provider label, not "anthropic"', async () => {
+    const r = buildJarvisRequest(
+      cfg({ provider: 'openrouter' }),
+      'k',
+      [],
+      [{ role: 'user', content: 'x' }]
+    )
+    const deps = depsWith(async () => ({ ok: false, status: 402, body: null }))
+    const out = await streamJarvisReply(r, deps, new AbortController().signal, () => {})
+    expect(out).toEqual({ ok: false, reason: 'provider-error', message: 'openrouter HTTP 402' })
+  })
+
+  it('an openai-shape stream parses deltas + streamed tool calls end to end', async () => {
+    const payload = [
+      'data: {"choices":[{"delta":{"content":"On "}}]}',
+      'data: {"choices":[{"delta":{"content":"it."}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"focus_viewport","arguments":""}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"board\\":\\"abcdef12\\"}"}}]}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      'data: [DONE]'
+    ].join('\n\n')
+    const req = buildJarvisRequest(
+      cfg({ provider: 'openrouter' }),
+      'k',
+      [],
+      [{ role: 'user', content: 'focus board abcdef12' }]
+    )
+    const deps = depsWith(async () => ({ ok: true, status: 200, body: chunks(payload + '\n\n') }))
+    const r = await streamJarvisReply(req, deps, new AbortController().signal, () => {})
+    expect(r).toMatchObject({
+      ok: true,
+      text: 'On it.',
+      stopReason: 'tool_use',
+      toolUses: [{ id: 'call_1', name: 'focus_viewport', input: { board: 'abcdef12' } }]
+    })
   })
 })
 
@@ -288,7 +386,7 @@ describe('J4 mock tool script (mockJarvisTurn via the mock stream)', () => {
 
   it('"add a card … to board …" scripts an add_card tool call', async () => {
     const req = buildJarvisRequest(
-      'm',
+      cfg(),
       'k',
       [],
       [{ role: 'user', content: 'add a card smoke test to board abcdef12' }]
@@ -303,7 +401,7 @@ describe('J4 mock tool script (mockJarvisTurn via the mock stream)', () => {
 
   it('a tool_result hop answers GROUNDED in the result content', async () => {
     const req = buildJarvisRequest(
-      'm',
+      cfg(),
       'k',
       [],
       [
@@ -328,7 +426,7 @@ describe('J4 mock tool script (mockJarvisTurn via the mock stream)', () => {
 
   it('a denied/error tool_result hop says nothing changed', async () => {
     const req = buildJarvisRequest(
-      'm',
+      cfg(),
       'k',
       [],
       [
