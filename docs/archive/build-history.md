@@ -2811,3 +2811,32 @@ LlmPane +1 tests · e2e `llmModelSelect.e2e.ts` @chrome (setLlmMock, green first
 matrix at pre-push (300 passed, 8.5 m) · title-stamped manual dev check (`llm-model-select
 0.22.2`) user-eyeballed ("looks good to me"). Version 0.22.0 → **0.22.2** (0.22.1 held by the
 in-flight `feat/jarvis-llm-config` lane).
+
+## PR #358 — feat(jarvis): brain rides the shared Context·LLM config (2026-07-17, v0.22.3)
+
+Squash `da44747a` (branch `feat/jarvis-llm-config` off `68309d80`, rebased past #357 → head
+`cc905421`). The Jarvis brain now consumes the SHARED Context·LLM config end-to-end — provider +
+model (`llmConfig`) · per-provider key slot (`llmKeyStore`) · per-hop budget reserve (`llmBudget`).
+The Jarvis-side model picker + key row are retired.
+
+- **`jarvisBrainOpenAi.ts` (new):** chat/completions converters + streaming SSE parser normalized
+  to jarvisBrain's `SseEvent` union (`stop_reason` mapped to the Anthropic vocabulary → turn loop
+  shape-agnostic).
+- **`jarvisBrain.buildJarvisRequest(config, …)`** provider-aware; `openAiShapeBase` exported from
+  `llmService` so both egress paths share ONE SSRF/trailing-slash guard (BUG-001/041 single
+  source); openai uses `max_completion_tokens`, openrouter/local `max_tokens`; local keyless-OK.
+- **`jarvisIpc`:** readiness = shared provider; budget-exceeded errors the turn (spoken);
+  4xx-with-tools → ONE toolless retry + spoken announce, cached per `provider:model` per session
+  (cache only on a successful retry). `status` adds provider/model/key hint.
+- **`jarvisConfig`:** Jarvis-only `model` key RETIRED (repair drops it; key migration was a no-op —
+  Jarvis already used the shared `anthropic` slot). Mock seam pins the anthropic shape (zero
+  egress in e2e).
+- **UI:** PersonaPane Brain = read-only mirror → Context·LLM; JarvisPanel no-key/budget rows
+  deep-link Settings section `llm`.
+
+**Verified:** cheap trio · zone units 180/180 post-rebase (both lanes' suites — jarvis +
+#357 catalog/combobox) · `jarvisBrainOpenAi.test.ts` new suite · FULL e2e matrix at pre-push
+(298P, both legs) · claude-review round 1 FULL PASS 0/0 (key-material, BUG-001/041 extraction,
+toolless-retry bound, budget reserve-before-egress all explicitly verified) · title-stamped manual
+dev check (`jarvis-llm-config 0.22.3`) user-eyeballed. Version 0.22.2 → **0.22.3** (rebase
+conflict = version only).
