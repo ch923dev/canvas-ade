@@ -66,6 +66,9 @@ function applyListenConfig(cfg: { listenMode?: JarvisListenMode; listenHoldMs?: 
     holdMs: cfg.listenHoldMs ?? 2500
   }
   useJarvisStore.getState().setListenMode(listenCfg.mode)
+  // A LIVE Settings flip must reach the armed hold too (review): auto→manual cancels a
+  // counting-down send; manual→auto arms over an already-buffered utterance.
+  hold.modeChanged(listenCfg.mode, listenCfg.holdMs)
 }
 
 function enqueueSpeak(clause: string): void {

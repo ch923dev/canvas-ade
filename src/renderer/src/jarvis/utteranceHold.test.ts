@@ -99,19 +99,52 @@ describe('createUtteranceHold (manual mode + flush/clear)', () => {
     expect(onSend).toHaveBeenCalledOnce()
   })
 
-  it('pause (edit focus) cancels the hold AND blocks arming from mid-edit finals; resume re-arms', () => {
+  it('pause (edit focus) cancels the hold; mid-edit finals DEFER (never mutate the edited text under the caret) and fold in on resume', () => {
     const onSend = vi.fn()
-    const hold = createUtteranceHold({ onSend })
+    const changes: string[] = []
+    const hold = createUtteranceHold({ onSend, onChange: (p) => changes.push(p) })
     hold.pushFinal('start of prompt', 'auto', 1000)
     hold.pause() // user clicked into the composing editor
     vi.advanceTimersByTime(5000)
     expect(onSend).not.toHaveBeenCalled()
-    hold.pushFinal('spoken while editing', 'auto', 1000) // a mid-edit final must not arm
+    hold.pushFinal('spoken while editing', 'auto', 1000)
+    // Review W2: the controlled textarea's value must NOT change mid-edit — the final
+    // parks in the deferred buffer instead.
+    expect(hold.pending()).toBe('start of prompt')
+    expect(changes).toEqual(['start of prompt'])
     vi.advanceTimersByTime(5000)
     expect(onSend).not.toHaveBeenCalled()
-    hold.resume('auto', 1000) // blur — the window re-arms over the whole buffer
+    hold.resume('auto', 1000) // blur — deferred folds in, the window re-arms over it all
+    expect(hold.pending()).toBe('start of prompt spoken while editing')
     vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledExactlyOnceWith('start of prompt spoken while editing')
+  })
+
+  it('flush during an edit session (Enter in the textarea) sends edited + deferred text and unsticks paused', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('draft text', 'manual', 1000)
+    hold.pause()
+    hold.setText('edited draft') // the user's edit
+    hold.pushFinal('and a spoken tail', 'manual', 1000) // defers
+    hold.flush() // Enter — no blur/resume ever comes (the textarea unmounts)
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('edited draft and a spoken tail')
+    // paused unstuck: the NEXT final buffers visibly again (no invisible deferred limbo).
+    hold.pushFinal('next utterance', 'manual', 1000)
+    expect(hold.pending()).toBe('next utterance')
+  })
+
+  it('a LIVE mode flip auto→manual cancels the counting-down send; manual→auto arms over the buffer (review W1)', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('almost sent', 'auto', 1000)
+    vi.advanceTimersByTime(900)
+    hold.modeChanged('manual', 1000) // Settings flip mid-countdown
+    vi.advanceTimersByTime(60_000)
+    expect(onSend).not.toHaveBeenCalled() // manual NEVER auto-sends — flip honored
+    hold.modeChanged('auto', 1000) // flip back with the buffer still pending
+    vi.advanceTimersByTime(1000)
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('almost sent') // doesn't sit forever
   })
 
   it('resume in manual mode never arms (blur just ends the edit session)', () => {

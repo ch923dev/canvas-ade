@@ -45,8 +45,14 @@ export function matchSendSpeech(text: string): boolean {
 }
 
 export interface UtteranceHold {
-  /** Append one final to the pending utterance; 'auto' (re)arms the hold timer. */
+  /** Append one final to the pending utterance; 'auto' (re)arms the hold timer. While
+   *  paused (edit session live) the final DEFERS to a side buffer instead — a controlled
+   *  textarea must never change under the user's caret — and folds in on resume/flush. */
   pushFinal(text: string, mode: JarvisListenMode, holdMs: number): void
+  /** The listen config changed LIVE (Settings flip): 'manual' must cancel an armed
+   *  countdown (nothing auto-sends after the flip); 'auto' arms over an already-pending
+   *  buffer so it doesn't sit forever waiting for a next final. */
+  modeChanged(mode: JarvisListenMode, holdMs: number): void
   /** Speech state changed: a non-empty partial means the user resumed talking — cancel
    *  the armed hold so the buffer keeps growing (the next final re-arms it). */
   touchPartial(speaking: boolean): void
@@ -71,6 +77,9 @@ export function createUtteranceHold(opts: {
   onChange?: (pending: string) => void
 }): UtteranceHold {
   let pending = ''
+  /** Finals spoken DURING an edit session park here (the textarea is a controlled input
+   *  bound to `pending` — mutating it mid-edit yanks the caret); folded in on resume/flush. */
+  let deferred = ''
   let timer: ReturnType<typeof setTimeout> | null = null
   /** Edit session live — the auto hold must not arm under the user's caret. */
   let paused = false
@@ -86,21 +95,37 @@ export function createUtteranceHold(opts: {
   }
   const send = (): void => {
     cancelTimer()
-    const text = pending
+    // A send ends any edit session (the textarea unmounts with the emptied buffer, so no
+    // blur/resume may ever come) — unstick `paused` here or later finals would defer
+    // into an invisible buffer forever.
+    paused = false
+    const text = joinFinal(pending, deferred)
+    deferred = ''
     setPending('')
     if (text) opts.onSend(text)
+  }
+  const arm = (mode: JarvisListenMode, holdMs: number): void => {
+    if (!paused && mode === 'auto' && pending) timer = setTimeout(send, holdMs)
   }
 
   return {
     pushFinal(text, mode, holdMs) {
+      if (paused) {
+        deferred = joinFinal(deferred, text)
+        return
+      }
       setPending(joinFinal(pending, text))
       cancelTimer()
-      if (!paused && mode === 'auto' && pending) timer = setTimeout(send, holdMs)
+      arm(mode, holdMs)
     },
     touchPartial(speaking) {
       // Only CANCEL on resumed speech — never re-arm here: the tail partial empties when
       // its final lands, and that final's own pushFinal owns the re-arm.
       if (speaking) cancelTimer()
+    },
+    modeChanged(mode, holdMs) {
+      cancelTimer()
+      arm(mode, holdMs)
     },
     pause() {
       paused = true
@@ -108,7 +133,12 @@ export function createUtteranceHold(opts: {
     },
     resume(mode, holdMs) {
       paused = false
-      if (mode === 'auto' && pending) timer = setTimeout(send, holdMs)
+      if (deferred) {
+        setPending(joinFinal(pending, deferred))
+        deferred = ''
+      }
+      cancelTimer()
+      arm(mode, holdMs)
     },
     setText(text) {
       setPending(text)
@@ -118,6 +148,7 @@ export function createUtteranceHold(opts: {
     clear() {
       cancelTimer()
       paused = false
+      deferred = ''
       setPending('')
     },
     pending: () => pending
