@@ -134,6 +134,31 @@ describe('createUtteranceHold (manual mode + flush/clear)', () => {
     expect(hold.pending()).toBe('next utterance')
   })
 
+  it('an UNRELATED config push (same mode+holdMs) never disturbs an armed countdown (review W3)', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('steady prompt', 'auto', 1000)
+    vi.advanceTimersByTime(900)
+    // e.g. the speaking-rate slider mid-drag: a flood of jarvis:config pushes with the
+    // listen fields UNCHANGED — the countdown must keep its original schedule.
+    hold.modeChanged('auto', 1000)
+    hold.modeChanged('auto', 1000)
+    vi.advanceTimersByTime(100)
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('steady prompt') // fired at the ORIGINAL 1000
+  })
+
+  it('a real holdMs change re-times the countdown to the new window', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('patient prompt', 'auto', 1000)
+    vi.advanceTimersByTime(900)
+    hold.modeChanged('auto', 5000) // the user dragged Patience up mid-countdown
+    vi.advanceTimersByTime(4900)
+    expect(onSend).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(100)
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('patient prompt')
+  })
+
   it('a LIVE mode flip auto→manual cancels the counting-down send; manual→auto arms over the buffer (review W1)', () => {
     const onSend = vi.fn()
     const hold = createUtteranceHold({ onSend })

@@ -83,6 +83,10 @@ export function createUtteranceHold(opts: {
   let timer: ReturnType<typeof setTimeout> | null = null
   /** Edit session live — the auto hold must not arm under the user's caret. */
   let paused = false
+  /** Last listen config seen — modeChanged() no-ops on unrelated jarvis:config pushes
+   *  (persona rename, speaking-rate slider…) so they never disturb an armed countdown. */
+  let lastMode: JarvisListenMode | null = null
+  let lastHoldMs = 0
 
   const cancelTimer = (): void => {
     if (timer !== null) clearTimeout(timer)
@@ -105,6 +109,8 @@ export function createUtteranceHold(opts: {
     if (text) opts.onSend(text)
   }
   const arm = (mode: JarvisListenMode, holdMs: number): void => {
+    lastMode = mode
+    lastHoldMs = holdMs
     if (!paused && mode === 'auto' && pending) timer = setTimeout(send, holdMs)
   }
 
@@ -124,6 +130,10 @@ export function createUtteranceHold(opts: {
       if (speaking) cancelTimer()
     },
     modeChanged(mode, holdMs) {
+      // Every jarvis:config:changed push lands here (the session can't tell which field
+      // moved) — an UNRELATED change (persona rename, speaking-rate slider mid-drag)
+      // must not cancel/reset an armed countdown. Only a real listen-config change acts.
+      if (mode === lastMode && holdMs === lastHoldMs) return
       cancelTimer()
       arm(mode, holdMs)
     },
