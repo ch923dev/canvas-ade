@@ -2779,3 +2779,35 @@ merged tree (the epic's one cross-OS payment) · title-stamped manual dev check 
 per-phase gates + user eyeballs recorded on each J-PR. Follow-ups filed (roadmap): visual
 numbered badges on candidate boards (design mock first) · JS sentencepiece for renamed-persona
 wake phrases.
+
+## PR #357 — feat(settings): Context·LLM model combobox + MAIN-side provider model catalog (2026-07-17, v0.22.2)
+
+Squash `6eca61b2` (branch `feat/llm-model-select` off `68309d80`). Replaces the free-text
+**Model** input in Settings › Context·LLM with a **type-to-filter combobox** fed by a new
+MAIN-side model catalog; free text stays first-class (no-key/offline/custom-id degrade to the
+old bare input).
+
+- **MAIN `llmModelsCatalog.ts` (new):** per-provider list fetchers behind injected `FetchLike` —
+  OpenRouter public (`supported_parameters`→⚒ tools, `context_length`) · OpenAI Bearer with
+  non-chat family filter · Anthropic `x-api-key`+version (`display_name` label, toolUse true) ·
+  local `{baseUrl}/models` keyless. Normalized `{id, label?, contextLength?, toolUse?}`; cloud
+  lists cached 1 h in `userData/llm-models-cache.json` (atomic, validated on read, per-provider
+  keys) with stale-cache fallback; local never cached. Bounds 2000 models / 256-char ids / 15 s
+  abort. BUG-001 loopback re-check on the local baseUrl; BUG-003 typed refusals only
+  (`no-key`/`no-base-url`/`provider-error`); `CANVAS_LLM_MOCK` deterministic catalog.
+- **IPC `llm:models:list`:** frame-guarded; renderer sends `{provider, refresh?}` only — key
+  (store-first) + baseUrl resolve MAIN-side; `VALID_PROVIDERS` guard. Preload `llm.models.list`
+  + mirrored types.
+- **`ModelCombobox.tsx` (new)** in LlmPane: aria combobox/listbox, keyboard nav, ctx/⚒ chips,
+  refresh footer with fetched-age, degrade hint rows, 200-row cap; Esc with the list open is
+  consumed (one Esc, one layer — Settings Modal survives).
+- **Review round 1 (2 warnings) fixed `a933f245`:** stale cross-provider fetch race → monotonic
+  `seq` ref + provider-value-keyed invalidation effect (regression test with manual resolvers);
+  first-keystroke filter wipe (openList's `setTyped(null)` winning the batch) → inline open via
+  `ensureLoaded()`. Round 2 clean (0/0), both fixes verified by the reviewer.
+
+**Verified:** cheap trio · zone units 246/246 · catalog 20 + combobox 17 + IPC +4 + preload +1 +
+LlmPane +1 tests · e2e `llmModelSelect.e2e.ts` @chrome (setLlmMock, green first run) · FULL e2e
+matrix at pre-push (300 passed, 8.5 m) · title-stamped manual dev check (`llm-model-select
+0.22.2`) user-eyeballed ("looks good to me"). Version 0.22.0 → **0.22.2** (0.22.1 held by the
+in-flight `feat/jarvis-llm-config` lane).
