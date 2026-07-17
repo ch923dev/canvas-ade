@@ -19,6 +19,12 @@ import {
   type SummarizeInput,
   type SummarizeResult
 } from './llmService'
+import {
+  listModels,
+  type FetchLike as ModelsFetchLike,
+  type ModelsCatalogDeps,
+  type ModelsListResult
+} from './llmModelsCatalog'
 
 /** Status surfaced to the renderer — provider/model + key presence, never key material. */
 export interface LlmStatus {
@@ -210,6 +216,30 @@ export function registerLlmHandlers(
     keyStore.clearKey(a.provider)
     return { ok: true }
   })
+
+  // Model-list catalog for the Settings combobox. The renderer sends { provider, refresh? } and
+  // NOTHING else — the key (keyForProvider, store-first) and the local baseUrl (persisted config)
+  // resolve MAIN-side only, so this channel can neither leak key material nor steer egress
+  // (BUG-001/BUG-003 disciplines live in llmModelsCatalog). The catalog issues GET requests (no
+  // body); the shared FetchLike transport handles them identically — the shapes differ only in
+  // the body field, hence the cast.
+  const catalogDeps: ModelsCatalogDeps = {
+    fetch: deps.fetch as unknown as ModelsFetchLike,
+    env: deps.env,
+    keyStore,
+    timeoutMs: injectedDeps?.timeoutMs
+  }
+  ipcMain.handle(
+    'llm:models:list',
+    async (e, a: { provider: ProviderName; refresh?: boolean }): Promise<ModelsListResult> => {
+      if (guard(e)) return { ok: false, reason: 'provider-error' }
+      // BUG-012 discipline: `provider` is unknown at runtime — an arbitrary key (e.g. '__proto__')
+      // must not reach the cache-file lookup. Unknown provider → typed refusal, no I/O.
+      if (!VALID_PROVIDERS.has(a?.provider as string))
+        return { ok: false, reason: 'provider-error' }
+      return listModels(userDataDir, a.provider, a.refresh === true, catalogDeps)
+    }
+  )
 
   ipcMain.handle(
     'llm:setConfig',

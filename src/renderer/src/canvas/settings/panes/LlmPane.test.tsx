@@ -20,7 +20,9 @@ const llm = {
   status: vi.fn(),
   setKey: vi.fn(),
   clearKey: vi.fn(),
-  setConfig: vi.fn()
+  setConfig: vi.fn(),
+  // Model combobox (lazy — only called when the list is opened).
+  models: { list: vi.fn() }
 }
 
 beforeEach(() => {
@@ -37,6 +39,11 @@ beforeEach(() => {
   llm.setKey.mockResolvedValue({ ok: true })
   llm.clearKey.mockResolvedValue({ ok: true })
   llm.setConfig.mockResolvedValue({ ok: true })
+  llm.models.list.mockResolvedValue({
+    ok: true,
+    fetchedAt: Date.now(),
+    models: [{ id: 'picked/from-list', contextLength: 128_000, toolUse: true }]
+  })
   ;(window as unknown as { api: { llm: typeof llm } }).api = { llm }
 })
 
@@ -89,6 +96,22 @@ it('Save writes config and the key when a key is entered, then shows the Saved i
   // The pane stays open and confirms in place (no onClose) — the key field is cleared on success.
   await waitFor(() => expect(document.querySelector('[data-test="settings-saved"]')).not.toBeNull())
   expect(key.value).toBe('')
+})
+
+it('picking a model from the combobox updates the field and Save persists it', async () => {
+  render(<LlmPane />)
+  const model = (await screen.findByLabelText(/model/i)) as HTMLInputElement
+  await waitFor(() => expect(model.value).toBe('google/gemini-2.5-flash'))
+  fireEvent.click(model) // opens the list → lazy fetch
+  await waitFor(() => expect(llm.models.list).toHaveBeenCalledWith({ provider: 'openrouter' }))
+  fireEvent.click(await screen.findByText('picked/from-list'))
+  expect(model.value).toBe('picked/from-list')
+  fireEvent.click(screen.getByRole('button', { name: /save/i }))
+  await waitFor(() =>
+    expect(llm.setConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'picked/from-list' })
+    )
+  )
 })
 
 it('Save does not call setKey when the key field is empty', async () => {

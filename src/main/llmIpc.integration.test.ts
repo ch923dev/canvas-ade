@@ -546,6 +546,98 @@ describe('registerLlmHandlers — key channels', () => {
     }
   })
 
+  it('models:list serves the deterministic mock catalog under CANVAS_LLM_MOCK (zero egress)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llm-models-mock-'))
+    const capMock = createIpcCapture()
+    registerLlmHandlers(capMock.ipcMain, mainWin, dir, {
+      fetch: noNetwork,
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    const r = (await capMock.invoke('llm:models:list', { provider: 'openrouter' })) as {
+      ok: boolean
+      models: { id: string }[]
+    }
+    expect(r.ok).toBe(true)
+    expect(r.models.map((m) => m.id)).toContain('mock/model-a')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('models:list fetches + parses a real-shape list through the handler', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llm-models-real-'))
+    const capReal = createIpcCapture()
+    registerLlmHandlers(capReal.ipcMain, mainWin, dir, {
+      fetch: (() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              data: [
+                {
+                  id: 'google/gemini-2.5-flash',
+                  name: 'Gemini 2.5 Flash',
+                  context_length: 1_048_576,
+                  supported_parameters: ['tools']
+                }
+              ]
+            })
+        })) as never,
+      env: {}
+    })
+    const r = (await capReal.invoke('llm:models:list', { provider: 'openrouter' })) as {
+      ok: boolean
+      models: { id: string; toolUse?: boolean }[]
+    }
+    expect(r.ok).toBe(true)
+    expect(r.models).toEqual([
+      {
+        id: 'google/gemini-2.5-flash',
+        label: 'Gemini 2.5 Flash',
+        contextLength: 1_048_576,
+        toolUse: true
+      }
+    ])
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('models:list rejects a foreign sender and an unknown provider (no fetch, no I/O)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llm-models-guard-'))
+    let fetched = false
+    const capG = createIpcCapture()
+    registerLlmHandlers(capG.ipcMain, mainWin, dir, {
+      fetch: (() => {
+        fetched = true
+        throw new Error('must not fetch')
+      }) as never,
+      env: {}
+    })
+    expect(
+      await capG.invokeAs(foreignEvent, 'llm:models:list', { provider: 'openrouter' })
+    ).toEqual({ ok: false, reason: 'provider-error' })
+    // BUG-012 discipline: '__proto__' / unknown providers refused before any cache/file lookup.
+    expect(await capG.invoke('llm:models:list', { provider: '__proto__' } as never)).toEqual({
+      ok: false,
+      reason: 'provider-error'
+    })
+    expect(await capG.invoke('llm:models:list', null as never)).toEqual({
+      ok: false,
+      reason: 'provider-error'
+    })
+    expect(fetched).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('models:list returns no-key for a keyed provider with no key (key resolved MAIN-side)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llm-models-nokey-'))
+    const capK = createIpcCapture()
+    registerLlmHandlers(capK.ipcMain, mainWin, dir, { fetch: noNetwork, env: {} })
+    expect(await capK.invoke('llm:models:list', { provider: 'anthropic' })).toEqual({
+      ok: false,
+      reason: 'no-key'
+    })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   // BUG-040: setConfig must validate provider against VALID_PROVIDERS and cap model string length
   it('setConfig rejects unknown provider and over-long model string (BUG-040)', async () => {
     const { cap, dir } = setupKeyed(fakeEncryptor())

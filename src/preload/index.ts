@@ -348,6 +348,19 @@ export interface LlmStatus {
 
 export type LlmWriteResult = { ok: boolean; reason?: string }
 
+// ── Model-select combobox — mirrors main `LlmModelEntry` / `ModelsListResult` ──
+export interface LlmModelEntry {
+  id: string
+  label?: string
+  contextLength?: number
+  /** Tri-state: true/false when the provider reports it, absent when unknown. */
+  toolUse?: boolean
+}
+
+export type LlmModelsListResult =
+  | { ok: true; models: LlmModelEntry[]; fetchedAt: number; stale?: true }
+  | { ok: false; reason: 'no-key' | 'no-base-url' | 'provider-error' }
+
 // ── Terminal-recap T12 + recap redesign S1: consent state, bundle mirrors, and the recap
 // namespace live in recapApi.ts (max-lines ratchet; the terminalApi.ts precedent). Types are
 // re-exported below so existing importers keep their paths.
@@ -860,7 +873,15 @@ const api = {
       model: string
       baseUrl?: string
       maxCallsPerDay?: number
-    }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args)
+    }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args),
+    // Model-select combobox: list the provider's selectable models. The renderer sends
+    // { provider, refresh? } ONLY — key + local baseUrl resolve MAIN-side (SSRF/key discipline).
+    models: {
+      list: (args: {
+        provider: LlmStatus['provider']
+        refresh?: boolean
+      }): Promise<LlmModelsListResult> => ipcRenderer.invoke('llm:models:list', args)
+    }
   },
 
   // ── Terminal-recap T12: consent + learned/updated pushes (factored to recapApi.ts) ──
