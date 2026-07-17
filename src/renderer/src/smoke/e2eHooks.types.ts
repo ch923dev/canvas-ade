@@ -393,6 +393,8 @@ export interface CanvasE2E {
     lastAssistantText: string
     panelOpen: boolean
     lastError: string | null
+    /** Listen-hold: buffered finals awaiting the send (the panel's composing row). */
+    composing: string
     /** J4: the ACTIVE turn's tool-act rows + whether a confirm gate is parked. */
     acts: Array<{ actId: number; name: string; phase: string; summary: string }>
     pendingConfirm: { title: string; body: string } | null

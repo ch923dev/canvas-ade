@@ -26,6 +26,7 @@ interface JarvisProbe {
   lastAssistantText: string
   panelOpen: boolean
   lastError: string | null
+  composing: string
 }
 
 const jarvisState = (page: Page): Promise<JarvisProbe> =>
@@ -38,9 +39,12 @@ const voiceCapturing = (page: Page): Promise<boolean> =>
   page.evaluate(() => (globalThis as any).__canvasE2E.voiceState().capturing)
 
 test.describe('@voice jarvis converse (stub voice → mock brain → panel transcript)', () => {
-  test.beforeEach(async ({ electronApp }) => {
+  test.beforeEach(async ({ page, electronApp }) => {
     await mainCall(electronApp, 'voiceStubSet', true)
     await mainCall(electronApp, 'setLlmMock', true)
+    // The shipped DEFAULT is 'manual' (nothing sends un-confirmed); the auto-flow specs
+    // in this suite opt into 'auto' explicitly. The manual spec overrides per-test.
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ listenMode: 'auto' }))
   })
   test.afterEach(async ({ page, electronApp }) => {
     // End any live capture so no session/consumer leaks into the next spec (resetAll
@@ -48,7 +52,9 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     // opt-in persists in userData — force it back off so no later spec inherits a live
     // closed-panel listener.
     await page
-      .evaluate(() => (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: false }))
+      .evaluate(() =>
+        (globalThis as any).api.jarvis.config.set({ wakeWordEnabled: false, listenMode: 'auto' })
+      )
       .catch(() => {})
     await page.evaluate(() => (globalThis as any).api.voice.stop()).catch(() => {})
     await mainCall(electronApp, 'setLlmMock', false)
@@ -144,6 +150,81 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
     await expect.poll(async () => (await jarvisState(page)).converseMode).toBe(false)
     expect(await evalIn(page, 'window.__canvasE2E.getSelection()')).toEqual([id])
+  })
+
+  test('listen-hold (auto): finals split by a thinking pause merge into ONE turn', async ({
+    page,
+    electronApp
+  }) => {
+    // Two finals ~1.4 s apart — the pre-fix behavior shipped the first alone and let the
+    // second SUPERSEDE it (the "Jarvis cuts me off" bug). The hold must buffer both.
+    await mainCall(electronApp, 'voiceStubSet', true, [
+      { atFrame: 2, t: 'partial', text: 'add a note' },
+      { atFrame: 8, t: 'final', text: 'add a note' },
+      { atFrame: 20, t: 'partial', text: 'about the release' },
+      { atFrame: 26, t: 'final', text: 'about the release' }
+    ])
+    await page.locator('[data-test="jarvis-edge-tab"]').click()
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+    // The first fragment BUFFERS into the composing row instead of shipping alone.
+    await expect
+      .poll(async () => (await jarvisState(page)).composing, { timeout: 10_000 })
+      .toContain('add a note')
+    await expect(page.locator('[data-test="jarvis-composing"]')).toBeVisible()
+    // …then the merged utterance sends as ONE turn after the hold window.
+    await expect
+      .poll(async () => (await jarvisState(page)).lastUserText, { timeout: 15_000 })
+      .toBe('add a note about the release')
+    await expect
+      .poll(async () => (await jarvisState(page)).lastAssistantText, { timeout: 15_000 })
+      .toContain('Understood: add a note about the release')
+    const s = await jarvisState(page)
+    expect(s.composing).toBe('') // the buffer emptied into the turn
+    expect(s.turnCount).toBeGreaterThanOrEqual(2)
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
+  })
+
+  test('listen-hold (manual): nothing sends until the Send button ships the buffer', async ({
+    page
+  }) => {
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ listenMode: 'manual' }))
+    await page.locator('[data-test="jarvis-edge-tab"]').click()
+    await expect
+      .poll(async () => (await jarvisState(page)).converseMode, { timeout: 10_000 })
+      .toBe(true)
+    await expect
+      .poll(async () => (await jarvisState(page)).composing, { timeout: 15_000 })
+      .toBe(STUB_FINAL)
+    // Well past the default auto window: still composing — manual NEVER auto-sends.
+    await page.waitForTimeout(3500)
+    const parked = await jarvisState(page)
+    expect(parked.activeTurnId).toBeNull()
+    expect(parked.lastUserText).toBe('')
+    expect(parked.composing).toBe(STUB_FINAL)
+    // EDITABLE buffer: the composing textarea is the source of truth — fix the
+    // transcription, then Send ships the EDITED text (never the raw finals).
+    const input = page.locator('[data-test="jarvis-compose-input"]')
+    await expect(input).toHaveValue(STUB_FINAL)
+    await input.fill('refactor the preview cap and add a changelog line')
+    // Esc inside the editor only leaves the edit — the buffer and panel SURVIVE.
+    await page.keyboard.press('Escape')
+    expect((await jarvisState(page)).panelOpen).toBe(true)
+    expect((await jarvisState(page)).composing).toBe(
+      'refactor the preview cap and add a changelog line'
+    )
+    // The panel Send button is the manual send (a spoken "send it" lands the same path).
+    await page.locator('[data-test="jarvis-send"]').click()
+    await expect
+      .poll(async () => (await jarvisState(page)).lastUserText, { timeout: 15_000 })
+      .toBe('refactor the preview cap and add a changelog line')
+    await expect
+      .poll(async () => (await jarvisState(page)).lastAssistantText, { timeout: 15_000 })
+      .toContain('Understood: refactor the preview cap and add a changelog line')
+    await page.keyboard.press('Escape')
+    await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
   })
 
   test('mic strip disarms and re-arms without closing the panel (E2E-1)', async ({ page }) => {

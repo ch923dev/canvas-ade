@@ -365,6 +365,46 @@ export function PersonaPane(): ReactElement | null {
       </label>
 
       <label style={pane.field}>
+        <span style={pane.label}>Listening</span>
+        <Seg
+          value={cfg.listenMode}
+          testId="persona-listen-mode"
+          options={[
+            { id: 'auto', label: 'Auto-send on pause' },
+            { id: 'manual', label: 'Wait for “send it”' }
+          ]}
+          onPick={(v) => patch({ listenMode: v })}
+        />
+        <span style={pane.hint}>
+          {cfg.listenMode === 'auto'
+            ? `pauses no longer cut you off — ${cfg.name} sends after the patience window`
+            : 'nothing sends until you say “send it” / “go ahead” or press Send in the panel'}
+        </span>
+      </label>
+
+      {cfg.listenMode === 'auto' && (
+        <label style={pane.field}>
+          <span style={pane.label}>Patience</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <input
+              aria-label="Listening patience"
+              type="range"
+              min={1000}
+              max={10000}
+              step={500}
+              value={cfg.listenHoldMs}
+              style={{ width: 120, accentColor: 'var(--accent)' }}
+              onChange={(e) => patch({ listenHoldMs: Number(e.target.value) })}
+            />
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--text-2)' }}>
+              {(cfg.listenHoldMs / 1000).toFixed(1)} s
+            </span>
+          </span>
+          <span style={pane.hint}>silence after you stop speaking before the prompt sends</span>
+        </label>
+      )}
+
+      <label style={pane.field}>
         <span style={pane.label}>Announcements</span>
         <Seg
           value={cfg.announcePolicy}

@@ -41,7 +41,9 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
       voiceSid: 3,
       announcePolicy: 'all',
       historyMode: 'off',
-      wakeWordEnabled: true
+      wakeWordEnabled: true,
+      listenMode: 'manual',
+      listenHoldMs: 4000
     }
     writeJarvisConfig(dir, cfg)
     expect(readJarvisConfig(dir)).toEqual(cfg)
@@ -73,6 +75,19 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
 
   it("historyMode 'project' is a first-class value (D4′ J5) and survives repair", () => {
     expect(repairJarvisConfig({ historyMode: 'project' }).historyMode).toBe('project')
+  })
+
+  it('listen-hold repair: mode enum + holdMs clamped/rounded into [1000, 10000]', () => {
+    expect(repairJarvisConfig({ listenMode: 'auto' }).listenMode).toBe('auto')
+    // Default AND repair fallback are 'manual' (user decision): nothing ships un-confirmed.
+    expect(repairJarvisConfig({ listenMode: 'shouty' }).listenMode).toBe('manual')
+    expect(repairJarvisConfig({}).listenMode).toBe('manual')
+    expect(repairJarvisConfig({}).listenHoldMs).toBe(2500)
+    expect(repairJarvisConfig({ listenHoldMs: 120 }).listenHoldMs).toBe(1000)
+    expect(repairJarvisConfig({ listenHoldMs: 99999 }).listenHoldMs).toBe(10000)
+    expect(repairJarvisConfig({ listenHoldMs: 2500.6 }).listenHoldMs).toBe(2501)
+    expect(repairJarvisConfig({ listenHoldMs: 'slow' }).listenHoldMs).toBe(2500)
+    expect(repairJarvisConfig({ listenHoldMs: NaN }).listenHoldMs).toBe(2500)
   })
 
   it('clamps speakingRate into [0.5, 2] and trims/caps the name', () => {

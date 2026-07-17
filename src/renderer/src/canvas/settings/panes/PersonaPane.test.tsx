@@ -29,7 +29,9 @@ const CFG: JarvisConfigView = {
   verbosity: 'concise',
   announcePolicy: 'attention',
   historyMode: 'session',
-  wakeWordEnabled: true
+  wakeWordEnabled: true,
+  listenMode: 'auto',
+  listenHoldMs: 2500
 }
 
 function mockApi(): void {

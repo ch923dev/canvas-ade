@@ -17,7 +17,11 @@ import { speakText } from '../voice/ttsSession'
 import { startNeuralCore, paintNeuralCoreFrame, type CoreMode } from './neuralCore'
 import {
   closeJarvisPanel,
+  editComposing,
   openJarvisPanel,
+  pauseComposing,
+  rearmComposing,
+  sendComposingNow,
   toggleConverse,
   toggleJarvisPanel,
   useJarvisController
@@ -117,6 +121,8 @@ export function JarvisPanel(): ReactElement | null {
   const lastError = useJarvisStore((s) => s.lastError)
   const personaName = useJarvisStore((s) => s.personaName)
   const speechReady = useJarvisStore((s) => s.speechReady)
+  const composing = useJarvisStore((s) => s.composing)
+  const listenMode = useJarvisStore((s) => s.listenMode)
   const ttsSpeaking = useTtsStore((s) => s.speaking)
   const capturing = useVoiceStore((s) => s.capturing)
   const partial = useVoiceStore((s) => s.partial)
@@ -242,6 +248,13 @@ export function JarvisPanel(): ReactElement | null {
       if (!(e.target instanceof Element) || !asideRef.current?.contains(e.target)) return
       e.preventDefault()
       e.stopPropagation()
+      // Esc INSIDE the composing editor only leaves the edit (blur) — closing the panel
+      // here would discard the very buffer the user is mid-edit on. A second Esc (target
+      // now the body) closes as usual.
+      if (e.target instanceof HTMLElement && e.target.dataset.test === 'jarvis-compose-input') {
+        e.target.blur()
+        return
+      }
       closeJarvisPanel()
     }
     window.addEventListener('keydown', onCaptureKey, true)
@@ -252,7 +265,7 @@ export function JarvisPanel(): ReactElement | null {
   useEffect(() => {
     const el = bodyRef.current
     if (el && panelOpen) el.scrollTop = el.scrollHeight
-  }, [panelOpen, turns.length, streamText, lastError, acts, pendingConfirm])
+  }, [panelOpen, turns.length, streamText, lastError, acts, pendingConfirm, composing])
 
   // D8 spoken announce (J4): a NEW attention mark may speak — grounded in the event
   // (board title + kind), per the persisted policy: 'all' speaks every event,
@@ -514,6 +527,49 @@ export function JarvisPanel(): ReactElement | null {
                   </div>
                 )
               )}
+            </div>
+          )}
+          {/* Listen-hold composing row: buffered finals awaiting the send, EDITABLE (the
+              dictation-draft discipline — the textarea is the source of truth; the next
+              voice final joins the edited text). Rendered whenever the buffer is
+              non-empty (a manual-mode buffer must stay visible even while a superseding
+              reply streams — it is unsent user text). */}
+          {composing && (
+            <div className="jp-composing" data-test="jarvis-composing">
+              <div className="jp-you">
+                <b>You</b> · composing
+              </div>
+              <textarea
+                className="jp-comp-input"
+                data-test="jarvis-compose-input"
+                aria-label="Composing prompt — edit before sending"
+                value={composing}
+                onChange={(e) => editComposing(e.target.value)}
+                onFocus={pauseComposing}
+                onBlur={rearmComposing}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    sendComposingNow()
+                  }
+                }}
+              />
+              <div className="jp-comp-bar">
+                <span className="jp-comp-hint">
+                  {listenMode === 'manual'
+                    ? 'holds until you confirm — say “send it”, press Enter, or Send'
+                    : 'pausing sends — keep talking or edit; “send it” sends now'}
+                </span>
+                <button
+                  type="button"
+                  className="jp-comp-send"
+                  data-test="jarvis-send"
+                  onClick={sendComposingNow}
+                  title="Send this to the brain now"
+                >
+                  Send ▸
+                </button>
+              </div>
             </div>
           )}
           {!streaming && mode === 'listening' && partial && (

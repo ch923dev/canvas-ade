@@ -18,6 +18,10 @@ export interface JarvisConfigView {
   announcePolicy: 'all' | 'attention' | 'chips-only'
   historyMode: 'project' | 'session' | 'off'
   wakeWordEnabled: boolean
+  /** Listen-hold (converse utterance completion): 'auto' sends after listenHoldMs of
+   *  silence; 'manual' waits for a send word / the panel Send button. */
+  listenMode: 'auto' | 'manual'
+  listenHoldMs: number
 }
 
 export interface JarvisStatusView {

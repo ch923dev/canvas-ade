@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, fireEvent, cleanup, act } from '@testing-library/react'
 import { VoicePill, clampPillPos, defaultPillPos, PILL_W, DRAG_THRESHOLD } from './VoicePill'
 import { useVoiceStore } from '../store/voiceStore'
+import { useJarvisStore } from '../store/jarvisStore'
 
 vi.mock('./voiceSession', () => ({
   startVoice: vi.fn(),
@@ -41,6 +42,7 @@ beforeEach(() => {
     draft: '',
     partial: ''
   })
+  useJarvisStore.setState({ converseMode: false })
 })
 
 afterEach(() => {
@@ -103,6 +105,57 @@ describe('VoicePill — drag vs click', () => {
   it('restores a persisted position clamped to the current viewport', async () => {
     const pill = await mountPill({ x: 99999, y: 99999 }) // e.g. saved on a bigger display
     expect(pill.style.left).toBe(`${window.innerWidth - PILL_W - 8}px`)
+  })
+})
+
+describe('VoicePill — session babysitter (silence stop + cap, converse carve-out)', () => {
+  it('dictation: sustained silence past the stop window kills capture', async () => {
+    vi.useFakeTimers()
+    await mountPill()
+    act(() => {
+      useVoiceStore.setState({
+        capturing: true,
+        captureStartedAt: Date.now(),
+        lastVoiceAt: Date.now() - 16_000
+      })
+    })
+    act(() => void vi.advanceTimersByTime(1100))
+    expect(stopVoice).toHaveBeenCalled()
+  })
+
+  it('converse mode: NEITHER the silence stop NOR the 2 min cap fires — the panel is the stop contract (listen-hold dev-check finding: mic went idle after every turn)', async () => {
+    vi.useFakeTimers()
+    await mountPill()
+    act(() => {
+      useJarvisStore.setState({ converseMode: true })
+      useVoiceStore.setState({
+        capturing: true,
+        captureStartedAt: Date.now() - 10 * 60_000, // far past the hard cap
+        lastVoiceAt: Date.now() - 60_000 // far past the silence window
+      })
+    })
+    act(() => void vi.advanceTimersByTime(5000))
+    expect(stopVoice).not.toHaveBeenCalled()
+  })
+
+  it('converse disarm hands the babysitter back (a stale-silent session then stops)', async () => {
+    vi.useFakeTimers()
+    await mountPill()
+    act(() => {
+      useJarvisStore.setState({ converseMode: true })
+      useVoiceStore.setState({
+        capturing: true,
+        captureStartedAt: Date.now(),
+        lastVoiceAt: Date.now() - 16_000
+      })
+    })
+    act(() => void vi.advanceTimersByTime(2000))
+    expect(stopVoice).not.toHaveBeenCalled()
+    act(() => {
+      useJarvisStore.setState({ converseMode: false })
+    })
+    act(() => void vi.advanceTimersByTime(1100))
+    expect(stopVoice).toHaveBeenCalled()
   })
 })
 

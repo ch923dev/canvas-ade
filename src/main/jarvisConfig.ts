@@ -18,6 +18,19 @@ export type JarvisAnnouncePolicy = 'all' | 'attention' | 'chips-only'
  *  gated per project, jarvisHistoryStore); 'session' keeps it in MAIN memory only; 'off'
  *  sends no history to the model at all. */
 export type JarvisHistoryMode = 'project' | 'session' | 'off'
+/** Listen-hold: how converse mode decides an utterance is COMPLETE before it goes to the
+ *  brain. STT finals fire on ~0.8–1 s pauses (dictation-tuned — harmless there, they only
+ *  append to a draft), so converse buffers them instead of sending each fragment:
+ *  'auto' sends the buffer after `listenHoldMs` of continued silence (speech resets it);
+ *  'manual' never auto-sends — the user says a send word or presses Send in the panel.
+ *  DEFAULT IS 'manual' (user decision 2026-07-17): an auto window kept cutting real
+ *  prompts short — nothing ships until the user explicitly confirms. */
+export type JarvisListenMode = 'auto' | 'manual'
+
+/** Listen-hold patience bounds/default (ms of post-final silence before an auto send). */
+export const MIN_LISTEN_HOLD_MS = 1000
+export const MAX_LISTEN_HOLD_MS = 10000
+export const DEFAULT_LISTEN_HOLD_MS = 2500
 
 /** Persona free-text cap — user-trusted but still bounded (PLAN §7 Security). */
 export const MAX_CUSTOM_TONE_LEN = 1000
@@ -42,6 +55,10 @@ export interface JarvisConfig {
   /** J5 D3: the opt-in wake word (OFF by default). Its SOLE power is opening the panel
    *  (KICKOFF-PANEL §3 carve-out) — turns still require the open panel. */
   wakeWordEnabled: boolean
+  /** How converse decides the utterance is done (see JarvisListenMode). */
+  listenMode: JarvisListenMode
+  /** 'auto' patience: ms of silence after the last final before the buffer sends. */
+  listenHoldMs: number
 }
 /* Retired (panel surface rev, 2026-07-13): `islandPosition` — the island is gone and the
  * panel docks. Retired (shared Context·LLM rewire, 2026-07-17): `model` — the brain now
@@ -63,7 +80,9 @@ export function jarvisDefaults(): JarvisConfig {
     verbosity: 'concise',
     announcePolicy: 'attention',
     historyMode: 'session',
-    wakeWordEnabled: false
+    wakeWordEnabled: false,
+    listenMode: 'manual',
+    listenHoldMs: DEFAULT_LISTEN_HOLD_MS
   }
 }
 
@@ -107,7 +126,12 @@ export function repairJarvisConfig(p: unknown): JarvisConfig {
       d.announcePolicy
     ),
     historyMode: optEnum(o.historyMode, ['project', 'session', 'off'] as const, d.historyMode),
-    wakeWordEnabled: o.wakeWordEnabled === true // opt-in: anything but true is false
+    wakeWordEnabled: o.wakeWordEnabled === true, // opt-in: anything but true is false
+    listenMode: optEnum(o.listenMode, ['auto', 'manual'] as const, d.listenMode),
+    listenHoldMs:
+      typeof o.listenHoldMs === 'number' && Number.isFinite(o.listenHoldMs)
+        ? Math.min(MAX_LISTEN_HOLD_MS, Math.max(MIN_LISTEN_HOLD_MS, Math.round(o.listenHoldMs)))
+        : d.listenHoldMs
   }
 }
 
