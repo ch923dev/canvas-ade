@@ -39,9 +39,12 @@ const voiceCapturing = (page: Page): Promise<boolean> =>
   page.evaluate(() => (globalThis as any).__canvasE2E.voiceState().capturing)
 
 test.describe('@voice jarvis converse (stub voice → mock brain → panel transcript)', () => {
-  test.beforeEach(async ({ electronApp }) => {
+  test.beforeEach(async ({ page, electronApp }) => {
     await mainCall(electronApp, 'voiceStubSet', true)
     await mainCall(electronApp, 'setLlmMock', true)
+    // The shipped DEFAULT is 'manual' (nothing sends un-confirmed); the auto-flow specs
+    // in this suite opt into 'auto' explicitly. The manual spec overrides per-test.
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ listenMode: 'auto' }))
   })
   test.afterEach(async ({ page, electronApp }) => {
     // End any live capture so no session/consumer leaks into the next spec (resetAll
@@ -201,14 +204,25 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     expect(parked.activeTurnId).toBeNull()
     expect(parked.lastUserText).toBe('')
     expect(parked.composing).toBe(STUB_FINAL)
+    // EDITABLE buffer: the composing textarea is the source of truth — fix the
+    // transcription, then Send ships the EDITED text (never the raw finals).
+    const input = page.locator('[data-test="jarvis-compose-input"]')
+    await expect(input).toHaveValue(STUB_FINAL)
+    await input.fill('refactor the preview cap and add a changelog line')
+    // Esc inside the editor only leaves the edit — the buffer and panel SURVIVE.
+    await page.keyboard.press('Escape')
+    expect((await jarvisState(page)).panelOpen).toBe(true)
+    expect((await jarvisState(page)).composing).toBe(
+      'refactor the preview cap and add a changelog line'
+    )
     // The panel Send button is the manual send (a spoken "send it" lands the same path).
     await page.locator('[data-test="jarvis-send"]').click()
     await expect
       .poll(async () => (await jarvisState(page)).lastUserText, { timeout: 15_000 })
-      .toBe(STUB_FINAL)
+      .toBe('refactor the preview cap and add a changelog line')
     await expect
       .poll(async () => (await jarvisState(page)).lastAssistantText, { timeout: 15_000 })
-      .toContain(MOCK_REPLY_HEAD)
+      .toContain('Understood: refactor the preview cap and add a changelog line')
     await page.keyboard.press('Escape')
     await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
   })

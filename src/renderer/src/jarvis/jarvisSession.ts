@@ -29,8 +29,9 @@ let voiceOpts: { sid?: number; speed?: number } = {}
  *  (review finding on PR #339). */
 let speakEpoch = 0
 
-/** Listen-hold config mirror (arm-time status + config:changed pushes keep it fresh). */
-let listenCfg: { mode: JarvisListenMode; holdMs: number } = { mode: 'auto', holdMs: 2500 }
+/** Listen-hold config mirror (arm-time status + config:changed pushes keep it fresh).
+ *  'manual' fallback matches jarvisDefaults — fail toward never-auto-sending. */
+let listenCfg: { mode: JarvisListenMode; holdMs: number } = { mode: 'manual', holdMs: 2500 }
 /** The converse utterance buffer: finals accumulate here until the hold decides the
  *  prompt is DONE (auto silence window / manual send) — the "Jarvis cut me off" fix. */
 const hold = createUtteranceHold({
@@ -38,14 +39,30 @@ const hold = createUtteranceHold({
   onChange: (pending) => useJarvisStore.getState().setComposing(pending)
 })
 
-/** Panel Send button — ship the composing buffer now (no-op when empty). */
+/** Panel Send button / Enter in the composing editor — ship the buffer now (no-op empty). */
 export function sendComposingNow(): void {
   hold.flush()
 }
 
+/** Composing editor edit — the textarea is the source of truth for the buffered text
+ *  (the voiceStore `setDraft` discipline); the NEXT voice final joins the edited text. */
+export function editComposing(text: string): void {
+  hold.setText(text)
+}
+
+/** Composing editor focus — an armed auto hold must never fire under the user's caret. */
+export function pauseComposing(): void {
+  hold.pause()
+}
+
+/** Composing editor blur — 'auto' mode re-arms its window over the (edited) buffer. */
+export function rearmComposing(): void {
+  hold.resume(listenCfg.mode, listenCfg.holdMs)
+}
+
 function applyListenConfig(cfg: { listenMode?: JarvisListenMode; listenHoldMs?: number }): void {
   listenCfg = {
-    mode: cfg.listenMode ?? 'auto',
+    mode: cfg.listenMode ?? 'manual',
     holdMs: cfg.listenHoldMs ?? 2500
   }
   useJarvisStore.getState().setListenMode(listenCfg.mode)

@@ -99,6 +99,50 @@ describe('createUtteranceHold (manual mode + flush/clear)', () => {
     expect(onSend).toHaveBeenCalledOnce()
   })
 
+  it('pause (edit focus) cancels the hold AND blocks arming from mid-edit finals; resume re-arms', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('start of prompt', 'auto', 1000)
+    hold.pause() // user clicked into the composing editor
+    vi.advanceTimersByTime(5000)
+    expect(onSend).not.toHaveBeenCalled()
+    hold.pushFinal('spoken while editing', 'auto', 1000) // a mid-edit final must not arm
+    vi.advanceTimersByTime(5000)
+    expect(onSend).not.toHaveBeenCalled()
+    hold.resume('auto', 1000) // blur — the window re-arms over the whole buffer
+    vi.advanceTimersByTime(1000)
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('start of prompt spoken while editing')
+  })
+
+  it('resume in manual mode never arms (blur just ends the edit session)', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('a manual prompt', 'manual', 1000)
+    hold.pause()
+    hold.resume('manual', 1000)
+    vi.advanceTimersByTime(60_000)
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('setText replaces the buffer (user edit); the NEXT final joins the edited text', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.pushFinal('recognized txet', 'manual', 1000)
+    hold.setText('recognized text') // the user fixed the transcription
+    expect(hold.pending()).toBe('recognized text')
+    hold.pushFinal('and more speech', 'manual', 1000)
+    hold.flush()
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('recognized text and more speech')
+  })
+
+  it('setText never arms a timer, even in auto mode (edits are not speech)', () => {
+    const onSend = vi.fn()
+    const hold = createUtteranceHold({ onSend })
+    hold.setText('typed from scratch')
+    vi.advanceTimersByTime(60_000)
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
   it('clear discards the buffer and the armed timer (converse teardown)', () => {
     const onSend = vi.fn()
     const hold = createUtteranceHold({ onSend })

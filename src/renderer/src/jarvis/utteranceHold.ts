@@ -50,6 +50,14 @@ export interface UtteranceHold {
   /** Speech state changed: a non-empty partial means the user resumed talking — cancel
    *  the armed hold so the buffer keeps growing (the next final re-arms it). */
   touchPartial(speaking: boolean): void
+  /** The user is EDITING the buffer (composing textarea focus): cancel any armed hold
+   *  and block auto re-arm — a mid-edit final must never ship a half-edited prompt. */
+  pause(): void
+  /** Editing ended (blur): unblock, and in 'auto' mode re-arm over the current buffer. */
+  resume(mode: JarvisListenMode, holdMs: number): void
+  /** Replace the pending text with the user's edit (never arms a timer — edits are not
+   *  speech; pair with pause()/resume() around the edit session). */
+  setText(text: string): void
   /** Send the pending utterance NOW (send word / panel button). No-op when empty. */
   flush(): void
   /** Discard the pending utterance (disarm / panel close). */
@@ -64,6 +72,8 @@ export function createUtteranceHold(opts: {
 }): UtteranceHold {
   let pending = ''
   let timer: ReturnType<typeof setTimeout> | null = null
+  /** Edit session live — the auto hold must not arm under the user's caret. */
+  let paused = false
 
   const cancelTimer = (): void => {
     if (timer !== null) clearTimeout(timer)
@@ -85,16 +95,29 @@ export function createUtteranceHold(opts: {
     pushFinal(text, mode, holdMs) {
       setPending(joinFinal(pending, text))
       cancelTimer()
-      if (mode === 'auto' && pending) timer = setTimeout(send, holdMs)
+      if (!paused && mode === 'auto' && pending) timer = setTimeout(send, holdMs)
     },
     touchPartial(speaking) {
       // Only CANCEL on resumed speech — never re-arm here: the tail partial empties when
       // its final lands, and that final's own pushFinal owns the re-arm.
       if (speaking) cancelTimer()
     },
+    pause() {
+      paused = true
+      cancelTimer()
+    },
+    resume(mode, holdMs) {
+      paused = false
+      if (mode === 'auto' && pending) timer = setTimeout(send, holdMs)
+    },
+    setText(text) {
+      setPending(text)
+      cancelTimer()
+    },
     flush: send,
     clear() {
       cancelTimer()
+      paused = false
       setPending('')
     },
     pending: () => pending

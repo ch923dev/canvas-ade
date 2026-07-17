@@ -51,8 +51,11 @@ async function openPanel(page: Page): Promise<void> {
 }
 
 test.describe('@voice jarvis hands (voice → tool call → confirm gate → canvas)', () => {
-  test.beforeEach(async ({ electronApp }) => {
+  test.beforeEach(async ({ page, electronApp }) => {
     await mainCall(electronApp, 'setLlmMock', true)
+    // Default is 'manual' (nothing sends un-confirmed); this suite's flows rely on the
+    // spoken command auto-shipping after the hold window — opt into 'auto'.
+    await page.evaluate(() => (globalThis as any).api.jarvis.config.set({ listenMode: 'auto' }))
   })
   test.afterEach(async ({ page, electronApp }) => {
     await page.evaluate(() => (globalThis as any).api.voice.stop()).catch(() => {})

@@ -22,7 +22,9 @@ export type JarvisHistoryMode = 'project' | 'session' | 'off'
  *  brain. STT finals fire on ~0.8–1 s pauses (dictation-tuned — harmless there, they only
  *  append to a draft), so converse buffers them instead of sending each fragment:
  *  'auto' sends the buffer after `listenHoldMs` of continued silence (speech resets it);
- *  'manual' never auto-sends — the user says a send word or presses Send in the panel. */
+ *  'manual' never auto-sends — the user says a send word or presses Send in the panel.
+ *  DEFAULT IS 'manual' (user decision 2026-07-17): an auto window kept cutting real
+ *  prompts short — nothing ships until the user explicitly confirms. */
 export type JarvisListenMode = 'auto' | 'manual'
 
 /** Listen-hold patience bounds/default (ms of post-final silence before an auto send). */
@@ -79,7 +81,7 @@ export function jarvisDefaults(): JarvisConfig {
     announcePolicy: 'attention',
     historyMode: 'session',
     wakeWordEnabled: false,
-    listenMode: 'auto',
+    listenMode: 'manual',
     listenHoldMs: DEFAULT_LISTEN_HOLD_MS
   }
 }

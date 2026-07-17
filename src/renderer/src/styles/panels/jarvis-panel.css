@@ -529,6 +529,26 @@
   flex-direction: column;
   gap: 4px;
 }
+.jp-comp-input {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-2);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+  padding: 6px 8px;
+  resize: none;
+  field-sizing: content;
+  min-height: 30px;
+  max-height: 140px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.jp-comp-input:focus {
+  outline: none;
+  border-color: rgba(79, 140, 255, 0.45);
+}
 .jp-comp-bar {
   display: flex;
   align-items: center;

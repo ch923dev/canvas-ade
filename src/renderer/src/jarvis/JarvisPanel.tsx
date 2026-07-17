@@ -17,7 +17,10 @@ import { speakText } from '../voice/ttsSession'
 import { startNeuralCore, paintNeuralCoreFrame, type CoreMode } from './neuralCore'
 import {
   closeJarvisPanel,
+  editComposing,
   openJarvisPanel,
+  pauseComposing,
+  rearmComposing,
   sendComposingNow,
   toggleConverse,
   toggleJarvisPanel,
@@ -245,6 +248,13 @@ export function JarvisPanel(): ReactElement | null {
       if (!(e.target instanceof Element) || !asideRef.current?.contains(e.target)) return
       e.preventDefault()
       e.stopPropagation()
+      // Esc INSIDE the composing editor only leaves the edit (blur) — closing the panel
+      // here would discard the very buffer the user is mid-edit on. A second Esc (target
+      // now the body) closes as usual.
+      if (e.target instanceof HTMLElement && e.target.dataset.test === 'jarvis-compose-input') {
+        e.target.blur()
+        return
+      }
       closeJarvisPanel()
     }
     window.addEventListener('keydown', onCaptureKey, true)
@@ -519,19 +529,36 @@ export function JarvisPanel(): ReactElement | null {
               )}
             </div>
           )}
-          {/* Listen-hold composing row: buffered finals awaiting the send. Rendered
-              whenever the buffer is non-empty (a manual-mode buffer must stay visible
-              even while a superseding reply streams — it is unsent user text). */}
+          {/* Listen-hold composing row: buffered finals awaiting the send, EDITABLE (the
+              dictation-draft discipline — the textarea is the source of truth; the next
+              voice final joins the edited text). Rendered whenever the buffer is
+              non-empty (a manual-mode buffer must stay visible even while a superseding
+              reply streams — it is unsent user text). */}
           {composing && (
             <div className="jp-composing" data-test="jarvis-composing">
-              <div className="jp-you jp-partial">
-                <b>You</b> · {composing}
+              <div className="jp-you">
+                <b>You</b> · composing
               </div>
+              <textarea
+                className="jp-comp-input"
+                data-test="jarvis-compose-input"
+                aria-label="Composing prompt — edit before sending"
+                value={composing}
+                onChange={(e) => editComposing(e.target.value)}
+                onFocus={pauseComposing}
+                onBlur={rearmComposing}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    sendComposingNow()
+                  }
+                }}
+              />
               <div className="jp-comp-bar">
                 <span className="jp-comp-hint">
                   {listenMode === 'manual'
-                    ? 'say “send it” or press Send'
-                    : 'pausing sends — keep talking to add more'}
+                    ? 'holds until you confirm — say “send it”, press Enter, or Send'
+                    : 'pausing sends — keep talking or edit; “send it” sends now'}
                 </span>
                 <button
                   type="button"

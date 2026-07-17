@@ -112,7 +112,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   personaName: 'Jarvis',
   speechReady: false,
   composing: '',
-  listenMode: 'auto',
+  listenMode: 'manual',
   setConverseMode: (on) =>
     set((s) =>
       s.converseMode === on ? s : { converseMode: on, ...(on ? { lastError: null } : {}) }

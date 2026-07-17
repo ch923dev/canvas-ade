@@ -78,8 +78,10 @@ describe('jarvisConfig (J3 persona config read-repair)', () => {
   })
 
   it('listen-hold repair: mode enum + holdMs clamped/rounded into [1000, 10000]', () => {
-    expect(repairJarvisConfig({ listenMode: 'manual' }).listenMode).toBe('manual')
-    expect(repairJarvisConfig({ listenMode: 'shouty' }).listenMode).toBe('auto')
+    expect(repairJarvisConfig({ listenMode: 'auto' }).listenMode).toBe('auto')
+    // Default AND repair fallback are 'manual' (user decision): nothing ships un-confirmed.
+    expect(repairJarvisConfig({ listenMode: 'shouty' }).listenMode).toBe('manual')
+    expect(repairJarvisConfig({}).listenMode).toBe('manual')
     expect(repairJarvisConfig({}).listenHoldMs).toBe(2500)
     expect(repairJarvisConfig({ listenHoldMs: 120 }).listenHoldMs).toBe(1000)
     expect(repairJarvisConfig({ listenHoldMs: 99999 }).listenHoldMs).toBe(10000)
