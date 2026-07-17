@@ -2,7 +2,7 @@
 import { it, expect, vi, beforeEach, afterEach, describe } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { useState, type ReactElement } from 'react'
-import { ModelCombobox, formatContext, formatAge } from './ModelCombobox'
+import { ModelCombobox, formatContext, formatAge, formatPrice } from './ModelCombobox'
 
 // `globals: false` → RTL auto-cleanup is not registered; unmount each render's tree by hand.
 afterEach(cleanup)
@@ -19,7 +19,8 @@ beforeEach(() => {
         id: 'google/gemini-2.5-flash',
         label: 'Gemini 2.5 Flash',
         contextLength: 1_048_576,
-        toolUse: true
+        toolUse: true,
+        pricing: { inputPerM: 0.3, outputPerM: 2.5 }
       },
       { id: 'meta-llama/llama-3-8b', contextLength: 8192, toolUse: false },
       { id: 'mock/no-meta' }
@@ -46,6 +47,8 @@ it('opens on click, fetches the provider list, renders ctx + tools chips', async
   expect(screen.getByText('8K ctx')).toBeTruthy()
   // toolUse true → chip; false/unknown → none.
   expect(screen.getAllByText('⚒ tools')).toHaveLength(1)
+  // pricing present on one model only → one price chip, input/output per 1M.
+  expect(screen.getByText('$0.30/$2.50 /M')).toBeTruthy()
 })
 
 it('typing filters the list AND updates the value immediately (free text always valid)', async () => {
@@ -236,5 +239,14 @@ describe('formatters', () => {
     expect(formatAge(now - 30_000, now)).toBe('just now')
     expect(formatAge(now - 120_000, now)).toBe('2 min ago')
     expect(formatAge(now - 7_200_000, now)).toBe('2 h ago')
+  })
+
+  it('formatPrice', () => {
+    expect(formatPrice(0, 0)).toBe('Free')
+    expect(formatPrice(3, 15)).toBe('$3/$15 /M') // whole ≥1 → no decimals
+    expect(formatPrice(0.1, 0.4)).toBe('$0.10/$0.40 /M') // sub-$1 → 2 decimals
+    expect(formatPrice(0.3, 2.5)).toBe('$0.30/$2.50 /M') // non-integer ≥1 → 2 decimals
+    expect(formatPrice(0, 15)).toBe('$0/$15 /M') // one side free
+    expect(formatPrice(0.0015, 0.006)).toBe('$0.0015/$0.006 /M') // ultra-cheap keeps precision
   })
 })

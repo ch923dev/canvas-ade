@@ -28,6 +28,22 @@ export function formatContext(n: number): string {
   return String(n)
 }
 
+/**
+ * Per-1M-token price → a compact chip: input then output. `$3/$15 /M`, `$0.10/$0.40 /M`, and
+ * `Free` when both are zero. Sub-$1 keeps 2 decimals (money-shaped); ultra-cheap rates widen
+ * precision rather than collapse a nonzero rate to `$0.00`.
+ */
+export function formatPrice(inputPerM: number, outputPerM: number): string {
+  if (inputPerM === 0 && outputPerM === 0) return 'Free'
+  const fmt = (v: number): string => {
+    if (v === 0) return '0'
+    if (v >= 1) return Number.isInteger(v) ? String(v) : v.toFixed(2)
+    if (v >= 0.01) return v.toFixed(2)
+    return v.toFixed(4).replace(/0+$/, '')
+  }
+  return `$${fmt(inputPerM)}/$${fmt(outputPerM)} /M`
+}
+
 /** "just now" / "N min ago" / "N h ago" for the refresh footer. */
 export function formatAge(fetchedAt: number, now: number): string {
   const s = Math.max(0, Math.floor((now - fetchedAt) / 1000))
@@ -284,6 +300,11 @@ export function ModelCombobox({ provider, value, onChange }: ModelComboboxProps)
                   <span style={styles.chip}>{formatContext(m.contextLength)} ctx</span>
                 )}
                 {m.toolUse === true && <span style={styles.chip}>⚒ tools</span>}
+                {m.pricing != null && (
+                  <span style={styles.chip} title="Input / output price per 1M tokens">
+                    {formatPrice(m.pricing.inputPerM, m.pricing.outputPerM)}
+                  </span>
+                )}
               </div>
             ))}
           {!loading && matches.length > MAX_VISIBLE && (
