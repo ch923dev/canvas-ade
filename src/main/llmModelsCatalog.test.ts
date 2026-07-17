@@ -42,13 +42,17 @@ const OPENROUTER_JSON = {
       id: 'google/gemini-2.5-flash',
       name: 'Google: Gemini 2.5 Flash',
       context_length: 1_048_576,
-      supported_parameters: ['tools', 'temperature']
+      supported_parameters: ['tools', 'temperature'],
+      // USD per TOKEN → ×1e6 → $0.3/M in, $2.5/M out.
+      pricing: { prompt: '0.0000003', completion: '0.0000025' }
     },
     {
       id: 'meta-llama/llama-3-8b',
       name: 'Meta: Llama 3 8B',
       context_length: 8192,
-      supported_parameters: ['temperature']
+      supported_parameters: ['temperature'],
+      // A free model — both zero → { inputPerM: 0, outputPerM: 0 } (kept, not dropped).
+      pricing: { prompt: '0', completion: '0' }
     }
   ]
 }
@@ -76,15 +80,33 @@ describe('llmModelsCatalog', () => {
             id: 'google/gemini-2.5-flash',
             label: 'Google: Gemini 2.5 Flash',
             contextLength: 1_048_576,
-            toolUse: true
+            toolUse: true,
+            pricing: { inputPerM: 0.3, outputPerM: 2.5 }
           },
           {
             id: 'meta-llama/llama-3-8b',
             label: 'Meta: Llama 3 8B',
             contextLength: 8192,
-            toolUse: false
+            toolUse: false,
+            pricing: { inputPerM: 0, outputPerM: 0 }
           }
         ]
+      })
+    })
+
+    it('openrouter: drops malformed/absent pricing but keeps the entry', async () => {
+      const { fetch } = okFetch({
+        data: [
+          { id: 'bad/price', pricing: { prompt: 'n/a', completion: '0.000001' } }, // unparseable in
+          { id: 'neg/price', pricing: { prompt: '-0.01', completion: '0.01' } }, // negative → drop
+          { id: 'no/price' } // no pricing field at all
+        ]
+      })
+      const r = await listModels(dir, 'openrouter', false, deps(fetch))
+      expect(r).toEqual({
+        ok: true,
+        fetchedAt: T0,
+        models: [{ id: 'bad/price' }, { id: 'neg/price' }, { id: 'no/price' }]
       })
     })
 
@@ -259,6 +281,8 @@ describe('llmModelsCatalog', () => {
         { models: LlmModelEntry[] }
       >
       expect(all.openrouter.models).toHaveLength(2)
+      // pricing survives the write→read cache round-trip (sanitizeEntries keeps it on read-back).
+      expect(all.openrouter.models[0].pricing).toEqual({ inputPerM: 0.3, outputPerM: 2.5 })
       expect(all.openai.models).toEqual([{ id: 'gpt-4.1-nano' }])
     })
 

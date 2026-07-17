@@ -30,6 +30,13 @@ export interface LlmModelEntry {
   label?: string
   contextLength?: number
   toolUse?: boolean
+  /**
+   * Per-1M-token USD price, pre-converted from the provider's per-token rate so the renderer does
+   * no math. Present only when the provider reports it (OpenRouter today); absent for openai/
+   * anthropic/local, whose list endpoints carry no pricing. `{ inputPerM: 0, outputPerM: 0 }` is a
+   * real value (a free model) — distinct from absent (price unknown).
+   */
+  pricing?: { inputPerM: number; outputPerM: number }
 }
 
 /** Typed result over IPC — mirrors SummarizeResult's discriminated-union discipline. */
@@ -109,6 +116,17 @@ function sanitizeEntries(raw: unknown): LlmModelEntry[] {
     )
       entry.contextLength = e.contextLength
     if (typeof e.toolUse === 'boolean') entry.toolUse = e.toolUse
+    const p = e.pricing
+    if (
+      p != null &&
+      typeof p.inputPerM === 'number' &&
+      typeof p.outputPerM === 'number' &&
+      Number.isFinite(p.inputPerM) &&
+      Number.isFinite(p.outputPerM) &&
+      p.inputPerM >= 0 &&
+      p.outputPerM >= 0
+    )
+      entry.pricing = { inputPerM: p.inputPerM, outputPerM: p.outputPerM }
     out.push(entry)
   }
   return out
@@ -144,6 +162,22 @@ function writeCache(userDataDir: string, provider: ProviderName, entry: CacheEnt
   writeFileAtomic.sync(f, JSON.stringify(all), 'utf8')
 }
 
+/**
+ * OpenRouter quotes `pricing.prompt` (input) / `pricing.completion` (output) as USD-PER-TOKEN
+ * strings ("0.000005"). Convert to USD per 1M tokens (×1e6) so the renderer shows "$5/M" with no
+ * math. Returns undefined unless BOTH parse to finite ≥0 — sanitizeEntries drops it either way, but
+ * skipping the object here keeps the parsed shape clean.
+ */
+function openRouterPricing(raw: unknown): { inputPerM: number; outputPerM: number } | undefined {
+  const p = raw as { prompt?: unknown; completion?: unknown } | undefined
+  if (p == null) return undefined
+  const inputPerM = parseFloat(String(p.prompt)) * 1e6
+  const outputPerM = parseFloat(String(p.completion)) * 1e6
+  if (!Number.isFinite(inputPerM) || !Number.isFinite(outputPerM)) return undefined
+  if (inputPerM < 0 || outputPerM < 0) return undefined
+  return { inputPerM, outputPerM }
+}
+
 function parseOpenRouter(json: unknown): LlmModelEntry[] {
   const data = (json as { data?: unknown })?.data
   if (!Array.isArray(data)) throw new Error('openrouter: malformed model list')
@@ -154,6 +188,7 @@ function parseOpenRouter(json: unknown): LlmModelEntry[] {
         name?: unknown
         context_length?: unknown
         supported_parameters?: unknown
+        pricing?: unknown
       }
       return {
         id: r.id,
@@ -161,7 +196,8 @@ function parseOpenRouter(json: unknown): LlmModelEntry[] {
         contextLength: r.context_length,
         toolUse: Array.isArray(r.supported_parameters)
           ? r.supported_parameters.includes('tools')
-          : undefined
+          : undefined,
+        pricing: openRouterPricing(r.pricing)
       } as LlmModelEntry
     })
   )
@@ -191,8 +227,18 @@ function parseAnthropic(json: unknown): LlmModelEntry[] {
 /** Deterministic list for CANVAS_LLM_MOCK (e2e/CI) — includes the provider default, zero egress. */
 function mockModels(provider: ProviderName): LlmModelEntry[] {
   return [
-    { id: DEFAULT_MODELS[provider], toolUse: true, contextLength: 128_000 },
-    { id: 'mock/model-a', toolUse: true, contextLength: 128_000 },
+    {
+      id: DEFAULT_MODELS[provider],
+      toolUse: true,
+      contextLength: 128_000,
+      pricing: { inputPerM: 0.3, outputPerM: 2.5 }
+    },
+    {
+      id: 'mock/model-a',
+      toolUse: true,
+      contextLength: 128_000,
+      pricing: { inputPerM: 0, outputPerM: 0 }
+    },
     { id: 'mock/model-b', contextLength: 32_000 }
   ]
 }

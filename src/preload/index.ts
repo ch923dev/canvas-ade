@@ -355,6 +355,8 @@ export interface LlmModelEntry {
   contextLength?: number
   /** Tri-state: true/false when the provider reports it, absent when unknown. */
   toolUse?: boolean
+  /** Per-1M-token USD price when the provider reports it (OpenRouter); absent otherwise. */
+  pricing?: { inputPerM: number; outputPerM: number }
 }
 
 export type LlmModelsListResult =
