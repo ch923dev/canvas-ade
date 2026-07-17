@@ -114,11 +114,22 @@ export function ModelCombobox({ provider, value, onChange }: ModelComboboxProps)
   const [now, setNow] = useState(0)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const loadedFor = useRef<Provider | null>(null)
+  // Monotonic request seq: a resolving fetch only lands if it is still the LATEST request —
+  // a slow response for the previously-selected provider (or a superseded refresh) is dropped
+  // instead of overwriting the list with the wrong provider's models.
+  const seq = useRef(0)
 
-  // Provider switch invalidates the loaded list (next open refetches; MAIN cache absorbs it).
+  // Provider switch invalidates the loaded list (next open refetches; MAIN cache absorbs it)
+  // and supersedes any in-flight fetch for the old provider. Keyed on the provider VALUE
+  // itself — not loadedFor — so a fetch that is still in flight (loadedFor not yet set) is
+  // superseded too, not just an already-landed list.
+  const prevProvider = useRef<Provider>(provider)
   useEffect(() => {
-    if (loadedFor.current !== null && loadedFor.current !== provider) {
+    if (prevProvider.current !== provider) {
+      prevProvider.current = provider
+      seq.current++
       setResult(null)
+      setLoading(false)
       loadedFor.current = null
       setOpen(false)
       setTyped(null)
@@ -126,20 +137,31 @@ export function ModelCombobox({ provider, value, onChange }: ModelComboboxProps)
   }, [provider])
 
   const load = (refresh: boolean): void => {
+    const mySeq = ++seq.current
+    const forProvider = provider
     setLoading(true)
     window.api.llm.models
-      .list({ provider, ...(refresh ? { refresh: true } : {}) })
+      .list({ provider: forProvider, ...(refresh ? { refresh: true } : {}) })
       .then((r) => {
+        if (seq.current !== mySeq) return // superseded (provider switch / newer request)
         setResult(r)
         setNow(Date.now())
-        loadedFor.current = provider
+        loadedFor.current = forProvider
       })
       .catch(() => {
+        if (seq.current !== mySeq) return
         // IPC rejection (teardown race) — degrade like a provider error; free text still works.
         setResult({ ok: false, reason: 'provider-error' })
-        loadedFor.current = provider
+        loadedFor.current = forProvider
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (seq.current === mySeq) setLoading(false)
+      })
+  }
+
+  /** Kick a fetch if the loaded list isn't this provider's — shared by every open gesture. */
+  const ensureLoaded = (): void => {
+    if (loadedFor.current !== provider && !loading) load(false)
   }
 
   const openList = (): void => {
@@ -147,7 +169,7 @@ export function ModelCombobox({ provider, value, onChange }: ModelComboboxProps)
     setActive(-1)
     setTyped(null)
     setNow(Date.now())
-    if (loadedFor.current !== provider && !loading) load(false)
+    ensureLoaded()
   }
 
   const close = (): void => {
@@ -205,7 +227,13 @@ export function ModelCombobox({ provider, value, onChange }: ModelComboboxProps)
           onChange(e.target.value)
           setTyped(e.target.value)
           setActive(-1)
-          if (!open) openList()
+          // Open WITHOUT openList(): its setTyped(null) would win the same React batch and
+          // wipe this keystroke's filter (the tab-focus-then-type path never clicks first).
+          if (!open) {
+            setOpen(true)
+            setNow(Date.now())
+            ensureLoaded()
+          }
         }}
         onClick={() => {
           if (!open) openList()

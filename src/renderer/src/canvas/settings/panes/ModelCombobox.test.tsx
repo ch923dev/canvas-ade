@@ -163,6 +163,44 @@ it('the refresh footer refetches with refresh:true', async () => {
   await waitFor(() => expect(list).toHaveBeenCalledWith({ provider: 'openrouter', refresh: true }))
 })
 
+it('the FIRST keystroke (no prior click) opens the list WITH the typed filter applied', async () => {
+  // Tab-focus-then-type path: the open-on-type must not wipe the keystroke's filter (the
+  // openList() setTyped(null) same-batch bug from review #357).
+  render(<Host />)
+  fireEvent.change(input(), { target: { value: 'llama' } })
+  expect(input().value).toBe('llama')
+  await screen.findByText('meta-llama/llama-3-8b')
+  expect(screen.queryByText('google/gemini-2.5-flash')).toBeNull() // filter survived the open
+})
+
+it('a stale fetch for the OLD provider resolving late never overwrites the new list', async () => {
+  // Review #357: no request guard → the slow openrouter response landed after a switch to
+  // anthropic and replaced anthropic's list. The seq guard must drop the superseded response.
+  const resolvers: ((v: unknown) => void)[] = []
+  list.mockImplementation(() => new Promise((res) => resolvers.push(res)))
+  function SwitchHost(): ReactElement {
+    const [provider, setProvider] = useState<'openrouter' | 'anthropic'>('openrouter')
+    const [value, setValue] = useState('')
+    return (
+      <>
+        <button onClick={() => setProvider('anthropic')}>switch</button>
+        <ModelCombobox provider={provider} value={value} onChange={setValue} />
+      </>
+    )
+  }
+  render(<SwitchHost />)
+  fireEvent.click(input()) // request 1 (openrouter) — left pending
+  fireEvent.click(screen.getByText('switch')) // supersedes request 1, closes the list
+  fireEvent.click(input()) // request 2 (anthropic) — pending
+  expect(list).toHaveBeenLastCalledWith({ provider: 'anthropic' })
+  // Request 2 lands first, then the STALE request 1 lands late.
+  resolvers[1]({ ok: true, fetchedAt: Date.now(), models: [{ id: 'claude-haiku-4-5' }] })
+  await screen.findByText('claude-haiku-4-5')
+  resolvers[0]({ ok: true, fetchedAt: Date.now(), models: [{ id: 'stale/openrouter-model' }] })
+  await waitFor(() => expect(screen.queryByText('stale/openrouter-model')).toBeNull())
+  expect(screen.getByText('claude-haiku-4-5')).toBeTruthy() // the fresh list survived
+})
+
 it('switching provider drops the loaded list; the next open refetches for the new provider', async () => {
   function SwitchHost(): ReactElement {
     const [provider, setProvider] = useState<'openrouter' | 'anthropic'>('openrouter')
