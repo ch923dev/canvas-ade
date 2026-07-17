@@ -39,7 +39,9 @@ export function formatPrice(inputPerM: number, outputPerM: number): string {
     if (v === 0) return '0'
     if (v >= 1) return Number.isInteger(v) ? String(v) : v.toFixed(2)
     if (v >= 0.01) return v.toFixed(2)
-    return v.toFixed(4).replace(/0+$/, '')
+    // Sub-cent: 2 significant digits, trimmed of trailing zeros with no dangling '.' — a naive
+    // toFixed(4)+strip renders "0." for 0 < v < 0.00005 (rounds to "0.0000" → strips to "0.").
+    return parseFloat(v.toPrecision(2)).toString()
   }
   return `$${fmt(inputPerM)}/$${fmt(outputPerM)} /M`
 }

@@ -248,5 +248,7 @@ describe('formatters', () => {
     expect(formatPrice(0.3, 2.5)).toBe('$0.30/$2.50 /M') // non-integer ≥1 → 2 decimals
     expect(formatPrice(0, 15)).toBe('$0/$15 /M') // one side free
     expect(formatPrice(0.0015, 0.006)).toBe('$0.0015/$0.006 /M') // ultra-cheap keeps precision
+    // regression: 0 < v < 0.00005 must not render a dangling "0." (old toFixed(4)+strip bug).
+    expect(formatPrice(0.00003, 0.00003)).toBe('$0.00003/$0.00003 /M')
   })
 })
