@@ -98,7 +98,16 @@ test.describe('@terminal gitDiff (read-only working-tree diff via the app-side s
   })
 
   test.afterAll(() => {
-    if (repo) rmSync(repo, { recursive: true, force: true })
+    if (!repo) return
+    try {
+      rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    } catch {
+      // Windows: Defender (or a lagging PTY shell whose cwd was this repo) can hold the
+      // fresh %TEMP% git dir past any reasonable retry window — and a teardown throw
+      // fails the suite's LAST test (the recurring "gitDiff env EBUSY teardown" flake;
+      // 44 orphaned e2e-gitdiff-* dirs proved the throw was chronic). Cleanup is
+      // best-effort: leave the dir to OS temp cleanup rather than fail a green suite.
+    }
   })
 
   test('returns the working-tree diff for a terminal board whose cwd is a git repo', async ({
