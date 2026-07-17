@@ -2840,3 +2840,36 @@ The Jarvis-side model picker + key row are retired.
 toolless-retry bound, budget reserve-before-egress all explicitly verified) · title-stamped manual
 dev check (`jarvis-llm-config 0.22.3`) user-eyeballed. Version 0.22.2 → **0.22.3** (rebase
 conflict = version only).
+
+---
+
+## PR #360 — Jarvis listen-hold: hold-until-confirm + editable composing buffer (2026-07-17)
+
+**Squash `1e2dcc32` → main, v0.22.5** (0.22.4 taken by #359; version-collision rebase rule).
+
+**Problem.** Converse mode shipped every STT final to the brain immediately, and the endpoint
+rules are dictation-tuned (silero VAD accelerator ~0.8 s, sherpa rule2 1.0 s trailing silence) —
+a thinking pause mid-sentence shipped a half-prompt, and the continuation superseded it ("Jarvis
+cuts me off"). Separately the dictation session babysitter (silence auto-STOP 15 s + 2 min cap,
+VoicePill) kept running during converse and killed the mic while the user read a reply — the
+panel stranded at *idle* after every turn.
+
+**Fix (engine untouched — dictation keeps snappy finals).** New `utteranceHold.ts` converse-side
+aggregator: finals APPEND (`joinFinal`); a live partial cancels the armed hold, the next final
+re-arms it. Default `listenMode: 'manual'` — nothing sends until "send it"/"go ahead"/"that's
+it", Enter, or the panel Send ▸ ('auto' + Patience slider 1–10 s in Settings › Persona ›
+Listening). Composing buffer is an EDITABLE textarea (setDraft discipline — the next voice final
+joins the edited text; Enter sends, Esc-in-editor only blurs). Editor focus pauses the hold and
+DEFERS mid-edit finals to a side buffer (controlled input never changes under the caret);
+`send()` unsticks paused. Babysitter stands down while converseMode (panel = the stop contract);
+disarm hands it back. Config: `listenMode` + `listenHoldMs` (1000–10000, default 2500,
+repair-clamped). Also KILLS the chronic "gitDiff env EBUSY teardown" e2e red: the suite's own
+afterAll rmSync threw EBUSY on its %TEMP% git repo and failed the last test — now retry +
+best-effort (reproduced 5×, 3/3 green post-fix).
+
+**Verified:** cheap trio · zone units green ×4 rounds (hold 30/30 final; VoicePill 19/19) · FULL
+matrix manual on the push trees: Windows **305/305 accounted** (chunked by tag; flakes
+isolated-green; @voice 22/22 ×4 incl. final head) + **Linux-Docker exit-0 ×2** (301P/300P) ·
+claude-review 3 warnings over 2 rounds ALL FIXED with regression units + inline dispositions,
+round 3 clean 0/0 · title-stamped manual dev check (`listen-hold`) user-eyeballed ×3 rounds
+(the third caught the babysitter bug live).
