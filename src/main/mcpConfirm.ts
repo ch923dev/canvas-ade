@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import { isJarvisToolCall } from './jarvisToolContext'
+import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
 
 /**
  * 🔒 Human-confirm gate (T4.2). The reusable "are you sure?" used by every dangerous
@@ -123,13 +123,21 @@ export function requestConfirm(
   bus: Pick<IpcMain, 'on' | 'removeListener'>,
   getWin: () => BrowserWindow | null,
   request: ConfirmRequest,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {}
 ): Promise<ConfirmDecision> {
   const win = getWin()
   const wc = win?.webContents
   if (!win || win.isDestroyed() || !wc || wc.isDestroyed()) {
     return Promise.resolve(DENIED) // no UI to confirm against → deny
   }
+  // 🔒 Cancel/supersede abort (Jarvis P1-A): a confirm raised for a turn that is later
+  // cancelled must settle denied THEN — not hold its listeners for up to 10 minutes while
+  // a human approval could still land a write for a turn whose reply was already thrown
+  // away. The signal arrives explicitly (opts.signal) or — like the origin stamp above —
+  // through the tool-call ALS, so the deep orchestrator gates inherit it without threading
+  // it through every gate signature. Absent for non-Jarvis callers: nothing changes.
+  const signal = opts.signal ?? jarvisToolCallSignal()
+  if (signal?.aborted) return Promise.resolve(DENIED) // turn already dead → never ask
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   return new Promise<ConfirmDecision>((resolve) => {
     // 🔒 Cryptographically-strong, unguessable per-request reply channel (BUG-022). The
@@ -146,10 +154,12 @@ export function requestConfirm(
       // reply) must deny, not hang the awaiting tool forever — remove these on resolve.
       wc.removeListener('destroyed', onGone)
       wc.removeListener('render-process-gone', onGone)
+      signal?.removeEventListener('abort', onAbort)
       if (timer) clearTimeout(timer)
       resolve(decision)
     }
     const onGone = (): void => finish(DENIED)
+    const onAbort = (): void => finish(DENIED) // turn cancelled → the gate dies with it
     const onReply = (e: IpcMainEvent, decision: unknown): void => {
       if (isForeignSender(e, getWin)) return // a foreign frame can't decide — ignore
       // Fail-closed: ONLY an explicit `approved === true` approves; anything else denies.
@@ -178,6 +188,7 @@ export function requestConfirm(
     // the on-listener never fires — deny so the awaiting MCP tool call can't hang forever.
     wc.once('destroyed', onGone)
     wc.once('render-process-gone', onGone)
+    signal?.addEventListener('abort', onAbort, { once: true })
     try {
       // 🔒 J4 origin stamp: MAIN's ALS marker (never caller input) tags a Jarvis-raised
       // confirm so the renderer routes it to the panel act card. Stamped at send time —

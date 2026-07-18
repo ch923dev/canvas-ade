@@ -14,14 +14,25 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-const als = new AsyncLocalStorage<{ jarvis: true }>()
+const als = new AsyncLocalStorage<{ jarvis: true; signal?: AbortSignal }>()
 
-/** Run `fn` (an orchestrator/tool call) with the Jarvis origin marker set. */
-export function runAsJarvisToolCall<T>(fn: () => Promise<T>): Promise<T> {
-  return als.run({ jarvis: true }, fn)
+/**
+ * Run `fn` (an orchestrator/tool call) with the Jarvis origin marker set. `signal` is the
+ * turn's AbortSignal: it rides the same ALS store so a confirm raised ANYWHERE inside the
+ * call (the spawn pre-gate and the deep orchestrator gates alike) can settle denied the
+ * moment the turn is cancelled/superseded, instead of holding its listeners until the
+ * 10-minute backstop while a dead turn's approval could still land a write.
+ */
+export function runAsJarvisToolCall<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return als.run({ jarvis: true, signal }, fn)
 }
 
 /** True inside a `runAsJarvisToolCall` async context (read by requestConfirm). */
 export function isJarvisToolCall(): boolean {
   return als.getStore()?.jarvis === true
+}
+
+/** The turn's AbortSignal inside a `runAsJarvisToolCall` context (read by requestConfirm). */
+export function jarvisToolCallSignal(): AbortSignal | undefined {
+  return als.getStore()?.signal
 }

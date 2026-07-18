@@ -12,6 +12,17 @@
  */
 import { create } from 'zustand'
 
+/**
+ * Display-transcript hard cap (P1-B): `turns` grows ~3 rows per settled turn (user + act
+ * chips + assistant) and was previously unbounded for the life of a project open — one
+ * long conversation grew store memory AND the panel DOM without limit (JarvisPanel maps
+ * the whole array). 240 rows ≈ 80 turns keeps every visible semantic intact: comfortably
+ * above the panel's HISTORY_WINDOW chip threshold (24) and MAIN's own prompt-history cap
+ * (MAX_HISTORY_TURNS = 200 messages). Oldest rows drop first; MAIN's canonical history
+ * (jarvisHistoryStore) has its own separate bounds and is untouched.
+ */
+export const MAX_DISPLAY_ROWS = 240
+
 /** One turn-act lifecycle phase (mirrors MAIN's JarvisActPhase). */
 export type JarvisActPhase = 'confirm' | 'running' | 'ok' | 'denied' | 'error'
 
@@ -133,6 +144,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
       awaitingReply: false,
       streamText: '',
       acts: [],
+      // P1-B: cap on append — oldest display rows drop first (see MAX_DISPLAY_ROWS).
       turns: [
         ...s.turns,
         { role: 'user' as const, text: s.lastUserText, at: Date.now() },
@@ -142,7 +154,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
           (a): JarvisDisplayTurn => ({ role: 'act', text: a.summary, at: Date.now(), act: a })
         ),
         { role: 'assistant' as const, text, interrupted: cancelled, at: Date.now() }
-      ]
+      ].slice(-MAX_DISPLAY_ROWS)
     })),
   turnFailed: (reason) =>
     set({ activeTurnId: null, awaitingReply: false, streamText: '', acts: [], lastError: reason }),
@@ -179,6 +191,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
     set((s) => (s.speechReady === speechReady ? s : { speechReady })),
   setComposing: (composing) => set((s) => (s.composing === composing ? s : { composing })),
   setListenMode: (listenMode) => set((s) => (s.listenMode === listenMode ? s : { listenMode })),
-  hydrateTurns: (turns) => set({ turns }),
+  // Same cap on hydrate (MAIN's history:get is bounded below it today — belt+braces).
+  hydrateTurns: (turns) => set({ turns: turns.slice(-MAX_DISPLAY_ROWS) }),
   clearTurns: () => set({ turns: [] })
 }))
