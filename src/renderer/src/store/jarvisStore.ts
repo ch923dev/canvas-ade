@@ -139,25 +139,44 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
     }),
   deltaReceived: (text) => set((s) => ({ streamText: s.streamText + text, awaitingReply: false })),
   turnDone: (text, cancelled) =>
-    set((s) => ({
-      activeTurnId: null,
-      awaitingReply: false,
-      streamText: '',
-      acts: [],
-      // P1-B: cap on append — oldest display rows drop first (see MAX_DISPLAY_ROWS).
-      turns: [
-        ...s.turns,
-        { role: 'user' as const, text: s.lastUserText, at: Date.now() },
-        // Resolved act rows fold into the transcript between the user line and the reply
-        // (exhibit F: the chip is part of the turn's record, not transient chrome).
-        ...s.acts.map(
-          (a): JarvisDisplayTurn => ({ role: 'act', text: a.summary, at: Date.now(), act: a })
-        ),
-        { role: 'assistant' as const, text, interrupted: cancelled, at: Date.now() }
-      ].slice(-MAX_DISPLAY_ROWS)
-    })),
+    set((s) => {
+      // P1-A hygiene: a confirm still parked when its turn settles belongs to a DEAD gate
+      // (MAIN settles the gate before the turn can finish — cancel/abort included). Deny +
+      // clear so the slot never leaks into the next turn; the reply is a no-op MAIN-side
+      // (its channel listener is already torn down).
+      s.pendingConfirm?.reply({ approved: false })
+      return {
+        activeTurnId: null,
+        awaitingReply: false,
+        streamText: '',
+        acts: [],
+        pendingConfirm: null,
+        // P1-B: cap on append — oldest display rows drop first (see MAX_DISPLAY_ROWS).
+        turns: [
+          ...s.turns,
+          { role: 'user' as const, text: s.lastUserText, at: Date.now() },
+          // Resolved act rows fold into the transcript between the user line and the reply
+          // (exhibit F: the chip is part of the turn's record, not transient chrome).
+          ...s.acts.map(
+            (a): JarvisDisplayTurn => ({ role: 'act', text: a.summary, at: Date.now(), act: a })
+          ),
+          { role: 'assistant' as const, text, interrupted: cancelled, at: Date.now() }
+        ].slice(-MAX_DISPLAY_ROWS)
+      }
+    }),
   turnFailed: (reason) =>
-    set({ activeTurnId: null, awaitingReply: false, streamText: '', acts: [], lastError: reason }),
+    set((s) => {
+      // Same dead-gate hygiene as turnDone: an errored turn must not leave a parked slot.
+      s.pendingConfirm?.reply({ approved: false })
+      return {
+        activeTurnId: null,
+        awaitingReply: false,
+        streamText: '',
+        acts: [],
+        pendingConfirm: null,
+        lastError: reason
+      }
+    }),
   actEvent: (act) =>
     set((s) => {
       const i = s.acts.findIndex((a) => a.actId === act.actId)

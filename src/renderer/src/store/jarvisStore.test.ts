@@ -62,6 +62,25 @@ describe('jarvisStore transcript cap (P1-B)', () => {
     expect(tail[2].text).toBe('did it')
   })
 
+  it('a confirm still parked at turn settle is denied + cleared (P1-A dead-gate hygiene)', () => {
+    const s = useJarvisStore.getState()
+    // Cancel path: the turn settles while the gate is parked (MAIN already settled it
+    // denied via the abort wiring) — the renderer slot must not leak into the next turn.
+    const doneReply: Array<{ approved: boolean }> = []
+    s.turnStarted(1, 'do the thing')
+    s.confirmRequested({ title: 'T', body: 'B' }, (d) => doneReply.push(d))
+    s.turnDone('', true)
+    expect(doneReply).toEqual([{ approved: false }])
+    expect(useJarvisStore.getState().pendingConfirm).toBeNull()
+    // Error path: same hygiene.
+    const failReply: Array<{ approved: boolean }> = []
+    s.turnStarted(2, 'again')
+    s.confirmRequested({ title: 'T', body: 'B' }, (d) => failReply.push(d))
+    s.turnFailed('turn-failed')
+    expect(failReply).toEqual([{ approved: false }])
+    expect(useJarvisStore.getState().pendingConfirm).toBeNull()
+  })
+
   it('hydrateTurns clamps an over-long hydrate to the NEWEST rows (belt+braces)', () => {
     const rows = Array.from({ length: MAX_DISPLAY_ROWS + 50 }, (_, i) => ({
       role: 'assistant' as const,
