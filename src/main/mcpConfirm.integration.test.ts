@@ -39,6 +39,7 @@ function fakeWin(mainFrame: object): {
 function fakeWinWithLifecycle(mainFrame: object): {
   win: BrowserWindow
   fire: (event: string) => void
+  listenerCount: () => number
 } {
   const listeners = new Map<string, (() => void)[]>()
   const win = {
@@ -62,7 +63,8 @@ function fakeWinWithLifecycle(mainFrame: object): {
   } as unknown as BrowserWindow
   return {
     win,
-    fire: (event: string) => (listeners.get(event) ?? []).slice().forEach((f) => f())
+    fire: (event: string) => (listeners.get(event) ?? []).slice().forEach((f) => f()),
+    listenerCount: () => [...listeners.values()].reduce((n, arr) => n + arr.length, 0)
   }
 }
 
@@ -71,6 +73,7 @@ function fakeBus(): {
   bus: Pick<IpcMain, 'on' | 'removeListener'>
   reply: (e: unknown, decision: unknown) => void
   channel: () => string | null
+  has: () => boolean
 } {
   let handler: ((e: unknown, decision: unknown) => void) | null = null
   let channel: string | null = null
@@ -83,7 +86,12 @@ function fakeBus(): {
       handler = null
     }
   } as unknown as Pick<IpcMain, 'on' | 'removeListener'>
-  return { bus, reply: (e, decision) => handler?.(e, decision), channel: () => channel }
+  return {
+    bus,
+    reply: (e, decision) => handler?.(e, decision),
+    channel: () => channel,
+    has: () => handler !== null
+  }
 }
 
 describe('requestConfirm', () => {
@@ -389,5 +397,65 @@ describe('J4 origin stamp', () => {
     expect(sent[0].payload.request.origin).toBeUndefined()
     reply({ senderFrame: mainFrame }, { approved: false })
     await expect(p).resolves.toEqual({ approved: false })
+  })
+})
+
+// ── P1-A: cancel/supersede abort — the turn's AbortSignal reaches a pending confirm ──
+describe('P1-A abort wiring', () => {
+  it('🔒 an abort while the confirm is pending settles denied and tears down every listener', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, listenerCount } = fakeWinWithLifecycle(mainFrame)
+    const { bus, reply, has } = fakeBus()
+    const ctrl = new AbortController()
+    const p = requestConfirm(bus, () => win, REQ, { signal: ctrl.signal })
+    expect(has()).toBe(true) // armed while pending
+    ctrl.abort()
+    await expect(p).resolves.toEqual({ approved: false })
+    // Listener hygiene: the reply-channel listener and both lifecycle hatches are gone —
+    // the pre-fix behavior held all of them for up to the 10-minute backstop.
+    expect(has()).toBe(false)
+    expect(listenerCount()).toBe(0)
+    // A late human approve changes nothing (the channel listener is torn down).
+    reply({ senderFrame: mainFrame }, { approved: true })
+    await expect(p).resolves.toEqual({ approved: false })
+  })
+
+  it('🔒 a pre-aborted signal denies immediately — the modal is never posted', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeWin(mainFrame)
+    const { bus } = fakeBus()
+    const ctrl = new AbortController()
+    ctrl.abort()
+    await expect(requestConfirm(bus, () => win, REQ, { signal: ctrl.signal })).resolves.toEqual({
+      approved: false
+    })
+    expect(sent).toHaveLength(0)
+  })
+
+  it('🔒 the signal rides the tool-call ALS — a turn abort settles a deep-gate confirm denied', async () => {
+    // Models the deep orchestrator gates (dispatch/kanban/visualize): requestConfirm is
+    // called with NO explicit signal, inside runAsJarvisToolCall(fn, signal) — the ALS
+    // must carry the turn's signal through the await chain to the gate.
+    const { runAsJarvisToolCall } = await import('./jarvisToolContext')
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeWin(mainFrame)
+    const { bus, has } = fakeBus()
+    const ctrl = new AbortController()
+    const p = runAsJarvisToolCall(() => requestConfirm(bus, () => win, REQ), ctrl.signal)
+    await vi.waitFor(() => expect(sent.length).toBe(1))
+    ctrl.abort()
+    await expect(p).resolves.toEqual({ approved: false })
+    expect(has()).toBe(false)
+  })
+
+  it('an approve that lands BEFORE the abort still approves (the human answered in time)', async () => {
+    const mainFrame = { name: 'main' }
+    const { win } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const ctrl = new AbortController()
+    const p = requestConfirm(bus, () => win, REQ, { signal: ctrl.signal })
+    reply({ senderFrame: mainFrame }, { approved: true })
+    ctrl.abort() // too late — the decision already settled
+    await expect(p).resolves.toEqual({ approved: true })
   })
 })

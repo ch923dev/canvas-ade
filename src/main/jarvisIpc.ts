@@ -349,9 +349,12 @@ export function registerJarvisHandlers(
         continue
       }
       // 🔒 The origin marker routes every confirm this call raises (the orchestrator gates
-      // AND the spawn pre-gate) to the panel's act card instead of the center modal.
-      const outcome = await runAsJarvisToolCall(() =>
-        executeJarvisTool(tu.name, tu.input, { facet, confirm })
+      // AND the spawn pre-gate) to the panel's act card instead of the center modal; the
+      // turn's signal rides the same context, so a cancel/supersede settles a pending
+      // confirm denied instead of leaving it approvable for a dead turn (P1-A).
+      const outcome = await runAsJarvisToolCall(
+        () => executeJarvisTool(tu.name, tu.input, { facet, confirm }),
+        signal
       )
       results.push({
         type: 'tool_result',
@@ -365,7 +368,10 @@ export function registerJarvisHandlers(
         actId,
         name: tu.name,
         summary: outcome.summary,
-        phase: outcome.denied ? 'denied' : outcome.isError ? 'error' : 'ok',
+        // Abort recheck AFTER the await (P1-A): a call that resolved into an already-
+        // cancelled turn must not paint a live 'ok' — the denied/error outcomes keep
+        // their truthful phase, an ok resolves as 'error' like the mid-round branch above.
+        phase: outcome.denied ? 'denied' : outcome.isError || signal.aborted ? 'error' : 'ok',
         gated
       })
     }

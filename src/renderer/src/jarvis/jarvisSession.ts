@@ -325,6 +325,13 @@ export function useJarvisController(): void {
       if (!store.getState().converseMode) return
       speakEpoch++
       chunker.reset()
+      // Gate-parked turn: nothing is streaming (the turn is blocked inside the tool call
+      // awaiting the act-card), so there is no stream to cancel — and cancelTurn would
+      // abort the turn's signal, which now (P1-A) settles the parked confirm DENIED
+      // before the very utterance that caused this barge-in ("yes"/"no") can answer it.
+      // Silence the audio, keep the gate; a non-answer utterance still supersedes at
+      // send (sendTurn denies the gate first) and teardown still denies it.
+      if (store.getState().pendingConfirm) return
       void window.api.jarvis.cancelTurn().catch(() => {})
     })
 

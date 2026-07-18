@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { registerJarvisHandlers, type JarvisIpcDeps, type JarvisTurnEvent } from './jarvisIpc'
+import { requestConfirm } from './mcpConfirm'
 import { writeLlmConfig } from './llmConfig'
 import type { JarvisCanvasFacet } from './jarvisTools'
 import type { AppModel } from './appModel'
@@ -178,6 +179,97 @@ describe('jarvisIpc J4 turn loop', () => {
       expect(done && done.kind === 'done' ? done.text : '').not.toContain('card-42')
     } finally {
       rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('P1-A cancel-mid-confirm (through the REAL requestConfirm)', () => {
+  it('jarvis:turn:cancel while a gate is pending → gate denied, no write, no listener leak, cancelled turn', async () => {
+    // The deep-gate shape: the facet write blocks on the REAL requestConfirm — exactly how
+    // the orchestrator gates (dispatch/kanban/visualize) ride the registry binding. The
+    // turn's AbortSignal must reach it through the tool-call ALS and settle it denied the
+    // moment the user cancels; before the fix the gate stayed approvable for 10 minutes
+    // and a late human approve landed the write for a turn whose reply was thrown away.
+    let replyHandler: ((e: unknown, decision: unknown) => void) | null = null
+    const bus = {
+      on: (_ch: string, h: (e: unknown, decision: unknown) => void): void => {
+        replyHandler = h
+      },
+      removeListener: (): void => {
+        replyHandler = null
+      }
+    } as unknown as Pick<IpcMain, 'on' | 'removeListener'>
+    const handlers: Record<string, Handler> = {}
+    const ipcMain = {
+      handle: (channel: string, fn: Handler): void => {
+        handlers[channel] = fn
+      }
+    } as unknown as IpcMain
+    const sent: Array<{ channel: string; payload: unknown }> = []
+    const mainFrame = { id: 'main' }
+    const win = {
+      isDestroyed: () => false,
+      webContents: {
+        isDestroyed: () => false,
+        mainFrame,
+        once: () => {},
+        removeListener: () => {},
+        send: (channel: string, payload: unknown) => sent.push({ channel, payload })
+      }
+    } as unknown as BrowserWindow
+    const write = vi.fn()
+    const facet = makeFacet({
+      addCard: async (boardId, spec) => {
+        const d = await requestConfirm(bus, () => win, {
+          title: 'Add card',
+          body: `Add "${spec.title}"?`
+        })
+        if (!d.approved) throw new Error('add_card: write denied by the human gate')
+        write(boardId, spec)
+        return { id: 'card-42' }
+      }
+    })
+    const dir = mkdtempSync(join(tmpdir(), 'jarvisipc-abort-'))
+    try {
+      registerJarvisHandlers(ipcMain, () => win, {
+        getUserData: () => dir,
+        getProjectKey: () => 'M:/proj',
+        getFacet: async () => facet,
+        stream: { fetch: vi.fn(), env: { CANVAS_LLM_MOCK: '1' } }
+      })
+      const ownEvent = { senderFrame: mainFrame } as unknown as IpcMainInvokeEvent
+      const r = handlers['jarvis:turn:start'](ownEvent, {
+        text: 'add a card smoke test to board abcdef12'
+      }) as { ok: boolean; id: number }
+      expect(r.ok).toBe(true)
+      // Wait for the gate to actually be pending (the confirm request posted).
+      await vi.waitFor(() => expect(sent.some((s) => s.channel === 'mcp:confirm')).toBe(true))
+      expect(replyHandler).not.toBeNull()
+      // The user cancels the turn while the confirm chip is up.
+      handlers['jarvis:turn:cancel'](ownEvent)
+      // The turn settles CANCELLED (never waits out the 10-minute confirm backstop).
+      const evs = await (async (): Promise<JarvisTurnEvent[]> => {
+        for (let i = 0; i < 400; i++) {
+          const all = sent
+            .filter((s) => s.channel === 'jarvis:turn:event')
+            .map((s) => s.payload as JarvisTurnEvent)
+            .filter((ev) => ev.id === r.id)
+          if (all.some((ev) => ev.kind === 'done' || ev.kind === 'error')) return all
+          await new Promise((res) => setTimeout(res, 5))
+        }
+        throw new Error('turn never settled after cancel')
+      })()
+      const done = evs.find((ev) => ev.kind === 'done')
+      expect(done && done.kind === 'done' ? done.cancelled : false).toBe(true)
+      // The gate resolved DENIED → the act card is not stuck on 'confirm'.
+      const acts = evs.filter((ev) => ev.kind === 'act')
+      expect(acts.map((a) => (a.kind === 'act' ? a.phase : ''))).toEqual(['confirm', 'denied'])
+      // No facet write happened, and the reply listener was torn down (no 10-min leak) —
+      // with the channel listener gone, a late human approve has nothing to land on.
+      expect(write).not.toHaveBeenCalled()
+      expect(replyHandler).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
