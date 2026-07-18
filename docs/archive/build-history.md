@@ -2873,3 +2873,37 @@ isolated-green; @voice 22/22 ×4 incl. final head) + **Linux-Docker exit-0 ×2**
 claude-review 3 warnings over 2 rounds ALL FIXED with regression units + inline dispositions,
 round 3 clean 0/0 · title-stamped manual dev check (`listen-hold`) user-eyeballed ×3 rounds
 (the third caught the babysitter bug live).
+
+## PR #361 — Jarvis review tail: confirm-abort race + bounded renderer transcript (2026-07-18)
+
+**Squash `0432f045` → main, v0.22.6.** The two verified P1s from the 2026-07-18 Jarvis deep
+review (tight lane; the review's P2/P3 sharp edges deliberately left for separate lanes).
+
+**P1-A — cancel/supersede did not abort an in-flight human confirm.** `runToolRound` checked
+`signal.aborted` only at the top of each tool iteration; the awaited tool call could block on a
+confirm gate with no abort wiring, and `requestConfirm` settled only on a genuine reply, window
+teardown, or the 10-minute backstop. A cancel/barge-in/new-turn (`activeAbort.abort()`) left the
+gate approvable — a late ✓ landed the canvas write for a turn whose reply was already thrown
+away, while the pending confirm held its reply-channel + lifecycle listeners up to 10 min. Fix:
+the turn's `AbortSignal` rides the existing tool-call ALS (`runAsJarvisToolCall(fn, signal)` —
+the same seam as the `origin:'jarvis'` stamp), so the spawn pre-gate AND the deep orchestrator
+gates inherit it with zero gate-signature changes; `requestConfirm` gains optional
+`opts.signal` (falls back to the ALS signal), denies + tears down all listeners on abort, and a
+pre-aborted signal never posts the modal. Post-await recheck paints an ok-into-dead-turn act as
+`error`. Renderer: barge-in no longer cancels a gate-parked turn (nothing streams then; the
+spoken "yes"/"no" that caused the barge-in must still answer the gate), and `turnDone`/
+`turnFailed` deny+clear a still-parked confirm slot (dead-gate hygiene).
+
+**P1-B — renderer transcript unbounded.** `jarvisStore.turns` grew ~3 rows per settled turn
+with no cap (only reset: `clearTurns()` at panel-controller mount); the panel maps the whole
+array. Fix: `MAX_DISPLAY_ROWS = 240` (≈80 turns) slice-on-append + hydrate clamp — above
+`HISTORY_WINDOW = 24` and MAIN's `MAX_HISTORY_TURNS = 200`, so chip semantics unchanged;
+MAIN's history bounds untouched.
+
+**Verified:** cheap trio · zone units 46/46 (incl. new `jarvisStore.test.ts` + 4 abort-wiring
+integration tests + a cancel-mid-confirm e2e-shape test through the REAL `requestConfirm`) ·
+title-stamped manual dev check with the P1-A race exercised live in the real app (gated
+add_card parked → `jarvis:turn:cancel` → gate denied, nothing landed, slot cleared) · pre-push
+gate 301P · pre-merge FULL matrix: Windows 303P + menuShell isolated-green, Linux-Docker exit-0
+(300P; dataFlow/menuShell ambient-flaky retried green) · claude-review clean round 1 (0
+critical / 0 warnings, no inline threads).
