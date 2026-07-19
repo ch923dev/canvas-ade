@@ -2907,3 +2907,43 @@ add_card parked → `jarvis:turn:cancel` → gate denied, nothing landed, slot c
 gate 301P · pre-merge FULL matrix: Windows 303P + menuShell isolated-green, Linux-Docker exit-0
 (300P; dataFlow/menuShell ambient-flaky retried green) · claude-review clean round 1 (0
 critical / 0 warnings, no inline threads).
+
+## PR #362 — terminal: maintainer-private OpenRouter routing (2026-07-19)
+
+**Squash `547ca511` → main, v0.22.7.** A compile-gated "Route via OpenRouter" option on the New
+Terminal dialog: a checkbox that reveals a model-slug input + a per-provider key-status row. When
+enabled on a capable preset, MAIN injects the OpenRouter provider env at spawn from the encrypted
+`llmKeyStore`.
+
+**Privacy — the whole point.** Gated behind `__TERMINAL_OPENROUTER__` (both `main` and `renderer`
+`define`s in `electron.vite.config.ts`, env `TERMINAL_OPENROUTER=1`), mirroring the
+`__LOCAL_UPDATE_CHANNEL__` pattern. Every distributed build (pr/staging/production) dead-code-
+eliminates the dialog section (renderer define) AND never wires the spawn-env key provider (main
+define, in `llmIpc`), so an ungated binary carries no trace of the routing path — a board's
+`openRouter` field alone can never route. The feature merges to `main` but only surfaces in a build
+the maintainer makes with the flag on. Renderer reads the gate through a typeof-guarded
+`featureFlags.ts` (vitest-safe, DCE-safe); MAIN through the same guard in `llmIpc`.
+
+**Security.** The API key never crosses IPC, never lands in the board doc (`canvas.json` is
+git-trackable), and never rides the PTY launch line (it echoes). `llm:hasKey` is presence-only; the
+key is resolved MAIN-side at spawn via the injectable `OpenRouterKeyProvider` seam
+(`ptySpawnEnv.ts`) from the safeStorage `llmKeyStore`. On a routed claude spawn `ANTHROPIC_API_KEY`
+is set explicitly blank (the OpenRouter Anthropic-endpoint contract, and it overrides an inherited
+direct key so a routed board can't silently bill the direct API). Env per preset: claude →
+`ANTHROPIC_BASE_URL=https://openrouter.ai/api` + `ANTHROPIC_AUTH_TOKEN` + blank `ANTHROPIC_API_KEY`
++ `ANTHROPIC_MODEL`; opencode → `OPENROUTER_API_KEY` + `--model openrouter/<slug>`. codex deferred
+(config.toml provisioner), gemini/shell have no OpenRouter path so the section is hidden for them.
+
+**Schema v20 (additive, floor stays 17).** Optional `TerminalBoard.openRouter {enabled, model?}`;
+`assertTerminalContent` extracted to `terminalBoardSchema.ts` (max-lines ratchet, the kanbanSchema
+precedent); `PATCHABLE_KEYS.terminal` lists `openRouter`; `projectStore.SCHEMA_VERSION` lock-stepped
+19→20; migration is identity. `composeCommand.applyOpenRouterModel` overlays the slug onto the model
+flag (claude verbatim, opencode `openrouter/`-prefixed).
+
+**Verified.** typecheck · lint (0 err) · format · zone units 282 · manual dev check eyeball PASS
+(gated build; dialog matches the approved mock — toggle → model field + amber missing-key row,
+command recomposes to `claude --model anthropic/claude-sonnet-4.5`) · new self-skipping gated e2e
+`terminalOpenRouter.e2e.ts` (`@terminal`) 2 passed vs the real gated build · FULL MATRIX green both
+legs (Windows `@terminal` 84P/2skip — spec self-skips ungated as designed — + Linux Docker full
+301P/5skip/1 out-of-zone `menuShell` flake rerun-green) · CI all green (check · analyze · CodeQL ·
+claude-review FULL PASS, 0 findings).
