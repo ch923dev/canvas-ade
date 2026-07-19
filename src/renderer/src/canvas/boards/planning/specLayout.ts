@@ -110,6 +110,9 @@ export function specToElkGraph(spec: DiagramSpec): ElkGraphIn {
     layoutOptions: {
       'elk.algorithm': 'layered',
       'elk.direction': spec.direction === 'down' ? 'DOWN' : 'RIGHT',
+      // Without this, an edge that crosses a group boundary (grouped node → root node) is IGNORED
+      // for layering — the target lands in layer 0 and the edge sweeps backwards across the graph.
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
       // Calm-density spacing: enough air to read, no poster-spread (design contract).
       'elk.spacing.nodeNode': '24',
       'elk.layered.spacing.nodeNodeBetweenLayers': '56',
