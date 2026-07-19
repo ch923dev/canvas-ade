@@ -40,6 +40,27 @@ import { useReducedMotion } from './useReducedMotion'
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
 
+/**
+ * Lazy CodeMirror source editor (S4b). The chunk (CM core + mermaid grammar) loads once, module-
+ * wide, kicked off when a card mounts; WHICH editor an editing session uses is latched at
+ * `</>`-open time (`editorAtOpenRef`) so the chunk resolving mid-edit never swaps the component
+ * under the user's cursor (an unmounting focused editor would fire blur → close the session).
+ * Until the chunk is ready, edits fall back to the plain <textarea> — same contract, no highlight.
+ */
+type DiagramEditorCmp = typeof import('./DiagramSourceEditor').default
+let diagramEditorCmp: DiagramEditorCmp | null = null
+let diagramEditorLoad: Promise<void> | null = null
+function ensureDiagramEditorLoaded(): void {
+  if (diagramEditorCmp || diagramEditorLoad) return
+  diagramEditorLoad = import('./DiagramSourceEditor')
+    .then((m) => {
+      diagramEditorCmp = m.default
+    })
+    .catch(() => {
+      diagramEditorLoad = null // chunk fetch failed → retry on the next card mount
+    })
+}
+
 export interface DiagramCardProps {
   element: DiagramElement
   /** Owning board id — for the untracked svgCache write-back. */
@@ -78,6 +99,11 @@ export const DiagramCard = memo(function DiagramCard({
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
   const motion = !reducedMotion
+  // Which editor THIS editing session renders — latched at open (see ensureDiagramEditorLoaded).
+  const editorAtOpenRef = useRef<DiagramEditorCmp | null>(null)
+  useEffect(() => {
+    ensureDiagramEditorLoaded()
+  }, [])
   const [svgUrl, setSvgUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -332,6 +358,8 @@ export const DiagramCard = memo(function DiagramCard({
   )
 
   const showHeader = selected || editing
+  // The editor component this editing session latched at `</>`-open (null → textarea fallback).
+  const SessionEditor = editing ? editorAtOpenRef.current : null
   const zoomBtn = (disabled: boolean): CSSProperties => ({
     all: 'unset',
     cursor: disabled ? 'default' : 'pointer',
@@ -461,6 +489,7 @@ export const DiagramCard = memo(function DiagramCard({
               } else {
                 onEditStart()
                 setDraft(source)
+                editorAtOpenRef.current = diagramEditorCmp
                 setEditing(true)
               }
             }}
@@ -479,33 +508,56 @@ export const DiagramCard = memo(function DiagramCard({
       )}
 
       {editing ? (
-        <textarea
-          className="pl-diagram-src"
-          value={draft}
-          spellCheck={false}
-          onPointerDown={(e) => e.stopPropagation()}
-          onChange={(e) => onDraftChange(e.target.value)}
-          onBlur={() => {
-            if (debounceRef.current) clearTimeout(debounceRef.current)
-            flushDraft(draft)
-            setEditing(false)
-          }}
-          autoFocus
-          style={{
-            position: 'absolute',
-            inset: '22px 0 0 0',
-            width: '100%',
-            height: 'calc(100% - 22px)',
-            resize: 'none',
-            border: 'none',
-            outline: 'none',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            font: '12px/1.5 var(--term-mono)',
-            padding: 8,
-            boxSizing: 'border-box'
-          }}
-        />
+        SessionEditor ? (
+          <div
+            className="pl-diagram-src nowheel nodrag nopan"
+            onPointerDown={(e) => e.stopPropagation()}
+            onBlur={(e) => {
+              // CodeMirror moves focus between internal nodes — only a blur that LEAVES the
+              // wrapper ends the editing session (mirrors the textarea's blur contract).
+              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+              if (debounceRef.current) clearTimeout(debounceRef.current)
+              flushDraft(draft)
+              setEditing(false)
+            }}
+            style={{
+              position: 'absolute',
+              inset: '22px 0 0 0',
+              background: 'var(--surface)',
+              overflow: 'hidden'
+            }}
+          >
+            <SessionEditor value={draft} onChange={onDraftChange} />
+          </div>
+        ) : (
+          <textarea
+            className="pl-diagram-src"
+            value={draft}
+            spellCheck={false}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => onDraftChange(e.target.value)}
+            onBlur={() => {
+              if (debounceRef.current) clearTimeout(debounceRef.current)
+              flushDraft(draft)
+              setEditing(false)
+            }}
+            autoFocus
+            style={{
+              position: 'absolute',
+              inset: '22px 0 0 0',
+              width: '100%',
+              height: 'calc(100% - 22px)',
+              resize: 'none',
+              border: 'none',
+              outline: 'none',
+              background: 'var(--surface)',
+              color: 'var(--text)',
+              font: '12px/1.5 var(--term-mono)',
+              padding: 8,
+              boxSizing: 'border-box'
+            }}
+          />
+        )
       ) : svgUrl ? (
         <div
           className={'pl-diagram-view' + (selected ? ' nowheel nodrag nopan' : '')}
