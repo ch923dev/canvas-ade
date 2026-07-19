@@ -38,7 +38,10 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import { assertTerminalContent } from './terminalBoardSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
+import { assertDiagramSpec } from './diagramSpec'
+import type { DiagramSpec } from './diagramSpec'
 export type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef }
+export type { DiagramSpec }
 
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
@@ -300,22 +303,32 @@ export interface ImageElement extends ElementCommon {
 }
 
 /**
- * v11: a themed Mermaid diagram element (S4). `source` is canonical — the SVG is a DERIVED cache
- * (`svgCache`, a content-addressed `assets/<sha1>.svg`) re-rendered from the source by the hidden
- * MAIN worker; a source change invalidates it. Rendered as an inert `<img>` of the cached SVG,
- * exactly like ImageElement (≈80% reuse). A new element kind is breaking → schema v11 / floor 11.
+ * v11: a themed diagram element (S4); v21 (diagram-viz Phase 1) grows the second ENGINE the v11
+ * field pinned for. Per engine, exactly one canonical body:
+ *  - `engine:'mermaid'` — `source` (Mermaid text) is canonical; the SVG is a DERIVED cache
+ *    (`svgCache`, a content-addressed `assets/<sha1>.svg`) re-rendered by the hidden MAIN worker;
+ *    a source change invalidates it. Rendered as an inert `<img>`, exactly like ImageElement.
+ *  - `engine:'expanse'` — `spec` (the structured {@link DiagramSpec}) is canonical; rendered LIVE
+ *    as token-styled DOM (no worker, no SVG cache, every string a React text node). `importedFrom`
+ *    preserves the original Mermaid source when a diagram was converted (never destroyed).
+ * A new element capability is breaking → schema v21 / floor 21 (boardSchemaVersion.ts).
  */
 export interface DiagramElement extends ElementCommon {
   kind: 'diagram'
-  /** Canonical diagram source text (Mermaid). */
-  source: string
-  /** Source dialect / render engine. Only 'mermaid' today; the field pins it for future engines. */
-  engine: 'mermaid'
+  /** Render engine — selects which canonical body field below applies. */
+  engine: 'mermaid' | 'expanse'
+  /** Canonical diagram source text (mermaid engine; absent on expanse). */
+  source?: string
+  /** Canonical structured model (expanse engine; absent on mermaid). */
+  spec?: DiagramSpec
+  /** Original Mermaid source preserved by an explicit mermaid→spec conversion. */
+  importedFrom?: string
   /** Display box (board-local px). */
   w: number
   h: number
-  /** Derived content-addressed SVG cache `assets/<sha1>.svg`. Absent ⇒ not yet rendered / pending;
-   *  a source edit clears it and the renderer re-renders + rewrites it (a silent, non-undoable patch). */
+  /** Derived content-addressed SVG cache `assets/<sha1>.svg` (mermaid engine ONLY). Absent ⇒ not
+   *  yet rendered / pending; a source edit clears it and the renderer re-renders + rewrites it
+   *  (a silent, non-undoable patch). The expanse engine renders live and never caches. */
   svgCache?: string
 }
 
@@ -727,7 +740,12 @@ const MIGRATIONS: Record<number, Migration> = {
   // routing). Optional + defaulted-at-read (absent ⇒ no routing) → identity bump; ADDITIVE so
   // MIN_READER_VERSION stays 17 (an older reader ignores the unknown optional key and it rides
   // through the structuredClone round-trip; assertBoard shape-checks without rejecting).
-  19: (doc) => ({ ...doc, schemaVersion: 20 })
+  19: (doc) => ({ ...doc, schemaVersion: 20 }),
+  // v21: the DiagramElement 'expanse' engine (+ spec + importedFrom, diagram-viz Phase 1). The
+  // engine value only appears on newly-authored expanse elements and every existing diagram element
+  // already satisfies the mermaid branch — identity bump. BREAKING (floor → 21): a pre-21 reader's
+  // diagram case hard-fails engine !== 'mermaid' / missing string source (boardSchemaVersion.ts).
+  20: (doc) => ({ ...doc, schemaVersion: 21 })
 }
 
 /**
@@ -929,17 +947,31 @@ export function assertPlanningElement(el: unknown): void {
       }
       return
     case 'diagram':
-      if (typeof el.source !== 'string') fail('diagram element is missing string source')
-      if (el.engine !== 'mermaid')
-        fail(`diagram element has unsupported engine ${String(el.engine)}`)
       if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('diagram element has non-positive w/h')
-      // svgCache is an OPTIONAL derived cache: absent (not-yet-rendered) is valid; present must be a
-      // non-empty assetId-shaped string. The asset GC (collectAssetIds) keeps it from being swept.
-      if (
-        el.svgCache !== undefined &&
-        (typeof el.svgCache !== 'string' || el.svgCache.length === 0)
-      ) {
-        fail('diagram element has an empty/non-string svgCache')
+      // v21: the engine discriminates which canonical body the element carries. Exactly one of
+      // source (mermaid) / spec (expanse) — the OTHER engine's body being present is rejected so a
+      // hand-edited doc can't smuggle an ambiguous element past the "source of truth" contract.
+      if (el.engine === 'mermaid') {
+        if (typeof el.source !== 'string') fail('diagram element is missing string source')
+        if (el.spec !== undefined) fail('mermaid diagram element must not carry a spec')
+        // svgCache is an OPTIONAL derived cache: absent (not-yet-rendered) is valid; present must be
+        // a non-empty assetId-shaped string. The asset GC (collectAssetIds) keeps it from being swept.
+        if (
+          el.svgCache !== undefined &&
+          (typeof el.svgCache !== 'string' || el.svgCache.length === 0)
+        ) {
+          fail('diagram element has an empty/non-string svgCache')
+        }
+      } else if (el.engine === 'expanse') {
+        assertDiagramSpec(el.spec, fail, isRecord, isFiniteNum)
+        if (el.source !== undefined) fail('expanse diagram element must not carry a source')
+        // The expanse engine renders live — a derived SVG cache has no meaning here.
+        if (el.svgCache !== undefined) fail('expanse diagram element must not carry an svgCache')
+      } else {
+        fail(`diagram element has unsupported engine ${String(el.engine)}`)
+      }
+      if (el.importedFrom !== undefined && typeof el.importedFrom !== 'string') {
+        fail('diagram element importedFrom is not a string')
       }
       return
     case 'fileref':

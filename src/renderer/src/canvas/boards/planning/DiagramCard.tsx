@@ -95,7 +95,10 @@ export const DiagramCard = memo(function DiagramCard({
   onCache,
   onResize
 }: DiagramCardProps): ReactElement {
-  const { id, x, y, w, h, source, svgCache } = element
+  const { id, x, y, w, h, svgCache } = element
+  // v21: source is engine-conditional (mermaid ⇒ present; validated in boardSchema). The expanse
+  // engine branches to the spec renderer before any source use — '' never actually renders.
+  const source = element.source ?? ''
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
   const motion = !reducedMotion

@@ -87,8 +87,18 @@
  *   round-trip the field, render no UI, inject no env). Optional + defaulted-at-read (absent ⇒ no
  *   routing) → ADDITIVE: writer-only bump, floor STAYS 17. The API key is NOT in the doc — it
  *   lives only in the encrypted llmKeyStore (canvas.json is git-trackable).
+ * - v21 = the DiagramElement `'expanse'` ENGINE (diagram-viz Phase 1): `engine` widens
+ *   'mermaid' → 'mermaid'|'expanse'; `source` becomes engine-conditional (required for mermaid,
+ *   absent for expanse); NEW `spec` (the structured DiagramSpec — diagramSpec.ts) is canonical for
+ *   expanse; NEW optional `importedFrom` preserves the original Mermaid source on conversion. A new
+ *   ELEMENT CAPABILITY is BREAKING per ADR 0007: a pre-21 `assertPlanningElement` diagram case
+ *   hard-fails `engine !== 'mermaid'` AND `typeof source !== 'string'`, so a doc carrying an
+ *   expanse diagram dies deep validation on any older reader — the compat floor moves to 21 too
+ *   (MIN_READER_VERSION below). The migration is identity (the engine value only appears on
+ *   newly-authored expanse elements; every existing diagram element already satisfies the
+ *   mermaid branch unchanged).
  */
-export const SCHEMA_VERSION = 20
+export const SCHEMA_VERSION = 21
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -123,5 +133,11 @@ export const SCHEMA_VERSION = 20
  * was additive and left the floor at 15; v17 is the next breaking bump, moving BOTH to 17. Floor
  * STAYS 17 through v18, v19 AND v20 — the Planning element appearance props (v18), the Kanban
  * card-detail fields (v19), and the TerminalBoard `openRouter` field (v20) are all ADDITIVE.)
+ * Floor moves to 21 with the v21 `'expanse'` diagram engine: a pre-21 reader's diagram case
+ * requires `engine === 'mermaid'` and a string `source`, so it would HARD-FAIL deep validation on
+ * a doc containing an expanse-engine diagram — stamping `minReaderVersion: 21` gives pre-21 apps
+ * the clean "update the app to open it" message instead of a confusing `.bak`-fallback. A doc with
+ * only mermaid diagrams still READS on older apps once written, but ADR 0007 floors are stamped by
+ * CAPABILITY, not per-doc content (the v11/v13 precedent).
  */
-export const MIN_READER_VERSION = 17
+export const MIN_READER_VERSION = 21
