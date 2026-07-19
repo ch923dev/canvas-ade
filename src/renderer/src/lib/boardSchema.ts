@@ -36,6 +36,7 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 // back-reference to BoardCommon is type-only, so there is no runtime import cycle. Re-exported below
 // so every `import { KanbanBoard } from '.../boardSchema'` consumer is unchanged.
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
+import { assertTerminalContent } from './terminalBoardSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
 export type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef }
 
@@ -182,6 +183,16 @@ export interface TerminalBoard extends BoardCommon {
    * literal monospace stack resolved like the `--term-mono` token.
    */
   fontFamilyId?: string
+  /**
+   * v20: per-board OpenRouter routing intent (maintainer-private feature, compile-gated
+   * __TERMINAL_OPENROUTER__ — ungated builds validate + round-trip the field but render no UI
+   * and inject no env). `enabled` routes THIS board's agent through OpenRouter at spawn (MAIN
+   * injects the provider env from the safeStorage llmKeyStore); `model` is the OpenRouter
+   * model slug (e.g. 'anthropic/claude-sonnet-4.5') the dialog also composes into the launch
+   * command's model flag. The API KEY is deliberately NOT here: canvas.json is git-trackable
+   * and the launch line echoes in the PTY — the key lives ONLY in the encrypted key store.
+   */
+  openRouter?: { enabled: boolean; model?: string }
 }
 
 export interface BrowserBoard extends BoardCommon {
@@ -711,7 +722,12 @@ const MIGRATIONS: Record<number, Migration> = {
   // MIN_READER_VERSION stays 17 (assertKanbanContent shape-checks them without rejecting a card, and
   // unknown keys ride through the structuredClone round-trip; the legacy singular `tag` is still read
   // as a fallback into `tags`). No data rewrite — a pre-v19 card just carries none of the new fields.
-  18: (doc) => ({ ...doc, schemaVersion: 19 })
+  18: (doc) => ({ ...doc, schemaVersion: 19 }),
+  // v20: optional TerminalBoard `openRouter` ({enabled, model?} — maintainer-private OpenRouter
+  // routing). Optional + defaulted-at-read (absent ⇒ no routing) → identity bump; ADDITIVE so
+  // MIN_READER_VERSION stays 17 (an older reader ignores the unknown optional key and it rides
+  // through the structuredClone round-trip; assertBoard shape-checks without rejecting).
+  19: (doc) => ({ ...doc, schemaVersion: 20 })
 }
 
 /**
@@ -956,40 +972,10 @@ export function assertBoard(b: unknown): void {
 
   switch (b.type) {
     case 'terminal':
-      if (b.shell !== undefined && typeof b.shell !== 'string')
-        fail('terminal shell is not a string')
-      if (b.launchCommand !== undefined && typeof b.launchCommand !== 'string') {
-        fail('terminal launchCommand is not a string')
-      }
-      if (b.cwd !== undefined && typeof b.cwd !== 'string') fail('terminal cwd is not a string')
-      if (b.port !== undefined && !isFiniteNum(b.port)) fail('terminal port is not a number')
-      if (b.agentSessionId !== undefined && typeof b.agentSessionId !== 'string') {
-        fail('terminal agentSessionId is not a string')
-      }
-      if (b.agentTranscriptPath !== undefined && typeof b.agentTranscriptPath !== 'string') {
-        fail('terminal agentTranscriptPath is not a string')
-      }
-      if (b.fontSize !== undefined && !isPositiveNum(b.fontSize)) {
-        fail('terminal fontSize must be a positive number')
-      }
-      if (b.scrollback !== undefined && (!isFiniteNum(b.scrollback) || b.scrollback < 0)) {
-        fail('terminal scrollback must be a non-negative number')
-      }
-      if (b.agentKind !== undefined && typeof b.agentKind !== 'string') {
-        fail('terminal agentKind is not a string')
-      }
-      if (b.monitorActivity !== undefined && typeof b.monitorActivity !== 'boolean') {
-        fail('terminal monitorActivity is not a boolean')
-      }
-      // v16 theming: type-check ONLY (do NOT reject an unknown id) — a future theme/font id
-      // written by a newer build must not fail the whole doc. The id is preserved verbatim
-      // and degrades to the default at render (terminalThemes.ts), per ADR 0007 forward-compat.
-      if (b.themeId !== undefined && typeof b.themeId !== 'string') {
-        fail('terminal themeId is not a string')
-      }
-      if (b.fontFamilyId !== undefined && typeof b.fontFamilyId !== 'string') {
-        fail('terminal fontFamilyId is not a string')
-      }
+      // Per-field checks live in terminalBoardSchema.ts (max-lines extraction, v20 —
+      // the kanbanSchema precedent below); guards are injected so the leaf module
+      // never imports back into this file.
+      assertTerminalContent(b, fail, isRecord, isFiniteNum, isPositiveNum)
       return
     case 'browser':
       if (typeof b.url !== 'string') fail('browser board is missing a string url')

@@ -418,7 +418,7 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
       boards: []
     } as unknown as CanvasDoc)
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(19)
+    expect(SCHEMA_VERSION).toBe(20)
     expect(MIN_READER_VERSION).toBe(17)
   })
 })
@@ -994,7 +994,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(19)
+    expect(SCHEMA_VERSION).toBe(20)
     expect(MIN_READER_VERSION).toBe(17)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
@@ -1345,13 +1345,13 @@ describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(19)
+    expect(SCHEMA_VERSION).toBe(20)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 19,
+      schemaVersion: 20,
       minReaderVersion: 17,
       viewport: vp,
       boards: [],
@@ -1538,7 +1538,7 @@ describe('W4 image element', () => {
   })
 
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(19)
+    expect(SCHEMA_VERSION).toBe(20)
   })
 
   it('round-trips a valid image element', () => {
@@ -1592,7 +1592,7 @@ describe('W4 image element', () => {
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(19)
+    expect(SCHEMA_VERSION).toBe(20)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -2279,6 +2279,68 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(() => fromObject(v9doc({ monitorActivity: 'yes' }))).toThrow(
       /monitorActivity is not a boolean/
     )
+  })
+})
+
+// ── OpenRouter routing (schema v20): optional TerminalBoard `openRouter` ──────────────
+// Additive (floor stays 17): every build validates + round-trips the field; only a gated
+// build renders UI / injects env, so ungated readers must carry it through untouched.
+describe('schema v20 — terminal openRouter field', () => {
+  const docWith = (terminal: Record<string, unknown>): unknown => ({
+    schemaVersion: SCHEMA_VERSION,
+    minReaderVersion: MIN_READER_VERSION,
+    viewport: null,
+    connectors: [],
+    boards: [{ id: 't1', type: 'terminal', x: 0, y: 0, w: 420, h: 340, title: 'T', ...terminal }]
+  })
+
+  it('round-trips enabled + model', () => {
+    const back = fromObject(docWith({ openRouter: { enabled: true, model: 'moonshotai/kimi-k2' } }))
+    const t = back.boards[0]
+    expect(t.type).toBe('terminal')
+    if (t.type === 'terminal') {
+      expect(t.openRouter).toEqual({ enabled: true, model: 'moonshotai/kimi-k2' })
+    }
+  })
+
+  it('accepts an absent field (default: no routing) and enabled without a model', () => {
+    const none = fromObject(docWith({}))
+    if (none.boards[0].type === 'terminal') expect(none.boards[0].openRouter).toBeUndefined()
+    const bare = fromObject(docWith({ openRouter: { enabled: false } }))
+    if (bare.boards[0].type === 'terminal') {
+      expect(bare.boards[0].openRouter).toEqual({ enabled: false })
+    }
+  })
+
+  it('rejects a non-object openRouter', () => {
+    expect(() => fromObject(docWith({ openRouter: 'yes' }))).toThrow(/openRouter is not an object/)
+  })
+
+  it('rejects a missing/non-boolean enabled', () => {
+    expect(() => fromObject(docWith({ openRouter: {} }))).toThrow(
+      /openRouter\.enabled is not a boolean/
+    )
+    expect(() => fromObject(docWith({ openRouter: { enabled: 'on' } }))).toThrow(
+      /openRouter\.enabled is not a boolean/
+    )
+  })
+
+  it('rejects a non-string model', () => {
+    expect(() => fromObject(docWith({ openRouter: { enabled: true, model: 42 } }))).toThrow(
+      /openRouter\.model is not a string/
+    )
+  })
+
+  it('migrates a v19 doc to the current version as an identity bump (floor stays 17)', () => {
+    const out = migrate({
+      schemaVersion: 19,
+      minReaderVersion: 17,
+      viewport: null,
+      connectors: [],
+      boards: []
+    } as never)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(MIN_READER_VERSION).toBe(17)
   })
 })
 

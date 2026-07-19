@@ -46,9 +46,60 @@ const NESTED_CLAUDE_ENV = [
   'CLAUDE_CODE_ENTRYPOINT'
 ] as const
 
+/** Per-spawn OpenRouter routing intent (mirrors `TerminalBoard.openRouter` / `SpawnOpts`). */
+export interface OpenRouterSpawnIntent {
+  enabled: boolean
+  /** OpenRouter model slug (e.g. 'anthropic/claude-sonnet-4.5'). Also composed into the
+   *  launch line's model flag by the dialog; here it backs ANTHROPIC_MODEL so routing
+   *  holds even if the user hand-strips the flag from the composed command. */
+  model?: string
+}
+
+/**
+ * Maintainer-private OpenRouter routing (compile-gated __TERMINAL_OPENROUTER__): index.ts
+ * wires this ONLY when the build flag is on, so every ungated build resolves no key and the
+ * env branch below is inert — a board field alone can never route. The provider returns the
+ * DECRYPTED OpenRouter key (llmKeyStore, safeStorage-encrypted, userData) — resolved
+ * MAIN-side at spawn time, never persisted in the board doc, never echoed into the PTY
+ * line. Like every seam in this file, a provider error must NEVER break a spawn.
+ */
+export type OpenRouterKeyProvider = () => string | undefined
+let openRouterKeyProvider: OpenRouterKeyProvider | undefined
+
+/** index.ts wires the key lookup here (gated); pty.ts stays decoupled. */
+export function setOpenRouterKeyProvider(fn: OpenRouterKeyProvider | undefined): void {
+  openRouterKeyProvider = fn
+}
+
+/**
+ * OpenRouter env for one spawn: OPENROUTER_API_KEY (opencode + anything OpenAI-compatible)
+ * plus the Anthropic-skin trio Claude Code reads — ANTHROPIC_BASE_URL → OpenRouter's
+ * Anthropic-compatible endpoint, AUTH_TOKEN → the key, and ANTHROPIC_API_KEY explicitly
+ * BLANK (the endpoint contract; also stops a routed board from silently billing an
+ * inherited direct-API key). Injected only when the board opted in AND a key resolves;
+ * enabled-but-no-key spawns UNROUTED (the dialog's key-status row is the pre-spawn warning).
+ */
+function openRouterEnv(intent: OpenRouterSpawnIntent | undefined): Record<string, string> {
+  if (!intent?.enabled) return {}
+  let key: string | undefined
+  try {
+    key = openRouterKeyProvider?.()
+  } catch {
+    key = undefined // key resolution must never break a spawn
+  }
+  if (!key) return {}
+  return {
+    OPENROUTER_API_KEY: key,
+    ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+    ANTHROPIC_AUTH_TOKEN: key,
+    ANTHROPIC_API_KEY: '',
+    ...(intent.model ? { ANTHROPIC_MODEL: intent.model } : {})
+  }
+}
+
 export function buildSpawnEnv(
   provider: RecapEnvProvider | undefined,
-  opts: { id: string; launchCommand?: string; cwd?: string }
+  opts: { id: string; launchCommand?: string; cwd?: string; openRouter?: OpenRouterSpawnIntent }
 ): Record<string, string> {
   let recapEnv: Record<string, string> | undefined
   try {
@@ -60,6 +111,9 @@ export function buildSpawnEnv(
     ...process.env,
     FORCE_HYPERLINK: '1',
     CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
+    // OpenRouter routing before the recap seam: recap stays the LAST word (its documented
+    // override contract), and the two key-sets are disjoint anyway.
+    ...openRouterEnv(opts.openRouter),
     ...(recapEnv ?? {})
   } as Record<string, string>
   for (const k of NESTED_CLAUDE_ENV) delete env[k]

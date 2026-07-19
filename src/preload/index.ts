@@ -39,6 +39,9 @@ export interface SpawnTerminalOpts {
   /** Desktop-notifications P3: the board's `monitorActivity` opt-out (schema v10). `false` silences
    *  this session's generic-PTY lifecycle notifications (exit done/error + idle needs-input). */
   monitorActivity?: boolean
+  /** v20 OpenRouter routing intent (compile-gated feature) — MAIN resolves the key itself;
+   *  key material never rides this IPC. Mirrors main `OpenRouterSpawnIntent`. */
+  openRouter?: { enabled: boolean; model?: string }
 }
 
 /** Result of `pty:spawn`: on failure `pid` is -1 and `state` is `spawn-failed`. */
@@ -870,6 +873,10 @@ const api = {
       ipcRenderer.invoke('llm:setKey', args),
     clearKey: (args: { provider: LlmStatus['provider'] }): Promise<LlmWriteResult> =>
       ipcRenderer.invoke('llm:clearKey', args),
+    // v20 OpenRouter terminal routing: PER-PROVIDER key presence (status() reports only the
+    // active config provider's). Presence boolean only — key material never crosses IPC.
+    hasKey: (args: { provider: LlmStatus['provider'] }): Promise<boolean> =>
+      ipcRenderer.invoke('llm:hasKey', args),
     setConfig: (args: {
       provider: LlmStatus['provider']
       model: string

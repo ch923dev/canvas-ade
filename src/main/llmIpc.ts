@@ -10,6 +10,7 @@ import { isForeignSender } from './ipcGuard'
 import type { ProviderName, LlmConfig } from './llmConfig'
 import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS, isLoopbackBaseUrl } from './llmConfig'
 import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
+import { setOpenRouterKeyProvider } from './ptySpawnEnv'
 import { createBudgetStore, DEFAULT_MAX_CALLS_PER_DAY } from './llmBudget'
 import {
   getProvider,
@@ -107,6 +108,12 @@ const NOOP_KEY_STORE: KeyStore = {
   hasKey: () => false
 }
 
+// Build-time maintainer-private OpenRouter terminal-routing gate (electron.vite.config.ts
+// `main.define`). typeof-guarded: a real build folds this to a constant (false ⇒ the wiring
+// below dead-code-eliminates, so ungated binaries never resolve a routing key); vitest runs
+// with no defines, where the guard reads false — tests drive setOpenRouterKeyProvider directly.
+declare const __TERMINAL_OPENROUTER__: boolean | undefined
+
 export function registerLlmHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
@@ -115,6 +122,13 @@ export function registerLlmHandlers(
   encryptor?: Encryptor
 ): void {
   const keyStore: KeyStore = encryptor ? createKeyStore(userDataDir, encryptor) : NOOP_KEY_STORE
+  // v20 OpenRouter terminal routing (maintainer-private, compile-gated): hand pty spawns a
+  // key lookup on the SAME store the llm:setKey/clearKey channels write — a Settings-pane key
+  // save is immediately live for the next routed spawn. Ungated builds never wire this, which
+  // keeps buildSpawnEnv's openRouter branch inert (a board field alone can never route).
+  if (typeof __TERMINAL_OPENROUTER__ !== 'undefined' && __TERMINAL_OPENROUTER__) {
+    setOpenRouterKeyProvider(() => keyStore.getKey('openrouter'))
+  }
   // BUG-013: HONOR an injected budget — only build a fresh store when none was injected, so a
   // caller/test that injects a budget (for isolation) is not silently ignored. Computed once into
   // a named local rather than relying on the spread-then-override order being correct.
@@ -215,6 +229,15 @@ export function registerLlmHandlers(
       return { ok: false, reason: 'invalid-provider' }
     keyStore.clearKey(a.provider)
     return { ok: true }
+  })
+
+  // v20 OpenRouter terminal routing: read-only PER-PROVIDER key presence for the New Terminal
+  // dialog's key-status row — `llm:status` reports hasKey only for the ACTIVE config provider,
+  // which need not be 'openrouter'. Presence only (boolean); key material never crosses IPC.
+  ipcMain.handle('llm:hasKey', (e, a: { provider: ProviderName }): boolean => {
+    if (guard(e)) return false
+    if (!VALID_PROVIDERS.has(a?.provider as string)) return false
+    return keyStore.hasKey(a.provider)
   })
 
   // Model-list catalog for the Settings combobox. The renderer sends { provider, refresh? } and
