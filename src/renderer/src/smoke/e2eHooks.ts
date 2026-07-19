@@ -25,7 +25,7 @@ import { fromObject } from '../lib/boardSchema'
 import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { clearClipboard } from '../canvas/boards/planning/elementClipboard'
-import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
+import { buildDiagramThemeVars, buildDiagramThemeCss } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import {
   e2eTerminals,
@@ -786,6 +786,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     diagramThemeVars() {
       return buildDiagramThemeVars()
+    },
+    diagramThemeCss(motion) {
+      return buildDiagramThemeCss(motion)
     },
     setAuthStatus(status) {
       useAccountStore.getState().apply(status)

@@ -27,9 +27,15 @@ import {
   type ReactElement
 } from 'react'
 import type { DiagramElement } from '../../../lib/boardSchema'
-import { buildDiagramThemeVars, diagramTypeLabel } from './diagramTheme'
+import {
+  buildDiagramThemeVars,
+  buildDiagramThemeCss,
+  cacheMotionMatches,
+  diagramTypeLabel
+} from './diagramTheme'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { useReducedMotion } from './useReducedMotion'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
@@ -70,6 +76,8 @@ export const DiagramCard = memo(function DiagramCard({
 }: DiagramCardProps): ReactElement {
   const { id, x, y, w, h, source, svgCache } = element
   const locked = element.locked ?? false
+  const reducedMotion = useReducedMotion()
+  const motion = !reducedMotion
   const [svgUrl, setSvgUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -236,10 +244,13 @@ export const DiagramCard = memo(function DiagramCard({
     setSvgUrl(next)
   }, [])
 
-  // Render-or-load effect, keyed on `[source, svgCache]`: a present cache reads instantly; an absent
-  // cache (fresh element OR a source edit that cleared it) renders via the hidden worker, then
-  // writes the asset + persists the id. A missing cached asset (GC / .bak restore) falls through to
-  // a re-render rather than showing a broken image.
+  // Render-or-load effect, keyed on `[source, svgCache, motion]`: a present cache reads instantly;
+  // an absent cache (fresh element OR a source edit that cleared it) renders via the hidden worker,
+  // then writes the asset + persists the id. A missing cached asset (GC / .bak restore) falls
+  // through to a re-render rather than showing a broken image. A cache whose BAKED motion mode
+  // (the S4b sentinel) mismatches the live reduced-motion preference also falls through — media
+  // queries don't re-evaluate inside an SVG-as-<img>, so an animated cache must never be shown to
+  // a reduced-motion user (nor a static one after the preference lifts).
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -247,14 +258,23 @@ export const DiagramCard = memo(function DiagramCard({
         const bytes = await window.api.asset.read(svgCache).catch(() => null)
         if (cancelled) return
         if (bytes && bytes.length) {
-          showSvg(new TextDecoder().decode(bytes))
-          setError(null)
-          return
+          const text = new TextDecoder().decode(bytes)
+          if (cacheMotionMatches(text, motion)) {
+            showSvg(text)
+            setError(null)
+            return
+          }
+          // baked motion mode mismatches the live preference → re-render below
         }
         // cache asset missing → fall through to a re-render below
       }
       const res = await window.api.diagram
-        .render({ source, themeVars: buildDiagramThemeVars(), id })
+        .render({
+          source,
+          themeVars: buildDiagramThemeVars(),
+          themeCss: buildDiagramThemeCss(motion),
+          id
+        })
         .catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }))
       if (cancelled) return
       if (res.ok) {
@@ -272,7 +292,7 @@ export const DiagramCard = memo(function DiagramCard({
     return () => {
       cancelled = true
     }
-  }, [source, svgCache, id, showSvg, onCache])
+  }, [source, svgCache, id, showSvg, onCache, motion])
 
   // Revoke the last object URL on unmount.
   useEffect(

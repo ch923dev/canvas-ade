@@ -24,6 +24,9 @@ import { isForeignSender } from './ipcGuard'
 
 /** Max source length (chars) accepted for a render — DoS guard (mirrors the worker's maxTextSize). */
 export const DIAGRAM_MAX_SOURCE = 50_000
+/** Max themeCss length (chars). The renderer's token-built CSS is ~2 KB; the cap only bounds a
+ *  hostile/buggy caller (same class as DIAGRAM_MAX_SOURCE). */
+export const DIAGRAM_MAX_THEME_CSS = 20_000
 /** Hard ceiling on one render before it is abandoned + the worker recycled (a pathological diagram
  *  can wedge layout). On timeout the window is destroyed so the next render starts from a fresh one. */
 export const DIAGRAM_RENDER_TIMEOUT_MS = 8_000
@@ -34,6 +37,9 @@ export interface DiagramRenderRequest {
   source: string
   /** Theme-variable overrides (resolved app-token hex/strings) merged into Mermaid `theme:'base'`. */
   themeVars?: Record<string, string>
+  /** Token-built CSS appended into the SVG via Mermaid `themeCSS` (S4b): semantic status classes,
+   *  edge-flow motion (or its reduced-motion static override), and the motion cache sentinel. */
+  themeCss?: string
   /** A unique, CSS-id-safe token → the SVG root id (namespaces every internal id per render). */
   id: string
 }
@@ -133,7 +139,8 @@ async function renderOnce(req: DiagramRenderRequest): Promise<DiagramRenderResul
   // terminators); themeVars is data MAIN controls, embedded as a JSON object literal.
   const encoded = encodeURIComponent(req.source)
   const themeLiteral = JSON.stringify(req.themeVars ?? {})
-  const expr = `window.__renderDiagram(${JSON.stringify(encoded)}, ${JSON.stringify(id)}, ${themeLiteral})`
+  const cssLiteral = JSON.stringify(req.themeCss ?? '')
+  const expr = `window.__renderDiagram(${JSON.stringify(encoded)}, ${JSON.stringify(id)}, ${themeLiteral}, ${cssLiteral})`
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const svg = await Promise.race<string>([
@@ -166,6 +173,13 @@ export function renderDiagram(req: DiagramRenderRequest): Promise<DiagramRenderR
     return Promise.resolve({ ok: false, error: `source exceeds ${DIAGRAM_MAX_SOURCE} characters` })
   if (typeof req.id !== 'string' || req.id.length === 0)
     return Promise.resolve({ ok: false, error: 'id must be a non-empty string' })
+  if (req.themeCss !== undefined && typeof req.themeCss !== 'string')
+    return Promise.resolve({ ok: false, error: 'themeCss must be a string' })
+  if (req.themeCss && req.themeCss.length > DIAGRAM_MAX_THEME_CSS)
+    return Promise.resolve({
+      ok: false,
+      error: `themeCss exceeds ${DIAGRAM_MAX_THEME_CSS} characters`
+    })
   const run = queue.then(() => renderOnce(req))
   // Keep the queue chained even when a render throws, but never let a rejection poison the chain.
   queue = run.then(
