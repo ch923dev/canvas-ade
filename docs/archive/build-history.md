@@ -2947,3 +2947,35 @@ command recomposes to `claude --model anthropic/claude-sonnet-4.5`) · new self-
 legs (Windows `@terminal` 84P/2skip — spec self-skips ungated as designed — + Linux Docker full
 301P/5skip/1 out-of-zone `menuShell` flake rerun-green) · CI all green (check · analyze · CodeQL ·
 claude-review FULL PASS, 0 findings).
+
+## PR #363 — diagram Phase 0: semantic status theming, edge flow, reduced-motion cache, CodeMirror editor (2026-07-19, v0.22.8)
+
+Squash `8e37373b`. First slice of the diagram-viz redesign epic (Direction C decided 2026-07-19 —
+hybrid: structured `DiagramSpec` engine planned alongside Mermaid; review + claude-design research
+docs in `docs/research/2026-07-19-diagram-viz-redesign/`).
+
+**Semantic theming (S4b).** `buildDiagramThemeCss` injects token-derived Mermaid `themeCSS`: status
+classes `done/active/warn/error/muted` agents attach as bare `:::class` (no classDef needed —
+probed on the vendored 11.15 build); wash fills + half-strength status-hue borders; accent stays
+active-only. Edge flow restyles Mermaid's own `e1@{ animate: true }` classes to an accent dash
+march (0.9s/1.8s vs built-in 20s/50s). Cascade contract: Mermaid id-prefixes themeCSS and appends
+it after its own rules — equal specificity + later wins.
+
+**Reduced motion at render time.** Media queries do NOT re-evaluate inside an SVG shown via
+`<img>` (verified empirically) → motion mode resolved per render, baked as a sentinel class, and
+`DiagramCard` re-renders when the cached SVG's baked mode mismatches the live preference
+(`useReducedMotion`; live matchMedia flip). Worker chain gains `themeCss` (MAIN cap 20k).
+
+**CodeMirror source editor.** Lazy ~210 kB chunk (CM 6 + `codemirror-lang-mermaid` imported
+DIRECT, never the @uiw barrel); which editor a session uses is latched at `</>`-open (mid-edit
+chunk resolution never swaps a focused editor); textarea fallback keeps the identical contract.
+Reviewer-warning-driven spec caught a REAL latent bug: DiagramCard never stopped keydown
+propagation, so planning tool hotkeys (c/s/p…) swallowed letters typed into the source — fixed on
+both paths + full-speed tripwire spec.
+
+**Verified.** cheap trio · zone units 68/68 · full units 5563P/5F = documented ambient classes
+(40/40 sanitized) · diagram e2e 8/8 (3 new specs) · user dev-check eyeball PASS · FULL MATRIX
+green both legs on the merge head `3f213830` (Win 306P + menuShell flake rerun-green · Linux
+Docker 303P/5skip clean ×2 trees) · CI green ×2 heads, claude-review 1 warning fixed +
+inline-dispositioned. Gotchas memorized: pnpm --lockfile-only in isolated copy (junction wipe
+prompt); in-file custom hook flips react-hooks v6 deep analysis; pipe-tail masks matrix exit.
