@@ -512,6 +512,10 @@ export const DiagramCard = memo(function DiagramCard({
           <div
             className="pl-diagram-src nowheel nodrag nopan"
             onPointerDown={(e) => e.stopPropagation()}
+            // Editing cards own their keystrokes (the ChecklistCard/NoteCard contract): without
+            // this stop, the well's tool shortcuts (s/n/c/a/p/e/…) fire on letters typed into the
+            // source and SWALLOW them (preventDefault) — `C[Ship]` arrives as `[hi]`.
+            onKeyDown={(e) => e.stopPropagation()}
             onBlur={(e) => {
               // CodeMirror moves focus between internal nodes — only a blur that LEAVES the
               // wrapper ends the editing session (mirrors the textarea's blur contract).
@@ -535,6 +539,10 @@ export const DiagramCard = memo(function DiagramCard({
             value={draft}
             spellCheck={false}
             onPointerDown={(e) => e.stopPropagation()}
+            // Same keystroke-ownership stop as the CodeMirror wrapper above — this was MISSING
+            // pre-S4b: bare tool letters typed into the source switched the planning tool and
+            // never reached the textarea (latent, masked by agent-written sources).
+            onKeyDown={(e) => e.stopPropagation()}
             onChange={(e) => onDraftChange(e.target.value)}
             onBlur={() => {
               if (debounceRef.current) clearTimeout(debounceRef.current)

@@ -265,4 +265,52 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     await expect(page.locator('.pl-diagram-src')).toHaveCount(0)
     await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
   })
+
+  test('CodeMirror editing path: highlighted editor mounts, typed edit commits + re-renders (S4b)', async ({
+    page
+  }) => {
+    // Covers the SessionEditor branch specifically (the </>-toggle spec above passes on the
+    // textarea fallback too, so it never proved WHICH editor mounted): the lazy chunk preloads at
+    // card mount, the open-time latch picks CodeMirror, a real typed edit flows through
+    // onDraftChange → close flush → tracked source commit → worker re-render.
+    await seedDiagram(page, 'graph TD\n  A[Plan] --> B[Build]')
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+
+    await page.locator('.pl-diagram').click({ position: { x: 24, y: 80 } })
+    const toggle = page.locator('.pl-diagram-head button').last()
+    await expect(toggle).toBeVisible()
+    await toggle.click()
+
+    // The CodeMirror content host must be inside the editor wrapper — proof the latch picked the
+    // real editor, not the <textarea> fallback (chunk had the seed+render window to load; if this
+    // ever flakes on a cold chunk, the latch design itself is at fault — do not retry-loop it).
+    const cm = page.locator('.pl-diagram-src .cm-content')
+    await expect(cm).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.pl-diagram-src textarea')).toHaveCount(0)
+
+    // Real typed edit: append a node line at the end of the document.
+    await cm.click()
+    await page.keyboard.press('Control+End')
+    // Full-speed typing, deliberately including tool-shortcut letters (c/s/p): pre-fix the well's
+    // tool hotkeys swallowed them (`C[Ship]` → `[hi]`) — this line is the regression tripwire.
+    await page.keyboard.type('\n  B --> C[Ship]')
+
+    // Close via the toggle — flushes the draft into ONE tracked commit and re-renders.
+    await toggle.click()
+    await expect(page.locator('.pl-diagram-src')).toHaveCount(0)
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+
+    // The typed edit landed in the durable store source (not just the editor draft).
+    const source = await page.evaluate(() => {
+      const boards = (globalThis as any).__canvasE2E.getBoards() as {
+        elements?: { kind: string; source?: string }[]
+      }[]
+      for (const b of boards) {
+        const d = b.elements?.find((e) => e.kind === 'diagram')
+        if (d) return d.source ?? ''
+      }
+      return ''
+    })
+    expect(source).toContain('C[Ship]')
+  })
 })
