@@ -33,6 +33,7 @@ import {
   cacheMotionMatches,
   diagramTypeLabel
 } from './diagramTheme'
+import { DiagramSpecView } from './DiagramSpecView'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 import { useReducedMotion } from './useReducedMotion'
@@ -96,8 +97,11 @@ export const DiagramCard = memo(function DiagramCard({
   onResize
 }: DiagramCardProps): ReactElement {
   const { id, x, y, w, h, svgCache } = element
-  // v21: source is engine-conditional (mermaid ⇒ present; validated in boardSchema). The expanse
-  // engine branches to the spec renderer before any source use — '' never actually renders.
+  // v21: the engine picks the body. mermaid ⇒ `source` is canonical (validated present in
+  // boardSchema; the '' fallback is for the type only) and renders via the hidden worker → inert
+  // <img>. expanse ⇒ `spec` is canonical and renders LIVE through DiagramSpecView (no worker, no
+  // svgCache); the source editor is hidden (spec editing is the Phase-4 ADR-gated surface).
+  const expanse = element.engine === 'expanse'
   const source = element.source ?? ''
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
@@ -281,6 +285,7 @@ export const DiagramCard = memo(function DiagramCard({
   // queries don't re-evaluate inside an SVG-as-<img>, so an animated cache must never be shown to
   // a reduced-motion user (nor a static one after the preference lifts).
   useEffect(() => {
+    if (expanse) return // spec renders live in DiagramSpecView — no worker, no cache
     let cancelled = false
     void (async () => {
       if (svgCache) {
@@ -321,7 +326,7 @@ export const DiagramCard = memo(function DiagramCard({
     return () => {
       cancelled = true
     }
-  }, [source, svgCache, id, showSvg, onCache, motion])
+  }, [expanse, source, svgCache, id, showSvg, onCache, motion])
 
   // Revoke the last object URL on unmount.
   useEffect(
@@ -423,9 +428,11 @@ export const DiagramCard = memo(function DiagramCard({
             zIndex: 1
           }}
         >
-          <span style={{ color: 'var(--text-2)' }}>{diagramTypeLabel(source)}</span>
+          <span style={{ color: 'var(--text-2)' }}>
+            {expanse ? (element.spec?.title ?? 'expanse') : diagramTypeLabel(source)}
+          </span>
           <span style={{ flex: 1 }} />
-          {!editing && svgUrl && (
+          {!editing && (expanse || svgUrl) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 1 }} title="Scroll to zoom">
               <button
                 type="button"
@@ -473,40 +480,42 @@ export const DiagramCard = memo(function DiagramCard({
               </button>
             </div>
           )}
-          <button
-            type="button"
-            title={editing ? 'Done editing' : 'Edit source'}
-            onPointerDown={(e) => e.stopPropagation()}
-            // While editing, the source <textarea> holds focus. A bare press would blur it FIRST
-            // (onBlur → setEditing(false) → re-render), so by the time onClick fires it reads
-            // editing===false and RE-OPENS the editor — one click = close+reopen, the editor never
-            // closes ("clicking once does 2 clicks"). preventDefault on mousedown keeps focus in the
-            // textarea so no spurious blur fires and the single click toggles with the correct state.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (editing) {
-                if (debounceRef.current) clearTimeout(debounceRef.current)
-                flushDraft(draft)
-                setEditing(false)
-              } else {
-                onEditStart()
-                setDraft(source)
-                editorAtOpenRef.current = diagramEditorCmp
-                setEditing(true)
-              }
-            }}
-            style={{
-              all: 'unset',
-              cursor: 'pointer',
-              padding: '1px 5px',
-              borderRadius: 4,
-              fontFamily: 'var(--term-mono)',
-              color: editing ? 'var(--accent)' : 'var(--text-3)'
-            }}
-          >
-            {'</>'}
-          </button>
+          {!expanse && (
+            <button
+              type="button"
+              title={editing ? 'Done editing' : 'Edit source'}
+              onPointerDown={(e) => e.stopPropagation()}
+              // While editing, the source <textarea> holds focus. A bare press would blur it FIRST
+              // (onBlur → setEditing(false) → re-render), so by the time onClick fires it reads
+              // editing===false and RE-OPENS the editor — one click = close+reopen, the editor never
+              // closes ("clicking once does 2 clicks"). preventDefault on mousedown keeps focus in the
+              // textarea so no spurious blur fires and the single click toggles with the correct state.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (editing) {
+                  if (debounceRef.current) clearTimeout(debounceRef.current)
+                  flushDraft(draft)
+                  setEditing(false)
+                } else {
+                  onEditStart()
+                  setDraft(source)
+                  editorAtOpenRef.current = diagramEditorCmp
+                  setEditing(true)
+                }
+              }}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: '1px 5px',
+                borderRadius: 4,
+                fontFamily: 'var(--term-mono)',
+                color: editing ? 'var(--accent)' : 'var(--text-3)'
+              }}
+            >
+              {'</>'}
+            </button>
+          )}
         </div>
       )}
 
@@ -569,7 +578,7 @@ export const DiagramCard = memo(function DiagramCard({
             }}
           />
         )
-      ) : svgUrl ? (
+      ) : expanse || svgUrl ? (
         <div
           className={'pl-diagram-view' + (selected ? ' nowheel nodrag nopan' : '')}
           onWheel={selected ? onWheel : undefined}
@@ -595,18 +604,28 @@ export const DiagramCard = memo(function DiagramCard({
               transformOrigin: 'center center'
             }}
           >
-            <img
-              src={svgUrl}
-              draggable={false}
-              alt=""
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-                display: 'block',
-                pointerEvents: 'none'
-              }}
-            />
+            {expanse ? (
+              // Live token-styled DOM (Phase 1 static renderer). pointer-events:none inside, so
+              // card-level select/drag/zoom/pan behave exactly like the inert mermaid <img>.
+              <DiagramSpecView
+                spec={element.spec!}
+                w={w}
+                h={Math.max(0, h - (showHeader ? 22 : 0))}
+              />
+            ) : (
+              <img
+                src={svgUrl!}
+                draggable={false}
+                alt=""
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  display: 'block',
+                  pointerEvents: 'none'
+                }}
+              />
+            )}
           </div>
         </div>
       ) : (
