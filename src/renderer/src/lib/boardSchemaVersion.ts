@@ -82,8 +82,13 @@
  *   unknown optional keys and they survive the `fromObject` structuredClone round-trip;
  *   `assertKanbanContent` shape-checks them without rejecting the card/board. The migration is identity
  *   (no data rewrite — a pre-v19 board/card simply carries none of the new fields).
+ * - v20 = optional TerminalBoard `openRouter` ({enabled, model?}) — per-board OpenRouter routing
+ *   intent (maintainer-private, compile-gated __TERMINAL_OPENROUTER__; ungated builds validate +
+ *   round-trip the field, render no UI, inject no env). Optional + defaulted-at-read (absent ⇒ no
+ *   routing) → ADDITIVE: writer-only bump, floor STAYS 17. The API key is NOT in the doc — it
+ *   lives only in the encrypted llmKeyStore (canvas.json is git-trackable).
  */
-export const SCHEMA_VERSION = 19
+export const SCHEMA_VERSION = 20
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -116,7 +121,7 @@ export const SCHEMA_VERSION = 19
  * older than 17 has no `kanban` case in `assertBoard`, so it would HARD-FAIL on a doc containing one
  * — pre-17 apps get the clean "update the app to open it" message instead of a `.bak`-fallback. (v16
  * was additive and left the floor at 15; v17 is the next breaking bump, moving BOTH to 17. Floor
- * STAYS 17 through v18 AND v19 — the Planning element appearance props (v18) and the Kanban card-detail
- * fields (v19) are both ADDITIVE.)
+ * STAYS 17 through v18, v19 AND v20 — the Planning element appearance props (v18), the Kanban
+ * card-detail fields (v19), and the TerminalBoard `openRouter` field (v20) are all ADDITIVE.)
  */
 export const MIN_READER_VERSION = 17

@@ -32,7 +32,11 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     // v16 (terminal theming, Lane B): the xterm colour-theme + font-family ids. Both
     // terminal-scoped + serialized; the dialog Apply patches them via updateBoard.
     'themeId',
-    'fontFamilyId'
+    'fontFamilyId',
+    // v20 (OpenRouter routing, compile-gated): the dialog Apply patches the whole
+    // {enabled, model?} object — MUST be listed or the patch is silently dropped
+    // (the PATCHABLE_KEYS-for-additive-field gotcha, see the kanban note below).
+    'openRouter'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements'],

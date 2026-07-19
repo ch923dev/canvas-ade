@@ -80,6 +80,13 @@ export interface SpawnOpts {
    * and the idle-at-prompt → needs-input heuristic. Absent ⇒ monitored (opt-out, not opt-in).
    */
   monitorActivity?: boolean
+  /**
+   * v20 OpenRouter routing intent (maintainer-private, compile-gated __TERMINAL_OPENROUTER__).
+   * Structural mirror of ptySpawnEnv's OpenRouterSpawnIntent, forwarded verbatim into
+   * buildSpawnEnv; inert unless a gated build wired a key provider (llmIpc). The key itself
+   * NEVER crosses this IPC — MAIN resolves it from the encrypted store.
+   */
+  openRouter?: { enabled: boolean; model?: string }
 }
 
 /** Lifecycle state pushed to the renderer over the data plane (2.1). */
@@ -742,7 +749,8 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const env = buildSpawnEnv(recapEnvProvider, {
       id: opts.id,
       launchCommand: opts.launchCommand,
-      cwd: opts.cwd
+      cwd: opts.cwd,
+      openRouter: opts.openRouter
     })
     let proc: pty.IPty
     try {

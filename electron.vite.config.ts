@@ -127,6 +127,12 @@ export default defineConfig({
       // invariant stays intact at the BINARY level for everything users receive
       // (src/main/localUpdateFeed.ts has the full posture).
       __LOCAL_UPDATE_CHANNEL__: JSON.stringify(process.env.LOCAL_UPDATE_CHANNEL === '1'),
+      // Maintainer-private OpenRouter terminal routing: true ONLY when the maintainer's own
+      // build/dev run sets TERMINAL_OPENROUTER=1. Compile-time gated exactly like
+      // __LOCAL_UPDATE_CHANNEL__ above, so pr/staging/production builds dead-code-eliminate
+      // the spawn-env injection wiring (index.ts) — distributed binaries carry no trace of
+      // the routing path. The renderer define below strips the dialog UI the same way.
+      __TERMINAL_OPENROUTER__: JSON.stringify(process.env.TERMINAL_OPENROUTER === '1'),
       // BUG-027: compile-time gate for the __canvasE2EMain test-surface registry
       // (src/main/e2eMain.ts), mirroring the __ENABLE_AUTO_UPDATE__ gate above so this
       // equally powerful debug surface (pty write, clipboard, gitDiff, spawnGroupNow,
@@ -171,7 +177,10 @@ export default defineConfig({
     // builds behave exactly as before (the gate seam exists for a later distribution build to flip).
     // Mirrors the main-process __ENABLE_AUTO_UPDATE__ build constant (see `main.define` above).
     define: {
-      __REQUIRE_ACCOUNT__: JSON.stringify(process.env.REQUIRE_ACCOUNT === '1')
+      __REQUIRE_ACCOUNT__: JSON.stringify(process.env.REQUIRE_ACCOUNT === '1'),
+      // Maintainer-private OpenRouter terminal routing (see main.define above): false ⇒ the
+      // New Terminal dialog's OpenRouter section is DCE-stripped from the renderer bundle.
+      __TERMINAL_OPENROUTER__: JSON.stringify(process.env.TERMINAL_OPENROUTER === '1')
     },
     // Pre-bundle the CodeMirror 6 stack (file-tree S3) at dev startup. The File board is a
     // LAZY chunk (BoardNode code-splits it), and CM6 fans out into many small packages

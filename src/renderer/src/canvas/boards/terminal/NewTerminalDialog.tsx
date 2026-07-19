@@ -31,7 +31,8 @@ import { useCanvasStore } from '../../../store/canvasStore'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import { AGENT_PRESETS, presetById } from './agentPresets'
 import { CommandBuilder } from './CommandBuilder'
-import { composeCommand, type OptionValues } from './composeCommand'
+import { applyOpenRouterModel, composeCommand, type OptionValues } from './composeCommand'
+import { OpenRouterSection, type OpenRouterValue } from './OpenRouterSection'
 import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT,
@@ -100,6 +101,12 @@ export function NewTerminalDialog({
   const [cwd, setCwd] = useState(board.cwd ?? '')
   // Absent monitorActivity reads as true, so default the toggle on unless explicitly opted out.
   const [monitor, setMonitor] = useState(board.monitorActivity !== false)
+  // v20 OpenRouter routing: enabled/model as ONE value (OpenRouterSection renders the gated
+  // UI; only a gated build can ever flip it — an ungated edit write-back is identity).
+  const [openRouter, setOpenRouter] = useState<OpenRouterValue>({
+    enabled: board.openRouter?.enabled ?? false,
+    model: board.openRouter?.model ?? ''
+  })
   const seedFont = resolveInitialFont(board.fontSize)
   const [font, setFont] = useState(seedFont)
   // Scrollback: seed from the board pin else the sticky default. The dialog is scrollback's ONLY
@@ -133,7 +140,12 @@ export function NewTerminalDialog({
   }, [])
 
   const preset = presetById(presetId) ?? AGENT_PRESETS[0]
-  const composed = useMemo(() => composeCommand(preset, values), [preset, values])
+  // v20: OpenRouter routing overlays the model slug so the composed command's model flag
+  // matches the routed provider (applyOpenRouterModel is a no-op when disabled/blank/incapable).
+  const composed = useMemo(() => {
+    const orModel = openRouter.enabled ? openRouter.model : undefined
+    return composeCommand(preset, applyOpenRouterModel(presetId, values, orModel))
+  }, [preset, presetId, values, openRouter])
   // The final launch command: a manual raw edit overrides the composed value.
   const command = rawOverride ?? composed
 
@@ -150,6 +162,13 @@ export function NewTerminalDialog({
     setRawOverride(null)
   }, [])
 
+  // OR controls are compose inputs too: toggling routing / editing the slug recomposes and
+  // takes back control from a manual command edit (mirrors onBuilderChange).
+  const onOpenRouterChange = useCallback((next: OpenRouterValue): void => {
+    setOpenRouter(next)
+    setRawOverride(null)
+  }, [])
+
   const apply = useCallback((): void => {
     beginChange()
     updateBoard(board.id, {
@@ -162,6 +181,12 @@ export function NewTerminalDialog({
       // Create omits the key when monitoring is on (stays absent = true); edit writes the
       // explicit boolean so the user can toggle it back ON after a prior opt-out.
       ...(editing ? { monitorActivity: monitor } : monitor ? {} : { monitorActivity: false }),
+      // v20 OpenRouter routing: only the gated section can CHANGE the value (an ungated edit
+      // write-back is identity, preserving a field written by a gated build). Off ⇒ the field
+      // clears (undefined drops out of the doc); the KEY is never part of the board patch.
+      openRouter: openRouter.enabled
+        ? { enabled: true, ...(openRouter.model.trim() ? { model: openRouter.model.trim() } : {}) }
+        : undefined,
       // Only pin a font/scrollback/theme/font-family that differs from the seed (else follow the
       // sticky default). Lane B theme/font ids mirror the fontSize/scrollback pin-only-on-change rule.
       ...(font !== seedFont ? { fontSize: font } : {}),
@@ -185,6 +210,7 @@ export function NewTerminalDialog({
     command,
     cwd,
     monitor,
+    openRouter,
     font,
     seedFont,
     scrollback,
@@ -303,6 +329,7 @@ export function NewTerminalDialog({
               data-test="new-terminal-command"
             />
           </Field>
+          <OpenRouterSection presetId={presetId} value={openRouter} onChange={onOpenRouterChange} />
           <Field label="Working dir">
             <input
               style={{ ...fld, fontFamily: 'var(--mono)' }}

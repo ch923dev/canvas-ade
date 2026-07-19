@@ -228,6 +228,21 @@ describe('registerLlmHandlers — key channels', () => {
     expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(false)
   })
 
+  // v20 OpenRouter terminal routing: PER-PROVIDER presence for the dialog's key-status row —
+  // llm:status reports only the ACTIVE config provider's key, so this must not track config.
+  it('hasKey reports per-provider presence and refuses an unknown provider', async () => {
+    const { cap } = setupKeyed(fakeEncryptor())
+    expect(await cap.invoke('llm:hasKey', { provider: 'openrouter' })).toBe(false)
+    await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'sk-or' })
+    expect(await cap.invoke('llm:hasKey', { provider: 'openrouter' })).toBe(true)
+    // Per-provider, not active-config-coupled: a different provider stays false.
+    expect(await cap.invoke('llm:hasKey', { provider: 'anthropic' })).toBe(false)
+    // BUG-012 discipline: unknown provider (incl. '__proto__') is refused with false, no I/O.
+    expect(await cap.invoke('llm:hasKey', { provider: '__proto__' })).toBe(false)
+    await cap.invoke('llm:clearKey', { provider: 'openrouter' })
+    expect(await cap.invoke('llm:hasKey', { provider: 'openrouter' })).toBe(false)
+  })
+
   it('setKey refuses cleanly when encryption is unavailable', async () => {
     const { cap } = setupKeyed(fakeEncryptor(false))
     const set = (await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'x' })) as {

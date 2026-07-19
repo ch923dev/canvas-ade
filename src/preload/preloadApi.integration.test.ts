@@ -168,6 +168,11 @@ describe('preload api → llm channels (M-brain)', () => {
       ['llm:clearKey', { provider: 'openrouter' }]
     ],
     [
+      'llm.hasKey',
+      (a: CanvasApi) => a.llm.hasKey({ provider: 'openrouter' }),
+      ['llm:hasKey', { provider: 'openrouter' }]
+    ],
+    [
       'llm.setConfig',
       (a: CanvasApi) => a.llm.setConfig({ provider: 'anthropic', model: 'm' }),
       ['llm:setConfig', { provider: 'anthropic', model: 'm' }]

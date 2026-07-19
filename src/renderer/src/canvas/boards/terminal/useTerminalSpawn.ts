@@ -416,6 +416,15 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     monitorActivityRef.current = board.monitorActivity
   }, [board.monitorActivity])
 
+  // v20 OpenRouter routing intent, forwarded on every spawn so MAIN can inject the provider
+  // env (compile-gated feature — inert in ungated builds). Read via a ref (mirrors
+  // monitorActivityRef) so a dialog edit never becomes a spawn dep — the dialog's
+  // Apply & restart path respawns anyway, which is when the new intent takes effect.
+  const openRouterRef = useRef<TerminalBoardData['openRouter']>(board.openRouter)
+  useEffect(() => {
+    openRouterRef.current = board.openRouter
+  }, [board.openRouter])
+
   // board.themeId / board.fontFamilyId for the spawn closure's INITIAL xterm construction, read via
   // refs so a change is NEVER a spawn dep — the theme/font apply LIVE in the host (TerminalBoard's
   // live-apply effects) without respawning the PTY (mirrors fontSizeRef / scrollbackRef). Lane B.
@@ -701,7 +710,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
         launchCommand,
         cols: term.cols,
         rows: term.rows,
-        monitorActivity: monitorActivityRef.current
+        monitorActivity: monitorActivityRef.current,
+        openRouter: openRouterRef.current
       })
       .then((res) => {
         if (termRef.current !== term || respawnGenerationRef.current !== generation) return
@@ -1048,7 +1058,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           launchCommand,
           cols: term.cols,
           rows: term.rows,
-          monitorActivity: monitorActivityRef.current
+          monitorActivity: monitorActivityRef.current,
+          openRouter: openRouterRef.current
         })
         .then((res) => {
           // Guard: if the effect was torn down and a new term was created before this

@@ -55,10 +55,10 @@ const legacyAssets = (dir: string): string => join(dir, ASSETS)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation. (v18 = Planning element appearance
- * props, ADDITIVE; v19 = Kanban card-detail fields — description/tags[]/fileRefs[], ADDITIVE —
- * see boardSchemaVersion.ts.)
+ * props, ADDITIVE; v19 = Kanban card-detail fields — description/tags[]/fileRefs[], ADDITIVE;
+ * v20 = TerminalBoard `openRouter` routing field, ADDITIVE — see boardSchemaVersion.ts.)
  */
-export const SCHEMA_VERSION = 19
+export const SCHEMA_VERSION = 20
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
