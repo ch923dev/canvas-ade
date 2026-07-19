@@ -39,6 +39,9 @@ importers:
       chokidar:
         specifier: ^5.0.0
         version: 5.0.0
+      codemirror-lang-mermaid:
+        specifier: ^0.5.0
+        version: 0.5.0
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9

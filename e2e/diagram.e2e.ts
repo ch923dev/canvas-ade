@@ -159,6 +159,90 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     }
   })
 
+  test('semantic status classes tint nodes from tokens; motion sentinel is baked (S4b)', async ({
+    page
+  }) => {
+    // Render through the REAL worker with the REAL theme builders: a bare `:::done`/`:::active`
+    // (no classDef boilerplate — the agent contract) must land the class on the node group, and the
+    // injected themeCSS must carry the token-derived status rules + the motion cache sentinel.
+    await seed(page, 'planning')
+    const res = await page.evaluate(async () => {
+      const g = globalThis as any
+      const out = await g.api.diagram.render({
+        source: 'flowchart TD\n  A[Parse]:::done --> B[Build]:::active\n  B --> C[Ship]',
+        themeVars: g.__canvasE2E.diagramThemeVars(),
+        themeCss: g.__canvasE2E.diagramThemeCss(true),
+        id: 'status-theme'
+      })
+      if (!out.ok) return { error: out.error as string }
+      return {
+        doneOnNode: /class="[^"]*node[^"]*done/.test(out.svg),
+        activeOnNode: /class="[^"]*node[^"]*active/.test(out.svg),
+        // Mermaid's serializer rewrites hex → rgb() (`#4f8cff` → `rgb(79, 140, 255)`) but passes
+        // rgba() through verbatim — match the serialized forms.
+        hasDoneRule: /\.node\.done rect[^}]+rgba\(62, 207, 142/.test(out.svg),
+        hasActiveRule: /\.node\.active rect[^}]+(?:#4f8cff|rgb\(79, 140, 255\))/.test(out.svg),
+        sentinel: out.svg.includes('expanse-motion-on')
+      }
+    })
+    expect('error' in res ? res.error : '').toBe('')
+    if ('error' in res) return
+    expect(res.doneOnNode, 'bare :::done must land on the node <g>').toBe(true)
+    expect(res.activeOnNode).toBe(true)
+    expect(res.hasDoneRule, 'themeCSS done rule (ok-wash fill) must survive into the SVG').toBe(
+      true
+    )
+    expect(res.hasActiveRule, 'themeCSS active rule (accent) must survive into the SVG').toBe(true)
+    expect(res.sentinel, 'motion sentinel must be baked for cache invalidation').toBe(true)
+  })
+
+  test('edge flow: motion ON restyles animate:true edges; motion OFF forces them static', async ({
+    page
+  }) => {
+    // The agent opt-in is Mermaid's own `e1@{ animate: true }` syntax. Motion ON must override the
+    // built-in glacial dash (20s/50s) with the accent expanse-flow march; motion OFF (the
+    // reduced-motion render) must strip animation entirely — same source, both proven through the
+    // real worker (the cascade contract: id-prefixed themeCSS lands AFTER Mermaid's own rules).
+    await seed(page, 'planning')
+    const src = 'flowchart TD\n  A[Plan] e1@--> B[Build]\n  e1@{ animate: true }'
+    const res = await page.evaluate(async (source) => {
+      const g = globalThis as any
+      const render = async (motion: boolean) =>
+        g.api.diagram.render({
+          source,
+          themeVars: g.__canvasE2E.diagramThemeVars(),
+          themeCss: g.__canvasE2E.diagramThemeCss(motion),
+          id: motion ? 'flow-on' : 'flow-off'
+        })
+      const on = await render(true)
+      const off = await render(false)
+      if (!on.ok) return { error: on.error as string }
+      if (!off.ok) return { error: off.error as string }
+      return {
+        edgeClassEmitted: on.svg.includes('edge-animation-fast'),
+        onHasFlow: on.svg.includes('@keyframes expanse-flow'),
+        onSentinel: on.svg.includes('expanse-motion-on'),
+        // Serializer notes: selector lists are id-prefixed and re-joined without spaces (anchor on
+        // the last selector), and `animation: none` expands to the full shorthand with the name
+        // last (`animation:auto ease 0s 1 normal none running none!important`) — assert a `none`
+        // inside an !important animation declaration; the motion-ON form (`expanse-flow … infinite`)
+        // contains no `none`, so this stays discriminating.
+        offKillsAnimation:
+          /\.edge-animation-slow[^}]+animation:[^};]*\bnone\b[^};]*!important/.test(off.svg),
+        offHasNoFlowKeyframes: !off.svg.includes('@keyframes expanse-flow'),
+        offSentinel: off.svg.includes('expanse-motion-off')
+      }
+    }, src)
+    expect('error' in res ? res.error : '').toBe('')
+    if ('error' in res) return
+    expect(res.edgeClassEmitted, 'animate:true must emit the edge-animation class').toBe(true)
+    expect(res.onHasFlow).toBe(true)
+    expect(res.onSentinel).toBe(true)
+    expect(res.offKillsAnimation, 'reduced-motion render must force edges static').toBe(true)
+    expect(res.offHasNoFlowKeyframes).toBe(true)
+    expect(res.offSentinel).toBe(true)
+  })
+
   test('the </> source toggle closes on a single click (no blur-then-reopen)', async ({ page }) => {
     // Regression: while editing, the source <textarea> holds focus. A bare press on </> blurred it
     // FIRST (onBlur → setEditing(false) → re-render), so the click then read editing===false and
@@ -180,5 +264,53 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     await toggle.click()
     await expect(page.locator('.pl-diagram-src')).toHaveCount(0)
     await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+  })
+
+  test('CodeMirror editing path: highlighted editor mounts, typed edit commits + re-renders (S4b)', async ({
+    page
+  }) => {
+    // Covers the SessionEditor branch specifically (the </>-toggle spec above passes on the
+    // textarea fallback too, so it never proved WHICH editor mounted): the lazy chunk preloads at
+    // card mount, the open-time latch picks CodeMirror, a real typed edit flows through
+    // onDraftChange → close flush → tracked source commit → worker re-render.
+    await seedDiagram(page, 'graph TD\n  A[Plan] --> B[Build]')
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+
+    await page.locator('.pl-diagram').click({ position: { x: 24, y: 80 } })
+    const toggle = page.locator('.pl-diagram-head button').last()
+    await expect(toggle).toBeVisible()
+    await toggle.click()
+
+    // The CodeMirror content host must be inside the editor wrapper — proof the latch picked the
+    // real editor, not the <textarea> fallback (chunk had the seed+render window to load; if this
+    // ever flakes on a cold chunk, the latch design itself is at fault — do not retry-loop it).
+    const cm = page.locator('.pl-diagram-src .cm-content')
+    await expect(cm).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.pl-diagram-src textarea')).toHaveCount(0)
+
+    // Real typed edit: append a node line at the end of the document.
+    await cm.click()
+    await page.keyboard.press('Control+End')
+    // Full-speed typing, deliberately including tool-shortcut letters (c/s/p): pre-fix the well's
+    // tool hotkeys swallowed them (`C[Ship]` → `[hi]`) — this line is the regression tripwire.
+    await page.keyboard.type('\n  B --> C[Ship]')
+
+    // Close via the toggle — flushes the draft into ONE tracked commit and re-renders.
+    await toggle.click()
+    await expect(page.locator('.pl-diagram-src')).toHaveCount(0)
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+
+    // The typed edit landed in the durable store source (not just the editor draft).
+    const source = await page.evaluate(() => {
+      const boards = (globalThis as any).__canvasE2E.getBoards() as {
+        elements?: { kind: string; source?: string }[]
+      }[]
+      for (const b of boards) {
+        const d = b.elements?.find((e) => e.kind === 'diagram')
+        if (d) return d.source ?? ''
+      }
+      return ''
+    })
+    expect(source).toContain('C[Ship]')
   })
 })

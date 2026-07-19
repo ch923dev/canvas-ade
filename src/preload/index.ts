@@ -825,6 +825,7 @@ const api = {
     render: (req: {
       source: string
       themeVars?: Record<string, string>
+      themeCss?: string
       id: string
     }): Promise<{ ok: true; svg: string } | { ok: false; error: string }> =>
       ipcRenderer.invoke('diagram:render', req)

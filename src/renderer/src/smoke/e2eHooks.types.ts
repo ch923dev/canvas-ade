@@ -354,6 +354,10 @@ export interface CanvasE2E {
    *  The ER a11y contrast spec renders an erDiagram with EXACTLY these and asserts the row
    *  backgrounds are dark — proving the builder's var names still match what Mermaid reads. */
   diagramThemeVars: () => Record<string, string>
+  /** S4b — the LIVE token-built themeCSS the app feeds the render worker (`buildDiagramThemeCss`):
+   *  semantic status classes + edge-flow motion (or its static reduced-motion override) + the
+   *  motion cache sentinel. The theming e2e renders with EXACTLY this and asserts the rules land. */
+  diagramThemeCss: (motion: boolean) => string
   /**
    * Phase 1 accounts — drive the renderer account store directly: the deterministic stand-in for
    * MAIN's `auth:statusChanged` push (no live WorkOS in e2e). It runs the SAME `apply` the real

@@ -27,12 +27,39 @@ import {
   type ReactElement
 } from 'react'
 import type { DiagramElement } from '../../../lib/boardSchema'
-import { buildDiagramThemeVars, diagramTypeLabel } from './diagramTheme'
+import {
+  buildDiagramThemeVars,
+  buildDiagramThemeCss,
+  cacheMotionMatches,
+  diagramTypeLabel
+} from './diagramTheme'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { useReducedMotion } from './useReducedMotion'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
+
+/**
+ * Lazy CodeMirror source editor (S4b). The chunk (CM core + mermaid grammar) loads once, module-
+ * wide, kicked off when a card mounts; WHICH editor an editing session uses is latched at
+ * `</>`-open time (`editorAtOpenRef`) so the chunk resolving mid-edit never swaps the component
+ * under the user's cursor (an unmounting focused editor would fire blur → close the session).
+ * Until the chunk is ready, edits fall back to the plain <textarea> — same contract, no highlight.
+ */
+type DiagramEditorCmp = typeof import('./DiagramSourceEditor').default
+let diagramEditorCmp: DiagramEditorCmp | null = null
+let diagramEditorLoad: Promise<void> | null = null
+function ensureDiagramEditorLoaded(): void {
+  if (diagramEditorCmp || diagramEditorLoad) return
+  diagramEditorLoad = import('./DiagramSourceEditor')
+    .then((m) => {
+      diagramEditorCmp = m.default
+    })
+    .catch(() => {
+      diagramEditorLoad = null // chunk fetch failed → retry on the next card mount
+    })
+}
 
 export interface DiagramCardProps {
   element: DiagramElement
@@ -70,6 +97,13 @@ export const DiagramCard = memo(function DiagramCard({
 }: DiagramCardProps): ReactElement {
   const { id, x, y, w, h, source, svgCache } = element
   const locked = element.locked ?? false
+  const reducedMotion = useReducedMotion()
+  const motion = !reducedMotion
+  // Which editor THIS editing session renders — latched at open (see ensureDiagramEditorLoaded).
+  const editorAtOpenRef = useRef<DiagramEditorCmp | null>(null)
+  useEffect(() => {
+    ensureDiagramEditorLoaded()
+  }, [])
   const [svgUrl, setSvgUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -236,10 +270,13 @@ export const DiagramCard = memo(function DiagramCard({
     setSvgUrl(next)
   }, [])
 
-  // Render-or-load effect, keyed on `[source, svgCache]`: a present cache reads instantly; an absent
-  // cache (fresh element OR a source edit that cleared it) renders via the hidden worker, then
-  // writes the asset + persists the id. A missing cached asset (GC / .bak restore) falls through to
-  // a re-render rather than showing a broken image.
+  // Render-or-load effect, keyed on `[source, svgCache, motion]`: a present cache reads instantly;
+  // an absent cache (fresh element OR a source edit that cleared it) renders via the hidden worker,
+  // then writes the asset + persists the id. A missing cached asset (GC / .bak restore) falls
+  // through to a re-render rather than showing a broken image. A cache whose BAKED motion mode
+  // (the S4b sentinel) mismatches the live reduced-motion preference also falls through — media
+  // queries don't re-evaluate inside an SVG-as-<img>, so an animated cache must never be shown to
+  // a reduced-motion user (nor a static one after the preference lifts).
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -247,14 +284,23 @@ export const DiagramCard = memo(function DiagramCard({
         const bytes = await window.api.asset.read(svgCache).catch(() => null)
         if (cancelled) return
         if (bytes && bytes.length) {
-          showSvg(new TextDecoder().decode(bytes))
-          setError(null)
-          return
+          const text = new TextDecoder().decode(bytes)
+          if (cacheMotionMatches(text, motion)) {
+            showSvg(text)
+            setError(null)
+            return
+          }
+          // baked motion mode mismatches the live preference → re-render below
         }
         // cache asset missing → fall through to a re-render below
       }
       const res = await window.api.diagram
-        .render({ source, themeVars: buildDiagramThemeVars(), id })
+        .render({
+          source,
+          themeVars: buildDiagramThemeVars(),
+          themeCss: buildDiagramThemeCss(motion),
+          id
+        })
         .catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }))
       if (cancelled) return
       if (res.ok) {
@@ -272,7 +318,7 @@ export const DiagramCard = memo(function DiagramCard({
     return () => {
       cancelled = true
     }
-  }, [source, svgCache, id, showSvg, onCache])
+  }, [source, svgCache, id, showSvg, onCache, motion])
 
   // Revoke the last object URL on unmount.
   useEffect(
@@ -312,6 +358,8 @@ export const DiagramCard = memo(function DiagramCard({
   )
 
   const showHeader = selected || editing
+  // The editor component this editing session latched at `</>`-open (null → textarea fallback).
+  const SessionEditor = editing ? editorAtOpenRef.current : null
   const zoomBtn = (disabled: boolean): CSSProperties => ({
     all: 'unset',
     cursor: disabled ? 'default' : 'pointer',
@@ -441,6 +489,7 @@ export const DiagramCard = memo(function DiagramCard({
               } else {
                 onEditStart()
                 setDraft(source)
+                editorAtOpenRef.current = diagramEditorCmp
                 setEditing(true)
               }
             }}
@@ -459,33 +508,64 @@ export const DiagramCard = memo(function DiagramCard({
       )}
 
       {editing ? (
-        <textarea
-          className="pl-diagram-src"
-          value={draft}
-          spellCheck={false}
-          onPointerDown={(e) => e.stopPropagation()}
-          onChange={(e) => onDraftChange(e.target.value)}
-          onBlur={() => {
-            if (debounceRef.current) clearTimeout(debounceRef.current)
-            flushDraft(draft)
-            setEditing(false)
-          }}
-          autoFocus
-          style={{
-            position: 'absolute',
-            inset: '22px 0 0 0',
-            width: '100%',
-            height: 'calc(100% - 22px)',
-            resize: 'none',
-            border: 'none',
-            outline: 'none',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            font: '12px/1.5 var(--term-mono)',
-            padding: 8,
-            boxSizing: 'border-box'
-          }}
-        />
+        SessionEditor ? (
+          <div
+            className="pl-diagram-src nowheel nodrag nopan"
+            onPointerDown={(e) => e.stopPropagation()}
+            // Editing cards own their keystrokes (the ChecklistCard/NoteCard contract): without
+            // this stop, the well's tool shortcuts (s/n/c/a/p/e/…) fire on letters typed into the
+            // source and SWALLOW them (preventDefault) — `C[Ship]` arrives as `[hi]`.
+            onKeyDown={(e) => e.stopPropagation()}
+            onBlur={(e) => {
+              // CodeMirror moves focus between internal nodes — only a blur that LEAVES the
+              // wrapper ends the editing session (mirrors the textarea's blur contract).
+              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+              if (debounceRef.current) clearTimeout(debounceRef.current)
+              flushDraft(draft)
+              setEditing(false)
+            }}
+            style={{
+              position: 'absolute',
+              inset: '22px 0 0 0',
+              background: 'var(--surface)',
+              overflow: 'hidden'
+            }}
+          >
+            <SessionEditor value={draft} onChange={onDraftChange} />
+          </div>
+        ) : (
+          <textarea
+            className="pl-diagram-src"
+            value={draft}
+            spellCheck={false}
+            onPointerDown={(e) => e.stopPropagation()}
+            // Same keystroke-ownership stop as the CodeMirror wrapper above — this was MISSING
+            // pre-S4b: bare tool letters typed into the source switched the planning tool and
+            // never reached the textarea (latent, masked by agent-written sources).
+            onKeyDown={(e) => e.stopPropagation()}
+            onChange={(e) => onDraftChange(e.target.value)}
+            onBlur={() => {
+              if (debounceRef.current) clearTimeout(debounceRef.current)
+              flushDraft(draft)
+              setEditing(false)
+            }}
+            autoFocus
+            style={{
+              position: 'absolute',
+              inset: '22px 0 0 0',
+              width: '100%',
+              height: 'calc(100% - 22px)',
+              resize: 'none',
+              border: 'none',
+              outline: 'none',
+              background: 'var(--surface)',
+              color: 'var(--text)',
+              font: '12px/1.5 var(--term-mono)',
+              padding: 8,
+              boxSizing: 'border-box'
+            }}
+          />
+        )
       ) : svgUrl ? (
         <div
           className={'pl-diagram-view' + (selected ? ' nowheel nodrag nopan' : '')}
