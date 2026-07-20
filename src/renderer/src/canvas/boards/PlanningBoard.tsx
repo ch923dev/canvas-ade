@@ -30,6 +30,7 @@ import { useStoreApi } from '@xyflow/react'
 import type {
   ChecklistElement,
   DiagramElement,
+  DiagramSpec,
   FileRefElement,
   NoteElement,
   NoteTint,
@@ -57,6 +58,7 @@ import { type PlanTool } from './planning/tools'
 import {
   patchElement,
   removeElement,
+  convertDiagramElement,
   toggleItem,
   addItem,
   removeItem,
@@ -313,6 +315,14 @@ export function PlanningBoard({
       commit((cur) =>
         patchElement<DiagramElement>(cur, id, (d) => ({ ...d, source: src, svgCache: undefined }))
       ),
+    [commit]
+  )
+  // Mermaid→expanse conversion — ONE tracked commit (the card arms the checkpoint via onEditStart
+  // before calling): swap the body to `spec`, keep the original text as `importedFrom`, drop
+  // source/svgCache (convertDiagramElement). Live-read commit → stable identity (BUG-023-safe).
+  const convertDiagram = useCallback(
+    (id: string, spec: DiagramSpec, importedFrom: string) =>
+      commit((cur) => convertDiagramElement(cur, id, spec, importedFrom)),
     [commit]
   )
   // Persist a freshly-rendered SVG assetId — UNTRACKED (derived artifact, never an undo step).
@@ -765,6 +775,7 @@ export function PlanningBoard({
                   selected={selectedIds.has(el.id)}
                   onSelect={selectOnPress}
                   onChangeSource={setDiagramSource}
+                  onConvert={convertDiagram}
                   onEditStart={beginChange}
                   onCache={onDiagramCache}
                   onResize={resizeDiagram}
