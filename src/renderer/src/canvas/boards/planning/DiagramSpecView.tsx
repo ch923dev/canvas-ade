@@ -14,7 +14,7 @@
  */
 import { type CSSProperties, type ReactElement } from 'react'
 import type { DiagramSpec } from '../../../lib/diagramSpec'
-import { specEdgePath } from './specLayout'
+import { specEdgeLabelPoint, specEdgePath } from './specLayout'
 import { SPEC_KIND_PATHS, specEdgeStyle, specKindSilhouette, specStatusStyle } from './specTheme'
 import { useSpecLayout } from './useSpecLayout'
 
@@ -156,8 +156,7 @@ export function DiagramSpecView({
             const b = layout.byId.get(e.to)
             if (!a || !b) return null
             const style = specEdgeStyle(e)
-            const mx = (a.x + a.w + b.x) / 2
-            const my = (a.y + a.h / 2 + b.y + b.h / 2) / 2
+            const mid = specEdgeLabelPoint(a, b, spec.direction)
             return (
               <g key={e.id} className="pl-spec-edge">
                 <path
@@ -170,8 +169,8 @@ export function DiagramSpecView({
                 />
                 {e.label && (
                   <text
-                    x={mx}
-                    y={my - 5}
+                    x={mid.x}
+                    y={mid.y - 5}
                     textAnchor="middle"
                     style={{ font: '450 10px var(--mono)', fill: 'var(--text-3)' }}
                   >

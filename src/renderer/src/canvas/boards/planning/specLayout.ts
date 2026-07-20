@@ -173,6 +173,27 @@ export function elkResultToLayout(spec: DiagramSpec, root: ElkNodeOut): SpecLayo
 }
 
 /**
+ * Edge-label anchor: the midpoint of the SAME facing anchors `specEdgePath` uses, so the label
+ * sits on the curve for both directions even when the two boxes differ in size.
+ */
+export function specEdgeLabelPoint(
+  from: PositionedSpecNode,
+  to: PositionedSpecNode,
+  direction: DiagramSpec['direction']
+): { x: number; y: number } {
+  if (direction === 'down') {
+    return {
+      x: (from.x + from.w / 2 + to.x + to.w / 2) / 2,
+      y: (from.y + from.h + to.y) / 2
+    }
+  }
+  return {
+    x: (from.x + from.w + to.x) / 2,
+    y: (from.y + from.h / 2 + to.y + to.h / 2) / 2
+  }
+}
+
+/**
  * Facing-edge bezier between two placed boxes (the `graphLayout.edgePath` recipe, axis-aware):
  * direction 'right' anchors right-mid → left-mid; 'down' anchors bottom-mid → top-mid.
  */

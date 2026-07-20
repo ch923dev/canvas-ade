@@ -4,6 +4,7 @@ import {
   specToElkGraph,
   elkResultToLayout,
   specEdgePath,
+  specEdgeLabelPoint,
   GROUP_PAD,
   type ElkNodeOut,
   type PositionedSpecNode
@@ -120,5 +121,22 @@ describe('specEdgePath', () => {
 
   it('anchors bottom-mid → top-mid for direction down', () => {
     expect(specEdgePath(a, b, 'down')).toBe('M 50 40 C 50 70, 250 70, 250 100')
+  })
+})
+
+describe('specEdgeLabelPoint', () => {
+  // Deliberately unequal boxes (actor-width source, detail-height target): the right- and
+  // down-direction midpoints only coincide when both boxes match, so these pin the branch.
+  const a: PositionedSpecNode = { id: 'a', x: 0, y: 0, w: 120, h: 32 }
+  const b: PositionedSpecNode = { id: 'b', x: 40, y: 100, w: 168, h: 49 }
+
+  it('midpoints the right-mid → left-mid anchors for direction right', () => {
+    expect(specEdgeLabelPoint(a, b, 'right')).toEqual({ x: (120 + 40) / 2, y: (16 + 124.5) / 2 })
+  })
+
+  it('midpoints the bottom-mid → top-mid anchors for direction down (not the right formula)', () => {
+    const down = specEdgeLabelPoint(a, b, 'down')
+    expect(down).toEqual({ x: (60 + 124) / 2, y: (32 + 100) / 2 })
+    expect(down).not.toEqual(specEdgeLabelPoint(a, b, 'right'))
   })
 })

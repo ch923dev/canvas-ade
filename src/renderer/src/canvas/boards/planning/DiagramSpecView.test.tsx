@@ -75,6 +75,24 @@ describe('DiagramSpecView (static expanse renderer)', () => {
     expect(root?.style.pointerEvents).toBe('none')
   })
 
+  it('positions a down-direction edge label on the down anchors (not the right formula)', async () => {
+    const down: DiagramSpec = {
+      version: 1,
+      direction: 'down',
+      nodes: [
+        { id: 'a', label: 'A', kind: 'actor' }, // 120×32
+        { id: 'b', label: 'B', detail: 'sub' } // 168×49 — unequal boxes split the two formulas
+      ],
+      edges: [{ id: 'e1', from: 'a', to: 'b', label: 'next' }]
+    }
+    const { container } = render(<DiagramSpecView spec={down} w={800} h={400} />)
+    await waitFor(() => expect(screen.getByText('next')).toBeTruthy())
+    const label = container.querySelector<SVGTextElement>('.pl-spec-edge text')
+    // mock layout: a(16,16), b(256,16) → bottom-mid (76,48) → top-mid (340,16), midpoint (208,32)
+    expect(label?.getAttribute('x')).toBe('208')
+    expect(label?.getAttribute('y')).toBe('27') // midpoint y − 5 lift
+  })
+
   it('renders a group as a labelled cluster', async () => {
     const grouped: DiagramSpec = {
       ...spec,
