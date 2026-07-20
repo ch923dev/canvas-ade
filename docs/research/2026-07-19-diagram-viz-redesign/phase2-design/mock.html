@@ -1,0 +1,1108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 2 design artifact — motion + focus (engine:'expanse')</title>
+    <style>
+      /* ── Real app tokens (mirror of src/renderer/src/styles/tokens.css) ─────────── */
+      @font-face {
+        font-family: 'Geist';
+        src: url('../../../../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Geist Mono';
+        src: url('../../../../src/renderer/src/assets/fonts/GeistMono-Variable.woff2')
+          format('woff2');
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --void: #0a0a0b;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --ok-wash: rgba(62, 207, 142, 0.14);
+        --warn: #e8b339;
+        --warn-wash: rgba(232, 179, 57, 0.12);
+        --err: #f2545b;
+        --err-wash: rgba(242, 84, 91, 0.14);
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --r-pill: 999px;
+        --fs-micro: 10px;
+        --fs-meta: 11px;
+        --fs-label: 12px;
+        --fs-body: 13px;
+
+        /* ══ THE PHASE-2 MOTION CONTRACT (the numbers under sign-off) ══ */
+        --m-entrance: 240ms; /* per-node fade+rise */
+        --m-entrance-step: 40ms; /* stagger step, node order = layout order */
+        --m-entrance-ease: cubic-bezier(0.16, 1, 0.3, 1); /* out-expo-ish, calm */
+        --m-flip: 320ms; /* FLIP layout morph */
+        --m-flip-ease: cubic-bezier(0.2, 0, 0, 1); /* emphasized-decelerate */
+        --m-pulse: 620ms; /* status-flip pulse, one-shot */
+        --m-dim: 160ms; /* focus dim in/out */
+        --m-dim-opacity: 0.22; /* non-neighbor rest opacity */
+        --m-collapse: 200ms; /* group ⇄ chip */
+        --m-march: 0.9s; /* animated-edge dash march (Phase-0 parity) */
+        --m-exit: 160ms; /* removed-node fade-out during morph */
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        padding: 28px;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      .sub {
+        font-size: var(--fs-meta);
+        color: var(--text-3);
+        font-family: var(--mono);
+        margin-bottom: 14px;
+      }
+
+      /* ── Demo control strip (mock chrome only — NOT app UI) ─────────────────────── */
+      .controls {
+        width: 940px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 8px 10px;
+        margin-bottom: 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+        font: 500 11px var(--ui);
+        color: var(--text-2);
+      }
+      .controls button {
+        font: 500 11px var(--ui);
+        color: var(--text);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--r-ctl);
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .controls button:hover {
+        border-color: var(--border-strong);
+      }
+      .controls label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-3);
+      }
+      .controls .sep {
+        width: 1px;
+        height: 18px;
+        background: var(--border);
+      }
+      .swatch {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        border: 1px solid var(--border-strong);
+        display: inline-block;
+        vertical-align: -3px;
+        margin-right: 4px;
+      }
+      .controls button.on {
+        border-color: var(--accent);
+      }
+
+      /* ── DiagramCard shell (matches DiagramCard.tsx chrome) ─────────────────────── */
+      .card {
+        width: 940px;
+        border: 1px solid var(--accent);
+        outline: 0.5px solid var(--accent);
+        border-radius: var(--r-inner);
+        overflow: hidden;
+        background: var(--surface);
+        position: relative;
+      }
+      .card-head {
+        height: 22px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 6px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+        font: 500 10px var(--ui);
+        color: var(--text-3);
+      }
+      .card-head .dialect {
+        color: var(--text-2);
+      }
+      .card-head .sp {
+        flex: 1;
+      }
+      /* ══ B4: version scrubber — lives in the HEAD, never inside the view
+            (zero-focusables e2e contract applies to .pl-specview only) ══ */
+      .scrub {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-family: var(--mono);
+        color: var(--text-3);
+      }
+      .scrub button {
+        all: unset;
+        cursor: pointer;
+        padding: 0 3px;
+        color: var(--text-3);
+      }
+      .scrub button:hover {
+        color: var(--text);
+      }
+      .scrub .rev {
+        color: var(--text-2);
+      }
+      .scrub .meta {
+        color: var(--text-faint);
+        margin-left: 2px;
+      }
+      .scrub .adot {
+        width: 5px;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--accent);
+        opacity: 0.7;
+      }
+      .card-head .zoom {
+        font-family: var(--mono);
+        color: var(--text-3);
+        display: flex;
+        gap: 8px;
+      }
+
+      /* ── Spec canvas ────────────────────────────────────────────────────────────── */
+      .spec {
+        position: relative;
+        height: 470px;
+        background: var(--surface);
+      }
+      .spec svg.edges {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .edge {
+        stroke: var(--border-strong);
+        stroke-width: 1.5;
+        fill: none;
+      }
+      .edge.dep {
+        stroke-dasharray: 3 4;
+      }
+      .edge.data {
+        stroke-dasharray: 1.5 3.5;
+        stroke-linecap: round;
+      }
+      .edge.status-done {
+        stroke: rgba(62, 207, 142, 0.5);
+      }
+      .edge.animated {
+        stroke: var(--accent);
+        stroke-dasharray: 6 5;
+        animation: flow var(--m-march) linear infinite;
+      }
+      @keyframes flow {
+        to {
+          stroke-dashoffset: -22;
+        }
+      }
+      .elabel {
+        font: 450 10px var(--mono);
+        fill: var(--text-3);
+      }
+      .ehead {
+        fill: var(--border-strong);
+      }
+      .ehead.accent {
+        fill: var(--accent);
+      }
+
+      /* ── Nodes (Phase-1 recipes, unchanged) ─────────────────────────────────────── */
+      .node {
+        position: absolute;
+        width: 168px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+        padding: 7px 9px 7px 8px;
+      }
+      .nh {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 16px;
+      }
+      .nh svg.ki {
+        flex: none;
+        width: 13px;
+        height: 13px;
+        stroke: var(--text-3);
+        stroke-width: 1.5;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .nl {
+        font: 500 12px/16px var(--ui);
+        color: var(--text);
+        flex: 1;
+      }
+      .nd {
+        font: 450 10px/14px var(--mono);
+        color: var(--text-3);
+        margin: 3px 0 0 19px;
+      }
+      .glyph {
+        flex: none;
+        font: 600 10px/14px var(--mono);
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .s-done {
+        background: var(--ok-wash);
+        border-color: rgba(62, 207, 142, 0.5);
+      }
+      .s-active {
+        background: var(--accent-wash);
+        border-color: var(--accent);
+      }
+      .s-warn {
+        background: var(--warn-wash);
+        border-color: rgba(232, 179, 57, 0.5);
+      }
+      .s-error {
+        background: var(--err-wash);
+        border-color: rgba(242, 84, 91, 0.55);
+      }
+      .s-muted {
+        opacity: 0.55;
+      }
+      .g-done {
+        color: var(--ok);
+      }
+      .g-active {
+        color: var(--accent);
+      }
+      .g-warn {
+        color: var(--warn);
+      }
+      .g-error {
+        color: var(--err);
+      }
+      .g-muted {
+        color: var(--text-3);
+      }
+      .k-decision {
+        clip-path: polygon(
+          9px 0,
+          calc(100% - 9px) 0,
+          100% 9px,
+          100% calc(100% - 9px),
+          calc(100% - 9px) 100%,
+          9px 100%,
+          0 calc(100% - 9px),
+          0 9px
+        );
+        border-radius: 0;
+      }
+      .k-actor {
+        border-radius: var(--r-pill);
+        padding-left: 12px;
+      }
+      .k-note {
+        border-style: dashed;
+        background: var(--surface);
+      }
+      .k-note .nl {
+        font-weight: 400;
+        color: var(--text-2);
+        font-size: 11px;
+      }
+
+      /* ── Group cluster + ══ SpecGroup.status render (the Phase-1 silent gap) ══ ── */
+      .group {
+        position: absolute;
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--r-board);
+        background: rgba(255, 255, 255, 0.015);
+        transition: opacity var(--m-dim) linear;
+      }
+      .group .gl {
+        position: absolute;
+        top: -8px;
+        left: 10px;
+        padding: 0 6px;
+        background: var(--surface);
+        font: 500 10px var(--ui);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+      .group .gcollapse {
+        position: absolute;
+        top: -7px;
+        right: 10px;
+        padding: 0 5px;
+        background: var(--surface);
+        font: 500 10px var(--mono);
+        color: var(--text-faint);
+      }
+      /* group.status = SAME wash + ½-border recipe, on the cluster chrome */
+      .group.s-active {
+        border-color: var(--accent);
+        background: rgba(79, 140, 255, 0.04);
+      }
+      .group.s-active .gl {
+        color: var(--accent);
+      }
+      .group.s-done {
+        border-color: rgba(62, 207, 142, 0.5);
+        background: rgba(62, 207, 142, 0.04);
+      }
+      .group.s-done .gl {
+        color: var(--ok);
+      }
+
+      /* ══ M1 · entrance stagger — fade + 6px rise per node, edges follow ══ */
+      .enter .node,
+      .enter .group {
+        animation: n-enter var(--m-entrance) var(--m-entrance-ease) both;
+        animation-delay: calc(var(--i, 0) * var(--m-entrance-step));
+      }
+      @keyframes n-enter {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .enter svg.edges path,
+      .enter svg.edges text {
+        animation: e-enter 200ms ease-out both;
+        animation-delay: calc(var(--m-entrance) + var(--i, 0) * 30ms);
+      }
+      @keyframes e-enter {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      /* ══ M2 · status-flip pulse — one-shot wash bloom + glyph pop ══ */
+      .pulse-done {
+        animation: pulse-done var(--m-pulse) ease-out 1;
+      }
+      @keyframes pulse-done {
+        0% {
+          box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.35);
+        }
+        60% {
+          box-shadow: 0 0 0 10px rgba(62, 207, 142, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(62, 207, 142, 0);
+        }
+      }
+      .pulse-done .glyph {
+        animation: g-pop var(--m-pulse) cubic-bezier(0.22, 1, 0.36, 1) 1;
+      }
+      @keyframes g-pop {
+        0% {
+          transform: scale(0.7);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      /* ══ M4 · focus dim — non-neighbors rest at 0.22; view stays pointer-events:none
+            in the app (hit-test happens in DiagramCard's card-level pointer handler) ══ */
+      .node,
+      svg.edges path,
+      svg.edges text {
+        transition: opacity var(--m-dim) linear;
+      }
+      .dim {
+        opacity: var(--m-dim-opacity) !important;
+      }
+
+      /* ══ M5 · group collapse — members exit, chip enters, edges re-anchor ══ */
+      .gchip {
+        position: absolute;
+        width: 168px;
+        background: var(--surface-raised);
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--r-inner);
+        padding: 7px 9px 7px 8px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--m-collapse) ease-out;
+      }
+      .gchip .nl {
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        font-size: 10px;
+        color: var(--text-2);
+      }
+      .gchip .cnt {
+        font: 500 10px var(--mono);
+        color: var(--text-faint);
+      }
+      .spec.collapsed .g-member,
+      .spec.collapsed .group,
+      .spec.collapsed .e-internal {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .spec.collapsed .gchip {
+        opacity: 1;
+      }
+      .spec.collapsed .e-chip-alt {
+        opacity: 1 !important;
+      }
+      .e-chip-alt {
+        opacity: 0;
+      }
+
+      /* ══ FLIP morph — JS applies inverted transform then releases;
+            transition lives here so the numbers stay in one place ══ */
+      .flip-run {
+        transition: transform var(--m-flip) var(--m-flip-ease) !important;
+      }
+      .exit-run {
+        transition: opacity var(--m-exit) linear !important;
+        opacity: 0 !important;
+      }
+
+      /* ══ B6 · theme presets — SCOPED overrides ([data-diagram-theme] ancestor),
+            exactly the token()-with-scope plumbing Phase 2 adds ══ */
+      .card[data-diagram-theme='graphite'] {
+        --ok-wash: rgba(255, 255, 255, 0.05);
+        --accent-wash: rgba(255, 255, 255, 0.07);
+        --warn-wash: rgba(255, 255, 255, 0.04);
+        --err-wash: rgba(255, 255, 255, 0.06);
+        --ok: #b8b8be;
+        --warn: #b8b8be;
+        --err: #ededee;
+        /* glyph SHAPE carries status (✓ ● ! ✕) — B1 "never color alone" holds */
+      }
+      .card[data-diagram-theme='graphite'] .s-done,
+      .card[data-diagram-theme='graphite'] .s-warn {
+        border-color: var(--border-strong);
+      }
+      .card[data-diagram-theme='graphite'] .s-error {
+        border-color: rgba(237, 237, 238, 0.4);
+      }
+      .card[data-diagram-theme='signal'] {
+        --ok-wash: rgba(62, 207, 142, 0.22);
+        --accent-wash: rgba(79, 140, 255, 0.22);
+        --warn-wash: rgba(232, 179, 57, 0.2);
+        --err-wash: rgba(242, 84, 91, 0.22);
+      }
+      .card[data-diagram-theme='signal'] .s-done {
+        border-color: var(--ok);
+      }
+      .card[data-diagram-theme='signal'] .s-warn {
+        border-color: var(--warn);
+      }
+      .card[data-diagram-theme='signal'] .s-error {
+        border-color: var(--err);
+      }
+
+      /* ══ Reduced motion — matchMedia + app setting; EVERYTHING off,
+            march → static accent dash, morph/scrub → snap ══ */
+      @media (prefers-reduced-motion: reduce) {
+        .edge.animated {
+          animation: none;
+        }
+        .enter .node,
+        .enter .group,
+        .enter svg.edges path,
+        .enter svg.edges text,
+        .pulse-done,
+        .pulse-done .glyph {
+          animation: none !important;
+        }
+        * {
+          transition-duration: 0s !important;
+        }
+      }
+      body.rm .edge.animated {
+        animation: none;
+      }
+      body.rm .enter .node,
+      body.rm .enter .group,
+      body.rm .enter svg.edges path,
+      body.rm .enter svg.edges text,
+      body.rm .pulse-done,
+      body.rm .pulse-done .glyph {
+        animation: none !important;
+      }
+      body.rm * {
+        transition-duration: 0s !important;
+      }
+
+      /* ── Sign-off table ─────────────────────────────────────────────────────────── */
+      table.spec-table {
+        width: 940px;
+        margin-top: 14px;
+        border-collapse: collapse;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+        font: 450 11px/17px var(--mono);
+        color: var(--text-2);
+      }
+      table.spec-table th {
+        font: 500 10px var(--ui);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        text-align: left;
+        padding: 8px 12px 6px;
+        border-bottom: 1px solid var(--border);
+      }
+      table.spec-table td {
+        padding: 5px 12px;
+        border-bottom: 1px solid var(--border-subtle);
+        vertical-align: top;
+      }
+      table.spec-table tr:last-child td {
+        border-bottom: 0;
+      }
+      table.spec-table td:first-child {
+        color: var(--text);
+        font-family: var(--ui);
+        font-weight: 500;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .notes {
+        width: 940px;
+        margin-top: 14px;
+        padding: 12px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+        font: 450 11px/17px var(--mono);
+        color: var(--text-3);
+      }
+      .notes b {
+        color: var(--text-2);
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Diagram motion + focus — Phase 2 (engine:'expanse', static renderer)</h1>
+    <div class="sub">
+      interactive artifact — every motion below is the REAL proposed timing · reduced-motion kills
+      all of it · view keeps zero focusables (scrubber lives in the card head)
+    </div>
+
+    <!-- ════ Demo controls (mock-only chrome) ════ -->
+    <div class="controls">
+      <button id="b-enter">⟳ replay entrance</button>
+      <button id="b-pulse">status flip: unit tests → done</button>
+      <button id="b-collapse">collapse BUILD group</button>
+      <button id="b-focus">focus “Matrix green?”</button>
+      <button id="b-clear">clear focus</button>
+      <span class="sep"></span>
+      <span>theme:</span>
+      <button class="thm on" data-t="">
+        <span
+          class="swatch"
+          style="background: var(--accent-wash); border-color: var(--accent)"
+        ></span
+        >calm
+      </button>
+      <button class="thm" data-t="graphite">
+        <span class="swatch" style="background: rgba(255, 255, 255, 0.07)"></span>graphite
+      </button>
+      <button class="thm" data-t="signal">
+        <span
+          class="swatch"
+          style="background: rgba(79, 140, 255, 0.3); border-color: var(--accent)"
+        ></span
+        >signal
+      </button>
+      <span class="sep"></span>
+      <label><input type="checkbox" id="rm" /> reduced motion (matchMedia ∥ app setting)</label>
+    </div>
+
+    <!-- ════ The card ════ -->
+    <div class="card" id="card">
+      <div class="card-head">
+        <span class="dialect">expanse · flow</span>
+        <span class="sp"></span>
+        <!-- B4 scrubber: ‹ › steps revisions; scrubbing runs the SAME FLIP morph -->
+        <span class="scrub" id="scrub">
+          <button id="s-prev" title="older revision">‹</button>
+          <span class="rev" id="s-rev">rev 4/4</span>
+          <button id="s-next" title="newer revision">›</button>
+          <span class="adot" id="s-adot" title="author: agent"></span>
+          <span class="meta" id="s-meta">agent · 15:25</span>
+        </span>
+        <span class="zoom"><span>−</span><span>100%</span><span>+</span></span>
+      </div>
+
+      <div class="spec enter" id="spec">
+        <!-- BUILD group (demo of group.status render: active tint) -->
+        <div
+          class="group s-active g-build"
+          style="--i: 0; left: 24px; top: 40px; width: 212px; height: 216px"
+        >
+          <span class="gl">Build</span><span class="gcollapse">⌄</span>
+        </div>
+        <!-- collapsed-state chip (M5) -->
+        <div class="gchip" style="left: 44px; top: 128px">
+          <div class="nh"><span class="nl">Build</span><span class="cnt">3 ▸</span></div>
+        </div>
+
+        <svg class="edges" width="940" height="470">
+          <defs>
+            <marker
+              id="ah"
+              viewBox="0 0 8 8"
+              refX="7"
+              refY="4"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M0 0 L8 4 L0 8 z" class="ehead" />
+            </marker>
+            <marker
+              id="aha"
+              viewBox="0 0 8 8"
+              refX="7"
+              refY="4"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M0 0 L8 4 L0 8 z" class="ehead accent" />
+            </marker>
+          </defs>
+          <!-- build internal flow (hidden when collapsed) -->
+          <path
+            class="edge status-done e-internal"
+            style="--i: 0"
+            d="M 128 88 C 128 102, 128 106, 128 120"
+            marker-end="url(#ah)"
+          />
+          <path
+            class="edge status-done e-internal"
+            style="--i: 1"
+            d="M 128 152 C 128 166, 128 170, 128 184"
+            marker-end="url(#ah)"
+          />
+          <!-- animated edge: unit tests → decision; alt anchor from the chip when collapsed -->
+          <path
+            class="edge animated e-utd"
+            style="--i: 2"
+            d="M 212 210 C 254 210, 262 213, 302 214"
+            marker-end="url(#aha)"
+          />
+          <path
+            class="edge animated e-chip-alt"
+            d="M 212 146 C 258 160, 264 196, 302 210"
+            marker-end="url(#aha)"
+          />
+          <!-- decision branches -->
+          <path
+            class="edge e-yes"
+            style="--i: 3"
+            d="M 474 206 C 520 188, 528 140, 570 122"
+            marker-end="url(#ah)"
+          />
+          <text class="elabel t-yes" x="502" y="158">yes</text>
+          <path
+            class="edge e-no"
+            style="--i: 4"
+            d="M 474 222 C 520 240, 528 288, 570 304"
+            marker-end="url(#ah)"
+          />
+          <text class="elabel t-no" x="502" y="278">no</text>
+          <!-- package → feed: EXISTS ONLY IN REV 4 (fades with the morph) -->
+          <path
+            class="edge e-pf"
+            style="--i: 5"
+            d="M 742 120 C 768 120, 774 117, 796 114"
+            marker-end="url(#ah)"
+          />
+          <!-- data edge -->
+          <path
+            class="edge data e-data"
+            style="--i: 6"
+            d="M 474 408 C 560 400, 624 190, 652 150"
+            marker-end="url(#ah)"
+          />
+          <!-- dependency: e2e red → user -->
+          <path
+            class="edge dep e-dep"
+            style="--i: 7"
+            d="M 742 306 C 774 306, 772 326, 798 332"
+            marker-end="url(#ah)"
+          />
+        </svg>
+
+        <!-- BUILD members -->
+        <div class="node s-done g-member" id="n-lint" style="--i: 1; left: 44px; top: 56px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">Lint</span><span class="glyph g-done">✓</span>
+          </div>
+        </div>
+        <div class="node s-done g-member" id="n-type" style="--i: 2; left: 44px; top: 120px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">Typecheck</span><span class="glyph g-done">✓</span>
+          </div>
+        </div>
+        <div class="node s-active g-member" id="n-unit" style="--i: 3; left: 44px; top: 184px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">Unit tests</span><span class="glyph g-active" id="unit-glyph">●</span>
+          </div>
+          <div class="nd" id="unit-detail">4,312 / 5,458</div>
+        </div>
+
+        <!-- decision -->
+        <div
+          class="node k-decision"
+          id="n-decision"
+          style="--i: 4; left: 306px; top: 198px; width: 168px"
+        >
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M12 3 L21 12 L12 21 L3 12 Z" /></svg>
+            <span class="nl">Matrix green?</span>
+          </div>
+        </div>
+
+        <!-- yes branch — Package MOVES between revs (FLIP), Feed exists only in rev 4 -->
+        <div class="node" id="n-package" style="--i: 5; left: 574px; top: 96px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <path d="M21 8 L12 3 L3 8 v8 l9 5 9-5 z M3 8 l9 5 9-5 M12 13 v8" />
+            </svg>
+            <span class="nl">Package</span>
+          </div>
+          <div class="nd">electron-builder</div>
+        </div>
+        <div class="node" id="n-feed" style="--i: 6; left: 800px; top: 96px; width: 116px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+              <path d="M9 9h6v6H9z" />
+            </svg>
+            <span class="nl">Feed</span>
+          </div>
+        </div>
+
+        <!-- no branch -->
+        <div class="node s-error" id="n-e2ew" style="--i: 7; left: 574px; top: 282px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">e2e — Windows</span><span class="glyph g-error">✕</span>
+          </div>
+          <div class="nd">menuShell timeout</div>
+        </div>
+        <div class="node s-warn" id="n-e2el" style="--i: 8; left: 574px; top: 356px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">e2e — Linux</span><span class="glyph g-warn">!</span>
+          </div>
+          <div class="nd">2 flaky-recovered</div>
+        </div>
+
+        <!-- actor -->
+        <div class="node k-actor" id="n-user" style="--i: 9; left: 798px; top: 316px; width: 118px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
+            </svg>
+            <span class="nl">User</span>
+          </div>
+        </div>
+
+        <!-- data + note -->
+        <div
+          class="node s-muted"
+          id="n-canvas"
+          style="--i: 10; left: 306px; top: 392px; width: 168px"
+        >
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <ellipse cx="12" cy="6" rx="8" ry="3" />
+              <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+            </svg>
+            <span class="nl">canvas.json</span><span class="glyph g-muted">–</span>
+          </div>
+        </div>
+        <div class="node k-note" id="n-note" style="--i: 11; left: 24px; top: 388px; width: 212px">
+          <div class="nh">
+            <span class="nl">rerun isolated before attributing — known flake classes</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ The numbers under sign-off ════ -->
+    <table class="spec-table">
+      <tr>
+        <th>motion</th>
+        <th>timing</th>
+        <th>mechanism</th>
+        <th>reduced-motion</th>
+      </tr>
+      <tr>
+        <td>entrance stagger</td>
+        <td>240ms/node · 40ms step · cubic-bezier(0.16,1,0.3,1)</td>
+        <td>
+          fade + 6px rise per node in layout order; edges fade in after nodes (200ms, 30ms step)
+        </td>
+        <td>everything visible immediately</td>
+      </tr>
+      <tr>
+        <td>FLIP layout morph</td>
+        <td>320ms · cubic-bezier(0.2,0,0,1)</td>
+        <td>
+          on spec change: existing nodes glide (transform, released to left/top); added nodes run
+          entrance; removed fade out 160ms; edges cross-fade old→new; fit-scale FROZEN during the
+          run
+        </td>
+        <td>instant snap to new layout</td>
+      </tr>
+      <tr>
+        <td>status-flip pulse</td>
+        <td>620ms one-shot</td>
+        <td>
+          wash bloom (box-shadow ring, status hue) + glyph scale-in 0.7→1 (ease-out-quint, no
+          overshoot)
+        </td>
+        <td>plain style swap, no pulse</td>
+      </tr>
+      <tr>
+        <td>edge march</td>
+        <td>0.9s linear ∞ (dashoffset −22)</td>
+        <td>
+          the Phase-0 `expanse-flow` numbers on `.pl-spec-edge`; static `'6 5'` dash attr unchanged
+          (e2e pin holds)
+        </td>
+        <td>static accent dash (today's Phase-1 render)</td>
+      </tr>
+      <tr>
+        <td>click-to-focus dim</td>
+        <td>160ms linear · rest 0.22</td>
+        <td>
+          card-level hit-test vs layout.byId (view STAYS pointer-events:none, zero focusables);
+          neighbors + their edges stay full; click empty / Esc / deselect restores
+        </td>
+        <td>instant dim/restore (still functional)</td>
+      </tr>
+      <tr>
+        <td>group collapse</td>
+        <td>200ms ease-out</td>
+        <td>
+          members + internal edges exit; 168px chip (label + count) enters; boundary edges re-anchor
+          to the chip; `collapsed` persists in spec (already validated)
+        </td>
+        <td>instant swap</td>
+      </tr>
+      <tr>
+        <td>version scrubber (B4)</td>
+        <td>morph = FLIP 320ms</td>
+        <td>
+          `revisions:[{spec,ts,author}]` capped 20 on the element (schema v22 ADDITIVE — writer
+          bump, floor stays); ‹ › in card HEAD; layout memoized per revision
+        </td>
+        <td>snap between revisions</td>
+      </tr>
+      <tr>
+        <td>theme presets (B6)</td>
+        <td>—</td>
+        <td>
+          optional `spec.theme` → host registry: calm (default) · graphite · signal; unknown ⇒ calm;
+          scoped `[data-diagram-theme]` var override; agent writes ride the existing MCP confirm
+          gate = "confirm-before-apply"
+        </td>
+        <td>n/a (static)</td>
+      </tr>
+    </table>
+
+    <div class="notes">
+      <b>Contracts held:</b> zero focusable elements inside the view (scrubber = card head) · every
+      spec string stays a React text node (stagger animates whole nodes, never split text) ·
+      `.pl-spec-node`/`.pl-spec-edge` counts and the literal `'6 5'` dasharray survive (march is a
+      CSS animation on the same attr) · one accent, active/animated only · group.status render
+      (silent Phase-1 gap) ships with this phase — wash + ½-border on cluster chrome, glyphless.
+      <br /><br />
+      <b>Gating:</b> motion = `prefers-reduced-motion` (live matchMedia — plain media query works,
+      this is same-document DOM, no Phase-0 SVG-in-img baking) <b>AND</b> a new app setting
+      (Settings → Appearance → “Diagram motion: auto / off”). Either one off ⇒ off.
+      <b>Not in this phase:</b> node drag / palette / inline editing (Phase 4, ADR-gated) · MCP
+      specOps (Phase 3). Focus + collapse here are CSS-only read interactions.
+    </div>
+
+    <script>
+      // ── mock-only demo wiring (the app implements this in React) ──
+      const $ = (s) => document.querySelector(s)
+      const spec = $('#spec')
+
+      // entrance replay
+      $('#b-enter').onclick = () => {
+        spec.classList.remove('enter')
+        void spec.offsetWidth
+        spec.classList.add('enter')
+      }
+
+      // status-flip pulse
+      let unitDone = false
+      $('#b-pulse').onclick = () => {
+        const n = $('#n-unit')
+        unitDone = !unitDone
+        n.classList.remove('pulse-done')
+        void n.offsetWidth
+        n.classList.toggle('s-active', !unitDone)
+        n.classList.toggle('s-done', unitDone)
+        $('#unit-glyph').textContent = unitDone ? '✓' : '●'
+        $('#unit-glyph').className = 'glyph ' + (unitDone ? 'g-done' : 'g-active')
+        $('#unit-detail').textContent = unitDone ? '5,458 / 5,458' : '4,312 / 5,458'
+        if (unitDone) n.classList.add('pulse-done')
+      }
+
+      // group collapse
+      $('#b-collapse').onclick = (e) => {
+        spec.classList.toggle('collapsed')
+        e.target.textContent = spec.classList.contains('collapsed')
+          ? 'expand BUILD group'
+          : 'collapse BUILD group'
+      }
+
+      // focus dim — neighbors of the decision node
+      const keep = ['n-unit', 'n-decision', 'n-package', 'n-e2ew', 'n-e2el']
+      const keepEdges = ['e-utd', 'e-yes', 'e-no', 't-yes', 't-no']
+      $('#b-focus').onclick = () => {
+        document.querySelectorAll('.node, .group, .gchip').forEach((n) => {
+          if (!keep.includes(n.id)) n.classList.add('dim')
+        })
+        document.querySelectorAll('svg.edges path, svg.edges text').forEach((p) => {
+          if (!keepEdges.some((c) => p.classList.contains(c))) p.classList.add('dim')
+        })
+      }
+      $('#b-clear').onclick = () =>
+        document.querySelectorAll('.dim').forEach((n) => n.classList.remove('dim'))
+
+      // B4 scrubber ⇄ FLIP morph. rev 4 = current; rev 3 = before "Feed" landed
+      // (Package sat further right; package→feed edge absent).
+      const REVS = {
+        4: { pkg: [574, 96], feed: true, meta: 'agent · 15:25' },
+        3: { pkg: [650, 96], feed: false, meta: 'user · 14:02' }
+      }
+      let rev = 4
+      function flipTo(next) {
+        if (next === rev || !REVS[next]) return
+        const pkg = $('#n-package')
+        const feed = $('#n-feed')
+        const pf = document.querySelector('.e-pf')
+        const first = { x: pkg.offsetLeft, y: pkg.offsetTop }
+        const target = REVS[next]
+        // Last: commit new left/top
+        pkg.style.left = target.pkg[0] + 'px'
+        pkg.style.top = target.pkg[1] + 'px'
+        // Invert
+        const dx = first.x - target.pkg[0]
+        const dy = first.y - target.pkg[1]
+        pkg.style.transition = 'none'
+        pkg.style.transform = `translate(${dx}px, ${dy}px)`
+        void pkg.offsetWidth
+        // Play
+        pkg.classList.add('flip-run')
+        pkg.style.transform = ''
+        pkg.addEventListener(
+          'transitionend',
+          () => {
+            pkg.classList.remove('flip-run')
+            pkg.style.transition = ''
+          },
+          { once: true }
+        )
+        // added/removed node + its edge
+        if (target.feed) {
+          feed.classList.remove('exit-run')
+          pf.classList.remove('exit-run')
+        } else {
+          feed.classList.add('exit-run')
+          pf.classList.add('exit-run')
+        }
+        rev = next
+        $('#s-rev').textContent = `rev ${rev}/4`
+        $('#s-meta').textContent = target.meta
+        $('#s-adot').style.background = target.meta.startsWith('agent')
+          ? 'var(--accent)'
+          : 'var(--text-3)'
+      }
+      $('#s-prev').onclick = () => flipTo(rev - 1)
+      $('#s-next').onclick = () => flipTo(rev + 1)
+
+      // theme presets
+      document.querySelectorAll('.thm').forEach((b) => {
+        b.onclick = () => {
+          document.querySelectorAll('.thm').forEach((x) => x.classList.remove('on'))
+          b.classList.add('on')
+          const t = b.dataset.t
+          if (t) $('#card').setAttribute('data-diagram-theme', t)
+          else $('#card').removeAttribute('data-diagram-theme')
+        }
+      })
+
+      // reduced-motion simulation (the app setting side of the gate)
+      $('#rm').onchange = (e) => document.body.classList.toggle('rm', e.target.checked)
+    </script>
+  </body>
+</html>
