@@ -35,6 +35,7 @@ import {
   cacheMotionMatches,
   diagramTypeLabel
 } from './diagramTheme'
+import { DiagramRevScrubber } from './DiagramRevScrubber'
 import { DiagramSpecView } from './DiagramSpecView'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
@@ -115,10 +116,22 @@ export const DiagramCard = memo(function DiagramCard({
   // folded spec is DERIVED before layout — collapse/expand rides the ordinary layout morph.
   // Session state only; the authored spec in elements[] is never touched (scene/session split).
   const [collapseToggled, setCollapseToggled] = useState<ReadonlySet<string>>(new Set())
+  // Revision scrub (M6/B4): a read-only PEEK at a prior spec. null = the live head; i indexes
+  // element.revisions (oldest→newest). Ephemeral session state; deselect snaps back to head.
+  const revisions = useMemo(
+    () => (expanse ? (element.revisions ?? []) : []),
+    [expanse, element.revisions]
+  )
+  const [revIndex, setRevIndex] = useState<number | null>(null)
+  useEffect(() => {
+    // A capture/removal that shrinks the list under a scrub must not index past the end.
+    setRevIndex((i) => (i !== null && i >= revisions.length ? null : i))
+  }, [revisions.length])
+  const displaySpec = revIndex === null ? (element.spec ?? null) : revisions[revIndex].spec
   const effectiveSpec = useMemo(() => {
-    if (!expanse || !element.spec) return null
-    return applyCollapse(element.spec, specEffectiveCollapsed(element.spec, collapseToggled))
-  }, [expanse, element.spec, collapseToggled])
+    if (!expanse || !displaySpec) return null
+    return applyCollapse(displaySpec, specEffectiveCollapsed(displaySpec, collapseToggled))
+  }, [expanse, displaySpec, collapseToggled])
   // Phase 2: the card owns the spec layout (null spec on the mermaid branch — hook runs
   // unconditionally) so it can hit-test focus clicks against the positioned boxes.
   const specLayout = useSpecLayout(effectiveSpec)
@@ -339,6 +352,7 @@ export const DiagramCard = memo(function DiagramCard({
       setZoom(ZOOM_FIT)
       setPan({ x: 0, y: 0 })
       setFocusId(null)
+      setRevIndex(null) // a revision scrub is a peek — deselect returns to the live head
     }
   }, [selected])
 
@@ -502,9 +516,16 @@ export const DiagramCard = memo(function DiagramCard({
           }}
         >
           <span style={{ color: 'var(--text-2)' }}>
-            {expanse ? (element.spec?.title ?? 'expanse') : diagramTypeLabel(source)}
+            {expanse ? (displaySpec?.title ?? 'expanse') : diagramTypeLabel(source)}
           </span>
           <span style={{ flex: 1 }} />
+          {!editing && expanse && revisions.length > 0 && (
+            <DiagramRevScrubber
+              count={revisions.length}
+              revIndex={revIndex}
+              onScrub={setRevIndex}
+            />
+          )}
           {!editing && (expanse || svgUrl) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 1 }} title="Scroll to zoom">
               <button

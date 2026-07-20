@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
 
 afterEach(cleanup) // globals:false ⇒ RTL auto-cleanup never registers (house convention)
 import type { ReactElement } from 'react'
@@ -299,5 +299,37 @@ describe('DiagramCard engine branch (expanse)', () => {
     await waitFor(() => expect(screen.getByText('Build (1)')).toBeTruthy())
     expect(screen.queryByText('Lint')).toBeNull() // the member folded away
     expect(container.querySelector('.pl-spec-chip')).toBeTruthy()
+  })
+
+  it('scrubs revision history read-only from the header (M6/B4)', async () => {
+    const oldSpec: DiagramSpec = {
+      version: 1,
+      title: 'Old pipeline',
+      direction: 'right',
+      nodes: [{ id: 'old1', label: 'OldNode' }],
+      edges: []
+    }
+    render(
+      <DiagramCard
+        element={{ ...element, revisions: [{ spec: oldSpec, ts: 1, author: 'agent' }] }}
+        boardId="b1"
+        interactive
+        selected
+        onDragStart={noop}
+        onChangeSource={noop}
+        onEditStart={noop}
+        onCache={noop}
+        onResize={noop}
+      />
+    )
+    await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy())
+    expect(screen.getByText('2/2')).toBeTruthy() // head of a 1-revision history
+    fireEvent.click(screen.getByTitle('Older revision'))
+    await waitFor(() => expect(screen.getByText('OldNode')).toBeTruthy())
+    expect(screen.queryByText('Lint')).toBeNull() // the peek replaces the live render…
+    expect(screen.getByText('1/2')).toBeTruthy()
+    expect(screen.getByText('Old pipeline')).toBeTruthy() // …title chip follows the peek
+    fireEvent.click(screen.getByTitle('Newer revision'))
+    await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy()) // back to the live head
   })
 })

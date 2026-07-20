@@ -418,7 +418,7 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
       boards: []
     } as unknown as CanvasDoc)
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(22)
     expect(MIN_READER_VERSION).toBe(21)
   })
 })
@@ -972,6 +972,44 @@ describe('fromObject deep validation', () => {
     expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, importedFrom: 7 })))).toThrow()
     expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, importedFrom: 7 })))).toThrow()
   })
+
+  // v22 (B4): prior-spec revisions — expanse-only, capped, every entry deep-validated.
+  const okRevision = { spec: okSpec, ts: 1_700_000_000_000, author: 'agent' }
+
+  it('accepts an expanse diagram with revisions and round-trips them through toObject', () => {
+    const withRevs = { ...okExpanse, revisions: [okRevision, { ...okRevision, author: 'user' }] }
+    const doc = fromObject(wrap(mkDiagram(withRevs)))
+    const el = (doc.boards[0] as PlanningBoard).elements[0] as Extract<
+      PlanningElement,
+      { kind: 'diagram' }
+    >
+    expect(el.revisions).toHaveLength(2)
+    const out = toObject(doc.boards, null)
+    expect((out.boards[0] as PlanningBoard).elements[0]).toEqual(el)
+  })
+
+  it('rejects bad revisions: over-cap, bad entry shape, bad ts/author, mermaid carrier', () => {
+    const many = Array.from({ length: 21 }, () => okRevision)
+    expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, revisions: many })))).toThrow(
+      /revision cap/
+    )
+    expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, revisions: {} })))).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, revisions: [7] })))).toThrow()
+    expect(() =>
+      fromObject(wrap(mkDiagram({ ...okExpanse, revisions: [{ ...okRevision, ts: 'now' }] })))
+    ).toThrow(/ts/)
+    expect(() =>
+      fromObject(wrap(mkDiagram({ ...okExpanse, revisions: [{ ...okRevision, author: 'bot' }] })))
+    ).toThrow(/author/)
+    expect(() =>
+      fromObject(
+        wrap(mkDiagram({ ...okExpanse, revisions: [{ ...okRevision, spec: { version: 2 } }] }))
+      )
+    ).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, revisions: [okRevision] })))).toThrow(
+      /mermaid/
+    )
+  })
 })
 
 // ── Degenerate geometry + load-floor clamp (BUG-025) ───────────────────────────
@@ -1058,7 +1096,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(22)
     expect(MIN_READER_VERSION).toBe(21)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
@@ -1225,6 +1263,44 @@ describe('migrate', () => {
     const out = migrate(structuredClone(v20) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([diagram])
+  })
+
+  // v22: optional DiagramElement `revisions` (B4). ADDITIVE — writer-only bump, floor STAYS 21.
+  // The migration is identity: a v21 expanse diagram (no history yet) rides through untouched.
+  it('migrates a v21 doc (revisions bump) as an identity bump (floor stays 21)', () => {
+    const expanseDiagram = {
+      id: 'd',
+      kind: 'diagram',
+      x: 0,
+      y: 0,
+      w: 280,
+      h: 200,
+      engine: 'expanse',
+      spec: { version: 1, direction: 'right', nodes: [{ id: 'a', label: 'A' }], edges: [] }
+    }
+    const v21 = {
+      schemaVersion: 21,
+      minReaderVersion: 21,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [
+        {
+          id: 'p',
+          type: 'planning',
+          title: 'P',
+          x: 0,
+          y: 0,
+          w: 300,
+          h: 200,
+          elements: [expanseDiagram]
+        }
+      ]
+    }
+    const out = migrate(structuredClone(v21) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(MIN_READER_VERSION).toBe(21) // v22 is additive — the floor stays at the v21 break
+    expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([expanseDiagram])
   })
 
   // v18 round-trip: opacity + stroke tokens survive toObject → wire → fromObject byte-for-byte, and
@@ -1439,13 +1515,13 @@ describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(22)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 21,
+      schemaVersion: 22,
       minReaderVersion: 21,
       viewport: vp,
       boards: [],
@@ -1632,7 +1708,7 @@ describe('W4 image element', () => {
   })
 
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(22)
   })
 
   it('round-trips a valid image element', () => {
@@ -1686,7 +1762,7 @@ describe('W4 image element', () => {
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(22)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
