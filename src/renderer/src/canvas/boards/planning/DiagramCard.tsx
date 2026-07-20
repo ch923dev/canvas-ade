@@ -495,6 +495,16 @@ export const DiagramCard = memo(function DiagramCard({
         if (editing) return
         e.stopPropagation()
         onSelect?.(id, e.shiftKey)
+        // M3: a SELECTED expanse card's BODY is the focus/collapse click surface — starting the
+        // element drag would pointer-capture to the well and the browser would dispatch the click
+        // THERE, never reaching the viewport's hit-test handler. The 22px header (shown exactly
+        // when selected) stays the move handle; the first (selecting) press still drags as ever.
+        if (expanse && selected) {
+          const host = e.currentTarget as HTMLElement
+          const rect = host.getBoundingClientRect()
+          const scale = host.offsetHeight > 0 ? rect.height / host.offsetHeight : 1
+          if (e.clientY - rect.top > 22 * scale) return
+        }
         onDragStart(e, id)
       }}
     >
