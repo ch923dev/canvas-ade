@@ -182,6 +182,11 @@ export interface PlanningElementSummary {
   tint?: string
   title?: string
   source?: string
+  /** Diagram engine (Phase 3) — 'mermaid' | 'expanse'; absent on a legacy pre-engine element. */
+  engine?: string
+  /** An expanse diagram's FULL spec (Phase 3) — the specOps read→update loop needs every id.
+   *  Bounded by its own schema caps (≤ ~16 KB serialized); the host re-validates on ingest. */
+  spec?: unknown
   items?: PlanningItemSummary[]
 }
 
@@ -273,6 +278,8 @@ export interface BoardSnapshotInput {
     tint?: string
     title?: string
     source?: string
+    engine?: string
+    spec?: unknown
     items?: ReadonlyArray<{ id?: string; label?: string; done?: boolean }>
   }>
   /** World-space geometry (P1) — every real `Board` carries these via `BoardCommon`; optional here
@@ -462,6 +469,12 @@ function derivePlanning(
     if (typeof e.tint === 'string' && e.tint.length > 0) el.tint = e.tint
     if (typeof e.title === 'string' && e.title.length > 0) el.title = e.title
     if (typeof e.source === 'string' && e.source.length > 0) el.source = e.source
+    if (e.kind === 'diagram') {
+      if (typeof e.engine === 'string' && e.engine.length > 0) el.engine = e.engine
+      // Phase 3: forward an expanse diagram's structured spec whole — deep validation is the
+      // host-ingest trust boundary (boardRegistry.sanitizePlanning), same split as the fields above.
+      if (e.engine === 'expanse' && e.spec !== undefined) el.spec = e.spec
+    }
     if (e.kind === 'checklist' && Array.isArray(e.items)) {
       const items: PlanningItemSummary[] = []
       for (const it of e.items) {

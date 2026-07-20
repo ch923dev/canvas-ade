@@ -14,7 +14,12 @@ import { createGatedWriter } from './dispatchGate'
 import { createRelayBatchMethod } from './mcpRelayBatch'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
-import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
+import {
+  buildPlanningConfirmDiff,
+  buildPlanningOps,
+  PlanningContentError,
+  renderPlanningConfirmBody
+} from './mcpPlanning'
 import { createKanbanMethods } from './mcpKanbanGate'
 import { createVisualizeMethod } from './mcpVisualizeGate'
 import { createCloseBoardMethod } from './mcpCloseGate'
@@ -641,11 +646,14 @@ export function buildOrchestrator(
 
       // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body carries
       // the FULL rendered content (not a bare count) so injected text can't be rubber-
-      // stamped; one batch confirm per write.
+      // stamped; one batch confirm per write. A structured-diagram batch additionally carries
+      // the Option-B semantic diff (presentation only — the body stays the full fallback).
       const body = renderPlanningConfirmBody(board.title, ops)
+      const diff = buildPlanningConfirmDiff(ops)
       const { approved } = await registry.confirm({
         title: `Write ${ops.length} item(s) to "${board.title}"`,
-        body
+        body,
+        ...(diff !== undefined ? { diff } : {})
       })
       if (!approved) {
         await auditPlanning('denied', { prompt: body, detail: `${ops.length} elements` })

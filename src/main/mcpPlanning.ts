@@ -1,4 +1,7 @@
-import type { PlanningOp, PlanningOpTint } from './mcpCommand'
+import type { ConfirmDiff, PlanningOp, PlanningOpTint } from '../shared/mcpTypes'
+import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import { assertDiagramSpec } from '../renderer/src/lib/diagramSpec'
+import { diffSpecs, lintSpec } from '../renderer/src/lib/specDiff'
 
 /**
  * 🔒 MAIN-side validation, sanitization, and caps for agent-authored planning CONTENT (S2).
@@ -47,6 +50,13 @@ export const MAX_PLANNING_SECTION = 60
  * rubber-stamped if it can't be seen). Bounds canvas.json / undo-snapshot growth per call.
  */
 export const MAX_PLANNING_BYTES = 16 * 1024
+/**
+ * Serialized-bytes bound for ONE structured DiagramSpec (Phase 3) — the same 16 KB
+ * confirm-reviewability premise, applied per spec so the cross-repo parity test can pin the
+ * package's `MAX_DIAGRAM_SPEC_BYTES` to it name-for-name. (The whole-batch cap above still
+ * governs the batch.)
+ */
+export const MAX_DIAGRAM_SPEC_BYTES = MAX_PLANNING_BYTES
 /** Bound on an arrow delta so a single op can't span an absurd distance. */
 const MAX_ARROW_DELTA = 5000
 
@@ -119,6 +129,51 @@ function sanitizeSection(raw: unknown, index: number): string | undefined {
   return trimmed
 }
 
+function isFiniteNum(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+/**
+ * 🔒 The MAIN-authoritative gate for ONE structured DiagramSpec (Phase 3). Reuses the renderer's
+ * canonical `assertDiagramSpec` (lib/diagramSpec.ts — an import-free LEAF designed for exactly
+ * this cross-bundle reuse: shape, caps, closed enums, referential integrity), then adds the two
+ * checks that are MCP-specific: a control-character REJECT over every string (unlike prose
+ * fields, a spec is not sanitized-in-place — it arrives atomically from one author, so a control
+ * char is an authoring bug worth surfacing, the same doctrine as dangling refs), and the 16 KB
+ * serialized-bytes confirm-reviewability bound. Returns a deep JSON clone so the minted op can
+ * never share references with (or carry getters from) the agent payload.
+ */
+export function buildDiagramSpec(raw: unknown, field: string): DiagramSpec {
+  const fail = (msg: string): never => {
+    throw new PlanningContentError(`${field}: ${msg}`)
+  }
+  assertDiagramSpec(raw, fail, isRecord, isFiniteNum)
+  const spec = raw as DiagramSpec
+  const scan = (v: unknown): void => {
+    if (typeof v === 'string') {
+      for (const ch of v) {
+        const code = ch.codePointAt(0) ?? 0
+        if (code === 0x0a || code === 0x09) continue // legit multi-line labels/details
+        if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
+          fail('contains a control character')
+        }
+      }
+      return
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) scan(x)
+      return
+    }
+    if (isRecord(v)) for (const k of Object.keys(v)) scan(v[k])
+  }
+  scan(spec)
+  const bytes = Buffer.byteLength(JSON.stringify(spec), 'utf8')
+  if (bytes > MAX_DIAGRAM_SPEC_BYTES) {
+    fail(`serializes to ${bytes} bytes (cap ${MAX_DIAGRAM_SPEC_BYTES})`)
+  }
+  return JSON.parse(JSON.stringify(spec)) as DiagramSpec
+}
+
 /** Validate one agent-supplied element → a clean, fully-specified {@link PlanningOp}. */
 function buildOp(el: unknown, index: number): PlanningOp {
   if (!isRecord(el)) throw new PlanningContentError(`element ${index} is not an object`)
@@ -185,6 +240,30 @@ function buildOp(el: unknown, index: number): PlanningOp {
       return withSection({ kind: 'arrow', dx, dy })
     }
     case 'diagram': {
+      // Phase 3: a diagram carries EXACTLY ONE content form — Mermaid `source` (engine 'mermaid',
+      // the pre-Phase-3 shape) or a structured `spec` (engine 'expanse'). The transport schema
+      // already enforces the XOR; MAIN re-checks from scratch (untrusted input).
+      const hasSource = el.source !== undefined
+      const hasSpec = el.spec !== undefined
+      if (hasSource === hasSpec) {
+        throw new PlanningContentError(
+          `diagram[${index}] must carry exactly one of "source" (Mermaid) or "spec" (expanse)`
+        )
+      }
+      if (hasSpec) {
+        if (el.engine !== undefined && el.engine !== 'expanse') {
+          throw new PlanningContentError(
+            `diagram[${index}] engine "${String(el.engine)}" cannot carry a structured spec`
+          )
+        }
+        const spec = buildDiagramSpec(el.spec, `diagram[${index}].spec`)
+        return withSection({ kind: 'diagram', engine: 'expanse', spec })
+      }
+      if (el.engine !== undefined && el.engine !== 'mermaid') {
+        throw new PlanningContentError(
+          `diagram[${index}] engine "${String(el.engine)}" cannot carry a Mermaid source`
+        )
+      }
       // Sanitize the Mermaid source like any multi-line text field (strip control/escape chars,
       // keep newlines, cap length). It is rendered later by the sandboxed worker, never executed.
       const source = sanitizePlanningText(
@@ -192,7 +271,7 @@ function buildOp(el: unknown, index: number): PlanningOp {
         MAX_PLANNING_DIAGRAM,
         `diagram[${index}].source`
       )
-      return withSection({ kind: 'diagram', source })
+      return withSection({ kind: 'diagram', engine: 'mermaid', source })
     }
     default:
       throw new PlanningContentError(`element ${index} has an unsupported kind ${String(el.kind)}`)
@@ -272,10 +351,62 @@ export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[])
         lines.push(`• ${sec}Arrow (Δx ${op.dx}, Δy ${op.dy})`)
         break
       case 'diagram':
-        lines.push(`• ${sec}Diagram (Mermaid — renders as an image):`)
-        lines.push(`    ${confirmField(op.source, '    ')}`)
+        if (op.engine === 'expanse') {
+          // Full-content plain-text fallback (ADR 0003 + the Jarvis body-only route): every
+          // node/edge/group as a describe row — the structured ConfirmDiff is presentation on top.
+          const d = diffSpecs(null, op.spec)
+          const title = op.spec.title !== undefined ? ` "${confirmField(op.spec.title, '  ')}"` : ''
+          lines.push(
+            `• ${sec}Diagram (structured${title} — ${op.spec.nodes.length} node(s), ` +
+              `${op.spec.edges.length} edge(s)${(op.spec.groups?.length ?? 0) > 0 ? `, ${op.spec.groups?.length} group(s)` : ''}):`
+          )
+          for (const s of d.sections) {
+            for (const row of s.rows)
+              lines.push(`    ${row.sig} ${confirmField(row.text, '      ')}`)
+          }
+          for (const warn of lintSpec(op.spec)) {
+            lines.push(`    ⚠ ${confirmField(warn, '      ')}`)
+          }
+        } else {
+          lines.push(`• ${sec}Diagram (Mermaid — renders as an image):`)
+          lines.push(`    ${confirmField(op.source, '    ')}`)
+        }
         break
     }
   }
   return lines.join('\n')
+}
+
+/**
+ * Build the OPTIONAL structured {@link ConfirmDiff} for an add batch (Phase 3, Option B) —
+ * present only when the batch carries ≥1 structured diagram. Sections come from
+ * {@link diffSpecs}(null, spec) (everything added, grouped Nodes/Edges/Groups), prefixed with
+ * the diagram's title when the batch has several. Presentation only: the plain body above stays
+ * the complete authoritative fallback.
+ */
+export function buildPlanningConfirmDiff(ops: PlanningOp[]): ConfirmDiff | undefined {
+  const specs = ops.filter(
+    (op): op is Extract<PlanningOp, { kind: 'diagram'; engine: 'expanse' }> =>
+      op.kind === 'diagram' && op.engine === 'expanse'
+  )
+  if (specs.length === 0) return undefined
+  const sections: ConfirmDiff['sections'] = []
+  const lints: string[] = []
+  let nodes = 0
+  let edges = 0
+  for (const op of specs) {
+    const d = diffSpecs(null, op.spec)
+    const prefix =
+      specs.length > 1 ? `${op.spec.title !== undefined ? `"${op.spec.title}" · ` : ''}` : ''
+    for (const s of d.sections) sections.push({ title: `${prefix}${s.title}`, rows: s.rows })
+    lints.push(...lintSpec(op.spec))
+    nodes += op.spec.nodes.length
+    edges += op.spec.edges.length
+  }
+  const bytes = specs.reduce((n, op) => n + Buffer.byteLength(JSON.stringify(op.spec), 'utf8'), 0)
+  const kb = (bytes / 1024).toFixed(1)
+  const summary =
+    `${specs.length > 1 ? `${specs.length} diagrams · ` : 'new diagram · '}` +
+    `${nodes} node(s) · ${edges} edge(s) · ${kb} KB of ${MAX_DIAGRAM_SPEC_BYTES / 1024} KB`
+  return { summary, sections, lints }
 }

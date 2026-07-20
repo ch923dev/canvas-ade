@@ -59,9 +59,9 @@ describe('buildPlanningOps', () => {
     expect(ops[3]).toEqual({ kind: 'arrow', dx: 10, dy: -20 })
   })
 
-  it('builds a diagram op (Mermaid source sanitized + kept multi-line)', () => {
+  it('builds a diagram op (Mermaid source sanitized + kept multi-line, engine stamped)', () => {
     const ops = buildPlanningOps([{ kind: 'diagram', source: 'graph TD\n  A-->B' }])
-    expect(ops[0]).toEqual({ kind: 'diagram', source: 'graph TD\n  A-->B' })
+    expect(ops[0]).toEqual({ kind: 'diagram', engine: 'mermaid', source: 'graph TD\n  A-->B' })
   })
 
   it('rejects a diagram with a non-string / empty source', () => {
