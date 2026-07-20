@@ -94,7 +94,11 @@ describe('orchestrator.addPlanningElements (S2 content write gate)', () => {
     const cmd = h.sent[0]
     expect(cmd.type).toBe('patchPlanning')
     if (cmd.type === 'patchPlanning') {
-      expect(cmd.ops[0]).toEqual({ kind: 'diagram', engine: 'mermaid', source: 'graph TD\n  A-->B' })
+      expect(cmd.ops[0]).toEqual({
+        kind: 'diagram',
+        engine: 'mermaid',
+        source: 'graph TD\n  A-->B'
+      })
     }
     expect(h.audits.some((a) => a.status === 'applied')).toBe(true)
   })
