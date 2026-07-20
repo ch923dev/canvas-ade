@@ -218,8 +218,10 @@ export function specEdgePath(
   return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`
 }
 
-/** What a focus click landed on — nodes win over their group (paint order), null = empty canvas. */
-export type SpecHit = { kind: 'node' | 'group'; id: string } | null
+/** What a focus click landed on — nodes win over their group (paint order), null = empty canvas.
+ *  'group-label' is the strip astride the cluster's top border (the floating label zone): the
+ *  collapse toggle (M4); 'group' is the body (clears focus). */
+export type SpecHit = { kind: 'node' | 'group' | 'group-label'; id: string } | null
 
 /**
  * Viewport-point → layout-element hit-test (M3 focus / M4 collapse-toggle clicks). The renderer is
@@ -250,9 +252,12 @@ export function specHitTest(
   }
   for (let i = layout.groups.length - 1; i >= 0; i--) {
     const g = layout.groups[i]
-    if (lx >= g.x && lx <= g.x + g.w && ly >= g.y && ly <= g.y + g.h) {
-      return { kind: 'group', id: g.id }
-    }
+    const inX = lx >= g.x && lx <= g.x + g.w
+    if (!inX) continue
+    // Label strip: the floating label sits astride the top border (top −8, 16px tall); the strip
+    // stays inside GROUP_PAD.top, so no member node can occupy it (nodes were checked first).
+    if (ly >= g.y - 8 && ly <= g.y + 14) return { kind: 'group-label', id: g.id }
+    if (ly >= g.y && ly <= g.y + g.h) return { kind: 'group', id: g.id }
   }
   return null
 }

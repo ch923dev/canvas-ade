@@ -276,4 +276,28 @@ describe('DiagramCard engine branch (expanse)', () => {
     expect(screen.queryByTitle('Edit source')).toBeNull() // spec editing is Phase-4 gated
     expect(screen.getByTitle('Reset to fit')).toBeTruthy() // zoom controls still live
   })
+
+  it('folds an authored-collapsed group to its chip through the derived spec (M4)', async () => {
+    const grouped: DiagramSpec = {
+      ...spec,
+      groups: [{ id: 'build', label: 'Build', collapsed: true }],
+      nodes: spec.nodes.map((n) => (n.id === 'lint' ? { ...n, group: 'build' } : n))
+    }
+    const { container } = render(
+      <DiagramCard
+        element={{ ...element, spec: grouped }}
+        boardId="b1"
+        interactive
+        selected
+        onDragStart={noop}
+        onChangeSource={noop}
+        onEditStart={noop}
+        onCache={noop}
+        onResize={noop}
+      />
+    )
+    await waitFor(() => expect(screen.getByText('Build (1)')).toBeTruthy())
+    expect(screen.queryByText('Lint')).toBeNull() // the member folded away
+    expect(container.querySelector('.pl-spec-chip')).toBeTruthy()
+  })
 })

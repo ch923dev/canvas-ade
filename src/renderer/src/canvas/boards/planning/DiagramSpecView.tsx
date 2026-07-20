@@ -20,6 +20,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type { DiagramSpec, SpecNode, SpecStatus } from '../../../lib/diagramSpec'
+import { specChipGroupId } from './specCollapse'
 import {
   specEdgeLabelPoint,
   specEdgePath,
@@ -458,6 +459,7 @@ export function DiagramSpecView({
           const sil = specKindSilhouette(n.kind)
           const pulseGen = pulses.get(n.id)
           const dim = focus !== null && !focus.nodes.has(n.id)
+          const chip = specChipGroupId(n.id) !== null
           const nodeStyle = {
             ...specNodeStyle(box, sil, status),
             '--i': ni,
@@ -466,10 +468,13 @@ export function DiagramSpecView({
           // Nodes carry an inline status opacity (muted's 0.55), which would outrank the stylesheet
           // dim — the dim must land inline too. Dim wins over muted (0.22 < 0.55).
           if (dim) nodeStyle.opacity = 0.22
+          // A collapse chip borrows the cluster's dashed-border vocabulary: reads as a folded
+          // group, not a step (clicking it unfolds — the card resolves that by the id prefix).
+          if (chip) nodeStyle.border = `1px dashed ${status.border}`
           return (
             <div
               key={pulseGen ? `${n.id}#p${pulseGen}` : n.id}
-              className={`pl-spec-node pl-spec-${sil}${pulseGen ? ' pl-spec-pulse' : ''}${dim ? ' pl-spec-dim' : ''}`}
+              className={`pl-spec-node pl-spec-${sil}${chip ? ' pl-spec-chip' : ''}${pulseGen ? ' pl-spec-pulse' : ''}${dim ? ' pl-spec-dim' : ''}`}
               style={nodeStyle}
             >
               {specNodeBody(n, sil, status)}

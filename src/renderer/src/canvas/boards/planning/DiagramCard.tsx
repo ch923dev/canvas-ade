@@ -19,6 +19,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -37,6 +38,7 @@ import {
 import { DiagramSpecView } from './DiagramSpecView'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
 import { specHitTest } from './specLayout'
 import { useReducedMotion } from './useReducedMotion'
 import { useSpecLayout } from './useSpecLayout'
@@ -109,9 +111,17 @@ export const DiagramCard = memo(function DiagramCard({
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
   const motion = !reducedMotion
+  // Group collapse (M4): ephemeral session toggles XOR the authored `collapsed` flags, and the
+  // folded spec is DERIVED before layout — collapse/expand rides the ordinary layout morph.
+  // Session state only; the authored spec in elements[] is never touched (scene/session split).
+  const [collapseToggled, setCollapseToggled] = useState<ReadonlySet<string>>(new Set())
+  const effectiveSpec = useMemo(() => {
+    if (!expanse || !element.spec) return null
+    return applyCollapse(element.spec, specEffectiveCollapsed(element.spec, collapseToggled))
+  }, [expanse, element.spec, collapseToggled])
   // Phase 2: the card owns the spec layout (null spec on the mermaid branch — hook runs
   // unconditionally) so it can hit-test focus clicks against the positioned boxes.
-  const specLayout = useSpecLayout(expanse ? (element.spec ?? null) : null)
+  const specLayout = useSpecLayout(effectiveSpec)
   // Which editor THIS editing session renders — latched at open (see ensureDiagramEditorLoaded).
   const editorAtOpenRef = useRef<DiagramEditorCmp | null>(null)
   useEffect(() => {
@@ -275,9 +285,19 @@ export const DiagramCard = memo(function DiagramCard({
     }
   }, [])
 
-  // Focus click (M3): invert the render transform chain and hit-test the positioned layout.
-  // Node ⇒ toggle focus on it; group / empty canvas ⇒ clear. Only while SELECTED (the same gate
-  // as pan/zoom — an unfocused card click is the selection click).
+  const toggleCollapse = useCallback((gid: string) => {
+    setCollapseToggled((s) => {
+      const next = new Set(s)
+      if (next.has(gid)) next.delete(gid)
+      else next.add(gid)
+      return next
+    })
+  }, [])
+
+  // Focus/collapse click (M3/M4): invert the render transform chain and hit-test the positioned
+  // layout. Node ⇒ toggle focus on it (a collapse CHIP toggles its group open instead); the
+  // group-label strip ⇒ toggle collapse; group body / empty canvas ⇒ clear focus. Only while
+  // SELECTED (the same gate as pan/zoom — an unfocused card click is the selection click).
   const onViewportClick = useCallback(
     (e: ReactMouseEvent) => {
       if (!expanse || !selected || !interactive || editing) return
@@ -295,9 +315,22 @@ export const DiagramCard = memo(function DiagramCard({
         y: (e.clientY - rect.top) / screenScale
       }
       const hit = specHitTest(point, { w, h: Math.max(0, h - 22) }, pan, zoom, layout)
-      setFocusId((f) => (hit?.kind === 'node' ? (hit.id === f ? null : hit.id) : null))
+      if (hit?.kind === 'node') {
+        const chipGroup = specChipGroupId(hit.id)
+        if (chipGroup !== null) {
+          toggleCollapse(chipGroup)
+          return
+        }
+        setFocusId((f) => (hit.id === f ? null : hit.id))
+        return
+      }
+      if (hit?.kind === 'group-label') {
+        toggleCollapse(hit.id)
+        return
+      }
+      setFocusId(null)
     },
-    [expanse, selected, interactive, editing, specLayout.layout, w, h, pan, zoom]
+    [expanse, selected, interactive, editing, specLayout.layout, w, h, pan, zoom, toggleCollapse]
   )
 
   // Snap back to a clean fit thumbnail whenever the element loses focus.
@@ -650,7 +683,7 @@ export const DiagramCard = memo(function DiagramCard({
               // none inside, so card-level select/drag/zoom/pan behave exactly like the inert
               // mermaid <img>.
               <DiagramSpecView
-                spec={element.spec!}
+                spec={effectiveSpec ?? element.spec!}
                 w={w}
                 h={Math.max(0, h - (showHeader ? 22 : 0))}
                 motion={motion}
