@@ -3032,3 +3032,46 @@ merge head `20e36807` (Win 308P + menuShell flake rerun-green 3/3 · Linux Docke
 CI green ×2 heads · claude-review 1 warning fixed + inline-dispositioned, incremental re-review
 0 new findings. Gotcha memorized: background-task 10-min cap truncates a matrix log mid-run — a
 missing `EXIT=` line means killed, not failed; run detached.
+
+## PR #365 — diagram Phase 2: motion + focus (v0.24.0, schema v22) — 2026-07-21
+
+**Squash `bea7c68a`** (branch `feat/diagram-motion`, base `94151247`). Phase 2 of the diagram-viz
+redesign (Direction C), all in the STATIC renderer — read interactions only, zero new focusables;
+the interactive editor stays Phase-4-gated. The user-signed design artifact
+(`docs/research/2026-07-19-diagram-viz-redesign/phase2-design/mock.html`) is the motion contract.
+
+**Motion.** Entrance 240ms out-expo / 40ms stagger (capped 12 steps), edge fade after; FROM-only
+keyframes + `fill: backwards` (a to-keyframe with `both` pins opacity over inline styles — broke
+muted/dim). Layout morph: left/top/w/h transitions 320ms emphasized-decelerate + container rescale;
+edges re-fade via a generation key; `sameGeometry()` gates status-only edits. Exit ghosts
+(`pl-spec-node-exit`, never `pl-spec-node` — count pins safe). Edge march 0.9s ON TOP of the static
+`'6 5'` dash attribute. One-shot status pulse 620ms via keyed remounts.
+
+**Read interactions.** Click-to-focus dim 0.22 (pure `specHitTest` inverts pan/zoom+fit; the view
+stays pointer-inert — the CARD hit-tests). Group collapse to a dashed chip (`applyCollapse` derived
+spec, `#g:` chip ids outside the slug charset; authored `collapsed` XOR session toggle; label strip
+toggles; rides the morph). `SpecGroup.status` finally renders (Phase-1 silent gap).
+
+**B6 presets.** `spec.theme` OPEN string (unknown→calm, round-trips): calm · graphite (greys, the
+one accent survives) · signal (0.22 washes, full borders) — live-token ports of the mock overrides.
+
+**B4 revisions (schema v21→22, ADDITIVE, floor stays 21).** `DiagramElement.revisions` cap 20,
+expanse-only, deep-validated (`assertDiagramRevisions`); captured at the `applyBoardPatch` choke
+point (`withSpecRevisions`, JSON-content-compared); ‹ n/N › read-only header scrubber
+(`DiagramRevScrubber`); WeakMap per-spec layout memo → instant scrubs. MAIN `projectStore` mirror
+lock-step.
+
+**M7 setting.** `diagramMotionStore` (localStorage, wayfindingStore pattern) + Appearance switch;
+effective motion = `!prefers-reduced-motion && setting !== 'off'`; feeds both engines.
+
+**Verified.** cheap trio · ~130 new units (5674P full; 5F = documented ambient machine classes,
+identical on untouched main) · diagram e2e 14/14 incl. 3 new Phase-2 specs (motion gate +
+emulateMedia flip · focus/collapse via REAL clicks · scrubber) · FULL MATRIX: Win 307P via 3
+playwright shards (1 transient gitDiff `git init` flake, 3/3 isolated) + Linux Docker 309P exit 0
+(detached container + Monitor poll) · CI green · claude-review FULL PASS round 1 (0 findings, 0
+nits) · user dev-check eyeball PASS on a seeded v22 demo project. The e2e caught a REAL M3 bug
+pre-merge (`8d24b610`): body pointerdown started the element drag → pointer capture redirected the
+click to the well → focus hit-test dead for real mice (jsdom `fireEvent` hid it); selected expanse
+body now skips the drag, 22px header = move handle. Gotchas memorized: `pnpm exec playwright test`
+skips the `pretest:e2e` build (tests stale `out/`); shard/detach patterns beat the 10-min
+background cap.
