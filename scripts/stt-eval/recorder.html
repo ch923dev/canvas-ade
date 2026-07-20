@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>STT eval recorder</title>
+    <style>
+      /* Tokens mirrored from src/renderer/src/index.css so this throwaway tool still
+         reads as part of the product. One accent, no gradients (DESIGN.md). */
+      :root {
+        --bg: #0f1115;
+        --panel: #161920;
+        --line: #252a34;
+        --text: #e6e9ef;
+        --muted: #8b93a3;
+        --accent: #4f8cff;
+        --ok: #3ecf8e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      /* Exactly three sizes: 22px hero prompt / 14px chrome / 11px mono tags (1.57x and
+         1.27x steps). The recorder shows one thing to read at a time, so a finer scale
+         would be hierarchy theatre — every other element inherits. */
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.55 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+      }
+      .wrap {
+        width: min(760px, 100%);
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+        color: var(--muted);
+      }
+      .bar .count {
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+      .track {
+        flex: 1;
+        height: 4px;
+        background: var(--line);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      /* scaleX, not width: animating width relayouts the flex row every frame. */
+      .track i {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        transform: scaleX(0);
+        transform-origin: left center;
+        transition: transform 0.2s;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 28px;
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .id {
+        font:
+          11px ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: var(--muted);
+        letter-spacing: 0.06em;
+      }
+      .prompt {
+        font-size: 22px;
+        line-height: 1.45;
+      }
+      .terms {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .terms span {
+        font:
+          11px ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 2px 7px;
+        color: var(--muted);
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 24px;
+        color: var(--muted);
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--line);
+      }
+      .rec .dot {
+        background: #ff5d5d;
+        animation: pulse 1s ease-in-out infinite;
+      }
+      .done .dot {
+        background: var(--ok);
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .rec .dot {
+          animation: none;
+        }
+      }
+      .meter {
+        flex: 1;
+        height: 6px;
+        background: var(--line);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      /* Same reason as .track — and this one updates at frame rate while recording. */
+      .meter i {
+        display: block;
+        height: 100%;
+        background: var(--ok);
+        transform: scaleX(0);
+        transform-origin: left center;
+      }
+      kbd {
+        font:
+          11px ui-monospace,
+          monospace;
+        border: 1px solid var(--line);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 1px 5px;
+        color: var(--text);
+      }
+      .help {
+        margin-top: 16px;
+        color: var(--muted);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .err {
+        color: #ff8b8b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="bar">
+        <span class="count" id="count">0 / 0</span>
+        <span class="track"><i id="progress"></i></span>
+        <span id="rate"></span>
+      </div>
+      <div class="card">
+        <div class="id" id="id">—</div>
+        <div class="prompt" id="prompt">Loading prompts…</div>
+        <div class="terms" id="terms"></div>
+        <div class="status" id="status">
+          <span class="dot"></span><span id="statusText">Ready</span
+          ><span class="meter"><i id="meter"></i></span>
+        </div>
+      </div>
+      <div class="help">
+        <span><kbd>space</kbd> hold to record</span>
+        <span><kbd>N</kbd> next</span>
+        <span><kbd>P</kbd> previous</span>
+        <span><kbd>R</kbd> re-record</span>
+      </div>
+    </div>
+
+    <script type="module">
+      const el = (id) => document.getElementById(id)
+      let prompts = []
+      let done = new Set()
+      let index = 0
+      let ctx = null
+      let node = null
+      let stream = null
+      let chunks = []
+      let recording = false
+      let sampleRate = 16000
+
+      // The worklet is inlined as a blob so the recorder stays two files. It only
+      // forwards mono float32 frames; the resample to 16 kHz is done by the AudioContext
+      // itself (constructed at that rate), which uses Chromium's real resampler rather
+      // than a hand-rolled decimation.
+      const WORKLET = `
+        class Tap extends AudioWorkletProcessor {
+          process(inputs) {
+            const ch = inputs[0] && inputs[0][0]
+            if (ch && ch.length) this.port.postMessage(new Float32Array(ch))
+            return true
+          }
+        }
+        registerProcessor('tap', Tap)
+      `
+
+      function setStatus(text, cls = '') {
+        el('statusText').textContent = text
+        el('status').className = 'status ' + cls
+      }
+
+      function render() {
+        const p = prompts[index]
+        if (!p) return
+        el('id').textContent = `${p.id}${done.has(p.id) ? '  ·  recorded' : ''}`
+        el('prompt').textContent = p.text
+        el('terms').innerHTML = ''
+        for (const t of p.keyterms ?? []) {
+          const s = document.createElement('span')
+          s.textContent = t
+          el('terms').appendChild(s)
+        }
+        el('count').textContent = `${done.size} / ${prompts.length}`
+        el('progress').style.transform =
+          `scaleX(${prompts.length ? done.size / prompts.length : 0})`
+        setStatus(
+          done.has(p.id) ? 'Recorded — R to redo' : 'Hold space to record',
+          done.has(p.id) ? 'done' : ''
+        )
+      }
+
+      async function ensureAudio() {
+        if (ctx) return
+        // Ask the browser for 16 kHz directly; also disable the aggressive front-end
+        // processing, because stacked noise suppression measurably HURTS modern ASR
+        // (STT-ACCURACY.md §3.4) and we want the corpus to be near-raw.
+        ctx = new AudioContext({ sampleRate: 16000 })
+        sampleRate = ctx.sampleRate
+        el('rate').textContent = `${sampleRate} Hz`
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        })
+        await ctx.audioWorklet.addModule(
+          URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
+        )
+        node = new AudioWorkletNode(ctx, 'tap')
+        node.port.onmessage = (e) => {
+          if (!recording) return
+          chunks.push(e.data)
+          let peak = 0
+          for (let i = 0; i < e.data.length; i++) peak = Math.max(peak, Math.abs(e.data[i]))
+          el('meter').style.transform = `scaleX(${Math.min(1, peak * 1.4)})`
+        }
+        ctx.createMediaStreamSource(stream).connect(node)
+        // A worklet with no downstream sink is not pulled in some builds; a muted gain
+        // node to the destination keeps the graph running without echoing to speakers.
+        const mute = ctx.createGain()
+        mute.gain.value = 0
+        node.connect(mute).connect(ctx.destination)
+      }
+
+      function toPcm16(frames) {
+        const total = frames.reduce((n, f) => n + f.length, 0)
+        const out = new Int16Array(total)
+        let o = 0
+        for (const f of frames) {
+          for (let i = 0; i < f.length; i++) {
+            const s = Math.max(-1, Math.min(1, f[i]))
+            out[o++] = s < 0 ? s * 0x8000 : s * 0x7fff
+          }
+        }
+        return out
+      }
+
+      async function start() {
+        if (recording) return
+        try {
+          await ensureAudio()
+          if (ctx.state === 'suspended') await ctx.resume()
+        } catch (err) {
+          setStatus(`Microphone unavailable: ${err.message}`, 'err')
+          return
+        }
+        chunks = []
+        recording = true
+        setStatus('Recording…', 'rec')
+      }
+
+      async function stop() {
+        if (!recording) return
+        recording = false
+        el('meter').style.transform = 'scaleX(0)'
+        const pcm = toPcm16(chunks)
+        chunks = []
+        if (pcm.length < sampleRate / 4) {
+          setStatus('Too short — hold space while you speak', 'err')
+          return
+        }
+        setStatus('Saving…')
+        const p = prompts[index]
+        try {
+          const res = await fetch(`/save?id=${encodeURIComponent(p.id)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: pcm.buffer
+          })
+          const json = await res.json()
+          if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
+          done.add(p.id)
+          render()
+          setStatus(`Saved ${json.seconds.toFixed(1)}s — N for next`, 'done')
+          // Auto-advance to the next UNRECORDED prompt so a full pass needs no navigation.
+          const nextUndone = prompts.findIndex((q, i) => i > index && !done.has(q.id))
+          if (nextUndone >= 0)
+            setTimeout(() => {
+              index = nextUndone
+              render()
+            }, 450)
+        } catch (err) {
+          setStatus(`Save failed: ${err.message}`, 'err')
+        }
+      }
+
+      addEventListener('keydown', (e) => {
+        if (e.repeat) return // key-repeat must not restart the take
+        if (e.code === 'Space') {
+          e.preventDefault()
+          start()
+        } else if (e.key === 'n' || e.key === 'N') {
+          index = Math.min(index + 1, prompts.length - 1)
+          render()
+        } else if (e.key === 'p' || e.key === 'P') {
+          index = Math.max(index - 1, 0)
+          render()
+        } else if (e.key === 'r' || e.key === 'R') {
+          setStatus('Hold space to re-record')
+        }
+      })
+      addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+          e.preventDefault()
+          stop()
+        }
+      })
+      // Releasing space outside the window would otherwise leave it recording forever.
+      addEventListener('blur', () => {
+        if (recording) stop()
+      })
+
+      const data = await (await fetch('/prompts')).json()
+      prompts = data.prompts
+      done = new Set(data.done)
+      render()
+    </script>
+  </body>
+</html>
