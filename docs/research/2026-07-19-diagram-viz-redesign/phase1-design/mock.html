@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 1 design artifact — DiagramSpec static renderer (engine:'expanse')</title>
+    <style>
+      /* ── Real app tokens (mirror of src/renderer/src/styles/tokens.css) ─────────── */
+      @font-face {
+        font-family: 'Geist';
+        src: url('../../../../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Geist Mono';
+        src: url('../../../../src/renderer/src/assets/fonts/GeistMono-Variable.woff2')
+          format('woff2');
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --void: #0a0a0b;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --ok-wash: rgba(62, 207, 142, 0.14);
+        --warn: #e8b339;
+        --warn-wash: rgba(232, 179, 57, 0.12);
+        --err: #f2545b;
+        --err-wash: rgba(242, 84, 91, 0.14);
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --r-pill: 999px;
+        --fs-micro: 10px;
+        --fs-meta: 11px;
+        --fs-label: 12px;
+        --fs-body: 13px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        padding: 28px;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      .sub {
+        font-size: var(--fs-meta);
+        color: var(--text-3);
+        font-family: var(--mono);
+        margin-bottom: 20px;
+      }
+
+      /* ── The DiagramCard shell (matches DiagramCard.tsx chrome exactly) ─────────── */
+      .card {
+        width: 940px;
+        border: 1px solid var(--accent);
+        outline: 0.5px solid var(--accent);
+        border-radius: var(--r-inner);
+        overflow: hidden;
+        background: var(--surface);
+        position: relative;
+      }
+      .card-head {
+        height: 22px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 6px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+        font: 500 10px var(--ui);
+        color: var(--text-3);
+      }
+      .card-head .dialect {
+        color: var(--text-2);
+      }
+      .card-head .sp {
+        flex: 1;
+      }
+      .card-head .zoom {
+        font-family: var(--mono);
+        color: var(--text-3);
+        display: flex;
+        gap: 8px;
+      }
+
+      /* ── Spec canvas: SVG edge layer under absolutely-positioned nodes ──────────── */
+      .spec {
+        position: relative;
+        height: 470px;
+        background: var(--surface);
+      }
+      .spec svg.edges {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .edge {
+        stroke: var(--border-strong);
+        stroke-width: 1.5;
+        fill: none;
+      }
+      .edge.dep {
+        stroke-dasharray: 3 4;
+      }
+      .edge.data {
+        stroke-dasharray: 1.5 3.5;
+        stroke-linecap: round;
+      }
+      .edge.status-done {
+        stroke: rgba(62, 207, 142, 0.5);
+      }
+      .edge.animated {
+        stroke: var(--accent);
+        stroke-dasharray: 6 5;
+        animation: flow 0.9s linear infinite;
+      }
+      @keyframes flow {
+        to {
+          stroke-dashoffset: -22;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .edge.animated {
+          animation: none;
+          stroke-dasharray: none;
+        }
+      }
+      .elabel {
+        font: 450 10px var(--mono);
+        fill: var(--text-3);
+      }
+      .ehead {
+        fill: var(--border-strong);
+      }
+      .ehead.accent {
+        fill: var(--accent);
+      }
+
+      /* ── Nodes: one calm base card; KIND = icon mark + silhouette tweak;
+       STATUS = wash fill + half-strength border + glyph (never color alone) ──── */
+      .node {
+        position: absolute;
+        width: 168px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+        padding: 7px 9px 7px 8px;
+      }
+      .nh {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 16px;
+      }
+      .nh svg.ki {
+        flex: none;
+        width: 13px;
+        height: 13px;
+        stroke: var(--text-3);
+        stroke-width: 1.5;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .nl {
+        font: 500 12px/16px var(--ui);
+        color: var(--text);
+        flex: 1;
+      }
+      .nd {
+        font: 450 10px/14px var(--mono);
+        color: var(--text-3);
+        margin: 3px 0 0 19px;
+      }
+      .glyph {
+        flex: none;
+        font: 600 10px/14px var(--mono);
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* status recipes — SAME wash+half-border contract as Phase-0 Mermaid (diagramTheme.ts) */
+      .s-done {
+        background: var(--ok-wash);
+        border-color: rgba(62, 207, 142, 0.5);
+      }
+      .s-active {
+        background: var(--accent-wash);
+        border-color: var(--accent);
+      }
+      .s-warn {
+        background: var(--warn-wash);
+        border-color: rgba(232, 179, 57, 0.5);
+      }
+      .s-error {
+        background: var(--err-wash);
+        border-color: rgba(242, 84, 91, 0.55);
+      }
+      .s-muted {
+        opacity: 0.55;
+      }
+      .g-done {
+        color: var(--ok);
+      }
+      .g-active {
+        color: var(--accent);
+      }
+      .g-warn {
+        color: var(--warn);
+      }
+      .g-error {
+        color: var(--err);
+      }
+      .g-muted {
+        color: var(--text-3);
+      }
+
+      /* kind silhouettes (restrained): decision = clipped corners · actor = pill · note = dashed */
+      .k-decision {
+        clip-path: polygon(
+          9px 0,
+          calc(100% - 9px) 0,
+          100% 9px,
+          100% calc(100% - 9px),
+          calc(100% - 9px) 100%,
+          9px 100%,
+          0 calc(100% - 9px),
+          0 9px
+        );
+        border-radius: 0;
+      }
+      .k-actor {
+        border-radius: var(--r-pill);
+        padding-left: 12px;
+      }
+      .k-note {
+        border-style: dashed;
+        background: var(--surface);
+      }
+      .k-note .nl {
+        font-weight: 400;
+        color: var(--text-2);
+        font-size: 11px;
+      }
+
+      /* group cluster */
+      .group {
+        position: absolute;
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--r-board);
+        background: rgba(255, 255, 255, 0.015);
+      }
+      .group .gl {
+        position: absolute;
+        top: -8px;
+        left: 10px;
+        padding: 0 6px;
+        background: var(--surface);
+        font: 500 10px var(--ui);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+      .group .gcollapse {
+        position: absolute;
+        top: -7px;
+        right: 10px;
+        padding: 0 5px;
+        background: var(--surface);
+        font: 500 10px var(--mono);
+        color: var(--text-faint);
+      }
+
+      /* ── Legend strip (sign-off completeness: full closed vocabulary) ───────────── */
+      .legend {
+        width: 940px;
+        margin-top: 14px;
+        display: flex;
+        gap: 24px;
+        padding: 12px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+      }
+      .lcol {
+        flex: 1;
+      }
+      .lt {
+        font: 500 10px var(--ui);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        margin-bottom: 8px;
+      }
+      .lrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font: 450 11px/20px var(--mono);
+        color: var(--text-2);
+      }
+      .lrow .chip {
+        width: 70px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 1px 7px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--surface-raised);
+        font: 500 10px var(--ui);
+        color: var(--text);
+      }
+      .lrow svg {
+        width: 12px;
+        height: 12px;
+        stroke: var(--text-3);
+        stroke-width: 1.5;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .lline {
+        width: 46px;
+        flex: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>DiagramSpec static renderer — engine:'expanse' (Phase 1, render-only)</h1>
+    <div class="sub">
+      real tokens · Geist · status = wash fill + ½-strength border + GLYPH (never color alone) ·
+      kind = icon + calm silhouette · SVG bezier edges · one accent (active only)
+    </div>
+
+    <!-- ════ The card as it sits on a Planning board (selected state) ════ -->
+    <div class="card">
+      <div class="card-head">
+        <span class="dialect">expanse · flow</span><span class="sp"></span>
+        <span class="zoom"
+          ><span>−</span><span>100%</span><span>+</span><span>&lt;/&gt;</span></span
+        >
+      </div>
+      <div class="spec">
+        <!-- group cluster behind its nodes -->
+        <div class="group" style="left: 24px; top: 40px; width: 212px; height: 216px">
+          <span class="gl">Build</span><span class="gcollapse">⌄</span>
+        </div>
+
+        <svg class="edges" width="940" height="470">
+          <defs>
+            <marker
+              id="ah"
+              viewBox="0 0 8 8"
+              refX="7"
+              refY="4"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M0 0 L8 4 L0 8 z" class="ehead" />
+            </marker>
+            <marker
+              id="aha"
+              viewBox="0 0 8 8"
+              refX="7"
+              refY="4"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M0 0 L8 4 L0 8 z" class="ehead accent" />
+            </marker>
+          </defs>
+          <!-- build column internal flow -->
+          <path
+            class="edge status-done"
+            d="M 128 88 C 128 102, 128 106, 128 120"
+            marker-end="url(#ah)"
+          />
+          <path
+            class="edge status-done"
+            d="M 128 152 C 128 166, 128 170, 128 184"
+            marker-end="url(#ah)"
+          />
+          <!-- active edge: unit tests → decision (marching dash, honors reduced-motion) -->
+          <path
+            class="edge animated"
+            d="M 212 210 C 254 210, 262 213, 302 214"
+            marker-end="url(#aha)"
+          />
+          <!-- decision branches -->
+          <path class="edge" d="M 474 206 C 520 188, 528 140, 570 122" marker-end="url(#ah)" />
+          <text class="elabel" x="502" y="158">yes</text>
+          <path class="edge" d="M 474 222 C 520 240, 528 288, 570 304" marker-end="url(#ah)" />
+          <text class="elabel" x="502" y="278">no</text>
+          <!-- package → feed (flow) -->
+          <path class="edge" d="M 742 120 C 768 120, 774 117, 796 114" marker-end="url(#ah)" />
+          <!-- data edge (dotted): canvas.json → package -->
+          <path class="edge data" d="M 474 408 C 560 400, 624 190, 652 150" marker-end="url(#ah)" />
+          <!-- dependency edge: e2e red → user actor -->
+          <path class="edge dep" d="M 742 306 C 774 306, 772 326, 798 332" marker-end="url(#ah)" />
+        </svg>
+
+        <!-- BUILD group -->
+        <div class="node s-done" style="left: 44px; top: 56px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">Lint</span><span class="glyph g-done">✓</span>
+          </div>
+        </div>
+        <div class="node s-done" style="left: 44px; top: 120px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">Typecheck</span><span class="glyph g-done">✓</span>
+          </div>
+        </div>
+        <div class="node s-active" style="left: 44px; top: 184px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">Unit tests</span><span class="glyph g-active">●</span>
+          </div>
+          <div class="nd">4,312 / 5,458</div>
+        </div>
+
+        <!-- decision (clipped corners + diamond mark) -->
+        <div class="node k-decision" style="left: 306px; top: 198px; width: 168px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M12 3 L21 12 L12 21 L3 12 Z" /></svg>
+            <span class="nl">Matrix green?</span>
+          </div>
+        </div>
+
+        <!-- yes branch: package (neutral) → updater feed (service) -->
+        <div class="node" style="left: 574px; top: 96px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <path d="M21 8 L12 3 L3 8 v8 l9 5 9-5 z M3 8 l9 5 9-5 M12 13 v8" />
+            </svg>
+            <span class="nl">Package</span>
+          </div>
+          <div class="nd">electron-builder</div>
+        </div>
+        <div class="node" style="left: 800px; top: 96px; width: 116px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+              <path d="M9 9h6v6H9z" />
+            </svg>
+            <span class="nl">Feed</span>
+          </div>
+        </div>
+
+        <!-- no branch: e2e failure (error) + linux leg (warn) -->
+        <div class="node s-error" style="left: 574px; top: 282px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">e2e — Windows</span><span class="glyph g-error">✕</span>
+          </div>
+          <div class="nd">menuShell timeout</div>
+        </div>
+        <div class="node s-warn" style="left: 574px; top: 356px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <span class="nl">e2e — Linux</span><span class="glyph g-warn">!</span>
+          </div>
+          <div class="nd">2 flaky-recovered</div>
+        </div>
+
+        <!-- actor pill -->
+        <div class="node k-actor" style="left: 798px; top: 316px; width: 118px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
+            </svg>
+            <span class="nl">User</span>
+          </div>
+        </div>
+
+        <!-- data (muted) + note -->
+        <div class="node s-muted" style="left: 306px; top: 392px; width: 168px">
+          <div class="nh">
+            <svg class="ki" viewBox="0 0 24 24">
+              <ellipse cx="12" cy="6" rx="8" ry="3" />
+              <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+            </svg>
+            <span class="nl">canvas.json</span><span class="glyph g-muted">–</span>
+          </div>
+        </div>
+        <div class="node k-note" style="left: 24px; top: 388px; width: 212px">
+          <div class="nh">
+            <span class="nl">rerun isolated before attributing — known flake classes</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ Closed-vocabulary legend (the sign-off surface) ════ -->
+    <div class="legend">
+      <div class="lcol">
+        <div class="lt">status → wash + glyph</div>
+        <div class="lrow">
+          <span class="chip"><span class="glyph g-done">✓</span>done</span> ok-wash · ok@50% border
+        </div>
+        <div class="lrow">
+          <span class="chip" style="border-color: var(--accent); background: var(--accent-wash)"
+            ><span class="glyph g-active">●</span>active</span
+          >
+          THE accent — only here
+        </div>
+        <div class="lrow">
+          <span class="chip"><span class="glyph g-warn">!</span>warn</span> warn-wash · warn@50%
+          border
+        </div>
+        <div class="lrow">
+          <span class="chip"><span class="glyph g-error">✕</span>error</span> err-wash · err@55%
+          border
+        </div>
+        <div class="lrow">
+          <span class="chip" style="opacity: 0.55"><span class="glyph g-muted">–</span>muted</span>
+          opacity 0.55
+        </div>
+        <div class="lrow"><span class="chip">neutral</span> raised surface, no glyph</div>
+      </div>
+      <div class="lcol">
+        <div class="lt">kind → icon + silhouette</div>
+        <div class="lrow"><span class="chip">step</span> rounded rect (default)</div>
+        <div class="lrow"><span class="chip">decision</span> clipped corners + ◇ mark</div>
+        <div class="lrow"><span class="chip">data</span> cylinder mark</div>
+        <div class="lrow"><span class="chip">service</span> chip mark</div>
+        <div class="lrow"><span class="chip">artifact</span> box mark</div>
+        <div class="lrow"><span class="chip">actor</span> pill + person mark</div>
+        <div class="lrow"><span class="chip">note</span> dashed, quiet text</div>
+      </div>
+      <div class="lcol">
+        <div class="lt">edge kind → line</div>
+        <div class="lrow">
+          <svg class="lline" height="8"><line x1="0" y1="4" x2="46" y2="4" class="edge" /></svg>
+          flow — solid border-strong
+        </div>
+        <div class="lrow">
+          <svg class="lline" height="8"><line x1="0" y1="4" x2="46" y2="4" class="edge dep" /></svg>
+          dependency — dashed
+        </div>
+        <div class="lrow">
+          <svg class="lline" height="8">
+            <line x1="0" y1="4" x2="46" y2="4" class="edge data" />
+          </svg>
+          data — dotted
+        </div>
+        <div class="lrow">
+          <svg class="lline" height="8">
+            <line x1="0" y1="4" x2="46" y2="4" class="edge animated" />
+          </svg>
+          animated:true — accent march
+        </div>
+        <div class="lrow" style="margin-top: 6px; color: var(--text-3)">
+          labels: 10px mono text-3<br />reduced-motion ⇒ static solid
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

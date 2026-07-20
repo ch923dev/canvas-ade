@@ -208,9 +208,9 @@ describe('kanban board (v17)', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('stamps the breaking reader floor (minReaderVersion 17) on write', () => {
+  it('stamps the breaking reader floor (minReaderVersion 21) on write', () => {
     const doc = toObject([createBoard('kanban', { id: 'k5', x: 0, y: 0 })], null)
-    expect(doc.minReaderVersion).toBe(17)
+    expect(doc.minReaderVersion).toBe(21)
   })
 })
 
@@ -418,8 +418,8 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
       boards: []
     } as unknown as CanvasDoc)
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(20)
-    expect(MIN_READER_VERSION).toBe(17)
+    expect(SCHEMA_VERSION).toBe(21)
+    expect(MIN_READER_VERSION).toBe(21)
   })
 })
 
@@ -908,6 +908,70 @@ describe('fromObject deep validation', () => {
     expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, w: 0 })))).toThrow()
     expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, svgCache: '' })))).toThrow()
   })
+
+  // v21: the 'expanse' engine — spec is canonical; source/svgCache are mermaid-only.
+  const okSpec = {
+    version: 1,
+    direction: 'right',
+    nodes: [
+      { id: 'a', label: 'A', status: 'done' },
+      { id: 'b', label: 'B', kind: 'decision' }
+    ],
+    edges: [{ id: 'e1', from: 'a', to: 'b', animated: true }]
+  }
+  const okExpanse = {
+    id: 'd2',
+    kind: 'diagram',
+    x: 0,
+    y: 0,
+    w: 280,
+    h: 200,
+    engine: 'expanse',
+    spec: okSpec
+  }
+
+  it('accepts a valid expanse diagram element (spec canonical, importedFrom optional)', () => {
+    expect(() => fromObject(wrap(mkDiagram(okExpanse)))).not.toThrow()
+    expect(() =>
+      fromObject(wrap(mkDiagram({ ...okExpanse, importedFrom: 'graph TD\n A-->B' })))
+    ).not.toThrow()
+  })
+
+  it('round-trips an expanse diagram through toObject unchanged (spec survives the clone)', () => {
+    const doc = fromObject(wrap(mkDiagram(okExpanse)))
+    const board = doc.boards[0] as PlanningBoard
+    const el = board.elements[0] as Extract<PlanningElement, { kind: 'diagram' }>
+    expect(el.engine).toBe('expanse')
+    expect(el.spec).toEqual(okSpec)
+    const out = toObject(doc.boards, null)
+    expect((out.boards[0] as PlanningBoard).elements[0]).toEqual(el)
+  })
+
+  it('rejects an expanse diagram carrying mermaid-only fields (source / svgCache)', () => {
+    expect(() =>
+      fromObject(wrap(mkDiagram({ ...okExpanse, source: 'graph TD\n A-->B' })))
+    ).toThrow()
+    expect(() =>
+      fromObject(wrap(mkDiagram({ ...okExpanse, svgCache: 'assets/abc.svg' })))
+    ).toThrow()
+  })
+
+  it('rejects a mermaid diagram carrying a spec, and an expanse diagram with none', () => {
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, spec: okSpec })))).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, spec: undefined })))).toThrow()
+  })
+
+  it('deep-validates the spec (a dangling edge endpoint fails the whole doc)', () => {
+    const bad = { ...okSpec, edges: [{ id: 'e1', from: 'a', to: 'ghost' }] }
+    expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, spec: bad })))).toThrow(
+      /unknown node "ghost"/
+    )
+  })
+
+  it('rejects a non-string importedFrom on either engine', () => {
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, importedFrom: 7 })))).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okExpanse, importedFrom: 7 })))).toThrow()
+  })
 })
 
 // ── Degenerate geometry + load-floor clamp (BUG-025) ───────────────────────────
@@ -994,8 +1058,8 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(20)
-    expect(MIN_READER_VERSION).toBe(17)
+    expect(SCHEMA_VERSION).toBe(21)
+    expect(MIN_READER_VERSION).toBe(21)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
@@ -1097,7 +1161,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v15) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(17) // Kanban's breaking floor; v16/v18 stay writer-only
+    expect(MIN_READER_VERSION).toBe(21) // the v21 expanse-engine breaking floor
     expect(out.boards).toEqual(v15.boards)
   })
 
@@ -1129,8 +1193,38 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v16) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(17) // additive v18 — the floor stays at Kanban's 17
+    expect(MIN_READER_VERSION).toBe(21) // the v21 expanse-engine breaking floor
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note, arrow])
+  })
+
+  // v21: the 'expanse' diagram engine (+ spec + importedFrom). BREAKING — both SCHEMA_VERSION and
+  // the floor move to 21 (a pre-21 reader's diagram case hard-fails a non-mermaid engine). The
+  // migration is identity: every existing diagram element is mermaid and rides through untouched.
+  it('migrates a v20 doc (expanse engine bump) as an identity bump, preserving a mermaid diagram', () => {
+    const diagram = {
+      id: 'd',
+      kind: 'diagram',
+      x: 0,
+      y: 0,
+      w: 280,
+      h: 200,
+      source: 'graph TD\n A-->B',
+      engine: 'mermaid',
+      svgCache: 'assets/0123456789012345678901234567890123456789.svg'
+    }
+    const v20 = {
+      schemaVersion: 20,
+      minReaderVersion: 17,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [
+        { id: 'p', type: 'planning', title: 'P', x: 0, y: 0, w: 300, h: 200, elements: [diagram] }
+      ]
+    }
+    const out = migrate(structuredClone(v20) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([diagram])
   })
 
   // v18 round-trip: opacity + stroke tokens survive toObject → wire → fromObject byte-for-byte, and
@@ -1345,14 +1439,14 @@ describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(20)
+    expect(SCHEMA_VERSION).toBe(21)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 20,
-      minReaderVersion: 17,
+      schemaVersion: 21,
+      minReaderVersion: 21,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -1538,7 +1632,7 @@ describe('W4 image element', () => {
   })
 
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(20)
+    expect(SCHEMA_VERSION).toBe(21)
   })
 
   it('round-trips a valid image element', () => {
@@ -1592,7 +1686,7 @@ describe('W4 image element', () => {
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
   it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(20)
+    expect(SCHEMA_VERSION).toBe(21)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -2248,8 +2342,8 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     // `diagram` element kind, the v12 `command` board type, the v13 `file` board + `fileref` element
     // kinds, the v14 `dataflow` board type, the v15 `qhd`/`uhd` viewport presets, and the v17 `kanban`
     // board type (v16 theming was additive). toObject stamps the CURRENT floor (MIN_READER_VERSION = 17).
-    expect(toObject([], null).minReaderVersion).toBe(17)
-    expect(MIN_READER_VERSION).toBe(17)
+    expect(toObject([], null).minReaderVersion).toBe(21)
+    expect(MIN_READER_VERSION).toBe(21)
   })
 
   it('round-trips agentKind + monitorActivity', () => {
@@ -2340,7 +2434,7 @@ describe('schema v20 — terminal openRouter field', () => {
       boards: []
     } as never)
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(17)
+    expect(MIN_READER_VERSION).toBe(21)
   })
 })
 

@@ -56,9 +56,10 @@ const legacyAssets = (dir: string): string => join(dir, ASSETS)
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation. (v18 = Planning element appearance
  * props, ADDITIVE; v19 = Kanban card-detail fields — description/tags[]/fileRefs[], ADDITIVE;
- * v20 = TerminalBoard `openRouter` routing field, ADDITIVE — see boardSchemaVersion.ts.)
+ * v20 = TerminalBoard `openRouter` routing field, ADDITIVE; v21 = the DiagramElement
+ * `'expanse'` engine + spec + importedFrom, BREAKING — see boardSchemaVersion.ts.)
  */
-export const SCHEMA_VERSION = 20
+export const SCHEMA_VERSION = 21
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
@@ -69,9 +70,11 @@ export const SCHEMA_VERSION = 20
  * viewport, so they get the clean "update the app" message instead of a `.bak`-fallback parse failure.
  * The floor moved to 17 with the breaking `kanban` board type (v17, P4) — pre-17 apps have no
  * `kanban` case in `assertBoard` and would `.bak`-fallback, so they get the clean update prompt.
- * (v16 was additive and left the floor at 15.)
+ * (v16 was additive and left the floor at 15; v18–v20 were additive and left it at 17.) The floor
+ * moved to 21 with the breaking `'expanse'` diagram engine (v21, diagram-viz Phase 1) — a pre-21
+ * reader's diagram case hard-fails a non-mermaid engine, so pre-21 apps get the clean update prompt.
  */
-export const MIN_READER_VERSION = 17
+export const MIN_READER_VERSION = 21
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }

@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.22.8",
+  "version": "0.23.0",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -87,6 +87,7 @@
     "electron": "^42.3.3",
     "electron-builder": "^26.15.5",
     "electron-vite": "^5.0.0",
+    "elkjs": "^0.12.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",

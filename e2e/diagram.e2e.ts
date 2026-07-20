@@ -313,4 +313,123 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     })
     expect(source).toContain('C[Ship]')
   })
+
+  /** Seed a planning board carrying one expanse-engine spec diagram (v21). */
+  async function seedSpecDiagram(page: Page): Promise<string> {
+    const id = await seed(page, 'planning')
+    await page.evaluate(
+      ({ boardId }) => {
+        ;(globalThis as any).__canvasE2E.patchBoard(boardId, {
+          elements: [
+            {
+              id: 'sp-1',
+              kind: 'diagram',
+              // Must FIT inside the default 516×366 planning well — an overflowing element parks
+              // its resize handle on top of the BOARD's corner and the drag grabs the wrong target.
+              x: 32,
+              y: 24,
+              w: 440,
+              h: 280,
+              engine: 'expanse',
+              spec: {
+                version: 1,
+                title: 'Pipeline',
+                direction: 'right',
+                groups: [{ id: 'build', label: 'Build' }],
+                nodes: [
+                  { id: 'lint', label: 'Lint', status: 'done', group: 'build' },
+                  {
+                    id: 'test',
+                    label: 'Unit tests',
+                    status: 'active',
+                    detail: '4/5k',
+                    group: 'build'
+                  },
+                  { id: 'gate', label: 'Matrix green?', kind: 'decision' },
+                  { id: 'evil', label: '<b>not markup</b>', status: 'error' }
+                ],
+                edges: [
+                  { id: 'e1', from: 'lint', to: 'test', status: 'done' },
+                  { id: 'e2', from: 'test', to: 'gate', animated: true },
+                  { id: 'e3', from: 'gate', to: 'evil', kind: 'dependency', label: 'no' }
+                ]
+              }
+            }
+          ]
+        })
+      },
+      { boardId: id }
+    )
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    return id
+  }
+
+  test('expanse spec renders the static DOM view via the real ELK worker (v21)', async ({
+    page
+  }) => {
+    // The engine + layout are REAL here: the elk-worker chunk loads lazily and runs off-thread —
+    // this spec proves the whole pipeline (schema accepts the element → ELK layout → token-styled
+    // DOM) in the packaged renderer, which jsdom cannot (worker + chunk fetch).
+    await seedSpecDiagram(page)
+
+    const view = page.locator('.pl-specview')
+    await expect(view).toBeVisible({ timeout: 20000 })
+    await expect(page.locator('.pl-spec-node')).toHaveCount(4, { timeout: 20000 })
+    // No mermaid machinery for this engine: no worker <img>, no error state.
+    await expect(page.locator('.pl-diagram img')).toHaveCount(0)
+
+    // Status = glyph + wash (B1: never colour alone) straight from the tokens.
+    await expect(view.getByText('✓')).toBeVisible() // done glyph
+    await expect(view.getByText('●')).toBeVisible() // active glyph
+    await expect(view.getByText('✕')).toBeVisible() // error glyph
+    const doneBg = await page
+      .locator('.pl-spec-node', { hasText: 'Lint' })
+      .evaluate((el) => (globalThis as any).getComputedStyle(el).backgroundColor)
+    expect(doneBg).toBe('rgba(62, 207, 142, 0.14)') // --ok-wash
+    // Group cluster label renders; edge layer carries one path per edge, animated = accent dash.
+    await expect(view.getByText('Build')).toBeVisible()
+    await expect(page.locator('.pl-spec-edge')).toHaveCount(3)
+    const accent = await page
+      .locator('.pl-spec-edge path[stroke="#4f8cff"]')
+      .getAttribute('stroke-dasharray')
+    expect(accent).toBe('6 5')
+
+    // Security + keystroke contracts: spec strings are text nodes (no markup), and the view adds
+    // ZERO focusable elements to the planning well (#363 class).
+    await expect(view.getByText('<b>not markup</b>')).toBeVisible()
+    expect(await view.locator('b').count()).toBe(0)
+    expect(await view.locator('button, input, textarea, select, [tabindex]').count()).toBe(0)
+
+    await page.screenshot({ path: 'test-results/diagram-spec-static.png' })
+  })
+
+  test('expanse card keeps card affordances but hides the source editor (Phase-4 gate)', async ({
+    page
+  }) => {
+    const boardId = await seedSpecDiagram(page)
+    await expect(page.locator('.pl-specview')).toBeVisible({ timeout: 20000 })
+
+    // Select the card → header shows the SPEC TITLE chip; the </> toggle must be ABSENT (an
+    // expanse diagram has no source; spec editing is the ADR-gated Phase-4 surface).
+    await page.locator('.pl-diagram').click({ position: { x: 24, y: 80 } })
+    await expect(page.locator('.pl-diagram-head')).toContainText('Pipeline')
+    await expect(page.locator('.pl-diagram-head button[title="Edit source"]')).toHaveCount(0)
+    // Zoom controls stay (the shared viewport machinery works for both engines).
+    await expect(page.locator('.pl-diagram-head button[title="Reset to fit"]')).toBeVisible()
+
+    // The shared resize handle still resizes the card (engine-agnostic affordance).
+    const handle = page.locator('.pl-diagram-resize')
+    await expect(handle).toBeVisible()
+    const before = await diagramSize(page, boardId)
+    const box = await handle.boundingBox()
+    if (!box) throw new Error('resize handle has no bounding box')
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 60, { steps: 8 })
+    await page.mouse.up()
+    const after = await diagramSize(page, boardId)
+    expect(after.w).toBeGreaterThan(before.w)
+    expect(after.h).toBeGreaterThan(before.h)
+  })
 })
