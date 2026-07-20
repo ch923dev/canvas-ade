@@ -176,6 +176,37 @@ describe('DiagramSpecView (static expanse renderer)', () => {
     await waitFor(() => expect(screen.getByText('●')).toBeTruthy()) // active glyph landed
     expect(container.querySelector('.pl-spec-pulse')).toBeNull()
   })
+
+  it('fades a removed node out as an exit ghost — never counted as a live pl-spec-node', async () => {
+    const { container, rerender } = render(<Host spec={spec} motion />)
+    await waitFor(() => expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(3))
+    const dropped: DiagramSpec = {
+      ...spec,
+      nodes: spec.nodes.filter((n) => n.id !== 'evil'),
+      edges: spec.edges.filter((e) => e.to !== 'evil')
+    }
+    rerender(<Host spec={dropped} motion />)
+    await waitFor(() => {
+      const ghost = container.querySelector<HTMLElement>('.pl-spec-node-exit')
+      expect(ghost?.textContent).toContain('<b>not markup</b>')
+    })
+    // The count pin the e2e suite relies on: ghosts are NOT .pl-spec-node.
+    expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(2)
+    await waitFor(() => expect(container.querySelector('.pl-spec-node-exit')).toBeNull())
+  })
+
+  it('spawns no ghosts with motion off (removal is instant)', async () => {
+    const { container, rerender } = render(<Host spec={spec} />)
+    await waitFor(() => expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(3))
+    const dropped: DiagramSpec = {
+      ...spec,
+      nodes: spec.nodes.filter((n) => n.id !== 'evil'),
+      edges: spec.edges.filter((e) => e.to !== 'evil')
+    }
+    rerender(<Host spec={dropped} />)
+    await waitFor(() => expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(2))
+    expect(container.querySelector('.pl-spec-node-exit')).toBeNull()
+  })
 })
 
 describe('DiagramCard engine branch (expanse)', () => {

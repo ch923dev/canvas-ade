@@ -277,11 +277,12 @@
 .pl-spec-enter .pl-spec-node,
 .pl-spec-enter .pl-spec-group {
   animation: pl-spec-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  /* Stagger caps at 12 steps (~480ms) — a 200-node spec must not tail out for seconds. */
+  animation-delay: calc(min(var(--i, 0), 12) * 40ms);
 }
 .pl-spec-enter .pl-spec-edge {
   animation: pl-spec-fade 200ms ease-out both;
-  animation-delay: calc(240ms + var(--i, 0) * 30ms);
+  animation-delay: calc(240ms + min(var(--i, 0), 12) * 30ms);
 }
 @keyframes pl-spec-enter {
   from {
@@ -309,7 +310,10 @@
     stroke-dashoffset: -22;
   }
 }
-.pl-spec-pulse {
+/* Selector carries the entrance rule's specificity + the node class: a pulsing node REPLACES its
+   entrance animation (it is remounted by the pulse key — replaying the enter slide would fight
+   the ring) instead of losing the ring to the higher-specificity entrance shorthand. */
+.pl-specview .pl-spec-node.pl-spec-pulse {
   animation: pl-spec-pulse 620ms ease-out 1;
 }
 @keyframes pl-spec-pulse {
@@ -331,14 +335,45 @@
     transform: scale(1);
   }
 }
-/* Opacity ease shared by the focus dim (M3) and the morph exit ghosts (M2). */
+/* Layout morph (M2): a spec edit that moves geometry glides live nodes/groups to their new
+   boxes — 320ms emphasized-decelerate, the approved mock's FLIP number — plus the 160ms
+   opacity ease shared with the focus dim (M3). Edges cannot transition a path `d`; the view
+   re-fades them via a generation key instead. */
 .pl-motion-on .pl-spec-node,
-.pl-motion-on .pl-spec-group,
+.pl-motion-on .pl-spec-group {
+  transition:
+    opacity 160ms linear,
+    left 320ms cubic-bezier(0.2, 0, 0, 1),
+    top 320ms cubic-bezier(0.2, 0, 0, 1),
+    width 320ms cubic-bezier(0.2, 0, 0, 1),
+    height 320ms cubic-bezier(0.2, 0, 0, 1);
+}
 .pl-motion-on .pl-spec-edge {
   transition: opacity 160ms linear;
 }
+/* Content extent rescale rides the same curve, so the fit stays coherent through the morph. */
+.pl-motion-on .pl-spec-enter {
+  transition:
+    transform 320ms cubic-bezier(0.2, 0, 0, 1),
+    width 320ms cubic-bezier(0.2, 0, 0, 1),
+    height 320ms cubic-bezier(0.2, 0, 0, 1);
+}
 .pl-specview .pl-spec-dim {
   opacity: 0.22;
+}
+/* Exit ghost: a removed node lingers one 160ms fade at its last box. Class is deliberately NOT
+   pl-spec-node — live-node selectors and the e2e count pins must never see ghosts. */
+.pl-motion-on .pl-spec-node-exit {
+  animation: pl-spec-exit 160ms ease-out both;
+}
+@keyframes pl-spec-exit {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+.pl-motion-off .pl-spec-node-exit {
+  display: none;
 }
 /* Motion gate OFF (reduced-motion or the app setting, composed in JS): everything static —
    exactly the Phase-1 render, march path keeps its static accent 6/5 dash. */
@@ -346,7 +381,8 @@
 .pl-motion-off .pl-spec-group,
 .pl-motion-off .pl-spec-edge,
 .pl-motion-off .pl-spec-march,
-.pl-motion-off .pl-spec-glyph {
+.pl-motion-off .pl-spec-glyph,
+.pl-motion-off .pl-spec-enter {
   animation: none !important;
   transition: none !important;
 }
@@ -355,8 +391,13 @@
   .pl-specview .pl-spec-group,
   .pl-specview .pl-spec-edge,
   .pl-specview .pl-spec-march,
-  .pl-specview .pl-spec-glyph {
+  .pl-specview .pl-spec-glyph,
+  .pl-specview .pl-spec-enter {
     animation: none !important;
     transition: none !important;
+  }
+  /* animation:none would freeze a ghost at full opacity — reduced motion removes it outright. */
+  .pl-specview .pl-spec-node-exit {
+    display: none;
   }
 }
