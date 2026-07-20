@@ -274,14 +274,17 @@
    pulse 620ms one-shot (wash ring + glyph scale-in, no overshoot) · focus/ghost opacity ease
    160ms. Gate: DiagramSpecView stamps pl-motion-on/off from (prefers-reduced-motion ∧ app
    setting); the media query below is the stylesheet backstop for the OS half of that gate. */
+/* Entrance keyframes are FROM-only + fill `backwards` on purpose: the animation releases to the
+   element's natural computed style when it ends. A to-keyframe with fill `both` would pin
+   opacity 1 forever (animations outrank inline styles), breaking muted's 0.55 and the focus dim. */
 .pl-spec-enter .pl-spec-node,
 .pl-spec-enter .pl-spec-group {
-  animation: pl-spec-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: pl-spec-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   /* Stagger caps at 12 steps (~480ms) — a 200-node spec must not tail out for seconds. */
   animation-delay: calc(min(var(--i, 0), 12) * 40ms);
 }
 .pl-spec-enter .pl-spec-edge {
-  animation: pl-spec-fade 200ms ease-out both;
+  animation: pl-spec-fade 200ms ease-out backwards;
   animation-delay: calc(240ms + min(var(--i, 0), 12) * 30ms);
 }
 @keyframes pl-spec-enter {
@@ -289,17 +292,10 @@
     opacity: 0;
     transform: translateY(6px);
   }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 @keyframes pl-spec-fade {
   from {
     opacity: 0;
-  }
-  to {
-    opacity: 1;
   }
 }
 .pl-spec-march {

@@ -159,6 +159,31 @@ function specNodeBody(n: SpecNode, sil: SpecSilhouette, status: SpecStatusStyle)
   )
 }
 
+/** The lit neighbourhood of a focused node: itself, every edge touching it, both endpoints of
+ *  those edges, and any group holding a lit node. Everything else dims to 0.22 (M3). */
+interface FocusSets {
+  nodes: ReadonlySet<string>
+  edges: ReadonlySet<string>
+  groups: ReadonlySet<string>
+}
+
+function specFocusSets(spec: DiagramSpec, focusId: string): FocusSets {
+  const nodes = new Set([focusId])
+  const edges = new Set<string>()
+  for (const e of spec.edges) {
+    if (e.from === focusId || e.to === focusId) {
+      edges.add(e.id)
+      nodes.add(e.from)
+      nodes.add(e.to)
+    }
+  }
+  const groups = new Set<string>()
+  for (const n of spec.nodes) {
+    if (n.group && nodes.has(n.id)) groups.add(n.group)
+  }
+  return { nodes, edges, groups }
+}
+
 /** Geometry equality between two layouts — a status-only spec edit relayouts to identical boxes,
  *  and must NOT re-fade edges or spawn ghosts (the morph is for real position changes). */
 function sameGeometry(a: SpecLayoutResult, b: SpecLayoutResult): boolean {
@@ -176,7 +201,8 @@ export function DiagramSpecView({
   h,
   motion,
   layout,
-  error
+  error,
+  focusId = null
 }: {
   spec: DiagramSpec
   /** Available card box (board-local px; header already subtracted by the caller). */
@@ -187,6 +213,8 @@ export function DiagramSpecView({
   /** Positioned layout from the card's useSpecLayout (null while the first layout resolves). */
   layout: SpecLayoutResult | null
   error: string | null
+  /** Focused node (card-level hit-test, M3): non-neighbours dim. Null / stale id ⇒ no dim. */
+  focusId?: string | null
 }): ReactElement {
   // ── Status-flip pulse: diff statuses per node id across spec changes; a changed id gets a
   // generation bump (React key remount restarts the one-shot animation) and is dropped again
@@ -288,6 +316,8 @@ export function DiagramSpecView({
 
   // Fit the content extent into the card box (contain, like the mermaid <img>'s object-fit).
   const scale = Math.min(w / layout.width, h / layout.height)
+  // A focused node that a spec edit removed must not dim the whole diagram — stale id ⇒ no focus.
+  const focus = focusId && layout.byId.has(focusId) ? specFocusSets(spec, focusId) : null
   return (
     <div
       className={`pl-specview ${motion ? 'pl-motion-on' : 'pl-motion-off'}`}
@@ -315,10 +345,11 @@ export function DiagramSpecView({
         {layout.groups.map((g, gi) => {
           const sg = spec.groups?.find((s) => s.id === g.id)
           const chrome = specGroupStyle(sg?.status)
+          const dim = focus !== null && !focus.groups.has(g.id)
           return (
             <div
               key={`g-${g.id}`}
-              className="pl-spec-group"
+              className={`pl-spec-group${dim ? ' pl-spec-dim' : ''}`}
               style={
                 {
                   position: 'absolute',
@@ -389,10 +420,11 @@ export function DiagramSpecView({
             if (!a || !b) return null
             const style = specEdgeStyle(e)
             const mid = specEdgeLabelPoint(a, b, spec.direction)
+            const dim = focus !== null && !focus.edges.has(e.id)
             return (
               <g
                 key={`${e.id}#l${layoutGen}`}
-                className="pl-spec-edge"
+                className={`pl-spec-edge${dim ? ' pl-spec-dim' : ''}`}
                 style={{ '--i': ei } as CSSProperties}
               >
                 <path
@@ -425,15 +457,19 @@ export function DiagramSpecView({
           const status = specStatusStyle(n.status)
           const sil = specKindSilhouette(n.kind)
           const pulseGen = pulses.get(n.id)
+          const dim = focus !== null && !focus.nodes.has(n.id)
           const nodeStyle = {
             ...specNodeStyle(box, sil, status),
             '--i': ni,
             '--pl-pulse-hue': status.glyphColor
           } as CSSProperties
+          // Nodes carry an inline status opacity (muted's 0.55), which would outrank the stylesheet
+          // dim — the dim must land inline too. Dim wins over muted (0.22 < 0.55).
+          if (dim) nodeStyle.opacity = 0.22
           return (
             <div
               key={pulseGen ? `${n.id}#p${pulseGen}` : n.id}
-              className={`pl-spec-node pl-spec-${sil}${pulseGen ? ' pl-spec-pulse' : ''}`}
+              className={`pl-spec-node pl-spec-${sil}${pulseGen ? ' pl-spec-pulse' : ''}${dim ? ' pl-spec-dim' : ''}`}
               style={nodeStyle}
             >
               {specNodeBody(n, sil, status)}

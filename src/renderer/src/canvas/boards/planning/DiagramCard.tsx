@@ -21,6 +21,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   type CSSProperties,
@@ -36,6 +37,7 @@ import {
 import { DiagramSpecView } from './DiagramSpecView'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { specHitTest } from './specLayout'
 import { useReducedMotion } from './useReducedMotion'
 import { useSpecLayout } from './useSpecLayout'
 
@@ -144,6 +146,11 @@ export const DiagramCard = memo(function DiagramCard({
     baseY: number
     scale: number
   } | null>(null)
+  // Click-to-focus (M3, expanse only): the renderer is pointer-inert, so the card hit-tests the
+  // click itself against the positioned layout. Ephemeral session state — never in elements[].
+  const [focusId, setFocusId] = useState<string | null>(null)
+  // A pan-drag release also fires click on the viewport — the move arms this guard to swallow it.
+  const clickGuardRef = useRef(false)
 
   const onResizeDown = useCallback(
     (e: ReactPointerEvent) => {
@@ -231,6 +238,7 @@ export const DiagramCard = memo(function DiagramCard({
       const rect = well?.getBoundingClientRect()
       const scale = well && rect && well.offsetWidth > 0 ? rect.width / well.offsetWidth : 1
       panRef.current = { startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y, scale }
+      clickGuardRef.current = false
       try {
         host.setPointerCapture(e.pointerId)
       } catch {
@@ -243,6 +251,8 @@ export const DiagramCard = memo(function DiagramCard({
     (e: ReactPointerEvent) => {
       const p = panRef.current
       if (!p) return
+      // A real drag (>4 screen px, the shared gesture threshold) must not read as a focus click.
+      if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > 4) clickGuardRef.current = true
       const next = clampPan(
         {
           x: p.baseX + (e.clientX - p.startX) / p.scale,
@@ -265,11 +275,37 @@ export const DiagramCard = memo(function DiagramCard({
     }
   }, [])
 
+  // Focus click (M3): invert the render transform chain and hit-test the positioned layout.
+  // Node ⇒ toggle focus on it; group / empty canvas ⇒ clear. Only while SELECTED (the same gate
+  // as pan/zoom — an unfocused card click is the selection click).
+  const onViewportClick = useCallback(
+    (e: ReactMouseEvent) => {
+      if (!expanse || !selected || !interactive || editing) return
+      if (clickGuardRef.current) {
+        clickGuardRef.current = false
+        return
+      }
+      const layout = specLayout.layout
+      if (!layout) return
+      const host = e.currentTarget as HTMLElement
+      const rect = host.getBoundingClientRect()
+      const screenScale = host.offsetWidth > 0 ? rect.width / host.offsetWidth : 1
+      const point = {
+        x: (e.clientX - rect.left) / screenScale,
+        y: (e.clientY - rect.top) / screenScale
+      }
+      const hit = specHitTest(point, { w, h: Math.max(0, h - 22) }, pan, zoom, layout)
+      setFocusId((f) => (hit?.kind === 'node' ? (hit.id === f ? null : hit.id) : null))
+    },
+    [expanse, selected, interactive, editing, specLayout.layout, w, h, pan, zoom]
+  )
+
   // Snap back to a clean fit thumbnail whenever the element loses focus.
   useEffect(() => {
     if (!selected) {
       setZoom(ZOOM_FIT)
       setPan({ x: 0, y: 0 })
+      setFocusId(null)
     }
   }, [selected])
 
@@ -590,6 +626,7 @@ export const DiagramCard = memo(function DiagramCard({
           onPointerMove={onViewportPointerMove}
           onPointerUp={onViewportPointerUp}
           onPointerCancel={onViewportPointerUp}
+          onClick={expanse ? onViewportClick : undefined}
           style={{
             position: 'absolute',
             // Sit BELOW the header bar when it's shown — otherwise it overlays (clips) the top of the
@@ -619,6 +656,7 @@ export const DiagramCard = memo(function DiagramCard({
                 motion={motion}
                 layout={specLayout.layout}
                 error={specLayout.error}
+                focusId={focusId}
               />
             ) : (
               <img

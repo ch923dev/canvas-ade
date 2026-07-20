@@ -47,16 +47,28 @@ const spec: DiagramSpec = {
 function Host({
   spec,
   motion = false,
+  focusId = null,
   w = 800,
   h = 400
 }: {
   spec: DiagramSpec
   motion?: boolean
+  focusId?: string | null
   w?: number
   h?: number
 }): ReactElement {
   const { layout, error } = useSpecLayout(spec)
-  return <DiagramSpecView spec={spec} w={w} h={h} motion={motion} layout={layout} error={error} />
+  return (
+    <DiagramSpecView
+      spec={spec}
+      w={w}
+      h={h}
+      motion={motion}
+      layout={layout}
+      error={error}
+      focusId={focusId}
+    />
+  )
 }
 
 describe('DiagramSpecView (static expanse renderer)', () => {
@@ -206,6 +218,28 @@ describe('DiagramSpecView (static expanse renderer)', () => {
     rerender(<Host spec={dropped} />)
     await waitFor(() => expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(2))
     expect(container.querySelector('.pl-spec-node-exit')).toBeNull()
+  })
+
+  it('dims non-neighbours (inline 0.22 — inline status opacity outranks the stylesheet)', async () => {
+    // Focus 'lint': lit = lint + e1 + gate; 'evil' and e2 dim.
+    const { container } = render(<Host spec={spec} focusId="lint" />)
+    await waitFor(() => expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(3))
+    const nodes = [...container.querySelectorAll<HTMLElement>('.pl-spec-node')]
+    const evil = nodes.find((n) => n.textContent?.includes('not markup'))
+    const lint = nodes.find((n) => n.textContent?.includes('Lint'))
+    const gate = nodes.find((n) => n.textContent?.includes('Matrix'))
+    expect(evil?.classList.contains('pl-spec-dim')).toBe(true)
+    expect(evil?.style.opacity).toBe('0.22')
+    expect(lint?.classList.contains('pl-spec-dim')).toBe(false)
+    expect(gate?.classList.contains('pl-spec-dim')).toBe(false)
+    const dimEdges = [...container.querySelectorAll('.pl-spec-edge.pl-spec-dim')]
+    expect(dimEdges).toHaveLength(1) // e2 (gate→evil); e1 touches the focus and stays lit
+  })
+
+  it('ignores a stale focus id (focused node removed by a spec edit ⇒ nothing dims)', async () => {
+    const { container } = render(<Host spec={spec} focusId="no-such-node" />)
+    await waitFor(() => expect(container.querySelectorAll('.pl-spec-node')).toHaveLength(3))
+    expect(container.querySelector('.pl-spec-dim')).toBeNull()
   })
 })
 

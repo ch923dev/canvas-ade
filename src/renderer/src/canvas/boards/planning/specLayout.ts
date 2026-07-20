@@ -217,3 +217,42 @@ export function specEdgePath(
   const dx = Math.max(24, Math.abs(tx - sx) * 0.5)
   return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`
 }
+
+/** What a focus click landed on — nodes win over their group (paint order), null = empty canvas. */
+export type SpecHit = { kind: 'node' | 'group'; id: string } | null
+
+/**
+ * Viewport-point → layout-element hit-test (M3 focus / M4 collapse-toggle clicks). The renderer is
+ * pointer-inert, so DiagramCard resolves clicks itself by inverting the render transform chain:
+ * card pan/zoom (translate+scale about the viewport centre) then the fit-scale (contain, about the
+ * content centre — flex centring puts the content centre AT the viewport centre, so both invert
+ * against the same point). `point` is viewport-local board px (client px ÷ the camera screen scale).
+ */
+export function specHitTest(
+  point: { x: number; y: number },
+  view: { w: number; h: number },
+  pan: { x: number; y: number },
+  zoom: number,
+  layout: SpecLayoutResult
+): SpecHit {
+  if (view.w <= 0 || view.h <= 0 || layout.width <= 0 || layout.height <= 0) return null
+  const fit = Math.min(view.w / layout.width, view.h / layout.height)
+  const s = zoom * fit
+  if (!(s > 0)) return null
+  const lx = layout.width / 2 + (point.x - view.w / 2 - pan.x) / s
+  const ly = layout.height / 2 + (point.y - view.h / 2 - pan.y) / s
+  // Topmost first: nodes paint above groups; later siblings paint above earlier ones.
+  for (let i = layout.nodes.length - 1; i >= 0; i--) {
+    const n = layout.nodes[i]
+    if (lx >= n.x && lx <= n.x + n.w && ly >= n.y && ly <= n.y + n.h) {
+      return { kind: 'node', id: n.id }
+    }
+  }
+  for (let i = layout.groups.length - 1; i >= 0; i--) {
+    const g = layout.groups[i]
+    if (lx >= g.x && lx <= g.x + g.w && ly >= g.y && ly <= g.y + g.h) {
+      return { kind: 'group', id: g.id }
+    }
+  }
+  return null
+}
