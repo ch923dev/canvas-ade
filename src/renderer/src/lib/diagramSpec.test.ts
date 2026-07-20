@@ -106,6 +106,14 @@ describe('assertDiagramSpec — shape & meta', () => {
     expect(() => check(base({ title: 'x'.repeat(201) }))).toThrow(/title/)
   })
 
+  it('accepts any non-empty theme string within the cap (OPEN vocabulary — render-side fallback)', () => {
+    expect(() => check(base({ theme: 'graphite' }))).not.toThrow()
+    expect(() => check(base({ theme: 'some-future-preset' }))).not.toThrow()
+    expect(() => check(base({ theme: '' }))).toThrow(/theme/)
+    expect(() => check(base({ theme: 'x'.repeat(65) }))).toThrow(/theme/)
+    expect(() => check({ ...base(), theme: 7 })).toThrow(/theme/)
+  })
+
   it('rejects non-array nodes/edges', () => {
     expect(() => check({ ...base(), nodes: {} })).toThrow(/nodes is not an array/)
     expect(() => check({ ...base(), nodes: [], edges: {} })).toThrow(/edges is not an array/)

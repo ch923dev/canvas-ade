@@ -33,6 +33,7 @@ import {
   specGroupStyle,
   specKindSilhouette,
   specStatusStyle,
+  specThemePreset,
   type SpecSilhouette,
   type SpecStatusStyle
 } from './specTheme'
@@ -319,6 +320,8 @@ export function DiagramSpecView({
   const scale = Math.min(w / layout.width, h / layout.height)
   // A focused node that a spec edit removed must not dim the whole diagram — stale id ⇒ no focus.
   const focus = focusId && layout.byId.has(focusId) ? specFocusSets(spec, focusId) : null
+  // B6 theme preset (M5): unknown names render calm, the spec value is preserved untouched.
+  const preset = specThemePreset(spec.theme)
   return (
     <div
       className={`pl-specview ${motion ? 'pl-motion-on' : 'pl-motion-off'}`}
@@ -345,7 +348,7 @@ export function DiagramSpecView({
       >
         {layout.groups.map((g, gi) => {
           const sg = spec.groups?.find((s) => s.id === g.id)
-          const chrome = specGroupStyle(sg?.status)
+          const chrome = specGroupStyle(sg?.status, preset)
           const dim = focus !== null && !focus.groups.has(g.id)
           return (
             <div
@@ -419,7 +422,7 @@ export function DiagramSpecView({
             const a = layout.byId.get(e.from)
             const b = layout.byId.get(e.to)
             if (!a || !b) return null
-            const style = specEdgeStyle(e)
+            const style = specEdgeStyle(e, preset)
             const mid = specEdgeLabelPoint(a, b, spec.direction)
             const dim = focus !== null && !focus.edges.has(e.id)
             return (
@@ -455,7 +458,7 @@ export function DiagramSpecView({
         {spec.nodes.map((n, ni) => {
           const box = layout.byId.get(n.id)
           if (!box) return null
-          const status = specStatusStyle(n.status)
+          const status = specStatusStyle(n.status, preset)
           const sil = specKindSilhouette(n.kind)
           const pulseGen = pulses.get(n.id)
           const dim = focus !== null && !focus.nodes.has(n.id)
@@ -483,7 +486,7 @@ export function DiagramSpecView({
         })}
 
         {ghosts.map((g) => {
-          const status = specStatusStyle(g.node.status)
+          const status = specStatusStyle(g.node.status, preset)
           const sil = specKindSilhouette(g.node.kind)
           return (
             <div
