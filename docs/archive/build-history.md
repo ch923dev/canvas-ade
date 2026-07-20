@@ -2979,3 +2979,56 @@ green both legs on the merge head `3f213830` (Win 306P + menuShell flake rerun-g
 Docker 303P/5skip clean ×2 trees) · CI green ×2 heads, claude-review 1 warning fixed +
 inline-dispositioned. Gotchas memorized: pnpm --lockfile-only in isolated copy (junction wipe
 prompt); in-file custom hook flips react-hooks v6 deep analysis; pipe-tail masks matrix exit.
+
+## PR #364 — diagram Phase 1: DiagramSpec engine + static expanse renderer (2026-07-20, v0.23.0)
+
+Squash `f62e2c08`. Second slice of the diagram-viz redesign epic: a structured, host-rendered
+diagram model (`engine: 'expanse'`) beside the frozen Mermaid Phase-0 path. Render-only by
+design — motion is Phase 2, the MCP surface Phase 3, drag/edit UI Phase 4 (ADR-gated).
+
+**Spec model (`lib/diagramSpec.ts`).** Closed vocabularies — 6 statuses, 7 node kinds, 3 edge
+kinds — so agents write MEANING and the host owns color (the security + design contract). Caps
+(200 nodes / 400 edges / 50 groups, per-field lengths), slug ids, duplicate-id rejection per
+namespace, dangling edge/group-ref rejection. Leaf module with injected guards
+(`fail`/`isRecord`/`isFiniteNum`) — the kanbanSchema precedent, no runtime import back into
+boardSchema.
+
+**Schema v21 (breaking, ADR 0007).** `DiagramElement` gains `engine: 'mermaid' | 'expanse'`,
+`spec`, `importedFrom`. Per-engine validation rejects cross-engine field smuggling (`spec` on
+mermaid; `source`/`svgCache` on expanse). A new element capability is breaking → `SCHEMA_VERSION`
+**and** `MIN_READER_VERSION` both → 21, identity migration `20 → 21`, MAIN mirror
+(`projectStore.ts`) bumped in lock-step.
+
+**Theme bridge + B1 gate.** `specTheme.ts` maps status → wash fill + half-strength border + glyph
+(`● ✓ ✕ ! –`, accent reserved for `active`), kind → silhouette + 24-viewBox icon path, edge
+kind/status → stroke + dasharray — exact Phase-0 Mermaid palette parity (one palette, two
+engines). `scripts/status-palette-gate.test.ts` parses `tokens.css` live and computes
+Machado-Oliveira-Fernandes severity-1.0 CVD simulation + OKLab ΔE: worst deutan pair 8.8 ≥ 6.0
+floor (legal only because glyphs ship as secondary encoding — status is never color alone),
+normal-vision min 18.6 ≥ 15, WCAG 3:1/4.5:1 on raw tokens and wash composites. A breaking token
+edit now fails the build. (Test lives under `scripts/` — the renderer tree bans `node:fs`.)
+
+**ELK layout + static renderer.** `elkjs@0.12.0` as a dev-dep; layout runs off-thread via a Vite
+`?worker` import, so the 2.7 MB engine is a lazy chunk and the entry bundle is untouched.
+`specLayout.ts` stays pure (size estimation, spec → ELK graph, ELK result → flat absolute layout,
+facing-edge beziers); `specElk.ts` owns the lazy singleton; `useSpecLayout.ts` the async
+lifecycle. `DiagramSpecView` renders groups → SVG edge layer → DOM nodes: every spec string is a
+React TEXT NODE (no innerHTML, no CSP change), the view is `pointer-events: none`, and it adds
+ZERO focusable elements (the #363 keystroke class). `DiagramCard` branches per engine — source
+editor hidden for expanse (Phase-4 gate), zoom/pan + header chrome shared.
+
+**Two real bugs caught in-lane.** (1) Eyeballing an e2e screenshot exposed cross-group edges being
+ignored for layering — a gate node landed left of its group and the edge swept backwards; fixed
+with `elk.hierarchyHandling: 'INCLUDE_CHILDREN'`. (2) The reviewer's single `[warning]` was
+correct: the edge-label midpoint hardcoded the right-direction anchors, so `direction:'down'`
+diagrams with unequal node boxes rendered labels off the bezier — extracted `specEdgeLabelPoint`
+mirroring `specEdgePath`'s per-direction anchors, pinned by units on both directions plus a
+down-direction component case.
+
+**Verified.** cheap trio · 74 new units across 6 suites · full units 5627P/5F = documented ambient
+classes (40/40 sanitized) · diagram e2e 10/10 (2 new specs through the real ELK worker) · design
+mock approved BEFORE code (`phase1-design/`) · user dev-check eyeball PASS · FULL MATRIX on the
+merge head `20e36807` (Win 308P + menuShell flake rerun-green 3/3 · Linux Docker 306P exit 0) ·
+CI green ×2 heads · claude-review 1 warning fixed + inline-dispositioned, incremental re-review
+0 new findings. Gotcha memorized: background-task 10-min cap truncates a matrix log mid-run — a
+missing `EXIT=` line means killed, not failed; run detached.
