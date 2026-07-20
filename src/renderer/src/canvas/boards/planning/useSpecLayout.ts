@@ -15,10 +15,15 @@ export interface SpecLayoutState {
   error: string | null
 }
 
-export function useSpecLayout(spec: DiagramSpec): SpecLayoutState {
+/**
+ * `spec` may be null (the mermaid engine branch — hooks must run unconditionally in DiagramCard,
+ * which owns the layout since Phase 2 so the card can hit-test focus clicks and memo revisions).
+ */
+export function useSpecLayout(spec: DiagramSpec | null): SpecLayoutState {
   const [state, setState] = useState<SpecLayoutState>({ layout: null, error: null })
 
   useEffect(() => {
+    if (!spec) return
     let cancelled = false
     void (async () => {
       try {

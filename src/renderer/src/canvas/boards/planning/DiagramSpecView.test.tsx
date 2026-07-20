@@ -3,8 +3,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 
 afterEach(cleanup) // globals:false ⇒ RTL auto-cleanup never registers (house convention)
+import type { ReactElement } from 'react'
 import { DiagramSpecView } from './DiagramSpecView'
 import { DiagramCard } from './DiagramCard'
+import { useSpecLayout } from './useSpecLayout'
 import type { DiagramSpec } from '../../../lib/diagramSpec'
 import type { DiagramElement } from '../../../lib/boardSchema'
 
@@ -40,9 +42,26 @@ const spec: DiagramSpec = {
   ]
 }
 
+/** Since Phase 2 the card owns the layout (hit-testing / revision memo) — this host stands in for
+ *  DiagramCard so the view's tests exercise the same hook→props wiring the app uses. */
+function Host({
+  spec,
+  motion = false,
+  w = 800,
+  h = 400
+}: {
+  spec: DiagramSpec
+  motion?: boolean
+  w?: number
+  h?: number
+}): ReactElement {
+  const { layout, error } = useSpecLayout(spec)
+  return <DiagramSpecView spec={spec} w={w} h={h} motion={motion} layout={layout} error={error} />
+}
+
 describe('DiagramSpecView (static expanse renderer)', () => {
   it('renders labels, details and status glyphs as plain text nodes', async () => {
-    render(<DiagramSpecView spec={spec} w={800} h={400} />)
+    render(<Host spec={spec} />)
     await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy())
     expect(screen.getByText('0 errors')).toBeTruthy()
     expect(screen.getByText('Matrix green?')).toBeTruthy()
@@ -51,13 +70,13 @@ describe('DiagramSpecView (static expanse renderer)', () => {
   })
 
   it('never interprets a spec string as markup (React text-node contract)', async () => {
-    const { container } = render(<DiagramSpecView spec={spec} w={800} h={400} />)
+    const { container } = render(<Host spec={spec} />)
     await waitFor(() => expect(screen.getByText('<b>not markup</b>')).toBeTruthy())
     expect(container.querySelector('b')).toBeNull()
   })
 
   it('draws one edge path per edge, styling animated (accent dash) and dependency (dashed)', async () => {
-    const { container } = render(<DiagramSpecView spec={spec} w={800} h={400} />)
+    const { container } = render(<Host spec={spec} />)
     await waitFor(() => expect(container.querySelectorAll('.pl-spec-edge')).toHaveLength(2))
     const paths = [...container.querySelectorAll<SVGPathElement>('.pl-spec-edge path')]
     const animated = paths.find((p) => p.getAttribute('stroke') === '#4f8cff')
@@ -68,7 +87,7 @@ describe('DiagramSpecView (static expanse renderer)', () => {
   })
 
   it('adds NO focusable/interactive elements and stays pointer-inert (the #363 keystroke class)', async () => {
-    const { container } = render(<DiagramSpecView spec={spec} w={800} h={400} />)
+    const { container } = render(<Host spec={spec} />)
     await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy())
     expect(container.querySelector('button, input, textarea, select, [tabindex]')).toBeNull()
     const root = container.querySelector<HTMLElement>('.pl-specview')
@@ -85,7 +104,7 @@ describe('DiagramSpecView (static expanse renderer)', () => {
       ],
       edges: [{ id: 'e1', from: 'a', to: 'b', label: 'next' }]
     }
-    const { container } = render(<DiagramSpecView spec={down} w={800} h={400} />)
+    const { container } = render(<Host spec={down} />)
     await waitFor(() => expect(screen.getByText('next')).toBeTruthy())
     const label = container.querySelector<SVGTextElement>('.pl-spec-edge text')
     // mock layout: a(16,16), b(256,16) → bottom-mid (76,48) → top-mid (340,16), midpoint (208,32)
@@ -99,8 +118,63 @@ describe('DiagramSpecView (static expanse renderer)', () => {
       groups: [{ id: 'build', label: 'Build' }],
       nodes: spec.nodes.map((n) => (n.id === 'lint' ? { ...n, group: 'build' } : n))
     }
-    render(<DiagramSpecView spec={grouped} w={800} h={400} />)
+    render(<Host spec={grouped} />)
     await waitFor(() => expect(screen.getByText('Build')).toBeTruthy())
+  })
+
+  it('tints a statused group cluster (border + label pick up the status hue)', async () => {
+    const grouped: DiagramSpec = {
+      ...spec,
+      groups: [{ id: 'build', label: 'Build', status: 'done' }],
+      nodes: spec.nodes.map((n) => (n.id === 'lint' ? { ...n, group: 'build' } : n))
+    }
+    const { container } = render(<Host spec={grouped} />)
+    await waitFor(() => expect(screen.getByText('Build')).toBeTruthy())
+    const cluster = container.querySelector<HTMLElement>('.pl-spec-group')
+    // jsdom has no :root tokens ⇒ specGroupStyle falls back to the literal ok hue at 0.5 alpha.
+    expect(cluster?.style.border).toContain('dashed')
+    expect(cluster?.style.border).toContain('rgba(62, 207, 142, 0.5)')
+  })
+
+  it('stamps the composed motion gate on the root (pl-motion-on / pl-motion-off)', async () => {
+    const on = render(<Host spec={spec} motion />)
+    await waitFor(() => expect(on.container.querySelector('.pl-specview')).toBeTruthy())
+    expect(on.container.querySelector('.pl-specview')?.classList.contains('pl-motion-on')).toBe(
+      true
+    )
+    cleanup()
+    const off = render(<Host spec={spec} />)
+    await waitFor(() => expect(off.container.querySelector('.pl-specview')).toBeTruthy())
+    expect(off.container.querySelector('.pl-specview')?.classList.contains('pl-motion-off')).toBe(
+      true
+    )
+  })
+
+  it('pulses a node once when its status flips (and only under motion)', async () => {
+    const { container, rerender } = render(<Host spec={spec} motion />)
+    await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy())
+    expect(container.querySelector('.pl-spec-pulse')).toBeNull() // first paint never pulses
+    const flipped: DiagramSpec = {
+      ...spec,
+      nodes: spec.nodes.map((n) => (n.id === 'lint' ? { ...n, status: 'active' as const } : n))
+    }
+    rerender(<Host spec={flipped} motion />)
+    await waitFor(() => {
+      const pulsing = container.querySelector<HTMLElement>('.pl-spec-pulse')
+      expect(pulsing?.textContent).toContain('Lint')
+    })
+  })
+
+  it('never pulses with motion off (status flip renders statically)', async () => {
+    const { container, rerender } = render(<Host spec={spec} />)
+    await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy())
+    const flipped: DiagramSpec = {
+      ...spec,
+      nodes: spec.nodes.map((n) => (n.id === 'lint' ? { ...n, status: 'active' as const } : n))
+    }
+    rerender(<Host spec={flipped} />)
+    await waitFor(() => expect(screen.getByText('●')).toBeTruthy()) // active glyph landed
+    expect(container.querySelector('.pl-spec-pulse')).toBeNull()
   })
 })
 

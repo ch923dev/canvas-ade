@@ -5,7 +5,8 @@ import {
   SPEC_KIND_PATHS,
   specStatusStyle,
   specKindSilhouette,
-  specEdgeStyle
+  specEdgeStyle,
+  specGroupStyle
 } from './specTheme'
 import { SPEC_STATUSES, SPEC_NODE_KINDS } from '../../../lib/diagramSpec'
 
@@ -85,6 +86,46 @@ describe('specKindSilhouette + SPEC_KIND_PATHS', () => {
       if (k === 'note') expect(SPEC_KIND_PATHS[k]).toHaveLength(0)
       else expect(SPEC_KIND_PATHS[k].length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('specGroupStyle — cluster chrome at group strength', () => {
+  it('keeps the node recipe at chrome strength: half-border hue + a 4% wash + hue label', () => {
+    expect(specGroupStyle('done')).toEqual({
+      border: 'rgba(62, 207, 142, 0.5)',
+      background: 'rgba(62, 207, 142, 0.04)',
+      label: '#3ecf8e'
+    })
+    expect(specGroupStyle('warn')).toEqual({
+      border: 'rgba(232, 179, 57, 0.5)',
+      background: 'rgba(232, 179, 57, 0.04)',
+      label: '#e8b339'
+    })
+    expect(specGroupStyle('error')).toEqual({
+      border: 'rgba(242, 84, 91, 0.55)',
+      background: 'rgba(242, 84, 91, 0.04)',
+      label: '#f2545b'
+    })
+  })
+
+  it('reserves the accent for active ONLY — full-strength border, like the active node', () => {
+    const active = specGroupStyle('active')
+    expect(active.border).toBe(ACCENT)
+    expect(active.label).toBe(ACCENT)
+    for (const s of SPEC_STATUSES) {
+      if (s === 'active') continue
+      expect(specGroupStyle(s).border).not.toBe(ACCENT)
+    }
+  })
+
+  it('defaults absent/neutral to the quiet cluster; muted only fades the label', () => {
+    const neutral = specGroupStyle('neutral')
+    expect(specGroupStyle(undefined)).toEqual(neutral)
+    expect(neutral.border).toBe('rgba(255,255,255,0.16)')
+    const muted = specGroupStyle('muted')
+    expect(muted.border).toBe(neutral.border)
+    expect(muted.background).toBe(neutral.background)
+    expect(muted.label).toBe('#46464b')
   })
 })
 

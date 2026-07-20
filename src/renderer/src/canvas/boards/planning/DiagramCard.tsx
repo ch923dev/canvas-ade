@@ -37,6 +37,7 @@ import { DiagramSpecView } from './DiagramSpecView'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 import { useReducedMotion } from './useReducedMotion'
+import { useSpecLayout } from './useSpecLayout'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
@@ -106,6 +107,9 @@ export const DiagramCard = memo(function DiagramCard({
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
   const motion = !reducedMotion
+  // Phase 2: the card owns the spec layout (null spec on the mermaid branch — hook runs
+  // unconditionally) so it can hit-test focus clicks against the positioned boxes.
+  const specLayout = useSpecLayout(expanse ? (element.spec ?? null) : null)
   // Which editor THIS editing session renders — latched at open (see ensureDiagramEditorLoaded).
   const editorAtOpenRef = useRef<DiagramEditorCmp | null>(null)
   useEffect(() => {
@@ -605,12 +609,16 @@ export const DiagramCard = memo(function DiagramCard({
             }}
           >
             {expanse ? (
-              // Live token-styled DOM (Phase 1 static renderer). pointer-events:none inside, so
-              // card-level select/drag/zoom/pan behave exactly like the inert mermaid <img>.
+              // Live token-styled DOM (Phase 1 static renderer + Phase 2 motion). pointer-events:
+              // none inside, so card-level select/drag/zoom/pan behave exactly like the inert
+              // mermaid <img>.
               <DiagramSpecView
                 spec={element.spec!}
                 w={w}
                 h={Math.max(0, h - (showHeader ? 22 : 0))}
+                motion={motion}
+                layout={specLayout.layout}
+                error={specLayout.error}
               />
             ) : (
               <img

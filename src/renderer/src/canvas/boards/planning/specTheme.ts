@@ -141,6 +141,47 @@ export const SPEC_KIND_PATHS: Record<SpecNodeKind, string[]> = {
   note: []
 }
 
+export interface SpecGroupStyle {
+  /** Cluster border ink (dashed) — half-strength status hue, accent for active, neutral default. */
+  border: string
+  /** Cluster fill — a 4% status wash (quieter than the node wash: chrome, not content). */
+  background: string
+  /** Group label ink. */
+  label: string
+}
+
+/** group status → cluster chrome (the Phase-1 silent gap: `SpecGroup.status` was validated but
+ *  never rendered). Same wash + half-border recipe as nodes, at chrome strength. */
+export function specGroupStyle(status: SpecStatus | undefined): SpecGroupStyle {
+  const neutral: SpecGroupStyle = {
+    border: token('--border-strong', 'rgba(255,255,255,0.16)'),
+    background: 'rgba(255,255,255,0.015)',
+    label: token('--text-3', '#7b7b81')
+  }
+  switch (status ?? 'neutral') {
+    case 'active': {
+      const accent = token('--accent', '#4f8cff')
+      return { border: accent, background: withAlpha(accent, 0.04), label: accent }
+    }
+    case 'done': {
+      const ok = token('--ok', '#3ecf8e')
+      return { border: withAlpha(ok, 0.5), background: withAlpha(ok, 0.04), label: ok }
+    }
+    case 'warn': {
+      const warn = token('--warn', '#e8b339')
+      return { border: withAlpha(warn, 0.5), background: withAlpha(warn, 0.04), label: warn }
+    }
+    case 'error': {
+      const err = token('--err', '#f2545b')
+      return { border: withAlpha(err, 0.55), background: withAlpha(err, 0.04), label: err }
+    }
+    case 'muted':
+      return { ...neutral, label: token('--text-faint', '#46464b') }
+    default:
+      return neutral
+  }
+}
+
 export interface SpecEdgeStyle {
   /** Stroke ink — border-strong neutral, a half-strength status hue, or the accent when animated. */
   stroke: string

@@ -1,39 +1,106 @@
 /**
- * Static DiagramSpec renderer (Phase 1, render-only) — the `engine:'expanse'` view inside
- * DiagramCard: an SVG facing-edge layer under absolutely-positioned token-styled divs (the
- * DataFlowGraphView pattern), laid out by ELK off-thread and fit-scaled into the card box.
+ * Static DiagramSpec renderer — the `engine:'expanse'` view inside DiagramCard: an SVG facing-edge
+ * layer under absolutely-positioned token-styled divs (the DataFlowGraphView pattern), laid out by
+ * ELK off-thread and fit-scaled into the card box. Since Phase 2 the LAYOUT lives in DiagramCard
+ * (useSpecLayout) and arrives as a prop, so the card can hit-test focus clicks and memo revisions;
+ * this module stays presentational.
  *
  * Security contract (REVIEW §1.6): every spec string lands as a React TEXT NODE — no innerHTML,
  * no markup interpolation anywhere. Interaction contract: the whole view is `pointer-events: none`
  * (exactly like the mermaid `<img>`), so card-level select/drag/resize/zoom behave identically
  * across engines and no focusable element enters the planning well (the #363 keystroke class).
  *
- * Phase boundaries: `animated` edges render as a STATIC accent dash (the march + entrance motion
- * is Phase 2); `collapsed` groups and per-node `icon`/`href` are persisted but not yet rendered
- * (Phase 2/4 surfaces).
+ * Motion (Phase 2, per the approved phase2-design mock): entrance stagger (240ms/40ms), the
+ * animated-edge dash march (0.9s, Phase-0 parity — the static `'6 5'` dash ATTRIBUTE is unchanged,
+ * the march is a CSS animation on top), and a one-shot status-flip pulse (620ms). All of it is
+ * gated by the composed `motion` prop (prefers-reduced-motion ∧ app setting) via the
+ * `pl-motion-off` class — plus a `prefers-reduced-motion` stylesheet backstop. Keyframes live in
+ * `styles/boards/planning.css` (§ DiagramSpec motion). Per-node `icon`/`href` stay unrendered
+ * (Phase 4 surfaces).
  */
-import { type CSSProperties, type ReactElement } from 'react'
-import type { DiagramSpec } from '../../../lib/diagramSpec'
-import { specEdgeLabelPoint, specEdgePath } from './specLayout'
-import { SPEC_KIND_PATHS, specEdgeStyle, specKindSilhouette, specStatusStyle } from './specTheme'
-import { useSpecLayout } from './useSpecLayout'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import type { DiagramSpec, SpecStatus } from '../../../lib/diagramSpec'
+import { specEdgeLabelPoint, specEdgePath, type SpecLayoutResult } from './specLayout'
+import {
+  SPEC_KIND_PATHS,
+  specEdgeStyle,
+  specGroupStyle,
+  specKindSilhouette,
+  specStatusStyle
+} from './specTheme'
 
 /** Decision silhouette: clipped corners (the approved mock's calm octagon). */
 const DECISION_CLIP =
   'polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), ' +
   'calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px)'
 
+/** Status-flip pulse duration — MUST match the pl-spec-pulse keyframe (planning.css). */
+const PULSE_MS = 620
+
+/** One-shot pulse bookkeeping: node id → generation (bumps re-trigger via the React key). */
+type PulseMap = ReadonlyMap<string, number>
+
 export function DiagramSpecView({
   spec,
   w,
-  h
+  h,
+  motion,
+  layout,
+  error
 }: {
   spec: DiagramSpec
   /** Available card box (board-local px; header already subtracted by the caller). */
   w: number
   h: number
+  /** Composed motion gate: prefers-reduced-motion ∧ the app setting. False ⇒ fully static. */
+  motion: boolean
+  /** Positioned layout from the card's useSpecLayout (null while the first layout resolves). */
+  layout: SpecLayoutResult | null
+  error: string | null
 }): ReactElement {
-  const { layout, error } = useSpecLayout(spec)
+  // ── Status-flip pulse: diff statuses per node id across spec changes; a changed id gets a
+  // generation bump (React key remount restarts the one-shot animation) and is dropped again
+  // after the keyframe ends. Timers are fire-and-forget per batch (each deletes only its own
+  // generation, so a rapid re-flip is never clipped by an older timer) and cleared on unmount.
+  const [pulses, setPulses] = useState<PulseMap>(new Map())
+  const prevStatusRef = useRef<Map<string, SpecStatus> | null>(null)
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+  useEffect(() => {
+    const next = new Map(spec.nodes.map((n) => [n.id, n.status ?? ('neutral' as SpecStatus)]))
+    const prev = prevStatusRef.current
+    prevStatusRef.current = next
+    if (!prev || !motion) return
+    const changed = spec.nodes.filter((n) => {
+      const p = prev.get(n.id)
+      return p !== undefined && p !== (n.status ?? 'neutral')
+    })
+    if (changed.length === 0) return
+    const batch: [string, number][] = []
+    setPulses((m) => {
+      const c = new Map(m)
+      for (const n of changed) {
+        const gen = (c.get(n.id) ?? 0) + 1
+        c.set(n.id, gen)
+        batch.push([n.id, gen])
+      }
+      return c
+    })
+    const t = setTimeout(() => {
+      timersRef.current.delete(t)
+      setPulses((m) => {
+        const c = new Map(m)
+        for (const [nid, gen] of batch) if (c.get(nid) === gen) c.delete(nid)
+        return c
+      })
+    }, PULSE_MS + 80)
+    timersRef.current.add(t)
+  }, [spec, motion])
+  useEffect(
+    () => () => {
+      for (const t of timersRef.current) clearTimeout(t)
+    },
+    []
+  )
 
   if (error || !layout) {
     return (
@@ -63,7 +130,7 @@ export function DiagramSpecView({
   const scale = Math.min(w / layout.width, h / layout.height)
   return (
     <div
-      className="pl-specview"
+      className={`pl-specview ${motion ? 'pl-motion-on' : 'pl-motion-off'}`}
       style={{
         width: '100%',
         height: '100%',
@@ -75,6 +142,7 @@ export function DiagramSpecView({
       }}
     >
       <div
+        className="pl-spec-enter"
         style={{
           position: 'relative',
           width: layout.width,
@@ -84,22 +152,26 @@ export function DiagramSpecView({
           transformOrigin: 'center center'
         }}
       >
-        {layout.groups.map((g) => {
-          const label = spec.groups?.find((s) => s.id === g.id)?.label ?? ''
+        {layout.groups.map((g, gi) => {
+          const sg = spec.groups?.find((s) => s.id === g.id)
+          const chrome = specGroupStyle(sg?.status)
           return (
             <div
               key={`g-${g.id}`}
               className="pl-spec-group"
-              style={{
-                position: 'absolute',
-                left: g.x,
-                top: g.y,
-                width: g.w,
-                height: g.h,
-                border: '1px dashed var(--border-strong)',
-                borderRadius: 'var(--r-board)',
-                background: 'rgba(255,255,255,0.015)'
-              }}
+              style={
+                {
+                  position: 'absolute',
+                  left: g.x,
+                  top: g.y,
+                  width: g.w,
+                  height: g.h,
+                  border: `1px dashed ${chrome.border}`,
+                  borderRadius: 'var(--r-board)',
+                  background: chrome.background,
+                  '--i': gi
+                } as CSSProperties
+              }
             >
               <span
                 style={{
@@ -111,10 +183,10 @@ export function DiagramSpecView({
                   font: '500 10px var(--ui)',
                   letterSpacing: '0.06em',
                   textTransform: 'uppercase',
-                  color: 'var(--text-3)'
+                  color: chrome.label
                 }}
               >
-                {label}
+                {sg?.label ?? ''}
               </span>
             </div>
           )
@@ -151,15 +223,16 @@ export function DiagramSpecView({
               <path d="M0 0 L8 4 L0 8 z" fill="var(--accent)" />
             </marker>
           </defs>
-          {spec.edges.map((e) => {
+          {spec.edges.map((e, ei) => {
             const a = layout.byId.get(e.from)
             const b = layout.byId.get(e.to)
             if (!a || !b) return null
             const style = specEdgeStyle(e)
             const mid = specEdgeLabelPoint(a, b, spec.direction)
             return (
-              <g key={e.id} className="pl-spec-edge">
+              <g key={e.id} className="pl-spec-edge" style={{ '--i': ei } as CSSProperties}>
                 <path
+                  className={style.animated ? 'pl-spec-march' : undefined}
                   d={specEdgePath(a, b, spec.direction)}
                   fill="none"
                   stroke={style.stroke}
@@ -182,13 +255,14 @@ export function DiagramSpecView({
           })}
         </svg>
 
-        {spec.nodes.map((n) => {
+        {spec.nodes.map((n, ni) => {
           const box = layout.byId.get(n.id)
           if (!box) return null
           const status = specStatusStyle(n.status)
           const sil = specKindSilhouette(n.kind)
           const paths = SPEC_KIND_PATHS[n.kind ?? 'step']
-          const nodeStyle: CSSProperties = {
+          const pulseGen = pulses.get(n.id)
+          const nodeStyle = {
             position: 'absolute',
             left: box.x,
             top: box.y,
@@ -199,14 +273,20 @@ export function DiagramSpecView({
             border: `1px ${sil === 'note' ? 'dashed' : 'solid'} ${status.border}`,
             borderRadius: sil === 'actor' ? 'var(--r-pill)' : 'var(--r-inner)',
             opacity: status.opacity,
-            padding: sil === 'actor' ? '7px 9px 7px 12px' : '7px 9px 7px 8px'
-          }
+            padding: sil === 'actor' ? '7px 9px 7px 12px' : '7px 9px 7px 8px',
+            '--i': ni,
+            '--pl-pulse-hue': status.glyphColor
+          } as CSSProperties
           if (sil === 'decision') {
             nodeStyle.clipPath = DECISION_CLIP
             nodeStyle.borderRadius = 0
           }
           return (
-            <div key={n.id} className={`pl-spec-node pl-spec-${sil}`} style={nodeStyle}>
+            <div
+              key={pulseGen ? `${n.id}#p${pulseGen}` : n.id}
+              className={`pl-spec-node pl-spec-${sil}${pulseGen ? ' pl-spec-pulse' : ''}`}
+              style={nodeStyle}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 16 }}>
                 {paths.length > 0 && (
                   <svg
