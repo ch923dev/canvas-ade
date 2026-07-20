@@ -41,6 +41,7 @@ import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
 import { specHitTest } from './specLayout'
+import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import { useReducedMotion } from './useReducedMotion'
 import { useSpecLayout } from './useSpecLayout'
 
@@ -111,7 +112,9 @@ export const DiagramCard = memo(function DiagramCard({
   const source = element.source ?? ''
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
-  const motion = !reducedMotion
+  // Composed motion gate (M7): OS reduced-motion ∧ the app setting — either off ⇒ fully static.
+  const motionSetting = useDiagramMotionStore((s) => s.setting)
+  const motion = !reducedMotion && motionSetting !== 'off'
   // Group collapse (M4): ephemeral session toggles XOR the authored `collapsed` flags, and the
   // folded spec is DERIVED before layout — collapse/expand rides the ordinary layout morph.
   // Session state only; the authored spec in elements[] is never touched (scene/session split).

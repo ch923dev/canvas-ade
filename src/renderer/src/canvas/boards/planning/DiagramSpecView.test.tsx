@@ -7,6 +7,7 @@ import type { ReactElement } from 'react'
 import { DiagramSpecView } from './DiagramSpecView'
 import { DiagramCard } from './DiagramCard'
 import { useSpecLayout } from './useSpecLayout'
+import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import type { DiagramSpec } from '../../../lib/diagramSpec'
 import type { DiagramElement } from '../../../lib/boardSchema'
 
@@ -331,5 +332,30 @@ describe('DiagramCard engine branch (expanse)', () => {
     expect(screen.getByText('Old pipeline')).toBeTruthy() // …title chip follows the peek
     fireEvent.click(screen.getByTitle('Newer revision'))
     await waitFor(() => expect(screen.getByText('Lint')).toBeTruthy()) // back to the live head
+  })
+
+  it('the app motion setting gates the view (M7): off ⇒ pl-motion-off even without OS reduced-motion', async () => {
+    useDiagramMotionStore.setState({ setting: 'off' })
+    try {
+      const { container } = render(
+        <DiagramCard
+          element={element}
+          boardId="b1"
+          interactive
+          selected
+          onDragStart={noop}
+          onChangeSource={noop}
+          onEditStart={noop}
+          onCache={noop}
+          onResize={noop}
+        />
+      )
+      await waitFor(() => expect(container.querySelector('.pl-specview')).toBeTruthy())
+      expect(container.querySelector('.pl-specview')?.classList.contains('pl-motion-off')).toBe(
+        true
+      )
+    } finally {
+      useDiagramMotionStore.setState({ setting: 'auto' })
+    }
   })
 })
