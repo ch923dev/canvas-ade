@@ -1,4 +1,5 @@
-import type { Board, BoardType } from '../lib/boardSchema'
+import type { Board, BoardType, PlanningElement } from '../lib/boardSchema'
+import { withSpecRevisions } from '../lib/specRevisions'
 
 /**
  * Patch keys a board of each type may accept — id/type are never patchable, and an
@@ -85,6 +86,12 @@ export function applyBoardPatch(
       }
     }
     if (!diff) return b
+    // v22 (B4): every planning-elements write flows through here — when the patch replaces an
+    // expanse diagram's spec, capture the displaced spec onto the element's `revisions` (capped).
+    // Undo/redo restores whole snapshots without this path, so replay never double-captures.
+    if (b.type === 'planning' && safe.elements !== undefined) {
+      safe.elements = withSpecRevisions(b.elements, safe.elements as PlanningElement[], Date.now())
+    }
     changed = true
     return { ...b, ...safe } as Board
   })

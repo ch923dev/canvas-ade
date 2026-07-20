@@ -97,8 +97,15 @@
  *   (MIN_READER_VERSION below). The migration is identity (the engine value only appears on
  *   newly-authored expanse elements; every existing diagram element already satisfies the
  *   mermaid branch unchanged).
+ * - v22 = optional DiagramElement `revisions` (diagram-viz Phase 2, B4) — a capped (20) list of
+ *   `{spec, ts, author}` snapshots of an expanse diagram's PRIOR specs, captured when a tracked
+ *   elements patch replaces a spec (boardPatch.withSpecRevisions) and scrubbed read-only from the
+ *   card header. Optional + defaulted-at-read (absent ⇒ no history) → identity bump; ADDITIVE so
+ *   MIN_READER_VERSION stays 21 (a pre-22 reader ignores the unknown optional key on the element
+ *   and it rides through the structuredClone round-trip; assertPlanningElement's expanse case
+ *   validates only known fields).
  */
-export const SCHEMA_VERSION = 21
+export const SCHEMA_VERSION = 22
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -138,6 +145,7 @@ export const SCHEMA_VERSION = 21
  * a doc containing an expanse-engine diagram — stamping `minReaderVersion: 21` gives pre-21 apps
  * the clean "update the app to open it" message instead of a confusing `.bak`-fallback. A doc with
  * only mermaid diagrams still READS on older apps once written, but ADR 0007 floors are stamped by
- * CAPABILITY, not per-doc content (the v11/v13 precedent).
+ * CAPABILITY, not per-doc content (the v11/v13 precedent). (Floor STAYS 21 through v22 — the
+ * DiagramElement `revisions` field is ADDITIVE.)
  */
 export const MIN_READER_VERSION = 21

@@ -19,8 +19,10 @@ import {
   memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   type CSSProperties,
@@ -33,10 +35,15 @@ import {
   cacheMotionMatches,
   diagramTypeLabel
 } from './diagramTheme'
+import { DiagramRevScrubber } from './DiagramRevScrubber'
 import { DiagramSpecView } from './DiagramSpecView'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
+import { specHitTest } from './specLayout'
+import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import { useReducedMotion } from './useReducedMotion'
+import { useSpecLayout } from './useSpecLayout'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
@@ -105,7 +112,32 @@ export const DiagramCard = memo(function DiagramCard({
   const source = element.source ?? ''
   const locked = element.locked ?? false
   const reducedMotion = useReducedMotion()
-  const motion = !reducedMotion
+  // Composed motion gate (M7): OS reduced-motion ∧ the app setting — either off ⇒ fully static.
+  const motionSetting = useDiagramMotionStore((s) => s.setting)
+  const motion = !reducedMotion && motionSetting !== 'off'
+  // Group collapse (M4): ephemeral session toggles XOR the authored `collapsed` flags, and the
+  // folded spec is DERIVED before layout — collapse/expand rides the ordinary layout morph.
+  // Session state only; the authored spec in elements[] is never touched (scene/session split).
+  const [collapseToggled, setCollapseToggled] = useState<ReadonlySet<string>>(new Set())
+  // Revision scrub (M6/B4): a read-only PEEK at a prior spec. null = the live head; i indexes
+  // element.revisions (oldest→newest). Ephemeral session state; deselect snaps back to head.
+  const revisions = useMemo(
+    () => (expanse ? (element.revisions ?? []) : []),
+    [expanse, element.revisions]
+  )
+  const [revIndex, setRevIndex] = useState<number | null>(null)
+  useEffect(() => {
+    // A capture/removal that shrinks the list under a scrub must not index past the end.
+    setRevIndex((i) => (i !== null && i >= revisions.length ? null : i))
+  }, [revisions.length])
+  const displaySpec = revIndex === null ? (element.spec ?? null) : revisions[revIndex].spec
+  const effectiveSpec = useMemo(() => {
+    if (!expanse || !displaySpec) return null
+    return applyCollapse(displaySpec, specEffectiveCollapsed(displaySpec, collapseToggled))
+  }, [expanse, displaySpec, collapseToggled])
+  // Phase 2: the card owns the spec layout (null spec on the mermaid branch — hook runs
+  // unconditionally) so it can hit-test focus clicks against the positioned boxes.
+  const specLayout = useSpecLayout(effectiveSpec)
   // Which editor THIS editing session renders — latched at open (see ensureDiagramEditorLoaded).
   const editorAtOpenRef = useRef<DiagramEditorCmp | null>(null)
   useEffect(() => {
@@ -140,6 +172,11 @@ export const DiagramCard = memo(function DiagramCard({
     baseY: number
     scale: number
   } | null>(null)
+  // Click-to-focus (M3, expanse only): the renderer is pointer-inert, so the card hit-tests the
+  // click itself against the positioned layout. Ephemeral session state — never in elements[].
+  const [focusId, setFocusId] = useState<string | null>(null)
+  // A pan-drag release also fires click on the viewport — the move arms this guard to swallow it.
+  const clickGuardRef = useRef(false)
 
   const onResizeDown = useCallback(
     (e: ReactPointerEvent) => {
@@ -227,6 +264,7 @@ export const DiagramCard = memo(function DiagramCard({
       const rect = well?.getBoundingClientRect()
       const scale = well && rect && well.offsetWidth > 0 ? rect.width / well.offsetWidth : 1
       panRef.current = { startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y, scale }
+      clickGuardRef.current = false
       try {
         host.setPointerCapture(e.pointerId)
       } catch {
@@ -239,6 +277,8 @@ export const DiagramCard = memo(function DiagramCard({
     (e: ReactPointerEvent) => {
       const p = panRef.current
       if (!p) return
+      // A real drag (>4 screen px, the shared gesture threshold) must not read as a focus click.
+      if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > 4) clickGuardRef.current = true
       const next = clampPan(
         {
           x: p.baseX + (e.clientX - p.startX) / p.scale,
@@ -261,11 +301,61 @@ export const DiagramCard = memo(function DiagramCard({
     }
   }, [])
 
+  const toggleCollapse = useCallback((gid: string) => {
+    setCollapseToggled((s) => {
+      const next = new Set(s)
+      if (next.has(gid)) next.delete(gid)
+      else next.add(gid)
+      return next
+    })
+  }, [])
+
+  // Focus/collapse click (M3/M4): invert the render transform chain and hit-test the positioned
+  // layout. Node ⇒ toggle focus on it (a collapse CHIP toggles its group open instead); the
+  // group-label strip ⇒ toggle collapse; group body / empty canvas ⇒ clear focus. Only while
+  // SELECTED (the same gate as pan/zoom — an unfocused card click is the selection click).
+  const onViewportClick = useCallback(
+    (e: ReactMouseEvent) => {
+      if (!expanse || !selected || !interactive || editing) return
+      if (clickGuardRef.current) {
+        clickGuardRef.current = false
+        return
+      }
+      const layout = specLayout.layout
+      if (!layout) return
+      const host = e.currentTarget as HTMLElement
+      const rect = host.getBoundingClientRect()
+      const screenScale = host.offsetWidth > 0 ? rect.width / host.offsetWidth : 1
+      const point = {
+        x: (e.clientX - rect.left) / screenScale,
+        y: (e.clientY - rect.top) / screenScale
+      }
+      const hit = specHitTest(point, { w, h: Math.max(0, h - 22) }, pan, zoom, layout)
+      if (hit?.kind === 'node') {
+        const chipGroup = specChipGroupId(hit.id)
+        if (chipGroup !== null) {
+          toggleCollapse(chipGroup)
+          return
+        }
+        setFocusId((f) => (hit.id === f ? null : hit.id))
+        return
+      }
+      if (hit?.kind === 'group-label') {
+        toggleCollapse(hit.id)
+        return
+      }
+      setFocusId(null)
+    },
+    [expanse, selected, interactive, editing, specLayout.layout, w, h, pan, zoom, toggleCollapse]
+  )
+
   // Snap back to a clean fit thumbnail whenever the element loses focus.
   useEffect(() => {
     if (!selected) {
       setZoom(ZOOM_FIT)
       setPan({ x: 0, y: 0 })
+      setFocusId(null)
+      setRevIndex(null) // a revision scrub is a peek — deselect returns to the live head
     }
   }, [selected])
 
@@ -405,6 +495,16 @@ export const DiagramCard = memo(function DiagramCard({
         if (editing) return
         e.stopPropagation()
         onSelect?.(id, e.shiftKey)
+        // M3: a SELECTED expanse card's BODY is the focus/collapse click surface — starting the
+        // element drag would pointer-capture to the well and the browser would dispatch the click
+        // THERE, never reaching the viewport's hit-test handler. The 22px header (shown exactly
+        // when selected) stays the move handle; the first (selecting) press still drags as ever.
+        if (expanse && selected) {
+          const host = e.currentTarget as HTMLElement
+          const rect = host.getBoundingClientRect()
+          const scale = host.offsetHeight > 0 ? rect.height / host.offsetHeight : 1
+          if (e.clientY - rect.top > 22 * scale) return
+        }
         onDragStart(e, id)
       }}
     >
@@ -429,9 +529,16 @@ export const DiagramCard = memo(function DiagramCard({
           }}
         >
           <span style={{ color: 'var(--text-2)' }}>
-            {expanse ? (element.spec?.title ?? 'expanse') : diagramTypeLabel(source)}
+            {expanse ? (displaySpec?.title ?? 'expanse') : diagramTypeLabel(source)}
           </span>
           <span style={{ flex: 1 }} />
+          {!editing && expanse && revisions.length > 0 && (
+            <DiagramRevScrubber
+              count={revisions.length}
+              revIndex={revIndex}
+              onScrub={setRevIndex}
+            />
+          )}
           {!editing && (expanse || svgUrl) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 1 }} title="Scroll to zoom">
               <button
@@ -586,6 +693,7 @@ export const DiagramCard = memo(function DiagramCard({
           onPointerMove={onViewportPointerMove}
           onPointerUp={onViewportPointerUp}
           onPointerCancel={onViewportPointerUp}
+          onClick={expanse ? onViewportClick : undefined}
           style={{
             position: 'absolute',
             // Sit BELOW the header bar when it's shown — otherwise it overlays (clips) the top of the
@@ -605,12 +713,17 @@ export const DiagramCard = memo(function DiagramCard({
             }}
           >
             {expanse ? (
-              // Live token-styled DOM (Phase 1 static renderer). pointer-events:none inside, so
-              // card-level select/drag/zoom/pan behave exactly like the inert mermaid <img>.
+              // Live token-styled DOM (Phase 1 static renderer + Phase 2 motion). pointer-events:
+              // none inside, so card-level select/drag/zoom/pan behave exactly like the inert
+              // mermaid <img>.
               <DiagramSpecView
-                spec={element.spec!}
+                spec={effectiveSpec ?? element.spec!}
                 w={w}
                 h={Math.max(0, h - (showHeader ? 22 : 0))}
+                motion={motion}
+                layout={specLayout.layout}
+                error={specLayout.error}
+                focusId={focusId}
               />
             ) : (
               <img

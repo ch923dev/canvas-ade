@@ -22,6 +22,7 @@ export const SPEC_EDGE_LABEL_MAX = 120
 export const SPEC_TITLE_MAX = 200
 export const SPEC_ICON_MAX = 64
 export const SPEC_HREF_FILE_MAX = 256
+export const SPEC_THEME_MAX = 64
 
 /** Closed status vocabulary → colour+glyph via specTheme.ts. Mirrors DIAGRAM_STATUS_CLASSES
  *  (the Phase-0 Mermaid `:::done` set) plus the explicit 'neutral' default. */
@@ -102,9 +103,45 @@ export interface DiagramSpec {
   title?: string
   /** Layout main axis (ELK direction RIGHT / DOWN). */
   direction: 'right' | 'down'
+  /** Theme preset name (specTheme.SPEC_THEME_PRESETS), ≤ 64 ch. Deliberately an OPEN string —
+   *  unlike status/kind, a theme is presentation-only: an unknown name renders as the default
+   *  (`calm`) with nothing lost, and the value round-trips for a newer app that knows it. */
+  theme?: string
   nodes: SpecNode[]
   edges: SpecEdge[]
   groups?: SpecGroup[]
+}
+
+/** Cap on `DiagramElement.revisions` (v22, B4) — oldest entries roll off past this. */
+export const DIAGRAM_REVISION_CAP = 20
+
+/** One prior spec of an expanse diagram (v22, B4): the snapshot that was REPLACED, when, by whom
+ *  ('user' is reserved for the Phase-4 editor — every live capture today is agent-authored). */
+export interface DiagramRevision {
+  spec: DiagramSpec
+  /** Capture time (ms epoch). */
+  ts: number
+  author: 'agent' | 'user'
+}
+
+/** Deep-validate a `DiagramElement.revisions` list (v22) — same injected-guard contract as
+ *  {@link assertDiagramSpec}; every entry's spec validates exactly like the live one. */
+export function assertDiagramRevisions(
+  revisions: unknown,
+  fail: (msg: string) => never,
+  isRecord: (v: unknown) => v is Record<string, unknown>,
+  isFiniteNum: (v: unknown) => v is number
+): void {
+  if (!Array.isArray(revisions)) fail('diagram element revisions is not an array')
+  if (revisions.length > DIAGRAM_REVISION_CAP) fail('diagram element exceeds the revision cap')
+  for (const r of revisions as unknown[]) {
+    if (!isRecord(r)) fail('diagram revision is not an object')
+    assertDiagramSpec(r.spec, fail, isRecord, isFiniteNum)
+    if (!isFiniteNum(r.ts)) fail('diagram revision ts is not a finite number')
+    if (r.author !== 'agent' && r.author !== 'user') {
+      fail('diagram revision author is not "agent" or "user"')
+    }
+  }
 }
 
 /** Slug charset for every spec id — stable, diffable, safe to interpolate into DOM ids/keys. */
@@ -137,6 +174,14 @@ export function assertDiagramSpec(
   }
   if (spec.direction !== 'right' && spec.direction !== 'down') {
     fail('diagram spec direction is not "right" or "down"')
+  }
+  if (
+    spec.theme !== undefined &&
+    (typeof spec.theme !== 'string' ||
+      spec.theme.length === 0 ||
+      spec.theme.length > SPEC_THEME_MAX)
+  ) {
+    fail('diagram spec theme is not a non-empty string within the cap')
   }
 
   const id = (v: unknown, what: string): string => {

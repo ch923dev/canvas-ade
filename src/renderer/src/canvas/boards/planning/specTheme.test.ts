@@ -5,7 +5,9 @@ import {
   SPEC_KIND_PATHS,
   specStatusStyle,
   specKindSilhouette,
-  specEdgeStyle
+  specEdgeStyle,
+  specGroupStyle,
+  specThemePreset
 } from './specTheme'
 import { SPEC_STATUSES, SPEC_NODE_KINDS } from '../../../lib/diagramSpec'
 
@@ -85,6 +87,113 @@ describe('specKindSilhouette + SPEC_KIND_PATHS', () => {
       if (k === 'note') expect(SPEC_KIND_PATHS[k]).toHaveLength(0)
       else expect(SPEC_KIND_PATHS[k].length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('specThemePreset — open vocabulary, calm fallback', () => {
+  it('resolves known presets and falls back to calm for unknown/absent', () => {
+    expect(specThemePreset('calm')).toBe('calm')
+    expect(specThemePreset('graphite')).toBe('graphite')
+    expect(specThemePreset('signal')).toBe('signal')
+    expect(specThemePreset('neon-2030')).toBe('calm')
+    expect(specThemePreset(undefined)).toBe('calm')
+  })
+})
+
+describe('theme presets — the approved mock deltas', () => {
+  it('graphite re-inks statuses onto the greys; the ONE accent stays (B8 extreme)', () => {
+    const done = specStatusStyle('done', 'graphite')
+    expect(done.fill).toBe('rgba(255, 255, 255, 0.05)')
+    expect(done.border).toBe('rgba(255,255,255,0.16)') // border-strong, not the ok hue
+    expect(done.glyphColor).toBe('#b8b8be')
+    expect(done.glyph).toBe('✓') // glyph SHAPE still carries status (B1 holds)
+    const error = specStatusStyle('error', 'graphite')
+    expect(error.border).toBe('rgba(237, 237, 238, 0.4)')
+    expect(error.glyphColor).toBe('#ededee')
+    const active = specStatusStyle('active', 'graphite')
+    expect(active.border).toBe(ACCENT)
+    expect(active.glyphColor).toBe(ACCENT)
+    expect(active.fill).toBe('rgba(255, 255, 255, 0.07)')
+  })
+
+  it('signal boosts washes to 0.22 and goes full-strength status borders', () => {
+    expect(specStatusStyle('done', 'signal')).toMatchObject({
+      fill: 'rgba(62, 207, 142, 0.22)',
+      border: '#3ecf8e'
+    })
+    expect(specStatusStyle('warn', 'signal')).toMatchObject({
+      fill: 'rgba(232, 179, 57, 0.2)',
+      border: '#e8b339'
+    })
+    expect(specStatusStyle('error', 'signal')).toMatchObject({
+      fill: 'rgba(242, 84, 91, 0.22)',
+      border: '#f2545b'
+    })
+    expect(specStatusStyle('active', 'signal').border).toBe(ACCENT)
+  })
+
+  it('neutral and muted ignore presets (no colour claim to re-ink)', () => {
+    for (const preset of ['graphite', 'signal'] as const) {
+      expect(specStatusStyle('neutral', preset)).toEqual(specStatusStyle('neutral'))
+      expect(specStatusStyle('muted', preset)).toEqual(specStatusStyle('muted'))
+    }
+  })
+
+  it('graphite edges tint grey (accent flow untouched); signal edges match calm', () => {
+    expect(specEdgeStyle({ status: 'done' }, 'graphite').stroke).toBe('rgba(184, 184, 190, 0.5)')
+    expect(specEdgeStyle({ status: 'error' }, 'graphite').stroke).toBe('rgba(237, 237, 238, 0.5)')
+    expect(specEdgeStyle({ animated: true }, 'graphite').stroke).toBe(ACCENT)
+    expect(specEdgeStyle({ status: 'done' }, 'signal')).toEqual(specEdgeStyle({ status: 'done' }))
+  })
+
+  it('graphite groups go neutral chrome with grey labels; signal groups full-hue borders', () => {
+    const g = specGroupStyle('done', 'graphite')
+    expect(g.border).toBe('rgba(255,255,255,0.16)')
+    expect(g.label).toBe('#b8b8be')
+    const s = specGroupStyle('done', 'signal')
+    expect(s.border).toBe('#3ecf8e')
+    expect(s.background).toBe('rgba(62, 207, 142, 0.06)')
+    expect(specGroupStyle('active', 'graphite').border).toBe(ACCENT) // the accent survives
+  })
+})
+
+describe('specGroupStyle — cluster chrome at group strength', () => {
+  it('keeps the node recipe at chrome strength: half-border hue + a 4% wash + hue label', () => {
+    expect(specGroupStyle('done')).toEqual({
+      border: 'rgba(62, 207, 142, 0.5)',
+      background: 'rgba(62, 207, 142, 0.04)',
+      label: '#3ecf8e'
+    })
+    expect(specGroupStyle('warn')).toEqual({
+      border: 'rgba(232, 179, 57, 0.5)',
+      background: 'rgba(232, 179, 57, 0.04)',
+      label: '#e8b339'
+    })
+    expect(specGroupStyle('error')).toEqual({
+      border: 'rgba(242, 84, 91, 0.55)',
+      background: 'rgba(242, 84, 91, 0.04)',
+      label: '#f2545b'
+    })
+  })
+
+  it('reserves the accent for active ONLY — full-strength border, like the active node', () => {
+    const active = specGroupStyle('active')
+    expect(active.border).toBe(ACCENT)
+    expect(active.label).toBe(ACCENT)
+    for (const s of SPEC_STATUSES) {
+      if (s === 'active') continue
+      expect(specGroupStyle(s).border).not.toBe(ACCENT)
+    }
+  })
+
+  it('defaults absent/neutral to the quiet cluster; muted only fades the label', () => {
+    const neutral = specGroupStyle('neutral')
+    expect(specGroupStyle(undefined)).toEqual(neutral)
+    expect(neutral.border).toBe('rgba(255,255,255,0.16)')
+    const muted = specGroupStyle('muted')
+    expect(muted.border).toBe(neutral.border)
+    expect(muted.background).toBe(neutral.background)
+    expect(muted.label).toBe('#46464b')
   })
 })
 

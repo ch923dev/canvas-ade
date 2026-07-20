@@ -314,11 +314,12 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     expect(source).toContain('C[Ship]')
   })
 
-  /** Seed a planning board carrying one expanse-engine spec diagram (v21). */
-  async function seedSpecDiagram(page: Page): Promise<string> {
+  /** Seed a planning board carrying one expanse-engine spec diagram (v21); `withHistory` adds one
+   *  v22 prior-spec revision so the header scrubber renders. */
+  async function seedSpecDiagram(page: Page, withHistory = false): Promise<string> {
     const id = await seed(page, 'planning')
     await page.evaluate(
-      ({ boardId }) => {
+      ({ boardId, history }) => {
         ;(globalThis as any).__canvasE2E.patchBoard(boardId, {
           elements: [
             {
@@ -353,12 +354,30 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
                   { id: 'e2', from: 'test', to: 'gate', animated: true },
                   { id: 'e3', from: 'gate', to: 'evil', kind: 'dependency', label: 'no' }
                 ]
-              }
+              },
+              // v22 (B4): one prior-spec snapshot so the ‹ n/N › header scrubber renders.
+              ...(history
+                ? {
+                    revisions: [
+                      {
+                        spec: {
+                          version: 1,
+                          title: 'Old pipeline',
+                          direction: 'right',
+                          nodes: [{ id: 'old1', label: 'Old step' }],
+                          edges: []
+                        },
+                        ts: 1,
+                        author: 'agent'
+                      }
+                    ]
+                  }
+                : {})
             }
           ]
         })
       },
-      { boardId: id }
+      { boardId: id, history: withHistory }
     )
     await evalIn(page, `window.__canvasE2E.fitView()`)
     await page.waitForTimeout(300)
@@ -431,5 +450,82 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     const after = await diagramSize(page, boardId)
     expect(after.w).toBeGreaterThan(before.w)
     expect(after.h).toBeGreaterThan(before.h)
+  })
+
+  test('phase-2 motion gate: pl-motion-on + edge march by default; reduced-motion flips fully static', async ({
+    page
+  }) => {
+    await seedSpecDiagram(page)
+    const view = page.locator('.pl-specview')
+    await expect(view).toBeVisible({ timeout: 20000 })
+    // Composed gate ON (no OS reduced-motion in the harness; the app setting defaults to auto).
+    await expect(view).toHaveClass(/pl-motion-on/)
+    // The march class rides ON TOP of the static '6 5' dash ATTRIBUTE (the Phase-0/1 pin holds).
+    const march = page.locator('.pl-spec-march')
+    await expect(march).toHaveCount(1)
+    expect(await march.getAttribute('stroke-dasharray')).toBe('6 5')
+    // OS reduced-motion flips the composed gate → the fully-static Phase-1 render, and back.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(view).toHaveClass(/pl-motion-off/)
+    await page.emulateMedia({ reducedMotion: null })
+    await expect(view).toHaveClass(/pl-motion-on/)
+  })
+
+  test('phase-2 focus + collapse: node click dims non-neighbours; the group label folds to a chip', async ({
+    page
+  }) => {
+    await seedSpecDiagram(page)
+    await expect(page.locator('.pl-spec-node')).toHaveCount(4, { timeout: 20000 })
+    // Select on the card's top-left corner — content is fit-CENTRED, so the corner is empty canvas
+    // (no focus lands with the selection click).
+    await page.locator('.pl-diagram').click({ position: { x: 8, y: 8 } })
+    await expect(page.locator('.pl-diagram-head')).toContainText('Pipeline')
+    expect(await page.locator('.pl-spec-dim').count()).toBe(0)
+
+    // Click the decision node through the pointer-inert view (the card-level hit-test): its
+    // non-neighbours dim to 0.22, the node itself stays lit. Same click toggles focus back off.
+    const gate = page.locator('.pl-spec-node', { hasText: 'Matrix green?' })
+    const gb = await gate.boundingBox()
+    if (!gb) throw new Error('gate node has no bounding box')
+    await page.mouse.click(gb.x + gb.width / 2, gb.y + gb.height / 2)
+    await expect(page.locator('.pl-spec-node', { hasText: 'Lint' })).toHaveClass(/pl-spec-dim/)
+    await expect(gate).not.toHaveClass(/pl-spec-dim/)
+    await page.mouse.click(gb.x + gb.width / 2, gb.y + gb.height / 2)
+    await expect(page.locator('.pl-spec-dim')).toHaveCount(0)
+
+    // The group-label strip folds 'Build' (2 members) into one dashed chip; ghosts are never
+    // counted as live nodes (.pl-spec-node-exit, the e2e count-pin contract). Chip click unfolds.
+    const label = page.locator('.pl-spec-group span', { hasText: 'Build' })
+    const lb = await label.boundingBox()
+    if (!lb) throw new Error('group label has no bounding box')
+    await page.mouse.click(lb.x + lb.width / 2, lb.y + lb.height / 2)
+    const chip = page.locator('.pl-spec-chip')
+    await expect(chip).toBeVisible()
+    await expect(chip).toContainText('Build (2)')
+    await expect(page.locator('.pl-spec-node')).toHaveCount(3)
+    await page.waitForTimeout(600) // fold morph + exit ghosts settle before the next hit-test
+    const cb = await chip.boundingBox()
+    if (!cb) throw new Error('chip has no bounding box')
+    await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2)
+    await expect(page.locator('.pl-spec-node')).toHaveCount(4)
+    await expect(page.locator('.pl-spec-chip')).toHaveCount(0)
+  })
+
+  test('phase-2 revisions: the header scrubber peeks an older spec read-only (v22)', async ({
+    page
+  }) => {
+    await seedSpecDiagram(page, true)
+    await expect(page.locator('.pl-spec-node')).toHaveCount(4, { timeout: 20000 })
+    await page.locator('.pl-diagram').click({ position: { x: 8, y: 8 } })
+    const head = page.locator('.pl-diagram-head')
+    await expect(head).toContainText('2/2') // the live head of a 1-revision history
+    await head.locator('button[title="Older revision"]').click()
+    await expect(head).toContainText('1/2')
+    await expect(page.locator('.pl-spec-node', { hasText: 'Old step' })).toBeVisible()
+    await expect(page.locator('.pl-spec-node')).toHaveCount(1) // the old spec has one node
+    await expect(head).toContainText('Old pipeline') // the title chip follows the peek
+    // Scrub back to head — the live spec was never touched (the peek is read-only).
+    await head.locator('button[title="Newer revision"]').click()
+    await expect(page.locator('.pl-spec-node')).toHaveCount(4)
   })
 })

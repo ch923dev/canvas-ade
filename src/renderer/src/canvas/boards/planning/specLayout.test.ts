@@ -5,6 +5,7 @@ import {
   elkResultToLayout,
   specEdgePath,
   specEdgeLabelPoint,
+  specHitTest,
   GROUP_PAD,
   type ElkNodeOut,
   type PositionedSpecNode
@@ -138,5 +139,59 @@ describe('specEdgeLabelPoint', () => {
     const down = specEdgeLabelPoint(a, b, 'down')
     expect(down).toEqual({ x: (60 + 124) / 2, y: (32 + 100) / 2 })
     expect(down).not.toEqual(specEdgeLabelPoint(a, b, 'right'))
+  })
+})
+
+describe('specHitTest', () => {
+  // 200×100 content fit-centred in a 400×300 view: fit = min(400/200, 300/100) = 2 — content
+  // paints as 400×200 (visually y 50…250). Node n1 (10,10 40×20), n2 overlaps it (30,10 40×20,
+  // later sibling paints on top), group g1 (0,0 100×60) underneath both.
+  const layout = {
+    nodes: [
+      { id: 'n1', x: 10, y: 10, w: 40, h: 20 },
+      { id: 'n2', x: 30, y: 10, w: 40, h: 20 }
+    ],
+    byId: new Map([
+      ['n1', { id: 'n1', x: 10, y: 10, w: 40, h: 20 }],
+      ['n2', { id: 'n2', x: 30, y: 10, w: 40, h: 20 }]
+    ]),
+    groups: [{ id: 'g1', x: 0, y: 0, w: 100, h: 60 }],
+    width: 200,
+    height: 100
+  }
+  const view = { w: 400, h: 300 }
+  const noPan = { x: 0, y: 0 }
+  // Layout point (lx,ly) → view point at zoom 1: (lx·2 + 0, ly·2 + 50).
+  const at = (lx: number, ly: number): { x: number; y: number } => ({ x: lx * 2, y: ly * 2 + 50 })
+
+  it('hits a node through the fit-centred transform at zoom 1', () => {
+    expect(specHitTest(at(15, 15), view, noPan, 1, layout)).toEqual({ kind: 'node', id: 'n1' })
+  })
+
+  it('prefers the topmost (later) node where boxes overlap, and groups only under no node', () => {
+    expect(specHitTest(at(40, 15), view, noPan, 1, layout)).toEqual({ kind: 'node', id: 'n2' })
+    expect(specHitTest(at(5, 50), view, noPan, 1, layout)).toEqual({ kind: 'group', id: 'g1' })
+  })
+
+  it('misses empty canvas (inside the content extent but outside every box)', () => {
+    expect(specHitTest(at(150, 90), view, noPan, 1, layout)).toBeNull()
+  })
+
+  it('inverts card zoom and pan (transform about the view centre, pan in view px)', () => {
+    // zoom 2, pan (30,-10): view = centre + 2·fit·(l − layoutCentre) + pan.
+    const v = (lx: number, ly: number): { x: number; y: number } => ({
+      x: 200 + 4 * (lx - 100) + 30,
+      y: 150 + 4 * (ly - 50) - 10
+    })
+    expect(specHitTest(v(15, 15), view, { x: 30, y: -10 }, 2, layout)).toEqual({
+      kind: 'node',
+      id: 'n1'
+    })
+    expect(specHitTest(v(150, 90), view, { x: 30, y: -10 }, 2, layout)).toBeNull()
+  })
+
+  it('returns null for a degenerate view or layout extent', () => {
+    expect(specHitTest({ x: 0, y: 0 }, { w: 0, h: 300 }, noPan, 1, layout)).toBeNull()
+    expect(specHitTest({ x: 0, y: 0 }, view, noPan, 1, { ...layout, width: 0 })).toBeNull()
   })
 })

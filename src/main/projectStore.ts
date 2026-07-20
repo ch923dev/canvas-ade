@@ -57,9 +57,10 @@ const legacyAssets = (dir: string): string => join(dir, ASSETS)
  * canonical version marker on fresh-project creation. (v18 = Planning element appearance
  * props, ADDITIVE; v19 = Kanban card-detail fields — description/tags[]/fileRefs[], ADDITIVE;
  * v20 = TerminalBoard `openRouter` routing field, ADDITIVE; v21 = the DiagramElement
- * `'expanse'` engine + spec + importedFrom, BREAKING — see boardSchemaVersion.ts.)
+ * `'expanse'` engine + spec + importedFrom, BREAKING; v22 = the DiagramElement `revisions`
+ * prior-spec snapshots, ADDITIVE — see boardSchemaVersion.ts.)
  */
-export const SCHEMA_VERSION = 21
+export const SCHEMA_VERSION = 22
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
@@ -73,6 +74,7 @@ export const SCHEMA_VERSION = 21
  * (v16 was additive and left the floor at 15; v18–v20 were additive and left it at 17.) The floor
  * moved to 21 with the breaking `'expanse'` diagram engine (v21, diagram-viz Phase 1) — a pre-21
  * reader's diagram case hard-fails a non-mermaid engine, so pre-21 apps get the clean update prompt.
+ * (v22 — DiagramElement `revisions` — is ADDITIVE and leaves the floor at 21.)
  */
 export const MIN_READER_VERSION = 21
 

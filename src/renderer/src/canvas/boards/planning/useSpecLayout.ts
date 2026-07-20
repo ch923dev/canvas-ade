@@ -15,16 +15,34 @@ export interface SpecLayoutState {
   error: string | null
 }
 
-export function useSpecLayout(spec: DiagramSpec): SpecLayoutState {
+/**
+ * Per-spec-object layout memo (B4): revision scrubbing and collapse toggles flip between STABLE
+ * spec objects (revisions persist in the element; applyCollapse is the identity when nothing
+ * collapses), so keying on object identity makes ‹ › scrubs and re-expands instant instead of
+ * re-running ELK. WeakMap ⇒ entries die with their specs, no size management needed.
+ */
+const layoutCache = new WeakMap<DiagramSpec, SpecLayoutResult>()
+
+/**
+ * `spec` may be null (the mermaid engine branch — hooks must run unconditionally in DiagramCard,
+ * which owns the layout since Phase 2 so the card can hit-test focus clicks and memo revisions).
+ */
+export function useSpecLayout(spec: DiagramSpec | null): SpecLayoutState {
   const [state, setState] = useState<SpecLayoutState>({ layout: null, error: null })
+  // Cache hit resolves SYNCHRONOUSLY at render (no setState-in-effect): a scrub to an
+  // already-laid-out spec paints its layout in the same frame the spec flips.
+  const cached = spec ? layoutCache.get(spec) : undefined
 
   useEffect(() => {
+    if (!spec || layoutCache.has(spec)) return // hit — served from the render-time read above
     let cancelled = false
     void (async () => {
       try {
         const root = await elkLayout(specToElkGraph(spec))
         if (cancelled) return
-        setState({ layout: elkResultToLayout(spec, root), error: null })
+        const layout = elkResultToLayout(spec, root)
+        layoutCache.set(spec, layout)
+        setState({ layout, error: null })
       } catch (e) {
         if (cancelled) return
         setState({ layout: null, error: String((e as Error)?.message ?? e) })
@@ -35,5 +53,5 @@ export function useSpecLayout(spec: DiagramSpec): SpecLayoutState {
     }
   }, [spec])
 
-  return state
+  return cached ? { layout: cached, error: null } : state
 }

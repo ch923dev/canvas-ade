@@ -23,6 +23,25 @@ function token(name: string, fallback: string): string {
 }
 
 /**
+ * B6 theme presets (Phase 2) — per the approved phase2-design mock:
+ *  - `calm`     the default recipe below, unchanged;
+ *  - `graphite` monochrome statuses: done/warn/error re-ink onto the text greys with faint white
+ *               washes — the glyph SHAPE carries status (B1 holds); the ONE accent (`active` +
+ *               animated flow) stays saturated (B8 taken to its extreme);
+ *  - `signal`   boosted washes (0.22) + full-strength status borders for wall-view legibility.
+ * `DiagramSpec.theme` is an OPEN string: an unknown preset renders as `calm` and the value is
+ * preserved (presentation-only fallback — unlike status/kind, nothing is lost by not knowing it).
+ */
+export const SPEC_THEME_PRESETS = ['calm', 'graphite', 'signal'] as const
+export type SpecThemePreset = (typeof SPEC_THEME_PRESETS)[number]
+
+export function specThemePreset(theme: string | undefined): SpecThemePreset {
+  return (SPEC_THEME_PRESETS as readonly string[]).includes(theme ?? '')
+    ? (theme as SpecThemePreset)
+    : 'calm'
+}
+
+/**
  * Per-status glyph — ships WITH the colour, never instead of a label (B1: status = icon + label,
  * never colour alone). `neutral` carries no glyph: no colour claim, nothing to disambiguate.
  */
@@ -48,9 +67,13 @@ export interface SpecStatusStyle {
   opacity: number
 }
 
-/** status → colours+glyph, tokens read live. The wash/half-border numbers mirror
- *  `buildDiagramThemeCss` exactly — the two engines must stay one palette (risk R7). */
-export function specStatusStyle(status: SpecStatus | undefined): SpecStatusStyle {
+/** status → colours+glyph, tokens read live. The calm wash/half-border numbers mirror
+ *  `buildDiagramThemeCss` exactly — the two engines must stay one palette (risk R7); the
+ *  graphite/signal deltas mirror the approved phase2-design mock's scoped var overrides. */
+export function specStatusStyle(
+  status: SpecStatus | undefined,
+  preset: SpecThemePreset = 'calm'
+): SpecStatusStyle {
   const s: SpecStatus = status ?? 'neutral'
   const raised = token('--surface-raised', '#1a1a1d')
   const border = token('--border', 'rgba(255,255,255,0.1)')
@@ -69,15 +92,33 @@ export function specStatusStyle(status: SpecStatus | undefined): SpecStatusStyle
       return { ...base, opacity: 0.55 }
     case 'active': {
       const accent = token('--accent', '#4f8cff')
+      const fill =
+        preset === 'graphite'
+          ? 'rgba(255, 255, 255, 0.07)'
+          : preset === 'signal'
+            ? withAlpha(accent, 0.22)
+            : token('--accent-wash', 'rgba(79, 140, 255, 0.14)')
       return {
         ...base,
-        fill: token('--accent-wash', 'rgba(79, 140, 255, 0.14)'),
-        border: accent, // full-strength: active is THE emphasis and the only saturated border
+        fill,
+        border: accent, // full-strength: active is THE emphasis — every preset keeps the one accent
         glyphColor: accent
       }
     }
     case 'done': {
+      if (preset === 'graphite') {
+        const ink = token('--text-2', '#b8b8be')
+        return {
+          ...base,
+          fill: 'rgba(255, 255, 255, 0.05)',
+          border: token('--border-strong', 'rgba(255,255,255,0.16)'),
+          glyphColor: ink
+        }
+      }
       const ok = token('--ok', '#3ecf8e')
+      if (preset === 'signal') {
+        return { ...base, fill: withAlpha(ok, 0.22), border: ok, glyphColor: ok }
+      }
       return {
         ...base,
         fill: token('--ok-wash', 'rgba(62, 207, 142, 0.14)'),
@@ -86,7 +127,19 @@ export function specStatusStyle(status: SpecStatus | undefined): SpecStatusStyle
       }
     }
     case 'warn': {
+      if (preset === 'graphite') {
+        const ink = token('--text-2', '#b8b8be')
+        return {
+          ...base,
+          fill: 'rgba(255, 255, 255, 0.04)',
+          border: token('--border-strong', 'rgba(255,255,255,0.16)'),
+          glyphColor: ink
+        }
+      }
       const warn = token('--warn', '#e8b339')
+      if (preset === 'signal') {
+        return { ...base, fill: withAlpha(warn, 0.2), border: warn, glyphColor: warn }
+      }
       return {
         ...base,
         fill: token('--warn-wash', 'rgba(232, 179, 57, 0.12)'),
@@ -95,7 +148,19 @@ export function specStatusStyle(status: SpecStatus | undefined): SpecStatusStyle
       }
     }
     case 'error': {
+      if (preset === 'graphite') {
+        const ink = token('--text', '#ededee')
+        return {
+          ...base,
+          fill: 'rgba(255, 255, 255, 0.06)',
+          border: withAlpha(ink, 0.4),
+          glyphColor: ink
+        }
+      }
       const err = token('--err', '#f2545b')
+      if (preset === 'signal') {
+        return { ...base, fill: withAlpha(err, 0.22), border: err, glyphColor: err }
+      }
       return {
         ...base,
         fill: token('--err-wash', 'rgba(242, 84, 91, 0.14)'),
@@ -141,6 +206,69 @@ export const SPEC_KIND_PATHS: Record<SpecNodeKind, string[]> = {
   note: []
 }
 
+export interface SpecGroupStyle {
+  /** Cluster border ink (dashed) — half-strength status hue, accent for active, neutral default. */
+  border: string
+  /** Cluster fill — a 4% status wash (quieter than the node wash: chrome, not content). */
+  background: string
+  /** Group label ink. */
+  label: string
+}
+
+/** group status → cluster chrome (the Phase-1 silent gap: `SpecGroup.status` was validated but
+ *  never rendered). Same wash + half-border recipe as nodes, at chrome strength; presets follow
+ *  the node deltas — graphite re-inks onto the greys, signal goes full-hue border. */
+export function specGroupStyle(
+  status: SpecStatus | undefined,
+  preset: SpecThemePreset = 'calm'
+): SpecGroupStyle {
+  const neutral: SpecGroupStyle = {
+    border: token('--border-strong', 'rgba(255,255,255,0.16)'),
+    background: 'rgba(255,255,255,0.015)',
+    label: token('--text-3', '#7b7b81')
+  }
+  const hued = (hue: string, borderAlpha: number): SpecGroupStyle => {
+    if (preset === 'signal') {
+      return { border: hue, background: withAlpha(hue, 0.06), label: hue }
+    }
+    return {
+      border: withAlpha(hue, borderAlpha),
+      background: withAlpha(hue, 0.04),
+      label: hue
+    }
+  }
+  switch (status ?? 'neutral') {
+    case 'active': {
+      const accent = token('--accent', '#4f8cff')
+      // Every preset keeps the one accent full-strength (B8) — signal only lifts the wash.
+      return {
+        border: accent,
+        background: withAlpha(accent, preset === 'signal' ? 0.06 : 0.04),
+        label: accent
+      }
+    }
+    case 'done':
+      return preset === 'graphite'
+        ? { ...neutral, label: token('--text-2', '#b8b8be') }
+        : hued(token('--ok', '#3ecf8e'), 0.5)
+    case 'warn':
+      return preset === 'graphite'
+        ? { ...neutral, label: token('--text-2', '#b8b8be') }
+        : hued(token('--warn', '#e8b339'), 0.5)
+    case 'error': {
+      if (preset === 'graphite') {
+        const ink = token('--text', '#ededee')
+        return { border: withAlpha(ink, 0.4), background: neutral.background, label: ink }
+      }
+      return hued(token('--err', '#f2545b'), 0.55)
+    }
+    case 'muted':
+      return { ...neutral, label: token('--text-faint', '#46464b') }
+    default:
+      return neutral
+  }
+}
+
 export interface SpecEdgeStyle {
   /** Stroke ink — border-strong neutral, a half-strength status hue, or the accent when animated. */
   stroke: string
@@ -151,8 +279,12 @@ export interface SpecEdgeStyle {
 }
 
 /** edge {kind, status, animated} → line style. Animated wins the stroke (accent flow, the Phase-0
- *  edge-flow look); otherwise status tints at half strength; otherwise neutral border-strong ink. */
-export function specEdgeStyle(edge: Pick<SpecEdge, 'kind' | 'status' | 'animated'>): SpecEdgeStyle {
+ *  edge-flow look); otherwise status tints at half strength; otherwise neutral border-strong ink.
+ *  Graphite re-inks the status tints onto the greys (accent flow stays); signal keeps calm's. */
+export function specEdgeStyle(
+  edge: Pick<SpecEdge, 'kind' | 'status' | 'animated'>,
+  preset: SpecThemePreset = 'calm'
+): SpecEdgeStyle {
   const animated = edge.animated === true
   const kindDash = edge.kind === 'dependency' ? '3 4' : edge.kind === 'data' ? '1.5 3.5' : ''
   if (animated) {
@@ -161,12 +293,20 @@ export function specEdgeStyle(edge: Pick<SpecEdge, 'kind' | 'status' | 'animated
   }
   let stroke = token('--border-strong', 'rgba(255,255,255,0.16)')
   if (edge.status && edge.status !== 'neutral' && edge.status !== 'muted') {
-    const hue = {
-      active: token('--accent', '#4f8cff'),
-      done: token('--ok', '#3ecf8e'),
-      warn: token('--warn', '#e8b339'),
-      error: token('--err', '#f2545b')
-    }[edge.status]
+    const hue =
+      preset === 'graphite'
+        ? {
+            active: token('--accent', '#4f8cff'), // the one accent survives graphite
+            done: token('--text-2', '#b8b8be'),
+            warn: token('--text-2', '#b8b8be'),
+            error: token('--text', '#ededee')
+          }[edge.status]
+        : {
+            active: token('--accent', '#4f8cff'),
+            done: token('--ok', '#3ecf8e'),
+            warn: token('--warn', '#e8b339'),
+            error: token('--err', '#f2545b')
+          }[edge.status]
     stroke = withAlpha(hue, 0.5)
   }
   return { stroke, dasharray: kindDash, animated: false }

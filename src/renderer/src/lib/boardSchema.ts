@@ -38,10 +38,11 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import { assertTerminalContent } from './terminalBoardSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
-import { assertDiagramSpec } from './diagramSpec'
-import type { DiagramSpec } from './diagramSpec'
+import { assertDiagramSpec, assertDiagramRevisions, DIAGRAM_REVISION_CAP } from './diagramSpec'
+import type { DiagramSpec, DiagramRevision } from './diagramSpec'
 export type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef }
-export type { DiagramSpec }
+export type { DiagramSpec, DiagramRevision }
+export { DIAGRAM_REVISION_CAP }
 
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
@@ -323,6 +324,10 @@ export interface DiagramElement extends ElementCommon {
   spec?: DiagramSpec
   /** Original Mermaid source preserved by an explicit mermaid→spec conversion. */
   importedFrom?: string
+  /** v22 (B4): prior specs, oldest→newest, capped at {@link DIAGRAM_REVISION_CAP} (expanse ONLY —
+   *  captured by boardPatch when a tracked elements patch replaces the spec; scrubbed read-only
+   *  from the card header). Absent ⇒ no history yet. */
+  revisions?: DiagramRevision[]
   /** Display box (board-local px). */
   w: number
   h: number
@@ -745,7 +750,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // engine value only appears on newly-authored expanse elements and every existing diagram element
   // already satisfies the mermaid branch — identity bump. BREAKING (floor → 21): a pre-21 reader's
   // diagram case hard-fails engine !== 'mermaid' / missing string source (boardSchemaVersion.ts).
-  20: (doc) => ({ ...doc, schemaVersion: 21 })
+  20: (doc) => ({ ...doc, schemaVersion: 21 }),
+  // v22: optional DiagramElement `revisions` (diagram-viz Phase 2, B4). Optional + defaulted-at-read
+  // (absent ⇒ no history) → identity bump; ADDITIVE so MIN_READER_VERSION stays 21 (a pre-22 reader
+  // ignores the unknown optional key and it rides through the structuredClone round-trip).
+  21: (doc) => ({ ...doc, schemaVersion: 22 })
 }
 
 /**
@@ -954,6 +963,8 @@ export function assertPlanningElement(el: unknown): void {
       if (el.engine === 'mermaid') {
         if (typeof el.source !== 'string') fail('diagram element is missing string source')
         if (el.spec !== undefined) fail('mermaid diagram element must not carry a spec')
+        // v22: spec revisions are an expanse-only capability (same strictness as `spec` above).
+        if (el.revisions !== undefined) fail('mermaid diagram element must not carry revisions')
         // svgCache is an OPTIONAL derived cache: absent (not-yet-rendered) is valid; present must be
         // a non-empty assetId-shaped string. The asset GC (collectAssetIds) keeps it from being swept.
         if (
@@ -967,6 +978,10 @@ export function assertPlanningElement(el: unknown): void {
         if (el.source !== undefined) fail('expanse diagram element must not carry a source')
         // The expanse engine renders live — a derived SVG cache has no meaning here.
         if (el.svgCache !== undefined) fail('expanse diagram element must not carry an svgCache')
+        // v22 (B4): capped prior-spec snapshots — every entry deep-validates like the live spec.
+        if (el.revisions !== undefined) {
+          assertDiagramRevisions(el.revisions, fail, isRecord, isFiniteNum)
+        }
       } else {
         fail(`diagram element has unsupported engine ${String(el.engine)}`)
       }
