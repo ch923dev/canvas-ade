@@ -44,10 +44,14 @@ interface PortLike {
   on(event: 'message', listener: (e: { data: unknown }) => void): unknown
   start(): void
 }
-/** The IPty slice the forwarder writes to. */
+/** The IPty slice the forwarder writes to. `cols`/`rows` (node-pty exposes both live) seed
+ *  the dedup memo below so a same-size sync right after attach is skipped too; optional so
+ *  the unit tests' plain-object procs stay valid. */
 interface ProcLike {
   write(data: string): void
   resize(cols: number, rows: number): void
+  cols?: number
+  rows?: number
 }
 
 /**
@@ -58,20 +62,39 @@ interface ProcLike {
  * reaped pty; that throw would escape this EventEmitter listener as an uncaughtException
  * → app.exit(1), crashing the app — so it is swallowed (the session is being torn down).
  * (Moved from pty.ts 2026-07-12, max-lines doctrine; re-exported there.)
+ *
+ * Resize-storm fix (terminal display v2): a SAME-SIZE resize is dropped here instead of
+ * forwarded. Every proc.resize reaches ConPTY, and ConPTY answers each one with a SIGWINCH
+ * even when the grid did not change — a streaming TUI (Claude Code et al.) repaints its live
+ * region per SIGWINCH, and each repaint that cannot erase rows already scrolled off pushes a
+ * duplicate frame into scrollback (claude-code#51828). The renderer legitimately posts
+ * redundant resizes (adopt grid-sync heals on both orderings, full-view transition fits), so
+ * the collapse belongs at this single choke point. The memo seeds from the proc's live dims
+ * when available, so a post-adopt heal that matches the PTY's current grid is a true no-op.
  */
 export function attachPortInput(port: PortLike, proc: ProcLike): void {
+  let lastCols = typeof proc.cols === 'number' ? proc.cols : -1
+  let lastRows = typeof proc.rows === 'number' ? proc.rows : -1
+  const resizeDedup = (cols: number, rows: number): void => {
+    if (cols === lastCols && rows === lastRows) return // same-size → no ConPTY SIGWINCH
+    proc.resize(cols, rows)
+    // Memo AFTER the call: a throw (exited pty) is swallowed by the outer catch and must
+    // not record dims the PTY never took.
+    lastCols = cols
+    lastRows = rows
+  }
   port.on('message', (e) => {
     const m = e.data as PortInputMsg
     try {
       if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
       else if (m.t === 'resize') {
-        if (isValidResize(m.cols, m.rows)) proc.resize(m.cols, m.rows)
+        if (isValidResize(m.cols, m.rows)) resizeDedup(m.cols, m.rows)
         else if (Number.isInteger(m.cols) && Number.isInteger(m.rows) && m.cols >= 1 && m.rows >= 1)
           // BUG-023: a legit but OVERSIZED grid (>1000 cols/rows — wide board at a
           // tiny font) is clamped instead of dropped, so row updates keep applying
           // instead of the PTY freezing at spawn dimensions. Garbage (non-integer,
           // <1, non-finite) is still dropped wholesale.
-          proc.resize(clampSpawnDim(m.cols, 80), clampSpawnDim(m.rows, 24))
+          resizeDedup(clampSpawnDim(m.cols, 80), clampSpawnDim(m.rows, 24))
       }
     } catch {
       /* pty already exited */
