@@ -78,6 +78,7 @@ import {
 import { useTerminalLivenessStore, isTerminalLive } from '../../../store/terminalLivenessStore'
 import { installSelectionShim } from './terminalSelection'
 import { createResizeSettler, RESIZE_SETTLE_MS } from './terminalResizeSettle'
+import { isBoardResizeDragging, onBoardResizeDrag } from '../../boardResizeDrag'
 import { createTerminalWriteCoalescer, type TerminalWriteCoalescer } from './terminalWriteCoalescer'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
@@ -841,6 +842,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       cancel: (h) => window.clearTimeout(h)
     })
     const resizeDisp = term.onResize(({ cols, rows }) => resizeSettler.push(cols, rows))
+    // T1a′: a NodeResizer handle-drag holds the settler — the grid keeps refitting visually
+    // per frame, but the PTY hears exactly ONE resize (the released grid) instead of a paced
+    // SIGWINCH stream that litters scrollback per repaint (#51828). Snapshot first: a terminal
+    // (re)mounting mid-drag must start held or the drag degrades to the paced stream.
+    if (isBoardResizeDragging(board.id)) resizeSettler.setHold(true)
+    const resizeDragOff = onBoardResizeDrag(board.id, (dragging) => resizeSettler.setHold(dragging))
 
     // Custom key handling (returns false to suppress xterm's default for keys we own).
     // handleTerminalKey calls e.preventDefault() for every owned chord — REQUIRED: xterm's
@@ -1165,6 +1172,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       clearSnapshot(snapRef.current)
       dataDisp.dispose()
       resizeDisp.dispose()
+      resizeDragOff()
       // T1a: drop any pending settled resize — the session is going away; a post-teardown
       // fire would land on a null/closed port anyway (post guards with ?.), this just makes
       // the cancellation explicit.

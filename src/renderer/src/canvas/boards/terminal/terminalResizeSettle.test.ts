@@ -98,4 +98,75 @@ describe('createResizeSettler (resize-storm fix — one PTY resize per burst)', 
     settler.dispose()
     expect(timers.cancelled.length).toBe(0)
   })
+
+  describe('hold (T1a′ — a handle-drag posts ONE resize, on release)', () => {
+    it('held pushes never arm a timer; release posts only the LATEST dims', () => {
+      const { post, timers, settler } = make()
+      settler.setHold(true)
+      settler.push(100, 30)
+      settler.push(110, 32)
+      settler.push(120, 34) // the whole drag, frame by frame
+      expect(timers.armed()).toBe(false)
+      settler.setHold(false)
+      expect(post).not.toHaveBeenCalled() // release still settles through the window
+      timers.fire()
+      expect(post).toHaveBeenCalledTimes(1)
+      expect(post).toHaveBeenCalledWith(120, 34)
+    })
+
+    it('release with nothing pending posts nothing (a drag that never crossed a cell)', () => {
+      const { post, timers, settler } = make()
+      settler.setHold(true)
+      settler.setHold(false)
+      expect(timers.armed()).toBe(false)
+      timers.fire()
+      expect(post).not.toHaveBeenCalled()
+    })
+
+    it('a timer firing while held keeps the pending dims for the release', () => {
+      const { post, timers, settler } = make()
+      settler.push(100, 30) // arms pre-drag
+      settler.setHold(true) // drag starts inside the window
+      settler.push(115, 33)
+      timers.fire() // the pre-drag window elapses mid-drag — must NOT post a mid-drag grid
+      expect(post).not.toHaveBeenCalled()
+      settler.setHold(false)
+      timers.fire()
+      expect(post).toHaveBeenCalledTimes(1)
+      expect(post).toHaveBeenCalledWith(115, 33)
+    })
+
+    it('a fit AFTER release but inside the window still wins (trailing semantics survive)', () => {
+      const { post, timers, settler } = make()
+      settler.setHold(true)
+      settler.push(100, 30)
+      settler.setHold(false) // release arms the window…
+      settler.push(101, 30) // …and the final ResizeObserver fit lands inside it
+      timers.fire()
+      expect(post).toHaveBeenCalledTimes(1)
+      expect(post).toHaveBeenCalledWith(101, 30)
+    })
+
+    it('redundant setHold calls are no-ops (unmount-guard end after a real end)', () => {
+      const { post, timers, settler } = make()
+      settler.setHold(true)
+      settler.setHold(true)
+      settler.push(100, 30)
+      settler.setHold(false)
+      settler.setHold(false) // must not re-arm / double-post
+      timers.fire()
+      expect(post).toHaveBeenCalledTimes(1)
+    })
+
+    it('dispose during a hold drops the pending dims — a later release posts nothing', () => {
+      const { post, timers, settler } = make()
+      settler.setHold(true)
+      settler.push(100, 30)
+      settler.dispose()
+      settler.setHold(false)
+      expect(timers.armed()).toBe(false)
+      timers.fire()
+      expect(post).not.toHaveBeenCalled()
+    })
+  })
 })
