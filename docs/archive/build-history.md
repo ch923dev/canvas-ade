@@ -3276,3 +3276,55 @@ tests (cloud ignores host death → no re-broker / no engine:event; local still 
 re-review clean. `index.ts` max-lines ratchet 704→707 for the cloud-selection wiring (T1d precedent).
 Squash `a934038`. **Doc-lifecycle:** `PHASE2-KICKOFF.md` was session scratch (never committed — nothing
 to delete). Worktree `.worktrees/voice-cloud-stt` stays live.
+
+## PR #369 — terminal: T2 latent defects — ring line-boundary replay guard, exact snapshot splice, gridFittedRef re-arm (v0.24.3 → 0.25.1) — 2026-07-23
+
+**The three latent terminal defects the four-agent recon flagged** (real, but not T1d's primary
+resize-storm bug; none block anything). One patch PR. Authored at v0.24.3, then rebased onto #370's
+0.25.0 and merged as **v0.25.1**.
+
+**D1 — ring line/escape-boundary replay trim.** The in-proc PTY `OutputRing` (`ptyOutput.ts`) could
+open an adopt replay **mid-CSI** once the 256 KB ring saturated and its head chunk was trimmed to a
+torn line — garbling the live terminal. The **daemon** ring already guarded exactly this
+(`ptyHost/ring.ts` `daemonRingReplay`); the two rings were asymmetric. New `readRingReplay` /
+`readRingSinceReplay` (+ `trimWrappedReplayHead` / `ringWrapped`) port the guard: trim the torn first
+line **only when wrapped**, verbatim under the cap, and **preserve the exact splice boundary** a
+snapshot preface joins onto (only the degraded eviction-ate-the-boundary case is trimmed). `adoptCore`
+now replays through them. **Bot [warning] fix:** `ringWrapped` first used `total >= cap`, but `pushRing`
+trims only on strict `total > cap`, so an exactly-full ring with nothing evicted was mis-flagged wrapped
+→ a complete first line dropped (silent loss); switched to the monotonic `written > cap`.
+
+**D2 — exact snapshot/tail splice boundary.** The background-adopt splice reconciled a RENDERED snapshot
+against a raw-byte watermark captured at the `writeSnapshot` handler entry (later than the renderer's
+serialize) → the in-flight bytes fell into neither the snapshot nor the replay tail (gap, data lost).
+Replaced the approximate count with a boundary **both sides agree on**: MAIN posts `{t:'sync',written}`
+after every adopt replay (`adoptCore`), seeding the renderer's ring-axis byte counter (`nextReceived`);
+the snapshotter reports `received − held − dropped` (`buildSnapshot`/`snapshotWatermark`) as the exact
+count rendered into the snapshot; MAIN uses it clamped (`resolveFlushWatermark`), falling back to the old
+count for a legacy caller. **Bot [warning] fix:** subtract the write-coalescer's hold-cap `dropped()`
+evictions too — `received − held` alone over-advanced the boundary on a hidden firehose past `holdCap()`,
+re-opening the gap; the coalescer now tracks cumulative `dropped()` (reset on `clear`), turning any
+residual seam into a safe overlap. Touches `pty.ts`, `terminalIpc.ts`, preload `terminalApi.ts`,
+`terminalSnapshotRegistry.ts` (`Snapshotter` now returns `{text,watermark}`), the hook, and the coalescer.
+
+**D3 — `gridFittedRef` re-arm on respawn.** The write-coalescer fit-hold released on the FIRST finite
+fit and never re-armed, so a Restart into the reused term could release at a stale/transient cols.
+`restart()` now resets `gridFittedRef` (and the D2 byte counter) **before** its `fitWhole`, so a fresh
+finite fit re-gates the release at the current layout (extracted to pure `fitHoldReleased` /
+`shouldReleaseFitHold`); no coalescer deadlock — a `fitWhole` always follows.
+
+**Verification.** typecheck (3 tiers) / lint / format + **full unit+integration** (5753 on the branch,
+5904 after the #370 rebase — only the 2 ambient `pathSafe` junction specs + the known `DiagramSpecView`
+flake fail, none from this change). Pure, unit-tested helpers for every fix (ring trim,
+`resolveFlushWatermark`, `nextReceived`, `buildSnapshot`, `snapshotWatermark`, `fitHoldReleased` /
+`shouldReleaseFitHold`, coalescer `dropped()`, the `adoptCore` sync post). **Full e2e matrix GREEN both
+legs** on the branch head (Windows `pnpm test:e2e` — 2 timing flakes [`menuShell`, `terminalLiveness`]
+absorbed on `--retries=2`, liveness path byte-identical to a green base; Linux Docker 309 passed + 1
+ambient flaky). Manual dev check: title-stamped `CANVAS_DEV_TITLE` build boots clean (no black screen)
++ human-eyeballed. **Bot review: 2 `[warning]`s** (the D2 coalescer-drop gap + the D1 `ringWrapped`
+off-by-one) — both **FIXED `362111f1`** + inline-dispositioned; incremental re-review clean.
+`max-lines` ratchet: `pty.ts` 702→706 (D1 guarded-reader imports + guarded replay ternary + D2 sync
+post, all in the lifecycle core) and a new `useTerminalSpawn.ts` 703 (the D2 accounting extracted to
+`terminalSpawnMath.ts` to hold the growth to the 3 hook-bound choke-point lines). Rebased onto #370
+`8d1ca02d` (clean auto-merge of `eslint.config.mjs`; only the package.json version conflict, resolved
+0.25.0 → 0.25.1). Squash `ab057b36`. Worktree `.worktrees/terminal-t2-defects` stays live.
