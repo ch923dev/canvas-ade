@@ -3138,3 +3138,38 @@ claude-review round-2 warning (LOD-flip wedges hold) confirmed + fixed + inline-
 dev-check eyeball PASS. Gotchas memorized: `pnpm install --lockfile-only` in a worktree STILL fires
 the junction wipe-MAIN prompt → resolve in a scratch-dir copy and copy the lockfile back; a stray
 `pnpm update` in that scratch dir silently bumps unrelated dep ranges → reset + redo scoped.
+
+## PR #367 — terminal: flicker-free terminals setting, default ON (T1d) (v0.24.2) — 2026-07-23
+
+**Squash `932a3a5f`** (branch `fix/terminal-flicker-free`, base `b8314412`; feature `305f26fa` +
+review-fix `549dca27`). T1d — the true upstream-class fix deferred by #366. App-wide **Flicker-free
+terminals** toggle (Settings › Application › Display); when ON the app stops forcing
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`, so Claude Code keeps its default alt-screen and a mid-stream
+resize never commits duplicate blocks to scrollback (anthropics/claude-code#51828 — the single
+residual dup #366 left).
+
+**Design fork → B, then default-ON (Path A).** Mocked A (per-board) / B (global) / C (auto-detect)
+with the real `index.css` tokens; user picked **B**. A code-verified reframe then flipped the default:
+alt-screen ON does NOT lose copy — `macOptionClickForcesSelection` is already set
+(`useTerminalSpawn.ts:710`) and the zoom shim forwards `shiftKey`, so **Shift+drag / Option+drag still
+selects**; only modifier-less drag-select is lost. Since #332's copy survives, litter-free became the
+default, with a "Hold Shift to select" hint in the toggle sub-copy.
+
+**Global userData config (no schema bump).** `terminalDisplayConfig.ts` mirrors
+`notificationsConfig.ts` — `{flickerFree:true}`, frame-guarded `terminalDisplay:get/set`,
+`isFlickerFree()` read fresh per spawn (a toggle applies to the next spawn without an app restart).
+`buildSpawnEnv` gains a `flickerFree` opt; the alt-screen decision runs AFTER the `process.env` spread
+(inherited-value strip so a parent Claude session can't leak past an ON) but BEFORE the recap seam
+(`Object.assign` last) so recap keeps its documented last-word override of the key.
+`TerminalDisplaySection.tsx` (own file, rendered by `TerminalPane`) = setrow + toggle, optimistic-revert.
+
+**Verified.** cheap trio · 34 touched-file units + the FULL unit/integration suite green in a clean
+env · build + boot smoke (renderer mounts, pty spawns) · live eyeball (Playwright `_electron`,
+title-stamped): default-ON on a fresh profile, Shift-hint copy, OFF↔ON persists through MAIN · FULL
+MATRIX: Win 308P/2-flaky + Linux Docker 308P/2-flaky (accounts+menuShell ambient, retry-passed), exit
+0 · CI check + CodeQL green. **claude-review round-2 [critical]** (the post-recap-spread ordering
+clobbered recap's alt-screen override + broke the untouched `pty.recapenv.test.ts` — a full-suite miss
+on my first push) confirmed + fixed (`549dca27`) + inline-dispositioned. Gotcha memorized: running
+units inside an Expanse board leaks `CANVAS_RECAP_BOARD` into `process.env` → recap-env specs fail
+locally but pass in CI; `pathSafe` junction-realpath specs fail on the worktree node_modules junction
+too (and on `main`) — both ambient, not regressions.
