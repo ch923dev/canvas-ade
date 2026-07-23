@@ -24,6 +24,12 @@
 
 // ── Planning op types (formerly hand-mirrored in mcpCommand.ts + planningMcpApply.ts) ──
 
+// TYPE-ONLY imports from the renderer's LEAF diagram modules (diagram Phase 3). Legal here —
+// both files are import-free leaves with no DOM/Node/Electron coupling (diagramSpec.ts is
+// designed for exactly this cross-bundle reuse), and a type import is erased at build.
+import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { SpecOp } from '../renderer/src/lib/specOps'
+
 /** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
 export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
 
@@ -54,7 +60,13 @@ export type PlanningOp =
     }
   | { kind: 'text'; text: string; section?: string }
   | { kind: 'arrow'; dx: number; dy: number; section?: string }
-  | { kind: 'diagram'; source: string; section?: string }
+  /**
+   * A diagram op carries EXACTLY ONE validated content form (Phase 3; MAIN enforces):
+   * Mermaid `source` (engine 'mermaid' — the pre-Phase-3 shape) or a structured `spec`
+   * (engine 'expanse', already deep-validated via `assertDiagramSpec` + the byte cap).
+   */
+  | { kind: 'diagram'; engine: 'mermaid'; source: string; section?: string }
+  | { kind: 'diagram'; engine: 'expanse'; spec: DiagramSpec; section?: string }
 
 // ── Planning-element EDIT op types (S6 — MCP in-place update/remove, MAIN → renderer) ──
 
@@ -75,19 +87,49 @@ export interface PlanningEditItemAdd {
  * The SANITIZED, kind-validated in-place edit for ONE planning element (S6). MAIN resolved the
  * element by id, read its `kind`, and validated + sanitized ONLY the fields that apply to that kind
  * (a field for another kind is rejected before this is minted). All fields optional; MAIN guarantees
- * ≥1. Field → kind: text (note/text) · tint (note) · title (checklist) · source (diagram) · dx/dy
- * (arrow) · setItems/addItems/removeItemIds (checklist).
+ * ≥1. Field → kind: text (note/text) · tint (note) · title (checklist) · source (MERMAID diagram) ·
+ * specOps (EXPANSE diagram, Phase 3 — an ordered, MAIN-validated op batch the renderer re-applies
+ * against the LIVE spec) · dx/dy (arrow) · setItems/addItems/removeItemIds (checklist).
  */
 export interface PlanningEditPatch {
   text?: string
   tint?: PlanningOpTint
   title?: string
   source?: string
+  specOps?: SpecOp[]
   dx?: number
   dy?: number
   setItems?: PlanningEditItemSet[]
   addItems?: PlanningEditItemAdd[]
   removeItemIds?: string[]
+}
+
+// ── Confirm-body semantic diff (diagram Phase 3, Option B — MAIN → renderer presentation) ──
+
+/** One diff row the confirm modal renders (`+` added / `~` changed / `−` removed). Text only. */
+export interface ConfirmDiffRow {
+  sig: '+' | '~' | '−'
+  text: string
+}
+
+/** One titled row group (Added/Changed/Removed — or Nodes/Edges/Groups for a full emit). */
+export interface ConfirmDiffSection {
+  title: string
+  rows: ConfirmDiffRow[]
+}
+
+/**
+ * The OPTIONAL structured diff a confirm request carries for a diagram-spec write (Phase 3,
+ * user-signed Option B). PRESENTATION ONLY: the plain-text `body` remains the authoritative,
+ * complete fallback (Jarvis panel routing renders body only), and nothing in here is
+ * interactive — the modal renders these as coloured text rows + warning chips.
+ */
+export interface ConfirmDiff {
+  /** Mono summary line under the title (counts · byte size · board/element names). */
+  summary: string
+  sections: ConfirmDiffSection[]
+  /** Non-blocking lint warnings (B5) — rendered as warning chips; never block approval. */
+  lints: string[]
 }
 
 /**

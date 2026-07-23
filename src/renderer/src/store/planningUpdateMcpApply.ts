@@ -1,5 +1,6 @@
 import type { ChecklistItem, NoteTint, PlanningElement } from '../lib/boardSchema'
 import type { PlanningEditOp, PlanningEditPatch } from '../../../shared/mcpTypes'
+import { applySpecOps } from '../lib/specOps'
 import { removeElement } from '../canvas/boards/planning/elements'
 
 /**
@@ -104,7 +105,22 @@ function editElement(el: PlanningElement, p: PlanningEditPatch): PlanningElement
       return n
     }
     case 'diagram': {
+      // Phase 3: an EXPANSE diagram's edit arrives as specOps — re-applied here against the LIVE
+      // spec (not MAIN's mirror snapshot), so a raced fresher element is never clobbered; the
+      // applier then re-validates the whole element (assertPlanningElement → assertDiagramSpec)
+      // and the applyBoardPatch choke point captures the prior spec as a v22 revision for free.
+      if (p.specOps !== undefined) {
+        if (el.engine !== 'expanse' || el.spec === undefined) {
+          throw new Error('specOps target is not a structured (expanse) diagram')
+        }
+        return { ...el, spec: applySpecOps(el.spec, p.specOps) }
+      }
       if (p.source === undefined) return el
+      if (el.engine === 'expanse') {
+        // MAIN rejects this pairing; a raced engine flip lands here — never write Mermaid source
+        // onto a structured diagram.
+        throw new Error('a structured (expanse) diagram is edited via specOps, not source')
+      }
       const n = { ...el, source: p.source }
       // A source change invalidates the derived SVG cache; drop it so the card re-renders from source.
       delete n.svgCache

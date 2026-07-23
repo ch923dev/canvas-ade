@@ -24,7 +24,7 @@ describe('materializePlanningOps', () => {
       },
       { kind: 'text', text: 'see ADR 0003' },
       { kind: 'arrow', dx: 80, dy: 40 },
-      { kind: 'diagram', source: 'graph TD\n  A-->B' }
+      { kind: 'diagram', engine: 'mermaid', source: 'graph TD\n  A-->B' }
     ]
     const out = materializePlanningOps(ops, [])
     expect(out.map((e) => e.kind)).toEqual(['note', 'checklist', 'text', 'arrow', 'diagram'])
@@ -277,11 +277,11 @@ describe('materializePlanningOps — 2c presentation (widen / diagram footprint 
 
   it('honors the footprint at materialize: a wide-source diagram is wider, a tall one is taller — both > the 280×200 default', () => {
     const [wide] = materializePlanningOps(
-      [{ kind: 'diagram', source: 'graph LR\n A-->B' }],
+      [{ kind: 'diagram', engine: 'mermaid', source: 'graph LR\n A-->B' }],
       []
     ) as Array<Extract<PlanningElement, { kind: 'diagram' }>>
     const [tall] = materializePlanningOps(
-      [{ kind: 'diagram', source: 'graph TD\n A-->B' }],
+      [{ kind: 'diagram', engine: 'mermaid', source: 'graph TD\n A-->B' }],
       []
     ) as Array<Extract<PlanningElement, { kind: 'diagram' }>>
     expect(wide.w).toBeGreaterThan(tall.w)

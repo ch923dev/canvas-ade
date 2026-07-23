@@ -828,7 +828,13 @@ const api = {
       themeCss?: string
       id: string
     }): Promise<{ ok: true; svg: string } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('diagram:render', req)
+      ipcRenderer.invoke('diagram:render', req),
+    // Mermaid→DiagramSpec convert action: the worker lifts the flowchart parse DB as plain JSON.
+    // `flow` stays `unknown` — the renderer's mermaidToSpec.ts owns the strict mapping/validation.
+    extractFlow: (
+      source: string
+    ): Promise<{ ok: true; flow: unknown } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('diagram:extractFlow', source)
   },
   // ── Project Library — browse files saved under <project>/.canvas/{downloads,assets} (MAIN-confined) ──
   library: {

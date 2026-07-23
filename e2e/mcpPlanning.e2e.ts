@@ -323,4 +323,169 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     await page.waitForTimeout(700)
     await page.screenshot({ path: 'test-results/planning-mcp-sections.png' })
   })
+
+  test('Phase 3: structured spec emit + specOps incremental patch, Option-B diff confirm, read→update loop', async ({
+    page,
+    mcp
+  }) => {
+    test.slow() // two confirm round-trips + mirror propagation + live spec render
+    const planId = await seed(page, 'planning')
+    await expect
+      .poll(
+        async () => {
+          const boards =
+            await mcp.orch.readJson<Array<{ id: string; type: string }>>('canvas://boards')
+          return boards.some((b) => b.id === planId && b.type === 'planning')
+        },
+        { timeout: 8000 }
+      )
+      .toBe(true)
+
+    // EMIT: engine:'expanse' + spec — incl. a deliberately disconnected node so the lint chip
+    // renders on the confirm (warn, never block).
+    const emitP = mcp.orch.call(TOOL, {
+      boardId: planId,
+      elements: [
+        {
+          kind: 'diagram',
+          engine: 'expanse',
+          spec: {
+            version: 1,
+            title: 'Release flow',
+            direction: 'right',
+            nodes: [
+              { id: 'plan', label: 'Plan', status: 'done' },
+              { id: 'build', label: 'Build', status: 'active' },
+              { id: 'island', label: 'Island' }
+            ],
+            edges: [{ id: 'e1', from: 'plan', to: 'build', kind: 'flow' }]
+          }
+        }
+      ]
+    })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    // Option B (user-signed): the modal carries the STRUCTURED diff block — summary + coloured
+    // rows + the disconnected-node lint chip — while the plain body still lists the full content.
+    const diffShown = await evalIn<boolean>(
+      page,
+      `(() => { const d = document.querySelector('[data-testid="confirm-diff"]'); const m = document.querySelector('[data-testid="confirm-modal"]'); return !!d && !!m && d.textContent.includes('3 node(s)') && d.textContent.includes('node plan "Plan" (step · done)') && d.textContent.includes('disconnected') && m.textContent.includes('Release flow') })()`
+    )
+    expect(diffShown).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await emitP)).toBe(true)
+    await expect
+      .poll(() => planningElementKinds(page, planId), { timeout: 8000 })
+      .toEqual(['diagram'])
+    // The spec renders LIVE (DiagramSpecView): all 3 nodes as token divs.
+    await expect
+      .poll(() => evalIn<number>(page, `document.querySelectorAll('.pl-spec-node').length`), {
+        timeout: 8000
+      })
+      .toBe(3)
+
+    // READ: the planning resource returns engine + the FULL spec (ids and all — the B7 remix
+    // property the update loop needs). Wait for the mirror to carry it.
+    type PlanningRead = {
+      elements: Array<{
+        id: string
+        kind: string
+        engine?: string
+        spec?: { nodes: Array<{ id: string }>; edges: Array<{ id: string }> }
+      }>
+    }
+    let diagramId = ''
+    await expect
+      .poll(
+        async () => {
+          const read = await mcp.orch.readJson<PlanningRead>(`canvas://board/${planId}/planning`)
+          const dia = read.elements.find((e) => e.kind === 'diagram')
+          if (!dia || dia.engine !== 'expanse' || !dia.spec) return false
+          diagramId = dia.id
+          return dia.spec.nodes.map((n) => n.id).join(',')
+        },
+        { timeout: 8000 }
+      )
+      .toBe('plan,build,island')
+
+    // UPDATE: a 3-op specOps batch — add a node + its edge, remove the island. One confirm,
+    // rendered as the semantic old→new diff (+ / −), one undo step.
+    const opsP = mcp.orch.call('update_planning_element', {
+      boardId: planId,
+      elementId: diagramId,
+      specOps: [
+        { op: 'upsertNode', node: { id: 'deploy', label: 'Deploy', kind: 'step' } },
+        { op: 'upsertEdge', edge: { id: 'e2', from: 'build', to: 'deploy', kind: 'flow' } },
+        { op: 'removeNode', id: 'island' }
+      ]
+    })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    const opsDiffShown = await evalIn<boolean>(
+      page,
+      `(() => { const d = document.querySelector('[data-testid="confirm-diff"]'); return !!d && d.textContent.includes('+2') && d.textContent.includes('−1') && d.textContent.includes('node deploy "Deploy" (step · neutral)') && d.textContent.includes('node island') })()`
+    )
+    expect(opsDiffShown).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await opsP)).toBe(true)
+    // The live element converges to plan/build/deploy — and the REPLACED spec was captured as a
+    // v22 revision at the applyBoardPatch choke point (no Phase-3 code re-implements history).
+    await expect
+      .poll(
+        async () => {
+          const read = await mcp.orch.readJson<PlanningRead>(`canvas://board/${planId}/planning`)
+          const dia = read.elements.find((e) => e.id === diagramId)
+          return dia?.spec?.nodes.map((n) => n.id).join(',') ?? ''
+        },
+        { timeout: 8000 }
+      )
+      .toBe('plan,build,deploy')
+    const revisions = await page.evaluate(
+      ([boardId, elId]) => {
+        const hook = (
+          globalThis as unknown as {
+            __canvasE2E: {
+              getBoards(): Array<{
+                id: string
+                elements?: Array<{ id: string; revisions?: unknown[] }>
+              }>
+            }
+          }
+        ).__canvasE2E
+        const el = hook
+          .getBoards()
+          .find((b) => b.id === boardId)
+          ?.elements?.find((e) => e.id === elId)
+        return el?.revisions?.length ?? 0
+      },
+      [planId, diagramId] as [string, string]
+    )
+    expect(revisions).toBe(1)
+
+    // ENGINE GATE: specOps against a MERMAID diagram is rejected BEFORE any confirm appears.
+    const mermaidP = mcp.orch.call(TOOL, {
+      boardId: planId,
+      elements: [{ kind: 'diagram', source: 'graph TD\n  A-->B' }]
+    })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    expect(acked(await mermaidP)).toBe(true)
+    let mermaidId = ''
+    await expect
+      .poll(
+        async () => {
+          const read = await mcp.orch.readJson<PlanningRead>(`canvas://board/${planId}/planning`)
+          const m = read.elements.find((e) => e.kind === 'diagram' && e.id !== diagramId)
+          if (m) mermaidId = m.id
+          return !!m
+        },
+        { timeout: 8000 }
+      )
+      .toBe(true)
+    const wrongEngine = await mcp.orch.call('update_planning_element', {
+      boardId: planId,
+      elementId: mermaidId,
+      specOps: [{ op: 'removeNode', id: 'a' }]
+    })
+    expect(rejected(wrongEngine)).toBe(true)
+    expect(await evalIn<boolean>(page, MODAL)).toBe(false) // rejected pre-gate — no modal raised
+  })
 })

@@ -160,7 +160,12 @@ function opCell(op: PlanningOp): { w: number; h: number } {
     case 'arrow':
       return { w: Math.max(GAP, Math.abs(op.dx)), h: Math.max(GAP, Math.abs(op.dy)) }
     case 'diagram':
-      return diagramFootprint(op.source)
+      // Phase 3: a structured spec states its orientation outright; Mermaid is sniffed from source.
+      return op.engine === 'expanse'
+        ? op.spec.direction === 'right'
+          ? DIAGRAM_WIDE
+          : DIAGRAM_TALL
+        : diagramFootprint(op.source)
   }
 }
 
@@ -317,18 +322,32 @@ export function materializePlanningOps(
         break
       }
       case 'diagram':
-        // Footprint follows the agent's source orientation (2c, see diagramFootprint); cell.w/h
-        // already carry it. No svgCache: DiagramCard renders the source via the worker on display.
-        out.push({
-          id: newId(),
-          kind: 'diagram',
-          x,
-          y,
-          w: cell.w,
-          h: cell.h,
-          source: op.source,
-          engine: 'mermaid'
-        })
+        // Footprint follows the agent's orientation (2c / Phase 3); cell.w/h already carry it.
+        // Mermaid: no svgCache — DiagramCard renders the source via the worker on display.
+        // Expanse: the spec is canonical — DiagramSpecView lays out + renders it live.
+        out.push(
+          op.engine === 'expanse'
+            ? {
+                id: newId(),
+                kind: 'diagram',
+                x,
+                y,
+                w: cell.w,
+                h: cell.h,
+                engine: 'expanse',
+                spec: op.spec
+              }
+            : {
+                id: newId(),
+                kind: 'diagram',
+                x,
+                y,
+                w: cell.w,
+                h: cell.h,
+                source: op.source,
+                engine: 'mermaid'
+              }
+        )
         break
     }
   })

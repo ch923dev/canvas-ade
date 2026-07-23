@@ -434,6 +434,11 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     await page.locator('.pl-diagram').click({ position: { x: 24, y: 80 } })
     await expect(page.locator('.pl-diagram-head')).toContainText('Pipeline')
     await expect(page.locator('.pl-diagram-head button[title="Edit source"]')).toHaveCount(0)
+    // Phase 3: the Mermaid→spec convert affordance is Mermaid-only — an expanse card gets NO
+    // convert button either (it IS the converted form; spec editing stays Phase-4 gated).
+    await expect(
+      page.locator('.pl-diagram-head button[title="Convert to structured"]')
+    ).toHaveCount(0)
     // Zoom controls stay (the shared viewport machinery works for both engines).
     await expect(page.locator('.pl-diagram-head button[title="Reset to fit"]')).toBeVisible()
 

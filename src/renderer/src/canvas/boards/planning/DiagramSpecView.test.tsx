@@ -266,6 +266,7 @@ describe('DiagramCard engine branch (expanse)', () => {
         selected
         onDragStart={noop}
         onChangeSource={noop}
+        onConvert={noop}
         onEditStart={noop}
         onCache={noop}
         onResize={noop}
@@ -292,6 +293,7 @@ describe('DiagramCard engine branch (expanse)', () => {
         selected
         onDragStart={noop}
         onChangeSource={noop}
+        onConvert={noop}
         onEditStart={noop}
         onCache={noop}
         onResize={noop}
@@ -318,6 +320,7 @@ describe('DiagramCard engine branch (expanse)', () => {
         selected
         onDragStart={noop}
         onChangeSource={noop}
+        onConvert={noop}
         onEditStart={noop}
         onCache={noop}
         onResize={noop}
@@ -345,6 +348,7 @@ describe('DiagramCard engine branch (expanse)', () => {
           selected
           onDragStart={noop}
           onChangeSource={noop}
+          onConvert={noop}
           onEditStart={noop}
           onCache={noop}
           onResize={noop}

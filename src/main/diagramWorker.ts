@@ -47,6 +47,12 @@ export interface DiagramRenderRequest {
 /** Render result: the SVG markup on success, or a human-readable error string. */
 export type DiagramRenderResult = { ok: true; svg: string } | { ok: false; error: string }
 
+/** Flowchart-extraction result: the plain `{direction, nodes, edges, subgraphs}` snapshot the
+ *  worker lifted from Mermaid's parse DB, or a human-readable error string. Typed `unknown` on
+ *  purpose — the renderer's mermaidToSpec.ts owns the strict shape mapping + validation, so MAIN
+ *  never pretends to know the loose best-effort shape the bridge emits. */
+export type DiagramExtractResult = { ok: true; flow: unknown } | { ok: false; error: string }
+
 let workerWin: BrowserWindow | null = null
 let ready: Promise<BrowserWindow> | null = null
 // Serialize renders: one Mermaid window, one render at a time. Each request chains onto the previous
@@ -189,6 +195,60 @@ export function renderDiagram(req: DiagramRenderRequest): Promise<DiagramRenderR
   return run
 }
 
+async function extractOnce(source: string): Promise<DiagramExtractResult> {
+  let win: BrowserWindow
+  try {
+    win = await ensureWorker()
+  } catch (e) {
+    return {
+      ok: false,
+      error: `worker init failed: ${cleanDiagramError(String((e as Error)?.message ?? e))}`
+    }
+  }
+  // Same injection-safe embedding as renderOnce: the URI-encoded source lands as a pure-ASCII
+  // string literal (no quotes/backslashes/JS line terminators can escape it).
+  const encoded = encodeURIComponent(source)
+  const expr = `window.__extractFlowchart(${JSON.stringify(encoded)})`
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const flow = await Promise.race<unknown>([
+      win.webContents.executeJavaScript(expr, true),
+      new Promise<never>((_resolve, rej) => {
+        timer = setTimeout(() => rej(new Error('extract timed out')), DIAGRAM_RENDER_TIMEOUT_MS)
+      })
+    ])
+    if (typeof flow !== 'object' || flow === null)
+      return { ok: false, error: 'extraction produced no output' }
+    return { ok: true, flow }
+  } catch (e) {
+    const error = cleanDiagramError(String((e as Error)?.message ?? e))
+    // Same recycle discipline as renderOnce: a timed-out parse may have wedged the shared worker
+    // document — destroy it so the next request starts fresh instead of inheriting the hang.
+    if (error.includes('timed out')) disposeDiagramWorker()
+    return { ok: false, error }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Extract a flowchart's parse DB from Mermaid `source` (the explicit convert action). Validates +
+ *  caps input exactly like {@link renderDiagram}, then rides the SAME serialized queue — extraction
+ *  shares the one worker document with renders, so the two must never interleave. Never rejects. */
+export function extractFlowchart(source: string): Promise<DiagramExtractResult> {
+  if (typeof source !== 'string')
+    return Promise.resolve({ ok: false, error: 'source must be a string' })
+  if (source.length === 0) return Promise.resolve({ ok: false, error: 'empty diagram source' })
+  if (source.length > DIAGRAM_MAX_SOURCE)
+    return Promise.resolve({ ok: false, error: `source exceeds ${DIAGRAM_MAX_SOURCE} characters` })
+  const run = queue.then(() => extractOnce(source))
+  // Keep the queue chained even when an extraction throws, but never poison the chain.
+  queue = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 /** Destroy the hidden worker window (app shutdown, main-window close, or render-timeout recycle). */
 export function disposeDiagramWorker(): void {
   const w = workerWin
@@ -203,7 +263,7 @@ export function disposeDiagramWorker(): void {
   }
 }
 
-/** Register the frame-guarded `diagram:render` IPC handler (renderer → MAIN). */
+/** Register the frame-guarded diagram IPC handlers (renderer → MAIN). */
 export function registerDiagramHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindowType | null
@@ -211,5 +271,9 @@ export function registerDiagramHandlers(
   ipcMain.handle('diagram:render', (ev, req: DiagramRenderRequest) => {
     if (isForeignSender(ev, getWin)) throw new Error('diagram:render — forbidden sender')
     return renderDiagram(req)
+  })
+  ipcMain.handle('diagram:extractFlow', (ev, source: string) => {
+    if (isForeignSender(ev, getWin)) throw new Error('diagram:extractFlow — forbidden sender')
+    return extractFlowchart(source)
   })
 }

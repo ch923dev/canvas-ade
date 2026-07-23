@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { ConfirmDiff } from '../../../shared/mcpTypes'
 import { Modal } from './Modal'
 import { useJarvisStore } from '../store/jarvisStore'
 
@@ -30,6 +31,10 @@ interface ConfirmRequest {
   confirmLabel?: string
   denyLabel?: string
   choices?: ConfirmChoices
+  /** Diagram Phase 3 (Option B): optional structured semantic diff for a diagram-spec write —
+   *  rendered as coloured rows + lint chips above the plain body. Presentation only; the body
+   *  stays the complete fallback (and the ONLY thing the Jarvis panel route renders). */
+  diff?: ConfirmDiff
   /** J4: MAIN-stamped Jarvis-tool origin (see routing note in the subscribe effect). */
   origin?: 'jarvis'
 }
@@ -106,18 +111,128 @@ export default function ConfirmModal(): React.ReactElement | null {
       >
         {current.title}
       </h2>
+      {current.diff && (
+        // Diagram Phase 3 (Option B, user-signed mock): semantic-diff rows + lint chips. Pure
+        // presentation over text — every string renders as a text node; the complete plain body
+        // stays below (scrollable) so nothing is reviewable only through this block.
+        <div data-testid="confirm-diff" style={{ margin: '10px 0 0' }}>
+          <div
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: 'var(--fs-meta)',
+              lineHeight: 'var(--lh-meta)',
+              color: 'var(--text-3)',
+              whiteSpace: 'pre-wrap',
+              fontVariantNumeric: 'tabular-nums'
+            }}
+          >
+            {current.diff.summary}
+          </div>
+          <div
+            style={{
+              margin: '8px 0 0',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--r-inner)',
+              background: 'var(--inset)',
+              padding: '8px 0',
+              maxHeight: '38vh',
+              overflowY: 'auto'
+            }}
+          >
+            {current.diff.sections.map((s, si) => (
+              <div key={si}>
+                <div
+                  style={{
+                    padding: '5px 12px 2px',
+                    fontSize: 'var(--fs-micro)',
+                    lineHeight: 'var(--lh-micro)',
+                    fontWeight: 'var(--fw-micro)' as never,
+                    letterSpacing: 'var(--tr-micro)',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-faint)'
+                  }}
+                >
+                  {s.title}
+                </div>
+                {s.rows.map((row, ri) => (
+                  <div
+                    key={ri}
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      padding: '1px 12px',
+                      fontFamily: 'var(--mono)',
+                      fontSize: 'var(--fs-meta)',
+                      lineHeight: '18px',
+                      color: row.sig === '−' ? 'var(--text-3)' : 'var(--text-2)',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word'
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 10,
+                        flex: 'none',
+                        textAlign: 'center',
+                        color:
+                          row.sig === '+'
+                            ? 'var(--ok)'
+                            : row.sig === '~'
+                              ? 'var(--warn)'
+                              : 'var(--err)'
+                      }}
+                    >
+                      {row.sig}
+                    </span>
+                    <span>{row.text}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          {current.diff.lints.length > 0 && (
+            <div style={{ margin: '8px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {current.diff.lints.map((warn, wi) => (
+                <div
+                  key={wi}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'flex-start',
+                    background: 'var(--warn-wash)',
+                    border: '1px solid rgba(232, 179, 57, 0.25)',
+                    borderRadius: 'var(--r-ctl)',
+                    padding: '6px 10px',
+                    fontSize: 'var(--fs-meta)',
+                    lineHeight: 'var(--lh-meta)',
+                    color: 'var(--text-2)'
+                  }}
+                >
+                  <span style={{ color: 'var(--warn)', fontFamily: 'var(--mono)', flex: 'none' }}>
+                    ⚠
+                  </span>
+                  <span>{warn}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <p
         style={{
           margin: '10px 0 18px',
-          fontSize: 'var(--fs-body)',
-          lineHeight: 'var(--lh-body)',
-          color: 'var(--text-2)',
+          // With a structured diff above (Phase 3), the body is the de-emphasized full-text
+          // fallback (still visible + scrollable — never hidden; ADR 0003) at meta size so the
+          // diff + buttons keep the viewport.
+          fontSize: current.diff ? 'var(--fs-meta)' : 'var(--fs-body)',
+          lineHeight: current.diff ? 'var(--lh-meta)' : 'var(--lh-body)',
+          color: current.diff ? 'var(--text-3)' : 'var(--text-2)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           // A long body (e.g. an MCP planning write showing the full content, S2) must not
           // push the Approve/Deny buttons off-screen — keep the body scrollable so the gate
           // stays usable and the full content remains reviewable (ADR 0003).
-          maxHeight: '50vh',
+          maxHeight: current.diff ? '16vh' : '50vh',
           overflowY: 'auto'
         }}
       >

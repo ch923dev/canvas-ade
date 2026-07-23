@@ -13,7 +13,7 @@ import { PlanningContentError } from './mcpPlanning'
  */
 describe('buildPlanningUpdateOp — kind-validated planning edits', () => {
   it('note: accepts text + tint', () => {
-    const op = buildPlanningUpdateOp('n1', 'note', { text: 'now correct', tint: 'green' })
+    const { op } = buildPlanningUpdateOp('n1', 'note', { text: 'now correct', tint: 'green' })
     expect(op).toEqual({
       op: 'update',
       elementId: 'n1',
@@ -33,21 +33,20 @@ describe('buildPlanningUpdateOp — kind-validated planning edits', () => {
   })
 
   it('text: accepts text, rejects tint', () => {
-    expect(buildPlanningUpdateOp('t1', 'text', { text: 'hi' }).patch).toEqual({ text: 'hi' })
+    expect(buildPlanningUpdateOp('t1', 'text', { text: 'hi' }).op.patch).toEqual({ text: 'hi' })
     expect(() => buildPlanningUpdateOp('t1', 'text', { tint: 'blue' })).toThrow(
       PlanningContentError
     )
   })
 
   it('checklist: accepts title + setItems + addItems + removeItemIds', () => {
-    const op = buildPlanningUpdateOp('c1', 'checklist', {
+    const { op } = buildPlanningUpdateOp('c1', 'checklist', {
       title: 'Build progress',
       setItems: [{ id: 'i1', done: true }],
       addItems: [{ label: 'new task' }],
       removeItemIds: ['i2']
     })
     expect(op.op).toBe('update')
-    if (op.op !== 'update') throw new Error('expected update')
     expect(op.patch.title).toBe('Build progress')
     expect(op.patch.setItems).toEqual([{ id: 'i1', done: true }])
     expect(op.patch.addItems).toEqual([{ label: 'new task', done: false }])
@@ -85,19 +84,22 @@ describe('buildPlanningUpdateOp — kind-validated planning edits', () => {
   })
 
   it('checklist: an empty array alongside a real field is ignored (the field still applies)', () => {
-    const op = buildPlanningUpdateOp('c1', 'checklist', { title: 'Build progress', setItems: [] })
+    const { op } = buildPlanningUpdateOp('c1', 'checklist', {
+      title: 'Build progress',
+      setItems: []
+    })
     expect(op.patch).toEqual({ title: 'Build progress' })
   })
 
   it('diagram: accepts source, rejects dx', () => {
     expect(
-      buildPlanningUpdateOp('d1', 'diagram', { source: 'graph TD\n A-->B' }).patch.source
+      buildPlanningUpdateOp('d1', 'diagram', { source: 'graph TD\n A-->B' }).op.patch.source
     ).toBe('graph TD\n A-->B')
     expect(() => buildPlanningUpdateOp('d1', 'diagram', { dx: 10 })).toThrow(PlanningContentError)
   })
 
   it('arrow: requires BOTH dx and dy', () => {
-    expect(buildPlanningUpdateOp('a1', 'arrow', { dx: 10, dy: -5 }).patch).toEqual({
+    expect(buildPlanningUpdateOp('a1', 'arrow', { dx: 10, dy: -5 }).op.patch).toEqual({
       dx: 10,
       dy: -5
     })
@@ -116,7 +118,7 @@ describe('buildPlanningUpdateOp — kind-validated planning edits', () => {
 
   it('sanitizes control characters out of text (mirrors the add path)', () => {
     // A C1 escape (0x9b) is stripped; the newline is kept.
-    const op = buildPlanningUpdateOp('n1', 'note', { text: 'ab\nc' })
+    const { op } = buildPlanningUpdateOp('n1', 'note', { text: 'ab\nc' })
     expect(op.patch.text).toBe('ab\nc')
   })
 })
@@ -139,7 +141,7 @@ describe('describeElement / renderPlanningEditConfirmBody', () => {
   })
 
   it('update body lists each changed field for the human to see', () => {
-    const op = buildPlanningUpdateOp('c1', 'checklist', {
+    const { op } = buildPlanningUpdateOp('c1', 'checklist', {
       setItems: [{ id: 'i1', done: true }],
       addItems: [{ label: 'ship it' }]
     })

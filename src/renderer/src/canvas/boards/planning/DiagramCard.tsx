@@ -25,10 +25,9 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
-  type CSSProperties,
   type ReactElement
 } from 'react'
-import type { DiagramElement } from '../../../lib/boardSchema'
+import type { DiagramElement, DiagramSpec } from '../../../lib/boardSchema'
 import {
   buildDiagramThemeVars,
   buildDiagramThemeCss,
@@ -37,8 +36,10 @@ import {
 } from './diagramTheme'
 import { DiagramRevScrubber } from './DiagramRevScrubber'
 import { DiagramSpecView } from './DiagramSpecView'
+import { DiagramZoomControls } from './DiagramZoomControls'
 import { resizeFromDrag } from './diagramResize'
-import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { wheelZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
+import { useDiagramConvert } from './useDiagramConvert'
 import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
 import { specHitTest } from './specLayout'
 import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
@@ -83,6 +84,10 @@ export interface DiagramCardProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Tracked source commit (sets source + clears svgCache to invalidate the cache). */
   onChangeSource: (id: string, source: string) => void
+  /** Tracked ONE-undo-step engine conversion (mermaid → expanse): commits `spec` + preserves the
+   *  original Mermaid text as `importedFrom`, deleting `source`/`svgCache` (the expanse body
+   *  contract in boardSchema). Fired only with an already-validated spec — never a partial one. */
+  onConvert: (id: string, spec: DiagramSpec, importedFrom: string) => void
   /** Arm one undo checkpoint at the start of an editing session OR a resize drag (beginChange). */
   onEditStart: () => void
   /** Persist a freshly-rendered SVG assetId (UNTRACKED — derived artifact). */
@@ -99,6 +104,7 @@ export const DiagramCard = memo(function DiagramCard({
   selected,
   onSelect,
   onChangeSource,
+  onConvert,
   onEditStart,
   onCache,
   onResize
@@ -147,6 +153,9 @@ export const DiagramCard = memo(function DiagramCard({
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(source)
+  // Explicit mermaid→structured conversion (the ⧉ header action): extract→map→commit pipeline +
+  // the transient ribbon notice live in the hook — every failure leaves the element untouched.
+  const { convertError, convertClick } = useDiagramConvert(id, source, onEditStart, onConvert)
   const urlRef = useRef<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Live corner-resize gesture: start pointer (screen px) + start size + the board-local→screen
@@ -458,15 +467,6 @@ export const DiagramCard = memo(function DiagramCard({
   const showHeader = selected || editing
   // The editor component this editing session latched at `</>`-open (null → textarea fallback).
   const SessionEditor = editing ? editorAtOpenRef.current : null
-  const zoomBtn = (disabled: boolean): CSSProperties => ({
-    all: 'unset',
-    cursor: disabled ? 'default' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
-    padding: '0 5px',
-    borderRadius: 4,
-    fontFamily: 'var(--term-mono)',
-    color: 'var(--text-3)'
-  })
 
   return (
     <div
@@ -540,52 +540,28 @@ export const DiagramCard = memo(function DiagramCard({
             />
           )}
           {!editing && (expanse || svgUrl) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 1 }} title="Scroll to zoom">
-              <button
-                type="button"
-                title="Zoom out"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  applyZoom(stepZoom(zoom, -1))
-                }}
-                disabled={zoom <= ZOOM_MIN}
-                style={zoomBtn(zoom <= ZOOM_MIN)}
-              >
-                −
-              </button>
-              <button
-                type="button"
-                title="Reset to fit"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  applyZoom(ZOOM_FIT)
-                }}
-                style={{
-                  all: 'unset',
-                  cursor: 'pointer',
-                  minWidth: 34,
-                  textAlign: 'center',
-                  color: 'var(--text-2)',
-                  fontVariantNumeric: 'tabular-nums'
-                }}
-              >
-                {Math.round(zoom * 100)}%
-              </button>
-              <button
-                type="button"
-                title="Zoom in"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  applyZoom(stepZoom(zoom, 1))
-                }}
-                style={zoomBtn(false)}
-              >
-                +
-              </button>
-            </div>
+            <DiagramZoomControls zoom={zoom} onZoom={applyZoom} />
+          )}
+          {!expanse && !editing && (
+            <button
+              type="button"
+              title="Convert to structured"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                void convertClick()
+              }}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: '1px 5px',
+                borderRadius: 4,
+                fontFamily: 'var(--term-mono)',
+                color: 'var(--text-3)'
+              }}
+            >
+              ⧉
+            </button>
           )}
           {!expanse && (
             <button
@@ -764,8 +740,9 @@ export const DiagramCard = memo(function DiagramCard({
         </div>
       )}
 
-      {/* Inline error ribbon while editing — so a bad edit reads as a parse error, not silence. */}
-      {editing && error && (
+      {/* Inline error ribbon: a parse error while editing (so a bad edit reads as a parse error,
+          not silence), or a transient convert failure (auto-cleared; the element is untouched). */}
+      {(convertError !== null || (editing && error)) && (
         <div
           style={{
             position: 'absolute',
@@ -783,7 +760,7 @@ export const DiagramCard = memo(function DiagramCard({
             pointerEvents: 'none'
           }}
         >
-          {error}
+          {convertError ?? error}
         </div>
       )}
 
