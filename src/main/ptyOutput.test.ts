@@ -257,6 +257,17 @@ describe('ringWrapped (T2·D1)', () => {
     pushRing(r, 'efgh') // now over cap → head trimmed, saturated
     expect(ringWrapped(r)).toBe(true)
   })
+  it('is FALSE at exactly cap with nothing evicted (off-by-one: pushRing trims only on strict overflow)', () => {
+    const r = createRing(6)
+    pushRing(r, 'abcdef') // total === cap, written === cap, head intact (no trim happened)
+    expect(r.total).toBe(6)
+    expect(r.written).toBe(6)
+    expect(ringWrapped(r)).toBe(false) // a `total >= cap` check would wrongly report wrapped here
+    // …and a full-ring replay must therefore NOT drop the (complete) first line.
+    const r2 = createRing(12)
+    pushRing(r2, 'first\nsecond') // 12 chars === cap exactly, untouched
+    expect(readRingReplay(r2)).toBe('first\nsecond')
+  })
 })
 
 describe('readRingReplay (T2·D1 full-ring replay guard)', () => {

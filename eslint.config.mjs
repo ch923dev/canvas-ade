@@ -315,14 +315,15 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
-    // 700→702 (T2 terminal defects, exact snapshot splice): the D2 accounting is factored into pure,
+    // 700→703 (T2 terminal defects, exact snapshot splice): the D2 accounting is factored into pure,
     // unit-tested helpers in terminalSpawnMath.ts (nextReceived / buildSnapshot / snapshotWatermark),
-    // but two lines are hook-bound choke points that cannot leave the spawn closure — the per-message
+    // but three lines are hook-bound choke points that cannot leave the spawn closure — the per-message
     // `receivedBytesRef.current = nextReceived(...)` count inside `port.onmessage` (it closes over the
-    // session's port + refs) and the `receivedBytesRef.current = 0` reset beside gridFittedRef on each
-    // fresh (re)spawn. The extraction already pulled the file back from +12 to +2. Ratchet DOWN on the
-    // next split of this Tier-3 hook. See docs/contributing/file-size-doctrine.md.
-    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
+    // session's port + refs), the `receivedBytesRef.current = 0` reset beside gridFittedRef on each
+    // fresh (re)spawn, and the snapshotter's `coalescerRef.current?.dropped() ?? 0` argument (reviewer
+    // fix: subtract hold-cap drops from the boundary). The extraction already pulled the file back from
+    // +13 to +3. Ratchet DOWN on the next split of this Tier-3 hook. See docs/contributing/file-size-doctrine.md.
+    rules: { 'max-lines': ['error', { max: 703, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

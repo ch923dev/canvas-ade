@@ -170,6 +170,19 @@ describe('createTerminalWriteCoalescer — scrollback-bounded hold (firehose cap
     h.runFrame()
     expect(h.writes).toEqual(['222333'])
   })
+
+  it('T2·D2: dropped() tracks cumulative evicted bytes (snapshot-boundary correction) + resets on clear', () => {
+    const h = harness({ live: false, cap: 10 })
+    expect(h.c.dropped()).toBe(0)
+    h.c.enqueue('AAAAA') // 5
+    h.c.enqueue('BBBBB') // 10 (== cap, retained)
+    h.c.enqueue('CCCCC') // 15 → drop oldest 'AAAAA'
+    expect(h.c.dropped(), 'the 5 evicted bytes are counted').toBe(5)
+    h.c.enqueue('DDDDD') // 20 → drop 'BBBBB' → 10
+    expect(h.c.dropped(), 'cumulative, not reset by a further drop').toBe(10)
+    h.c.clear()
+    expect(h.c.dropped(), 'a restart/teardown resets the tally').toBe(0)
+  })
 })
 
 describe('createTerminalWriteCoalescer — clear (restart / teardown)', () => {

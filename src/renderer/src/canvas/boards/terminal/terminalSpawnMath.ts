@@ -138,15 +138,17 @@ export function shouldReleaseFitHold(
  * T2·D2 — the EXACT snapshot/tail splice boundary on the PTY ring's `written` byte axis. A
  * background switch-away serializes the RENDERED xterm buffer (the snapshot preface) and MAIN
  * replays the raw ring tail AFTER it on switch-back; the boundary between them must be exact or the
- * gap duplicates (overlap) / loses (gap) bytes. It is exactly the count of bytes RENDERED into the
+ * seam duplicates (overlap) / loses (gap) bytes. It is exactly the count of bytes RENDERED into the
  * snapshot = bytes the renderer RECEIVED on the port (`received`, ring-axis, seeded by MAIN's adopt
- * `sync`) minus the bytes the coalescer still HOLDS unrendered (`held` — a hidden board's queued
- * tail belongs to the post-snapshot replay, not the preface). Clamped ≥ 0. Reported to MAIN, which
- * splices `readRingSince(watermark)` after the preface — replacing the old approximate
- * handler-entry ring count.
+ * `sync`) minus the bytes NOT applied to xterm: the coalescer's still-queued `held` bytes (a hidden
+ * board's tail belongs to the post-snapshot replay) AND its hold-cap `dropped` bytes (evicted,
+ * never rendered). Subtracting `dropped` too keeps a hidden firehose past `holdCap()` from
+ * over-advancing the boundary — otherwise those evicted bytes (still in MAIN's larger ring) land in
+ * NEITHER side, re-opening the gap; subtracting them turns any residual seam into a safe overlap.
+ * Clamped ≥ 0. MAIN splices `readRingSince(watermark)` after the preface.
  */
-export function snapshotWatermark(received: number, held: number): number {
-  return Math.max(0, received - held)
+export function snapshotWatermark(received: number, held: number, dropped: number): number {
+  return Math.max(0, received - held - dropped)
 }
 
 /**
@@ -170,8 +172,9 @@ export function nextReceived(prev: number, m: { t: string; d?: string; written?:
 export function buildSnapshot(
   text: string | undefined,
   received: number,
-  held: number
+  held: number,
+  dropped: number
 ): { text: string; watermark: number } | null {
   if (typeof text !== 'string') return null
-  return { text, watermark: snapshotWatermark(received, held) }
+  return { text, watermark: snapshotWatermark(received, held, dropped) }
 }

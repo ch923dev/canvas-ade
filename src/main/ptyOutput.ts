@@ -133,9 +133,16 @@ export function trimWrappedReplayHead(joined: string, wrapped: boolean): string 
   return nl >= 0 && nl < joined.length - 1 ? joined.slice(nl + 1) : joined
 }
 
-/** Whether the ring has wrapped (is saturated at the cap) — its head chunk was trimmed to fit. */
+/**
+ * Whether the ring has WRAPPED — i.e. `pushRing` has actually evicted/trimmed at least once, so the
+ * head chunk may be a torn line. Uses the monotonic `written > cap` (never decremented), NOT
+ * `total >= cap`: `pushRing` trims only on strict overflow (`total > cap`), so a ring that lands
+ * EXACTLY on `cap` with nothing ever evicted still has a fully-intact head — `total >= cap` would
+ * mis-flag it as wrapped and `trimWrappedReplayHead` would drop a complete first line (silent data
+ * loss). `written > cap` distinguishes "exactly full, nothing evicted yet" from "genuinely wrapped".
+ */
 export function ringWrapped(ring: OutputRing): boolean {
-  return ring.total >= ring.cap
+  return ring.written > ring.cap
 }
 
 /**

@@ -170,17 +170,22 @@ describe('shouldReleaseFitHold — fit-release trigger + respawn re-arm (T2·D3,
 })
 
 describe('snapshotWatermark — exact snapshot/tail splice boundary (T2·D2, pure)', () => {
-  it('is the received count when nothing is held (fully-rendered live board)', () => {
+  it('is the received count when nothing is held or dropped (fully-rendered live board)', () => {
     // The common switch-away case: coalescer caught up → boundary == everything received.
-    expect(snapshotWatermark(4096, 0)).toBe(4096)
+    expect(snapshotWatermark(4096, 0, 0)).toBe(4096)
   })
   it('excludes still-held (unrendered) bytes so they land in the post-snapshot replay tail', () => {
     // A hidden board holding 300 bytes: only 700 are IN the snapshot, so the boundary is 700 and
     // the 300 held bytes are replayed from MAIN's ring on switch-back (no gap).
-    expect(snapshotWatermark(1000, 300)).toBe(700)
+    expect(snapshotWatermark(1000, 300, 0)).toBe(700)
   })
-  it('never goes negative (held can transiently exceed received during an adopt replay)', () => {
-    expect(snapshotWatermark(50, 200)).toBe(0)
+  it('ALSO excludes hold-cap dropped bytes (reviewer fix: else the gap re-opens for a hidden firehose)', () => {
+    // 1000 received, 300 still queued, 200 evicted by trim() → only 500 rendered into the snapshot.
+    // Subtracting dropped keeps those 200 (still in MAIN's ring) in the replay tail (overlap, not gap).
+    expect(snapshotWatermark(1000, 300, 200)).toBe(500)
+  })
+  it('never goes negative (held/dropped can transiently exceed received during an adopt replay)', () => {
+    expect(snapshotWatermark(50, 200, 100)).toBe(0)
   })
 })
 
@@ -207,14 +212,14 @@ describe('nextReceived — ring-axis byte counter reducer (T2·D2, pure)', () =>
 })
 
 describe('buildSnapshot — persisted snapshot + exact boundary (T2·D2, pure)', () => {
-  it('pairs the serialized text with received−held as the boundary', () => {
-    expect(buildSnapshot('BUFFER', 1000, 300)).toEqual({ text: 'BUFFER', watermark: 700 })
+  it('pairs the serialized text with received−held−dropped as the boundary', () => {
+    expect(buildSnapshot('BUFFER', 1000, 300, 200)).toEqual({ text: 'BUFFER', watermark: 500 })
   })
   it('is null when there is nothing to serialize (no serializer / non-string)', () => {
-    expect(buildSnapshot(undefined, 1000, 0)).toBeNull()
+    expect(buildSnapshot(undefined, 1000, 0, 0)).toBeNull()
   })
   it('keeps an empty string (the registry skips blanks itself) with a 0-clamped boundary', () => {
-    expect(buildSnapshot('', 0, 50)).toEqual({ text: '', watermark: 0 })
+    expect(buildSnapshot('', 0, 50, 0)).toEqual({ text: '', watermark: 0 })
   })
 })
 

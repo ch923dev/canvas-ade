@@ -744,14 +744,15 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // S3: publish this term's buffer serializer so the app can flush its scrollback to the
     // `.canvas/terminal/<id>.snapshot` sidecar on quit / window-close / project-switch (see
     // terminalSnapshotRegistry). Unregistered on teardown. A new term starts un-restored.
-    // T2·D2: persist the serialized buffer + the EXACT splice boundary (received minus the bytes the
-    // coalescer still HOLDS unrendered — a hidden board's queued tail belongs to the post-snapshot
-    // replay, not the preface). buildSnapshot returns null when there is nothing to serialize.
+    // T2·D2: persist the serialized buffer + the EXACT splice boundary (received minus the bytes NOT
+    // applied to xterm — the coalescer's still-queued `held()` tail AND its hold-cap `dropped()`
+    // evictions). buildSnapshot returns null when there is nothing to serialize.
     registerTerminalSnapshotter(board.id, () =>
       buildSnapshot(
         serializeAddonRef.current?.serialize(),
         receivedBytesRef.current,
-        coalescerRef.current?.held() ?? 0
+        coalescerRef.current?.held() ?? 0,
+        coalescerRef.current?.dropped() ?? 0
       )
     )
     setRestored(false)
