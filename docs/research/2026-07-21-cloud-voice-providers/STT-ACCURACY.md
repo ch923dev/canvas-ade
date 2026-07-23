@@ -273,6 +273,56 @@ Design rules, each sourced:
 
 ## 6. Provider recommendation for the batch pass
 
+### 6.0 First measured run — 2026-07-23 (own voice, 30 utterances, `scripts/stt-eval`)
+
+The harness is built (`scripts/stt-eval/`, `feat/stt-eval`). First corpus recorded: **30 read
+utterances, 199.9 s, 16 kHz mono, one speaker/mic/room** — read speech, so absolute WER is
+optimistic; the signal is the *relative* picture and the *failure-mode split*. Only
+`OPENROUTER_API_KEY` was available, so **only OpenRouter ran** (every other engine SKIPPED for a
+missing key — Groq/Deepgram/AssemblyAI/OpenAI/local are still unmeasured).
+
+| Engine | Bias | WER | Keyterm exact | Keyterm loose | Recoverable gap | Median |
+|---|---|---:|---:|---:|---:|---:|
+| OpenRouter `openai/whisper-large-v3` | unbiased | 35.3% | 27.4% | 64.5% | 37.1 pt | 698 ms |
+| OpenRouter `openai/whisper-large-v3` | biased | **35.3%** | **27.4%** | **64.5%** | 37.1 pt | 725 ms |
+
+Three findings, one of them answers an open question outright:
+
+1. **OpenRouter's `/audio/transcriptions` ignores keyterm biasing — CONFIRMED, not inferred.**
+   The biased and unbiased columns are **byte-identical** (same WER, same exact/loose, term-for-term).
+   Passing a `prompt`/keyterm list changes nothing. That closes open-question §8.4 below and
+   **disqualifies OpenRouter as the accuracy engine**: biasing is the single biggest lever we have
+   (§3.1) and this endpoint has no seam for it. It also only offers whisper-lineage models (no
+   nova-3 / Universal-class), so there is no better model to select our way out of it either.
+
+2. **The 35.3% WER is dominated by identifier *formatting*, not misrecognition.** Plain-English
+   utterances scored ~0% (e.g. "Push with no verify to skip the pre-push end-to-end gate." came back
+   verbatim, hyphens and all). The WER is concentrated entirely in technical tokens, and it splits cleanly:
+   - **Formatting-recoverable (~half the terms): heard right, spelled wrong.** `utilityProcess`
+     → "utility process", `contextIsolation` → "context isolation", `getUserMedia` → "get user media",
+     `add_card`/`move_card`/`update_card`, `electron-builder`, `node-pty`, `schemaVersion`, `userData`,
+     `safeStorage` — all **0% exact but 100% loose**. This is exactly the class §3.2's deterministic
+     replacement layer recovers. The **37-point exact→loose gap is the prize**, and it is
+     provider-independent and client-side.
+   - **Genuinely misheard (~35% of terms): 0% loose — the phonemes were lost.** `voiceIpc` → "boys of
+     easy", `MessagePort` → "message board", `useVoiceCapture` → "use of voice capture", `llmKeyStore`,
+     `createTtsRunner`, `ipcRenderer`, `sherpa-onnx`, `Groq`, `AssemblyAI`, `invoke`, `lint`, `vitest`,
+     `typecheck`, `zustand`. These need **biasing or LLM post-correction** — and on OpenRouter biasing
+     is unavailable, so on OpenRouter they are simply lost.
+
+3. **This validates the two-pass plan (§5) and re-orders the roadmap.** The cheapest, highest-ROI,
+   provider-independent win is the deterministic formatting layer (§3.2): on this run it would lift
+   keyterm-exact from 27% toward the 64% loose ceiling for **zero** provider dependence. The
+   genuinely-misheard bucket is what the provider choice actually turns on — which makes measuring the
+   **biasing-capable** providers (Groq `prompt`, Deepgram `keyterm`, AssemblyAI `keyterms_prompt`) the
+   next real experiment. Groq is free-tier → the cheapest next measurement.
+
+**Net: OpenRouter is rejected for STT** (its TTS/Kokoro role in PLAN.md Phase 1 is untouched — that
+finding stands). The provider decision below is **still a recommendation, not yet a measurement** —
+the biasing-capable engines remain unrun for lack of keys.
+
+### 6.1 Recommendation (to verify once keys exist)
+
 Given the code-vocabulary benchmark gap, pick on **biasing headroom + latency + cost**, then verify
 with our own eval:
 
@@ -300,10 +350,10 @@ needs a **WAV header wrapper** around our PCM buffer. Trivial (44 bytes), but it
 
 - **§2.1 STT pick is superseded.** Deepgram-streaming-first → Groq-batch-first with AssemblyAI as
   the accuracy tier. Streaming Deepgram becomes optional, not the default.
-- **OpenRouter STT stops being a consolation prize.** PLAN.md §2.3 dismissed it as "batch only, so
-  not viable." Under push-to-talk, **batch-only is exactly the right shape** — it just needs to
-  expose a biasing param, which is unverified for OpenRouter's transcription endpoint. Worth
-  checking; if it does, it's another zero-new-key option.
+- **OpenRouter STT: checked and rejected (2026-07-23, §6.0).** Batch-only was the right *shape* under
+  push-to-talk, but its `/audio/transcriptions` endpoint **ignores keyterm biasing** (biased ≡ unbiased,
+  measured) and only serves whisper-lineage models. Without a biasing seam it can't touch the
+  genuinely-misheard bucket, so it is out as the STT accuracy engine. (Its TTS role is unaffected.)
 - **New config surface**: `sttMode: 'streaming' | 'pushToTalk'`, keyterm source toggles, replacement
   rules, LLM-correction toggle (default off).
 - **Cost rails get much less urgent.** At Groq's $0.04/hr, the monthly-cap machinery in PLAN.md
@@ -318,12 +368,15 @@ needs a **WAV header wrapper** around our PCM buffer. Trivial (44 bytes), but it
 1. **Push-to-talk instead of, or alongside, streaming?** The two-pass design keeps streaming as the
    ghost draft, so "instead of" isn't required — but shipping only push-to-talk is simpler and
    matches Claude Code / superwhisper / VoiceInk convention.
-2. **Does the eval come first?** Recommend yes. It's a day of work and it converts three guesses
-   into measurements.
+2. **Does the eval come first?** ✅ RESOLVED — built and run (§6.0). First run measured OpenRouter and
+   killed it as an STT candidate. Still owed: Groq/Deepgram/AssemblyAI/local runs (need keys/model).
 3. **How far do we take repo-derived keyterms?** Static list only (ships tomorrow) vs file-tree
-   derived vs CodeGraph symbols (best, but opt-in per repo).
+   derived vs CodeGraph symbols (best, but opt-in per repo). *Sharpened by §6.0:* biasing only helps
+   the genuinely-misheard bucket; the formatting bucket is fixed by §3.2 regardless of keyterm source.
 4. **LLM post-correction — ship at all?** Real ~30% relative gain, real hallucination risk. Recommend
    building it behind an off-by-default toggle so the eval can measure it on our own audio.
+5. ~~Does OpenRouter's transcription endpoint expose a biasing param?~~ ✅ RESOLVED 2026-07-23 — **no.**
+   Biased and unbiased runs came back byte-identical (§6.0). OpenRouter is out for STT accuracy.
 
 ---
 
