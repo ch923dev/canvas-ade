@@ -40,7 +40,10 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const next = () => argv[++i]
-    if (a === '--engines') args.engines = next()
+    // A bare `--` is the end-of-options separator; some pnpm setups forward it verbatim
+    // (`pnpm stt:eval -- --engines openai` → argv includes "--"). Skip it, don't error.
+    if (a === '--') continue
+    else if (a === '--engines') args.engines = next()
     else if (a === '--manifest') args.manifest = next()
     else if (a === '--bias-cap') args.biasCap = Number(next())
     else if (a === '--only')
