@@ -708,6 +708,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // absent id resolves to the sticky last-used, an unknown id degrades to the Canvas default.
       theme: terminalThemeColors(resolveInitialThemeId(themeIdRef.current)),
       allowProposedApi: true,
+      // T3 · xterm 6.0 — DEC 2026 synchronized output. 6.0 parses `CSI ?2026 h/l` NATIVELY and buffers
+      // rendering between BSU/ESU so a TUI's frame paints atomically — no partial-frame repaint, the
+      // scrollback-litter class (claude-code#51828). 5.5 had no 2026 support, so the sequences Claude
+      // Code emits were IGNORED; the bump alone "wires" it — there is no enable flag (the state is the
+      // read-only `term.modes.synchronizedOutputMode`). It composes with the Lane A write-coalescer:
+      // the coalescer batches term.write at rAF, and xterm holds the render until ESU even across
+      // coalescer flushes — two independent, complementary batch boundaries, no double-buffer of data.
+      // reflowCursorLine (new in 6.0) is LEFT DEFAULT (false): it only affects xterm's native reflow,
+      // which the S2 backstop already bypasses for the corruption-prone established-grid cols change
+      // (serialize→resize→reset→rewrite); false matches 5.5 and lets the shell own the cursor line.
       // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell that never releases while a
       // board stays mounted at LOD. Now configurable per board (Appearance tab) with a sticky
       // default; absent => 2000. Capped at 50000 (~70 MB worst case/terminal — see

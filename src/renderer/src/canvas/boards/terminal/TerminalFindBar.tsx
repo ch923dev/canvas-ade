@@ -71,6 +71,14 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
   // (caught by the Ctrl+F e2e under load: Enter to 2/3, late settle pushed it to 3/3). The
   // step's own find call refreshes the decorations/count anyway, so the settle is redundant then.
   const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // @xterm/addon-search 0.16 bug (T3, xterm 6.0 bump): SearchAddon.findNext assigns its
+  // `lastSearchOptions = n` BEFORE the `didOptionsChange(n)` check reads it, so toggling
+  // caseSensitive/regex on the SAME term always sees "no change" → it skips `_highlightAllMatches`,
+  // and `onDidChangeResults` re-fires the STALE count (match-case ON never narrows). We detect an
+  // option change and `clearDecorations()` first: that resets the addon's cached term
+  // (clearDecorations → clearCachedTerm), so the next findNext recomputes the decorations + count at
+  // the new options. A pure query change needs no clear — the term differs from the cache already.
+  const optSigRef = useRef({ caseSensitive, regex })
   useEffect(() => {
     const addon = api.addonRef.current
     if (!addon) return
@@ -78,6 +86,10 @@ function TerminalFindBarImpl({ api }: { api: TerminalFindApi }): ReactElement {
       addon.clearDecorations()
       return
     }
+    if (optSigRef.current.caseSensitive !== caseSensitive || optSigRef.current.regex !== regex) {
+      addon.clearDecorations() // option toggle on the same term — force a fresh recount (0.16 bug above)
+    }
+    optSigRef.current = { caseSensitive, regex }
     api.flushPending()
     const search = (): boolean => {
       try {

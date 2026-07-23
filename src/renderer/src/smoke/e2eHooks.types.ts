@@ -100,6 +100,18 @@ export interface CanvasE2E {
   /** Reset a terminal's buffer and write known text (selection-shim sliver). */
   resetTerminalWrite: (id: string, text: string) => void
   /**
+   * Append-write raw bytes to a terminal WITHOUT resetting (unlike resetTerminalWrite) — drives a
+   * multi-chunk "streaming" sequence so a spec can interleave writes with a resize / full-view
+   * enter mid-stream and prove the buffer stays intact (no litter/reflow corruption). T3.
+   */
+  writeTerminal: (id: string, text: string) => void
+  /**
+   * The terminal's live DEC 2026 synchronized-output mode (`term.modes.synchronizedOutputMode`):
+   * true between a parsed BSU (`CSI ?2026 h`) and ESU (`CSI ?2026 l`). Proves xterm 6.0 HONORS the
+   * synchronized-output frames Claude Code emits — 5.5 had no support, so it is always false there. T3.
+   */
+  terminalSyncOutput: (id: string) => boolean
+  /**
    * Screen-pixel point inside cell (col,row) for a terminal, from the SCALED screen rect.
    * `fx`/`fy` are the intra-cell fractions (0..1, default 0.5 = center). Use a non-center
    * fraction to land UNAMBIGUOUSLY inside a cell — xterm rounds at the exact half-cell
