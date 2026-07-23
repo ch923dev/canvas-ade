@@ -3173,3 +3173,106 @@ on my first push) confirmed + fixed (`549dca27`) + inline-dispositioned. Gotcha 
 units inside an Expanse board leaks `CANVAS_RECAP_BOARD` into `process.env` → recap-env specs fail
 locally but pass in CI; `pathSafe` junction-realpath specs fail on the worktree node_modules junction
 too (and on `main`) — both ambient, not regressions.
+
+## PR #368 — STT eval harness: measure WER + keyterm recall to pick a cloud STT provider (Phase 1.5) (v0.24.2 → reconciled 0.24.3) — 2026-07-23
+
+**Scripts + docs only — nothing in the Electron bundle.** An offline STT evaluation harness
+(`scripts/stt-eval/`) to choose a cloud speech-to-text provider from measured numbers on our own
+audio, since no public benchmark measures WER on code/programming vocabulary. Cheap trio + its own
+unit tests are the gate; the app is byte-identical to `main`. Companion research:
+`docs/research/2026-07-21-cloud-voice-providers/{PLAN,STT-ACCURACY}.md`.
+
+**What it measures.** Every engine × {biased, unbiased} on two metrics — WER (Levenshtein over
+normalised tokens; code separators split so `--no-verify` ≡ "no verify") and **keyterm recall**
+scored `exact` (verbatim, pasteable) vs `loose` (identifier-folded). The exact→loose gap is the
+actionable signal: precisely what a deterministic formatting layer recovers. Six engine adapters
+behind one interface (`local`/`groq`/`openrouter`/`openai`/`assemblyai`/`deepgram`); a missing key →
+SKIPPED with a printed reason, never silently dropped. Run-wide bias list capped (default 30) and
+never the utterance's own keyterms. Runner flags `--delay` (rate-limit throttle) and `--post-format`.
+
+**Measured (own voice, 30 utterances, 16 kHz).** OpenAI `gpt-4o-transcribe` biased = 23.1% WER /
+69.4% keyterm-exact (the accuracy leader; biasing lift +29 pt). OpenRouter's `/audio/transcriptions`
+**ignores keyterm biasing** — biased ≡ unbiased byte-identical on two different models → rejected for
+STT (its TTS/Kokoro role via `/audio/speech` is untouched). The residual WER is identifier
+**formatting**, not misrecognition. The **§3.2 deterministic formatting layer** (`formatRestore.mjs`:
+fold repo symbols → canonical, greedy longest-match word-window rewrite, whitespace-only inter-word
+gaps, ambiguous folds dropped) closes the gap: gpt-4o-transcribe biased **69.4% → 83.9% keyterm-exact**.
+**Decision recorded:** OpenAI `gpt-4o-transcribe` direct + prompt biasing + the formatting layer;
+Groq turbo is the budget fallback. This feeds Phase 2 app integration (`feat/voice-cloud-stt`).
+
+**Verified.** 84 unit tests (`wer`/`wav`/`corpus`/`report`/`formatRestore`, `scripts/**/*.test.ts` in
+the `unit-node` project) + cheap trio green repo-wide; end-to-end proven against a fake OpenAI-shaped
+vendor on 127.0.0.1 (no network); full e2e matrix green at the pre-push gate (311 passed). No app
+e2e surface touched. **claude-review [warning]** caught a real false-merge bug in `formatRestore`
+(multi-word matcher folded across punctuation, e.g. "add. card" → `add_card`) — fixed (`cf515f7c`,
+whitespace-only inter-word gaps) + inline-dispositioned; the honest re-score is 83.9% (was 85.5% with
+the bug over-crediting coincidental false merges). **CodeQL** log-injection on `record.mjs:108`
+dismissed as false positive (`id` allowlisted against the fixed prompt-id set at :95-97).
+
+**Version note.** Bumped to 0.24.2 on `feat/stt-eval`, which collided with #367 (flicker-free
+terminals) landing at 0.24.2 while #368 was in review — a concurrent-merge artifact. Main reconciled
+to **0.24.3** in this build-history commit so the version stays monotonic. Recorded corpus audio +
+raw transcripts stay gitignored; `corpus/prompts.json` tracked for reproducibility.
+
+## PR #370 — Cloud STT (OpenAI gpt-4o-transcribe) for voice dictation (Phase 2) (v0.24.3 → 0.25.0) — 2026-07-23
+
+**The first cloud tier for voice.** Wires the Phase-1.5 provider decision (#368) into the app: a
+batch **transcribe-on-release** cloud STT engine (OpenAI `gpt-4o-transcribe`), selectable in Settings ›
+Voice alongside local sherpa-onnx. **Composite `VoiceEngineHandle`, in-main** (decision #4, no
+utilityProcess → the OpenAI key never crosses a process boundary): `cloudSttEngine.ts` wraps the local
+sherpa handle and overrides only the 3 STT methods (`startSession`/`stopSession`/`onEngineFailure`);
+TTS (Kokoro) + wake-word delegate straight through, untouched.
+
+**The pipeline.** While the hotkey is held the renderer streams `{t:'frame'}` Int16 PCM over the
+session port; the engine buffers it. On `{t:'eos'}` → assemble a 16 kHz mono WAV (`voiceWav.ts`, TS
+port of #368's `wav.mjs`) → one multipart POST `/v1/audio/transcriptions` (`openaiTranscribe.ts`;
+gpt-4o-transcribe · json · temperature 0 · language en · top-30 symbol prompt) → deterministic
+`formatRestore` (`voiceFormatRestore.ts`, TS port of #368's **fixed** `formatRestore.mjs`+`wer.mjs` —
+**83.9% keyterm-exact**, the honest re-score after #368's false-merge fix, not the pre-fix 85.5%) →
+deliver. The key resolves MAIN-side inside `openaiTranscribe`'s `getKey` closure and is written
+straight onto the `Authorization` header; injectable `FetchLike` so units never hit the network.
+
+**Out-of-band delivery (the port-close subtlety).** `useVoiceCapture` closes its session port
+synchronously right after posting `{t:'eos'}`, so a batch final produced ~0.8 s later can't ride back
+on it (local STT never needs to — it streams finals WHILE held). So the cloud result flows over a new
+`voice:transcript` IPC event (`transcribing`/`final`/`error`), wired like `voice:engine:event`; frames
++ eos still flow renderer→MAIN over the port unchanged. The renderer's final-routing
+(`consumeFinal`→Jarvis seam / `finalReceived`) was extracted to one `applyFinal` used by both paths.
+
+**File-tree symbol biasing (decision #1).** `voiceSymbols.ts` scans the open project's identifiers
+(bounded async walk; ignores node_modules/.git/build; distinctive-token heuristic drops keywords /
+common words), freq-ranks: top-30 = the biasing prompt (long glossaries backfire, §3.1), full uncapped
+set = the formatRestore dictionary (§3.2). Cached + self-refreshing on project switch (a just-switched
+project serves EMPTY until its background rebuild lands, never the previous project's symbols).
+
+**New "transcribing…" UX (design-gated).** Cloud emits no live partials, so a token-faithful design
+mock (rendered + screenshot-signed-off; 3 `AskUserQuestion` decisions incl. the side-channel approach)
+drove a calm pill accent-wave + a flyout pulsing-dot indicator that fill the ~0.8 s batch gap; the
+final folds into the editable draft. Settings › Voice gains the enabled Cloud option + an OpenAI-key
+row (writes the SHARED `openai` key slot via `llm:setKey`; renderer sees presence only) + a model
+field — extracted to `SettingsVoiceCloud.tsx` to keep `SettingsVoiceSection` under its max-lines
+ratchet. A cloud-selected-but-no-key state falls back to local + surfaces a "set OpenAI key" note
+(never silent).
+
+**Security (unchanged invariants).** OpenAI key via `keyForProvider('openai', env, keyStore)` MAIN-side
+only — never renderer / child-process env / board doc / logged. Recorded audio buffered in-memory only,
+never persisted. `contextIsolation`/`nodeIntegration:false`/`sandbox` untouched.
+
+**Verification.** typecheck (3 tiers) / lint / format + **unit** (111 voice tests — WAV encode/decode,
+formatRestore [17 ported harness tests], cloud engine [mock fetch: buffering / emit sequence / stale-
+result supersede / error / empty-audio / delegation], openaiTranscribe request-shape + error-map,
+selection gate, symbol provider) + a new **`@voice` e2e** (`voiceCloud.e2e.ts` — isolated app launch +
+a fake OpenAI vendor: `listening → transcribing → final` end-to-end asserting exactly one round-trip,
+plus a fail-visible vendor-error path with the draft preserved) + a **windowed dev check** (drove the
+real built app against a fake vendor — Settings cloud fields, the transcribing state [pill wave +
+flyout indicator], and the transcript folding into the draft all render; window title stamp confirmed).
+**Full e2e matrix GREEN both legs** (Windows `pnpm test:e2e` exit 0 · Linux Docker 311 passed + 1
+ambient `browser.e2e` @preview flaky-but-passed). CI check/CodeQL/analyze/claude-review all PASS.
+**Bot review: 1 `[warning]`** — `onEngineFailure` delegating straight to the local host would let a
+TTS/KWS-only whole-host crash restart/truncate a live *cloud* recording (which never runs on the host)
+— **FIXED `3d7cf0b3`** (a `liveIsCloud` flag, set from `useCloud()` at session start, skips the STT
+restart for a cloud session; the TTS-failure forwarding still runs) + inline-dispositioned; +2 unit
+tests (cloud ignores host death → no re-broker / no engine:event; local still restarts once). Incremental
+re-review clean. `index.ts` max-lines ratchet 704→707 for the cloud-selection wiring (T1d precedent).
+Squash `a934038`. **Doc-lifecycle:** `PHASE2-KICKOFF.md` was session scratch (never committed — nothing
+to delete). Worktree `.worktrees/voice-cloud-stt` stays live.

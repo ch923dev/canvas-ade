@@ -1,0 +1,155 @@
+{
+  "$comment": "Read-aloud prompts for the STT eval corpus. Each prompt IS the reference transcript, so no hand-transcription is needed. Terms are drawn from THIS repo on purpose: the whole hypothesis under test is that generic ASR mangles real code vocabulary. NOTE the known limitation, stated in README.md: read speech is cleaner than spontaneous dictation, so absolute WER will be optimistic — the RELATIVE ranking between engines is the signal we are after.",
+  "prompts": [
+    {
+      "id": "u001",
+      "text": "Run pnpm typecheck and then pnpm lint before pushing.",
+      "keyterms": ["pnpm", "typecheck", "lint"]
+    },
+    {
+      "id": "u002",
+      "text": "Open src slash main slash voiceIpc dot ts and find the session start handler.",
+      "keyterms": ["voiceIpc", "ts"]
+    },
+    {
+      "id": "u003",
+      "text": "The useVoiceCapture hook posts a frame message over the MessagePort.",
+      "keyterms": ["useVoiceCapture", "MessagePort"]
+    },
+    {
+      "id": "u004",
+      "text": "createTtsRunner cancels the active synthesis when the epoch changes.",
+      "keyterms": ["createTtsRunner", "epoch"]
+    },
+    {
+      "id": "u005",
+      "text": "Push with no verify to skip the pre push end to end gate.",
+      "keyterms": ["pre-push"]
+    },
+    {
+      "id": "u006",
+      "text": "The sherpa onnx addon loads inside a utilityProcess, not the renderer.",
+      "keyterms": ["sherpa-onnx", "utilityProcess", "renderer"]
+    },
+    {
+      "id": "u007",
+      "text": "Set contextIsolation to true and nodeIntegration to false.",
+      "keyterms": ["contextIsolation", "nodeIntegration"]
+    },
+    {
+      "id": "u008",
+      "text": "Bump the schemaVersion and leave minReaderVersion alone for an additive change.",
+      "keyterms": ["schemaVersion", "minReaderVersion"]
+    },
+    {
+      "id": "u009",
+      "text": "repairVoiceConfig coerces every field against the defaults.",
+      "keyterms": ["repairVoiceConfig"]
+    },
+    {
+      "id": "u010",
+      "text": "The llmKeyStore encrypts each key with safeStorage before writing to userData.",
+      "keyterms": ["llmKeyStore", "safeStorage", "userData"]
+    },
+    {
+      "id": "u011",
+      "text": "Deepgram nova three takes linear sixteen at sixteen kilohertz mono.",
+      "keyterms": ["Deepgram", "nova-3", "linear16"]
+    },
+    {
+      "id": "u012",
+      "text": "Add a keyterm query parameter for each boosted term.",
+      "keyterms": ["keyterm"]
+    },
+    {
+      "id": "u013",
+      "text": "Run git rebase origin main before you open the pull request.",
+      "keyterms": ["git", "rebase", "origin"]
+    },
+    {
+      "id": "u014",
+      "text": "The zustand store lives in canvasStore dot ts under src renderer.",
+      "keyterms": ["zustand", "canvasStore", "renderer"]
+    },
+    {
+      "id": "u015",
+      "text": "React Flow renders each board as a custom node.",
+      "keyterms": ["React Flow"]
+    },
+    {
+      "id": "u016",
+      "text": "node pty runs only in main and never in the renderer.",
+      "keyterms": ["node-pty", "renderer"]
+    },
+    {
+      "id": "u017",
+      "text": "Call ipcRenderer dot invoke on the control plane channel.",
+      "keyterms": ["ipcRenderer", "invoke"]
+    },
+    {
+      "id": "u018",
+      "text": "The ttsBargeIn module filters echo with a bigram overlap check.",
+      "keyterms": ["ttsBargeIn", "bigram"]
+    },
+    {
+      "id": "u019",
+      "text": "Set the environment variable CANVAS underscore DEV underscore TITLE before running pnpm dev.",
+      "keyterms": ["CANVAS_DEV_TITLE", "pnpm"]
+    },
+    {
+      "id": "u020",
+      "text": "electron builder unpacks the dot node natives out of the asar.",
+      "keyterms": ["electron-builder", "asar"]
+    },
+    {
+      "id": "u021",
+      "text": "The vitest config declares four projects split by filename and extension.",
+      "keyterms": ["vitest"]
+    },
+    {
+      "id": "u022",
+      "text": "Wrap the raw PCM in a forty four byte WAV header before uploading.",
+      "keyterms": ["PCM", "WAV"]
+    },
+    {
+      "id": "u023",
+      "text": "Groq whisper large v three turbo costs four cents an hour.",
+      "keyterms": ["Groq", "whisper-large-v3-turbo"]
+    },
+    {
+      "id": "u024",
+      "text": "AssemblyAI takes a keyterms prompt of up to one thousand phrases.",
+      "keyterms": ["AssemblyAI", "keyterms_prompt"]
+    },
+    {
+      "id": "u025",
+      "text": "The offline recognizer needs modified beam search for hotwords to apply.",
+      "keyterms": ["modified_beam_search", "hotwords"]
+    },
+    {
+      "id": "u026",
+      "text": "Check the getUserMedia constraints and turn off aggressive noise suppression.",
+      "keyterms": ["getUserMedia"]
+    },
+    {
+      "id": "u027",
+      "text": "jarvisSession registers a final consumer while converse mode is live.",
+      "keyterms": ["jarvisSession", "converse"]
+    },
+    {
+      "id": "u028",
+      "text": "The pre push hook runs the windows leg only for renderer scoped changes.",
+      "keyterms": ["pre-push", "renderer"]
+    },
+    {
+      "id": "u029",
+      "text": "Use write file atomic so a crash never truncates canvas dot json.",
+      "keyterms": ["write-file-atomic", "canvas.json"]
+    },
+    {
+      "id": "u030",
+      "text": "The kanban board exposes add card, move card, and update card.",
+      "keyterms": ["kanban", "add_card", "move_card", "update_card"]
+    }
+  ]
+}

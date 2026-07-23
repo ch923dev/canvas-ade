@@ -32,6 +32,27 @@ const MAX_INPUT_PX = 112
 /** How many recent prompts the flyout shows inline; the full ring lives in Settings › Voice. */
 const RECENT_VISIBLE = 8
 
+/** Map a cloud transcribe error reason (openaiTranscribe.TranscribeErrorReason) to a short,
+ *  fail-visible line. Unknown reasons fall back to a generic message rather than leaking codes. */
+function cloudErrorMessage(reason: string): string {
+  switch (reason) {
+    case 'no-key':
+      return 'No OpenAI key set'
+    case 'unauthorized':
+      return 'OpenAI rejected the key'
+    case 'quota':
+      return 'OpenAI quota exhausted'
+    case 'rate-limited':
+      return 'OpenAI rate limit — try again'
+    case 'timeout':
+      return 'Transcription timed out'
+    case 'server':
+      return 'OpenAI service error — try again'
+    default:
+      return 'Transcription failed'
+  }
+}
+
 interface DlState {
   receivedBytes: number
   totalBytes: number
@@ -85,8 +106,12 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const micStatus = useVoiceStore((s) => s.micStatus)
   const modelStatus = useVoiceStore((s) => s.modelStatus)
   const engineError = useVoiceStore((s) => s.engineError)
+  const transcribing = useVoiceStore((s) => s.transcribing)
+  const cloudError = useVoiceStore((s) => s.cloudError)
+  const cloudKeyMissing = useVoiceStore((s) => s.cloudKeyMissing)
   const setDraft = useVoiceStore((s) => s.setDraft)
   const setFlyoutOpen = useVoiceStore((s) => s.setFlyoutOpen)
+  const setCloudError = useVoiceStore((s) => s.setCloudError)
   const recent = useVoiceStore((s) => s.recent)
   // Target = the selected TERMINAL board (primitive selectors — no fresh-object churn).
   const targetId = useCanvasStore((s) => {
@@ -104,6 +129,8 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const [modelMeta, setModelMeta] = useState<{ id: string; label: string; mb: number } | null>(null)
   const [dl, setDl] = useState<DlState | null>(null)
   const [dlError, setDlError] = useState<string | null>(null)
+  // Phase 2: the configured cloud STT model, shown in the transcribing hint (cosmetic).
+  const [sttModel, setSttModel] = useState('')
   // Recent (prompt history) — collapsed by default; opens on click. Shows a slice of the
   // durable ring inline; the full list lives in Settings › Voice.
   const [recentOpen, setRecentOpen] = useState(false)
@@ -111,8 +138,12 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
   const denied = micSilent || micStatus === 'denied'
   const showError = !denied && engineError
   const modelMissing = !denied && modelStatus === 'absent'
+  // A cloud transcribe error takes the header slot below engine-crash/model-missing but keeps
+  // the composer live (the draft is preserved and still sendable). Dismissible.
+  const showCloudError = !denied && !showError && !modelMissing && !!cloudError
   const hasText = (draft + partial).trim().length > 0
-  const canInject = !!targetId && running && hasText
+  // Never inject mid-transcription — the batch final is still in flight.
+  const canInject = !!targetId && running && hasText && !transcribing
 
   // Auto-grow off the MIRROR (it includes the partial tail, so the box grows with the
   // dictation), capped at ~6 rows; keep the tail visible while listening.
@@ -144,6 +175,21 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
       alive = false
     }
   }, [open, modelMissing, modelMeta])
+
+  // Phase 2: the cloud STT model name for the transcribing hint (cosmetic; cheap one-shot).
+  useEffect(() => {
+    const getConfig = window.api?.voice?.config?.get
+    if (!open || sttModel || !getConfig) return
+    let alive = true
+    void getConfig()
+      .then((c) => {
+        if (alive) setSttModel(c.sttModel)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [open, sttModel])
 
   if (!open || !anchor) return null
 
@@ -286,6 +332,32 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
                 ×
               </button>
             </div>
+          ) : showCloudError ? (
+            // Phase 2: a fail-visible cloud transcribe error. Header slot only — the composer
+            // below stays editable + sendable (the draft is untouched). Dismissible.
+            <div className="vf-note" data-test="voice-flyout-cloud-error">
+              <span className="vf-sdot" style={{ background: 'var(--err)' }} />
+              <span className="vf-grow">
+                {cloudErrorMessage(cloudError!)}
+                <span className="vf-meta">
+                  {' '}
+                  draft preserved
+                  {cloudError === 'no-key' ||
+                  cloudError === 'unauthorized' ||
+                  cloudError === 'quota'
+                    ? ' · check Settings › Voice'
+                    : ''}
+                </span>
+              </span>
+              <button
+                className="vf-x"
+                title="Dismiss (draft kept)"
+                data-test="voice-flyout-cloud-error-dismiss"
+                onClick={() => setCloudError(null)}
+              >
+                ×
+              </button>
+            </div>
           ) : targetId && running ? (
             <div className="vf-hd">
               <span className="vf-to">to</span>
@@ -319,8 +391,22 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
               </button>
             </div>
           )}
-          {hasText || targetId ? (
+          {hasText || targetId || transcribing ? (
             <div className="vf-body">
+              {/* Phase 2: cloud selected but no key — dictation ran locally; nudge to Settings.
+                  A slim non-blocking strip (the target row + composer stay usable). */}
+              {cloudKeyMissing && !transcribing && (
+                <button
+                  type="button"
+                  className="vf-cloud-nokey"
+                  data-test="voice-flyout-cloud-nokey"
+                  onClick={openVoiceSettings}
+                  title="Set your OpenAI key in Settings › Voice"
+                >
+                  <span className="vf-sdot" style={{ background: 'var(--warn)' }} />
+                  Cloud STT needs an OpenAI key — using local · Settings →
+                </button>
+              )}
               <div className="vf-text">
                 <div className="vf-mirror" aria-hidden ref={mirrorRef}>
                   <span className="vf-ghost">{draft}</span>
@@ -329,6 +415,14 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
                     // can lead with a space, which would render as a stray indent.
                     <span className="vf-partial" data-test="voice-flyout-partial">
                       {(draft && !/\s$/.test(draft) ? ' ' : '') + partial.trim()}
+                    </span>
+                  )}
+                  {/* Phase 2: cloud batch gap (no partials) — a calm pulsing dot + label. */}
+                  {transcribing && (
+                    <span className="vf-transcribing" data-test="voice-flyout-transcribing">
+                      {draft && !/\s$/.test(draft) ? ' ' : ''}
+                      <span className="vf-tdot" />
+                      transcribing…
                     </span>
                   )}
                   {capturing && <span className="vf-caret" />}
@@ -353,7 +447,13 @@ export function VoiceFlyout({ anchor }: { anchor: PillPos | null }): ReactElemen
                 />
               </div>
               <div className="vf-actions">
-                {hint}
+                {transcribing ? (
+                  <span className="vf-hint" data-test="voice-flyout-transcribing-hint">
+                    {sttModel || 'cloud'} · ~1s
+                  </span>
+                ) : (
+                  hint
+                )}
                 <button
                   className="vf-btn"
                   data-test="voice-flyout-insert"

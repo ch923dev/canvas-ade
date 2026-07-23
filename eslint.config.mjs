@@ -311,7 +311,9 @@ export default tseslint.config(
     // the two import lines. Ratchet DOWNWARD when index.ts is next split.
     // 702→704 (T1d flicker-free): the one-line registerTerminalDisplayHandlers(...) wiring must
     // sit beside the other terminal handlers (+ its import). Store lives in terminalDisplayConfig.ts.
-    rules: { 'max-lines': ['error', { max: 704, skipBlankLines: true, skipComments: true }] }
+    // 704→707 (Phase 2 voice cloud STT): the safeStorage encryptor moved above registerVoiceHandlers
+    // and its now-3-line deps arg ({ encryptor, getProjectDir }) is the cloud-selection key gate.
+    rules: { 'max-lines': ['error', { max: 707, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
