@@ -19,6 +19,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCorpus, buildBiasList, DEFAULT_BIAS_CAP } from './corpus.mjs'
 import { scoreUtterance, aggregate } from './wer.mjs'
+import { restoreFormatting, buildSymbolMap } from './formatRestore.mjs'
 import { wavDurationSeconds } from './wav.mjs'
 import { selectEngines } from './engines/index.mjs'
 import { withRetry, timed } from './engines/http.mjs'
@@ -35,7 +36,8 @@ function parseArgs(argv) {
     biasCap: DEFAULT_BIAS_CAP,
     only: 'both',
     timeoutMs: 60_000,
-    delayMs: 0
+    delayMs: 0,
+    postFormat: false
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -50,6 +52,7 @@ function parseArgs(argv) {
       args.only = next() // biased | unbiased | both
     else if (a === '--timeout') args.timeoutMs = Number(next())
     else if (a === '--delay') args.delayMs = Number(next())
+    else if (a === '--post-format') args.postFormat = true
     else if (a === '--help' || a === '-h') args.help = true
     else throw new Error(`unknown argument: ${a}`)
   }
@@ -73,6 +76,9 @@ const HELP = `stt-eval — measure WER + keyterm recall on our own audio
   --delay <ms>          sleep between requests to stay under a rate limit (default: 0).
                         Excluded from the latency column. Free-tier Groq (~20 RPM) needs
                         ~3500; without it half the requests 429 and score as total misses.
+  --post-format         apply the §3.2 deterministic formatting layer to each hypothesis
+                        before scoring (formatRestore.mjs), using the corpus's FULL keyterm
+                        set (uncapped) as the symbol dictionary. Measures raw + restored.
 
 Credentials are read from the environment; an engine without one is skipped:
   GROQ_API_KEY · OPENAI_API_KEY · OPENROUTER_API_KEY · ASSEMBLYAI_API_KEY · DEEPGRAM_API_KEY
@@ -89,7 +95,12 @@ function median(values) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-async function runCondition(engine, utterances, biasTerms, { timeoutMs, label, delayMs = 0 }) {
+async function runCondition(
+  engine,
+  utterances,
+  biasTerms,
+  { timeoutMs, label, delayMs = 0, formatMap = null }
+) {
   const rows = []
   const latencies = []
   let errors = 0
@@ -104,14 +115,18 @@ async function runCondition(engine, utterances, biasTerms, { timeoutMs, label, d
         withRetry(() => engine.transcribe({ wav, keyterms: biasTerms, timeoutMs }))
       )
       latencies.push(ms)
+      // §3.2 layer runs AFTER the model, on its raw text — exactly where it would sit in
+      // the production pipeline. Keep the raw form too so the report can show both.
+      const restored = formatMap ? restoreFormatting(value.text, formatMap) : value.text
       rows.push({
         id: u.id,
         reference: u.reference,
-        hypothesis: value.text,
+        hypothesis: restored,
+        hypothesisRaw: formatMap ? value.text : undefined,
         ms,
         score: scoreUtterance({
           reference: u.reference,
-          hypothesis: value.text,
+          hypothesis: restored,
           keyterms: u.keyterms
         })
       })
@@ -164,10 +179,17 @@ async function main() {
   const engines = selectEngines(args.engines)
   const conditions = args.only === 'both' ? ['unbiased', 'biased'] : [args.only]
 
+  // The §3.2 formatting layer's dictionary is the corpus's FULL keyterm set, UNCAPPED —
+  // deliberately unlike the ≤30-term biasing prompt. The whole point of the two layers is
+  // that the long tail the prompt can't hold is recovered here (STT-ACCURACY.md §3.2).
+  const formatSymbols = [...new Set(corpus.utterances.flatMap((u) => u.keyterms))]
+  const formatMap = args.postFormat ? buildSymbolMap(formatSymbols) : null
+
   console.log(
     `corpus: ${corpus.utterances.length} utterances (${audioSeconds.toFixed(1)}s) · ` +
       `bias list: ${biasTerms.length}${biasDropped ? ` (+${biasDropped} dropped by cap)` : ''} · ` +
-      `engines: ${engines.map((e) => e.id).join(', ')}\n`
+      `engines: ${engines.map((e) => e.id).join(', ')}` +
+      `${formatMap ? ` · post-format: ${formatMap.byFold.size}-symbol dict` : ''}\n`
   )
 
   const rows = []
@@ -191,7 +213,8 @@ async function main() {
         await runCondition(engine, corpus.utterances, cond === 'biased' ? biasTerms : [], {
           timeoutMs: args.timeoutMs,
           label: cond,
-          delayMs: args.delayMs
+          delayMs: args.delayMs,
+          formatMap
         })
       )
     }
@@ -205,7 +228,9 @@ async function main() {
     biasTerms,
     biasCap: args.biasCap,
     biasDropped,
-    conditions
+    conditions,
+    postFormat: args.postFormat,
+    formatSymbolCount: formatMap ? formatMap.byFold.size : 0
   }
 
   mkdirSync(RESULTS_DIR, { recursive: true })

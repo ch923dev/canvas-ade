@@ -142,6 +142,26 @@ Take superwhisper's lesson: a regex/dictionary layer for file extensions, CLI fl
 casing conversions. 100% deterministic, zero latency, zero cost, user-editable. Optionally add
 Talon-style spoken formatters later for power users.
 
+**✅ BUILT + MEASURED (2026-07-23).** `scripts/stt-eval/formatRestore.mjs` implements exactly this:
+fold every repo symbol to its bare-alnum form, index canonical-by-fold, then greedy longest-match
+over the hypothesis's word windows rewrites "context isolation" → `contextIsolation`, "add card" →
+`add_card`, "message port" → `MessagePort`. Whole-words-only (never a substring), ambiguous folds
+(`add_card` vs `addCard`) dropped rather than guessed. The dictionary is the corpus's **full**
+keyterm set (57 terms, uncapped) — deliberately unlike the ≤30-term biasing prompt, because the long
+tail the prompt can't hold is exactly what this recovers. Re-scored against the saved
+gpt-4o-transcribe transcripts (17 unit tests, `formatRestore.test.ts`; `--post-format` runner flag):
+
+| gpt-4o-transcribe | keyterm-exact raw → +layer | WER |
+|---|---:|---:|
+| **biased** (chosen config) | **69.4% → 85.5%** (+16 pt) | 23.1% → 19.7% |
+| unbiased | 40.3% → 75.8% (+35 pt) | 26.3% → 18.8% |
+
+The two layers stack cleanly: the formatting layer recovers "heard right, spelled wrong" (+35 pt on
+unbiased); prompt biasing adds the ~10 pt of "genuinely misheard" the formatting layer can't touch
+(it needs the phonemes to be right). **Combined: 85.5% keyterm-exact / 19.7% WER** — the ~85% this
+doc predicted. The layer is provider-independent: it lifted even OpenRouter's biasing-stripped
+gpt-4o-transcribe from 40.3% → 74.2%.
+
 ### 3.3 LLM post-correction (GER) — real, but needs a guardrail
 
 Generative Error Correction on the GenSEC benchmark: Whisper-1.5B baseline **11.82% WER →
@@ -325,17 +345,19 @@ Findings:
    **genuinely misheard** (0% loose). The genuinely-misheard bucket shrinks with model quality: on
    gpt-4o-transcribe biased, keyterm-loose is 87.1%, so only ~13% of identifiers were truly lost.
 
-5. **Roadmap.** (a) Build the §3.2 deterministic formatting layer — proven, provider-independent, and
-   with gpt-4o-transcribe already at 69.4% exact / 87.1% loose the remaining ~18-pt gap is exactly what
-   it closes → **plausibly ~85% exact end-to-end.** (b) **Measured accuracy default: OpenAI
-   `gpt-4o-transcribe` (direct) + prompt biasing.** **Budget default: Groq `whisper-large-v3-turbo`**
+5. **Roadmap.** (a) ✅ **DONE — the §3.2 deterministic formatting layer is built and measured**
+   (`formatRestore.mjs`): it takes gpt-4o-transcribe biased from **69.4% → 85.5% keyterm-exact**
+   (19.7% WER), closing the exact→loose gap as predicted. (b) ✅ **DECIDED — accuracy default: OpenAI
+   `gpt-4o-transcribe` (direct, full) + prompt biasing.** Budget fallback: Groq `whisper-large-v3-turbo`
    (~free, 43.5% exact) if $0.006/min ever matters — at expected dictation volumes it does not.
-   (c) Still worth measuring: **Deepgram `nova-3`** (`keyterm`) and **AssemblyAI** (`keyterms_prompt`,
-   1,000-phrase headroom) — the only untested configs that could beat gpt-4o-transcribe's 69.4%.
+   (c) Still optional: **Deepgram `nova-3`** (`keyterm`) and **AssemblyAI** (`keyterms_prompt`,
+   1,000-phrase headroom) — the only untested configs that could beat 69.4% raw; not on the critical
+   path now that the layer clears 85%.
 
-**Net: OpenRouter rejected for STT (double-confirmed — strips biasing on two models). `gpt-4o-transcribe`
-direct + biasing is the measured leader** (WER 23.1%, keyterm-exact 69.4%, loose 87.1%, 777 ms,
-$0.006/min); **Groq turbo is the budget option** (~free, 43.5% exact). Deepgram/AssemblyAI still unrun.
+**Net (2026-07-23, DECIDED): OpenAI `gpt-4o-transcribe` direct + biasing + the §3.2 formatting layer —
+85.5% keyterm-exact / 19.7% WER, $0.006/min.** OpenRouter rejected for STT (double-confirmed — strips
+biasing on two models). Groq turbo is the budget option (~free). Next is Phase 2 app integration
+(wire the cloud engine + push-to-talk through the existing `VoiceEngineHandle` seam).
 
 ### 6.1 Recommendation (to verify once keys exist)
 

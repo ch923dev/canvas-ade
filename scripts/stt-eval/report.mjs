@@ -107,6 +107,12 @@ export function renderReport({ meta, rows }) {
   out.push(
     "> $/min is the engine's DEFAULT-model rate; a `STT_EVAL_*_MODEL` override may cost differently."
   )
+  if (meta.postFormat) {
+    out.push(
+      `> **§3.2 formatting layer APPLIED** before scoring (${meta.formatSymbolCount}-symbol dict); ` +
+        'scores are post-restoration.'
+    )
+  }
   out.push('')
   out.push('## Ranked results')
   out.push('')
