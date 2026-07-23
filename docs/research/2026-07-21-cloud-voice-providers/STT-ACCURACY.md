@@ -277,72 +277,65 @@ Design rules, each sourced:
 
 The harness is built (`scripts/stt-eval/`, `feat/stt-eval`). First corpus: **30 read utterances,
 199.9 s, 16 kHz mono, one speaker/mic/room** — read speech, so absolute WER is optimistic; the
-signal is the *relative* picture and the *failure-mode split*. Three engines measured —
-**OpenAI**, **Groq**, **OpenRouter** (Deepgram/AssemblyAI/local still unrun for lack of key/model).
+signal is the *relative* picture and the *failure-mode split*. **Five engine·model configs measured**
+(Deepgram/AssemblyAI/local still unrun for lack of key/model). Ranked by biased keyterm-exact — the
+metric that matters for dictating code — with the **biasing lift** (unbiased→biased exact) called out
+because it is the whole experiment:
 
-| Engine (model) | Bias | WER | Keyterm exact | Keyterm loose | Median |
-|---|---|---:|---:|---:|---:|
-| **OpenAI `gpt-4o-mini-transcribe`** | **biased** | **30.0%** | **51.6%** | **88.7%** | 663 ms |
-| OpenAI `gpt-4o-mini-transcribe` | unbiased | 31.6% | 37.1% | 79.0% | 898 ms |
-| Groq `whisper-large-v3-turbo` | biased | 32.8% | 43.5% | ~64% | 640 ms |
-| Groq `whisper-large-v3-turbo` | unbiased | 34.7% | 27.4% | ~64% | **566 ms** |
-| OpenRouter `openai/whisper-large-v3` | biased | 35.3% | 27.4% | 64.5% | 795 ms |
-| OpenRouter `openai/whisper-large-v3` | unbiased | 35.6% | 27.4% | 64.5% | 698 ms |
+| Engine · model | WER (biased) | Keyterm-exact (unbiased→biased) | Keyterm-loose | Median | $/min |
+|---|---:|---:|---:|---:|---:|
+| **OpenAI `gpt-4o-transcribe`** | **23.1%** | 40.3% → **69.4%  (+29 pt)** | **87.1%** | 777 ms | $0.006 |
+| OpenAI `gpt-4o-mini-transcribe` | 30.0% | 37.1% → 51.6%  (+14.5) | 88.7% | 663 ms | ~$0.003 |
+| Groq `whisper-large-v3-turbo` | 32.8% | 27.4% → 43.5%  (+16) | ~64% | 640 ms | ~$0.0007 |
+| OpenRouter `gpt-4o-transcribe` | 25.6% | 41.9% → 40.3%  (**none**) | 75.8% | 792 ms | token |
+| OpenRouter `whisper-large-v3` | 35.3% | 27.4% → 27.4%  (**none**) | 64.5% | 795 ms | token |
 
-> Groq needed `--delay 4000` (a new runner flag): free-tier is ~20 RPM, and firing 60 requests
-> back-to-back 429'd half of them (those score as total misses — the first, un-throttled Groq run
-> read a bogus 46–67% WER purely from rate-limit failures, not model quality). Throttled = 0 errors.
-> OpenAI ran the CHEAP `gpt-4o-mini-transcribe` (~$0.003/min) via a `STT_EVAL_OPENAI_MODEL` override;
-> the full `gpt-4o-transcribe` is untested and would likely score higher still.
+> Runner notes: Groq needed `--delay 4000` (free-tier ~20 RPM; un-throttled, 60 back-to-back requests
+> 429'd half → a bogus 46–67% WER from failures, not model quality — throttled = 0 errors). All OpenAI
+> and OpenRouter runs above were 0-error. Models chosen via `STT_EVAL_OPENAI_MODEL` /
+> `STT_EVAL_OPENROUTER_MODEL`; the report prints the actual model per row.
 
-Five findings; the third re-orders the provider pick:
+Findings:
 
-1. **Biasing WORKS on Groq AND OpenAI, and is IGNORED by OpenRouter — the cleanest signal in the run.**
-   Groq's `prompt` biasing lifted keyterm-exact **27.4% → 43.5% (+16 pts)**; OpenAI's lifted it
-   **37.1% → 51.6% (+14.5 pts)**. Per-term on Groq, 11 terms improved (almost all **0%→100% exact**),
-   every one a bias-list term (`contextIsolation`, `ipcRenderer`, `llmKeyStore`, `nodeIntegration`,
-   `hotwords`, `kanban`, …), one minor regression (`renderer`). That is the model learning to spell
-   the terms verbatim from the prompt, exactly the §3.1 mechanism. OpenRouter's
-   `/audio/transcriptions`, by contrast, returned **byte-identical** biased/unbiased columns — no
-   biasing seam, whisper-lineage only. **OpenRouter is rejected for STT.** (Its TTS/Kokoro role in
-   PLAN.md Phase 1 is untouched.) Closes open-question §8.5.
+1. **Full `gpt-4o-transcribe` + biasing is the runaway accuracy leader — 69.4% keyterm-exact / 23.1%
+   WER.** Its `prompt` biasing lift is the largest measured: **40.3% → 69.4% (+29 pts)**, with 18
+   terms going to 100% exact (`createTtsRunner`, `llmKeyStore`, `ipcRenderer`, `safeStorage`,
+   `userData`, `add_card`/`move_card`/`update_card`, `electron-builder`, `asar`, `Groq`, `AssemblyAI`,
+   `kanban`, `canvasStore`, `linear16`, `keyterm`, …). It is a clear step above its own mini (69.4 vs
+   51.6% exact) and everything else. Cost $0.006/min — 2× mini, ~9× Groq, still trivial per session.
 
-2. **The whisper-lineage engines share one base capability; the 4o-transcribe lineage is a real step up.**
-   Groq and OpenRouter unbiased are a wash (34.7% / 35.6% WER, both 27.4% exact — both whisper-large-v3).
-   `gpt-4o-mini-transcribe` is a different, newer model and it shows: better WER, better keyterm-exact,
-   and — the number that matters most — **keyterm-loose 88.7% vs the whisper engines' ~64%.**
+2. **OpenRouter serves gpt-4o-transcribe at identical *base* quality but STRIPS biasing — the
+   OpenRouter rejection is now double-confirmed on two different models.** OpenRouter's unbiased
+   gpt-4o-transcribe (41.9% exact) matches OpenAI-direct's unbiased (40.3%) — so it genuinely serves
+   the same model — but its biased run shows **no lift** (41.9→40.3%, noise), whereas OpenAI-direct on
+   the same model gains **+29 pts**. OpenRouter's `/audio/transcriptions` does not forward the biasing
+   prompt (same as it did nothing on whisper-large-v3). **Routing through OpenRouter discards the
+   single biggest accuracy lever available.** Rejected for STT. (Its TTS/Kokoro role in PLAN.md Phase 1
+   is untouched.) Closes open-question §8.5.
 
-3. **`gpt-4o-mini-transcribe` is the measured accuracy leader, and its 88.7% loose ceiling changes the
-   §3.2 math.** Loose recall = "heard the phonemes right, may have mis-formatted." At 88.7% loose,
-   gpt-4o-mini *heard* ~89% of identifiers correctly; the deterministic replacement layer (§3.2) then
-   has an ~89% ceiling to recover toward, vs ~64% on whisper. So **gpt-4o-mini + §3.2 layer plausibly
-   reaches ~85% keyterm-exact** — well past Groq's biased 43.5%. Transcript evidence: `voiceIpc` →
-   "voiceRPC.ts" (got the path shape + `.ts`; Groq "voiceLPC", OpenRouter "boys of easy"),
-   `pnpm type-check`, `no-verify`, `pre-push` all near-clean. Cost is ~$0.003/min (mini) — 4.5× Groq's
-   ~$0.0007 but still trivial; latency 663 ms ≈ Groq.
+3. **Biasing works on every direct provider; the effect is huge on gpt-4o-transcribe.** Lift by
+   config: gpt-4o-transcribe **+29 pt**, Groq +16, gpt-4o-mini +14.5, OpenRouter (both models) **0**.
+   This is the §3.1 mechanism — the model spelling bias-list terms verbatim from the prompt — and it is
+   the difference between "usable for code" and not.
 
-4. **The WER is identifier *formatting*, not misrecognition — confirmed across all three engines.**
+4. **The residual WER is identifier *formatting*, not misrecognition — confirmed across all configs.**
    Plain-English utterances scored ~0% ("Push with no verify to skip the pre-push end-to-end gate."
-   came back verbatim, hyphens and all). The error sits entirely in code tokens:
-   - **Formatting-recoverable: heard right, spelled wrong.** `utilityProcess` → "utility process",
-     `add_card`/`move_card`/`update_card`, `electron-builder`, `schemaVersion`, `userData` — 0% exact
-     but 100% loose. The exact→loose gap is what §3.2's deterministic layer recovers,
-     **provider-independent and client-side.**
-   - **Genuinely misheard: 0% loose, phonemes lost.** Shrinks sharply on gpt-4o-mini — only
-     `useVoiceCapture`, `voiceIpc`, `createTtsRunner`, `vitest`, `zustand`, `keyterms_prompt` stayed
-     0% loose, vs a much longer list on whisper. `MessagePort` → "message port" (loose hit on OpenAI;
-     was "message board" on whisper).
+   came back verbatim, hyphens and all). The error sits in code tokens: **formatting-recoverable**
+   (heard right, spelled wrong — 0% exact / 100% loose, the class §3.2's client-side layer fixes) vs
+   **genuinely misheard** (0% loose). The genuinely-misheard bucket shrinks with model quality: on
+   gpt-4o-transcribe biased, keyterm-loose is 87.1%, so only ~13% of identifiers were truly lost.
 
-5. **Roadmap.** (a) Build the §3.2 deterministic formatting layer — a proven, provider-independent win,
-   and gpt-4o-mini's high loose ceiling makes it pay off more. (b) **Provisional default: OpenAI
-   `gpt-4o-mini-transcribe` + prompt biasing** (measured accuracy leader) — pending a cost/latency
-   call against Groq (~free, marginally faster, but ~24 pts lower loose ceiling). (c) Still worth
-   measuring: **Deepgram `nova-3`** (`keyterm`) and **AssemblyAI** (`keyterms_prompt`, 1,000-phrase
-   headroom); and the full **`gpt-4o-transcribe`** vs mini.
+5. **Roadmap.** (a) Build the §3.2 deterministic formatting layer — proven, provider-independent, and
+   with gpt-4o-transcribe already at 69.4% exact / 87.1% loose the remaining ~18-pt gap is exactly what
+   it closes → **plausibly ~85% exact end-to-end.** (b) **Measured accuracy default: OpenAI
+   `gpt-4o-transcribe` (direct) + prompt biasing.** **Budget default: Groq `whisper-large-v3-turbo`**
+   (~free, 43.5% exact) if $0.006/min ever matters — at expected dictation volumes it does not.
+   (c) Still worth measuring: **Deepgram `nova-3`** (`keyterm`) and **AssemblyAI** (`keyterms_prompt`,
+   1,000-phrase headroom) — the only untested configs that could beat gpt-4o-transcribe's 69.4%.
 
-**Net so far: OpenRouter rejected for STT. `gpt-4o-mini-transcribe` is the measured accuracy leader**
-(biased WER 30.0%, keyterm-exact 51.6%, **loose 88.7%**, 663 ms, ~$0.003/min); **Groq turbo is the
-budget pick** (~free, biased 43.5% exact). Deepgram/AssemblyAI and full gpt-4o-transcribe still unrun.
+**Net: OpenRouter rejected for STT (double-confirmed — strips biasing on two models). `gpt-4o-transcribe`
+direct + biasing is the measured leader** (WER 23.1%, keyterm-exact 69.4%, loose 87.1%, 777 ms,
+$0.006/min); **Groq turbo is the budget option** (~free, 43.5% exact). Deepgram/AssemblyAI still unrun.
 
 ### 6.1 Recommendation (to verify once keys exist)
 
