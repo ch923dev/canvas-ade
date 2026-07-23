@@ -12,6 +12,7 @@
  *  - KIND = a 13px line icon + a calm silhouette tweak (decision = clipped corners, actor = pill,
  *    note = dashed); step/data/service/artifact share the base rect and differ by icon alone.
  */
+import type { CSSProperties } from 'react'
 import { withAlpha } from './diagramTheme'
 import type { SpecEdge, SpecNodeKind, SpecStatus } from '../../../lib/diagramSpec'
 
@@ -185,6 +186,33 @@ export function specKindSilhouette(kind: SpecNodeKind | undefined): SpecSilhouet
     default:
       return 'rect'
   }
+}
+
+/** Decision silhouette: clipped corners (the approved mock's calm octagon). */
+export const DECISION_CLIP =
+  'polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), ' +
+  'calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px)'
+
+/**
+ * Silhouette + status → a node div's CHROME (background/border/radius/clip/padding + opacity).
+ * Positioning/sizing is the caller's job — the static `DiagramSpecView` adds absolute left/top/w/h;
+ * the Phase-4 editor's React Flow node is positioned by RF and sized from the layout box. Shared so
+ * the two renderers can never drift (risk R7).
+ */
+export function specNodeChrome(sil: SpecSilhouette, status: SpecStatusStyle): CSSProperties {
+  const style: CSSProperties = {
+    boxSizing: 'border-box',
+    background: sil === 'note' ? 'var(--surface)' : status.fill,
+    border: `1px ${sil === 'note' ? 'dashed' : 'solid'} ${status.border}`,
+    borderRadius: sil === 'actor' ? 'var(--r-pill)' : 'var(--r-inner)',
+    opacity: status.opacity,
+    padding: sil === 'actor' ? '7px 9px 7px 12px' : '7px 9px 7px 8px'
+  }
+  if (sil === 'decision') {
+    style.clipPath = DECISION_CLIP
+    style.borderRadius = 0
+  }
+  return style
 }
 
 /**
