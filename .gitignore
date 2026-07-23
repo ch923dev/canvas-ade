@@ -83,3 +83,11 @@ opencode.json
 
 # Local Claude Code design-hook cache (impeccable plugin) — session tooling, never source.
 .impeccable/
+
+# STT eval harness (scripts/stt-eval) — the recorded corpus is the maintainer's OWN VOICE
+# and the results carry raw transcripts, so neither is tracked by default. `prompts.json`
+# (the read-aloud script) IS tracked, so anyone can re-record the same corpus locally.
+# Opt in deliberately with `git add -f` if a shared reference corpus is ever wanted.
+/scripts/stt-eval/corpus/*.wav
+/scripts/stt-eval/corpus/manifest.json
+/scripts/stt-eval/results/
