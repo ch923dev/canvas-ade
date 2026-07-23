@@ -249,10 +249,16 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     if (lod && board.type !== 'terminal') setHovered(false)
   }, [lod, board.type])
 
-  // Resize-storm fix (T1a′): if the node unmounts mid-handle-drag (delete/undo during a
-  // drag) NodeResizer never fires onResizeEnd — clear the flag so a terminal remounting
-  // under the same board id doesn't start permanently held. Redundant end calls no-op.
-  useEffect(() => () => endBoardResizeDrag(board.id), [board.id])
+  // Resize-storm fix (T1a′): NodeResizer can unmount without firing onResizeEnd — full
+  // BoardNode unmount (delete/undo mid-drag) OR the `!lod &&` gate dropping it when a
+  // zoom-out crosses LOD_ZOOM during a live drag (terminal boards stay mounted across the
+  // LOD boundary, so only the resizer subtree goes away). Key the cleanup on `lod` so both
+  // paths clear the flag; otherwise the terminal's PTY resize stays held forever.
+  // Redundant end calls no-op.
+  useEffect(() => {
+    if (lod) return undefined
+    return () => endBoardResizeDrag(board.id)
+  }, [lod, board.id])
 
   // Stable per-board content host: created ONCE and always the createPortal target, so
   // toggling full view never changes the fiber structure (which would remount the subtree
