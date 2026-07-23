@@ -226,7 +226,7 @@ describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
   })
 
   describe('terminal-copy fix: baseline spawn env', () => {
-    it('every spawn carries FORCE_HYPERLINK=1 + CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1', async () => {
+    it('every spawn carries FORCE_HYPERLINK=1; alt-screen unset by default (T1d flicker-free ON)', async () => {
       const { registerPtyHandlers } = await import('./pty')
       const { ipcMain, invoke } = buildIpc()
       registerPtyHandlers(ipcMain, makeGetWin())
@@ -234,7 +234,10 @@ describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
       await invoke('pty:spawn', { id: 'b5' })
       const spawnedEnv = spawnSpy.mock.calls[0][2].env as Record<string, string>
       expect(spawnedEnv['FORCE_HYPERLINK']).toBe('1')
-      expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBe('1')
+      // T1d: "Flicker-free terminals" defaults ON (isFlickerFree() unbound → the ON default here, no
+      // terminalDisplayConfig bound in this test), so the CLI keeps its default alt-screen — the var
+      // is NOT set. The forced-off path ('1' when flicker-free is OFF) is covered in ptySpawnEnv.test.ts.
+      expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBeUndefined()
     })
 
     it('the recap-env provider is merged LAST and can override the baseline', async () => {
@@ -272,8 +275,11 @@ describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
         await invoke('pty:spawn', { id: 'b11' })
         const spawnedEnv = spawnSpy.mock.calls[0][2].env as Record<string, string>
         for (const k of Object.keys(poisoned)) expect(spawnedEnv[k]).toBeUndefined()
-        // The deliberate baseline survives the scrub.
-        expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBe('1')
+        // FORCE_HYPERLINK is the deliberate baseline that survives the scrub. The alt-screen var is
+        // NOT set here: T1d flicker-free defaults ON (no terminalDisplayConfig bound), so the CLI
+        // keeps its default alt-screen (the var is only set on the forced-off / flicker-free-OFF path).
+        expect(spawnedEnv['FORCE_HYPERLINK']).toBe('1')
+        expect(spawnedEnv['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']).toBeUndefined()
       } finally {
         for (const [k, v] of Object.entries(saved)) {
           if (v === undefined) delete process.env[k]
