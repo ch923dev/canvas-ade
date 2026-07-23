@@ -24,10 +24,17 @@ export type RecapEnvProvider = (opts: {
  *   disables + wipes text selection in the embedding terminal (xterm
  *   `SelectionService.disable()` on every DECSET mouse-mode toggle). This is the one
  *   documented switch that restores selection AND keeps scrollback (the DISABLE_MOUSE
- *   variants break in-app scrolling).
+ *   variants break in-app scrolling). **T1d — this is now conditional on `opts.flickerFree`
+ *   (the app-wide "Flicker-free terminals" setting, default ON):** ON omits it so the CLI keeps
+ *   its default alt-screen → zero resize-scrollback litter (anthropics/claude-code#51828); Shift+drag
+ *   still copies in alt-screen so #332's copy fix is NOT re-broken (only modifier-less drag-select is
+ *   lost). OFF forces it off as above. Decided AFTER the process.env spread (so an inherited value
+ *   from a parent Claude session can't leak past an ON) but BEFORE the recap seam (so recap keeps its
+ *   last-word override of this key).
  *
  * Both are inert for non-Claude agents. `recapEnv` (the injectable policy seam) is spread
- * LAST so a policy can still override either baseline var.
+ * LAST so a policy can still override either baseline var (the alt-screen decision is applied
+ * after the spreads, so `flickerFree` — an explicit user setting — wins over any inherited value).
  */
 /**
  * Nested-session env scrub: when the app itself was launched FROM a Claude Code session (a dev
@@ -99,7 +106,15 @@ function openRouterEnv(intent: OpenRouterSpawnIntent | undefined): Record<string
 
 export function buildSpawnEnv(
   provider: RecapEnvProvider | undefined,
-  opts: { id: string; launchCommand?: string; cwd?: string; openRouter?: OpenRouterSpawnIntent }
+  opts: {
+    id: string
+    launchCommand?: string
+    cwd?: string
+    openRouter?: OpenRouterSpawnIntent
+    /** T1d "Flicker-free terminals" (app-wide setting, read fresh per spawn in pty.ts). When true,
+     *  do NOT force alt-screen off → the CLI keeps its default alt-screen (zero resize litter). */
+    flickerFree?: boolean
+  }
 ): Record<string, string> {
   let recapEnv: Record<string, string> | undefined
   try {
@@ -110,12 +125,18 @@ export function buildSpawnEnv(
   const env = {
     ...process.env,
     FORCE_HYPERLINK: '1',
-    CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
-    // OpenRouter routing before the recap seam: recap stays the LAST word (its documented
-    // override contract), and the two key-sets are disjoint anyway.
-    ...openRouterEnv(opts.openRouter),
-    ...(recapEnv ?? {})
+    // OpenRouter routing before the recap seam; the two key-sets are disjoint anyway.
+    ...openRouterEnv(opts.openRouter)
   } as Record<string, string>
+  // Alt-screen decision (T1d) — set AFTER the process.env spread (so an inherited
+  // CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN from a parent Claude session can't leak past an ON) but
+  // BEFORE the recap seam (so recap stays the LAST word and can still override this key — its
+  // documented contract, exercised by pty.recapenv.test.ts). ON omits the var → the CLI keeps its
+  // default alt-screen (zero resize litter, #51828); OFF forces it off (selection-during-stream, #332).
+  if (opts.flickerFree) delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
+  else env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1'
+  // Recap seam LAST word (its documented override contract): can still override the alt-screen key.
+  Object.assign(env, recapEnv ?? {})
   for (const k of NESTED_CLAUDE_ENV) delete env[k]
   return env
 }

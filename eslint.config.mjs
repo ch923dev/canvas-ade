@@ -292,7 +292,9 @@ export default tseslint.config(
     // spawn choke point, and the one-line maybeEnsureClaudeHook(...) probe must sit in the
     // onData handler beside the pasteMode observer it mirrors (+ its import). The seams
     // themselves live in ptySpawnEnv.ts / claudeBootDetect.ts. Ratchet DOWNWARD on next split.
-    rules: { 'max-lines': ['error', { max: 700, skipBlankLines: true, skipComments: true }] }
+    // 700→702 (T1d flicker-free): the one-line flickerFree: isFlickerFree() read must fire at the
+    // buildSpawnEnv choke point (+ its import). The store lives in terminalDisplayConfig.ts.
+    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/main/index.ts'],
@@ -303,7 +305,9 @@ export default tseslint.config(
     // wireBackgroundSessionsUx boot (replaces the old wireLifecycleNotifications line), the
     // isTrayResident() guard merged into the existing window-all-closed quit condition, and
     // the two import lines. Ratchet DOWNWARD when index.ts is next split.
-    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
+    // 702→704 (T1d flicker-free): the one-line registerTerminalDisplayHandlers(...) wiring must
+    // sit beside the other terminal handlers (+ its import). Store lives in terminalDisplayConfig.ts.
+    rules: { 'max-lines': ['error', { max: 704, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

@@ -9,6 +9,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../../../store/canvasStore'
 import { pane } from '../paneStyles'
 import { BackgroundSessionsSection } from './BackgroundSessionsSection'
+import { TerminalDisplaySection } from './TerminalDisplaySection'
 
 export function TerminalPane(): ReactElement {
   const projectDir = useCanvasStore((s) => s.project.dir)
@@ -88,6 +89,9 @@ export function TerminalPane(): ReactElement {
           {error}
         </div>
       )}
+
+      {/* T1d: app-wide "Flicker-free terminals" alt-screen setting. */}
+      <TerminalDisplaySection />
 
       {/* PR-2 background sessions: close policy + notify + surviveRestart (mock 4). */}
       <BackgroundSessionsSection />

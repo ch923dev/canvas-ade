@@ -80,6 +80,7 @@ import { registerShellHandlers } from './shellIpc'
 import { registerTerminalHandlers } from './terminalIpc'
 import { registerPlatformIpc } from './platformIpc'
 import { bindLowRamConfig } from './lowRamConfig'
+import { registerTerminalDisplayHandlers } from './terminalDisplayConfig'
 import { flushRendererAutosave } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
 import {
@@ -506,6 +507,8 @@ app.whenReady().then(async () => {
   registerShellHandlers(ipcMain, () => mainWindow)
   // Phase 5 · S1: frame-guarded "save terminal output to file" (native dialog + atomic write).
   registerTerminalHandlers(ipcMain, () => mainWindow)
+  // T1d: "Flicker-free terminals" setting + spawn-time isFlickerFree() getter (terminalDisplayConfig).
+  registerTerminalDisplayHandlers(ipcMain, () => mainWindow, userData)
   // SYNC platform info (Windows build number) for the terminal's xterm windowsPty hint (A-Win).
   registerPlatformIpc(ipcMain, () => mainWindow)
   // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The

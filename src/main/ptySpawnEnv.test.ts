@@ -45,6 +45,27 @@ describe('buildSpawnEnv — baseline', () => {
   })
 })
 
+describe('buildSpawnEnv — flicker-free / alt-screen (T1d)', () => {
+  const ALT = 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'
+  afterEach(() => delete process.env[ALT])
+
+  it('OFF (omitted / false) forces alt-screen off — DISABLE_ALTERNATE_SCREEN=1', () => {
+    expect(buildSpawnEnv(undefined, { id: 'b1' })[ALT]).toBe('1')
+    expect(buildSpawnEnv(undefined, { id: 'b1', flickerFree: false })[ALT]).toBe('1')
+  })
+
+  it('ON omits DISABLE_ALTERNATE_SCREEN so the CLI keeps its default alt-screen', () => {
+    const env = buildSpawnEnv(undefined, { id: 'b1', flickerFree: true })
+    expect(env[ALT]).toBeUndefined()
+  })
+
+  it('ON deletes a value inherited from a parent Claude session (no leak past an ON)', () => {
+    process.env[ALT] = '1' // Expanse launched from a claude session that set it
+    const env = buildSpawnEnv(undefined, { id: 'b1', flickerFree: true })
+    expect(env[ALT]).toBeUndefined()
+  })
+})
+
 describe('buildSpawnEnv — OpenRouter routing (v20)', () => {
   // buildSpawnEnv inherits process.env by design (a spawn gets the parent env). The dev box may
   // carry a real OPENROUTER_API_KEY / ANTHROPIC_* — scrub the routing keys so this suite controls

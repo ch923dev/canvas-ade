@@ -9,6 +9,7 @@ import { acquireProc, configurePtyHostBridge, tryDaemonReattach } from './ptyHos
 // operates on daemon sessions unchanged. The glue (gate, survivor list, acquire, reattach,
 // boot + quit-drain wiring) lives in ./ptyHost/bridge (max-lines ratchet).
 import { buildSpawnEnv, syncRecapHook, type RecapEnvProvider } from './ptySpawnEnv'
+import { isFlickerFree } from './terminalDisplayConfig'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
@@ -750,7 +751,8 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       id: opts.id,
       launchCommand: opts.launchCommand,
       cwd: opts.cwd,
-      openRouter: opts.openRouter
+      openRouter: opts.openRouter,
+      flickerFree: isFlickerFree() // T1d: app-wide setting, read fresh per spawn (no cache)
     })
     let proc: pty.IPty
     try {

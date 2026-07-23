@@ -853,6 +853,13 @@ const api = {
   // ── Phase 5 · S1: save the live terminal buffer to a user-chosen .txt (MAIN dialog + atomic write) ──
   // ── Phase 5 · S1 save-output + S3 snapshot persist/restore (factored to terminalApi.ts) ──
   terminal: terminalApi,
+  // ── T1d: app-wide "Flicker-free terminals" display setting (userData config, MAIN-owned) ──
+  // get() → null for a foreign sender; set() persists {flickerFree} and applies to the next spawn.
+  terminalDisplay: {
+    get: (): Promise<{ flickerFree: boolean } | null> => ipcRenderer.invoke('terminalDisplay:get'),
+    set: (cfg: { flickerFree: boolean }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('terminalDisplay:set', cfg)
+  },
   // ── M-memory T-M4: read cached Tier-2 prose for the panel (pure disk read; MAIN-guarded) ──
   memory: {
     readBoards: (ids: string[]): Promise<Record<string, string>> =>
