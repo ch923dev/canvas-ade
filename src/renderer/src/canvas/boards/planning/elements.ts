@@ -12,6 +12,7 @@ import type {
   ChecklistElement,
   ChecklistItem,
   DiagramElement,
+  DiagramSpec,
   FileRefElement,
   ImageElement,
   NoteElement,
@@ -220,6 +221,24 @@ export function patchElement<E extends PlanningElement>(
 /** Remove one element by id. */
 export function removeElement(els: PlanningElement[], id: string): PlanningElement[] {
   return els.filter((el) => el.id !== id)
+}
+
+/** Mermaid→expanse engine conversion (one tracked edit): swap the canonical body to `spec` and
+ *  preserve the original Mermaid text as `importedFrom`. `source`/`svgCache` are DELETED via
+ *  destructure-rest (not set undefined) — the expanse branch of assertBoard rejects either key,
+ *  and a JSON round-trip must never resurrect a stale body. */
+export function convertDiagramElement(
+  els: PlanningElement[],
+  id: string,
+  spec: DiagramSpec,
+  importedFrom: string
+): PlanningElement[] {
+  return patchElement<DiagramElement>(els, id, ({ source: _s, svgCache: _c, ...rest }) => ({
+    ...rest,
+    engine: 'expanse',
+    spec,
+    importedFrom
+  }))
 }
 
 /** Move an element to a new board-local top-left. */

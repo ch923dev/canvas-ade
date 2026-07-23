@@ -1,10 +1,16 @@
 import type {
+  ConfirmDiff,
   PlanningEditItemAdd,
   PlanningEditItemSet,
   PlanningEditOp,
   PlanningEditPatch
 } from '../shared/mcpTypes'
+import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { SpecOp } from '../renderer/src/lib/specOps'
+import { applySpecOps } from '../renderer/src/lib/specOps'
+import { diffSpecs, lintSpec } from '../renderer/src/lib/specDiff'
 import {
+  buildDiagramSpec,
   confirmField,
   MAX_PLANNING_DIAGRAM,
   MAX_PLANNING_ITEMS,
@@ -36,12 +42,14 @@ const MAX_ARROW_DELTA = 5000
 /** Bound on an agent-supplied checklist-item id it echoes back from the read resource. */
 const MAX_ITEM_ID = 200
 
-/** The editable fields allowed per element kind — a present field NOT in the set is rejected. */
+/** The editable fields allowed per element kind — a present field NOT in the set is rejected.
+ *  A diagram's two content fields are further gated by its resolved ENGINE (Phase 3): `source`
+ *  edits a Mermaid diagram, `specOps` a structured (expanse) one — enforced in the builder. */
 const ALLOWED_FIELDS: Record<string, ReadonlySet<string>> = {
   note: new Set(['text', 'tint']),
   text: new Set(['text']),
   checklist: new Set(['title', 'setItems', 'addItems', 'removeItemIds']),
-  diagram: new Set(['source']),
+  diagram: new Set(['source', 'specOps']),
   arrow: new Set(['dx', 'dy'])
 }
 const PATCH_KEYS = [
@@ -49,12 +57,24 @@ const PATCH_KEYS = [
   'tint',
   'title',
   'source',
+  'specOps',
   'dx',
   'dy',
   'setItems',
   'addItems',
   'removeItemIds'
 ] as const
+
+/** Max `specOps` in ONE update call (Phase 3) — a reviewability bound (one confirm row per op),
+ *  mirrored name-for-name by the package's transport cap for the cross-repo parity test. */
+export const MAX_SPEC_OPS = 100
+
+/** The resolved diagram context the gate passes for a kind:'diagram' target (Phase 3) — its
+ *  engine plus, for an expanse element, the full current spec from the validated mirror. */
+export interface DiagramEditContext {
+  engine?: string
+  spec?: DiagramSpec
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -126,16 +146,87 @@ function buildRemoveItemIds(raw: unknown): string[] {
   return raw.map((id, j) => sanitizeItemId(id, `removeItemIds[${j}]`))
 }
 
+const SPEC_OP_KINDS = new Set([
+  'upsertNode',
+  'removeNode',
+  'upsertEdge',
+  'removeEdge',
+  'upsertGroup',
+  'removeGroup',
+  'setMeta'
+])
+
+/**
+ * 🔒 Validate + sanitize ONE `specOps` batch against the element's CURRENT spec (Phase 3). Shape-checks
+ * each op lightly (the deep judge is the RESULT: `applySpecOps` then the authoritative
+ * `buildDiagramSpec` gate — caps, closed enums, referential integrity, control-char reject, 16 KB
+ * bound — so an op batch can never land a spec the emit path would reject), and rejects a batch that
+ * nets to ZERO change (idempotent removes make a typo'd id a silent no-op otherwise — the empty-patch
+ * doctrine). Returns the cloned ops + the validated resulting spec.
+ */
+function buildSpecOps(raw: unknown, current: DiagramSpec): { ops: SpecOp[]; next: DiagramSpec } {
+  if (!Array.isArray(raw)) throw new PlanningContentError('specOps is not an array')
+  if (raw.length === 0) throw new PlanningContentError('specOps is empty')
+  if (raw.length > MAX_SPEC_OPS) {
+    throw new PlanningContentError(`specOps has more than ${MAX_SPEC_OPS} ops`)
+  }
+  for (const [i, op] of raw.entries()) {
+    if (!isRecord(op) || typeof op.op !== 'string' || !SPEC_OP_KINDS.has(op.op)) {
+      throw new PlanningContentError(`specOps[${i}] is not a recognized op`)
+    }
+    if (op.op === 'upsertNode' && !isRecord(op.node)) {
+      throw new PlanningContentError(`specOps[${i}] upsertNode carries no node object`)
+    }
+    if (op.op === 'upsertEdge' && !isRecord(op.edge)) {
+      throw new PlanningContentError(`specOps[${i}] upsertEdge carries no edge object`)
+    }
+    if (op.op === 'upsertGroup' && !isRecord(op.group)) {
+      throw new PlanningContentError(`specOps[${i}] upsertGroup carries no group object`)
+    }
+    if (
+      (op.op === 'removeNode' || op.op === 'removeEdge' || op.op === 'removeGroup') &&
+      typeof op.id !== 'string'
+    ) {
+      throw new PlanningContentError(`specOps[${i}] ${op.op} carries no id`)
+    }
+  }
+  const ops = raw as SpecOp[]
+  // Judge the RESULT with the same authoritative gate the emit path uses; its clone also proves
+  // the applied shape is plain JSON. Malformed op payloads surface here as result violations.
+  const next = buildDiagramSpec(applySpecOps(current, ops), 'specOps result')
+  const d = diffSpecs(current, next)
+  if (d.added + d.changed + d.removed === 0) {
+    throw new PlanningContentError('specOps produce no change (check the ids)')
+  }
+  return { ops: JSON.parse(JSON.stringify(ops)) as SpecOp[], next }
+}
+
+/**
+ * Build the Option-B {@link ConfirmDiff} for a specOps edit (Phase 3) — the semantic old→new diff +
+ * lint over the PROPOSED spec. Presentation only; the plain body stays the complete fallback.
+ */
+export function buildSpecOpsConfirmDiff(current: DiagramSpec, next: DiagramSpec): ConfirmDiff {
+  const d = diffSpecs(current, next)
+  const bytes = Buffer.byteLength(JSON.stringify(next), 'utf8')
+  const summary =
+    `${d.added + d.changed + d.removed} change(s) · +${d.added} · ~${d.changed} · −${d.removed} · ` +
+    `nodes ${current.nodes.length}→${next.nodes.length} · ${(bytes / 1024).toFixed(1)} KB of 16 KB`
+  return { summary, sections: d.sections, lints: lintSpec(next) }
+}
+
 /**
  * Build a SANITIZED, kind-validated `update` op for one existing element (S6). `kind` is the element's
  * RESOLVED kind (read from the live mirror by the gate); a patch field that doesn't apply to it is
- * rejected. Throws {@link PlanningContentError} on any violation or an empty (no-applicable-field) patch.
+ * rejected. For a diagram target, `diagram` carries the resolved engine + current spec (Phase 3) —
+ * `source` applies only to a Mermaid diagram, `specOps` only to a structured (expanse) one. Throws
+ * {@link PlanningContentError} on any violation or an empty (no-applicable-field) patch.
  */
 export function buildPlanningUpdateOp(
   elementId: string,
   kind: string,
-  patch: unknown
-): Extract<PlanningEditOp, { op: 'update' }> {
+  patch: unknown,
+  diagram?: DiagramEditContext
+): { op: Extract<PlanningEditOp, { op: 'update' }>; nextSpec?: DiagramSpec } {
   if (!isRecord(patch)) throw new PlanningContentError('patch is not an object')
   const allowed = ALLOWED_FIELDS[kind]
   if (!allowed) {
@@ -147,7 +238,38 @@ export function buildPlanningUpdateOp(
       throw new PlanningContentError(`field "${key}" does not apply to a ${kind} element`)
     }
   }
+  let nextSpec: DiagramSpec | undefined
   const p: PlanningEditPatch = {}
+  if (kind === 'diagram') {
+    // Phase 3 engine split. The mirror's `engine` may be absent on a legacy element — absent
+    // reads as Mermaid (the pre-engine shape), matching the renderer's own default.
+    const isExpanse = diagram?.engine === 'expanse'
+    if (patch.source !== undefined && patch.specOps !== undefined) {
+      throw new PlanningContentError(
+        'supply either "source" (Mermaid) or "specOps" (expanse), not both'
+      )
+    }
+    if (patch.source !== undefined && isExpanse) {
+      throw new PlanningContentError(
+        'a structured (expanse) diagram is edited via "specOps", not "source"'
+      )
+    }
+    if (patch.specOps !== undefined) {
+      if (!isExpanse) {
+        throw new PlanningContentError(
+          '"specOps" applies only to a structured (expanse) diagram — edit a Mermaid diagram via "source"'
+        )
+      }
+      if (diagram?.spec === undefined) {
+        throw new PlanningContentError(
+          'the structured diagram carries no readable spec (stale mirror) — re-read the board and retry'
+        )
+      }
+      const built = buildSpecOps(patch.specOps, diagram.spec)
+      p.specOps = built.ops
+      nextSpec = built.next
+    }
+  }
   if (patch.text !== undefined) p.text = sanitizePlanningText(patch.text, MAX_PLANNING_TEXT, 'text')
   if (patch.tint !== undefined) {
     if (!TINTS.includes(patch.tint as (typeof TINTS)[number])) {
@@ -197,7 +319,10 @@ export function buildPlanningUpdateOp(
   if (Object.keys(p).length === 0) {
     throw new PlanningContentError(`patch has no field that applies to a ${kind} element`)
   }
-  return { op: 'update', elementId, kind, patch: p }
+  return {
+    op: { op: 'update', elementId, kind, patch: p },
+    ...(nextSpec !== undefined ? { nextSpec } : {})
+  }
 }
 
 /** A short, single-line human description of the target element for the confirm body. */
@@ -215,7 +340,8 @@ export function describeElement(kind: string, label: string | undefined): string
 export function renderPlanningEditConfirmBody(
   boardTitle: string,
   op: PlanningEditOp,
-  elementDesc: string
+  elementDesc: string,
+  specDiff?: ConfirmDiff
 ): string {
   if (op.op === 'remove') {
     return (
@@ -229,6 +355,15 @@ export function renderPlanningEditConfirmBody(
       '(renders as passive content — nothing runs):',
     ''
   ]
+  if (p.specOps !== undefined && specDiff !== undefined) {
+    // Phase 3: the plain-text fallback of the Option-B diff — the FULL change list (ADR 0003;
+    // also what the Jarvis body-only route shows). The structured payload rides beside it.
+    lines.push(`• Update structured diagram (${p.specOps.length} op(s)) — ${specDiff.summary}`)
+    for (const s of specDiff.sections) {
+      for (const row of s.rows) lines.push(`    ${row.sig} ${confirmField(row.text, '      ')}`)
+    }
+    for (const warn of specDiff.lints) lines.push(`    ⚠ ${confirmField(warn, '      ')}`)
+  }
   if (p.title !== undefined) lines.push(`• Set title: ${confirmField(p.title, '  ')}`)
   if (p.text !== undefined) lines.push(`• Set text: ${confirmField(p.text, '  ')}`)
   if (p.tint !== undefined) lines.push(`• Set tint: ${p.tint}`)

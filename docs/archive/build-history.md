@@ -3369,3 +3369,30 @@ post, all in the lifecycle core) and a new `useTerminalSpawn.ts` 703 (the D2 acc
 `terminalSpawnMath.ts` to hold the growth to the 3 hook-bound choke-point lines). Rebased onto #370
 `8d1ca02d` (clean auto-merge of `eslint.config.mjs`; only the package.json version conflict, resolved
 0.25.0 → 0.25.1). Squash `ab057b36`. Worktree `.worktrees/terminal-t2-defects` stays live.
+
+## PR #372 — diagram Phase 3: MCP contract v2 — spec emit, specOps, Option-B diff confirm, Mermaid importer (v0.26.0 → 0.27.0) — 2026-07-24
+
+**Structured-spec pipeline over the MCP boundary** (kanban `Phase 3 — MCP contract v2`, 4 cards).
+(1) **Spec emit + specOps:** `add_planning_elements` takes `{kind:'diagram', engine:'expanse', spec}`
+(XOR `source`); `update_planning_element` takes `specOps` (7 kinds, ≤100/batch, idempotent
+slug-id upserts, ordered apply, result-judged via `assertDiagramSpec`; removeNode cascades edges,
+removeGroup clears member refs; zero-diff batches rejected). MAIN authoritative
+(`buildDiagramSpec` = the renderer leaf + control-char REJECT + 16 KB + clone); renderer re-validates
++ re-applies against the LIVE spec; engine-gated both directions (source↔mermaid, specOps↔expanse;
+missing mirror = "stale mirror"). New pure leafs `lib/specOps.ts` + `lib/specDiff.ts`. (2) **Option-B
+structured diff confirm** (user-signed design): optional `ConfirmDiff {summary, sections[rows
+'+'/'~'/'−'], lints}` beside the always-complete plain body (Jarvis renders body only, ADR 0003);
+`ConfirmModal` renders sig-coloured rows + lint chips (disconnected/dup-edge/self-loop/empty-group).
+(3) **Mermaid→spec importer:** ⧉ "Convert to structured" on mermaid cards only
+(`!expanse && !editing`), flowchart subset via `getDiagramFromText().db` in the sandboxed
+diagram-worker, `importedFrom` preserved; expanse cards keep zero source-editing affordances (Phase 4
+still gated). (4) **Contract:** pin `@expanse-ade/mcp` **0.21.0** (MCP repo PR #12, tag→OIDC publish;
+zod spec/specOps schemas + caps exports + handoff-bundle README) + **armed 20-cap parity test**
+(zero skips). **NO schema bump** — v22 carries engine/spec/importedFrom (additive, ADR 0007);
+revisions ride the existing v22 capture. **Full e2e matrix both legs ×2** (pre- and post-rebase onto
+#371 `bf900232`): Windows 314 passed; Linux 313 passed. Non-lane failures only: menuShell/dataFlow
+(documented ambients) + **terminalCrisp:155/:200 persistent on pristine MAIN `bf900232`** (zoom
+snap-band "settled 0.97 snapped to exactly 1" false — #371/xterm-6.0 escape, flagged to the terminal
+lane; zero terminal files in this diff). Manual dev check title-stamped + human-eyeballed (⧉ convert
+affordance signed off). Version 0.24.0→**0.27.0** (0.25.x/0.26.0 taken by STT/xterm mid-flight);
+lockfile moved (pin bump). Squash `9087903f`. Worktree `.worktrees/diagram-mcp-v2` torn down.

@@ -1,4 +1,6 @@
 import type { IpcMain, BrowserWindow, IpcMainEvent } from 'electron'
+import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import { assertDiagramSpec } from '../renderer/src/lib/diagramSpec'
 import { isForeignSender } from './ipcGuard'
 
 /** Minimal board projection the renderer pushes to MAIN (control plane; no content). */
@@ -145,6 +147,19 @@ export interface PlanningElementMirror {
   tint?: string
   title?: string
   source?: string
+  /**
+   * Diagram engine (Phase 3): 'mermaid' | 'expanse' (absent on a legacy pre-engine element —
+   * reads as Mermaid). Drives which edit field the gate accepts (`source` vs `specOps`).
+   */
+  engine?: string
+  /**
+   * A structured (expanse) diagram's FULL spec (Phase 3) — NOT a preview: the specOps
+   * read→update loop needs every id, and the gate computes/validates/diffs the op result
+   * against it. Bounded by construction: kept ONLY when it passes the authoritative
+   * `assertDiagramSpec` on ingest (own caps ⇒ ≤ ~16 KB serialized), so a forged `mcp:boards`
+   * push cannot grow MAIN memory past the element cap × spec cap.
+   */
+  spec?: DiagramSpec
   items?: PlanningItemMirror[]
 }
 
@@ -435,6 +450,30 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
     if (title !== undefined) el.title = title
     const source = boundedPreview(rec.source)
     if (source !== undefined) el.source = source
+    if (kind === 'diagram') {
+      const engine = boundedStr(rec.engine)
+      if (engine !== undefined) el.engine = engine
+      // Phase 3: keep an expanse diagram's FULL spec only when it deep-validates — the validator's
+      // own caps bound it (≤ ~16 KB serialized), so this cannot grow the mirror unboundedly, and
+      // the edit gate can trust every spec it reads here without re-checking shape.
+      if (engine === 'expanse' && rec.spec !== undefined) {
+        try {
+          assertDiagramSpec(
+            rec.spec,
+            (msg: string): never => {
+              throw new Error(msg)
+            },
+            (v): v is Record<string, unknown> =>
+              typeof v === 'object' && v !== null && !Array.isArray(v),
+            (v): v is number => typeof v === 'number' && Number.isFinite(v)
+          )
+          el.spec = JSON.parse(JSON.stringify(rec.spec)) as DiagramSpec
+        } catch {
+          // invalid/forged spec → mirror the element without it (the gate then rejects specOps
+          // with its stale-mirror message rather than operating on garbage)
+        }
+      }
+    }
     if (kind === 'checklist' && Array.isArray(rec.items)) {
       const items: PlanningItemMirror[] = []
       for (const it of rec.items) {

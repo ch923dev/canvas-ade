@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
+import type { ConfirmDiff } from '../shared/mcpTypes'
 import { isForeignSender } from './ipcGuard'
 import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
 
@@ -51,6 +52,13 @@ export interface ConfirmRequest {
   denyLabel?: string
   /** 🔒 P5: an optional layout chooser — when set, the modal renders the options + returns `choice`. */
   choices?: ConfirmChoices
+  /**
+   * Diagram Phase 3 (Option B): an optional STRUCTURED semantic diff for a diagram-spec write —
+   * coloured rows + lint chips the modal renders in place of dumping the spec. PRESENTATION
+   * ONLY: `body` stays the complete plain-text fallback (the Jarvis panel route renders body
+   * only), nothing in it is interactive, and the decision protocol is untouched.
+   */
+  diff?: ConfirmDiff
   /**
    * 🔒 J4: set by MAIN (never a caller) when the request was raised inside a Jarvis tool
    * call (`isJarvisToolCall`), so the renderer can render it as the panel's turn-act card

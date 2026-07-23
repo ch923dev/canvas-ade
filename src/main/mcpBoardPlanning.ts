@@ -20,7 +20,9 @@ export interface BoardPlanningItem {
   done: boolean
 }
 
-/** One element in the projection (S6) — always id+kind; editable fields present only for their kind. */
+/** One element in the projection (S6) — always id+kind; editable fields present only for their kind.
+ *  Phase 3: a diagram carries `engine`, and an expanse diagram its FULL `spec` (ids and all — the
+ *  read half of the specOps read→update loop; B7's "remix" property). */
 export interface BoardPlanningElement {
   id: string
   kind: string
@@ -28,6 +30,8 @@ export interface BoardPlanningElement {
   tint?: string
   title?: string
   source?: string
+  engine?: string
+  spec?: unknown
   items?: BoardPlanningItem[]
 }
 
@@ -44,6 +48,8 @@ export interface BoardPlanningInput {
       tint?: string
       title?: string
       source?: string
+      engine?: string
+      spec?: unknown
       items?: ReadonlyArray<{ id: string; label: string; done: boolean }>
     }>
   }
@@ -70,6 +76,8 @@ function projectElement(
   if (e.tint !== undefined) el.tint = e.tint
   if (e.title !== undefined) el.title = e.title
   if (e.source !== undefined) el.source = e.source
+  if (e.engine !== undefined) el.engine = e.engine
+  if (e.spec !== undefined) el.spec = e.spec
   if (e.items !== undefined) {
     el.items = e.items.map((it) => ({ id: it.id, label: it.label, done: it.done }))
   }

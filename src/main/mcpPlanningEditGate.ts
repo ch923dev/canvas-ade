@@ -1,8 +1,10 @@
 import type { McpCommand, McpCommandAck } from './mcpCommand'
-import type { PlanningEditPatch } from '../shared/mcpTypes'
+import type { ConfirmDiff, PlanningEditPatch } from '../shared/mcpTypes'
+import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
 import type { DispatchStatus, LifecycleOrchestrator } from './mcpRegistry'
 import {
   buildPlanningUpdateOp,
+  buildSpecOpsConfirmDiff,
   describeElement,
   renderPlanningEditConfirmBody
 } from './mcpPlanningEdit'
@@ -17,12 +19,16 @@ import { PlanningContentError } from './mcpPlanning'
  * the orchestrator harness. No PTY / nonce — an element is passive content (ADR 0003).
  */
 
-/** One mirrored planning element the gate reads (id+kind to resolve; label fields for the confirm body). */
+/** One mirrored planning element the gate reads (id+kind to resolve; label fields for the confirm
+ *  body; Phase 3: a diagram's `engine` + — for an expanse element — its FULL validated `spec`, the
+ *  base the specOps result is computed/diffed against). */
 export interface PlanningEditBoardElement {
   id: string
   kind: string
   text?: string
   title?: string
+  engine?: string
+  spec?: DiagramSpec
   items?: ReadonlyArray<{ id: string; label: string; done: boolean }>
 }
 
@@ -34,7 +40,11 @@ export interface PlanningEditGateDeps {
     title: string
     planning?: { elements: PlanningEditBoardElement[] }
   }>
-  confirm: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+  confirm: (req: {
+    title: string
+    body: string
+    diff?: ConfirmDiff
+  }) => Promise<{ approved: boolean }>
   sendCommand: (cmd: McpCommand) => Promise<McpCommandAck>
   audit: (input: {
     type: string
@@ -69,6 +79,7 @@ export function createPlanningEditMethods(deps: PlanningEditGateDeps): PlanningE
         | { op: 'update'; elementId: string; kind: string; patch: PlanningEditPatch }
         | { op: 'remove'; elementId: string }
       body: string
+      diff?: ConfirmDiff
     }
   ): Promise<void> => {
     const audit = (
@@ -114,8 +125,13 @@ export function createPlanningEditMethods(deps: PlanningEditGateDeps): PlanningE
       await audit('rejected', { detail })
       throw err
     }
-    // (5) Mandatory human confirm — the host owns the decision, fail-closed. Body shows the exact edit.
-    const { approved } = await deps.confirm({ title: `Modify "${board.title}"`, body: built.body })
+    // (5) Mandatory human confirm — the host owns the decision, fail-closed. Body shows the exact
+    // edit; a specOps edit additionally carries the Option-B semantic diff (presentation only).
+    const { approved } = await deps.confirm({
+      title: `Modify "${board.title}"`,
+      body: built.body,
+      ...(built.diff !== undefined ? { diff: built.diff } : {})
+    })
     if (!approved) {
       await audit('denied', { prompt: built.body })
       throw new Error(`${auditType}: write denied by the human gate`)
@@ -131,18 +147,38 @@ export function createPlanningEditMethods(deps: PlanningEditGateDeps): PlanningE
     await audit('applied', { prompt: built.body })
   }
 
-  const labelOf = (el: PlanningEditBoardElement): string | undefined => el.title ?? el.text
+  const labelOf = (el: PlanningEditBoardElement): string | undefined =>
+    el.title ?? el.text ?? el.spec?.title
 
   return {
     async updatePlanningElement(boardId, elementId, patch) {
       await applyEdit(boardId, elementId, 'update_planning_element', (element, boardTitle) => {
-        const op = buildPlanningUpdateOp(elementId, element.kind, patch)
+        const built = buildPlanningUpdateOp(
+          elementId,
+          element.kind,
+          patch,
+          element.kind === 'diagram'
+            ? {
+                ...(element.engine !== undefined ? { engine: element.engine } : {}),
+                ...(element.spec !== undefined ? { spec: element.spec } : {})
+              }
+            : undefined
+        )
+        // Phase 3: a specOps edit carries the Option-B semantic diff (computed against the SAME
+        // mirror spec the ops were validated on) for both the plain body and the structured payload.
+        const diff =
+          built.op.patch.specOps !== undefined &&
+          built.nextSpec !== undefined &&
+          element.spec !== undefined
+            ? buildSpecOpsConfirmDiff(element.spec, built.nextSpec)
+            : undefined
         const body = renderPlanningEditConfirmBody(
           boardTitle,
-          op,
-          describeElement(element.kind, labelOf(element))
+          built.op,
+          describeElement(element.kind, labelOf(element)),
+          diff
         )
-        return { op, body }
+        return { op: built.op, body, ...(diff !== undefined ? { diff } : {}) }
       })
     },
     async removePlanningElement(boardId, elementId) {
