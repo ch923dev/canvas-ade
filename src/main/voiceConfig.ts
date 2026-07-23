@@ -13,6 +13,9 @@ import writeFileAtomic from 'write-file-atomic'
 import { DEFAULT_VOICE_MODEL_ID } from './voiceModels'
 import { DEFAULT_TTS_MODEL_ID } from './voiceTtsModels'
 
+/** Default cloud STT model (Phase 1.5 pick: gpt-4o-transcribe + biasing + formatRestore = 85.5%). */
+export const DEFAULT_STT_MODEL = 'gpt-4o-transcribe'
+
 /** Cap on the persisted voice prompt-history ring. The flyout surfaces a small Recent slice; the
  *  Settings › Voice pane shows the full list up to this bound. Repair enforces it no matter what a
  *  writer sends, so a runaway array on disk can never grow the file unbounded. */
@@ -38,6 +41,10 @@ export interface VoiceConfig {
   autoSendOnFinal: false
   /** Placeholder for the cloud tier; unused in v1. */
   cloudProvider?: string
+  /** Phase 2: the cloud STT model when `engine === 'cloud'`. Default gpt-4o-transcribe (the
+   *  Phase 1.5 pick). Free-text so a newer OpenAI transcription model can be typed in without a
+   *  code change; inert while `engine === 'sherpa-onnx'`. */
+  sttModel: string
   /** Default true; the pill widget can be hidden entirely (Settings toggle, live-apply). */
   showPill: boolean
   /** Screen-fixed px (viewport-clamped again on restore — displays change between runs). */
@@ -73,7 +80,8 @@ function defaults(): VoiceConfig {
     showPill: true,
     promptHistory: [],
     ttsModelId: DEFAULT_TTS_MODEL_ID,
-    ttsDuplex: 'full'
+    ttsDuplex: 'full',
+    sttModel: DEFAULT_STT_MODEL
   }
 }
 
@@ -119,7 +127,8 @@ export function repairVoiceConfig(p: unknown): VoiceConfig {
     pillPosition,
     promptHistory,
     ttsModelId: optStr(o.ttsModelId) ?? d.ttsModelId,
-    ttsDuplex: o.ttsDuplex === 'half' ? 'half' : 'full'
+    ttsDuplex: o.ttsDuplex === 'half' ? 'half' : 'full',
+    sttModel: optStr(o.sttModel) ?? d.sttModel
   }
 }
 

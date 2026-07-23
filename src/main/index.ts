@@ -501,7 +501,16 @@ app.whenReady().then(async () => {
   registerPtyHandlers(ipcMain, () => mainWindow)
   // PTY-host boot (DESIGN.md 2026-07-12): failure notifier (muted headless) + reattach warm-up.
   bootPtyHost({ muted: process.env.CANVAS_E2E === '1' || Boolean(SMOKE) })
-  registerVoiceHandlers(ipcMain, () => mainWindow) // voice V1: session control + port broker
+  // T-B2 safeStorage encryptor (Electron-free llmKeyStore); Phase 2 voice cloud STT reads the same MAIN-side `openai` slot + the file-tree symbols via getCurrentDir.
+  const llmEncryptor: Encryptor = {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (s) => safeStorage.encryptString(s),
+    decryptString: (b) => safeStorage.decryptString(b)
+  }
+  registerVoiceHandlers(ipcMain, () => mainWindow, {
+    encryptor: llmEncryptor,
+    getProjectDir: getCurrentDir
+  })
   registerClipboardHandlers(ipcMain, () => mainWindow)
   // General external-open channel (scheme re-validated in MAIN) — Phase 4 terminal web-links.
   registerShellHandlers(ipcMain, () => mainWindow)
@@ -556,17 +565,6 @@ app.whenReady().then(async () => {
   registerPreviewOsrHandlers(ipcMain, () => mainWindow) // offscreen preview → <canvas>
   registerDiagramHandlers(ipcMain, () => mainWindow) // S4: hidden Mermaid render worker
   registerPreviewScreenshotHandler(ipcMain, () => mainWindow)
-
-  // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
-  // electron) and injected so llmKeyStore stays Electron-free + unit-testable. Under
-  // CANVAS_SMOKE=e2e the key store lives in a throwaway temp dir (exported for the probe) so
-  // a test key never lands in the real userData; otherwise it lives in userData (NEVER a
-  // project folder).
-  const llmEncryptor: Encryptor = {
-    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
-    encryptString: (s) => safeStorage.encryptString(s),
-    decryptString: (b) => safeStorage.decryptString(b)
-  }
 
   // ── Phase 1 accounts: construct the sign-in service (reuses the safeStorage encryptor) + register
   //    its IPC, then flush any deep-link that arrived before the service existed (open-url pre-ready).

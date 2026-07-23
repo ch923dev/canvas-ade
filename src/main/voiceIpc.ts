@@ -17,6 +17,11 @@ import type { BrowserWindow, IpcMain } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { createVoiceEngine, type VoiceEngineHandle } from './voiceEngine'
 import { currentVoiceStubEngine } from './voiceEngineStub'
+import { createCloudSttEngine, type CloudSttEvent } from './cloudSttEngine'
+import { createOpenAiTranscribe, type TranscribeFetch } from './openaiTranscribe'
+import { createSymbolProvider, type SymbolProvider } from './voiceSymbols'
+import { keyForProvider } from './llmService'
+import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
 import {
   readVoiceConfig,
   repairVoiceConfig,
@@ -120,6 +125,20 @@ function micAccessStatus(): string {
 export interface VoiceIpcDeps {
   engine?: VoiceEngineHandle
   getUserData?: () => string
+  // ── Phase 2 cloud STT (all optional; the real wiring injects the safeStorage encryptor +
+  //    getCurrentDir, unit tests inject keyStore/symbols/transcribeFetch directly) ──
+  /** safeStorage encryptor → the OpenAI key store (MAIN-side only, mirrors jarvisIpc). */
+  encryptor?: Encryptor
+  /** Direct key-store injection (unit tests); else built from `encryptor` + userData. */
+  keyStore?: Pick<KeyStore, 'hasKey' | 'getKey'>
+  /** The open project dir, for the file-tree symbol provider (index.ts: getCurrentDir). */
+  getProjectDir?: () => string | null
+  /** Direct symbol-provider injection (unit tests); else built from `getProjectDir`. */
+  symbols?: SymbolProvider
+  /** Injectable transcription transport (unit/e2e); default = global fetch (undici). */
+  transcribeFetch?: TranscribeFetch
+  /** Override the OpenAI base URL (e2e fake vendor); default reads CANVAS_VOICE_OPENAI_BASE. */
+  transcribeBaseUrl?: () => string
   modelOps?: {
     status: typeof modelStatus
     paths: typeof modelPaths
@@ -207,9 +226,56 @@ export function registerVoiceHandlers(
     download: downloadKwsModel,
     remove: deleteKwsModel
   }
-  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in
-  // every normal run — only settable through e2eMain's gated registry) → the real host.
-  const engine = (): VoiceEngineHandle => deps.engine ?? currentVoiceStubEngine() ?? defaultEngine()
+  // ── Phase 2 cloud STT selection (decision #4: composite in-main, key never leaves MAIN) ──
+  // The key store is built here from the injected safeStorage encryptor (jarvisIpc pattern); a
+  // dev OPENAI_API_KEY env var is the store-less fallback (keyForProvider). Presence only ever
+  // reaches the renderer via the shared llm:hasKey channel.
+  const keyStore: Pick<KeyStore, 'hasKey' | 'getKey'> | undefined =
+    deps.keyStore ?? (deps.encryptor ? createKeyStore(getUserData(), deps.encryptor) : undefined)
+  const hasOpenAiKey = (): boolean => keyForProvider('openai', process.env, keyStore) !== undefined
+  // File-tree symbol provider (decision #1): top-30 bias + full formatRestore dict, cached +
+  // self-refreshing on project switch. Eager first build for the project open at boot.
+  const symbols: SymbolProvider =
+    deps.symbols ??
+    createSymbolProvider({ getProjectDir: deps.getProjectDir ?? ((): null => null) })
+  symbols.refresh()
+  // Deliver a cloud batch result/status to the renderer OUT-OF-BAND — useVoiceCapture closes its
+  // session port right after {t:'eos'}, so the ~0.8 s-later final can't ride the port back.
+  const emitTranscript = (ev: CloudSttEvent): void => {
+    getWin()?.webContents.send('voice:transcript', ev)
+  }
+  const transcribe = createOpenAiTranscribe({
+    getKey: () => keyForProvider('openai', process.env, keyStore), // MAIN-side only, never returned out
+    getModel: () => readVoiceConfig(getUserData()).sttModel,
+    getBaseUrl:
+      deps.transcribeBaseUrl ?? ((): string => process.env.CANVAS_VOICE_OPENAI_BASE || ''),
+    fetch: deps.transcribeFetch
+  })
+  let cloudEngineSingleton: VoiceEngineHandle | null = null
+  const cloudEngine = (): VoiceEngineHandle => {
+    if (!cloudEngineSingleton) {
+      cloudEngineSingleton = createCloudSttEngine({
+        local: defaultEngine(), // wraps the persistent local host; TTS/KWS delegate through
+        transcribe,
+        emit: emitTranscript,
+        getSymbols: () => symbols.get()
+      })
+    }
+    return cloudEngineSingleton
+  }
+  /** Cloud STT is on only when configured AND a key is present; else we fall back to local
+   *  (the renderer surfaces the "set OpenAI key" note itself via config + llm:hasKey). */
+  const useCloud = (): boolean =>
+    readVoiceConfig(getUserData()).engine === 'cloud' && hasOpenAiKey()
+
+  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in every
+  // normal run — only settable through e2eMain's gated registry) → cloud composite (when
+  // configured + keyed) → the real local host.
+  const engine = (): VoiceEngineHandle => {
+    const override = deps.engine ?? currentVoiceStubEngine()
+    if (override) return override
+    return useCloud() ? cloudEngine() : defaultEngine()
+  }
 
   // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
   void ops.sweep(getUserData()).catch(() => {})
@@ -270,14 +336,18 @@ export function registerVoiceHandlers(
     // there swapped the flyout body for the model-missing row and failed the composer
     // specs Linux-only. deps.engine (unit-test injection) keeps the real disk check.
     const stubActive = !deps.engine && currentVoiceStubEngine() !== null
+    // Cloud STT ignores the on-disk sherpa model entirely (it holds the port + calls OpenAI), so
+    // report 'ready' (no Download CTA) and pass null paths — the cloud engine drops the model arg.
+    const cloudActive = !deps.engine && !stubActive && useCloud()
     // V4: the configured model drives the session. An id missing from the catalog is
     // preserved on disk but falls back to the default here (scene-id discipline).
     const cfgModel = readVoiceConfig(userData).modelId
     const modelId = VOICE_MODEL_CATALOG.some((m) => m.id === cfgModel)
       ? cfgModel
       : DEFAULT_VOICE_MODEL_ID
-    const status = stubActive ? 'ready' : await ops.status(userData, modelId)
-    const paths = !stubActive && status === 'ready' ? ops.paths(userData, modelId) : null
+    const status = stubActive || cloudActive ? 'ready' : await ops.status(userData, modelId)
+    const paths =
+      !stubActive && !cloudActive && status === 'ready' ? ops.paths(userData, modelId) : null
     liveModel = paths
     liveActive = true
     restartedOnce = false // a user-started session gets a fresh restart budget

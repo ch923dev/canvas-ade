@@ -34,6 +34,8 @@ export interface VoiceConfigView {
   hotkey?: string
   autoSendOnFinal: false
   cloudProvider?: string
+  /** Phase 2: cloud STT model (default gpt-4o-transcribe); inert while engine is sherpa-onnx. */
+  sttModel: string
   showPill: boolean
   pillPosition?: { x: number; y: number }
   /** Sent voice prompts, newest first, capped (MAX_PROMPT_HISTORY in main). The flyout reads a
@@ -58,6 +60,15 @@ export type VoiceWakeEvent = { kind: 'error'; reason?: string }
  *  re-brokered the session after a crash (a fresh voice:port follows); 'error' = the
  *  restart budget is spent — stop capturing, keep the draft, offer Restart. */
 export type VoiceEngineEvent = { kind: 'restarted' } | { kind: 'error'; reason?: string }
+
+/** Phase 2 cloud STT — the batch result/status pushed OUT-OF-BAND (the session port is closed
+ *  right after {t:'eos'}). 'transcribing' = OpenAI round-trip in flight (drives the pill/flyout
+ *  transcribing state); 'final' = the formatRestore-corrected transcript; 'error' = a
+ *  fail-visible network/quota/timeout reason (the draft is kept). Local STT never emits these. */
+export type VoiceTranscriptEvent =
+  | { kind: 'transcribing' }
+  | { kind: 'final'; text: string }
+  | { kind: 'error'; reason: string }
 
 /** The four catalog channels + progress push under one prefix — `voice:models` (STT)
  *  and `voice:tts:models` (J2) are the same surface over different catalogs. */
@@ -99,6 +110,13 @@ export const voiceApi = {
     const listener = (_e: Electron.IpcRendererEvent, ev: VoiceEngineEvent): void => cb(ev)
     ipcRenderer.on('voice:engine:event', listener)
     return () => ipcRenderer.removeListener('voice:engine:event', listener)
+  },
+  // Phase 2: cloud STT batch results (transcribing/final/error). Local STT streams over the
+  // port instead, so this only fires when the cloud engine is active.
+  onTranscript: (cb: (ev: VoiceTranscriptEvent) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, ev: VoiceTranscriptEvent): void => cb(ev)
+    ipcRenderer.on('voice:transcript', listener)
+    return () => ipcRenderer.removeListener('voice:transcript', listener)
   },
   models: modelCatalogApi('voice:models'),
   // ── J2 TTS: control plane (chunks flow over the voice:tts:port MessagePort). speak()

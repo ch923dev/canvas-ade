@@ -24,7 +24,8 @@ const DEFAULTS: VoiceConfig = {
   pillPosition: undefined,
   promptHistory: [],
   ttsModelId: DEFAULT_TTS_MODEL_ID,
-  ttsDuplex: 'full'
+  ttsDuplex: 'full',
+  sttModel: 'gpt-4o-transcribe'
 }
 
 describe('voiceConfig (V4 full SPEC §5 shape)', () => {
@@ -66,7 +67,8 @@ describe('voiceConfig (V4 full SPEC §5 shape)', () => {
       pillPosition: { x: 12, y: 34 },
       promptHistory: ['deploy the site', 'run the tests'],
       ttsModelId: 'piper-en_US-lessac-medium',
-      ttsDuplex: 'half'
+      ttsDuplex: 'half',
+      sttModel: 'gpt-4o-mini-transcribe'
     }
     writeVoiceConfig(dir, cfg)
     expect(readVoiceConfig(dir)).toEqual(cfg)

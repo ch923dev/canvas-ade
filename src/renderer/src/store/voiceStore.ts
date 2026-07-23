@@ -72,6 +72,16 @@ interface VoiceState {
   /** V5 SPEC §3 `error` state: the engine crashed past its restart budget. The draft is
    *  untouched — the flyout shows the error row with Restart until a new start clears it. */
   engineError: boolean
+  /** Phase 2 cloud STT: between release and the batch final (~0.8 s OpenAI round-trip). Cloud
+   *  has no live partials, so this drives the pill/flyout `transcribing…` affordance. Set by the
+   *  voice:transcript 'transcribing' event; cleared by 'final'/'error' or a fresh capture. */
+  transcribing: boolean
+  /** Phase 2: a fail-visible cloud transcribe error reason (network/quota/timeout/…). The draft
+   *  is kept; the flyout shows a dismissible note. Cleared on a fresh capture or dismiss. */
+  cloudError: string | null
+  /** Phase 2: engine is 'cloud' but no OpenAI key is set — dictation falls back to local and the
+   *  flyout shows a "set OpenAI key" note (never silent). Computed renderer-side (config + hasKey). */
+  cloudKeyMissing: boolean
   /** Epoch ms of the last frame whose RMS beat SILENCE_RMS (silence auto-stop input). */
   lastVoiceAt: number
   /** Epoch ms the live capture session armed (the ~2 min hard-cap input). */
@@ -97,6 +107,9 @@ interface VoiceState {
   /** Download CTA completion flips 'absent' → 'ready' without another start(). */
   setModelStatus: (s: 'ready' | 'absent' | 'unknown') => void
   setEngineError: (on: boolean) => void
+  setTranscribing: (on: boolean) => void
+  setCloudError: (reason: string | null) => void
+  setCloudKeyMissing: (on: boolean) => void
   /** Sent-prompt history mirror (newest first) — hydrated from voiceConfig at pill mount and
    *  re-synced on voice:config:changed. Render cache only; the source of truth is the durable
    *  userData/voice-config.json ring (never a project file, never session-serialized). */
@@ -117,6 +130,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   micStatus: 'unknown',
   modelStatus: 'unknown',
   engineError: false,
+  transcribing: false,
+  cloudError: null,
+  cloudKeyMissing: false,
   lastVoiceAt: 0,
   captureStartedAt: 0,
   captureStarted: () =>
@@ -126,6 +142,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       micSilent: false,
       framesSent: 0,
       engineError: false, // a fresh session (incl. Restart) leaves the error state
+      transcribing: false, // a new hold supersedes any in-flight transcription
+      cloudError: null, // clear a prior transcribe error on a fresh attempt
       captureStartedAt: Date.now(),
       // A fresh session starts its silence clock NOW — else a stale lastVoiceAt from a
       // previous session would auto-stop this one immediately.
@@ -170,6 +188,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((s) => (s.composerSuppressed === on ? s : { composerSuppressed: on })),
   setModelStatus: (modelStatus) => set({ modelStatus }),
   setEngineError: (on) => set((s) => (s.engineError === on ? s : { engineError: on })),
+  setTranscribing: (on) => set((s) => (s.transcribing === on ? s : { transcribing: on })),
+  setCloudError: (reason) => set((s) => (s.cloudError === reason ? s : { cloudError: reason })),
+  setCloudKeyMissing: (on) => set((s) => (s.cloudKeyMissing === on ? s : { cloudKeyMissing: on })),
   recent: [],
   setRecent: (recent) => set((s) => (s.recent === recent ? s : { recent }))
 }))
