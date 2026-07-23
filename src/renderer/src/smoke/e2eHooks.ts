@@ -210,6 +210,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       t.reset()
       t.write(text)
     },
+    writeTerminal(id, text) {
+      e2eTerminals.get(id)?.write(text)
+    },
+    terminalSyncOutput(id) {
+      return e2eTerminals.get(id)?.modes.synchronizedOutputMode ?? false
+    },
     terminalCellPoint(id, col, row, fx = 0.5, fy = 0.5) {
       const t = e2eTerminals.get(id)
       // Resolve the screen via the LIVE xterm's own element, not a node-scoped DOM query:
