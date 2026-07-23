@@ -46,6 +46,7 @@ import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStor
 import { clearStickyLocalPrefs } from './e2eStickyPrefs'
 import { useCommandStore, commandStoreDefaults } from '../store/commandStore'
 import { useVoiceStore } from '../store/voiceStore'
+import { useTtsStore } from '../store/ttsStore'
 import { useJarvisStore } from '../store/jarvisStore'
 import { setConverseMode } from '../jarvis/jarvisSession'
 import { useLibraryStore } from '../store/libraryStore'
@@ -619,6 +620,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         flyoutOpen: s.flyoutOpen,
         modelStatus: s.modelStatus
       }
+    },
+    ttsState() {
+      const s = useTtsStore.getState()
+      return { sessionLive: s.sessionLive, speaking: s.speaking, lastError: s.lastError }
     },
     jarvisState() {
       const s = useJarvisStore.getState()

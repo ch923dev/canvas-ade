@@ -16,6 +16,7 @@ import type {
   VoiceModelListEntry
 } from '../../../preload/voice'
 import { formatMb } from './SettingsVoiceSection'
+import { SettingsVoiceTtsCloud } from './SettingsVoiceTtsCloud'
 import { pane } from './settings/paneStyles'
 import { speakText, cancelSpeech } from '../voice/ttsSession'
 import { getTtsPlayer } from '../voice/ttsPlayback'
@@ -46,6 +47,9 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
   // Click → audio-out gap feedback: true from the Preview click until playback actually
   // starts (or the speak fails) — drives the "Synthesizing…" button state.
   const [pending, setPending] = useState(false)
+  // Phase 3: whether the shared OpenAI key is set (reported up by the cloud block). Gates Preview
+  // when cloud TTS is selected — with a key, cloud can speak with no local model downloaded.
+  const [cloudKeyPresent, setCloudKeyPresent] = useState(false)
   const speaking = useTtsStore((s) => s.speaking)
   // Pending settles on either edge of `speaking` (start = the normal path; end covers a
   // start missed during the subscribe race), with a watchdog so the button can never
@@ -160,14 +164,51 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
 
   const selected = models.find((m) => m.id === cfg?.ttsModelId)
   const selectedReady = selected?.status === 'ready'
+  const cloudTts = cfg?.ttsEngine === 'cloud'
+  // Cloud can speak with just a key (no local model needed); otherwise Preview needs a downloaded
+  // local voice — which is also the fallback the cloud path uses when the key is missing.
+  const previewReady = cloudTts ? cloudKeyPresent || selectedReady : selectedReady
 
   return (
     <>
       <div style={pane.divider} />
       <div style={pane.head}>Speech — Jarvis voice</div>
 
+      <label style={pane.field}>
+        <span style={pane.label}>Engine</span>
+        <select
+          aria-label="Speech engine"
+          data-test="tts-engine"
+          value={cfg?.ttsEngine ?? 'kokoro'}
+          onChange={(e) => setField({ ttsEngine: e.target.value as VoiceConfigView['ttsEngine'] })}
+          style={pane.input}
+        >
+          <option value="kokoro">Local — Kokoro (on-device)</option>
+          <option value="cloud">Cloud — OpenAI gpt-4o-mini-tts</option>
+        </select>
+        {cloudTts && (
+          <span style={pane.hint}>
+            Sentences are synthesized by OpenAI and streamed back as it speaks. Your key stays on
+            this machine (encrypted); audio is never saved to disk.
+          </span>
+        )}
+      </label>
+
+      {cloudTts && cfg && (
+        <div style={s.cloudBlock}>
+          <SettingsVoiceTtsCloud
+            ttsCloudModel={cfg.ttsCloudModel}
+            ttsVoice={cfg.ttsVoice}
+            onModelChange={(v) => setField({ ttsCloudModel: v })}
+            onVoiceChange={(v) => setField({ ttsVoice: v })}
+            onError={setError}
+            onKeyPresence={setCloudKeyPresent}
+          />
+        </div>
+      )}
+
       <div style={pane.field}>
-        <span style={pane.label}>Voice model</span>
+        <span style={pane.label}>{cloudTts ? 'Local voice — fallback' : 'Voice model'}</span>
         {models.map((m) => {
           const active = m.id === cfg?.ttsModelId
           const isDownloading = downloadingId === m.id
@@ -249,13 +290,22 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
           )
         })}
         <span style={pane.hint}>
-          Shared pronunciation data downloads once and is reused by both voices.
+          {cloudTts
+            ? 'Used automatically if the cloud voice is unavailable (no key set, or a failed request).'
+            : 'Shared pronunciation data downloads once and is reused by both voices.'}
         </span>
       </div>
 
       <div style={pane.setrow} data-test="tts-preview-row">
         <div style={{ flex: 1 }}>
-          <div style={pane.rowTitle}>Preview voice</div>
+          <div style={pane.rowTitle}>
+            Preview voice
+            {cloudTts && (
+              <span style={s.viaPill} data-test="tts-via-openai">
+                VIA OPENAI
+              </span>
+            )}
+          </div>
           <div style={pane.rowSub}>
             Speaks a short line through the selected voice. Talk over it to test barge-in.
           </div>
@@ -272,8 +322,8 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
         ) : (
           <button
             type="button"
-            style={{ ...pane.syncBtn, ...(!selectedReady || pending ? pane.ctlDisabled : null) }}
-            disabled={!selectedReady || pending}
+            style={{ ...pane.syncBtn, ...(!previewReady || pending ? pane.ctlDisabled : null) }}
+            disabled={!previewReady || pending}
             data-test="tts-preview"
             onClick={preview}
           >
@@ -312,6 +362,28 @@ export function SettingsVoiceTtsSection(): ReactElement | null {
 // Model-row grammar mirrored from SettingsVoiceSection's private copy (it doesn't export
 // its style object; paneStyles carries the shared field/row/button shapes used above).
 const s: Record<string, CSSProperties> = {
+  // The cloud-TTS fields grouped under an accent left-rail (approved design mock).
+  cloudBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 11,
+    padding: 12,
+    border: '1px solid var(--border-subtle)',
+    borderLeft: '2px solid var(--accent)',
+    borderRadius: 'var(--r-inner)',
+    background: 'var(--surface)'
+  },
+  viaPill: {
+    marginLeft: 7,
+    fontSize: 9.5,
+    fontWeight: 600,
+    letterSpacing: '0.03em',
+    color: 'var(--accent)',
+    background: 'var(--accent-wash)',
+    border: '1px solid rgba(79,140,255,.4)',
+    borderRadius: 4,
+    padding: '1px 6px'
+  },
   model: {
     background: 'var(--surface)',
     border: '1px solid var(--border-subtle)',

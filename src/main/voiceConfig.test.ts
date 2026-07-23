@@ -25,7 +25,10 @@ const DEFAULTS: VoiceConfig = {
   promptHistory: [],
   ttsModelId: DEFAULT_TTS_MODEL_ID,
   ttsDuplex: 'full',
-  sttModel: 'gpt-4o-transcribe'
+  sttModel: 'gpt-4o-transcribe',
+  ttsEngine: 'kokoro',
+  ttsCloudModel: 'gpt-4o-mini-tts',
+  ttsVoice: 'alloy'
 }
 
 describe('voiceConfig (V4 full SPEC §5 shape)', () => {
@@ -68,7 +71,10 @@ describe('voiceConfig (V4 full SPEC §5 shape)', () => {
       promptHistory: ['deploy the site', 'run the tests'],
       ttsModelId: 'piper-en_US-lessac-medium',
       ttsDuplex: 'half',
-      sttModel: 'gpt-4o-mini-transcribe'
+      sttModel: 'gpt-4o-mini-transcribe',
+      ttsEngine: 'cloud',
+      ttsCloudModel: 'tts-1-hd',
+      ttsVoice: 'nova'
     }
     writeVoiceConfig(dir, cfg)
     expect(readVoiceConfig(dir)).toEqual(cfg)
@@ -136,6 +142,19 @@ describe('voiceConfig (V4 full SPEC §5 shape)', () => {
   it("accepts 'cloud' as a persisted engine value (greyed in UI, never honored)", () => {
     expect(repairVoiceConfig({ engine: 'cloud' }).engine).toBe('cloud')
     expect(repairVoiceConfig({ engine: 'sherpa-onnx' }).engine).toBe('sherpa-onnx')
+  })
+
+  it('Phase 3: repairs the cloud-TTS fields (ttsEngine/ttsCloudModel/ttsVoice)', () => {
+    // ttsEngine is a strict 'kokoro' | 'cloud' — anything else repairs to the local default.
+    expect(repairVoiceConfig({ ttsEngine: 'cloud' }).ttsEngine).toBe('cloud')
+    expect(repairVoiceConfig({ ttsEngine: 'sherpa-onnx' }).ttsEngine).toBe('kokoro')
+    expect(repairVoiceConfig({ ttsEngine: 42 }).ttsEngine).toBe('kokoro')
+    expect(repairVoiceConfig({}).ttsEngine).toBe('kokoro')
+    // model + voice are free-text: a non-empty string is preserved, junk falls back to the default.
+    expect(repairVoiceConfig({ ttsCloudModel: 'tts-1' }).ttsCloudModel).toBe('tts-1')
+    expect(repairVoiceConfig({ ttsCloudModel: 7 }).ttsCloudModel).toBe('gpt-4o-mini-tts')
+    expect(repairVoiceConfig({ ttsVoice: 'shimmer' }).ttsVoice).toBe('shimmer')
+    expect(repairVoiceConfig({ ttsVoice: '' }).ttsVoice).toBe('alloy')
   })
 })
 
