@@ -73,6 +73,19 @@ function tokenize(text) {
 }
 
 /**
+ * True iff every gap BETWEEN the `len` word tokens starting at word `w` is pure whitespace.
+ * Guards the multi-word matcher against merging words split by punctuation (see call site).
+ */
+function interWordGapsAreWhitespace(tokens, wordIdx, w, len) {
+  for (let k = 0; k < len - 1; k++) {
+    for (let t = wordIdx[w + k] + 1; t < wordIdx[w + k + 1]; t++) {
+      if (!/^\s*$/.test(tokens[t].text)) return false
+    }
+  }
+  return true
+}
+
+/**
  * Rewrite prose-form identifiers in `text` to their canonical spelling using `symbols`
  * (or a prebuilt map from buildSymbolMap). Greedy longest-match over word windows; the
  * gaps between matched words are consumed, everything else is preserved verbatim.
@@ -91,6 +104,12 @@ export function restoreFormatting(text, symbols) {
     let matched = null
     const maxLen = Math.min(map.maxSpan, wordIdx.length - w)
     for (let len = maxLen; len >= 1; len--) {
+      // A multi-word match may only span words separated by PURE WHITESPACE. Without this,
+      // "add. card" (two sentences) would fold to "addcard", match `add_card`, delete the
+      // full stop and splice unrelated sentences into a fabricated identifier — a false
+      // merge that gets likelier as the dictionary grows. A separator carrying any
+      // non-space char (`.`/`,`/`(` …) means the words weren't spoken as one token.
+      if (len > 1 && !interWordGapsAreWhitespace(tokens, wordIdx, w, len)) continue
       const fold = foldIdentifier(
         Array.from({ length: len }, (_, k) => tokens[wordIdx[w + k]].text).join('')
       )

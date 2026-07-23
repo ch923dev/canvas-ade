@@ -153,14 +153,20 @@ gpt-4o-transcribe transcripts (17 unit tests, `formatRestore.test.ts`; `--post-f
 
 | gpt-4o-transcribe | keyterm-exact raw → +layer | WER |
 |---|---:|---:|
-| **biased** (chosen config) | **69.4% → 85.5%** (+16 pt) | 23.1% → 19.7% |
+| **biased** (chosen config) | **69.4% → 83.9%** (+14.5 pt) | 23.1% → 19.7% |
 | unbiased | 40.3% → 75.8% (+35 pt) | 26.3% → 18.8% |
 
 The two layers stack cleanly: the formatting layer recovers "heard right, spelled wrong" (+35 pt on
 unbiased); prompt biasing adds the ~10 pt of "genuinely misheard" the formatting layer can't touch
-(it needs the phonemes to be right). **Combined: 85.5% keyterm-exact / 19.7% WER** — the ~85% this
-doc predicted. The layer is provider-independent: it lifted even OpenRouter's biasing-stripped
+(it needs the phonemes to be right). **Combined: 83.9% keyterm-exact / 19.7% WER** — near the ~85%
+this doc predicted. The layer is provider-independent: it lifted even OpenRouter's biasing-stripped
 gpt-4o-transcribe from 40.3% → 74.2%.
+
+> The biased figure was 85.5% until the PR #368 review caught a false-merge bug: the multi-word matcher
+> folded across punctuation, so "add. card" (two sentences) could splice into `add_card`. Fixed to
+> require pure-whitespace inter-word gaps; the honest re-score is **83.9%** (the 1.6 pt was coincidental
+> false merges). All eight real recoveries — `message port`→`MessagePort`, `schema version`→`schemaVersion`,
+> `NodePTY`→`node-pty`, `modified beam search`→`modified_beam_search`, … — are unaffected.
 
 ### 3.3 LLM post-correction (GER) — real, but needs a guardrail
 
@@ -346,16 +352,16 @@ Findings:
    gpt-4o-transcribe biased, keyterm-loose is 87.1%, so only ~13% of identifiers were truly lost.
 
 5. **Roadmap.** (a) ✅ **DONE — the §3.2 deterministic formatting layer is built and measured**
-   (`formatRestore.mjs`): it takes gpt-4o-transcribe biased from **69.4% → 85.5% keyterm-exact**
+   (`formatRestore.mjs`): it takes gpt-4o-transcribe biased from **69.4% → 83.9% keyterm-exact**
    (19.7% WER), closing the exact→loose gap as predicted. (b) ✅ **DECIDED — accuracy default: OpenAI
    `gpt-4o-transcribe` (direct, full) + prompt biasing.** Budget fallback: Groq `whisper-large-v3-turbo`
    (~free, 43.5% exact) if $0.006/min ever matters — at expected dictation volumes it does not.
    (c) Still optional: **Deepgram `nova-3`** (`keyterm`) and **AssemblyAI** (`keyterms_prompt`,
    1,000-phrase headroom) — the only untested configs that could beat 69.4% raw; not on the critical
-   path now that the layer clears 85%.
+   path now that the layer clears ~84%.
 
 **Net (2026-07-23, DECIDED): OpenAI `gpt-4o-transcribe` direct + biasing + the §3.2 formatting layer —
-85.5% keyterm-exact / 19.7% WER, $0.006/min.** OpenRouter rejected for STT (double-confirmed — strips
+83.9% keyterm-exact / 19.7% WER, $0.006/min.** OpenRouter rejected for STT (double-confirmed — strips
 biasing on two models). Groq turbo is the budget option (~free). Next is Phase 2 app integration
 (wire the cloud engine + push-to-talk through the existing `VoiceEngineHandle` seam).
 

@@ -102,6 +102,31 @@ describe('restoreFormatting', () => {
     )
   })
 
+  it('does NOT merge multi-word matches split by punctuation (sentence boundary)', () => {
+    // "add. card" spans a full stop → must not fold into add_card and delete the period.
+    expect(restoreFormatting('please add. card is broken', SYMBOLS)).toBe(
+      'please add. card is broken'
+    )
+    // comma between the words is likewise not a spoken single token
+    expect(restoreFormatting('context, isolation matters', SYMBOLS)).toBe(
+      'context, isolation matters'
+    )
+  })
+
+  it('still matches a multi-word symbol across multiple plain spaces / a newline', () => {
+    expect(restoreFormatting('call use  voice\tcapture now', SYMBOLS)).toBe(
+      'call useVoiceCapture now'
+    )
+  })
+
+  it('falls back to a shorter whitespace-only match when the longer span is punctuated', () => {
+    // "modified beam. search" can't be the 3-word symbol (period before "search"), and no
+    // shorter symbol matches, so it stays verbatim rather than force a bad merge.
+    expect(restoreFormatting('use modified beam. search here', SYMBOLS)).toBe(
+      'use modified beam. search here'
+    )
+  })
+
   it('does not rewrite an ambiguous fold', () => {
     const out = restoreFormatting('add card here', ['add_card', 'addCard'])
     expect(out).toBe('add card here') // ambiguous → left as prose
