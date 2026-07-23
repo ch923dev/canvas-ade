@@ -24,6 +24,17 @@ interface ActiveCapture {
   dispose: () => void
 }
 
+/**
+ * Route a finalized transcript segment into the dictation composer. Shared by BOTH delivery
+ * paths: the local engine posts {t:'final'} over the session port (streamed while held), and
+ * the cloud engine emits it out-of-band on voice:transcript (batch, after the port closed).
+ * An armed converse consumer (Jarvis) takes the final instead of the draft (J3 seam).
+ */
+function applyFinal(text: string): void {
+  if (!consumeFinal(text)) useVoiceStore.getState().finalReceived(text)
+  else useVoiceStore.getState().partialReceived('')
+}
+
 /** Renderer → MAIN frame message over the voice port (the stub/engine end counts these). */
 interface VoiceFrameMsg {
   t: 'frame'
@@ -70,10 +81,8 @@ function createCapture(port: MessagePort): ActiveCapture {
     else if (m?.t === 'partial' && typeof m.text === 'string') {
       useVoiceStore.getState().partialReceived(m.text)
     } else if (m?.t === 'final' && typeof m.text === 'string') {
-      // J3 converse seam: an armed consumer (the Jarvis controller) takes the final —
-      // the dictation draft/flyout never see it. Unconsumed finals keep the V3 route.
-      if (!consumeFinal(m.text)) useVoiceStore.getState().finalReceived(m.text)
-      else useVoiceStore.getState().partialReceived('')
+      // Local streaming final over the port; the same routing the cloud side-channel uses.
+      applyFinal(m.text)
     }
   }
 
@@ -166,9 +175,27 @@ export function useVoiceCapture(): void {
         s.setEngineError(false)
       }
     })
+    // Phase 2 cloud STT: batch result/status delivered out-of-band (the session port is closed
+    // right after {t:'eos'}). 'transcribing' drives the gap affordance; 'final' folds into the
+    // draft via the same applyFinal routing; 'error' is fail-visible (draft kept, flyout opens).
+    const offTranscript = window.api.voice.onTranscript?.((ev) => {
+      const s = useVoiceStore.getState()
+      if (ev.kind === 'transcribing') {
+        s.setTranscribing(true)
+        s.setFlyoutOpen(true)
+      } else if (ev.kind === 'final') {
+        s.setTranscribing(false)
+        applyFinal(ev.text)
+      } else if (ev.kind === 'error') {
+        s.setTranscribing(false)
+        s.setCloudError(ev.reason)
+        s.setFlyoutOpen(true)
+      }
+    })
     return () => {
       window.removeEventListener('message', onWinMsg)
       offEngine?.()
+      offTranscript?.()
       session?.dispose()
     }
   }, [])

@@ -69,6 +69,7 @@ export function VoicePill(): ReactElement | null {
   const level = useVoiceStore((s) => s.level)
   const micSilent = useVoiceStore((s) => s.micSilent)
   const micStatus = useVoiceStore((s) => s.micStatus)
+  const transcribing = useVoiceStore((s) => s.transcribing)
   const [pos, setPos] = useState<PillPos | null>(null)
   const [showPill, setShowPill] = useState(true)
   // Drag bookkeeping lives in refs — the pointer handlers are stable across renders.
@@ -92,6 +93,7 @@ export function VoicePill(): ReactElement | null {
     showPill: boolean
     hotkey?: string
     promptHistory?: string[]
+    engine?: 'sherpa-onnx' | 'cloud'
   }): void => {
     setShowPill(cfg.showPill)
     chordRef.current = resolveHotkey(cfg.hotkey)
@@ -99,6 +101,16 @@ export function VoicePill(): ReactElement | null {
     // Hydrate the prompt-history mirror from config at mount and keep it live: a Send from the
     // flyout OR a delete/clear in Settings both round-trip through voice:config:changed → here.
     useVoiceStore.getState().setRecent(cfg.promptHistory ?? [])
+    // Phase 2: surface the "set OpenAI key" note when cloud is selected without a key — computed
+    // here (the pill is always mounted) so it's correct even when Settings never opened.
+    if (cfg.engine === 'cloud') {
+      void window.api.llm
+        ?.hasKey({ provider: 'openai' })
+        .then((h) => useVoiceStore.getState().setCloudKeyMissing(!h))
+        .catch(() => {})
+    } else {
+      useVoiceStore.getState().setCloudKeyMissing(false)
+    }
   }
 
   // Restore config once: position (re-clamped — displays change between runs) + show
@@ -251,13 +263,16 @@ export function VoicePill(): ReactElement | null {
   if (!enabled || !pos) return null
 
   const denied = micSilent || micStatus === 'denied'
+  // Phase 2: the cloud batch gap (released, transcribing) — the bars run a calm indeterminate
+  // wave (mic off, so no RMS), distinct from idle (flat) and listening (RMS-driven).
+  const working = transcribing && !capturing
   const liveLevel = Math.min(1, level * 6) // speech RMS ~0.02–0.2 → usable bar range
 
   return (
     <>
       {showPill && (
         <div
-          className={`voice-pill${capturing ? ' listening' : ''}${denied ? ' denied' : ''}`}
+          className={`voice-pill${capturing ? ' listening' : ''}${working ? ' transcribing' : ''}${denied ? ' denied' : ''}`}
           style={{ left: pos.x, top: pos.y }}
           role="button"
           aria-pressed={capturing}
@@ -279,14 +294,22 @@ export function VoicePill(): ReactElement | null {
           </span>
           <img className="vp-logo" src={logoUrl} alt="" draggable={false} />
           {denied && <span className="vp-sdot" />}
-          <span className={`vp-bars${capturing ? ' live' : ''}`} data-test="voice-pill-bars">
+          <span
+            className={`vp-bars${capturing ? ' live' : ''}${working ? ' working' : ''}`}
+            data-test="voice-pill-bars"
+          >
             {BAR_SHAPE.map((m, i) => (
               // Constant 16px layout box; the level drives scaleY (0.25 = the idle 4px look).
+              // While `working` the CSS wave animation owns transform, so drop the inline style.
               <i
                 key={i}
-                style={{
-                  transform: `scaleY(${capturing ? Math.min(1, 0.25 + liveLevel * m * 0.75) : 0.25})`
-                }}
+                style={
+                  working
+                    ? undefined
+                    : {
+                        transform: `scaleY(${capturing ? Math.min(1, 0.25 + liveLevel * m * 0.75) : 0.25})`
+                      }
+                }
               />
             ))}
           </span>

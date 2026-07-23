@@ -15,6 +15,7 @@ import type {
 } from '../../../preload/voice'
 import { codeToToken, defaultHotkey, hotkeyLabel, parseHotkey } from '../voice/hotkey'
 import { PROMPT_HISTORY_CAP } from '../store/voiceStore'
+import { SettingsVoiceCloud } from './SettingsVoiceCloud'
 
 const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
@@ -250,11 +251,23 @@ export function SettingsVoiceSection({
           style={s.input}
         >
           <option value="sherpa-onnx">Local — sherpa-onnx (on-device)</option>
-          <option value="cloud" disabled>
-            Cloud — coming soon
-          </option>
+          <option value="cloud">Cloud — OpenAI gpt-4o-transcribe</option>
         </select>
+        {cfg?.engine === 'cloud' && (
+          <span style={s.hint}>
+            Push-to-talk audio is sent to OpenAI on release and transcribed there. Your key stays on
+            this machine (encrypted); recorded audio is never saved to disk.
+          </span>
+        )}
       </label>
+
+      {cfg?.engine === 'cloud' && (
+        <SettingsVoiceCloud
+          sttModel={cfg.sttModel}
+          onModelChange={(v) => setField({ sttModel: v })}
+          onError={setError}
+        />
+      )}
 
       <div style={s.field}>
         <span style={s.label}>Model</span>
