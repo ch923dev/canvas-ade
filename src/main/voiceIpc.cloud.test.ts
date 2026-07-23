@@ -14,12 +14,21 @@ import { join } from 'node:path'
 
 const h = vi.hoisted(() => {
   class FakePort {
-    on(): this {
+    handler: ((e: { data: unknown }) => void) | null = null
+    posted: unknown[] = []
+    on(_ev: 'message', cb: (e: { data: unknown }) => void): this {
+      this.handler = cb
       return this
     }
     start(): void {}
-    postMessage(): void {}
+    postMessage(m: unknown): void {
+      this.posted.push(m)
+    }
     close(): void {}
+    /** Feed an inbound message to whatever handler the engine registered. */
+    send(m: unknown): void {
+      this.handler?.({ data: m })
+    }
   }
   const channels: Array<{ port1: FakePort; port2: FakePort }> = []
   // The local host's utilityProcess child — session:start posts to it; cloud never does.
@@ -149,6 +158,32 @@ describe('voiceIpc cloud-STT selection gate', () => {
       expect.objectContaining({ t: 'session:start' }),
       expect.anything()
     )
+  })
+
+  // Phase 3 (bot [critical] fix): the STT and TTS cloud tiers are INDEPENDENT — the router keeps a
+  // stable per-domain singleton and never rebuilds a live session, so toggling ttsEngine mid-STT
+  // recording must not discard the in-flight STT buffer (a combined-key composite would have).
+  it('a ttsEngine toggle mid cloud-STT session does NOT discard the STT recording', async () => {
+    writeVoiceConfig(userData, repairVoiceConfig({ engine: 'cloud', ttsEngine: 'kokoro' }))
+    const t = harness({ userData, hasKey: true })
+    const res = await t.handlers['voice:session:start'](t.ownEvent)
+    expect(res).toMatchObject({ ok: true, modelStatus: 'ready' })
+    // The router built the STT-domain singleton and handed it this session's port.
+    const port = h.channels[h.channels.length - 1].port1
+    const frame = (): { t: 'frame'; d: ArrayBuffer } => ({
+      t: 'frame',
+      d: new Uint8Array([1, 2]).buffer
+    })
+    port.send(frame())
+    port.send(frame())
+    port.send(frame())
+    // Toggle the OTHER (TTS) tier mid-recording — must NOT rebuild / discard the STT session.
+    await t.handlers['voice:config:set'](t.ownEvent, { ttsEngine: 'cloud' })
+    port.send({ t: 'eos' })
+    // Stop routes to the SAME STT singleton → its 3 buffered frames come back (a rebuilt engine
+    // would have a fresh, empty session → 0 frames).
+    const stopped = await t.handlers['voice:session:stop'](t.ownEvent)
+    expect(stopped).toMatchObject({ ok: true, frames: 3 })
   })
 
   // Review (PR #370): a cloud recording never runs on the local host, so a whole-host death (a

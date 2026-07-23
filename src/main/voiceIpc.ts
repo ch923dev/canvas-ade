@@ -273,40 +273,59 @@ export function registerVoiceHandlers(
   const useCloudTts = (): boolean =>
     readVoiceConfig(getUserData()).ttsEngine === 'cloud' && hasOpenAiKey()
 
-  // The STT and TTS cloud layers are INDEPENDENT composites over the persistent local host, stacked
-  // as configured (STT inner, TTS outer — each overrides only its own methods and delegates the
-  // rest, so the four combos all resolve correctly). The composed handle is memoized by a config
-  // key so every call within one session returns the SAME instance (session state lives inside the
-  // composites); a config toggle between sessions rebuilds only the thin wrappers — the underlying
-  // local host persists.
-  let composed: { key: string; handle: VoiceEngineHandle } | null = null
-  const composeEngine = (): VoiceEngineHandle => {
-    const stt = useCloud()
-    const tts = useCloudTts()
-    const key = `${stt ? 'S' : '-'}${tts ? 'T' : '-'}`
-    if (composed?.key === key) return composed.handle
-    let handle = defaultEngine()
-    if (stt) {
-      handle = createCloudSttEngine({
-        local: handle, // wraps the persistent local host; TTS/KWS delegate through
-        transcribe,
-        emit: emitTranscript,
-        getSymbols: () => symbols.get()
-      })
+  // The STT and TTS cloud tiers are INDEPENDENT (design decision #1: cloud STT + local TTS, or the
+  // reverse, must be mixable). Each is a STABLE per-domain singleton over the persistent local host,
+  // built once and NEVER rebuilt — so a config toggle can't discard live session state (an in-flight
+  // cloud-STT recording buffer, or the cloud-TTS port/queue). The two are ROUTED per-method by live
+  // config, NOT stacked into one combined composite (which would couple them: a TTS-engine toggle
+  // would tear down an in-flight STT recording, and vice versa). Each cloud layer wraps defaultEngine
+  // directly; its cross-domain delegation is inert because the router only ever calls a layer for its
+  // OWN domain.
+  let cloudSttSingleton: VoiceEngineHandle | null = null
+  let cloudTtsSingleton: VoiceEngineHandle | null = null
+  const cloudStt = (): VoiceEngineHandle =>
+    (cloudSttSingleton ??= createCloudSttEngine({
+      local: defaultEngine(),
+      transcribe,
+      emit: emitTranscript,
+      getSymbols: () => symbols.get()
+    }))
+  const cloudTts = (): VoiceEngineHandle =>
+    (cloudTtsSingleton ??= createCloudTtsEngine({ local: defaultEngine(), speak }))
+  // The engine serving THIS call for each domain: cloud when configured + keyed, else the local host.
+  const sttDomain = (): VoiceEngineHandle => (useCloud() ? cloudStt() : defaultEngine())
+  const ttsDomain = (): VoiceEngineHandle => (useCloudTts() ? cloudTts() : defaultEngine())
+  // A stable router: STT methods dispatch to the STT domain, TTS methods to the TTS domain; wake /
+  // failure / dispose go straight to the local host (the cloud layers delegate those to it anyway,
+  // so registering on it directly is equivalent and never rebuilds a live session).
+  const routerEngine: VoiceEngineHandle = {
+    startSession: (port, model) => sttDomain().startSession(port, model),
+    stopSession: (timeoutMs) => sttDomain().stopSession(timeoutMs),
+    onEngineFailure: (cb) => defaultEngine().onEngineFailure(cb),
+    startTtsSession: (port, model) => ttsDomain().startTtsSession(port, model),
+    ttsSpeak: (req) => ttsDomain().ttsSpeak(req),
+    ttsCancel: () => ttsDomain().ttsCancel(),
+    stopTtsSession: () => ttsDomain().stopTtsSession(),
+    onTtsFailure: (cb) => defaultEngine().onTtsFailure(cb),
+    startKwsSession: (port, model) => defaultEngine().startKwsSession(port, model),
+    stopKwsSession: (timeoutMs) => defaultEngine().stopKwsSession(timeoutMs),
+    onKwsFailure: (cb) => defaultEngine().onKwsFailure(cb),
+    dispose: () => {
+      const stt = cloudSttSingleton
+      const tts = cloudTtsSingleton
+      cloudSttSingleton = null
+      cloudTtsSingleton = null
+      // Disposing either cloud layer also disposes the shared local host (they delegate dispose to
+      // it — idempotent on a second call); fall back to the host directly when neither exists.
+      if (stt) stt.dispose()
+      if (tts) tts.dispose()
+      if (!stt && !tts) defaultEngine().dispose()
     }
-    if (tts) handle = createCloudTtsEngine({ local: handle, speak }) // STT/KWS delegate through
-    composed = { key, handle }
-    return handle
   }
 
-  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in every
-  // normal run — only settable through e2eMain's gated registry) → the cloud composite (STT
-  // and/or TTS, as configured + keyed) → the real local host.
-  const engine = (): VoiceEngineHandle => {
-    const override = deps.engine ?? currentVoiceStubEngine()
-    if (override) return override
-    return composeEngine()
-  }
+  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in every normal
+  // run — only settable through e2eMain's gated registry) → the per-domain cloud router.
+  const engine = (): VoiceEngineHandle => deps.engine ?? currentVoiceStubEngine() ?? routerEngine
 
   // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
   void ops.sweep(getUserData()).catch(() => {})
