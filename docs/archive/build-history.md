@@ -3173,3 +3173,43 @@ on my first push) confirmed + fixed (`549dca27`) + inline-dispositioned. Gotcha 
 units inside an Expanse board leaks `CANVAS_RECAP_BOARD` into `process.env` → recap-env specs fail
 locally but pass in CI; `pathSafe` junction-realpath specs fail on the worktree node_modules junction
 too (and on `main`) — both ambient, not regressions.
+
+## PR #368 — STT eval harness: measure WER + keyterm recall to pick a cloud STT provider (Phase 1.5) (v0.24.2 → reconciled 0.24.3) — 2026-07-23
+
+**Scripts + docs only — nothing in the Electron bundle.** An offline STT evaluation harness
+(`scripts/stt-eval/`) to choose a cloud speech-to-text provider from measured numbers on our own
+audio, since no public benchmark measures WER on code/programming vocabulary. Cheap trio + its own
+unit tests are the gate; the app is byte-identical to `main`. Companion research:
+`docs/research/2026-07-21-cloud-voice-providers/{PLAN,STT-ACCURACY}.md`.
+
+**What it measures.** Every engine × {biased, unbiased} on two metrics — WER (Levenshtein over
+normalised tokens; code separators split so `--no-verify` ≡ "no verify") and **keyterm recall**
+scored `exact` (verbatim, pasteable) vs `loose` (identifier-folded). The exact→loose gap is the
+actionable signal: precisely what a deterministic formatting layer recovers. Six engine adapters
+behind one interface (`local`/`groq`/`openrouter`/`openai`/`assemblyai`/`deepgram`); a missing key →
+SKIPPED with a printed reason, never silently dropped. Run-wide bias list capped (default 30) and
+never the utterance's own keyterms. Runner flags `--delay` (rate-limit throttle) and `--post-format`.
+
+**Measured (own voice, 30 utterances, 16 kHz).** OpenAI `gpt-4o-transcribe` biased = 23.1% WER /
+69.4% keyterm-exact (the accuracy leader; biasing lift +29 pt). OpenRouter's `/audio/transcriptions`
+**ignores keyterm biasing** — biased ≡ unbiased byte-identical on two different models → rejected for
+STT (its TTS/Kokoro role via `/audio/speech` is untouched). The residual WER is identifier
+**formatting**, not misrecognition. The **§3.2 deterministic formatting layer** (`formatRestore.mjs`:
+fold repo symbols → canonical, greedy longest-match word-window rewrite, whitespace-only inter-word
+gaps, ambiguous folds dropped) closes the gap: gpt-4o-transcribe biased **69.4% → 83.9% keyterm-exact**.
+**Decision recorded:** OpenAI `gpt-4o-transcribe` direct + prompt biasing + the formatting layer;
+Groq turbo is the budget fallback. This feeds Phase 2 app integration (`feat/voice-cloud-stt`).
+
+**Verified.** 84 unit tests (`wer`/`wav`/`corpus`/`report`/`formatRestore`, `scripts/**/*.test.ts` in
+the `unit-node` project) + cheap trio green repo-wide; end-to-end proven against a fake OpenAI-shaped
+vendor on 127.0.0.1 (no network); full e2e matrix green at the pre-push gate (311 passed). No app
+e2e surface touched. **claude-review [warning]** caught a real false-merge bug in `formatRestore`
+(multi-word matcher folded across punctuation, e.g. "add. card" → `add_card`) — fixed (`cf515f7c`,
+whitespace-only inter-word gaps) + inline-dispositioned; the honest re-score is 83.9% (was 85.5% with
+the bug over-crediting coincidental false merges). **CodeQL** log-injection on `record.mjs:108`
+dismissed as false positive (`id` allowlisted against the fixed prompt-id set at :95-97).
+
+**Version note.** Bumped to 0.24.2 on `feat/stt-eval`, which collided with #367 (flicker-free
+terminals) landing at 0.24.2 while #368 was in review — a concurrent-merge artifact. Main reconciled
+to **0.24.3** in this build-history commit so the version stays monotonic. Recorded corpus audio +
+raw transcripts stay gitignored; `corpus/prompts.json` tracked for reproducibility.
