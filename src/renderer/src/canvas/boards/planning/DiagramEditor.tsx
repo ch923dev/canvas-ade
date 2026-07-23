@@ -68,6 +68,7 @@ import {
   type SpecThemePreset
 } from './specTheme'
 import { SpecNodeBody } from './specNodeVisual'
+import { DiagramNodeComment } from './DiagramNodeComment'
 
 /** Context so the custom RF node can read the theme/direction and drive inline editing WITHOUT the
  *  node list rebuilding every time `editingId` flips (a node-`data` route would). */
@@ -78,6 +79,8 @@ interface EditorCtx {
   beginEdit: (id: string) => void
   commitEdit: (id: string, label: string, detail: string) => void
   cancelEdit: () => void
+  /** T3: open the node-comment composer for a node (routes a prompt to a Terminal agent). */
+  beginComment: (id: string) => void
 }
 const EditorContext = createContext<EditorCtx | null>(null)
 
@@ -196,7 +199,7 @@ function InlineNodeEditor({
 
 /** The custom React Flow node: the shared token chrome/body, plus source/target handles for
  *  drawing + re-routing edges, and the inline editor when this node is being edited. */
-function SpecFlowNodeView({ id, data }: NodeProps<SpecFlowNode>): ReactElement {
+function SpecFlowNodeView({ id, data, selected }: NodeProps<SpecFlowNode>): ReactElement {
   const ctx = useContext(EditorContext)
   const n = data.node
   const sil = specKindSilhouette(n.kind)
@@ -220,6 +223,38 @@ function SpecFlowNodeView({ id, data }: NodeProps<SpecFlowNode>): ReactElement {
       }}
     >
       <Handle type="target" position={tgtPos} style={HANDLE_STYLE} />
+      {selected && !editing && ctx && (
+        // T3: comment on this node → routes a prompt to a Terminal agent.
+        <button
+          type="button"
+          title="Comment → agent"
+          className="nodrag"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            ctx.beginComment(id)
+          }}
+          style={{
+            all: 'unset',
+            cursor: 'pointer',
+            position: 'absolute',
+            top: -9,
+            right: -9,
+            width: 18,
+            height: 18,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 10,
+            background: 'var(--surface-overlay)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--r-pill)',
+            zIndex: 3
+          }}
+        >
+          💬
+        </button>
+      )}
       {editing && ctx ? (
         <InlineNodeEditor
           node={n}
@@ -239,6 +274,8 @@ const nodeTypes: NodeTypes = { spec: SpecFlowNodeView }
 export interface DiagramEditorProps {
   spec: DiagramSpec
   layout: SpecLayoutResult
+  /** Owning diagram element id — T3 remembers its last comment target per diagram. */
+  diagramId: string
   /** Card body box (board-local px; header already subtracted by the caller). */
   w: number
   h: number
@@ -252,6 +289,7 @@ export interface DiagramEditorProps {
 function DiagramEditorInner({
   spec,
   layout,
+  diagramId,
   w,
   h,
   onEditStart,
@@ -262,6 +300,7 @@ function DiagramEditorInner({
   const [nodes, setNodes, onNodesChange] = useNodesState<SpecFlowNode>(deriveNodes(spec, layout))
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(deriveEdges(spec, preset))
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [commentId, setCommentId] = useState<string | null>(null)
 
   // Re-derive the RF working copy whenever the spec/layout changes from OUTSIDE the pane (our own
   // commit, an undo, or an agent specOps write). Idempotent for a drag we just committed — the pos
@@ -386,8 +425,10 @@ function DiagramEditorInner({
     editingId,
     beginEdit: setEditingId,
     commitEdit,
-    cancelEdit: () => setEditingId(null)
+    cancelEdit: () => setEditingId(null),
+    beginComment: setCommentId
   }
+  const commentNode = commentId ? spec.nodes.find((n) => n.id === commentId) : undefined
 
   return (
     <EditorContext.Provider value={ctx}>
@@ -412,6 +453,13 @@ function DiagramEditorInner({
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid-dot)" />
         <DiagramPalette onAddNode={onAddNode} />
+        {commentNode && (
+          <DiagramNodeComment
+            node={commentNode}
+            diagramId={diagramId}
+            onClose={() => setCommentId(null)}
+          />
+        )}
       </ReactFlow>
     </EditorContext.Provider>
   )

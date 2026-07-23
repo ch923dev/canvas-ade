@@ -692,6 +692,7 @@ export const DiagramCard = memo(function DiagramCard({
           <DiagramEditor
             spec={effectiveSpec}
             layout={specLayout.layout}
+            diagramId={id}
             w={w}
             h={Math.max(0, h - (showHeader ? 22 : 0))}
             onEditStart={onEditStart}
