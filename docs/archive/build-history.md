@@ -3396,3 +3396,46 @@ snap-band "settled 0.97 snapped to exactly 1" false — #371/xterm-6.0 escape, f
 lane; zero terminal files in this diff). Manual dev check title-stamped + human-eyeballed (⧉ convert
 affordance signed off). Version 0.24.0→**0.27.0** (0.25.x/0.26.0 taken by STT/xterm mid-flight);
 lockfile moved (pin bump). Squash `9087903f`. Worktree `.worktrees/diagram-mcp-v2` torn down.
+
+## PR #373 — voice Phase 3: cloud TTS via OpenAI gpt-4o-mini-tts (v0.27.0 → 0.28.0) — 2026-07-24
+
+**TTS twin of #370 (cloud STT)** — a cloud TTS tier selectable in **Settings › Voice › Speech**
+alongside local Kokoro, on the SAME in-MAIN composite decision. **`cloudTtsEngine.ts`** wraps the
+local sherpa/Kokoro host and overrides ONLY the 5 TTS methods (`startTtsSession`/`ttsSpeak`/
+`ttsCancel`/`stopTtsSession`/`onTtsFailure`); STT + wake + engine-failure + dispose delegate through
+(no utilityProcess → the OpenAI key never crosses a process boundary). **`openaiSpeak.ts`** (twin of
+`openaiTranscribe.ts`): `POST /v1/audio/speech`, key MAIN-side in a `getKey` closure (never
+returned/logged/passed to renderer or child), **streaming** pcm body, injectable `SpeakFetch`, typed
+error map (`no-key|unauthorized|rate-limited|quota|timeout|network|server|bad-response`); an external
+cancel re-throws `AbortError` (a cancel, not a fail). **`response_format: pcm`** (24 kHz s16le mono,
+headerless) is byte-identical to the renderer's existing `tts:chunk` payload, so playback + barge-in
+**reuse the shipped channel with no decoder/resample**; the engine holds the `voice:tts:port` MAIN
+end, posts `tts:chunk`/`tts:done`/`tts:error`, runs FIFO-serial, and `ttsCancel` aborts the in-flight
+fetch + drains the queue (16-bit-sample alignment carried across chunk boundaries). **Config:**
+`ttsEngine` (`kokoro`|`cloud`), `ttsCloudModel` (gpt-4o-mini-tts), `ttsVoice` (alloy) — INDEPENDENT of
+the STT `engine` (cloud STT + local TTS mixable). **Selection gate (`voiceIpc.ts`):** `useCloudTts()`
++ a **per-domain router** — two stable singletons (`cloudStt`/`cloudTts`), built once over the local
+host and NEVER rebuilt, dispatched per-method by live config; `voice:tts:start` bypasses the
+local-model gate for cloud; `ttsIsCloud` makes a cloud speak immune to a whole-host death;
+fail-visible fallback to local when keyless. **Settings:** engine picker + `SettingsVoiceTtsCloud.tsx`
+(shared-`openai`-slot key entry + voice picker + model field) + local-fallback rows + `VIA OPENAI`
+preview pill — **design mock signed off before code**. Security unchanged from STT (key MAIN-side
+only, presence-only to renderer, synthesized audio in-memory only, sandbox/isolation untouched).
+**Bot review 1 `[critical]`:** the initial combined-key `composeEngine` cache discarded the OTHER
+domain's live session on an independent-tier toggle (in-flight STT recording buffer / TTS port+queue)
+→ **FIXED** by the per-domain router + a guard test (3 buffered STT frames survive a mid-recording
+`ttsEngine` toggle and return on stop; a rebuilt engine would return 0); inline-dispositioned,
+incremental re-review **0 crit / 0 warn**. **Verification:** typecheck (3 tiers)/lint 0-err/format +
+**36 new units** (openaiSpeak shape/stream/16-bit-align/errors; cloudTtsEngine stream/FIFO/cancel/
+supersede/delegation) + config-repair + **6 TTS gate + a cross-domain independence guard** (STT gate
+5/5); voice/settings unit suite 231; **`@voice` e2e** (`e2e/voiceTtsCloud.e2e.ts`) vs a fake
+`/v1/audio/speech` **streaming** vendor (round-trip, audio delivered via `speaking`, fail-visible 401)
++ a new AudioContext-clock-independent `ttsState()` hook. **Full matrix both legs GREEN on the fix
+head** (Windows 316P · Linux Docker 314P; every failure a documented `@preview`/`@chrome` ambient
+flake, rerun-green, zero relevant files in the voice-only diff; `terminalSearch:81` — which failed on
+the pre-rebase base `43ba5d4d` — cleared by #371's addon-search 0.16 bump). Manual dev check
+title-stamped `pnpm dev` (Settings › Voice › Speech eyeballed) + published design artifact + in-app
+screenshot. **Version:** #370/#371/#372 took 0.25/0.26/0.27 mid-cycle → cloud TTS lands at **0.28.0**
+(rebase past #371 xterm-6.0, merge past #372 diagram — force-push to the feature branch is
+permission-blocked; the diagram diff is disjoint from voice so the version was the only resolution).
+Squash `1e671f48`. Worktree `.worktrees/voice-cloud-tts` teardown after this docs commit.
