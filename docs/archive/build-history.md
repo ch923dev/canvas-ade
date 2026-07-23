@@ -3075,3 +3075,66 @@ click to the well → focus hit-test dead for real mice (jsdom `fireEvent` hid i
 body now skips the drag, 22px header = move handle. Gotchas memorized: `pnpm exec playwright test`
 skips the `pretest:e2e` build (tests stale `out/`); shard/detach patterns beat the 10-min
 background cap.
+
+## PR #366 — terminal: kill the resize-storm duplicate-block corruption (v0.24.1) — 2026-07-23
+
+**Squash `49ea404e`** (branch `fix/terminal-resize-storm`, base `9f11b805`). Round 2 of the terminal
+duplicate-block bug (round 1 = #353). Symptom: entering full view or dragging a terminal board's
+edge handles while an agentic CLI streams stacked the live region into scrollback 3–6× + truncated
+interleave. Four-agent forensic recon pinned the root cause as **upstream** (Claude Code CLI
+anthropics/claude-code#51828 — Ink redraw cursor-up saturates at the viewport top, un-erased frames
+land in scrollback; regressed at CLI v2.1.101, open at the user's v2.1.215) **amplified** by an
+app-side resize burst — zero terminal-path commits since #353, the CLI changed under us. This PR
+removes the app-side amplification; the single residual duplicate is the upstream class (its true
+fix, T1d, is the alt-screen decision deferred below). User dev-check eyeball PASS: single residual
+dup only, no multiplication.
+
+**T1a — main-side dedup.** `ptyResize.ts` skips a same-size resize at the single renderer→PTY choke
+point; the memo is seeded from the proc's live dims so post-adopt grid-sync heals no-op instead of
+firing a redundant ConPTY SIGWINCH.
+
+**T1a — trailing settler.** New `terminalResizeSettle.ts`: a full-view transition steps the xterm
+grid up to 3× (backstop cols resize + whole-cell row-shed same tick + catch-up fit a frame later);
+the settler collapses the burst to ONE PTY resize (the SETTLED grid) on a ~50ms trailing window.
+Pure of xterm/React (injected timers) → burst-collapse + dispose unit-tested.
+
+**T1a′ — interactive drag hold (added after the user caught the gap).** Pacing is not enough for a
+handle-drag: a ResizeObserver fires per frame, so even one resize per 50ms window is ~20 SIGWINCH on
+a slow drag, each littering under #51828. New `boardResizeDrag.ts` (plain module registry, the
+`registerTerminalInput` precedent — ephemeral one-producer interaction state, no render dependency):
+BoardNode's `NodeResizer` marks a per-board drag on start/end. The settler's `setHold()` accumulates
+pushes silently while held — the grid refits **visually** per frame, but the PTY hears exactly ONE
+resize (the released grid) after the final RO fit lands in the trailing window. A terminal
+(re)mounting mid-drag seeds held from the registry snapshot; a BoardNode unmount / LOD-flip clears a
+stranded flag (cleanup keyed on `lod`, since the `!lod &&` gate can drop `NodeResizer` mid-drag on a
+zoom-out without firing `onResizeEnd`).
+
+**T1b — kill the stale-metrics fit.** `useTerminalSpawn.ts` counterScale-transition flag suppresses
+the RO's first fit at pre-font metrics during a full-view transition; the reraster's deferred
+correct-metrics refit owns the transition (flag consumed in `fitWhole`, both orderings safe). Narrow
+carve-outs keep the deferred-spawn / deferred-respawn paths alive. `terminalSpawnMath.ts` extracted
+(pure spawn helpers, max-lines doctrine).
+
+**Rode along — repo-wide SCA gate un-red.** 11 new upstream advisories at/above `high` published
+since the last green run had turned the SCA gate (`scripts/sca-audit.mjs`) red on every PR + main.
+`pnpm.overrides`: tar `>=7.5.19` (critical GHSA-23hp-3jrh-7fpw) · sharp `>=0.35.0` · fast-uri
+`>=3.1.4 <4` (ajv's v3 line) · brace-expansion `1.1.16`/`2.1.2` (both majors) · next `>=16.2.11` +
+an explicit `next@^16.2.11` devDep (pnpm 9 does not re-resolve geist's auto-installed peer from an
+override alone). All of next/sharp are optional/dev-only fixtures; no app-runtime dep moved.
+
+**Not in this PR (T1d, follow-up decision).** The app force-sets
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` on every spawn (deliberate — terminal-copy fix #332;
+alt-screen kills selection), maximizing exposure to the upstream litter. A per-board flicker-free
+opt-in is the true upstream-class fix but trades away the selection fix — tracked on the plan board.
+
+**Verified.** cheap trio · terminal zone units 408/408 + settler/registry 16/16 + a real-mount
+LOD-flip regression guard (`BoardNode.lodholdrelease.test.tsx` — drives `zoom` past `LOD_ZOOM`
+through BoardNode's own `useStore(isLod)` selector, mutation-verified: `[board.id]` deps fail it,
+`[lod, board.id]` pass) ·
+fullview.e2e + terminalScrollback.e2e 8/8 first-try (the #353 lossless-refit/exact-restore specs,
+highest regression risk) · FULL MATRIX: Win via 3 playwright shards (107 + 104 [+1 menuShell flake,
+3/3 isolated] + 100/3-skip, workers=1) + Linux Docker 309P exit 0 · CI check green (SCA now clean) ·
+claude-review round-2 warning (LOD-flip wedges hold) confirmed + fixed + inline-dispositioned · user
+dev-check eyeball PASS. Gotchas memorized: `pnpm install --lockfile-only` in a worktree STILL fires
+the junction wipe-MAIN prompt → resolve in a scratch-dir copy and copy the lockfile back; a stray
+`pnpm update` in that scratch dir silently bumps unrelated dep ranges → reset + redo scoped.
