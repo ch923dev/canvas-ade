@@ -32,6 +32,7 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeProps,
@@ -41,10 +42,13 @@ import {
   SPEC_DETAIL_MAX,
   SPEC_LABEL_MAX,
   type DiagramSpec,
-  type SpecNode
+  type SpecNode,
+  type SpecNodeKind,
+  type SpecStatus
 } from '../../../lib/diagramSpec'
 import {
   addEdge as specAddEdge,
+  addNode as specAddNode,
   editNode,
   isValidSpec,
   removeEdge,
@@ -53,6 +57,7 @@ import {
   setNodePos,
   uniqueSpecId
 } from '../../../lib/specEditorOps'
+import { DiagramPalette } from './DiagramPalette'
 import { specNodeBox, type SpecLayoutResult } from './specLayout'
 import {
   specEdgeStyle,
@@ -247,9 +252,12 @@ export interface DiagramEditorProps {
 function DiagramEditorInner({
   spec,
   layout,
+  w,
+  h,
   onEditStart,
   onChangeSpec
-}: Omit<DiagramEditorProps, 'w' | 'h'>): ReactElement {
+}: DiagramEditorProps): ReactElement {
+  const rf = useReactFlow()
   const preset = specThemePreset(spec.theme)
   const [nodes, setNodes, onNodesChange] = useNodesState<SpecFlowNode>(deriveNodes(spec, layout))
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(deriveEdges(spec, preset))
@@ -341,6 +349,37 @@ function DiagramEditorInner({
     [spec, onEditStart, commit]
   )
 
+  // Palette drop: place a new node at the current viewport centre (offset a touch per node count so
+  // repeated adds don't stack), commit an upsertNode, then open its inline editor so the user names
+  // it right away. `pos` is set so the node lands where the user is looking (a pinned drop).
+  const onAddNode = useCallback(
+    (opts: { kind: SpecNodeKind; status: SpecStatus; icon?: string }): void => {
+      const vp = rf.getViewport()
+      const off = (spec.nodes.length % 6) * 14
+      const cx = (w / 2 - vp.x) / vp.zoom - 84 + off
+      const cy = (h / 2 - vp.y) / vp.zoom - 16 + off
+      const id = uniqueSpecId(
+        opts.kind,
+        spec.nodes.map((n) => n.id)
+      )
+      const node: SpecNode = {
+        id,
+        label: opts.kind,
+        kind: opts.kind,
+        pos: { x: Math.round(cx), y: Math.round(cy) },
+        ...(opts.status !== 'neutral' ? { status: opts.status } : {}),
+        ...(opts.icon ? { icon: opts.icon } : {})
+      }
+      onEditStart()
+      const next = specAddNode(spec, node)
+      if (next !== spec && isValidSpec(next)) {
+        onChangeSpec(next)
+        setEditingId(id)
+      }
+    },
+    [rf, spec, w, h, onEditStart, onChangeSpec]
+  )
+
   const ctx: EditorCtx = {
     direction: spec.direction,
     preset,
@@ -372,6 +411,7 @@ function DiagramEditorInner({
         className="pl-editor-flow"
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid-dot)" />
+        <DiagramPalette onAddNode={onAddNode} />
       </ReactFlow>
     </EditorContext.Provider>
   )
@@ -390,7 +430,7 @@ export function DiagramEditor({ w, h, ...rest }: DiagramEditorProps): ReactEleme
       onPointerDown={(e) => e.stopPropagation()}
     >
       <ReactFlowProvider>
-        <DiagramEditorInner {...rest} />
+        <DiagramEditorInner w={w} h={h} {...rest} />
       </ReactFlowProvider>
     </div>
   )

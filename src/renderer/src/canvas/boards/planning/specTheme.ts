@@ -15,6 +15,30 @@
 import type { CSSProperties } from 'react'
 import { withAlpha } from './diagramTheme'
 import type { SpecEdge, SpecNodeKind, SpecStatus } from '../../../lib/diagramSpec'
+import type { IconName } from '../../Icon'
+
+/** The CLOSED icon vocabulary a DiagramSpec node may use — a curated, diagram-relevant subset of the
+ *  host Icon registry. The Phase-4 palette offers exactly this set and the renderer gates `node.icon`
+ *  on it, so an unknown/typo'd name shows the KIND glyph, never the registry's diamond fallback.
+ *  Closed-vocab doctrine (like status/kind): colour/shape/icon all come from a fixed set, never raw. */
+export const SPEC_ICON_NAMES: readonly IconName[] = [
+  'play',
+  'stop',
+  'cpu',
+  'globe',
+  'file',
+  'download',
+  'settings',
+  'plug',
+  'activity',
+  'bell'
+]
+const SPEC_ICON_SET = new Set<string>(SPEC_ICON_NAMES)
+
+/** Narrow a free string to a spec-supported icon name (unknown ⇒ the kind glyph renders instead). */
+export function isSpecIcon(v: string | undefined | null): v is IconName {
+  return typeof v === 'string' && SPEC_ICON_SET.has(v)
+}
 
 /** Resolve a CSS custom property off :root (same discipline as diagramTheme.token). */
 function token(name: string, fallback: string): string {

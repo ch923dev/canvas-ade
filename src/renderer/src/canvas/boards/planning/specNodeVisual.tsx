@@ -8,7 +8,8 @@
  */
 import type { ReactElement } from 'react'
 import type { SpecNode } from '../../../lib/diagramSpec'
-import { SPEC_KIND_PATHS, type SpecSilhouette, type SpecStatusStyle } from './specTheme'
+import { Icon } from '../../Icon'
+import { isSpecIcon, SPEC_KIND_PATHS, type SpecSilhouette, type SpecStatusStyle } from './specTheme'
 
 /** Node interior (kind mark + label + status glyph + detail) — shared by live nodes, exit ghosts,
  *  and the editor's React Flow node. */
@@ -25,25 +26,31 @@ export function SpecNodeBody({
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 16 }}>
-        {paths.length > 0 && (
-          <svg
-            viewBox="0 0 24 24"
-            style={{
-              flex: 'none',
-              width: 13,
-              height: 13,
-              stroke: 'var(--text-3)',
-              strokeWidth: 1.5,
-              fill: 'none',
-              strokeLinecap: 'round',
-              strokeLinejoin: 'round'
-            }}
-            aria-hidden
-          >
-            {paths.map((d) => (
-              <path key={d} d={d} />
-            ))}
-          </svg>
+        {isSpecIcon(node.icon) ? (
+          // Phase 4 surfaces the optional host-registry icon (unknown names never reach here —
+          // isSpecIcon gates the `diamond` fallback); it stands in for the kind glyph.
+          <Icon name={node.icon} size={13} style={{ flex: 'none', color: 'var(--text-3)' }} />
+        ) : (
+          paths.length > 0 && (
+            <svg
+              viewBox="0 0 24 24"
+              style={{
+                flex: 'none',
+                width: 13,
+                height: 13,
+                stroke: 'var(--text-3)',
+                strokeWidth: 1.5,
+                fill: 'none',
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round'
+              }}
+              aria-hidden
+            >
+              {paths.map((d) => (
+                <path key={d} d={d} />
+              ))}
+            </svg>
+          )
         )}
         <span
           style={{
