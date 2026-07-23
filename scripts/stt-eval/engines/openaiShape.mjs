@@ -83,7 +83,9 @@ function makeOpenAiShapeEngine({
 
 export const groq = makeOpenAiShapeEngine({
   id: 'groq',
-  label: 'Groq whisper-large-v3-turbo',
+  // Label is the VENDOR only; the actual model (default or STT_EVAL_*_MODEL override) is
+  // shown separately by the report so an overridden run can never be mislabelled.
+  label: 'Groq',
   base: 'https://api.groq.com/openai/v1',
   baseEnv: 'STT_EVAL_GROQ_BASE',
   keyEnv: 'GROQ_API_KEY',
@@ -95,7 +97,7 @@ export const groq = makeOpenAiShapeEngine({
 
 export const openai = makeOpenAiShapeEngine({
   id: 'openai',
-  label: 'OpenAI gpt-4o-transcribe',
+  label: 'OpenAI',
   base: 'https://api.openai.com/v1',
   baseEnv: 'STT_EVAL_OPENAI_BASE',
   keyEnv: 'OPENAI_API_KEY',
@@ -107,7 +109,7 @@ export const openai = makeOpenAiShapeEngine({
 
 export const openrouter = makeOpenAiShapeEngine({
   id: 'openrouter',
-  label: 'OpenRouter (batch transcription)',
+  label: 'OpenRouter',
   base: 'https://openrouter.ai/api/v1',
   baseEnv: 'STT_EVAL_OPENROUTER_BASE',
   keyEnv: 'OPENROUTER_API_KEY',

@@ -29,15 +29,18 @@ function renderTable(rows) {
     '| Engine | Bias | WER | Keyterm exact | Keyterm loose | Recoverable gap | Median ms | $/min | Errors |',
     '|---|---|---:|---:|---:|---:|---:|---:|---:|'
   ]
+  // Engine cell = vendor + the model ACTUALLY run. The model can be overridden per run
+  // (STT_EVAL_*_MODEL), so a static label would silently mislabel it — always show model().
+  const engineCell = (r) => (r.model ? `${r.label} \`${r.model}\`` : r.label)
   const body = rankRows(rows).map((r) => {
     if (r.skipped) {
-      return `| ${r.label} | — | _skipped_ | — | — | — | — | ${money(r.pricePerMinUsd)} | ${r.skipReason} |`
+      return `| ${engineCell(r)} | — | _skipped_ | — | — | — | — | ${money(r.pricePerMinUsd)} | ${r.skipReason} |`
     }
     const gap =
       r.agg.keytermExactRate === null || r.agg.keytermLooseRate === null
         ? '—'
         : pct(r.agg.keytermLooseRate - r.agg.keytermExactRate)
-    return `| ${r.label} | ${r.bias} | ${pct(r.agg.wer)} | ${pct(r.agg.keytermExactRate)} | ${pct(r.agg.keytermLooseRate)} | ${gap} | ${num(r.medianMs)} | ${money(r.pricePerMinUsd)} | ${r.errors} |`
+    return `| ${engineCell(r)} | ${r.bias} | ${pct(r.agg.wer)} | ${pct(r.agg.keytermExactRate)} | ${pct(r.agg.keytermLooseRate)} | ${gap} | ${num(r.medianMs)} | ${money(r.pricePerMinUsd)} | ${r.errors} |`
   })
   return [...header, ...body].join('\n')
 }
@@ -100,6 +103,9 @@ export function renderReport({ meta, rows }) {
   out.push("> Bias list is ONE run-wide list, never the utterance's own keyterms — see corpus.mjs.")
   out.push(
     '> "Recoverable gap" = loose minus exact: the share a deterministic replacement layer could fix.'
+  )
+  out.push(
+    "> $/min is the engine's DEFAULT-model rate; a `STT_EVAL_*_MODEL` override may cost differently."
   )
   out.push('')
   out.push('## Ranked results')
