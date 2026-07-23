@@ -238,10 +238,10 @@ function SpecFlowNodeView({ id, data, selected }: NodeProps<SpecFlowNode>): Reac
             all: 'unset',
             cursor: 'pointer',
             position: 'absolute',
-            top: -9,
-            right: -9,
-            width: 18,
-            height: 18,
+            top: 2,
+            right: 2,
+            width: 17,
+            height: 17,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -249,7 +249,8 @@ function SpecFlowNodeView({ id, data, selected }: NodeProps<SpecFlowNode>): Reac
             background: 'var(--surface-overlay)',
             border: '1px solid var(--border-strong)',
             borderRadius: 'var(--r-pill)',
-            zIndex: 3
+            pointerEvents: 'auto',
+            zIndex: 6
           }}
         >
           💬

@@ -533,4 +533,114 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     await head.locator('button[title="Newer revision"]').click()
     await expect(page.locator('.pl-spec-node')).toHaveCount(4)
   })
+
+  // ── Phase 4 — focus-mode editor (ADR 0013) ──────────────────────────────────────────────────
+
+  /** Read the seeded expanse diagram's live spec from the store (post-edit assertions). */
+  async function readSpec(page: Page): Promise<{
+    nodes: { id: string; label: string; kind?: string; pos?: { x: number; y: number } }[]
+    edges: { id: string; from: string; to: string }[]
+  }> {
+    return page.evaluate(() => {
+      const boards = (globalThis as any).__canvasE2E.getBoards()
+      for (const b of boards) {
+        const el = (b.elements ?? []).find((e: any) => e.id === 'sp-1')
+        if (el) return el.spec
+      }
+      throw new Error('sp-1 not found')
+    })
+  }
+
+  /** Seed a spec diagram, select it, and open the focus-mode editor via the ✎ toggle. */
+  async function openEditor(page: Page): Promise<string> {
+    const boardId = await seedSpecDiagram(page)
+    await expect(page.locator('.pl-specview')).toBeVisible({ timeout: 20000 })
+    await page.locator('.pl-diagram').click({ position: { x: 8, y: 8 } }) // select (empty corner)
+    await page.locator('.pl-diagram-head button[title="Edit diagram"]').click()
+    await expect(page.locator('.pl-editor-flow')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.pl-editor-node')).toHaveCount(4, { timeout: 10000 })
+    return boardId
+  }
+
+  test('phase-4: ✎ opens the nested React Flow editor + palette; the source editor stays absent', async ({
+    page
+  }) => {
+    await seedSpecDiagram(page)
+    await expect(page.locator('.pl-specview')).toBeVisible({ timeout: 20000 })
+    await page.locator('.pl-diagram').click({ position: { x: 8, y: 8 } })
+    // ✎ Edit is the Phase-4 entry; the zero-source-edit pin still holds (no "Edit source" button).
+    await expect(page.locator('.pl-diagram-head button[title="Edit diagram"]')).toBeVisible()
+    await expect(page.locator('.pl-diagram-head button[title="Edit source"]')).toHaveCount(0)
+    await page.locator('.pl-diagram-head button[title="Edit diagram"]').click()
+    // The nested editor + palette (collapsed ＋ toggle) mount; the static view is gone.
+    await expect(page.locator('.pl-editor-flow')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.pl-editor-palette-toggle')).toBeVisible()
+    await expect(page.locator('.pl-editor-node')).toHaveCount(4)
+    await expect(page.locator('.pl-specview')).toHaveCount(0)
+    // Done returns to the static render.
+    await page.locator('.pl-diagram-head button[title="Done editing"]').click()
+    await expect(page.locator('.pl-specview')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.pl-editor-flow')).toHaveCount(0)
+  })
+
+  test('phase-4: the palette adds a node (upsertNode → 5 nodes, kind persisted)', async ({
+    page
+  }) => {
+    await openEditor(page)
+    await page.locator('.pl-editor-palette-toggle').click() // expand the collapsed rail
+    await page.locator('.pl-editor-palette button[title="service"]').click()
+    await expect(page.locator('.pl-editor-node')).toHaveCount(5)
+    const spec = await readSpec(page)
+    expect(spec.nodes).toHaveLength(5)
+    expect(spec.nodes.some((n) => n.kind === 'service')).toBe(true)
+  })
+
+  test('phase-4: double-click inline-edits a node label (commits to the spec)', async ({
+    page
+  }) => {
+    await openEditor(page)
+    // Target the right-side decision node — clear of the top-left palette toggle.
+    await page.locator('.pl-editor-node', { hasText: 'Matrix green?' }).dblclick()
+    const input = page.locator('.pl-editor-inline input[aria-label="Node label"]')
+    await expect(input).toBeFocused()
+    await input.fill('Matrix ok?')
+    await input.press('Enter')
+    await expect(page.locator('.pl-editor-node', { hasText: 'Matrix ok?' })).toBeVisible()
+    const spec = await readSpec(page)
+    expect(spec.nodes.find((n) => n.id === 'gate')?.label).toBe('Matrix ok?')
+  })
+
+  test('phase-4: dragging a node persists pos, and a SINGLE undo reverts it', async ({ page }) => {
+    await openEditor(page)
+    expect((await readSpec(page)).nodes.find((n) => n.id === 'gate')?.pos).toBeUndefined()
+    const node = page.locator('.pl-editor-node', { hasText: 'Matrix green?' })
+    const bb = await node.boundingBox()
+    if (!bb) throw new Error('gate node has no bounding box')
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(bb.x + bb.width / 2 + 50, bb.y + bb.height / 2 + 40, { steps: 10 })
+    await page.mouse.up()
+    // The drag pinned a pos.
+    await expect
+      .poll(async () => (await readSpec(page)).nodes.find((n) => n.id === 'gate')?.pos != null)
+      .toBe(true)
+    // ONE undo step reverts the whole gesture (the lazy per-drag checkpoint).
+    await evalIn(page, `window.__canvasE2E.undo()`)
+    await expect
+      .poll(async () => (await readSpec(page)).nodes.find((n) => n.id === 'gate')?.pos == null)
+      .toBe(true)
+    expect((await readSpec(page)).nodes).toHaveLength(4) // undo restored, nothing else changed
+  })
+
+  test('phase-4: selecting a node exposes the 💬 comment composer (T3)', async ({ page }) => {
+    await openEditor(page)
+    await page.locator('.pl-editor-node', { hasText: 'Matrix green?' }).click()
+    const commentBtn = page.locator('.pl-editor-node button[title="Comment → agent"]').first()
+    await expect(commentBtn).toBeVisible({ timeout: 10000 })
+    await commentBtn.click()
+    const composer = page.locator('.pl-editor-comment')
+    await expect(composer).toBeVisible()
+    await expect(composer).toContainText('Comment on')
+    await expect(composer.locator('textarea')).toBeVisible()
+  })
 })

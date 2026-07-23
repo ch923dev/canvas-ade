@@ -22,13 +22,16 @@ export function DiagramNodeComment({
   diagramId: string
   onClose: () => void
 }): ReactElement {
-  const terminals = useCanvasStore((s) =>
-    s.boards.filter((b) => b.type === 'terminal').map((b) => ({ id: b.id, title: b.title }))
-  )
+  // Select the STABLE boards ref (a new-array selector trips React 19's "getSnapshot should be
+  // cached" loop → the board error-boundary); derive terminals in a memo.
+  const boards = useCanvasStore((s) => s.boards)
   const running = useTerminalRuntimeStore((s) => s.running)
   const runningTerminals = useMemo(
-    () => terminals.filter((t) => running[t.id]),
-    [terminals, running]
+    () =>
+      boards
+        .filter((b) => b.type === 'terminal' && running[b.id])
+        .map((b) => ({ id: b.id, title: b.title })),
+    [boards, running]
   )
 
   const remembered = lastTarget.get(diagramId)

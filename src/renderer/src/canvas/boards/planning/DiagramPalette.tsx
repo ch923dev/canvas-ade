@@ -30,8 +30,45 @@ export interface DiagramPaletteProps {
 }
 
 export function DiagramPalette({ onAddNode }: DiagramPaletteProps): ReactElement {
+  const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<SpecStatus>('neutral')
   const [icon, setIcon] = useState<IconName | null>(null)
+
+  // Collapsed by default: a compact ＋ that expands the rail on demand, so the palette never
+  // permanently occludes the graph behind it (the e2e-caught occlusion). Floating top-left per
+  // the signed mock's placement.
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="pl-editor-palette-toggle nodrag nowheel nopan"
+        title="Add node"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => setOpen(true)}
+        style={{
+          all: 'unset',
+          position: 'absolute',
+          left: 10,
+          top: 10,
+          zIndex: 4,
+          width: 26,
+          height: 26,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          font: '500 16px/1 var(--ui)',
+          color: 'var(--text-2)',
+          background: 'var(--surface-overlay)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--r-ctl)',
+          boxShadow: 'var(--shadow-pop)'
+        }}
+      >
+        ＋
+      </button>
+    )
+  }
 
   return (
     <div
@@ -50,7 +87,19 @@ export function DiagramPalette({ onAddNode }: DiagramPaletteProps): ReactElement
         boxShadow: 'var(--shadow-pop)'
       }}
     >
-      <div style={SECTION_LABEL}>Add node</div>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 7 }}>
+        <span style={{ ...SECTION_LABEL, margin: '2px 2px 0' }}>Add node</span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          title="Close palette"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => setOpen(false)}
+          style={{ all: 'unset', cursor: 'pointer', color: 'var(--text-3)', padding: '0 3px' }}
+        >
+          ×
+        </button>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 5 }}>
         {SPEC_NODE_KINDS.map((k) => (
           <button
