@@ -294,7 +294,11 @@ export default tseslint.config(
     // themselves live in ptySpawnEnv.ts / claudeBootDetect.ts. Ratchet DOWNWARD on next split.
     // 700→702 (T1d flicker-free): the one-line flickerFree: isFlickerFree() read must fire at the
     // buildSpawnEnv choke point (+ its import). The store lives in terminalDisplayConfig.ts.
-    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
+    // 702→706 (T2 terminal defects): D1 routes adoptCore's replay through the line-boundary–guarded
+    // readRingReplay/readRingSinceReplay (+2 import lines, +1 for the guarded ternary), and D2 posts
+    // the one-line `{ t: 'sync', written }` boundary seed inside adoptCore — all choke-point lines in
+    // the session-lifecycle core (the pure readers/helpers live in ptyOutput.ts). Ratchet DOWN on next split.
+    rules: { 'max-lines': ['error', { max: 706, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/main/index.ts'],
@@ -308,6 +312,17 @@ export default tseslint.config(
     // 702→704 (T1d flicker-free): the one-line registerTerminalDisplayHandlers(...) wiring must
     // sit beside the other terminal handlers (+ its import). Store lives in terminalDisplayConfig.ts.
     rules: { 'max-lines': ['error', { max: 704, skipBlankLines: true, skipComments: true }] }
+  },
+  {
+    files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
+    // 700→702 (T2 terminal defects, exact snapshot splice): the D2 accounting is factored into pure,
+    // unit-tested helpers in terminalSpawnMath.ts (nextReceived / buildSnapshot / snapshotWatermark),
+    // but two lines are hook-bound choke points that cannot leave the spawn closure — the per-message
+    // `receivedBytesRef.current = nextReceived(...)` count inside `port.onmessage` (it closes over the
+    // session's port + refs) and the `receivedBytesRef.current = 0` reset beside gridFittedRef on each
+    // fresh (re)spawn. The extraction already pulled the file back from +12 to +2. Ratchet DOWN on the
+    // next split of this Tier-3 hook. See docs/contributing/file-size-doctrine.md.
+    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

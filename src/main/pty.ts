@@ -22,6 +22,8 @@ import {
   pushRing,
   readRing,
   readRingSince,
+  readRingReplay,
+  readRingSinceReplay,
   type OutputPage,
   type OutputRing
 } from './ptyOutput'
@@ -444,9 +446,19 @@ export function adoptCore(
   // bare post-park tail. Undo parks (deleted board; nothing was flushed at delete)
   // always full-ring replay. Port messages are ordered, so the preface lands first.
   const watermark = p.kind === 'background' && preface ? p.watermark : undefined
-  const replay = watermark !== undefined ? readRingSince(p.buf, watermark) : readRing(p.buf)
+  // T2·D1: replay through the line-boundary–guarded readers so a wrapped ring never opens the
+  // replay mid-CSI in the live terminal (readRingSinceReplay preserves the exact splice boundary
+  // the preface joins; readRingReplay trims a torn head on the full-ring undo replay).
+  const replay =
+    watermark !== undefined ? readRingSinceReplay(p.buf, watermark) : readRingReplay(p.buf)
   if (watermark !== undefined && preface) port1.postMessage({ t: 'data', d: preface })
   if (replay) port1.postMessage({ t: 'data', d: replay })
+  // T2·D2: seed the renderer's received-byte counter to THIS ring's `written` axis. After the
+  // preface + replay above, the renderer's buffer represents the ring up to `written`, so its NEXT
+  // snapshot flush can report an EXACT splice boundary (received-since-here) instead of MAIN
+  // guessing from the approximate handler-entry ring count. Ordered after the replay so it
+  // OVERWRITES the transient count the renderer accrued while consuming the replayed bytes.
+  port1.postMessage({ t: 'sync', written: p.buf.written })
   port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
 
   return { adopted: true, pid: p.proc.pid }

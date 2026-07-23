@@ -21,14 +21,18 @@ export const terminalApi = {
    * where the process may exit right after and the write must land before that happens.
    * `expectedDir` (R2 dir-pin, BUG-009-style) rejects a flush that raced across a project switch —
    * with resident background projects a late write must never land in the newly-active project.
+   * `watermark` (T2·D2) is the EXACT byte count rendered into `text` on the ring's `written` axis, so
+   * MAIN splices the switch-back tail from the true snapshot boundary instead of an approximate one;
+   * omitted ⇒ MAIN falls back to the handler-entry ring count (legacy behavior).
    */
   writeSnapshot: (
     boardId: string,
     text: string,
     sync?: boolean,
-    expectedDir?: string
+    expectedDir?: string,
+    watermark?: number
   ): Promise<boolean> =>
-    ipcRenderer.invoke('terminal:writeSnapshot', boardId, text, sync, expectedDir),
+    ipcRenderer.invoke('terminal:writeSnapshot', boardId, text, sync, expectedDir, watermark),
   /** Read the board's persisted snapshot back (ANSI), or null when absent. */
   readSnapshot: (boardId: string): Promise<string | null> =>
     ipcRenderer.invoke('terminal:readSnapshot', boardId),

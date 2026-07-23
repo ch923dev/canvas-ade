@@ -15,6 +15,7 @@ import writeFileAtomic from 'write-file-atomic'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
 import { takeExitResidue, peekRingWritten, setFlushWatermark, type ExitResidue } from './pty'
+import { resolveFlushWatermark } from './ptyOutput'
 import {
   writeTerminalSnapshot,
   writeTerminalSnapshotAsync,
@@ -84,7 +85,8 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
       boardId: string,
       text: string,
       sync?: boolean,
-      expectedDir?: string
+      expectedDir?: string,
+      watermark?: number
     ): boolean | Promise<boolean> => {
       if (guard(e)) return false
       const dir = getCurrentDir()
@@ -97,11 +99,12 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
       if (expectedDir !== undefined && expectedDir !== dir) return false
       const safeText = typeof text === 'string' ? text : ''
       const id = String(boardId)
-      // Phase 5 splice (review fix): capture the ring watermark at handler ENTRY — the closest
-      // MAIN-side point to the renderer's serialize — and commit it only when the write LANDS.
-      // The background park then splices the tail from here instead of from park time, so
-      // output arriving between this flush and the park is replayed, not silently dropped.
-      const written = peekRingWritten(id)
+      // T2·D2 splice boundary: the renderer reports the EXACT byte count it rendered into `text`
+      // on the ring's `written` axis; MAIN clamps it to the live ring (falling back to the
+      // handler-entry ring count for a legacy caller) and commits it only when the write LANDS. The
+      // background park then splices the tail from this exact boundary — no gap/overlap from the old
+      // approximate count, and output arriving between this flush and the park is still replayed.
+      const written = resolveFlushWatermark(watermark, peekRingWritten(id))
       const commit = (ok: boolean): boolean => {
         if (ok && written !== null) setFlushWatermark(id, written)
         return ok

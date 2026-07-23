@@ -11,8 +11,14 @@
  * buffers are skipped so an untouched idle board never writes a blank sidecar.
  */
 
-/** Returns the board's serialized ANSI buffer, or null when there is nothing worth persisting. */
-type Snapshotter = () => string | null
+/**
+ * Returns the board's serialized ANSI buffer + the EXACT byte boundary it represents on MAIN's ring
+ * `written` axis (T2·D2 — the snapshot/tail splice point), or null when there is nothing worth
+ * persisting. `watermark` lets MAIN splice the switch-back tail from the true snapshot boundary
+ * instead of an approximate handler-entry ring count.
+ */
+type Snapshot = { text: string; watermark: number }
+type Snapshotter = () => Snapshot | null
 
 const registry = new Map<string, Snapshotter>()
 
@@ -44,14 +50,16 @@ export async function flushAllTerminalSnapshots(opts?: {
   const entries = [...registry.entries()]
   await Promise.all(
     entries.map(async ([id, fn]) => {
-      let text: string | null = null
+      let snap: Snapshot | null = null
       try {
-        text = fn()
+        snap = fn()
       } catch {
-        text = null
+        snap = null
       }
-      if (!text || !text.trim()) return
-      await window.api.terminal.writeSnapshot(id, text, sync, opts?.expectedDir).catch(() => false)
+      if (!snap || !snap.text || !snap.text.trim()) return
+      await window.api.terminal
+        .writeSnapshot(id, snap.text, sync, opts?.expectedDir, snap.watermark)
+        .catch(() => false)
     })
   )
 }

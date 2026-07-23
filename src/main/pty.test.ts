@@ -311,6 +311,7 @@ describe('adoptCore (T1)', () => {
     // Replay then running, in order.
     expect(port1.posted).toEqual([
       { t: 'data', d: 'scrollback-text' },
+      { t: 'sync', written: 'scrollback-text'.length }, // T2·D2: seed the renderer's byte axis
       { t: 'state', state: 'running' }
     ])
     clearTimeout(timer)
@@ -1355,6 +1356,7 @@ describe('adoptCore Phase-5 splice (watermark + preface)', () => {
     expect(port1.posted).toEqual([
       { t: 'data', d: 'SNAPSHOT-PREFACE' },
       { t: 'data', d: 'TAIL' },
+      { t: 'sync', written: buf.written }, // T2·D2: exact-boundary seed = ring written after TAIL
       { t: 'state', state: 'running' }
     ])
   })
@@ -1414,6 +1416,7 @@ describe('adoptCore Phase-5 splice (watermark + preface)', () => {
     )
     expect(port1.posted).toEqual([
       { t: 'data', d: 'pre-parkTAIL' },
+      { t: 'sync', written: buf.written }, // T2·D2: seed even on the no-preface full-ring replay
       { t: 'state', state: 'running' }
     ])
   })
@@ -1437,6 +1440,7 @@ describe('adoptCore Phase-5 splice (watermark + preface)', () => {
     )
     expect(port1.posted).toEqual([
       { t: 'data', d: 'everything' },
+      { t: 'sync', written: 'everything'.length }, // T2·D2: seed on undo adopt too
       { t: 'state', state: 'running' }
     ])
     clearTimeout(timer)

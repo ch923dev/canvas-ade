@@ -24,6 +24,15 @@ import {
   conptyHint,
   finiteDims
 } from './useTerminalSpawn'
+// The T2 fit-hold + snapshot-boundary helpers are pure and unit-tested directly against their home
+// module (not re-exported through the hook, which is at its max-lines cap).
+import {
+  fitHoldReleased,
+  shouldReleaseFitHold,
+  snapshotWatermark,
+  nextReceived,
+  buildSnapshot
+} from './terminalSpawnMath'
 
 describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
   it('cwd prefers the board cwd over the project dir', () => {
@@ -123,6 +132,89 @@ describe('finiteDims — FitAddon proposal gate (pure)', () => {
     expect(finiteDims(undefined)).toBe(false) // proposeDimensions() before layout
     expect(finiteDims({ cols: NaN, rows: 24 })).toBe(false) // display:none well (0-size math)
     expect(finiteDims({ cols: 80, rows: Infinity })).toBe(false)
+  })
+})
+
+describe('fitHoldReleased — write-coalescer fit-hold gate (T2·D3, pure)', () => {
+  it('releases (renders) only when live AND not backstopping AND grid fitted', () => {
+    expect(fitHoldReleased(true, false, true)).toBe(true)
+  })
+  it('holds while below-LOD / off-screen (not live)', () => {
+    expect(fitHoldReleased(false, false, true)).toBe(false)
+  })
+  it('holds while a resize-backstop snapshot is mid-flight', () => {
+    expect(fitHoldReleased(true, true, true)).toBe(false)
+  })
+  it('holds while the grid is still the unfitted 80×24 default (gridFitted false)', () => {
+    expect(fitHoldReleased(true, false, false)).toBe(false)
+  })
+})
+
+describe('shouldReleaseFitHold — fit-release trigger + respawn re-arm (T2·D3, pure)', () => {
+  it('releases on a fresh (re-armed) grid with a finite proposal', () => {
+    expect(shouldReleaseFitHold(false, { cols: 120, rows: 30 })).toBe(true)
+  })
+  it('does NOT release on a non-finite (not-laid-out) proposal even when armed', () => {
+    expect(shouldReleaseFitHold(false, undefined)).toBe(false)
+    expect(shouldReleaseFitHold(false, { cols: NaN, rows: 30 })).toBe(false)
+  })
+  it('a still-set gridFitted (NOT re-armed) blocks the re-release — the defect this fixes', () => {
+    // Before D3, a respawn kept gridFitted === true: this fit could not re-gate the hold at the
+    // current cols, so a finite-but-wrong transient proposal would already have released it.
+    expect(shouldReleaseFitHold(true, { cols: 120, rows: 30 })).toBe(false)
+  })
+  it('re-arming (gridFitted → false) on respawn lets the NEXT finite fit release cleanly', () => {
+    const armed = false // what restart() sets before its fitWhole
+    expect(shouldReleaseFitHold(armed, { cols: 132, rows: 43 })).toBe(true)
+  })
+})
+
+describe('snapshotWatermark — exact snapshot/tail splice boundary (T2·D2, pure)', () => {
+  it('is the received count when nothing is held (fully-rendered live board)', () => {
+    // The common switch-away case: coalescer caught up → boundary == everything received.
+    expect(snapshotWatermark(4096, 0)).toBe(4096)
+  })
+  it('excludes still-held (unrendered) bytes so they land in the post-snapshot replay tail', () => {
+    // A hidden board holding 300 bytes: only 700 are IN the snapshot, so the boundary is 700 and
+    // the 300 held bytes are replayed from MAIN's ring on switch-back (no gap).
+    expect(snapshotWatermark(1000, 300)).toBe(700)
+  })
+  it('never goes negative (held can transiently exceed received during an adopt replay)', () => {
+    expect(snapshotWatermark(50, 200)).toBe(0)
+  })
+})
+
+describe('nextReceived — ring-axis byte counter reducer (T2·D2, pure)', () => {
+  it('adds a live data message length to the running total', () => {
+    expect(nextReceived(100, { t: 'data', d: 'hello' })).toBe(105)
+  })
+  it('OVERWRITES to the ring absolute on a sync (re-aligns past an adopt replay)', () => {
+    // Even though the renderer just accrued replay bytes, sync snaps it back to MAIN's `written`.
+    expect(nextReceived(999, { t: 'sync', written: 4096 })).toBe(4096)
+  })
+  it('is inert for state/exit/empty messages', () => {
+    expect(nextReceived(100, { t: 'state' })).toBe(100)
+    expect(nextReceived(100, { t: 'exit' })).toBe(100)
+    expect(nextReceived(100, { t: 'data' })).toBe(100) // no d → nothing added
+    expect(nextReceived(100, { t: 'sync' })).toBe(100) // no written → no reseed
+  })
+  it('a fresh spawn counts from 0 == the ring written (no sync needed)', () => {
+    let n = 0
+    n = nextReceived(n, { t: 'data', d: 'abc' })
+    n = nextReceived(n, { t: 'data', d: 'de' })
+    expect(n).toBe(5)
+  })
+})
+
+describe('buildSnapshot — persisted snapshot + exact boundary (T2·D2, pure)', () => {
+  it('pairs the serialized text with received−held as the boundary', () => {
+    expect(buildSnapshot('BUFFER', 1000, 300)).toEqual({ text: 'BUFFER', watermark: 700 })
+  })
+  it('is null when there is nothing to serialize (no serializer / non-string)', () => {
+    expect(buildSnapshot(undefined, 1000, 0)).toBeNull()
+  })
+  it('keeps an empty string (the registry skips blanks itself) with a 0-clamped boundary', () => {
+    expect(buildSnapshot('', 0, 50)).toEqual({ text: '', watermark: 0 })
   })
 })
 

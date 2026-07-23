@@ -118,6 +118,67 @@ export function readRingSince(ring: OutputRing, watermark: number): string {
   return fresh >= joined.length ? joined : joined.slice(joined.length - fresh)
 }
 
+/**
+ * T2·D1 — line-boundary replay guard. A byte-capped ring can open mid-CSI (mid-escape-sequence)
+ * once it has WRAPPED (saturated → the oldest chunk was head-trimmed to fit the cap, so its first
+ * bytes may be a torn escape/line). Replaying that head straight into xterm garbles the render.
+ * This mirrors the daemon ring's `daemonRingReplay` guard (`ptyHost/ring.ts`) — the two rings were
+ * asymmetric: the daemon trimmed, the in-proc ring did not. When `wrapped`, drop the torn first
+ * line so the replay starts clean; a single line longer than the ring replays as-is (losing it
+ * entirely would be worse). Verbatim while under the cap (nothing was dropped, the head is intact).
+ */
+export function trimWrappedReplayHead(joined: string, wrapped: boolean): string {
+  if (!wrapped) return joined
+  const nl = joined.indexOf('\n')
+  return nl >= 0 && nl < joined.length - 1 ? joined.slice(nl + 1) : joined
+}
+
+/** Whether the ring has wrapped (is saturated at the cap) — its head chunk was trimmed to fit. */
+export function ringWrapped(ring: OutputRing): boolean {
+  return ring.total >= ring.cap
+}
+
+/**
+ * Full-ring replay for a terminal (undo-adopt / no-preface path), head-trimmed to a line boundary
+ * when the ring has wrapped (T2·D1). The verbatim `readRing` stays for non-replay readers (MCP
+ * scrollback pages strip ANSI; port-scan parses line-oriented output) where a torn head is inert.
+ */
+export function readRingReplay(ring: OutputRing): string {
+  return trimWrappedReplayHead(readRing(ring), ringWrapped(ring))
+}
+
+/**
+ * Post-watermark replay for a terminal (T2·D1). When the watermark still lies within the retained
+ * ring the slice is the EXACT splice boundary a snapshot preface joins onto — never trimmed, or the
+ * snapshot's trailing partial line would lose its raw continuation. Only the DEGRADED case (eviction
+ * ate past the watermark, so the whole retained tail is returned and its head is already torn with
+ * no clean boundary to preserve) gets the wrap guard.
+ */
+export function readRingSinceReplay(ring: OutputRing, watermark: number): string {
+  const fresh = Math.max(0, ring.written - watermark)
+  if (fresh === 0) return ''
+  const joined = readRing(ring)
+  if (fresh >= joined.length) return trimWrappedReplayHead(joined, ringWrapped(ring))
+  return joined.slice(joined.length - fresh)
+}
+
+/**
+ * T2·D2 — resolve the flush watermark used to splice the switch-back tail. The renderer reports the
+ * EXACT boundary it rendered into the snapshot (on this ring's `written` axis); MAIN clamps it to
+ * `[0, ringWritten]` (a renderer count can never legitimately exceed what the ring has ever pushed)
+ * and uses it in place of the old approximate handler-entry `ringWritten`. When the renderer
+ * supplied nothing (legacy caller), fall back to `ringWritten`. `null` ringWritten (no live
+ * session — parked/exited) means there is nothing to splice, so the result stays `null`.
+ */
+export function resolveFlushWatermark(
+  rendererWatermark: number | undefined,
+  ringWritten: number | null
+): number | null {
+  if (ringWritten === null) return null
+  if (rendererWatermark === undefined || !Number.isFinite(rendererWatermark)) return ringWritten
+  return Math.max(0, Math.min(rendererWatermark, ringWritten))
+}
+
 /** One capped, tail-anchored page of cleaned scrollback. */
 export interface OutputPage {
   /** Plain-text slice for this page, in chronological order. */

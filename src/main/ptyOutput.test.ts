@@ -6,7 +6,12 @@ import {
   createRing,
   pushRing,
   readRing,
-  readRingSince
+  readRingSince,
+  readRingReplay,
+  readRingSinceReplay,
+  trimWrappedReplayHead,
+  ringWrapped,
+  resolveFlushWatermark
 } from './ptyOutput'
 
 describe('OutputRing (PERF-06 chunk deque)', () => {
@@ -223,5 +228,107 @@ describe('readRingSince (Phase 5 watermark splice)', () => {
     const ring = createRing(1024)
     pushRing(ring, 'everything')
     expect(readRingSince(ring, 0)).toBe('everything')
+  })
+})
+
+// T2·D1: line-boundary replay guard — mirrors the daemon ring's daemonRingReplay (ptyHost/ring.ts).
+// A wrapped (saturated) ring can open a replay mid-CSI; guard the FULL replay + the degraded
+// post-watermark tail, while leaving the exact splice boundary untrimmed.
+describe('trimWrappedReplayHead (T2·D1)', () => {
+  it('is verbatim when not wrapped (nothing was dropped, head is intact)', () => {
+    expect(trimWrappedReplayHead('\x1b[31mred\nmore', false)).toBe('\x1b[31mred\nmore')
+  })
+  it('drops the torn first line when wrapped', () => {
+    expect(trimWrappedReplayHead('rn-esc\x1b[3\nCLEAN\nrest', true)).toBe('CLEAN\nrest')
+  })
+  it('replays a single newline-free line as-is when wrapped (losing it is worse)', () => {
+    expect(trimWrappedReplayHead('x'.repeat(40), true)).toBe('x'.repeat(40))
+  })
+  it('replays as-is when the only newline is the final char (no clean line follows)', () => {
+    expect(trimWrappedReplayHead('torn-head\n', true)).toBe('torn-head\n')
+  })
+})
+
+describe('ringWrapped (T2·D1)', () => {
+  it('is false under the cap, true once saturated', () => {
+    const r = createRing(6)
+    pushRing(r, 'abcd')
+    expect(ringWrapped(r)).toBe(false)
+    pushRing(r, 'efgh') // now over cap → head trimmed, saturated
+    expect(ringWrapped(r)).toBe(true)
+  })
+})
+
+describe('readRingReplay (T2·D1 full-ring replay guard)', () => {
+  it('replays verbatim while under the cap', () => {
+    const r = createRing(1024)
+    pushRing(r, 'first\nsecond')
+    expect(readRingReplay(r)).toBe('first\nsecond')
+  })
+  it('starts a wrapped replay after the first newline (no mid-escape head)', () => {
+    const r = createRing(16)
+    // Force saturation so the head chunk is trimmed to a torn line, then a clean line follows.
+    pushRing(r, 'AAAAAAAAAAAA') // 12
+    pushRing(r, 'B\nCLEAN-TAIL') // over cap 16 → oldest head trimmed to 'AAAA', ring wrapped
+    expect(ringWrapped(r)).toBe(true)
+    expect(readRing(r)).toBe('AAAAB\nCLEAN-TAIL') // torn head is 'AAAAB' (mid-line)
+    // The torn head is dropped at the first newline boundary → the replay starts clean.
+    expect(readRingReplay(r)).toBe('CLEAN-TAIL')
+  })
+  it('replays a wrapped single giant line as-is (no newline to trim to)', () => {
+    const r = createRing(4)
+    pushRing(r, 'abcdefgh') // saturated, single line, no newline
+    expect(ringWrapped(r)).toBe(true)
+    expect(readRingReplay(r)).toBe('efgh')
+  })
+})
+
+describe('resolveFlushWatermark (T2·D2 exact splice boundary)', () => {
+  it('uses the renderer-reported boundary, clamped to the live ring', () => {
+    expect(resolveFlushWatermark(120, 500)).toBe(120)
+  })
+  it('clamps a renderer count that (impossibly) exceeds the ring to the ring written', () => {
+    expect(resolveFlushWatermark(9999, 500)).toBe(500)
+  })
+  it('clamps a negative renderer count to 0', () => {
+    expect(resolveFlushWatermark(-5, 500)).toBe(0)
+  })
+  it('falls back to the ring count for a legacy caller (no renderer watermark)', () => {
+    expect(resolveFlushWatermark(undefined, 500)).toBe(500)
+  })
+  it('falls back to the ring count when the renderer watermark is non-finite', () => {
+    expect(resolveFlushWatermark(Number.NaN, 500)).toBe(500)
+  })
+  it('is null when there is no live session to splice (null ring written)', () => {
+    expect(resolveFlushWatermark(120, null)).toBeNull()
+    expect(resolveFlushWatermark(undefined, null)).toBeNull()
+  })
+})
+
+describe('readRingSinceReplay (T2·D1 post-watermark replay guard)', () => {
+  it('returns empty when nothing followed the watermark', () => {
+    const r = createRing(1024)
+    pushRing(r, 'x')
+    expect(readRingSinceReplay(r, r.written)).toBe('')
+  })
+  it('does NOT trim the exact splice boundary (preserves the preface join)', () => {
+    const r = createRing(1024)
+    pushRing(r, 'PREFACE-END') // rendered into the snapshot preface
+    const watermark = r.written
+    pushRing(r, 'no-newline-tail-continues-the-line')
+    // Even though there is no newline, the exact in-ring slice is returned untrimmed so the
+    // snapshot's trailing partial line keeps its raw continuation.
+    expect(readRingSinceReplay(r, watermark)).toBe('no-newline-tail-continues-the-line')
+  })
+  it('trims the torn head only in the degraded (eviction ate the boundary) case', () => {
+    const r = createRing(10)
+    pushRing(r, 'aaaaaaaaaa') // fills the ring
+    const watermark = r.written // 10
+    // Push past the watermark region so eviction eats it: written(21) - watermark(10) = 11 fresh,
+    // but only 10 retained → degraded whole-tail path with a torn 'b…' head.
+    pushRing(r, 'bb\nCCCCCCCC')
+    expect(ringWrapped(r)).toBe(true)
+    expect(readRing(r)).toBe('b\nCCCCCCCC') // torn head 'b', then a clean line
+    expect(readRingSinceReplay(r, watermark)).toBe('CCCCCCCC') // wrap-guard drops the torn head
   })
 })
