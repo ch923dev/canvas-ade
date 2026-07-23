@@ -394,6 +394,17 @@ export interface CanvasE2E {
     modelStatus: 'ready' | 'absent' | 'unknown'
   }
   /**
+   * Phase 3 cloud TTS — ephemeral playback state (`ttsStore`). The voiceTtsCloud e2e asserts
+   * `speaking` flips true once synthesized chunks reach the renderer (delivery), and `lastError`
+   * surfaces on a vendor failure (fail-visible). AudioContext-clock-independent: setSpeaking(true)
+   * fires synchronously the moment the first chunk schedules.
+   */
+  ttsState: () => {
+    sessionLive: boolean
+    speaking: boolean
+    lastError: string | null
+  }
+  /**
    * Jarvis — the conversation/panel state (`jarvisStore`, ephemeral). The jarvis e2e
    * drives a stub-voice final through the mock brain and asserts the turn lifecycle
    * (thinking → streaming reply → done) + the display transcript + the structural

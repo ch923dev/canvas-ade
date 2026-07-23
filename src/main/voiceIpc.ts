@@ -18,7 +18,9 @@ import { isForeignSender } from './ipcGuard'
 import { createVoiceEngine, type VoiceEngineHandle } from './voiceEngine'
 import { currentVoiceStubEngine } from './voiceEngineStub'
 import { createCloudSttEngine, type CloudSttEvent } from './cloudSttEngine'
+import { createCloudTtsEngine } from './cloudTtsEngine'
 import { createOpenAiTranscribe, type TranscribeFetch } from './openaiTranscribe'
+import { createOpenAiSpeak, type SpeakFetch } from './openaiSpeak'
 import { createSymbolProvider, type SymbolProvider } from './voiceSymbols'
 import { keyForProvider } from './llmService'
 import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
@@ -139,6 +141,10 @@ export interface VoiceIpcDeps {
   transcribeFetch?: TranscribeFetch
   /** Override the OpenAI base URL (e2e fake vendor); default reads CANVAS_VOICE_OPENAI_BASE. */
   transcribeBaseUrl?: () => string
+  /** Phase 3: injectable speech transport (unit/e2e); default = global fetch (undici). */
+  speakFetch?: SpeakFetch
+  /** Phase 3: override the OpenAI speech base URL (e2e fake vendor); default = CANVAS_VOICE_OPENAI_BASE. */
+  speakBaseUrl?: () => string
   modelOps?: {
     status: typeof modelStatus
     paths: typeof modelPaths
@@ -251,31 +257,75 @@ export function registerVoiceHandlers(
       deps.transcribeBaseUrl ?? ((): string => process.env.CANVAS_VOICE_OPENAI_BASE || ''),
     fetch: deps.transcribeFetch
   })
-  let cloudEngineSingleton: VoiceEngineHandle | null = null
-  const cloudEngine = (): VoiceEngineHandle => {
-    if (!cloudEngineSingleton) {
-      cloudEngineSingleton = createCloudSttEngine({
-        local: defaultEngine(), // wraps the persistent local host; TTS/KWS delegate through
-        transcribe,
-        emit: emitTranscript,
-        getSymbols: () => symbols.get()
-      })
-    }
-    return cloudEngineSingleton
-  }
-  /** Cloud STT is on only when configured AND a key is present; else we fall back to local
-   *  (the renderer surfaces the "set OpenAI key" note itself via config + llm:hasKey). */
+  // Phase 3: the cloud TTS speak seam. Shares the openai key + the base-URL override with STT; the
+  // key is read MAIN-side inside the getKey closure and never returned out.
+  const speak = createOpenAiSpeak({
+    getKey: () => keyForProvider('openai', process.env, keyStore), // MAIN-side only, never returned out
+    getModel: () => readVoiceConfig(getUserData()).ttsCloudModel,
+    getVoice: () => readVoiceConfig(getUserData()).ttsVoice,
+    getBaseUrl: deps.speakBaseUrl ?? ((): string => process.env.CANVAS_VOICE_OPENAI_BASE || ''),
+    fetch: deps.speakFetch
+  })
+  /** Cloud STT / cloud TTS are each on only when configured AND a key is present; else that layer
+   *  falls back to local (the renderer surfaces the "set OpenAI key" note via config + llm:hasKey). */
   const useCloud = (): boolean =>
     readVoiceConfig(getUserData()).engine === 'cloud' && hasOpenAiKey()
+  const useCloudTts = (): boolean =>
+    readVoiceConfig(getUserData()).ttsEngine === 'cloud' && hasOpenAiKey()
 
-  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in every
-  // normal run — only settable through e2eMain's gated registry) → cloud composite (when
-  // configured + keyed) → the real local host.
-  const engine = (): VoiceEngineHandle => {
-    const override = deps.engine ?? currentVoiceStubEngine()
-    if (override) return override
-    return useCloud() ? cloudEngine() : defaultEngine()
+  // The STT and TTS cloud tiers are INDEPENDENT (design decision #1: cloud STT + local TTS, or the
+  // reverse, must be mixable). Each is a STABLE per-domain singleton over the persistent local host,
+  // built once and NEVER rebuilt — so a config toggle can't discard live session state (an in-flight
+  // cloud-STT recording buffer, or the cloud-TTS port/queue). The two are ROUTED per-method by live
+  // config, NOT stacked into one combined composite (which would couple them: a TTS-engine toggle
+  // would tear down an in-flight STT recording, and vice versa). Each cloud layer wraps defaultEngine
+  // directly; its cross-domain delegation is inert because the router only ever calls a layer for its
+  // OWN domain.
+  let cloudSttSingleton: VoiceEngineHandle | null = null
+  let cloudTtsSingleton: VoiceEngineHandle | null = null
+  const cloudStt = (): VoiceEngineHandle =>
+    (cloudSttSingleton ??= createCloudSttEngine({
+      local: defaultEngine(),
+      transcribe,
+      emit: emitTranscript,
+      getSymbols: () => symbols.get()
+    }))
+  const cloudTts = (): VoiceEngineHandle =>
+    (cloudTtsSingleton ??= createCloudTtsEngine({ local: defaultEngine(), speak }))
+  // The engine serving THIS call for each domain: cloud when configured + keyed, else the local host.
+  const sttDomain = (): VoiceEngineHandle => (useCloud() ? cloudStt() : defaultEngine())
+  const ttsDomain = (): VoiceEngineHandle => (useCloudTts() ? cloudTts() : defaultEngine())
+  // A stable router: STT methods dispatch to the STT domain, TTS methods to the TTS domain; wake /
+  // failure / dispose go straight to the local host (the cloud layers delegate those to it anyway,
+  // so registering on it directly is equivalent and never rebuilds a live session).
+  const routerEngine: VoiceEngineHandle = {
+    startSession: (port, model) => sttDomain().startSession(port, model),
+    stopSession: (timeoutMs) => sttDomain().stopSession(timeoutMs),
+    onEngineFailure: (cb) => defaultEngine().onEngineFailure(cb),
+    startTtsSession: (port, model) => ttsDomain().startTtsSession(port, model),
+    ttsSpeak: (req) => ttsDomain().ttsSpeak(req),
+    ttsCancel: () => ttsDomain().ttsCancel(),
+    stopTtsSession: () => ttsDomain().stopTtsSession(),
+    onTtsFailure: (cb) => defaultEngine().onTtsFailure(cb),
+    startKwsSession: (port, model) => defaultEngine().startKwsSession(port, model),
+    stopKwsSession: (timeoutMs) => defaultEngine().stopKwsSession(timeoutMs),
+    onKwsFailure: (cb) => defaultEngine().onKwsFailure(cb),
+    dispose: () => {
+      const stt = cloudSttSingleton
+      const tts = cloudTtsSingleton
+      cloudSttSingleton = null
+      cloudTtsSingleton = null
+      // Disposing either cloud layer also disposes the shared local host (they delegate dispose to
+      // it — idempotent on a second call); fall back to the host directly when neither exists.
+      if (stt) stt.dispose()
+      if (tts) tts.dispose()
+      if (!stt && !tts) defaultEngine().dispose()
+    }
   }
+
+  // Resolution order: explicit test injection → the e2e runtime stub (dormant null in every normal
+  // run — only settable through e2eMain's gated registry) → the per-domain cloud router.
+  const engine = (): VoiceEngineHandle => deps.engine ?? currentVoiceStubEngine() ?? routerEngine
 
   // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
   void ops.sweep(getUserData()).catch(() => {})
@@ -296,6 +346,10 @@ export function registerVoiceHandlers(
   // WHOLE-host failure (which kills any TTS session too) without reordering this file —
   // it is assigned once the TTS handlers are registered.
   let ttsActive = false
+  // Phase 3: whether the LIVE TTS session runs on cloud. A cloud speak never touches the local host
+  // (it holds a MAIN-owned port + calls OpenAI), so a whole-host death is a STT/KWS/local-TTS-only
+  // failure and must NOT fail the in-progress cloud speak.
+  let ttsIsCloud = false
   let hostFailureAlsoFails: ((reason: string) => void) | null = null
 
   const brokerSession = (paths: VoiceModelPaths | null): boolean => {
@@ -310,7 +364,9 @@ export function registerVoiceHandlers(
   }
 
   const onEngineFailure = (reason: string): void => {
-    hostFailureAlsoFails?.(reason) // a dead host takes any live TTS session with it
+    // A dead host takes any live LOCAL TTS session with it — but a CLOUD TTS session runs off the
+    // host (its own fetch + a MAIN-owned port), so a host death is not its failure.
+    if (!ttsIsCloud) hostFailureAlsoFails?.(reason)
     // A cloud STT recording doesn't run on the host — a whole-host death is TTS/KWS-only and must
     // not tear down / restart the in-progress cloud session (it would truncate the transcription
     // and fire a spurious {kind:'restarted'} for a path that never broke). TTS already failed above.
@@ -499,12 +555,20 @@ export function registerVoiceHandlers(
     const win = getWin()
     if (!win) return { ok: false, modelStatus: 'absent' }
     const userData = getUserData()
+    // Cloud TTS synthesizes over the network — it needs NO on-disk model, so bypass the model-ready
+    // gate (mirrors the cloud STT `cloudActive` bypass) and pass null paths (the cloud engine drops
+    // them). The e2e stub keeps the real disk check; unit-test injection (deps.engine) does too.
+    const stubActive = !deps.engine && currentVoiceStubEngine() !== null
+    const cloudTts = !deps.engine && !stubActive && useCloudTts()
     const modelId = configuredTtsModelId()
-    const status = await ttsOps.status(userData, modelId)
-    const paths = status === 'ready' ? ttsOps.paths(userData, modelId) : null
-    // No count-only degraded mode here (unlike STT): a TTS session without a model has
-    // nothing to stream — fail fast and let Settings drive the download CTA.
-    if (!paths) return { ok: false, modelStatus: status }
+    const status = cloudTts ? 'ready' : await ttsOps.status(userData, modelId)
+    const paths = !cloudTts && status === 'ready' ? ttsOps.paths(userData, modelId) : null
+    // No count-only degraded mode here (unlike STT): a LOCAL TTS session without a model has
+    // nothing to stream — fail fast and let Settings drive the download CTA. Cloud needs no model.
+    if (!cloudTts && !paths) return { ok: false, modelStatus: status }
+    // Immunity tracks the CONFIG (mirrors STT's liveIsCloud = useCloud()), not the model-bypass gate,
+    // so an injected test engine + cloud config is still treated as a cloud session.
+    ttsIsCloud = useCloudTts()
     engine().onTtsFailure(onTtsFailure)
     // A TTS-only user still needs host-death observation (STT may never have started —
     // without this the exit escalation would have no listener to reach onTtsFailure).
@@ -548,6 +612,7 @@ export function registerVoiceHandlers(
   ipcMain.handle('voice:tts:stop', async (e): Promise<{ ok: boolean }> => {
     if (isForeignSender(e, getWin)) return { ok: false }
     ttsActive = false
+    ttsIsCloud = false
     engine().stopTtsSession()
     return { ok: true }
   })

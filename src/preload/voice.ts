@@ -46,6 +46,13 @@ export interface VoiceConfigView {
   /** J2 barge-in mode (D6): 'full' = transcription-gated interrupt; 'half' = mic
    *  suppressed while speaking, elevated-RMS burst interrupts (AEC-hostile machines). */
   ttsDuplex: 'full' | 'half'
+  /** Phase 3: which engine synthesizes speech — 'kokoro' (local) or 'cloud' (OpenAI). Independent
+   *  of the STT `engine` field. A cloud-selected-but-keyless config falls back to local. */
+  ttsEngine: 'kokoro' | 'cloud'
+  /** Phase 3: cloud TTS model (default gpt-4o-mini-tts); inert while ttsEngine is kokoro. */
+  ttsCloudModel: string
+  /** Phase 3: cloud TTS voice (alloy/echo/fable/onyx/nova/shimmer …); inert while ttsEngine is kokoro. */
+  ttsVoice: string
 }
 
 /** J2: TTS-side failure push (worker/host death) — flush playback; the next speak

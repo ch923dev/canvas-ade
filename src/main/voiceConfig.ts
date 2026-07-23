@@ -16,6 +16,12 @@ import { DEFAULT_TTS_MODEL_ID } from './voiceTtsModels'
 /** Default cloud STT model (Phase 1.5 pick: gpt-4o-transcribe + biasing + formatRestore = 85.5%). */
 export const DEFAULT_STT_MODEL = 'gpt-4o-transcribe'
 
+/** Phase 3 cloud TTS defaults: gpt-4o-mini-tts (steerable, cheaper, current-gen) + the `alloy`
+ *  voice. Both free-text on disk so a newer OpenAI model/voice can be typed/picked without a code
+ *  change; inert while `ttsEngine === 'kokoro'`. */
+export const DEFAULT_TTS_CLOUD_MODEL = 'gpt-4o-mini-tts'
+export const DEFAULT_TTS_VOICE = 'alloy'
+
 /** Cap on the persisted voice prompt-history ring. The flyout surfaces a small Recent slice; the
  *  Settings › Voice pane shows the full list up to this bound. Repair enforces it no matter what a
  *  writer sends, so a runaway array on disk can never grow the file unbounded. */
@@ -59,6 +65,17 @@ export interface VoiceConfig {
    *  frames are suppressed during playback and a sustained elevated-RMS burst is the
    *  interrupt instead. */
   ttsDuplex: 'full' | 'half'
+  /** Phase 3: which TTS engine synthesizes Jarvis speech. 'kokoro' = the local on-device catalog
+   *  voice (default); 'cloud' = OpenAI /v1/audio/speech (needs the shared `openai` key — a
+   *  cloud-selected-but-keyless config falls back to local at session start, never silently). INDEPENDENT
+   *  of the STT `engine` field, so cloud dictation + local speech (or the reverse) can be mixed. */
+  ttsEngine: 'kokoro' | 'cloud'
+  /** Phase 3: the OpenAI speech model when `ttsEngine === 'cloud'`. Default gpt-4o-mini-tts.
+   *  Free-text (tts-1 / tts-1-hd typeable); inert while `ttsEngine === 'kokoro'`. */
+  ttsCloudModel: string
+  /** Phase 3: the OpenAI voice when `ttsEngine === 'cloud'` (alloy/echo/fable/onyx/nova/shimmer …).
+   *  Free-text so a new voice can be typed; inert while `ttsEngine === 'kokoro'`. */
+  ttsVoice: string
   /** Voice prompt history — the prompts the user SENT via dictation, newest first, capped at
    *  MAX_PROMPT_HISTORY. The flyout shows a Recent slice for one-click reuse; Settings › Voice
    *  shows the whole list to browse/copy/delete. Durable *config* in userData (never a project
@@ -81,7 +98,10 @@ function defaults(): VoiceConfig {
     promptHistory: [],
     ttsModelId: DEFAULT_TTS_MODEL_ID,
     ttsDuplex: 'full',
-    sttModel: DEFAULT_STT_MODEL
+    sttModel: DEFAULT_STT_MODEL,
+    ttsEngine: 'kokoro',
+    ttsCloudModel: DEFAULT_TTS_CLOUD_MODEL,
+    ttsVoice: DEFAULT_TTS_VOICE
   }
 }
 
@@ -128,7 +148,10 @@ export function repairVoiceConfig(p: unknown): VoiceConfig {
     promptHistory,
     ttsModelId: optStr(o.ttsModelId) ?? d.ttsModelId,
     ttsDuplex: o.ttsDuplex === 'half' ? 'half' : 'full',
-    sttModel: optStr(o.sttModel) ?? d.sttModel
+    sttModel: optStr(o.sttModel) ?? d.sttModel,
+    ttsEngine: o.ttsEngine === 'cloud' ? 'cloud' : 'kokoro',
+    ttsCloudModel: optStr(o.ttsCloudModel) ?? d.ttsCloudModel,
+    ttsVoice: optStr(o.ttsVoice) ?? d.ttsVoice
   }
 }
 
