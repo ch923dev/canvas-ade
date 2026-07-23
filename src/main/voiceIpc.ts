@@ -288,6 +288,10 @@ export function registerVoiceHandlers(
   let liveModel: VoiceModelPaths | null = null
   let liveActive = false
   let restartedOnce = false
+  // Phase 2: whether the LIVE STT session runs on cloud. A cloud recording never touches the local
+  // host (it holds the port + calls OpenAI), so a whole-host death — which onEngineFailure below
+  // reacts to — is a TTS/KWS-only failure for a cloud session and must NOT restart/interrupt it.
+  let liveIsCloud = false
   // J2 TTS session state. `hostFailureAlsoFails` lets the TTS block below observe a
   // WHOLE-host failure (which kills any TTS session too) without reordering this file —
   // it is assigned once the TTS handlers are registered.
@@ -307,6 +311,10 @@ export function registerVoiceHandlers(
 
   const onEngineFailure = (reason: string): void => {
     hostFailureAlsoFails?.(reason) // a dead host takes any live TTS session with it
+    // A cloud STT recording doesn't run on the host — a whole-host death is TTS/KWS-only and must
+    // not tear down / restart the in-progress cloud session (it would truncate the transcription
+    // and fire a spurious {kind:'restarted'} for a path that never broke). TTS already failed above.
+    if (liveIsCloud) return
     if (!liveActive) return // idle host death — the next start respawns anyway
     if (!restartedOnce) {
       restartedOnce = true
@@ -350,6 +358,7 @@ export function registerVoiceHandlers(
       !stubActive && !cloudActive && status === 'ready' ? ops.paths(userData, modelId) : null
     liveModel = paths
     liveActive = true
+    liveIsCloud = useCloud() // a cloud session is immune to the host-death restart (above)
     restartedOnce = false // a user-started session gets a fresh restart budget
     engine().onEngineFailure(onEngineFailure)
     if (!brokerSession(paths)) {
