@@ -92,10 +92,13 @@ import {
 
 /** A control-plane message arriving over the data-plane MessagePort. */
 interface PortMessage {
-  t: 'data' | 'exit' | 'state'
+  t: 'data' | 'exit' | 'state' | 'sync'
   d?: string
   code?: number
   state?: TerminalState
+  /** T2·D2: on `sync`, the ring's cumulative `written` — seeds the received-byte counter to the
+   *  ring axis after an adopt replay so the next snapshot reports an exact splice boundary. */
+  written?: number
 }
 
 /** Platform check for the terminal key resolver's primary modifier (Cmd on macOS). */
@@ -103,13 +106,18 @@ const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
 // Pure decision helpers live in terminalSpawnMath.ts (max-lines doctrine); imported for the
 // hook body below AND re-exported so the unit tests + any external import keep this module
-// path (the pty.ts › ptyResize.ts precedent).
+// path (the pty.ts › ptyResize.ts precedent). The T2 additions (fit-hold gate + snapshot-boundary
+// helpers) are unit-tested directly against terminalSpawnMath — no re-export needed for them.
 import {
   conptyHint,
   fullViewScale,
   resolveSpawnArgs,
   nextStateAfterAdopt,
-  finiteDims
+  finiteDims,
+  fitHoldReleased,
+  shouldReleaseFitHold,
+  buildSnapshot,
+  nextReceived
 } from './terminalSpawnMath'
 export { conptyHint, fullViewScale, resolveSpawnArgs, nextStateAfterAdopt, finiteDims }
 
@@ -290,6 +298,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // flush AFTER the grid is real. Reset per new term in the spawn closure (beside establishedRef).
   const gridFittedRef = useRef(false)
   const portRef = useRef<MessagePort | null>(null)
+  // T2·D2 (exact snapshot splice): cumulative PTY bytes RECEIVED over the port on MAIN's ring
+  // `written` axis. Every live `t:'data'` message adds its length; MAIN's `t:'sync'` (posted after
+  // an adopt replay) OVERWRITES it to the ring's absolute `written` so the counter re-aligns past
+  // the replayed bytes. Reset to 0 per fresh (re)spawn (the ring restarts at 0). The snapshotter
+  // reports `received − held` as the exact boundary MAIN splices the switch-back tail from.
+  const receivedBytesRef = useRef(0)
   // #23: when a Restart happens while the well is unfitted (LOD/display:none),
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
   // let the spawn effect's ResizeObserver consume this flag on the first good fit.
@@ -567,7 +581,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // Switch-back replay fix: the fit above ran, but plainFit can "succeed" as a silent no-op
     // when the well has no layout (FitAddon.fit() returns early on an undefined proposal), so
     // gate the release on a FINITE proposal — the grid now truly reflects the board's width.
-    if (!gridFittedRef.current && finiteDims(fit.proposeDimensions())) {
+    // T2·D3: `shouldReleaseFitHold` is the armed-∧-finite predicate; respawn re-arms gridFitted
+    // (sets it false) so THIS decision is re-made at the current cols on every (re)spawn.
+    if (shouldReleaseFitHold(gridFittedRef.current, fit.proposeDimensions())) {
       gridFittedRef.current = true
       // Release the bytes held for the pre-fit window (an adopt's replayed scrollback / a
       // restored snapshot that raced this first fit) — they now wrap at the true column count.
@@ -728,7 +744,17 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // S3: publish this term's buffer serializer so the app can flush its scrollback to the
     // `.canvas/terminal/<id>.snapshot` sidecar on quit / window-close / project-switch (see
     // terminalSnapshotRegistry). Unregistered on teardown. A new term starts un-restored.
-    registerTerminalSnapshotter(board.id, () => serializeAddonRef.current?.serialize() ?? null)
+    // T2·D2: persist the serialized buffer + the EXACT splice boundary (received minus the bytes NOT
+    // applied to xterm — the coalescer's still-queued `held()` tail AND its hold-cap `dropped()`
+    // evictions). buildSnapshot returns null when there is nothing to serialize.
+    registerTerminalSnapshotter(board.id, () =>
+      buildSnapshot(
+        serializeAddonRef.current?.serialize(),
+        receivedBytesRef.current,
+        coalescerRef.current?.held() ?? 0,
+        coalescerRef.current?.dropped() ?? 0
+      )
+    )
     setRestored(false)
     setRestoredExitCode(null)
     startedRef.current = false // a fresh term: no explicit Start/Resume has run on it yet
@@ -767,6 +793,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     if (isE2E()) e2eTerminalLink.set(board.id, activateLink)
     establishedRef.current = false // a fresh grid: not yet fitted in-canvas (full-view freeze base)
     gridFittedRef.current = false // a fresh grid: constructor-default 80×24 until the first real fit
+    receivedBytesRef.current = 0 // T2·D2: a fresh session → the ring restarts at written=0
     // No WebGL/canvas RENDERER addon is loaded (the fit/search/unicode/web-links addons above
     // don't change the render path) => xterm uses its built-in DOM renderer, which Chromium
     // re-rasterizes crisp at any camera scale (the fix for pan/zoom blur).
@@ -923,7 +950,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // the grid is still the unfitted 80×24 default (switch-back replay fix) — in every case the
       // bytes queue instead of rendering wrong (interleaved into a reset buffer / wrapped at 80
       // cols and reflow-mangled by the first fit); they flush in order on resume/fit.
-      isLive: () => liveRef.current && !resizeBackstopRef.current && gridFittedRef.current,
+      isLive: () =>
+        fitHoldReleased(liveRef.current, resizeBackstopRef.current, gridFittedRef.current),
       schedule: (fn) => requestAnimationFrame(fn),
       cancel: (h) => cancelAnimationFrame(h),
       holdCap: () =>
@@ -952,6 +980,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       portRef.current = port
       port.onmessage = (ev): void => {
         const m = ev.data as PortMessage
+        // T2·D2: advance the ring-axis byte counter for every message (live `data` adds its length;
+        // MAIN's `sync` after an adopt replay overwrites it to the ring's absolute `written`).
+        receivedBytesRef.current = nextReceived(receivedBytesRef.current, m)
         if (m.t === 'data' && m.d) coalescer.enqueue(m.d)
         else if (m.t === 'state' && m.state) setState(m.state)
         else if (m.t === 'exit') {
@@ -1273,6 +1304,15 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // Lane A: discard any coalesced/held bytes from the prior session so they can't flush into the
     // freshly-reset terminal (the term is reused on this path — no new spawn closure runs).
     coalescerRef.current?.clear()
+    // T2·D3: RE-ARM the fit-hold on respawn. The term is reused (no fresh spawn closure runs), so
+    // gridFittedRef is still `true` from the prior session — leaving it set would let the fresh
+    // session's replayed/first output render immediately at whatever cols the reused term happens
+    // to hold, including a finite-but-wrong transient. Reset it here (BEFORE the fitWhole below, and
+    // before respawn() spawns) so a FRESH finite fit re-gates the release at the current layout: the
+    // immediate path's fitWhole re-establishes it at the live cols; the deferred path keeps it armed
+    // until the ResizeObserver's first good fit. No coalescer deadlock — a fitWhole always follows.
+    gridFittedRef.current = false
+    receivedBytesRef.current = 0 // T2·D2: respawn starts a fresh MAIN ring at written=0
     setState('spawning')
     // #23: only spawn now if the well is laid out (finite proposed dims). A board
     // restarted entirely under LOD has a display:none well where fit.fit() no-ops

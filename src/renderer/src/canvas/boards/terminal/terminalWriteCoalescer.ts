@@ -59,6 +59,13 @@ export interface TerminalWriteCoalescer {
   flushNow: () => boolean
   /** Current held character count (the e2e held-bytes probe; proves the PTY produced while gated). */
   held: () => number
+  /**
+   * T2·D2 — cumulative chars the hold-cap `trim()` has EVICTED (received but never applied to xterm)
+   * since the last `clear()`. The snapshot-boundary math must subtract this too: `received − held`
+   * alone over-counts by the dropped amount (those bytes are in neither the snapshot nor `held()`),
+   * which would re-open the exact splice gap this fix closes for a hidden firehose past `holdCap()`.
+   */
+  dropped: () => number
   /** Drop the buffer + cancel any scheduled flush. Used on restart (reuse the term) and teardown. */
   clear: () => void
 }
@@ -68,6 +75,9 @@ export function createTerminalWriteCoalescer(deps: WriteCoalescerDeps): Terminal
   // Held chunks (FIFO) + their running total length, so trimming the oldest is O(dropped).
   let chunks: string[] = []
   let len = 0
+  // T2·D2: cumulative chars evicted by trim() since the last clear() — subtracted from the snapshot
+  // boundary so hold-cap drops don't over-advance the watermark (see `dropped` in the interface).
+  let droppedTotal = 0
   // 0 = no flush scheduled (rAF handles are > 0). A single in-flight flush at a time.
   let handle = 0
 
@@ -96,6 +106,7 @@ export function createTerminalWriteCoalescer(deps: WriteCoalescerDeps): Terminal
     const cap = holdCap()
     while (len > cap && chunks.length > 1) {
       len -= chunks[0].length
+      droppedTotal += chunks[0].length // T2·D2: these bytes are evicted, never applied to xterm
       chunks.shift()
     }
   }
@@ -126,11 +137,15 @@ export function createTerminalWriteCoalescer(deps: WriteCoalescerDeps): Terminal
     held() {
       return len
     },
+    dropped() {
+      return droppedTotal
+    },
     clear() {
       if (handle !== 0) cancel(handle)
       handle = 0
       chunks = []
       len = 0
+      droppedTotal = 0 // T2·D2: a restart/teardown starts a fresh session → reset the drop tally
     }
   }
 }

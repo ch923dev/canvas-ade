@@ -103,3 +103,78 @@ export function finiteDims(
 ): d is { cols: number; rows: number } {
   return d !== undefined && Number.isFinite(d.cols) && Number.isFinite(d.rows)
 }
+
+/**
+ * T2·D3 — the write-coalescer's fit-hold gate. PTY bytes render only when the board is live
+ * (on-screen ∧ ≥ LOD), no resize-backstop snapshot is mid-flight, AND the grid has been fitted to
+ * a real finite layout (`gridFitted`). Until `gridFitted`, incoming bytes are HELD so an adopt's
+ * replayed scrollback / a fresh respawn's first output never renders at the constructor-default
+ * 80×24 and get reflow-mangled by the first real fit. Mirrors useTerminalSpawn's coalescer `isLive`.
+ */
+export function fitHoldReleased(
+  live: boolean,
+  backstopInFlight: boolean,
+  gridFitted: boolean
+): boolean {
+  return live && !backstopInFlight && gridFitted
+}
+
+/**
+ * T2·D3 — whether THIS fit should release the fit-hold: only when the hold is still ARMED
+ * (`gridFitted` false) AND the proposal is finite (a real layout, not the not-laid-out 80×24).
+ * Re-arming `gridFitted` (set false) on respawn is what lets a fresh finite fit re-make this
+ * decision at the CURRENT cols — without the re-arm a stale `gridFitted === true` carried over from
+ * a prior term incarnation keeps the gate open, so a finite-but-wrong transient proposal could have
+ * released the hold at the wrong column count.
+ */
+export function shouldReleaseFitHold(
+  gridFitted: boolean,
+  proposal: { cols: number; rows: number } | undefined
+): boolean {
+  return !gridFitted && finiteDims(proposal)
+}
+
+/**
+ * T2·D2 — the EXACT snapshot/tail splice boundary on the PTY ring's `written` byte axis. A
+ * background switch-away serializes the RENDERED xterm buffer (the snapshot preface) and MAIN
+ * replays the raw ring tail AFTER it on switch-back; the boundary between them must be exact or the
+ * seam duplicates (overlap) / loses (gap) bytes. It is exactly the count of bytes RENDERED into the
+ * snapshot = bytes the renderer RECEIVED on the port (`received`, ring-axis, seeded by MAIN's adopt
+ * `sync`) minus the bytes NOT applied to xterm: the coalescer's still-queued `held` bytes (a hidden
+ * board's tail belongs to the post-snapshot replay) AND its hold-cap `dropped` bytes (evicted,
+ * never rendered). Subtracting `dropped` too keeps a hidden firehose past `holdCap()` from
+ * over-advancing the boundary — otherwise those evicted bytes (still in MAIN's larger ring) land in
+ * NEITHER side, re-opening the gap; subtracting them turns any residual seam into a safe overlap.
+ * Clamped ≥ 0. MAIN splices `readRingSince(watermark)` after the preface.
+ */
+export function snapshotWatermark(received: number, held: number, dropped: number): number {
+  return Math.max(0, received - held - dropped)
+}
+
+/**
+ * T2·D2 — advance the received-byte counter for one port message on the ring's `written` axis.
+ * A live `t:'data'` adds its length; MAIN's `t:'sync'` (after an adopt replay) OVERWRITES the
+ * counter to the ring's absolute `written` so it re-aligns past the replayed bytes; anything else
+ * is inert. Pure so the counting reducer is unit-tested without the port.
+ */
+export function nextReceived(prev: number, m: { t: string; d?: string; written?: number }): number {
+  if (m.t === 'data' && typeof m.d === 'string') return prev + m.d.length
+  if (m.t === 'sync' && typeof m.written === 'number') return m.written
+  return prev
+}
+
+/**
+ * T2·D2 — build the persisted snapshot (serialized text + exact splice boundary) from the live
+ * serialize result and the current received/held counts, or null when there is nothing to persist
+ * (no serializer / non-string). The boundary is `snapshotWatermark(received, held)`. Pure so the
+ * snapshot assembly is unit-tested without xterm.
+ */
+export function buildSnapshot(
+  text: string | undefined,
+  received: number,
+  held: number,
+  dropped: number
+): { text: string; watermark: number } | null {
+  if (typeof text !== 'string') return null
+  return { text, watermark: snapshotWatermark(received, held, dropped) }
+}

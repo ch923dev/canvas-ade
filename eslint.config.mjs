@@ -294,7 +294,11 @@ export default tseslint.config(
     // themselves live in ptySpawnEnv.ts / claudeBootDetect.ts. Ratchet DOWNWARD on next split.
     // 700→702 (T1d flicker-free): the one-line flickerFree: isFlickerFree() read must fire at the
     // buildSpawnEnv choke point (+ its import). The store lives in terminalDisplayConfig.ts.
-    rules: { 'max-lines': ['error', { max: 702, skipBlankLines: true, skipComments: true }] }
+    // 702→706 (T2 terminal defects): D1 routes adoptCore's replay through the line-boundary–guarded
+    // readRingReplay/readRingSinceReplay (+2 import lines, +1 for the guarded ternary), and D2 posts
+    // the one-line `{ t: 'sync', written }` boundary seed inside adoptCore — all choke-point lines in
+    // the session-lifecycle core (the pure readers/helpers live in ptyOutput.ts). Ratchet DOWN on next split.
+    rules: { 'max-lines': ['error', { max: 706, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/main/index.ts'],
@@ -310,6 +314,18 @@ export default tseslint.config(
     // 704→707 (Phase 2 voice cloud STT): the safeStorage encryptor moved above registerVoiceHandlers
     // and its now-3-line deps arg ({ encryptor, getProjectDir }) is the cloud-selection key gate.
     rules: { 'max-lines': ['error', { max: 707, skipBlankLines: true, skipComments: true }] }
+  },
+  {
+    files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
+    // 700→703 (T2 terminal defects, exact snapshot splice): the D2 accounting is factored into pure,
+    // unit-tested helpers in terminalSpawnMath.ts (nextReceived / buildSnapshot / snapshotWatermark),
+    // but three lines are hook-bound choke points that cannot leave the spawn closure — the per-message
+    // `receivedBytesRef.current = nextReceived(...)` count inside `port.onmessage` (it closes over the
+    // session's port + refs), the `receivedBytesRef.current = 0` reset beside gridFittedRef on each
+    // fresh (re)spawn, and the snapshotter's `coalescerRef.current?.dropped() ?? 0` argument (reviewer
+    // fix: subtract hold-cap drops from the boundary). The extraction already pulled the file back from
+    // +13 to +3. Ratchet DOWN on the next split of this Tier-3 hook. See docs/contributing/file-size-doctrine.md.
+    rules: { 'max-lines': ['error', { max: 703, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
