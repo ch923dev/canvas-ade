@@ -3214,6 +3214,47 @@ terminals) landing at 0.24.2 while #368 was in review — a concurrent-merge art
 to **0.24.3** in this build-history commit so the version stays monotonic. Recorded corpus audio +
 raw transcripts stay gitignored; `corpus/prompts.json` tracked for reproducibility.
 
+## PR #371 — terminal: xterm 5.5 → 6.0 + addons lock-step; DEC 2026 native; addon-search 0.16 fix (Terminal Display Epic T3) (v0.25.1 → 0.26.0) — 2026-07-24
+
+**The platform bump for the terminal display epic** (T3, following T2 #369). `@xterm/xterm` ^5.5 → ^6.0
+with all addons moved in lock-step: `addon-fit` 0.10→0.11, `addon-search` 0.15→0.16, `addon-unicode11`
+0.8→0.9, `addon-webgl` 0.18→0.19 (unloaded — DOM renderer — bumped for coherence); `addon-serialize`
+0.14 + `addon-web-links` 0.12 were already 6.0-paired. Installed via the shared-store path (`pnpm add` on
+MAIN populates the junctioned node_modules; the worktree lock copied back) rather than the
+scratch/hand-edit route, given the multi-package move — MAIN briefly held 6.0 under its 5.5 manifest
+until this merge reconciled it.
+
+**DEC 2026 (synchronized output).** 6.0 parses `CSI ?2026 h/l` NATIVELY and buffers rendering between
+BSU/ESU so a TUI's frame paints atomically — the closest app-side mitigation for the scrollback-litter
+class (claude-code#51828); 5.5 ignored the sequences Claude Code emits. No enable flag exists (the state
+is the read-only `term.modes.synchronizedOutputMode`), so the bump *is* the wiring — documented at the
+`new Terminal({…})` site. Composes with the Lane A write-coalescer (two independent batch boundaries, no
+double-buffer of data). `reflowCursorLine` (new 6.0 option) left DEFAULT false — behavior-preserving, and
+the S2 backstop bypasses native reflow for the corruption-prone established-grid cols change anyway.
+
+**Migration fix — `@xterm/addon-search@0.16` regression.** The bump exposed an upstream ordering bug:
+`findNext` assigns `this._state.lastSearchOptions = n` BEFORE its `didOptionsChange(n)` check reads it, so
+a same-term `caseSensitive`/`regex` toggle never re-highlights or re-counts (match-case stopped narrowing;
+the count latched). Worked around in `TerminalFindBar` by `clearDecorations()` on an option toggle (resets
+the addon's cached term → `clearCachedTerm`), forcing the next `findNext` to recompute. The
+`terminalSearch` match-case e2e (which caught this) passes again.
+
+**Coverage.** New `e2e/terminalXterm6.e2e.ts`: (1) a streamed buffer keeps every line across a mid-stream
+widen + animated full-view enter/exit (the T1b transition the backstop spec's `setBoardSize`-only path
+misses); (2) DEC 2026 BSU/ESU parsed + honored (would fail on 5.5). Two e2e hooks added: `writeTerminal`
+(append, no reset) + `terminalSyncOutput` (`modes.synchronizedOutputMode`).
+
+**Verification.** typecheck (3 tiers) / lint / format + **full unit+integration 5905 pass** (only the 2
+ambient `pathSafe` junction specs fail — pristine-base too). Build clean (xterm bundles as ESM; css path
+unchanged). **Full e2e matrix GREEN both legs** on the merge head `c0dfd726` (Windows 312 passed / 2 flaky
+retry-recovered; Linux Docker 312 passed / 2 ambient flaky [`dataFlow`, `menuShell`] retry-recovered; the
+new xterm6 spec + full `@terminal` 86/86 green). Manual dev check: title-stamped `T3 xterm6 (0.26.0)`
+build boots clean + human-eyeballed. CI 4/4 (check · analyze · CodeQL · claude-review). **Bot review:
+CLEAN** — 0 `[critical]`/`[warning]`, 0 inline; 1 non-blocking nit (CLAUDE.md Stack `@xterm ≥5.5` → `≥6.0`,
+applied in this docs commit). Squash `ecbc06ec`. Worktree `.worktrees/terminal-t3-xterm6` teardown to
+follow. Upstream watch (epic item 3): claude-code#51828 unaffected — if the CLI fixes it, T1d's
+alt-screen-off trade-off becomes moot.
+
 ## PR #370 — Cloud STT (OpenAI gpt-4o-transcribe) for voice dictation (Phase 2) (v0.24.3 → 0.25.0) — 2026-07-23
 
 **The first cloud tier for voice.** Wires the Phase-1.5 provider decision (#368) into the app: a
