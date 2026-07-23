@@ -34,6 +34,7 @@ import { isLod } from '../lib/canvasView'
 import { BoardAttention } from './BoardAttention'
 import { BoardFrame } from './BoardFrame'
 import { useLingeringPresence } from './hooks/useLingeringPresence'
+import { beginBoardResizeDrag, endBoardResizeDrag } from './boardResizeDrag'
 
 // §F code-split: each board type is its own lazy chunk so its heavy deps load only
 // when a board of that type first mounts — a no-terminal project never fetches xterm
@@ -248,6 +249,17 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     if (lod && board.type !== 'terminal') setHovered(false)
   }, [lod, board.type])
 
+  // Resize-storm fix (T1a′): NodeResizer can unmount without firing onResizeEnd — full
+  // BoardNode unmount (delete/undo mid-drag) OR the `!lod &&` gate dropping it when a
+  // zoom-out crosses LOD_ZOOM during a live drag (terminal boards stay mounted across the
+  // LOD boundary, so only the resizer subtree goes away). Key the cleanup on `lod` so both
+  // paths clear the flag; otherwise the terminal's PTY resize stays held forever.
+  // Redundant end calls no-op.
+  useEffect(() => {
+    if (lod) return undefined
+    return () => endBoardResizeDrag(board.id)
+  }, [lod, board.id])
+
   // Stable per-board content host: created ONCE and always the createPortal target, so
   // toggling full view never changes the fiber structure (which would remount the subtree
   // and kill a live PTY — bug 1). We RELOCATE this element in the DOM between the in-node
@@ -341,6 +353,13 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           // no live-view detach/reattach is needed the way the native engine required.)
           onResizeStart={() => {
             useCanvasStore.getState().beginChange()
+            // Resize-storm fix (T1a′): a terminal board defers its PTY resize while the
+            // handle-drag is live — the grid refits visually per frame, the PTY hears only
+            // the released size (one SIGWINCH, one TUI repaint).
+            beginBoardResizeDrag(board.id)
+          }}
+          onResizeEnd={() => {
+            endBoardResizeDrag(board.id)
           }}
         />
       )}

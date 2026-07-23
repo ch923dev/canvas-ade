@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -96,6 +96,7 @@
     "geist": "^1.7.2",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
+    "next": "^16.2.11",
     "prettier": "^3.8.3",
     "react": "^19.2.7",
     "react-arborist": "^3.10.5",
@@ -113,14 +114,19 @@
       "node-pty"
     ],
     "overrides": {
-      "tar": ">=7.5.8",
+      "tar": ">=7.5.19",
       "esbuild": ">=0.28.1",
       "postcss": ">=8.5.10",
       "form-data": ">=4.0.6",
       "hono": ">=4.12.25",
       "undici@>=7.23.0 <7.28.0": ">=7.28.0 <8",
       "undici@>=6.0.0 <6.27.0": ">=6.27.0 <7",
-      "@codemirror/state": "6.7.0"
+      "@codemirror/state": "6.7.0",
+      "sharp": ">=0.35.0",
+      "fast-uri": ">=3.1.4 <4",
+      "brace-expansion@>=1.0.0 <2.0.0": ">=1.1.16 <2",
+      "brace-expansion@>=2.0.0 <3.0.0": ">=2.1.2 <3",
+      "next": ">=16.2.11"
     }
   }
 }

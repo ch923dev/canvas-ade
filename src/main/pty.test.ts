@@ -414,6 +414,59 @@ describe('attachPortInput (Finding 3 — single renderer→PTY write guard)', ()
     expect(proc.resize).toHaveBeenLastCalledWith(1000, 55)
   })
 
+  it('resize-storm dedup: a SAME-SIZE resize is dropped (no redundant ConPTY SIGWINCH)', () => {
+    const port = makePort()
+    const { proc } = makeProc(708)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } })
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } })
+    expect(proc.resize).toHaveBeenCalledTimes(1)
+  })
+
+  it('resize-storm dedup: a size CHANGE after a dropped duplicate still applies', () => {
+    const port = makePort()
+    const { proc } = makeProc(709)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } })
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } })
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 29 } })
+    expect(proc.resize).toHaveBeenCalledTimes(2)
+    expect(proc.resize).toHaveBeenLastCalledWith(100, 29)
+  })
+
+  it('resize-storm dedup: seeds from proc.cols/rows — a post-adopt same-size heal is a no-op', () => {
+    const port = makePort()
+    const { proc } = makeProc(710)
+    const seeded = { ...proc, cols: 120, rows: 40 }
+    attachPortInput(port as any, seeded as any)
+    port.handler?.({ data: { t: 'resize', cols: 120, rows: 40 } }) // grid-sync heal, same size
+    expect(seeded.resize).not.toHaveBeenCalled()
+    port.handler?.({ data: { t: 'resize', cols: 121, rows: 40 } }) // real drift still applies
+    expect(seeded.resize).toHaveBeenCalledWith(121, 40)
+  })
+
+  it('resize-storm dedup: clamped-path duplicates are dropped too (memo holds the CLAMPED dims)', () => {
+    const port = makePort()
+    const { proc } = makeProc(711)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 1200, rows: 40 } }) // → clamped 1000×40
+    port.handler?.({ data: { t: 'resize', cols: 1500, rows: 40 } }) // → clamps to the SAME 1000×40
+    expect(proc.resize).toHaveBeenCalledTimes(1)
+    expect(proc.resize).toHaveBeenCalledWith(1000, 40)
+  })
+
+  it('resize-storm dedup: a throw does not memo — the retry still reaches proc.resize', () => {
+    const port = makePort()
+    const { proc } = makeProc(712)
+    attachPortInput(port as any, proc as any)
+    proc.resize.mockImplementationOnce(() => {
+      throw new Error('exited')
+    })
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } }) // swallowed throw
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } }) // must NOT be deduped away
+    expect(proc.resize).toHaveBeenCalledTimes(2)
+  })
+
   it('swallows a throw from proc.write (would crash main via uncaughtException)', () => {
     const port = makePort()
     const { proc } = makeProc(705)

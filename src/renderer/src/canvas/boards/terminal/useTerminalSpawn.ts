@@ -77,6 +77,8 @@ import {
 } from '../../../store/terminalSnapshotRegistry'
 import { useTerminalLivenessStore, isTerminalLive } from '../../../store/terminalLivenessStore'
 import { installSelectionShim } from './terminalSelection'
+import { createResizeSettler, RESIZE_SETTLE_MS } from './terminalResizeSettle'
+import { isBoardResizeDragging, onBoardResizeDrag } from '../../boardResizeDrag'
 import { createTerminalWriteCoalescer, type TerminalWriteCoalescer } from './terminalWriteCoalescer'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
@@ -99,12 +101,17 @@ interface PortMessage {
 /** Platform check for the terminal key resolver's primary modifier (Cmd on macOS). */
 const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
-/** The full-view modal's inset (mirrors FullViewModal's 5vh/5vw → ~90% of the viewport). */
-const FULL_VIEW_INSET = 0.9
-
-/** Min ConPTY build for xterm to keep reflow ON under the `windowsPty` hint (its `_isReflowEnabled`
- *  gate). Below this, setting `windowsPty` would DISABLE reflow → widen-loses-data; so we skip it. */
-const CONPTY_REFLOW_MIN_BUILD = 21376
+// Pure decision helpers live in terminalSpawnMath.ts (max-lines doctrine); imported for the
+// hook body below AND re-exported so the unit tests + any external import keep this module
+// path (the pty.ts › ptyResize.ts precedent).
+import {
+  conptyHint,
+  fullViewScale,
+  resolveSpawnArgs,
+  nextStateAfterAdopt,
+  finiteDims
+} from './terminalSpawnMath'
+export { conptyHint, fullViewScale, resolveSpawnArgs, nextStateAfterAdopt, finiteDims }
 
 /**
  * Lane A held-buffer cap. While a terminal is hidden (off-screen / below-LOD) its PTY output is
@@ -115,97 +122,6 @@ const CONPTY_REFLOW_MIN_BUILD = 21376
  * recent screen. The cap is read per-enqueue (a thunk) so a live scrollback edit is honoured. */
 const HOLD_BYTES_PER_LINE = 512
 const HOLD_FLOOR_BYTES = 64_000
-
-/**
- * A-Win: xterm's `windowsPty` constructor hint (terminal-scrollback fix § A-Win). On a Windows 11
- * ConPTY build (≥ 21376) it tells xterm the ConPTY context so its resize/scrollback handling defers
- * to ConPTY's own screen reprint instead of double-laying-out the screen — cutting the row
- * duplication/garble seen on a drag-resize. Returns `undefined` (no hint) off Windows (`winBuild`
- * null) or on older builds, where enabling it would instead DISABLE reflow and lose data on widen.
- * Pure for unit-testing the build gate.
- */
-export function conptyHint(
-  winBuild: number | null
-): { backend: 'conpty'; buildNumber: number } | undefined {
-  if (winBuild == null || winBuild < CONPTY_REFLOW_MIN_BUILD) return undefined
-  return { backend: 'conpty', buildNumber: winBuild }
-}
-
-/**
- * Full-view font scale (Pure A1, docs/research/2026-06-23-terminal-scrollback-reflow; grid
- * unfrozen in S3). Full view portals the board OUTSIDE React Flow at native scale (no camera).
- * counterScale is the factor that fits the IN-CANVAS grid into the modal — the font seam renders
- * at pinned × cs (natively crisp, no bitmap upscale), so full view reads bigger. Since S3 the
- * grid is no longer frozen at that size: `fitWhole` refits cols/rows to the modal at the scaled
- * font THROUGH the lossless S2 backstop, so the axis this min-fit letterboxes is filled with real
- * columns/rows instead of dead space (cs keeps only its font-magnification role). We divide the
- * modal by the OUTER board box (board.w/board.h) — deliberately an over-estimate of the grid's
- * content box (it includes the fixed title bar + 12px well padding), which keeps the scale-up
- * CONSERVATIVE (never clips; min of the width/height fits for the same reason). The no-clip rAF
- * loop in useTerminalReraster is the sub-cell safety net for any residual overflow. Window dims
- * are tracked LIVE while full view is open (fvWinSize state in useTerminalSpawn — the stale-scale
- * fix): an OS fullscreen/maximize toggle mid-full-view recomputes the factor.
- */
-export function fullViewScale(
-  boardW: number,
-  boardH: number,
-  innerW: number,
-  innerH: number
-): number {
-  if (!(boardW > 0) || !(boardH > 0) || !(innerW > 0) || !(innerH > 0)) return 1
-  const k = Math.min((innerW * FULL_VIEW_INSET) / boardW, (innerH * FULL_VIEW_INSET) / boardH)
-  // Clamp to a sane, finite, positive range: full view should never SHRINK below ~half (a huge
-  // board still reads), and a tiny board scaled to a giant monitor caps at 8× (avoids absurd fonts).
-  return Number.isFinite(k) && k > 0 ? Math.min(Math.max(k, 0.5), 8) : 1
-}
-
-/**
- * Resolve the PTY spawn descriptor's cwd + launchCommand. Pure, so the cwd fallback
- * chain and the one-shot launch-override precedence are unit-testable in isolation.
- *  - cwd: the board's explicit cwd, else the open project dir, else undefined (MAIN
- *    spawns in os.homedir()).
- *  - launchCommand: a one-shot `override` (e.g. `claude --resume <id>` from the Restart
- *    menu) wins over the board's persisted command. `??` (not `||`) so a deliberate
- *    empty override stays empty rather than reverting to the board command.
- */
-export function resolveSpawnArgs(
-  board: Pick<TerminalBoardData, 'cwd' | 'launchCommand'>,
-  projectDir: string | null | undefined,
-  override?: string
-): { cwd: string | undefined; launchCommand: string | undefined } {
-  return {
-    cwd: board.cwd ?? projectDir ?? undefined,
-    launchCommand: override ?? board.launchCommand
-  }
-}
-
-/**
- * The adopt → idle → spawn fork, decided once after `adoptTerminal` resolves. Pure.
- *  - adopted (undo-of-delete reattach) → 'running' (the reposted port replays the buffer).
- *  - else idle-on-mount (disk-restored / duplicated) → 'idle' (explicit Start, no auto-spawn).
- *  - else → 'spawn' a fresh shell.
- */
-export function nextStateAfterAdopt(
-  adopted: boolean,
-  idleOnMount: boolean
-): 'running' | 'idle' | 'spawn' {
-  if (adopted) return 'running'
-  if (idleOnMount) return 'idle'
-  return 'spawn'
-}
-
-/**
- * True only when FitAddon's proposal reflects a REAL layout — finite cols AND rows. An
- * unfitted well (below-LOD `display:none`, mount before first layout) proposes undefined
- * or non-finite dims; every consumer of a proposal must gate on this, or it acts on the
- * constructor-default 80×24 grid. Pure — shared by the deferred spawn (#34), the deferred
- * respawn (#23), the backstop's propose, and the fit-gate release (switch-back replay fix).
- */
-export function finiteDims(
-  d: { cols: number; rows: number } | undefined
-): d is { cols: number; rows: number } {
-  return d !== undefined && Number.isFinite(d.cols) && Number.isFinite(d.rows)
-}
 
 export interface TerminalSpawnDeps {
   board: TerminalBoardData
@@ -540,6 +456,23 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   useEffect(() => {
     counterScaleRef.current = counterScale
   }, [counterScale])
+  // Resize-storm fix (T1b): a counterScale change (full-view enter/exit, the live mid-full-view
+  // OS rescale) opens a TRANSITION window. The portal relocation's ResizeObserver fire lands
+  // inside it with STALE cell metrics — the font seam's new render font hasn't been measured
+  // yet — so its fit proposes the wrong cols and pays a full serialize→reset→rewrite backstop
+  // that the reraster's own one-frame-deferred refit immediately repeats at the correct
+  // metrics: two full-buffer replays + two SIGWINCH repaints per transition where one suffices
+  // (each spurious repaint litters scrollback via claude-code#51828). While the flag is up the
+  // RO skips its fit; the NEXT explicit fitWhole — the reraster's deferred refit, or whichever
+  // caller lands first (both orderings safe: whoever runs consumes the flag and fits) — owns
+  // the transition. Layout effect so the flag is up BEFORE the relocation's RO delivery.
+  const csTransitionRef = useRef(false)
+  const prevCsTransitionRef = useRef(counterScale)
+  useLayoutEffect(() => {
+    if (prevCsTransitionRef.current === counterScale) return
+    prevCsTransitionRef.current = counterScale
+    csTransitionRef.current = true
+  }, [counterScale])
 
   // Live camera zoom for the selection shim. The DOM-rendered host rides the raw React Flow
   // viewport transform `scale(z')` (no counter-scale wrapper), so the element's on-screen
@@ -579,6 +512,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const fit = fitRef.current
     const term = termRef.current
     if (!fit || !term) return
+    // Resize-storm fix (T1b): any explicit fit consumes the counterScale-transition flag —
+    // this call IS the transition's fit (normally the reraster's deferred correct-metrics
+    // refit), so the ResizeObserver's suppression window ends here.
+    csTransitionRef.current = false
     // Full-view UNFREEZE (S3, terminal-display fix): Pure A1 used to freeze an ESTABLISHED grid
     // here — a cols-changing refit rode xterm's lossy reflow (truncation/duplication), so full
     // view scaled the font only and LETTERBOXED the non-binding axis (the "dead space at the
@@ -890,9 +827,27 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       submit: () => sendInput('\r')
     })
     const dataDisp = term.onData((d) => sendInput(d))
-    const resizeDisp = term.onResize(({ cols, rows }) =>
-      portRef.current?.postMessage({ t: 'resize', cols, rows })
-    )
+    // Resize-storm fix (T1a): the xterm grid may step several times in one transition (the
+    // backstop's cols resize + the whole-cell row-shed land in the same fitWhole; a coalesced
+    // catch-up fit can follow) — forwarding EACH step to the PTY means one ConPTY SIGWINCH +
+    // one TUI live-region repaint per step, and every repaint litters scrollback under
+    // claude-code#51828. The settler collapses the burst: the PTY sees only the SETTLED grid,
+    // one resize per ~3-frame window. The adopt grid-sync heals (fitWhole / port-attach) stay
+    // DIRECT posts — they are one-shot drift repairs, and MAIN's same-size dedup absorbs them
+    // when the grids already agree.
+    const resizeSettler = createResizeSettler({
+      post: (cols, rows) => portRef.current?.postMessage({ t: 'resize', cols, rows }),
+      delayMs: RESIZE_SETTLE_MS,
+      schedule: (fn, ms) => window.setTimeout(fn, ms),
+      cancel: (h) => window.clearTimeout(h)
+    })
+    const resizeDisp = term.onResize(({ cols, rows }) => resizeSettler.push(cols, rows))
+    // T1a′: a NodeResizer handle-drag holds the settler — the grid keeps refitting visually
+    // per frame, but the PTY hears exactly ONE resize (the released grid) instead of a paced
+    // SIGWINCH stream that litters scrollback per repaint (#51828). Snapshot first: a terminal
+    // (re)mounting mid-drag must start held or the drag degrades to the paced stream.
+    if (isBoardResizeDragging(board.id)) resizeSettler.setHold(true)
+    const resizeDragOff = onBoardResizeDrag(board.id, (dragging) => resizeSettler.setHold(dragging))
 
     // Custom key handling (returns false to suppress xterm's default for keys we own).
     // handleTerminalKey calls e.preventDefault() for every owned chord — REQUIRED: xterm's
@@ -1182,6 +1137,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       const key = wrap ? `${wrap.clientWidth}x${wrap.clientHeight}` : null
       if (key !== null && key === lastWrapKey) return // zoom-driven layout change — FREEZE: no refit
       lastWrapKey = key
+      // Resize-storm fix (T1b): during a counterScale transition (full-view enter/exit) this
+      // fire arrives with STALE cell metrics — the seam's new render font isn't measured yet —
+      // so fitting here proposes the wrong cols and pays a full backstop replay + SIGWINCH
+      // that the reraster's deferred correct-metrics refit immediately repeats. Skip the fit;
+      // that refit (which consumes the flag in fitWhole) owns the transition. Narrow on
+      // purpose: an UNFITTED grid (fresh mount straight into full view) still fits here — its
+      // plain fit has no backstop to waste and the deferred launch() below is its only spawn
+      // driver; a parked deferred respawn likewise rides this fire (its only driver), at
+      // stale-metrics cost identical to the pre-fix behavior.
+      if (csTransitionRef.current && gridFittedRef.current && !pendingRespawnRef.current) return
       fitWholeRef.current() // whole-cell fit (clip-free); swallows the not-laid-out throw itself
       // First good fit after a hidden/LOD mount spawns the deferred PTY at the
       // board's true width; later fits no-op (`spawned` guard) and just resize.
@@ -1207,6 +1172,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       clearSnapshot(snapRef.current)
       dataDisp.dispose()
       resizeDisp.dispose()
+      resizeDragOff()
+      // T1a: drop any pending settled resize — the session is going away; a post-teardown
+      // fire would land on a null/closed port anyway (post guards with ?.), this just makes
+      // the cancellation explicit.
+      resizeSettler.dispose()
       ro.disconnect()
       // S3: stop advertising this term's serializer (it is disposed below). The going-away flush
       // (quit/close/switch) already ran on the live registry before teardown; a React unmount for a
