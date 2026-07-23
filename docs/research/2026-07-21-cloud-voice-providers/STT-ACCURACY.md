@@ -273,63 +273,75 @@ Design rules, each sourced:
 
 ## 6. Provider recommendation for the batch pass
 
-### 6.0 First measured run — 2026-07-23 (own voice, 30 utterances, `scripts/stt-eval`)
+### 6.0 First measured runs — 2026-07-23 (own voice, 30 utterances, `scripts/stt-eval`)
 
-The harness is built (`scripts/stt-eval/`, `feat/stt-eval`). First corpus recorded: **30 read
-utterances, 199.9 s, 16 kHz mono, one speaker/mic/room** — read speech, so absolute WER is
-optimistic; the signal is the *relative* picture and the *failure-mode split*. Only
-`OPENROUTER_API_KEY` was available, so **only OpenRouter ran** (every other engine SKIPPED for a
-missing key — Groq/Deepgram/AssemblyAI/OpenAI/local are still unmeasured).
+The harness is built (`scripts/stt-eval/`, `feat/stt-eval`). First corpus: **30 read utterances,
+199.9 s, 16 kHz mono, one speaker/mic/room** — read speech, so absolute WER is optimistic; the
+signal is the *relative* picture and the *failure-mode split*. Two engines measured so far —
+**OpenRouter** and **Groq** (Deepgram/AssemblyAI/OpenAI/local still unrun for lack of key/model).
 
-| Engine | Bias | WER | Keyterm exact | Keyterm loose | Recoverable gap | Median |
-|---|---|---:|---:|---:|---:|---:|
-| OpenRouter `openai/whisper-large-v3` | unbiased | 35.3% | 27.4% | 64.5% | 37.1 pt | 698 ms |
-| OpenRouter `openai/whisper-large-v3` | biased | **35.3%** | **27.4%** | **64.5%** | 37.1 pt | 725 ms |
+| Engine | Bias | WER | Keyterm exact | Keyterm loose | Median |
+|---|---|---:|---:|---:|---:|
+| **Groq `whisper-large-v3-turbo`** | unbiased | 34.7% | 27.4% | ~64% | **566 ms** |
+| **Groq `whisper-large-v3-turbo`** | **biased** | **32.8%** | **43.5%** | ~64% | 640 ms |
+| OpenRouter `openai/whisper-large-v3` | unbiased | 35.6% | 27.4% | 64.5% | 698 ms |
+| OpenRouter `openai/whisper-large-v3` | biased | 35.3% | 27.4% | 64.5% | 795 ms |
 
-Three findings, one of them answers an open question outright:
+> Groq needed `--delay 4000` (a new runner flag): free-tier is ~20 RPM, and firing 60 requests
+> back-to-back 429'd half of them (those score as total misses — the first, un-throttled Groq run
+> read a bogus 46–67% WER purely from rate-limit failures, not model quality). Throttled = 0 errors.
 
-1. **OpenRouter's `/audio/transcriptions` ignores keyterm biasing — CONFIRMED, not inferred.**
-   The biased and unbiased columns are **byte-identical** (same WER, same exact/loose, term-for-term).
-   Passing a `prompt`/keyterm list changes nothing. That closes open-question §8.4 below and
-   **disqualifies OpenRouter as the accuracy engine**: biasing is the single biggest lever we have
-   (§3.1) and this endpoint has no seam for it. It also only offers whisper-lineage models (no
-   nova-3 / Universal-class), so there is no better model to select our way out of it either.
+Four findings; two of them decide the provider question between these two:
 
-2. **The 35.3% WER is dominated by identifier *formatting*, not misrecognition.** Plain-English
-   utterances scored ~0% (e.g. "Push with no verify to skip the pre-push end-to-end gate." came back
-   verbatim, hyphens and all). The WER is concentrated entirely in technical tokens, and it splits cleanly:
-   - **Formatting-recoverable (~half the terms): heard right, spelled wrong.** `utilityProcess`
-     → "utility process", `contextIsolation` → "context isolation", `getUserMedia` → "get user media",
-     `add_card`/`move_card`/`update_card`, `electron-builder`, `node-pty`, `schemaVersion`, `userData`,
-     `safeStorage` — all **0% exact but 100% loose**. This is exactly the class §3.2's deterministic
-     replacement layer recovers. The **37-point exact→loose gap is the prize**, and it is
-     provider-independent and client-side.
-   - **Genuinely misheard (~35% of terms): 0% loose — the phonemes were lost.** `voiceIpc` → "boys of
-     easy", `MessagePort` → "message board", `useVoiceCapture` → "use of voice capture", `llmKeyStore`,
-     `createTtsRunner`, `ipcRenderer`, `sherpa-onnx`, `Groq`, `AssemblyAI`, `invoke`, `lint`, `vitest`,
-     `typecheck`, `zustand`. These need **biasing or LLM post-correction** — and on OpenRouter biasing
-     is unavailable, so on OpenRouter they are simply lost.
+1. **Biasing WORKS on Groq, and is IGNORED by OpenRouter — the cleanest signal in the run.**
+   Groq's `prompt` biasing lifted keyterm-exact **27.4% → 43.5% (+16 pts)** and WER 34.7% → 32.8%.
+   Per-term, 11 terms improved (almost all **0%→100% exact**) and every one is a bias-list term:
+   `contextIsolation`, `ipcRenderer`, `llmKeyStore`, `nodeIntegration`, `linear16`, `hotwords`,
+   `kanban`, `Groq`, `bigram`, `keyterm`, `pre-push` — with a single minor regression (`renderer`,
+   a common word, 75→50%). That is the model learning to spell the terms verbatim from the prompt,
+   exactly the §3.1 mechanism. OpenRouter's `/audio/transcriptions`, by contrast, returned
+   **byte-identical** biased/unbiased columns — it has no biasing seam and serves whisper-lineage
+   only. **OpenRouter is rejected for STT; Groq is the pick between the two.** (OpenRouter's
+   TTS/Kokoro role in PLAN.md Phase 1 is untouched.) Closes open-question §8.5.
 
-3. **This validates the two-pass plan (§5) and re-orders the roadmap.** The cheapest, highest-ROI,
-   provider-independent win is the deterministic formatting layer (§3.2): on this run it would lift
-   keyterm-exact from 27% toward the 64% loose ceiling for **zero** provider dependence. The
-   genuinely-misheard bucket is what the provider choice actually turns on — which makes measuring the
-   **biasing-capable** providers (Groq `prompt`, Deepgram `keyterm`, AssemblyAI `keyterms_prompt`) the
-   next real experiment. Groq is free-tier → the cheapest next measurement.
+2. **Same base model capability — biasing + speed + cost are the differentiators.** Unbiased, the two
+   are a wash (Groq 34.7% / OpenRouter 35.6% WER, both 27.4% keyterm-exact) — unsurprising, both are
+   whisper-large-v3 lineage. Groq then wins on all three axes that matter: biasing that works, ~1.4×
+   lower latency (566 ms vs 698–795 ms), and effectively-free pricing.
 
-**Net: OpenRouter is rejected for STT** (its TTS/Kokoro role in PLAN.md Phase 1 is untouched — that
-finding stands). The provider decision below is **still a recommendation, not yet a measurement** —
-the biasing-capable engines remain unrun for lack of keys.
+3. **The WER is identifier *formatting*, not misrecognition — confirmed on both engines.**
+   Plain-English utterances scored ~0% ("Push with no verify to skip the pre-push end-to-end gate."
+   came back verbatim, hyphens and all). The error sits entirely in code tokens and splits cleanly:
+   - **Formatting-recoverable: heard right, spelled wrong.** `utilityProcess` → "utility process",
+     `contextIsolation` → "context isolation", `getUserMedia` → "get user media",
+     `add_card`/`move_card`/`update_card`, `electron-builder`, `schemaVersion`, `userData` — 0% exact
+     but 100% loose. The ~37-point exact→loose gap is what §3.2's deterministic replacement layer
+     recovers, **provider-independent and client-side.**
+   - **Genuinely misheard: 0% loose, phonemes lost.** `voiceIpc` → "boys of easy" (OpenRouter) /
+     "voiceLPC.ts" (Groq — much closer), `MessagePort` → "message board", `useVoiceCapture`. These
+     need **biasing or LLM post-correction** — and Groq's biasing already recovered several of them
+     (`llmKeyStore`, `ipcRenderer` went 0→100% under bias).
+
+4. **Roadmap order confirmed.** (a) Build the §3.2 deterministic formatting layer — a proven,
+   provider-independent win that lifts exact toward the ~64% loose ceiling for free. (b) Adopt **Groq
+   turbo + prompt biasing** as the measured default cloud engine. (c) Still worth measuring for the
+   accuracy tier: **Deepgram `nova-3`** (`keyterm`) and **AssemblyAI** (`keyterms_prompt`, 1,000-phrase
+   headroom vs Groq's 224-token / ~30-term cap) — Groq's biased 43.5% exact is good but still leaves
+   half the identifiers non-verbatim, so the larger-headroom providers may pull further ahead.
+
+**Net so far: OpenRouter rejected for STT; Groq turbo + biasing is the measured front-runner** (WER
+32.8%, keyterm-exact 43.5%, 640 ms, ~free). The accuracy-tier providers remain unrun for lack of keys.
 
 ### 6.1 Recommendation (to verify once keys exist)
 
 Given the code-vocabulary benchmark gap, pick on **biasing headroom + latency + cost**, then verify
 with our own eval:
 
-- **Default: Groq `whisper-large-v3-turbo`.** $0.00067/min (effectively free), the only credibly
-  measured sub-second latency, 4.6% AA-WER. Its `prompt` is capped at 224 tokens — which happens to
-  align with the "keep it to ~30 terms" constraint anyway. Cheap enough that cost stops being a
-  design consideration entirely.
+- **Default: Groq `whisper-large-v3-turbo`. ✅ MEASURED front-runner (§6.0)** — biased 32.8% WER /
+  43.5% keyterm-exact / 640 ms on our own audio, and its `prompt` biasing demonstrably works (+16 pt
+  keyterm-exact). $0.00067/min (effectively free), the only credibly measured sub-second latency, 4.6%
+  AA-WER. The 224-token `prompt` cap aligns with the "keep it to ~30 terms" constraint anyway. Cheap
+  enough that cost stops being a design consideration entirely.
 - **Accuracy tier: AssemblyAI Universal-3 Pro.** 3.1% AA-WER and by far the largest biasing headroom
   (`keyterms_prompt`, 1,000 phrases) — the best home for a large repo symbol list if the eval shows
   30 terms isn't enough. ~$0.0035/min, no minimum-duration penalty.

@@ -34,7 +34,8 @@ function parseArgs(argv) {
     manifest: DEFAULT_MANIFEST,
     biasCap: DEFAULT_BIAS_CAP,
     only: 'both',
-    timeoutMs: 60_000
+    timeoutMs: 60_000,
+    delayMs: 0
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -45,6 +46,7 @@ function parseArgs(argv) {
     else if (a === '--only')
       args.only = next() // biased | unbiased | both
     else if (a === '--timeout') args.timeoutMs = Number(next())
+    else if (a === '--delay') args.delayMs = Number(next())
     else if (a === '--help' || a === '-h') args.help = true
     else throw new Error(`unknown argument: ${a}`)
   }
@@ -53,6 +55,8 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(args.biasCap) || args.biasCap < 0)
     throw new Error('--bias-cap must be a non-negative number')
+  if (!Number.isFinite(args.delayMs) || args.delayMs < 0)
+    throw new Error('--delay must be a non-negative number of ms')
   return args
 }
 
@@ -63,6 +67,9 @@ const HELP = `stt-eval — measure WER + keyterm recall on our own audio
   --bias-cap <n>        max terms in the run-wide bias list (default: ${DEFAULT_BIAS_CAP})
   --only <cond>         biased | unbiased | both (default: both)
   --timeout <ms>        per-request timeout (default: 60000)
+  --delay <ms>          sleep between requests to stay under a rate limit (default: 0).
+                        Excluded from the latency column. Free-tier Groq (~20 RPM) needs
+                        ~3500; without it half the requests 429 and score as total misses.
 
 Credentials are read from the environment; an engine without one is skipped:
   GROQ_API_KEY · OPENAI_API_KEY · OPENROUTER_API_KEY · ASSEMBLYAI_API_KEY · DEEPGRAM_API_KEY
@@ -77,11 +84,17 @@ function median(values) {
   return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2)
 }
 
-async function runCondition(engine, utterances, biasTerms, { timeoutMs, label }) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function runCondition(engine, utterances, biasTerms, { timeoutMs, label, delayMs = 0 }) {
   const rows = []
   const latencies = []
   let errors = 0
-  for (const u of utterances) {
+  for (let i = 0; i < utterances.length; i++) {
+    const u = utterances[i]
+    // Throttle BEFORE the request (not the first). Sits outside timed(), so the latency
+    // column stays a clean per-request measurement even when we're pacing for a rate limit.
+    if (delayMs > 0 && i > 0) await sleep(delayMs)
     const wav = readFileSync(u.file)
     try {
       const { value, ms } = await timed(() =>
@@ -174,7 +187,8 @@ async function main() {
       rows.push(
         await runCondition(engine, corpus.utterances, cond === 'biased' ? biasTerms : [], {
           timeoutMs: args.timeoutMs,
-          label: cond
+          label: cond,
+          delayMs: args.delayMs
         })
       )
     }
