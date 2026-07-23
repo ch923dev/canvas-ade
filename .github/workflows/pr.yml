@@ -19,7 +19,7 @@ jobs:
           node-version: 22
       # node-gyp (rebuilds node-pty in postinstall) imports distutils, removed from
       # the Python 3.12 stdlib that GitHub runners now ship — pin 3.11 (has distutils).
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - run: corepack enable
