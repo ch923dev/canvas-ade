@@ -19,6 +19,7 @@ import type { BrowserWindow, IpcMain } from 'electron'
 import type { RunningMcp } from './mcp'
 import { registerJarvisHandlers, type JarvisIpcDeps } from './jarvisIpc'
 import { registerLlmHandlers } from './llmIpc'
+import { registerSwarmHandlers } from './swarmChatIpc'
 import { requestConfirm } from './mcpConfirm'
 
 interface LlmJarvisBootDeps {
@@ -61,6 +62,22 @@ export function wireLlmJarvis(
     // J4: the Jarvis-side pre-gate (spawn_board). Same fail-closed requestConfirm as every
     // MCP gate; the ALS origin marker (set around the executor in jarvisIpc) routes it to
     // the panel act card.
+    confirm: (req) => requestConfirm(ipcMain, getWin, req)
+  })
+  // Orchestration S1: the swarm boards' app-resident orchestrator brain — per-board chat
+  // sessions on the SAME shared Context·LLM config/key/budget plumbing (Q9 default). RunningMcp
+  // is the tool facet (structural superset of SwarmCanvasFacet); the same fail-closed
+  // requestConfirm gates spawn_worker (dispatch confirms inside the orchestrator gate).
+  registerSwarmHandlers(ipcMain, getWin, {
+    getUserData: () => deps.llmDataDir,
+    encryptor: deps.llmEncryptor,
+    getFacet: async () => {
+      try {
+        return (await deps.ensureMcp()) ?? null
+      } catch {
+        return null
+      }
+    },
     confirm: (req) => requestConfirm(ipcMain, getWin, req)
   })
 }

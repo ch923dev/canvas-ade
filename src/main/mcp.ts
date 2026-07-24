@@ -224,6 +224,13 @@ export async function startMcpServer(
      * spawn check so a user's cap change applies without restarting MAIN. Omitted ⇒ MCP_SPAWN_CAP.
      */
     cap?: () => number
+    /**
+     * Orchestration S1: observer fired whenever the lead DESIGNATION changes (grant, revoke,
+     * lead-board close, consent revoke) with the now-designated board id (null = none). Purely
+     * an app-side notification hook (mcpBoot pushes it to the renderer for the LEAD badge /
+     * board-menu state) — never sees token material, never alters leadAuthority semantics.
+     */
+    onLeadChanged?: (boardId: string | null) => void
   } = {}
 ): Promise<RunningMcp | null> {
   try {
@@ -243,11 +250,19 @@ export async function startMcpServer(
     // lifecycle (leadAuthority.ts). Built beside the connected tracker so board close kills a lead
     // token exactly like a connected one (BUG-019 discipline).
     const lead = makeLeadAuthority((token) => tokens.revoke(token))
+    // S1: fan the designation out to the app-side observer ONLY when it actually changed —
+    // the renderer badge/menu state subscribes via mcpBoot. Never carries token material.
+    const notifyLead = (before: string | null): void => {
+      const now = lead.designated()
+      if (now !== before) opts.onLeadChanged?.(now)
+    }
     const orchestrator = buildOrchestrator(registry, {
       cap: opts.cap,
       onBoardClosed: (boardId) => {
         connected.revoke(boardId)
+        const before = lead.designated()
         lead.onBoardClosed(boardId)
+        notifyLead(before)
       }
     })
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
@@ -326,7 +341,9 @@ export async function startMcpServer(
       // consent it rode in on).
       revokeAllConnected: () => {
         connected.revokeAll()
+        const before = lead.designated()
         lead.revoke()
+        notifyLead(before)
       },
       getLeadBoardId: () => lead.designated(),
       grantLead: (boardId) => {
@@ -336,9 +353,16 @@ export async function startMcpServer(
         if (!board || board.type !== 'terminal') {
           return { ok: false, reason: 'not-found' as const }
         }
-        return lead.grant(boardId)
+        const before = lead.designated()
+        const r = lead.grant(boardId)
+        notifyLead(before)
+        return r
       },
-      revokeLead: () => lead.revoke(),
+      revokeLead: () => {
+        const before = lead.designated()
+        lead.revoke()
+        notifyLead(before)
+      },
       close: () => {
         // Clear the seam minter so a post-close `mintTerminalToken` fails loud (no bogus token).
         __setTerminalTokenMinter(null)

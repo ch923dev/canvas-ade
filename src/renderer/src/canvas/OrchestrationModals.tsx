@@ -27,6 +27,25 @@ export function OrchestrationModals(): ReactElement {
   const modal = useOrchestrationStore((s) => s.modal)
   const setModal = useOrchestrationStore((s) => s.setModal)
   const setEnabled = useOrchestrationStore((s) => s.setEnabled)
+  const setLeadBoardId = useOrchestrationStore((s) => s.setLeadBoardId)
+
+  // S1: the lead-designation cache — hydrate once on mount and stay live on the MAIN push
+  // (grant / revoke / lead-board close / consent revoke). MAIN's leadAuthority is runtime-only
+  // and app-global (not per-project), so this mounts once and does NOT re-run on project switch.
+  useEffect(() => {
+    let cancelled = false
+    void window.api?.orchestration
+      ?.getLeadStatus?.()
+      .then((r) => {
+        if (!cancelled) setLeadBoardId(r.boardId)
+      })
+      .catch(() => {})
+    const off = window.api?.orchestration?.onLeadChanged?.((boardId) => setLeadBoardId(boardId))
+    return () => {
+      cancelled = true
+      off?.()
+    }
+  }, [setLeadBoardId])
 
   // First-init trigger + per-project hydration. Re-runs on a project switch (project.dir change):
   // each project carries its own consent, so an undecided project prompts once on open. Drive the
