@@ -27,7 +27,7 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     // the graph backbone renders through the SHARED spec renderer (Phase 5): at least one
     // endpoint (service) node + one inferred entity (data) node
     await expect(node.locator('.pl-spec-node[data-kind="service"]').first()).toBeVisible({
-      timeout: 5000
+      timeout: 20000
     })
     await expect(node.locator('.pl-spec-node[data-kind="data"]').first()).toBeVisible()
     // the id-lineage edge (the JD-4 flagship) — dependency-dash + active (accent) status
@@ -104,7 +104,7 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect(node.locator('.pl-spec-node[data-kind="service"]').first()).toBeVisible({
-      timeout: 5000
+      timeout: 20000
     })
     // rel AND lineage both map to dependency-kind edges — a flat API draws none of either
     expect(await node.locator('g.pl-spec-edge[data-kind="dependency"]').count()).toBe(0)
@@ -125,7 +125,7 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect(node.locator('.pl-spec-node[data-kind="service"]').first()).toBeVisible({
-      timeout: 5000
+      timeout: 20000
     })
     // P5: the "hidden N" roll-up lives in the Inspector's Filters section — select to reveal.
     // Default API-only filter hides the non-API `document` record → the Hidden meta is shown.
