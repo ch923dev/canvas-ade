@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mermaidFlowToSpec } from './mermaidToSpec'
-import { SPEC_EDGE_LABEL_MAX, SPEC_LABEL_MAX, SPEC_MAX_NODES } from './diagramSpec'
+import { SPEC_EDGE_LABEL_MAX, SPEC_LABEL_MAX, SPEC_MAX_NODES } from '@expanse-ade/diagram/spec'
 
 // Snapshot shapes mirror what resources/diagram-worker/bridge.js __extractFlowchart emits.
 interface Flow {

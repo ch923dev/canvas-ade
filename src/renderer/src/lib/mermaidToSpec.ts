@@ -24,7 +24,7 @@ import {
   type SpecGroup,
   type SpecNode,
   type SpecNodeKind
-} from './diagramSpec'
+} from '@expanse-ade/diagram/spec'
 
 // Injected-guard locals (the assertDiagramSpec contract — boardSchema owns its own copies; this
 // module stays a leaf, so it brings its own).

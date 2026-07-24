@@ -18,7 +18,7 @@ import {
   type DiagramSpec,
   type SpecEdge,
   type SpecNode
-} from './diagramSpec'
+} from '@expanse-ade/diagram/spec'
 import { applySpecOps } from './specOps'
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null

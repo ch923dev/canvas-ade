@@ -5,6 +5,9 @@ import { setLowRamMode } from './lib/osrSizing'
 import '@xyflow/react/dist/style.css'
 import '@xterm/xterm/css/xterm.css'
 import './index.css'
+// Side-effect: wires the @expanse-ade/diagram host seams (styles.css, ELK worker, Icon renderer)
+// before any diagram mounts — see the bridge header for the full seam map.
+import './canvas/boards/planning/diagramPackageBridge'
 
 // Low-RAM (AUDIT §5): MAIN decides once from os.totalmem; apply the OSR supersample cap (2×→1×)
 // BEFORE any Browser board mounts. Read defensively — a torn preload leaves the cap at 2× (safe).

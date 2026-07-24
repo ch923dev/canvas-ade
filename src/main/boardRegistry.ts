@@ -1,6 +1,6 @@
 import type { IpcMain, BrowserWindow, IpcMainEvent } from 'electron'
-import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
-import { assertDiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
+import { assertDiagramSpec } from '@expanse-ade/diagram/spec'
 import { isForeignSender } from './ipcGuard'
 
 /** Minimal board projection the renderer pushes to MAIN (control plane; no content). */

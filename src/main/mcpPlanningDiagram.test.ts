@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import {
   buildDiagramSpec,
   buildPlanningConfirmDiff,

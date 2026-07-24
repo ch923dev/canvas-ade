@@ -17,8 +17,19 @@
  *    truncated node are dropped. `truncated` reports what was cut so the board can surface it.
  */
 import type { DfGraph, DfNode, GraphDiff } from './dataFlowGraph'
-import type { DiagramSpec, SpecEdge, SpecNode, SpecNodeRow, SpecStatus } from './diagramSpec'
-import { SPEC_ID_MAX, SPEC_MAX_EDGES, SPEC_MAX_NODES, SPEC_MAX_ROWS } from './diagramSpec'
+import type {
+  DiagramSpec,
+  SpecEdge,
+  SpecNode,
+  SpecNodeRow,
+  SpecStatus
+} from '@expanse-ade/diagram/spec'
+import {
+  SPEC_ID_MAX,
+  SPEC_MAX_EDGES,
+  SPEC_MAX_NODES,
+  SPEC_MAX_ROWS
+} from '@expanse-ade/diagram/spec'
 
 export interface DfSpecResult {
   spec: DiagramSpec

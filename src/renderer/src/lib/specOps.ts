@@ -1,4 +1,4 @@
-import type { DiagramSpec, SpecEdge, SpecGroup, SpecNode } from './diagramSpec'
+import type { DiagramSpec, SpecEdge, SpecGroup, SpecNode } from '@expanse-ade/diagram/spec'
 
 /**
  * DiagramSpec incremental ops (diagram Phase 3 — MCP contract v2). The pure apply half of the

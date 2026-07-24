@@ -12,7 +12,7 @@ import {
   SPEC_MAX_NODES,
   SPEC_THEME_MAX,
   SPEC_TITLE_MAX
-} from '../renderer/src/lib/diagramSpec'
+} from '@expanse-ade/diagram/spec'
 import {
   MAX_DIAGRAM_SPEC_BYTES,
   MAX_PLANNING_DIAGRAM,
@@ -45,7 +45,7 @@ describe('planning + diagram-spec caps ↔ @expanse-ade/mcp parity', () => {
     ['MAX_PLANNING_LABEL', MAX_PLANNING_LABEL],
     ['MAX_PLANNING_DIAGRAM', MAX_PLANNING_DIAGRAM],
     ['MAX_PLANNING_SECTION', MAX_PLANNING_SECTION],
-    // Structured-diagram caps — NAME-FOR-NAME mirrors of lib/diagramSpec.ts.
+    // Structured-diagram caps — NAME-FOR-NAME mirrors of @expanse-ade/diagram/spec (extracted from lib/diagramSpec.ts).
     ['SPEC_MAX_NODES', SPEC_MAX_NODES],
     ['SPEC_MAX_EDGES', SPEC_MAX_EDGES],
     ['SPEC_MAX_GROUPS', SPEC_MAX_GROUPS],

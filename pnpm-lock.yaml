@@ -29,6 +29,9 @@ importers:
       '@electron-toolkit/utils':
         specifier: ^4.0.0
         version: 4.0.0(electron@42.3.3)
+      '@expanse-ade/diagram':
+        specifier: 0.1.0
+        version: 0.1.0(elkjs@0.12.0)(react@19.2.7)
       '@expanse-ade/mcp':
         specifier: 0.21.0
         version: 0.21.0
@@ -684,6 +687,13 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@expanse-ade/diagram@0.1.0':
+    resolution: {integrity: sha512-EPF3yIPv6VSlvK/qFFY8w+Z4XCxWuUh3HceB/2X2sL4YX/T66f4NQEHdUytNEpT85FdpQQDSClD0OHrJ272A6w==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      elkjs: '>=0.9.0'
+      react: '>=18'
 
   '@expanse-ade/mcp@0.21.0':
     resolution: {integrity: sha512-qsxCU66XUpAEExEkeTwXW6FIU2miv50cnN4fA9PLb+xkDDH9+OtmyvusFuwdkflQHHBqwpBlszA9SJEchqoGsA==}
@@ -4168,6 +4178,11 @@ snapshots:
   '@exodus/bytes@1.15.1(@noble/hashes@2.2.0)':
     optionalDependencies:
       '@noble/hashes': 2.2.0
+
+  '@expanse-ade/diagram@0.1.0(elkjs@0.12.0)(react@19.2.7)':
+    dependencies:
+      elkjs: 0.12.0
+      react: 19.2.7
 
   '@expanse-ade/mcp@0.21.0':
     dependencies:

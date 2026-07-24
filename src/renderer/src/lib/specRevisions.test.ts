@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { withSpecRevisions } from './specRevisions'
 import { DIAGRAM_REVISION_CAP, type PlanningElement } from './boardSchema'
-import type { DiagramSpec } from './diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 
 const spec = (label: string): DiagramSpec => ({
   version: 1,

@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { dfGraphToSpec } from './dfSpecAdapter'
 import type { DfGraph, GraphDiff } from './dataFlowGraph'
-import { assertDiagramSpec, SPEC_MAX_EDGES, SPEC_MAX_NODES, SPEC_MAX_ROWS } from './diagramSpec'
+import {
+  assertDiagramSpec,
+  SPEC_MAX_EDGES,
+  SPEC_MAX_NODES,
+  SPEC_MAX_ROWS
+} from '@expanse-ade/diagram/spec'
 
 const NO_DIFF: GraphDiff = { added: new Set(), removed: new Set(), changed: new Set() }
 

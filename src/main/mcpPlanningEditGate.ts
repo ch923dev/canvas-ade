@@ -1,6 +1,6 @@
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { ConfirmDiff, PlanningEditPatch } from '../shared/mcpTypes'
-import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import type { DispatchStatus, LifecycleOrchestrator } from './mcpRegistry'
 import {
   buildPlanningUpdateOp,

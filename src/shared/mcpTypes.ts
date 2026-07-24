@@ -27,7 +27,7 @@
 // TYPE-ONLY imports from the renderer's LEAF diagram modules (diagram Phase 3). Legal here —
 // both files are import-free leaves with no DOM/Node/Electron coupling (diagramSpec.ts is
 // designed for exactly this cross-bundle reuse), and a type import is erased at build.
-import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import type { SpecOp } from '../renderer/src/lib/specOps'
 
 /** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
