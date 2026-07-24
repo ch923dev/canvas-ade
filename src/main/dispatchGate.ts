@@ -21,7 +21,7 @@ import type { DispatchStatus } from './mcpRegistry'
  * them, so the `\r` is delivered as a discrete Enter keystroke and the prompt is actually
  * submitted. Zero under test (NODE_ENV==='test') so unit tests stay instant + deterministic.
  */
-const SUBMIT_SETTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 100
+const SUBMIT_SETTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 150
 
 /**
  * 🔒 Paste-framing + paced chunking (relay cut-off fix, 2026-07-04): a long dispatch previously
@@ -301,14 +301,21 @@ export function createGatedWriter(
         }
         i = end
       }
-      // (echo confirm) ONLY when readiness did NOT already confirm delivery — echo can only
-      // UPGRADE `delivered`, so an already-`ready` write skips this wait and submits immediately
-      // (no avoidable ECHO_CONFIRM_MS latency on the common confirmed case). Bounded wait for the
-      // target to visibly react to the body BEFORE the submit. Output-arrived-since-write test:
-      // staleMs is now−lastActivityAt, so stale ≤ elapsed ⇔ the last output happened at/after the
-      // write began. Degrade-and-submit at the cap (the human already approved) — the ack honesty,
-      // not the submit, carries an unseen echo.
-      if (!ready && deps.activityStaleMs) {
+      // (echo confirm + submit pacing) Bounded wait for the target to visibly react to the body
+      // BEFORE the submit. Output-arrived-since-write test: staleMs is now−lastActivityAt, so
+      // stale ≤ elapsed ⇔ the last output happened at/after the write began. Degrade-and-submit
+      // at the cap (the human already approved) — the ack honesty, not the submit, carries an
+      // unseen echo.
+      //
+      // The poll runs on EVERY bodied write, including an already-`ready` one (changed for
+      // PR #381's dev-check repro): a long paste-framed prompt keeps an agent TUI ingesting /
+      // repainting past a blind fixed settle, and a `\r` landing inside that burst is treated as
+      // a LITERAL newline — the prompt sat UNSENT in the input box while the readiness-confirmed
+      // write reported `ready`. Pacing the submit on the target's first post-write output makes
+      // the Enter land after ingestion. Ack semantics are UNCHANGED: `delivered = ready ||
+      // echoSeen` (echo still only UPGRADES), and `echo=` is still recorded only when readiness
+      // did not already carry delivery (see the audit note below).
+      if (deps.activityStaleMs) {
         const writeStart = Date.now()
         for (;;) {
           const stale = deps.activityStaleMs(targetId)
@@ -346,8 +353,9 @@ export function createGatedWriter(
     // Echo confirm (2026-07-04): the target visibly reacting to the write is independent positive
     // evidence, composed with OR — `dispatched` iff the boot settled (`ready`, resolved above) OR
     // the target echoed; only BOTH-negative degrades to `dispatched_unconfirmed`. `echo=` is
-    // recorded ONLY when the poll actually ran (i.e. `!ready`) — a `ready` write skips the poll,
-    // so claiming `echo=none` there would be dishonest ("didn't check", not "checked, saw none").
+    // recorded ONLY when the ack actually depended on the check (i.e. `!ready`) — on a `ready`
+    // write the poll still runs but purely to PACE the submit (see the write step), and stamping
+    // its result into a readiness-carried ack would churn audit shape for no forensic gain.
     const delivered = ready || echoSeen
     const echoDetail =
       !ready && deps.activityStaleMs && safeText.length > 0
