@@ -9,6 +9,16 @@
  * Reuses the shipped terminal config building blocks — `AGENT_PRESETS` tiles + `CommandBuilder` +
  * `composeCommand` (same look as New Terminal) — over the shared Modal. Pre-fills from
  * `lastWorkerConfig` so repeated dispatches are a quick review-and-Dispatch.
+ *
+ * Orchestration Phase 0 adds the ROLE row: picking a pack (builder / code-reviewer / explorer /
+ * planner) pre-fills the claude builder values from the pack's DATA (`packOptionValues` — model
+ * tier, effort, permission posture) and commits `rolePackId` with the config so the dispatch
+ * prepends the role brief and the pump applies the write-role gate. The brief itself is SHOWN in
+ * an editable textarea (seeded from the pack, reseeded on pack pick, remembered per session) —
+ * what the user sees is exactly what is prepended on dispatch. "Custom" is the pre-pack escape
+ * hatch (agent-agnostic, unchanged, no brief). Pack values stay user-editable — the pack is the
+ * DEFAULT shape, the composed command remains the source of truth; switching the AGENT preset
+ * drops back to Custom (packs are claude-hosted in Phase 0, Q8).
  */
 import { useCallback, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
 import { Modal } from '../../Modal'
@@ -16,6 +26,15 @@ import { Icon } from '../../Icon'
 import { AGENT_PRESETS, presetById } from '../terminal/agentPresets'
 import { CommandBuilder } from '../terminal/CommandBuilder'
 import { composeCommand, type OptionValues } from '../terminal/composeCommand'
+import {
+  isWriteRolePack,
+  launchLooksReadOnly,
+  packOptionValues,
+  ROLE_PACKS,
+  rolePackById,
+  WRITE_ROLE_CONCURRENCY_CAP,
+  type RolePack
+} from '../../../lib/rolePacks'
 import type { WorkerConfig } from '../../../store/commandStore'
 
 const DEFAULT_PRESET = 'claude'
@@ -49,16 +68,42 @@ export function WorkerConfigDialog({
   const [presetId, setPresetId] = useState(initial?.presetId ?? DEFAULT_PRESET)
   const [values, setValues] = useState<OptionValues>(initial?.values ?? DEFAULT_WORKER_VALUES)
   const [rawOverride, setRawOverride] = useState<string | null>(initial?.rawOverride ?? null)
+  const [rolePackId, setRolePackId] = useState<string | null>(initial?.rolePackId ?? null)
+  // The role brief SHOWN is the brief SENT: editable per dispatch ("extend the prompt"), seeded
+  // from the remembered config (else the pack default) and reseeded on every pack pick.
+  const [roleBrief, setRoleBrief] = useState<string>(
+    initial?.rolePackId
+      ? (initial?.roleBrief ?? rolePackById(initial.rolePackId)?.systemPrompt ?? '')
+      : ''
+  )
   const [prompt, setPrompt] = useState(engineeredPrompt)
 
   const preset = presetById(presetId) ?? AGENT_PRESETS[0]
   const composed = useMemo(() => composeCommand(preset, values), [preset, values])
   const command = rawOverride ?? composed
+  const rolePack = rolePackById(rolePackId)
+  // Effective posture mirrors the pump's gate (`isWriteRoleTask`): the pack declares, but the
+  // ACTUAL editable command decides — a read pack whose command was edited past read-only proof
+  // (plan mode dropped / bypass toggled) is disclosed AND dispatched as a write role, fail-closed.
+  const roleWritePosture =
+    rolePack !== undefined && (isWriteRolePack(rolePack) || !launchLooksReadOnly(command.trim()))
 
   const pickPreset = useCallback((id: string): void => {
     setPresetId(id)
     setValues({})
     setRawOverride(null)
+    setRolePackId(null) // packs are claude-hosted in Phase 0 — an agent switch is a Custom choice
+  }, [])
+
+  /** Role row: a pack pre-fills the claude builder values from its data; null = Custom (as-is). */
+  const pickRole = useCallback((pack: RolePack | null): void => {
+    setRolePackId(pack ? pack.id : null)
+    setRoleBrief(pack ? pack.systemPrompt : '')
+    if (pack) {
+      setPresetId(DEFAULT_PRESET)
+      setValues(packOptionValues(pack))
+      setRawOverride(null)
+    }
   }, [])
 
   const onBuilderChange = useCallback((next: OptionValues): void => {
@@ -70,9 +115,26 @@ export function WorkerConfigDialog({
     onDispatch({
       launchCommand: command.trim(),
       prompt: prompt.trim() || engineeredPrompt,
-      config: { presetId, values, rawOverride }
+      config: {
+        presetId,
+        values,
+        rawOverride,
+        rolePackId,
+        // Committed only for a pack dispatch; an emptied textarea is an explicit "no brief".
+        roleBrief: rolePackId !== null ? roleBrief : null
+      }
     })
-  }, [command, prompt, engineeredPrompt, presetId, values, rawOverride, onDispatch])
+  }, [
+    command,
+    prompt,
+    engineeredPrompt,
+    presetId,
+    values,
+    rawOverride,
+    rolePackId,
+    roleBrief,
+    onDispatch
+  ])
 
   return (
     <Modal
@@ -86,6 +148,62 @@ export function WorkerConfigDialog({
       <div style={zone}>
         Zone: <span style={zoneNameStyle}>{zoneName}</span>
       </div>
+
+      <div>
+        <div style={sectionLabel}>Role</div>
+        <div style={roleRow}>
+          <button
+            type="button"
+            onClick={() => pickRole(null)}
+            style={rolePackId === null ? { ...roleChip, ...roleChipSel } : roleChip}
+            data-testid="worker-role-custom"
+            aria-pressed={rolePackId === null}
+          >
+            Custom
+          </button>
+          {ROLE_PACKS.map((p) => {
+            const sel = p.id === rolePackId
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => pickRole(p)}
+                style={sel ? { ...roleChip, ...roleChipSel } : roleChip}
+                data-testid={`worker-role-${p.id}`}
+                aria-pressed={sel}
+              >
+                {p.name}
+              </button>
+            )
+          })}
+        </div>
+        {rolePack && (
+          <div style={roleNote}>
+            {roleWritePosture ? 'write posture' : 'read-only posture'} · model{' '}
+            {packOptionValues(rolePack).model}
+          </div>
+        )}
+        {roleWritePosture && (
+          <div style={roleWarn} data-testid="worker-role-write-warning">
+            Write role — no workspace isolation yet: concurrent write workers are capped at{' '}
+            {WRITE_ROLE_CONCURRENCY_CAP} (queued write tasks wait; read roles still dispatch).
+          </div>
+        )}
+      </div>
+
+      {rolePack && (
+        <label style={fieldWrap}>
+          <span style={fieldLabel}>Role brief (prepended to the task on dispatch — editable)</span>
+          <textarea
+            style={promptArea}
+            spellCheck={false}
+            rows={4}
+            value={roleBrief}
+            onChange={(e) => setRoleBrief(e.target.value)}
+            data-testid="worker-role-brief"
+          />
+        </label>
+      )}
 
       <div>
         <div style={sectionLabel}>Agent</div>
@@ -190,6 +308,36 @@ const sectionLabel: CSSProperties = {
   textTransform: 'uppercase',
   color: 'var(--text-3)',
   marginBottom: 6
+}
+const roleRow: CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap' }
+const roleChip: CSSProperties = {
+  height: 26,
+  padding: '0 10px',
+  borderRadius: 'var(--r-ctl)',
+  border: '1px solid var(--border-subtle)',
+  background: 'var(--surface-overlay)',
+  color: 'var(--text-2)',
+  fontFamily: 'var(--ui)',
+  fontSize: 11.5,
+  cursor: 'pointer'
+}
+const roleChipSel: CSSProperties = {
+  background: 'var(--accent-wash)',
+  borderColor: 'var(--accent)',
+  color: 'var(--accent)',
+  fontWeight: 600
+}
+const roleNote: CSSProperties = {
+  marginTop: 6,
+  fontSize: 11,
+  lineHeight: '15px',
+  color: 'var(--text-3)'
+}
+const roleWarn: CSSProperties = {
+  marginTop: 4,
+  fontSize: 11,
+  lineHeight: '15px',
+  color: 'var(--warn)'
 }
 const presets: CSSProperties = { display: 'flex', gap: 8, justifyContent: 'space-between' }
 const presetBtn: CSSProperties = {

@@ -274,6 +274,46 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     await expect(node.getByRole('button', { name: /focus/ })).toHaveCount(2)
   })
 
+  // Orchestration Phase 0 — proof criterion 3: a role pack is selectable from the Command-board
+  // dispatch UI and shapes the launch command from pack DATA. Deliberately NO-SPAWN (Cancel, never
+  // Dispatch) so no worker leaks into MAIN's spawn-cap `tracked` — see the note below. Submit →
+  // the prompt engineers (LLM falls back to the raw task without a provider) → the worker-config
+  // dialog opens → packs pre-fill the composed command → the write role discloses its cap.
+  test('Phase 0: a role pack is selectable in the dispatch dialog and shapes the command', async ({
+    page
+  }) => {
+    const id = await seed(page, 'command')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    const node = page.locator(`[data-id="${id}"]`)
+
+    await node.locator('.cmd-submit-input').fill('scout the spawn cap code')
+    await node.locator('.cmd-submit-input').press('Enter')
+    const dialog = page.getByTestId('worker-config-dialog')
+    await expect(dialog).toBeVisible()
+
+    // Explorer (read posture, cheap model) — the pack's data becomes the composed command, and
+    // the role brief is shown EDITABLE, seeded from the pack ("extend the prompt").
+    await dialog.getByTestId('worker-role-explorer').click()
+    await expect(dialog.getByTestId('worker-command')).toHaveValue(
+      'claude --model haiku --effort low --permission-mode plan'
+    )
+    await expect(dialog.getByTestId('worker-role-brief')).toHaveValue(/You are an Explorer:/)
+    await expect(dialog.getByTestId('worker-role-write-warning')).toHaveCount(0)
+
+    // Builder (write posture) — swapping the pack swaps the shape, and the Phase-0 write cap is
+    // DISCLOSED (no workspace isolation until Phase 3), never silent.
+    await dialog.getByTestId('worker-role-builder').click()
+    await expect(dialog.getByTestId('worker-command')).toHaveValue(
+      'claude --model sonnet --dangerously-skip-permissions'
+    )
+    await expect(dialog.getByTestId('worker-role-write-warning')).toContainText('capped at 1')
+
+    // Cancel — the task stays queued-not-ready; nothing spawned, no cap leaked.
+    await dialog.getByTestId('worker-cancel').click()
+    await expect(dialog).toHaveCount(0)
+  })
+
   // The full dispatch choreography (submit → spawn an agent group → engineer the prompt → hand off,
   // confirm-gated → advance) is covered deterministically by the useCommandDispatch hook unit test
   // (mocked window.api) + the spawn primitive by spawnGroup.e2e + the confirm gate by mcp.e2e. A

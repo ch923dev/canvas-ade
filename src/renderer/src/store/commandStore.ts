@@ -56,6 +56,18 @@ export interface WorkerConfig {
   presetId: string
   values: Record<string, string | boolean>
   rawOverride: string | null
+  /**
+   * The role pack chosen in the dialog (orchestration Phase 0) — `null`/absent = Custom (the
+   * pre-pack behavior, unchanged). Kept as a plain id string so the store stays a leaf (the pack
+   * registry lives in `lib/rolePacks.ts`); optional so pre-pack fixtures/configs stay valid.
+   */
+  rolePackId?: string | null
+  /**
+   * The role brief as shown (editable) in the dialog for a pack dispatch — the user may extend /
+   * trim the pack's default standing orders per dispatch, and the remembered value pre-fills the
+   * next one. `null`/absent = Custom dispatch (no brief).
+   */
+  roleBrief?: string | null
 }
 
 /** One orchestrator task. Phase C adds the requested `composition` + the spawned `group` (runtime). */
@@ -80,6 +92,18 @@ export interface CommandTask {
    * config cancelled. No hardcoded default — the dialog (default preset `claude`) owns it.
    */
   launchCommand?: string
+  /**
+   * The role pack shaping this dispatch (orchestration Phase 0), committed with the config.
+   * Drives the role-brief prompt prepend + the write-role concurrency gate in the pump; absent =
+   * Custom dispatch (pre-pack semantics, no role gate beyond the global cap).
+   */
+  rolePackId?: string
+  /**
+   * The (possibly user-edited) role brief committed with a pack dispatch — prepended to the
+   * gated REPL write in place of the pack's default. Absent = use the pack default (pre-feature
+   * tasks); '' = brief explicitly cleared for this dispatch.
+   */
+  roleBrief?: string
   /** Phase D — the worker's settled result (status·summary·refs), snapshotted at settle. */
   result?: TaskResult
   /** Phase D — the raw `git diff HEAD` captured at settle (cached for the chip + view-diff; '' = none). */
@@ -162,9 +186,13 @@ interface CommandState {
   setConfiguring: (id: string | null) => void
   /**
    * Commit the config dialog's result (C2d Dispatch): the chosen `launchCommand` + the (possibly
-   * edited) `prompt`. Setting `launchCommand` marks the task READY so the pump spawns it.
+   * edited) `prompt` + the chosen role pack (Phase 0; absent = Custom). Setting `launchCommand`
+   * marks the task READY so the pump spawns it.
    */
-  setTaskConfig: (id: string, config: { launchCommand: string; prompt: string }) => void
+  setTaskConfig: (
+    id: string,
+    config: { launchCommand: string; prompt: string; rolePackId?: string; roleBrief?: string }
+  ) => void
   /** Remember the dialog's config to pre-fill the next dispatch. */
   setLastWorkerConfig: (config: WorkerConfig) => void
   /** Attach the spawned worker group to a task (set when routing starts). Runtime-only. */
@@ -226,7 +254,16 @@ export const useCommandStore = create<CommandState>((set) => ({
   setTaskConfig: (id, config) =>
     set((s) => ({
       tasks: s.tasks.map((t) =>
-        t.id === id ? { ...t, launchCommand: config.launchCommand, prompt: config.prompt } : t
+        t.id === id
+          ? {
+              ...t,
+              launchCommand: config.launchCommand,
+              prompt: config.prompt,
+              // A reconfigure back to Custom must CLEAR a previously-committed pack + brief.
+              rolePackId: config.rolePackId,
+              roleBrief: config.roleBrief
+            }
+          : t
       )
     })),
   setLastWorkerConfig: (config) => set({ lastWorkerConfig: config }),

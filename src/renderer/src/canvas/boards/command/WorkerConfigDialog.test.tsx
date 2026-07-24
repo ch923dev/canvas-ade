@@ -2,6 +2,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { WorkerConfigDialog } from './WorkerConfigDialog'
+import { rolePackById } from '../../../lib/rolePacks'
+
+const packBrief = (id: string): string => rolePackById(id)?.systemPrompt ?? ''
 
 // The dialog's Modal portals to document.body; unmount each render so the portal can't leak into the
 // next test (duplicate test-ids). RTL auto-cleanup is not wired in this project's vitest setup.
@@ -37,7 +40,13 @@ describe('WorkerConfigDialog', () => {
     expect(onDispatch).toHaveBeenCalledWith({
       launchCommand: 'claude --dangerously-skip-permissions',
       prompt: 'Do it carefully.',
-      config: { presetId: 'claude', values: { 'skip-permissions': true }, rawOverride: null }
+      config: {
+        presetId: 'claude',
+        values: { 'skip-permissions': true },
+        rawOverride: null,
+        rolePackId: null, // Custom — the pre-pack default is unchanged
+        roleBrief: null
+      }
     })
   })
 
@@ -53,6 +62,187 @@ describe('WorkerConfigDialog', () => {
     )
     expect((screen.getByTestId('worker-command') as HTMLInputElement).value).toBe(
       'claude --permission-mode plan'
+    )
+  })
+
+  it('a role pack pre-fills the claude command from pack DATA and commits its rolePackId', () => {
+    const onDispatch = vi.fn()
+    render(
+      <WorkerConfigDialog
+        zoneName="Recon"
+        engineeredPrompt="Find where spawn caps live."
+        initial={null}
+        onDispatch={onDispatch}
+        onCancel={() => {}}
+      />
+    )
+    // Custom is the default; picking Explorer swaps the composed command to the pack's shape.
+    expect(screen.getByTestId('worker-role-custom').getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByTestId('worker-role-explorer'))
+    expect((screen.getByTestId('worker-command') as HTMLInputElement).value).toBe(
+      'claude --model haiku --effort low --permission-mode plan'
+    )
+    // Read role → no write-cap warning.
+    expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
+
+    // The pack's brief is shown editable, seeded from pack data.
+    expect((screen.getByTestId('worker-role-brief') as HTMLTextAreaElement).value).toBe(
+      packBrief('explorer')
+    )
+
+    fireEvent.click(screen.getByTestId('worker-dispatch'))
+    expect(onDispatch).toHaveBeenCalledWith({
+      launchCommand: 'claude --model haiku --effort low --permission-mode plan',
+      prompt: 'Find where spawn caps live.',
+      config: {
+        presetId: 'claude',
+        values: { model: 'haiku', effort: 'low', 'permission-mode': 'plan' },
+        rawOverride: null,
+        rolePackId: 'explorer',
+        roleBrief: packBrief('explorer')
+      }
+    })
+  })
+
+  it('the role brief is editable ("extend the prompt") and the EDITED text is committed', () => {
+    const onDispatch = vi.fn()
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={onDispatch}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-explorer'))
+    const extended = packBrief('explorer') + ' Also list every caller you find.'
+    fireEvent.change(screen.getByTestId('worker-role-brief'), { target: { value: extended } })
+    fireEvent.click(screen.getByTestId('worker-dispatch'))
+    expect(onDispatch.mock.calls[0][0].config.roleBrief).toBe(extended)
+    // Re-picking a pack RESEEDS the brief from pack data (a stale edit never leaks across roles).
+    cleanup()
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-builder'))
+    expect((screen.getByTestId('worker-role-brief') as HTMLTextAreaElement).value).toBe(
+      packBrief('builder')
+    )
+  })
+
+  it('a remembered EDITED brief pre-fills the next dispatch; Custom shows no brief field', () => {
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={{
+          presetId: 'claude',
+          values: { model: 'haiku', effort: 'low', 'permission-mode': 'plan' },
+          rawOverride: null,
+          rolePackId: 'explorer',
+          roleBrief: 'Custom standing orders.'
+        }}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    expect((screen.getByTestId('worker-role-brief') as HTMLTextAreaElement).value).toBe(
+      'Custom standing orders.'
+    )
+    fireEvent.click(screen.getByTestId('worker-role-custom'))
+    expect(screen.queryByTestId('worker-role-brief')).toBeNull()
+  })
+
+  it('swapping the pack swaps the launch shape — builder vs code-reviewer (data, not a fork)', () => {
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    const command = screen.getByTestId('worker-command') as HTMLInputElement
+    fireEvent.click(screen.getByTestId('worker-role-builder'))
+    expect(command.value).toBe('claude --model sonnet --dangerously-skip-permissions')
+    // Write role → the Phase-0 no-isolation cap is DISCLOSED, not silent.
+    expect(screen.getByTestId('worker-role-write-warning').textContent).toMatch(/capped at 1/)
+
+    fireEvent.click(screen.getByTestId('worker-role-code-reviewer'))
+    expect(command.value).toBe('claude --model opus --permission-mode plan')
+    expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
+  })
+
+  it("editing a read pack's command past read-only proof flips the disclosure to write posture", () => {
+    // PR #381 review: the pack declares, the ACTUAL editable command decides — mirroring the
+    // pump's isWriteRoleTask, which fail-closes the same divergence to write-gated.
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-explorer'))
+    expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
+    fireEvent.change(screen.getByTestId('worker-command'), {
+      target: { value: 'claude --model haiku --permission-mode bypassPermissions' }
+    })
+    expect(screen.getByTestId('worker-role-write-warning')).not.toBeNull()
+    // Restoring a read-only command restores the exemption.
+    fireEvent.change(screen.getByTestId('worker-command'), {
+      target: { value: 'claude --model haiku --permission-mode plan' }
+    })
+    expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
+  })
+
+  it('switching the AGENT preset drops back to Custom (packs are claude-hosted in Phase 0)', () => {
+    const onDispatch = vi.fn()
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={onDispatch}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-builder'))
+    fireEvent.click(screen.getByTestId('worker-preset-codex'))
+    expect(screen.getByTestId('worker-role-custom').getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByTestId('worker-dispatch'))
+    expect(onDispatch.mock.calls[0][0].config.rolePackId).toBeNull()
+    expect(onDispatch.mock.calls[0][0].config.roleBrief).toBeNull() // no brief on a Custom dispatch
+  })
+
+  it('pre-fills the remembered pack from a prior config (initial.rolePackId)', () => {
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={{
+          presetId: 'claude',
+          values: { model: 'haiku', effort: 'low', 'permission-mode': 'plan' },
+          rawOverride: null,
+          rolePackId: 'explorer'
+        }}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    expect(screen.getByTestId('worker-role-explorer').getAttribute('aria-pressed')).toBe('true')
+    expect((screen.getByTestId('worker-command') as HTMLInputElement).value).toBe(
+      'claude --model haiku --effort low --permission-mode plan'
     )
   })
 

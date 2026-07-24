@@ -153,12 +153,15 @@ describe('createGatedWriter — post-write echo confirmation (honest ack, OR-com
     expect(writes[writes.length - 1]).toBe('\r') // degrade-and-submit, never a swallowed Enter
   })
 
-  it('readiness ready → echo poll SKIPPED (no avoidable wait); still dispatched, no echo= recorded', async () => {
-    // Perf gate: an already-`ready` write needs no echo confirmation (echo can only UPGRADE), so
-    // the poll is skipped entirely — activityStaleMs is never consulted and `echo=` is not
-    // recorded (claiming echo=none here would mean "didn't check", not "checked, saw none").
+  it('readiness ready → echo poll still PACES the submit, but the ack stays readiness-carried (no echo=)', async () => {
+    // PR #381 dev-check repro: a `ready` write used to SKIP the poll and submit after a blind
+    // fixed settle — a long paste kept the TUI ingesting past it and the `\r` landed as a literal
+    // newline (prompt UNSENT in the input box, card falsely done). The poll now always runs on a
+    // bodied write to pace the submit on the target's first post-write output. Ack semantics are
+    // unchanged: delivery/audit stay readiness-carried and `echo=` is NOT recorded when `ready`
+    // (the check paced the submit; the ack never depended on it).
     const probe = { calls: 0 }
-    const { deps, audits } = makeDeps({
+    const { deps, writes, audits } = makeDeps({
       awaitReady: async () => ({ outcome: 'ready', waitedMs: 5 }),
       activityStaleMs: () => {
         probe.calls += 1
@@ -167,7 +170,8 @@ describe('createGatedWriter — post-write echo confirmation (honest ack, OR-com
     })
     const r = await createGatedWriter(deps)(input())
     expect(r.delivery).toBe('ready')
-    expect(probe.calls).toBe(0) // echo poll never ran — readiness already carried delivery
+    expect(probe.calls).toBeGreaterThan(0) // pacing poll ran (bounded; instant under test)
+    expect(writes[writes.length - 1]).toBe('\r') // and the submit still landed after it
     const last = audits[audits.length - 1]
     expect(last.status).toBe('dispatched')
     expect(last.detail).toContain('readiness=ready')

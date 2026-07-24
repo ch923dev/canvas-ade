@@ -290,4 +290,104 @@ describe('useCommandDispatch', () => {
       expect(tasks.filter((t) => t.status === 'queued').length).toBe(1)
     })
   })
+
+  // ——— Orchestration Phase 0: role packs on the dispatch loop ———
+
+  it('a pack dispatch prepends the role brief to the gated REPL write (never the shell line)', async () => {
+    const api = setupApi()
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('review it', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, {
+      launchCommand: 'claude --model opus --permission-mode plan',
+      prompt: 'Review the diff on feat/x.',
+      config: {
+        presetId: 'claude',
+        values: { model: 'opus', 'permission-mode': 'plan' },
+        rawOverride: null,
+        rolePackId: 'code-reviewer'
+      }
+    })
+    // The shell line stays the BARE pack-composed command…
+    await waitFor(() =>
+      expect(api.spawnGroup).toHaveBeenCalledWith(
+        expect.objectContaining({ launchCommand: 'claude --model opus --permission-mode plan' })
+      )
+    )
+    // …and the role brief rides the gated REPL dispatch, collapsed to one line with the task.
+    await waitFor(() => expect(api.dispatchPrompt).toHaveBeenCalled())
+    const delivered = api.dispatchPrompt.mock.calls[0][1] as string
+    expect(delivered).toMatch(/^You are a Code Reviewer:/)
+    expect(delivered).toContain('Review the diff on feat/x.')
+    expect(delivered).not.toMatch(/[\r\n]/)
+    expect(useCommandStore.getState().tasks[0].rolePackId).toBe('code-reviewer')
+  })
+
+  it('a dialog-edited role brief overrides the pack default on the dispatched line', async () => {
+    const api = setupApi()
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('scout it', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, {
+      launchCommand: 'claude --model haiku --effort low --permission-mode plan',
+      prompt: 'Find the cap.',
+      config: {
+        presetId: 'claude',
+        values: {},
+        rawOverride: null,
+        rolePackId: 'explorer',
+        roleBrief: 'You are a scout. Cite path:line only.'
+      }
+    })
+    await waitFor(() => expect(api.dispatchPrompt).toHaveBeenCalled())
+    expect(api.dispatchPrompt.mock.calls[0][1]).toBe(
+      'You are a scout. Cite path:line only. Find the cap.'
+    )
+  })
+
+  it('write-role cap: a 2nd builder waits while the 1st runs; an explorer passes it', async () => {
+    let n = 0
+    const api = setupApi({
+      spawnGroup: async () => ({ groupId: `g${++n}`, terminalId: `t${n}` }),
+      awaitSettled: () => new Promise<Result>(() => {}) // both spawned workers stay in flight
+    })
+    const { result } = renderHook(() => useCommandDispatch(4))
+    for (const t of ['build a', 'build b', 'explore c']) result.current.dispatch(t, TERMINAL_ONLY)
+    await waitFor(() =>
+      expect(useCommandStore.getState().tasks.filter((t) => t.prompt).length).toBe(3)
+    )
+    const [b1, b2, ex] = useCommandStore.getState().tasks.map((t) => t.id)
+    const builderCfg = {
+      presetId: 'claude',
+      values: { model: 'sonnet', 'skip-permissions': true },
+      rawOverride: null,
+      rolePackId: 'builder'
+    }
+    result.current.confirmConfig(b1, { launchCommand: 'claude', prompt: 'a', config: builderCfg })
+    result.current.confirmConfig(b2, { launchCommand: 'claude', prompt: 'b', config: builderCfg })
+    result.current.confirmConfig(ex, {
+      launchCommand: 'claude --model haiku --effort low --permission-mode plan',
+      prompt: 'c',
+      config: { ...builderCfg, values: {}, rolePackId: 'explorer' }
+    })
+    // Global cap 4 has room for all three — but only ONE write role may be in flight (no
+    // isolation yet), so builder-2 stays queued while the read-role explorer sails past it.
+    await waitFor(() => {
+      const tasks = useCommandStore.getState().tasks
+      expect(tasks.find((t) => t.id === b1)?.status).toBe('executing')
+      expect(tasks.find((t) => t.id === ex)?.status).toBe('executing')
+      expect(tasks.find((t) => t.id === b2)?.status).toBe('queued')
+    })
+
+    // The running builder's board goes gone → its task fails, the write slot frees, the pump
+    // re-fires (the existing board-gone re-pump) and the queued builder finally spawns.
+    api.fireStatus({ id: 't1', status: 'gone' })
+    await waitFor(() => {
+      const tasks = useCommandStore.getState().tasks
+      expect(tasks.find((t) => t.id === b1)?.status).toBe('failed')
+      expect(tasks.find((t) => t.id === b2)?.status).toBe('executing')
+    })
+  })
 })

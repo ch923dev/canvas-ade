@@ -5,6 +5,8 @@ import {
   inFlightSlots,
   canDispatch,
   nextQueuedTask,
+  isWriteRoleTask,
+  writeRoleInFlight,
   memberTags,
   isFailureResult,
   isCapError,
@@ -84,6 +86,90 @@ describe('nextQueuedTask', () => {
     expect(nextQueuedTask([task('x', 'executing')])).toBeUndefined()
     // An un-configured queued task (still in / cancelled out of the dialog) is not dispatchable.
     expect(nextQueuedTask([task('q', 'queued')])).toBeUndefined()
+  })
+})
+
+describe('write-role gate (orchestration Phase 0)', () => {
+  // A configured task under a role pack, carrying the launch shape its pack composes (the gate
+  // reads the ACTUAL committed command, not just the pack — see the divergence cases below).
+  // builder = the only write-posture catalog pack; code-reviewer/explorer/planner are 'plan'.
+  const READ_LAUNCH = 'claude --model haiku --permission-mode plan'
+  const packed = (id: string, status: TaskStatus, rolePackId: string): CommandTask => ({
+    ...task(id, status),
+    launchCommand: rolePackId === 'builder' ? 'claude --model sonnet' : READ_LAUNCH,
+    rolePackId
+  })
+
+  it('isWriteRoleTask: true for a write-posture pack; Custom/unknown packs are not gated', () => {
+    expect(isWriteRoleTask({ rolePackId: 'builder', launchCommand: 'claude' })).toBe(true)
+    for (const id of ['code-reviewer', 'explorer', 'planner']) {
+      expect(isWriteRoleTask({ rolePackId: id, launchCommand: READ_LAUNCH })).toBe(false)
+    }
+    // Custom dispatches keep pre-pack semantics regardless of command shape.
+    expect(isWriteRoleTask({ rolePackId: undefined, launchCommand: 'claude' })).toBe(false)
+    expect(isWriteRoleTask({ rolePackId: 'no-such-pack', launchCommand: 'claude' })).toBe(false)
+  })
+
+  it('a read-pack task whose EDITED command no longer proves read posture fails CLOSED to write', () => {
+    // PR #381 review: the composed command stays editable after the pack pre-fills it, so the
+    // gate must key off the committed launchCommand, not the pack's static declaration.
+    expect(
+      isWriteRoleTask({
+        rolePackId: 'explorer',
+        launchCommand: 'claude --model haiku --permission-mode bypassPermissions'
+      })
+    ).toBe(true)
+    expect(
+      isWriteRoleTask({
+        rolePackId: 'explorer',
+        launchCommand: 'claude --model haiku --permission-mode plan --dangerously-skip-permissions'
+      })
+    ).toBe(true)
+    expect(isWriteRoleTask({ rolePackId: 'explorer', launchCommand: 'claude' })).toBe(true)
+    expect(isWriteRoleTask({ rolePackId: 'explorer', launchCommand: undefined })).toBe(true)
+    // A harmless edit that KEEPS the read-only proof keeps the exemption.
+    expect(
+      isWriteRoleTask({
+        rolePackId: 'explorer',
+        launchCommand: 'claude --model haiku --permission-mode plan --add-dir ../docs'
+      })
+    ).toBe(false)
+  })
+
+  it('writeRoleInFlight counts routing/executing write-role tasks only', () => {
+    expect(
+      writeRoleInFlight([
+        packed('a', 'routing', 'builder'),
+        packed('b', 'executing', 'builder'),
+        packed('c', 'executing', 'explorer'), // read role — not counted
+        packed('d', 'queued', 'builder'), // not in flight
+        packed('e', 'done', 'builder') // settled — slot freed
+      ])
+    ).toBe(2)
+  })
+
+  it('nextQueuedTask SKIPS a queued write-role task while one is in flight — read roles pass', () => {
+    const tasks = [
+      packed('w1', 'executing', 'builder'), // holds the single write slot
+      packed('w2', 'queued', 'builder'), // write-blocked → skipped, stays queued
+      packed('r1', 'queued', 'explorer') // read role behind it still dispatches
+    ]
+    expect(nextQueuedTask(tasks)?.id).toBe('r1')
+  })
+
+  it('a queued write-role task dispatches once the write slot frees (settled/gone)', () => {
+    const done = [packed('w1', 'done', 'builder'), packed('w2', 'queued', 'builder')]
+    expect(nextQueuedTask(done)?.id).toBe('w2')
+    const failed = [packed('w1', 'failed', 'builder'), packed('w2', 'queued', 'builder')]
+    expect(nextQueuedTask(failed)?.id).toBe('w2')
+  })
+
+  it('Custom (pack-less) dispatches keep pre-pack semantics — never write-gated', () => {
+    const tasks = [
+      packed('w1', 'executing', 'builder'),
+      { ...task('c1', 'queued'), launchCommand: 'claude' } // Custom: only the global cap applies
+    ]
+    expect(nextQueuedTask(tasks)?.id).toBe('c1')
   })
 })
 
