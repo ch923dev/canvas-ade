@@ -43,6 +43,7 @@ import { createCanvasMemory } from './canvasMemory'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
 import { listConnectors } from './boardRegistry'
+import { mintTerminalToken } from './orchestration/seam'
 import { sendMcpCommand, type McpCommandAck } from './mcpCommand'
 import type { BoardResult } from '@expanse-ade/mcp'
 import type { RunningMcp } from './mcp'
@@ -234,6 +235,26 @@ export interface E2EMain {
    * 🔒 The token is returned ONLY to the in-process e2e seam; it is NEVER logged.
    */
   mcpMintConnectedToken(boardId: string): { token: string; port: number } | null
+  /**
+   * Orchestration Phase 1 (precondition X): grant/revoke the LEAD designation for a board — the
+   * same consent-gated `RunningMcp.grantLead`/`revokeLead` the Settings IPC drives — so the e2e
+   * can prove the single-active-lead invariant + the minter routing structurally.
+   */
+  mcpLeadGrant(
+    boardId: string
+  ):
+    | { ok: true }
+    | { ok: false; reason: 'not-found' }
+    | { ok: false; reason: 'already-active'; holder: string }
+    | null
+  mcpLeadRevoke(): boolean
+  /**
+   * Phase 1: mint a terminal token through the REAL spawn-time seam (`mintTerminalToken`) so the
+   * routing itself is under test — the designated lead board must come back `tier:'lead'`, any
+   * other board `tier:'connected'`. Returns null when the MCP server never mounted.
+   * 🔒 The token is returned ONLY to the in-process e2e seam; it is NEVER logged.
+   */
+  mcpLeadMintViaSeam(boardId: string): { token: string; port: number; tier: string } | null
   /**
    * Memory probe (T1.7): point the Brain/Memory engine at a fresh EMPTY temp dir and
    * return its root — `canvas://memory` must then read the graceful-empty shell. Always
@@ -594,6 +615,22 @@ export function installE2EMain(
       if (!mcp) return null
       const { token, port } = mcp.mintConnectedToken(boardId)
       return { token, port }
+    },
+    mcpLeadGrant(boardId) {
+      if (!mcp) return null
+      return mcp.grantLead(boardId)
+    },
+    mcpLeadRevoke() {
+      if (!mcp) return false
+      mcp.revokeLead()
+      return true
+    },
+    mcpLeadMintViaSeam(boardId) {
+      if (!mcp) return null
+      // The REAL spawn-time path: the seam's registered minter routes lead-vs-connected by the
+      // live designation (mcp.ts) — exactly what the provisioner calls at terminal spawn.
+      const { token, port, tier } = mintTerminalToken(boardId)
+      return { token, port, tier }
     },
     gitDiff(boardId) {
       return mcp?.gitDiff(boardId) ?? Promise.resolve('')

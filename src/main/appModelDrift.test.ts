@@ -73,4 +73,55 @@ describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp regist
     expect(workerUris).not.toContain('canvas://app-model')
     await worker.close()
   })
+
+  // ── Lead tier (orchestration Phase 1, precondition X) — the cross-repo parity anchor. ──
+  // APP_TOOLS deliberately stays the ORCHESTRATOR-session mirror (the app-model resource is
+  // orchestrator-only, so the catalog describes that session). The lead tier's surface is
+  // pinned here structurally instead: the exact orchestration-core tool set, every name a
+  // cataloged (orchestrator-registered) tool — so a package bump that widens/narrows the lead
+  // registration fails THIS build until the host acknowledges it.
+  describe('lead tier registration parity (@expanse-ade/mcp ≥0.22.0)', () => {
+    const LEAD_TOOLS = [
+      'ping',
+      'spawn_board',
+      'spawn_group',
+      'relay_prompt',
+      'relay_prompts',
+      'assign_prompt',
+      'wait_for_idle',
+      'wait_for_all',
+      'write_result',
+      // planningWrite is passed true by connect(), so the flag-gated content writes register —
+      // the same set the connected tier gets under the flag.
+      'add_planning_elements',
+      'update_planning_element',
+      'remove_planning_element',
+      'add_card',
+      'move_card',
+      'update_card',
+      'remove_card',
+      'visualize_plan'
+    ]
+
+    it('a lead session registers EXACTLY the orchestration core (own-board dispatch + spawn + barriers)', async () => {
+      const client = await connect('lead')
+      const registered = (await client.listTools()).tools.map((t) => t.name).sort()
+      expect(registered).toEqual([...LEAD_TOOLS].sort())
+      await client.close()
+    })
+
+    it('every lead tool is a cataloged tool name (no un-cataloged surface reaches a lead)', async () => {
+      const cataloged = new Set(APP_TOOLS.map((t) => t.name))
+      for (const name of LEAD_TOOLS) {
+        expect(cataloged.has(name), `${name} missing from APP_TOOLS`).toBe(true)
+      }
+    })
+
+    it('canvas://app-model stays orchestrator-only (absent from a lead session)', async () => {
+      const client = await connect('lead')
+      const uris = (await client.listResources()).resources.map((r) => r.uri)
+      expect(uris).not.toContain('canvas://app-model')
+      await client.close()
+    })
+  })
 })

@@ -17,13 +17,23 @@ import { WORKER_SPAWN_CAP } from '../../../store/workerPool'
 
 afterEach(cleanup)
 
-const orchestration = { setConsent: vi.fn(), getSpawnCap: vi.fn(), setSpawnCap: vi.fn() }
+const orchestration = {
+  setConsent: vi.fn(),
+  getSpawnCap: vi.fn(),
+  setSpawnCap: vi.fn(),
+  getLeadStatus: vi.fn(),
+  grantLead: vi.fn(),
+  revokeLead: vi.fn()
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
   orchestration.setConsent.mockResolvedValue({ ok: true })
   orchestration.getSpawnCap.mockResolvedValue(WORKER_SPAWN_CAP)
   orchestration.setSpawnCap.mockResolvedValue({ ok: true })
+  orchestration.getLeadStatus.mockResolvedValue({ boardId: null })
+  orchestration.grantLead.mockResolvedValue({ ok: true })
+  orchestration.revokeLead.mockResolvedValue({ ok: true })
   ;(window as unknown as { api: { orchestration: typeof orchestration } }).api = { orchestration }
   useOrchestrationStore.setState({ enabled: false, modal: 'none' })
   // The config cache is a module singleton — reset `loaded` so each test re-fetches getSpawnCap.
@@ -118,5 +128,98 @@ describe('worker spawn cap (blur-commit)', () => {
       ).toMatch(/worker cap/i)
     )
     expect(field.value).toBe('4') // reverted — the store never adopted the rejected value
+  })
+})
+
+describe('lead terminal (orchestration Phase 1 — consent-gated grant)', () => {
+  const seedTerminal = (): void => {
+    useCanvasStore.setState({
+      boards: [{ id: 't1', type: 'terminal', title: 'Build agent' }] as never
+    })
+  }
+
+  it('grant is TWO-step: first click arms (Confirm grant), second click calls grantLead', async () => {
+    useOrchestrationStore.setState({ enabled: true, modal: 'none' })
+    seedTerminal()
+    render(<OrchestrationPane onClose={() => {}} />)
+    const pick = (await screen.findByLabelText(/lead terminal board/i)) as HTMLSelectElement
+    fireEvent.change(pick, { target: { value: 't1' } })
+    const grant = screen.getByRole('button', { name: /grant lead/i })
+    fireEvent.click(grant)
+    // Armed — no IPC yet; the button relabels to the explicit confirm.
+    expect(orchestration.grantLead).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /confirm grant/i }))
+    await waitFor(() => expect(orchestration.grantLead).toHaveBeenCalledWith('t1'))
+    // On success the section flips to the current-lead row with a Revoke control + restart hint.
+    await waitFor(() =>
+      expect(document.querySelector('[data-test="settings-lead-current"]')).not.toBeNull()
+    )
+    expect(
+      (document.querySelector('[data-test="settings-lead-note"]') as HTMLElement)?.textContent
+    ).toMatch(/restart the agent/i)
+  })
+
+  it('changing the selection disarms the pending confirm', async () => {
+    useOrchestrationStore.setState({ enabled: true, modal: 'none' })
+    seedTerminal()
+    render(<OrchestrationPane onClose={() => {}} />)
+    const pick = (await screen.findByLabelText(/lead terminal board/i)) as HTMLSelectElement
+    fireEvent.change(pick, { target: { value: 't1' } })
+    fireEvent.click(screen.getByRole('button', { name: /grant lead/i }))
+    fireEvent.change(pick, { target: { value: 't1' } })
+    // Back to the un-armed label — a fresh two-step is required.
+    expect(screen.getByRole('button', { name: /grant lead/i })).toBeTruthy()
+    expect(orchestration.grantLead).not.toHaveBeenCalled()
+  })
+
+  it('surfaces the single-active-lead refusal (already-active)', async () => {
+    useOrchestrationStore.setState({ enabled: true, modal: 'none' })
+    seedTerminal()
+    orchestration.grantLead.mockResolvedValue({
+      ok: false,
+      reason: 'already-active',
+      holder: 't0'
+    })
+    render(<OrchestrationPane onClose={() => {}} />)
+    const pick = (await screen.findByLabelText(/lead terminal board/i)) as HTMLSelectElement
+    fireEvent.change(pick, { target: { value: 't1' } })
+    fireEvent.click(screen.getByRole('button', { name: /grant lead/i }))
+    fireEvent.click(screen.getByRole('button', { name: /confirm grant/i }))
+    await waitFor(() =>
+      expect(
+        (document.querySelector('[data-test="settings-lead-note"]') as HTMLElement)?.textContent
+      ).toMatch(/already holds the lead role/i)
+    )
+    expect(document.querySelector('[data-test="settings-lead-current"]')).toBeNull()
+  })
+
+  it('hydrates the current lead from getLeadStatus and revokes through revokeLead', async () => {
+    useOrchestrationStore.setState({ enabled: true, modal: 'none' })
+    seedTerminal()
+    orchestration.getLeadStatus.mockResolvedValue({ boardId: 't1' })
+    render(<OrchestrationPane onClose={() => {}} />)
+    await waitFor(() =>
+      expect(document.querySelector('[data-test="settings-lead-current"]')).not.toBeNull()
+    )
+    // Shows the board TITLE, not the raw id.
+    expect(
+      (document.querySelector('[data-test="settings-lead-current"]') as HTMLElement).textContent
+    ).toMatch(/build agent/i)
+    fireEvent.click(screen.getByRole('button', { name: /revoke/i }))
+    await waitFor(() => expect(orchestration.revokeLead).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(document.querySelector('[data-test="settings-lead-current"]')).toBeNull()
+    )
+  })
+
+  it('grant controls are disabled while orchestration consent is off (rides the same consent)', async () => {
+    useOrchestrationStore.setState({ enabled: false, modal: 'none' })
+    seedTerminal()
+    render(<OrchestrationPane onClose={() => {}} />)
+    const pick = (await screen.findByLabelText(/lead terminal board/i)) as HTMLSelectElement
+    expect(pick.disabled).toBe(true)
+    expect(
+      (screen.getByRole('button', { name: /grant lead/i }) as HTMLButtonElement).disabled
+    ).toBe(true)
   })
 })

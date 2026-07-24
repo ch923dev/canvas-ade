@@ -24,7 +24,10 @@ beforeEach(() => {
     orchestration: {
       getSpawnCap: vi.fn().mockResolvedValue(4),
       setSpawnCap: vi.fn(),
-      setConsent: vi.fn()
+      setConsent: vi.fn(),
+      getLeadStatus: vi.fn().mockResolvedValue({ boardId: null }),
+      grantLead: vi.fn().mockResolvedValue({ ok: true }),
+      revokeLead: vi.fn().mockResolvedValue({ ok: true })
     },
     project: {
       keepForeverDirs: vi.fn().mockResolvedValue([]),

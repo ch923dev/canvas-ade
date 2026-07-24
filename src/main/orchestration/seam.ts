@@ -20,8 +20,13 @@ import { isEnabled, setEnabled } from '../orchestrationConsent'
 
 // ── WT-authority (P0) implements ────────────────────────────────────────────
 
-/** Capability tier a Terminal board's MCP token carries. v1 mints only `connected`. */
-export type TerminalTier = 'connected'
+/**
+ * Capability tier a Terminal board's MCP token carries. v1 minted only `connected`; orchestration
+ * Phase 1 (precondition X) adds `lead` — the wire-facing orchestrator role, minted ONLY for the
+ * single explicitly-granted lead board (see `leadAuthority.ts`; the minter in `mcp.ts` routes by
+ * designation, so the spawn-time provisioner needs no tier awareness).
+ */
+export type TerminalTier = 'connected' | 'lead'
 
 /** A minted MCP token for one Terminal board: tier-scoped, bound to a board + its server port. */
 export interface TerminalToken {

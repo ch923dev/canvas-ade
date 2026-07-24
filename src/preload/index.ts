@@ -384,6 +384,13 @@ export type {
 // shared import). A SEPARATE consent from recap (decision 2026-06-19).
 export type OrchestrationConsentState = 'enabled' | 'declined' | 'undecided'
 
+// Lead terminal (orchestration Phase 1). MIRRORS src/main/orchestrationLead.ts
+// LeadGrantIpcResult (process boundary → no shared import) — keep in lockstep.
+export type OrchestrationLeadGrantResult =
+  | { ok: true }
+  | { ok: false; reason: 'forbidden' | 'no-project' | 'consent' | 'no-server' | 'not-found' }
+  | { ok: false; reason: 'already-active'; holder: string }
+
 // The Sync modal's data plane. Shapes MIRROR src/main/cliProvisioners/shared.ts
 // (CliId / ProvisionStatus / SyncResult) across the process boundary — keep in lockstep.
 // 🔒 the endpoint token is PRE-MASKED in MAIN; the raw token never crosses the bridge.
@@ -933,7 +940,16 @@ const api = {
     // cap (default 4); setSpawnCap persists an in-range integer [1,16] and returns a typed result.
     getSpawnCap: (): Promise<number> => ipcRenderer.invoke('orchestration:getSpawnCap'),
     setSpawnCap: (cap: number): Promise<{ ok: boolean; reason?: string }> =>
-      ipcRenderer.invoke('orchestration:setSpawnCap', cap)
+      ipcRenderer.invoke('orchestration:setSpawnCap', cap),
+    // Lead terminal (orchestration Phase 1, precondition X): the consent-gated grant of the
+    // wire-facing orchestrator role to ONE terminal board (single-active-lead). Granting
+    // DESIGNATES only — the lead token is minted by spawn-time provisioning when the designated
+    // terminal's agent next (re)starts. The token itself never crosses this bridge.
+    getLeadStatus: (): Promise<{ boardId: string | null }> =>
+      ipcRenderer.invoke('orchestration:getLeadStatus'),
+    grantLead: (boardId: string): Promise<OrchestrationLeadGrantResult> =>
+      ipcRenderer.invoke('orchestration:grantLead', boardId),
+    revokeLead: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('orchestration:revokeLead')
   },
 
   // ── External MCP servers: register the user's OWN MCP servers, written into each selected agent
