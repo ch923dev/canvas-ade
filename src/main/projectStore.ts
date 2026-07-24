@@ -58,9 +58,10 @@ const legacyAssets = (dir: string): string => join(dir, ASSETS)
  * props, ADDITIVE; v19 = Kanban card-detail fields — description/tags[]/fileRefs[], ADDITIVE;
  * v20 = TerminalBoard `openRouter` routing field, ADDITIVE; v21 = the DiagramElement
  * `'expanse'` engine + spec + importedFrom, BREAKING; v22 = the DiagramElement `revisions`
- * prior-spec snapshots, ADDITIVE — see boardSchemaVersion.ts.)
+ * prior-spec snapshots, ADDITIVE; v23 = the `swarm` board type (orchestration S1), BREAKING —
+ * see boardSchemaVersion.ts.)
  */
-export const SCHEMA_VERSION = 22
+export const SCHEMA_VERSION = 23
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
@@ -74,9 +75,11 @@ export const SCHEMA_VERSION = 22
  * (v16 was additive and left the floor at 15; v18–v20 were additive and left it at 17.) The floor
  * moved to 21 with the breaking `'expanse'` diagram engine (v21, diagram-viz Phase 1) — a pre-21
  * reader's diagram case hard-fails a non-mermaid engine, so pre-21 apps get the clean update prompt.
- * (v22 — DiagramElement `revisions` — is ADDITIVE and leaves the floor at 21.)
+ * (v22 — DiagramElement `revisions` — is ADDITIVE and leaves the floor at 21.) The floor moved to
+ * 23 with the breaking `swarm` board type (v23, orchestration S1) — pre-23 apps have no `swarm`
+ * case in `assertBoard` and would `.bak`-fallback, so they get the clean update prompt.
  */
-export const MIN_READER_VERSION = 21
+export const MIN_READER_VERSION = 23
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }

@@ -18,6 +18,7 @@
 @import './styles/boards/browser-overlays.css';
 @import './styles/boards/planning.css';
 @import './styles/boards/kanban.css';
+@import './styles/boards/swarm.css';
 @import './styles/chrome/controls.css';
 @import './styles/boards/text-toolbar.css';
 @import './styles/screens/welcome.css';

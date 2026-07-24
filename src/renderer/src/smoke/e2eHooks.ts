@@ -88,14 +88,14 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     seedBoard(type, patch) {
       const store = useCanvasStore.getState()
       const id = store.addBoard(type, { x: seedX, y: 0 })
-      seedX += 760 // wider than the largest default board (browser 700) → no overlap
+      seedX += 1240 // wider than the largest default board (swarm 1180) → no overlap
       if (patch) store.updateBoard(id, patch)
       return id
     },
     seedConfigPendingTerminal() {
       const store = useCanvasStore.getState()
       const id = store.addBoard('terminal', { x: seedX, y: 0 }, { configPending: true })
-      seedX += 760
+      seedX += 1240
       return id
     },
     getConfigPendingId() {

@@ -22,6 +22,7 @@ import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
 import { useProjectSwitchHotkey } from './store/useProjectSwitchHotkey'
 import { useNotifications } from './store/useNotifications'
+import { useSwarmEvents } from './store/useSwarmEvents'
 import { useVoiceCapture } from './voice/useVoiceCapture'
 import { useTtsPlayback } from './voice/useTtsPlayback'
 import { VoicePill } from './voice/VoicePill'
@@ -55,6 +56,9 @@ function App(): React.ReactElement {
   // Desktop notifications: MAIN pushes agent-lifecycle events (done / needs-input / error) → an
   // in-app toast + focus-on-click. The native OS notification is raised in MAIN.
   useNotifications()
+  // Orchestration S1: mirror MAIN's per-board swarm orchestrator sessions into swarmStore
+  // (turn stream + run events) — one global subscription, keyed by swarm board id.
+  useSwarmEvents()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)

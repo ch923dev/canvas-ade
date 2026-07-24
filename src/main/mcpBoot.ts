@@ -116,7 +116,19 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     // The runaway-swarm spawn cap is user-configurable (orchestration-config.json in userData). Read
     // FRESH per spawn check so a Settings change to the cap applies live — no MAIN restart, no
     // orchestrator rebuild. Unset/absent config ⇒ MCP_SPAWN_CAP (4).
-    cap: () => readOrchestrationConfig(userData).spawnCap
+    cap: () => readOrchestrationConfig(userData).spawnCap,
+    // Orchestration S1: push every lead-designation change to the renderer (the LEAD badge +
+    // board-menu state + New Terminal dialog subscribe via orchestrationStore). Guarded like every
+    // MAIN→renderer push — a dying window drops the event (state re-hydrates on next mount).
+    onLeadChanged: (boardId: string | null): void => {
+      try {
+        const win = getWin()
+        if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+        win.webContents.send('orchestration:leadChanged', boardId)
+      } catch {
+        /* window died mid-send — the renderer re-hydrates on next mount */
+      }
+    }
   }
   // Memoized so concurrent triggers (ENABLE onChange · open-of-consented-project · e2e warm) share
   // ONE boot; publish writes the resolved server into index.ts's `mcp` for the () => mcp getters

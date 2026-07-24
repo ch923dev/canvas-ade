@@ -46,6 +46,7 @@ import { presetById } from './terminal/agentPresets'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
 import { usePaletteRestart } from './terminal/usePaletteRestart'
+import { useLeadRole, LeadBadge } from './terminal/useLeadRole'
 import { notifyResumeFellBack } from './terminal/resumeFallbackToast'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
@@ -287,6 +288,14 @@ export function TerminalBoard({
     board.agentKind && board.agentKind !== 'shell' ? presetById(board.agentKind)?.label : undefined
   const identity = presetLabel ?? agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
+
+  // Orchestration S1: the lead-role surface (LEAD badge + frame ring + ⋯-menu grant/revoke +
+  // the already-active confirm). Replaces the deleted Settings › Lead terminal picker.
+  const {
+    isLead,
+    menuItems: leadMenuItems,
+    confirmEl: leadConfirmEl
+  } = useLeadRole(board.id, running)
 
   // ── Per-board font size ───────────────────────────────────────────────────────
   // Persist path (the four triggers call these — they never touch xterm directly):
@@ -586,6 +595,8 @@ export function TerminalBoard({
         running={running}
         spawning={state === 'spawning'}
         status={status}
+        titleBadge={isLead ? <LeadBadge /> : undefined}
+        lead={isLead}
         contentBg={themeBg}
         onFull={onFull}
         onDuplicate={onDuplicate}
@@ -593,6 +604,7 @@ export function TerminalBoard({
         onAddToGroup={onAddToGroup}
         onRemoveFromGroup={onRemoveFromGroup}
         onRemoveFromAllGroups={onRemoveFromAllGroups}
+        menuExtraItems={leadMenuItems}
         onStartConnect={onStartConnect}
       >
         <div style={{ ...(lod ? shellHidden : shell), ...flip.perspectiveStyle }}>
@@ -823,6 +835,8 @@ export function TerminalBoard({
           onClose={configPending ? clearConfigPending : closeConfig}
         />
       )}
+      {/* S1: the already-active lead confirm (portal'd Modal — position immaterial). */}
+      {leadConfirmEl}
     </>
   )
 }

@@ -130,6 +130,27 @@ export function TypeGlyph({ type, running = false }: TypeGlyphProps): ReactEleme
         <path d="M9 4v16M15 4v16" />
       </svg>
     )
+  if (type === 'swarm')
+    // The swarm mark (S1) — one orchestrator node fanned out to three workers: the one-voice
+    // manager pattern in a line icon (same family as the kanban/planning marks).
+    return (
+      <svg
+        width={15}
+        height={15}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx={12} cy={5.5} r={2.5} />
+        <circle cx={5} cy={18} r={2.2} />
+        <circle cx={12} cy={18} r={2.2} />
+        <circle cx={19} cy={18} r={2.2} />
+        <path d="M12 8v4.5M12 12.5L5.8 16M12 12.5v3.3M12 12.5l6.2 3.5" />
+      </svg>
+    )
   // planning
   return (
     <svg

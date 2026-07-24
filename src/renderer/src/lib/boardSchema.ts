@@ -35,6 +35,12 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 // v17 Kanban schema pieces live in a leaf module (keeps this file under the max-lines gate); the
 // back-reference to BoardCommon is type-only, so there is no runtime import cycle. Re-exported below
 // so every `import { KanbanBoard } from '.../boardSchema'` consumer is unchanged.
+import {
+  DEFAULT_BOARD_SIZE,
+  DEFAULT_TITLE,
+  DEFAULT_BROWSER_URL,
+  MIN_BOARD_SIZE
+} from './boardDefaults'
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import { assertTerminalContent } from './terminalBoardSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
@@ -120,6 +126,7 @@ export type BoardType =
   | 'file'
   | 'dataflow'
   | 'kanban'
+  | 'swarm'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
 export type BrowserViewport = 'mobile' | 'tablet' | 'desktop' | 'qhd' | 'uhd'
@@ -402,6 +409,20 @@ export interface DataFlowBoard extends BoardCommon {
   sourceBoardId?: string
 }
 
+/**
+ * v23: the Swarm board (orchestration S1, 07-swarm-board.md §3) — the chat-driven orchestration
+ * surface: one orchestrator voice (app-resident chat spine), worker terminal cards, a read-only
+ * plan strip, and a needs-you strip. MULTI-INSTANCE by design: each board = one run / feature
+ * zone, so N swarm boards drive N concurrent runs (the Command-board singleton rule does NOT
+ * apply). The PERSISTED shape is just `BoardCommon` with `type:'swarm'`: run state (chat
+ * transcript, run memory, worker membership, statuses) lives in the EPHEMERAL per-board-keyed
+ * `swarmStore` and is NEVER serialized (scene/session split; the durable run ledger is S2's
+ * deliverable — 09 §6). A new board type is breaking → schema v23 / floor 23.
+ */
+export interface SwarmBoard extends BoardCommon {
+  type: 'swarm'
+}
+
 export type Board =
   | TerminalBoard
   | BrowserBoard
@@ -410,6 +431,7 @@ export type Board =
   | FileBoard
   | DataFlowBoard
   | KanbanBoard
+  | SwarmBoard
 
 // ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
 // A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
@@ -516,37 +538,9 @@ export interface CanvasDoc {
 }
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────
-
-/** Smallest a board may be resized to (DESIGN.md §6). */
-export const MIN_BOARD_SIZE = { w: 240, h: 160 } as const
-
-/** Size a freshly-added board of each type gets (handoff 2.0-B). */
-export const DEFAULT_BOARD_SIZE: Record<BoardType, { w: number; h: number }> = {
-  terminal: { w: 420, h: 340 },
-  browser: { w: 700, h: 500 },
-  planning: { w: 516, h: 366 },
-  // Wide enough for the five-column kanban body + the submit well + worker-pool strip (the
-  // approved Phase-A production mock); collapses to a one-line rail when minimized.
-  command: { w: 760, h: 440 },
-  file: { w: 520, h: 380 },
-  // Wide enough for the focus-on-node graph + the bottom legend strip (the approved JD-4 mock).
-  dataflow: { w: 760, h: 520 },
-  // Wide enough for the four default columns side by side + a little header room (the P4 mock).
-  kanban: { w: 900, h: 520 }
-}
-
-const DEFAULT_TITLE: Record<BoardType, string> = {
-  terminal: 'Terminal',
-  browser: 'Browser',
-  planning: 'Planning',
-  command: 'Orchestrator',
-  file: 'File',
-  dataflow: 'Data Flow',
-  kanban: 'Kanban'
-}
-
-/** Seed URL for a new Browser board (basic edit lands in 2.2; port assignment Phase 3). */
-const DEFAULT_BROWSER_URL = 'http://localhost:5173'
+// Extracted to ./boardDefaults (a leaf module) at the v23 max-lines ratchet; re-exported here so
+// every existing `import { DEFAULT_BOARD_SIZE } from '.../boardSchema'` consumer is unchanged.
+export { MIN_BOARD_SIZE, DEFAULT_BOARD_SIZE } from './boardDefaults'
 
 // ── Factory ─────────────────────────────────────────────────────────────────
 
@@ -601,6 +595,9 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
     case 'kanban':
       // Starts with the four default lanes and no cards; the human/agent fills it in (P4.2/P3).
       return { ...base, type, columns: DEFAULT_KANBAN_COLUMNS.map((c) => ({ ...c })), cards: [] }
+    case 'swarm':
+      // v23: no per-type persisted fields — the run state lives in the ephemeral swarmStore.
+      return { ...base, type }
   }
 }
 
@@ -758,7 +755,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v22: optional DiagramElement `revisions` (diagram-viz Phase 2, B4). Optional + defaulted-at-read
   // (absent ⇒ no history) → identity bump; ADDITIVE so MIN_READER_VERSION stays 21 (a pre-22 reader
   // ignores the unknown optional key and it rides through the structuredClone round-trip).
-  21: (doc) => ({ ...doc, schemaVersion: 22 })
+  21: (doc) => ({ ...doc, schemaVersion: 22 }),
+  // v23: the `swarm` board type (orchestration S1). The type only appears on newly-authored swarm
+  // boards, so existing docs have nothing to backfill — identity bump. BREAKING (floor → 23): a
+  // pre-23 reader's assertBoard throws on the unknown type (boardSchemaVersion.ts).
+  22: (doc) => ({ ...doc, schemaVersion: 23 })
 }
 
 /**
@@ -1068,6 +1069,10 @@ export function assertBoard(b: unknown): void {
       // max-lines extraction at the board-inspector epic merge); guards are injected so the leaf
       // module never imports back into this file.
       assertKanbanContent(b, fail, isRecord, isPositiveNum)
+      return
+    case 'swarm':
+      // v23: the Swarm board persists no per-type fields — the run state is ephemeral swarmStore
+      // state. The common-field checks above (id/title/x/y/w/h/z) are the whole contract.
       return
     default:
       fail(`board has an unknown type ${String(b.type)}`)

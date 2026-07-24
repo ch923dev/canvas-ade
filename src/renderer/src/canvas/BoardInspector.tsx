@@ -42,7 +42,8 @@ const TYPE_TAG: Record<BoardType, string> = {
   command: 'COMMAND',
   file: 'FILE',
   dataflow: 'DATA FLOW',
-  kanban: 'KANBAN'
+  kanban: 'KANBAN',
+  swarm: 'SWARM'
 }
 
 export function BoardInspector(): ReactElement | null {

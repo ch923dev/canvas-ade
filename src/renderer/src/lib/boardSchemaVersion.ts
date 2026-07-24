@@ -104,8 +104,17 @@
  *   MIN_READER_VERSION stays 21 (a pre-22 reader ignores the unknown optional key on the element
  *   and it rides through the structuredClone round-trip; assertPlanningElement's expanse case
  *   validates only known fields).
+ * - v23 = the `swarm` board TYPE (orchestration S1 — the Swarm board: chat-driven orchestration
+ *   surface, 07-swarm-board.md §3). MULTI-INSTANCE by design (each board = one run / feature
+ *   zone — the Command-board singleton rule does NOT apply). The PERSISTED shape is just
+ *   `BoardCommon` with `type:'swarm'`: the run state (chat transcript, run memory, worker
+ *   membership, statuses) is ephemeral per-board `swarmStore` state, NEVER serialized (the
+ *   scene/session split; the durable run ledger is the S2 deliverable, 09 §6). A NEW board type
+ *   is BREAKING per ADR 0007: a pre-23 `assertBoard` default branch throws on the unknown type,
+ *   so the compat floor moves to 23 too. The migration is identity (the type only appears on
+ *   newly-authored swarm boards).
  */
-export const SCHEMA_VERSION = 22
+export const SCHEMA_VERSION = 23
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -146,6 +155,9 @@ export const SCHEMA_VERSION = 22
  * the clean "update the app to open it" message instead of a confusing `.bak`-fallback. A doc with
  * only mermaid diagrams still READS on older apps once written, but ADR 0007 floors are stamped by
  * CAPABILITY, not per-doc content (the v11/v13 precedent). (Floor STAYS 21 through v22 — the
- * DiagramElement `revisions` field is ADDITIVE.)
+ * DiagramElement `revisions` field is ADDITIVE.) Floor moves to 23 with the v23 `swarm` board
+ * type (orchestration S1): an app older than 23 has no `swarm` case in `assertBoard`, so it would
+ * HARD-FAIL deep validation on a doc containing one — pre-23 apps get the clean "update the app
+ * to open it" message instead of a `.bak`-fallback.
  */
-export const MIN_READER_VERSION = 21
+export const MIN_READER_VERSION = 23

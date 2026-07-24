@@ -18,7 +18,7 @@
  * camera doesn't teleport. Fewer than 2 boards is a no-op. Safe for undo/redo + persistence.
  */
 
-import type { BrowserViewport } from './boardSchema'
+import type { BoardType, BrowserViewport } from './boardSchema'
 
 export type TidyMode = 'smart' | 'by-type' | 'grid'
 
@@ -30,7 +30,9 @@ export interface TidyBoard {
   y: number
   w: number
   h: number
-  type?: 'terminal' | 'browser' | 'planning' | 'command' | 'file' | 'dataflow' | 'kanban'
+  // The full BoardType union — every non-terminal/browser type buckets into the "planning"
+  // cluster below, so new board types (kanban, swarm, …) need no per-type case here.
+  type?: BoardType
   viewport?: BrowserViewport
   previewSourceId?: string | null
 }

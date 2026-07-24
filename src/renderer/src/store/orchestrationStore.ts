@@ -22,17 +22,29 @@ interface OrchestrationStore {
   enabled: boolean
   /** Which onboarding modal to show (cross-component channel: Settings → host). */
   modal: OrchestrationModalView
+  /**
+   * S1: reactive cache of the designated lead board id (null = none). MAIN's leadAuthority is
+   * authoritative; hydrated once on mount (getLeadStatus) and kept live by the
+   * `orchestration:leadChanged` push (OrchestrationModals owns the subscription). Drives the
+   * terminal LEAD badge, the board-menu grant/revoke state, and the creation-time row.
+   */
+  leadBoardId: string | null
   /** Set the cached flag (after a getConsent read on open, or a successful consent write). */
   setEnabled: (on: boolean) => void
   /** Open/close an onboarding modal. */
   setModal: (view: OrchestrationModalView) => void
+  /** Set the cached lead designation (hydrate read or the MAIN push). */
+  setLeadBoardId: (boardId: string | null) => void
 }
 
 export const useOrchestrationStore = create<OrchestrationStore>((set) => ({
   enabled: false,
   modal: 'none',
+  leadBoardId: null,
   // Conditional sets — skip the swap when unchanged so a re-hydrate to the same value
   // (project open / autosave-adjacent renders) doesn't churn subscribers.
   setEnabled: (on) => set((s) => (s.enabled === on ? s : { enabled: on })),
-  setModal: (view) => set((s) => (s.modal === view ? s : { modal: view }))
+  setModal: (view) => set((s) => (s.modal === view ? s : { modal: view })),
+  setLeadBoardId: (boardId) =>
+    set((s) => (s.leadBoardId === boardId ? s : { leadBoardId: boardId }))
 }))

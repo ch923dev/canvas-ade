@@ -101,7 +101,8 @@ const TYPE_LABEL: Record<BoardType, string> = {
   command: 'command',
   file: 'file',
   dataflow: 'data flow',
-  kanban: 'kanban'
+  kanban: 'kanban',
+  swarm: 'swarm'
 }
 
 export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): PaletteCommand[] {
