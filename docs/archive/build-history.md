@@ -3505,3 +3505,31 @@ inline-dispositioned, re-review clean. **Full matrix green** (Windows 324P · Li
 Manual dev check title-stamped `P5-Card1 diagram-phase5`. **Version:** 0.29.0 → **0.29.1** (patch —
 unify/refactor, Card 1 alone). Squash `2b5fa858`. Card 2 (`@expanse-ade/diagram` extraction) decided
 separately post-merge. Worktree `.worktrees/diagram-phase5` teardown deferred to the Card-2 decision.
+
+## 2026-07-24 — PR #381: orchestration Phase 0 — role packs on the Command-board dispatch loop (v0.30.0)
+
+**Role is a parameter, not a fork** (orchestration plan Phase 0, `M:/expanse/docs/orchestration/`):
+new `lib/rolePacks.ts` — a declarative `RolePack` (tier · permission posture · model tier/pin/effort ·
+isolation · confirm policy · role brief · reportSchema · acceptance + writeScope/entryCondition/
+domainHint) with a structural validator (Q4 enforced: `session-consented` is read-only-only) and four
+packs as pure data: **builder** (write, sonnet), **code-reviewer** (read, opus), **explorer** (read,
+haiku + effort low — the cheap-read axis), **planner** (read, sonnet; artifact = planning-board
+elements). A pack shapes the spawn through the EXISTING pipeline — `packOptionValues` →
+`agentPresets`/`composeCommand` (no second composition path); the role brief rides the gated REPL
+dispatch (never the 400-char-clamped launch line). `WorkerConfigDialog` gains the ROLE row (Custom
+escape hatch preserved) + the brief SHOWN in an editable textarea ("what you see is what's prepended";
+per-dispatch extend/trim/clear, remembered, reseeded on pack pick). Pump: write-role concurrency gate
+**cap 1 until Phase-3 worktrees** — skip-not-block (read roles + Custom sail past), disclosed in the
+dialog, and **fail-closed on command divergence** (review round 1's warning: `launchLooksReadOnly`
+requires the LAST `--permission-mode` = `plan` + no bypass flag, else a read-pack task counts as
+write). App-side only: no MCP wire change, confirm gate untouched. **Dev-check found a REAL dispatch
+bug** (prompt delivered but `\r` swallowed inside the paste burst → unsent prompt + false-done via
+silence-settle): `dispatchGate` echo poll now paces EVERY bodied submit (ack/audit semantics
+unchanged), settle 100→150ms — user-verified live. Briefs rewritten per a dedicated Opus research
+pass over Anthropic's multi-agent/agent-building guidance (identity+posture → negative scope limits →
+named `write_result` contract → blocked/failed escape hatch). All four Phase-0 proof criteria met.
+Reviewer rounds: 1 warning → fixed + dispositioned; post-rebase FULL re-review 0-crit/0-warn. **Full
+matrix green** on `8e12540`-line, fix head, AND the rebased merge head `e5a7daac` (Win 325P ·
+Linux Docker exit-0 323P; menuShell = documented flake, rerun-green ×4). Manual dev check ×2 user
+eyeball rounds (title-stamped). OpenRouter per-role policy confirmed S1 scope. **Version:** 0.29.1 →
+**0.30.0** (minor — new subsystem). Squash `77548a76`.
