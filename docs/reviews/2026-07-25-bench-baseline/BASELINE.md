@@ -124,15 +124,57 @@ per-terminal work that scales with board count. Candidates, ranked, cross-refere
 Unexplained wrinkle: N=8 pan/zoom *improved* over the reference while N=4 degraded. N=8 runs at
 fitZoom 0.571 vs N=4's 0.880 — the lower zoom likely masks the same cost behind cheaper glyph raster.
 
-### Remaining confounder
+### `fitZoom` ruled out
 
-The reference does not state its per-row `fitZoom`. Ours is pinned at 0.880 across all four N=4 runs, so
-it is not run-to-run variance — but if the reference sampled N=4 at a different fit zoom, some of the
-delta is not like-for-like. Checkable in the harness's git history before any bisect.
+`git log --follow e2e/terminalLoad.bench.ts` shows exactly one prior commit — `78088bbc` (#259), which
+created the file. `PINNED`, `CELL_W`, `CELL_H` and `PHASE_MS` were introduced there and never changed.
+The harness inputs are byte-identical to those that produced the reference, so N=4 ran at fitZoom 0.880
+in both. Not a confounder.
 
-**Next:** confirm the reference `fitZoom`, then bisect N=4 static across the range since 2026-06-25.
-The recorded `zoom ≥ pan ≥ static` finding (camera motion is never the bottleneck; cost is the
-write/DOM-mutation path) argues for starting at P-2 and the ptyHost daemon merge.
+## ROOT CAUSE: dependencies, not app source
+
+A bisect over the 365 commits since `78088bbc` was planned, then **abandoned after one measurement that
+made it unnecessary** — and which the bisect could never have found anyway.
+
+`node_modules` in a worktree is a junction to MAIN's, so every bisect step would have run old app source
+against **current** dependencies. That makes a bisect structurally blind to a dependency-caused
+regression. The good-endpoint check exposed exactly that:
+
+| What | N=4 static |
+|---|---|
+| Reference, 2026-06-25 (app `78088bbc` + deps of that era) | 116–133 fps, p50 **6.1 ms** |
+| **App `78088bbc` + CURRENT deps** (this test) | **75.6 fps, p50 12.1 ms** |
+| Current main `2bdc517e` + current deps | 78.9 fps, p50 12.1 ms |
+
+**The app source that produced the fast reference is slow on today's dependencies.** Old source and
+current source measure the same. Therefore the regression is in `node_modules`, and no app commit
+caused it.
+
+Corroboration: the built `xterm-R4LLEgbX.js` chunk is 411.70 kB with an identical content hash in both
+builds — the same xterm was bundled either way, confirming deps stayed pinned to current across the
+comparison.
+
+This also **exonerates P-1 / P-2 / P-3** as the cause of *this* delta (audit
+`docs/reviews/2026-07-25-project-switch-perf-audit/AUDIT.md`). They remain valid findings on their own
+merits; they simply did not cause this regression. An earlier reading of this document ranked P-2 as the
+best fit based on the N-scaling shape — that inference is superseded by the direct measurement above.
+
+### Prime suspect
+
+`@xterm/xterm` **5.5 → 6.x**. At `78088bbc`, `package.json` pinned `"@xterm/xterm": "^5.5.0"` plus
+`"@xterm/addon-webgl": "^0.18.0"`; current main is `>= 6.0`. A major bump in the terminal renderer
+itself, measured by a terminal-render benchmark, is the strongest prior. Other candidates in the same
+`node_modules`: `@xyflow/react` 12.x movement, React 19.x patches, Vite 7 codegen differences.
+
+### How to confirm
+
+Requires a `node_modules` with xterm 5.5, which this worktree **cannot** produce — `pnpm install`
+through the junction resolves against MAIN's tree and would corrupt it. Confirmation needs a standalone
+clone of `78088bbc` with a real `pnpm install` at that lockfile, then the same N=4 run. If that returns
+p50 6.1 ms, xterm (or whatever else the old lockfile pins) is confirmed and the question becomes whether
+the 6.x cost is configuration (addons, renderer options) or inherent.
+
+**Do not bisect app commits for this.** The answer is not there.
 
 ## Reproducing
 
