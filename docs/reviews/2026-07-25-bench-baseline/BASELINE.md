@@ -74,9 +74,10 @@ Reference: `docs/research/2026-06-25-terminal-dom-renderer/REPORT.md:110-138`.
 | N=8 zoom | 65 fps | 88.2 | **+36%** |
 | Gating, K=2 | 133.9 fps | 116.6 | −13% |
 
-**Mixed, and the N=4 row is the one to chase.** Its p50 moved 6.1 → 12.1 ms — in vsync terms, from
-hitting every frame to every other frame. That is a discrete step, not drift. Meanwhile N=8 pan/zoom
-improved, so this is not a uniform slowdown.
+**Mixed, and the N=4 row is the one that was chased.** Its p50 moved 6.1 → 12.1 ms — in vsync terms,
+from hitting every frame to every other frame. That is a discrete step, not drift. Meanwhile N=8
+pan/zoom improved, so this is not a uniform slowdown. It was chased to ground and is **not a product
+regression** — see the elimination table below.
 
 ## Repeat runs — N=4 regression CONFIRMED, N=1 clean
 
@@ -109,20 +110,18 @@ in every run — never 6.1.** Verdict: **real regression at N=4, −32…−41% 
 
 ### What the shape implies
 
-The regression is present at N=4 and absent at N=1, so it is **not** a global per-frame overhead — it is
-per-terminal work that scales with board count. Candidates, ranked, cross-referenced to
-`docs/reviews/2026-07-25-project-switch-perf-audit/AUDIT.md`:
+> **Superseded — see *NOT A PRODUCT REGRESSION* below.** The reasoning in this subsection was the
+> working hypothesis before the two elimination runs; it is kept because it is what motivated them, not
+> because it holds. Direct measurement beat it.
 
-1. **P-2** — `useTerminalLiveness.ts:54,116` and `useOffscreenLiveness.ts:55,125` each perform a
-   `getBoundingClientRect()` forced layout plus an O(boards) loop on *every* `boards` reference change.
-   Effectively free at N=1; grows with N. Best fit.
-2. **P-1** — `App` re-renders 14 unmemoized children on every store mutation (`App.tsx:124-179` +
-   `useMcpPublish.ts:25`); mutation rate scales with the number of live terminals.
-3. **P-3** — the PTY wire JSON-encodes per chunk with no daemon-side batching
-   (`daemonMain.ts:82-84,184-188`); N streams multiply that main-process cost.
+The delta is present at N=4 and absent at N=1, so it is **not** a global per-frame overhead — it is work
+that scales with board count. That read pointed at per-terminal *code* (P-2's forced layouts, P-1's
+re-render fan-out, P-3's per-chunk JSON encode). All three were subsequently ruled out as the cause by
+running the old source and the old lockfile directly. Load that scales with board count fits the same
+shape, and that is what it turned out to be.
 
-Unexplained wrinkle: N=8 pan/zoom *improved* over the reference while N=4 degraded. N=8 runs at
-fitZoom 0.571 vs N=4's 0.880 — the lower zoom likely masks the same cost behind cheaper glyph raster.
+Wrinkle the code hypothesis never explained, and contention does: N=8 pan/zoom *improved* over the
+reference while N=4 degraded.
 
 ### `fitZoom` ruled out
 
@@ -131,50 +130,64 @@ created the file. `PINNED`, `CELL_W`, `CELL_H` and `PHASE_MS` were introduced th
 The harness inputs are byte-identical to those that produced the reference, so N=4 ran at fitZoom 0.880
 in both. Not a confounder.
 
-## ROOT CAUSE: dependencies, not app source
+## NOT A PRODUCT REGRESSION — the reference is not reproducible from the repo
 
-A bisect over the 365 commits since `78088bbc` was planned, then **abandoned after one measurement that
-made it unnecessary** — and which the bisect could never have found anyway.
+Three successive eliminations, each a direct measurement rather than an inference. **All negative.**
 
-`node_modules` in a worktree is a junction to MAIN's, so every bisect step would have run old app source
-against **current** dependencies. That makes a bisect structurally blind to a dependency-caused
-regression. The good-endpoint check exposed exactly that:
+| # | Build | N=4 static | Verdict |
+|---|---|---|---|
+| — | Reference 2026-06-25 (`REPORT.md:110-138`) | 116–133 fps, p50 **6.1 ms** | the number being chased |
+| 1 | Current main `2bdc517e` + current deps | 78.9 fps, p50 12.1 ms | — |
+| 2 | App `78088bbc` + **current** deps | 75.6 fps, p50 12.1 ms | **app source exonerated** |
+| 3 | App `78088bbc` + **its own lockfile** (`pnpm install --frozen-lockfile`, standalone clone) | **82.5 fps, p50 12.1 ms** | **dependencies exonerated** |
 
-| What | N=4 static |
-|---|---|
-| Reference, 2026-06-25 (app `78088bbc` + deps of that era) | 116–133 fps, p50 **6.1 ms** |
-| **App `78088bbc` + CURRENT deps** (this test) | **75.6 fps, p50 12.1 ms** |
-| Current main `2bdc517e` + current deps | 78.9 fps, p50 12.1 ms |
+Run 3 is the controlling one: the *exact* source and the *exact* dependency tree that produced
+116–133 fps in June measure 82.5 fps today. Confirmed genuinely different deps — the bundled chunk is
+`xterm-Zq1Gu-mt.js` **414.71 kB** (xterm **5.5.0**, verified in `node_modules`) versus
+`xterm-R4LLEgbX.js` 411.70 kB (xterm 6.x) for runs 1–2. Electron is **42.3.3 in both trees**, so the
+runtime is identical too.
 
-**The app source that produced the fast reference is slow on today's dependencies.** Old source and
-current source measure the same. Therefore the regression is in `node_modules`, and no app commit
-caused it.
+**`@xterm/xterm` 5.5 → 6.x was the prime suspect and is REFUTED.** So are `@xyflow/react`, the React 19
+patches, and Vite 7 codegen — the whole old lockfile was installed, not just xterm.
 
-Corroboration: the built `xterm-R4LLEgbX.js` chunk is 411.70 kB with an identical content hash in both
-builds — the same xterm was bundled either way, confirming deps stayed pinned to current across the
-comparison.
+Source, dependencies and Electron are therefore all eliminated. **Nothing in the repository explains the
+delta**, so a bisect over the 365 intervening commits would have found nothing (and, run in a worktree,
+could not have: `node_modules` is a junction to MAIN's, so every step would have used current deps).
 
-This also **exonerates P-1 / P-2 / P-3** as the cause of *this* delta (audit
-`docs/reviews/2026-07-25-project-switch-perf-audit/AUDIT.md`). They remain valid findings on their own
-merits; they simply did not cause this regression. An earlier reading of this document ranked P-2 as the
-best fit based on the N-scaling shape — that inference is superseded by the direct measurement above.
+### What actually explains it: measurement contention
 
-### Prime suspect
+The only remaining variable is the machine, and it is not quiet:
 
-`@xterm/xterm` **5.5 → 6.x**. At `78088bbc`, `package.json` pinned `"@xterm/xterm": "^5.5.0"` plus
-`"@xterm/addon-webgl": "^0.18.0"`; current main is `>= 6.0`. A major bump in the terminal renderer
-itself, measured by a terminal-render benchmark, is the strongest prior. Other candidates in the same
-`node_modules`: `@xyflow/react` 12.x movement, React 19.x patches, Vite 7 codegen differences.
+```
+8 cores / 16 threads · 31.9 GB RAM, 8.8 GB free · Balanced power plan
+CPU load at rest: 76%
+37 × Code · 24 × node · 10 × pwsh · Docker Desktop · 7 × chrome
+```
 
-### How to confirm
+This fits the observed shape precisely. N=4 spawns four full-tilt `pwsh` streamers plus main-process
+encode plus the renderer. At **N=1 that fits in the remaining headroom and matches the reference within
+noise** (153.7–160 vs ~163 fps, p50 6.1 ms in both). At N=4 it does not, and the frame slips from one
+vsync interval to two. A per-terminal *code* cost would have shown up in runs 2 and 3; contention is
+what is left, and it is load-dependent exactly where the delta appears.
 
-Requires a `node_modules` with xterm 5.5, which this worktree **cannot** produce — `pnpm install`
-through the junction resolves against MAIN's tree and would corrupt it. Confirmation needs a standalone
-clone of `78088bbc` with a real `pnpm install` at that lockfile, then the same N=4 run. If that returns
-p50 6.1 ms, xterm (or whatever else the old lockfile pins) is confirmed and the question becomes whether
-the 6.x cost is configuration (addons, renderer options) or inherent.
+Not proven — proving it needs a re-run on a quiet machine, which means closing the user's editor and
+Docker. But it is the only surviving candidate, and the N=1 control agreeing with the reference while
+N=4 disagrees is hard to explain any other way.
 
-**Do not bisect app commits for this.** The answer is not there.
+Two earlier conclusions in this document were wrong and are superseded: P-2 was ranked best-fit from the
+N-scaling shape (superseded by run 2), and run 2 was then read as proving a dependency cause (superseded
+by run 3).
+
+### Consequences
+
+1. **The 2026-06-25 numbers are not a valid regression target** and should not be chased further. They
+   were captured under unrecorded machine conditions that no longer hold.
+2. **The tables above become the reference** for this machine — but only as long as the load is
+   comparable.
+3. **R2 must record machine state with the numbers** (core count, CPU load at rest, refresh rate, notable
+   running processes). A bench number without its conditions is what produced this entire investigation.
+   This extends R2's scope in `docs/reviews/2026-07-25-project-switch-perf-audit/AUDIT.md`.
+4. **P-1 / P-2 / P-3 remain valid findings on their own merits.** They simply did not cause this delta.
 
 ## Reproducing
 
