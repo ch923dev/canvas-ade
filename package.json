@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.30.0",
+  "version": "0.30.1",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -49,6 +49,7 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux"
   },
+  "//sca-pins": "electron-builder-squirrel-windows is NOT a build target (win = nsis) — the explicit devDependency exists because app-builder-lib exact-peer-pins it, the lockfile had a stale 25.1.8 peer auto-install resolution, and pnpm overrides do NOT apply to peer auto-install (pnpm#4214). The stale 25.x line dragged app-builder-lib@25.1.8 (GHSA-7g7r-gx96-252g) + builder-util-runtime@9.2.10 (GHSA-p2f4-r6v6-j797) — both HIGH, both SCA-gate blockers. Keep this dep version-matched to electron-builder.",
   "//packaging-pins": "ajv + signal-exit are NOT imported by app code — they pin their PROD transitive versions (ajv@8 via @expanse-ade/mcp's MCP SDK; signal-exit@4 via write-file-atomic@8) into the node_modules ROOT. electron-builder only collects depth-1 deps; pnpm otherwise nests these under their consumers while the dev-hoisted ajv@6/signal-exit@3 take root, so the PACKAGED app crashes (MODULE_NOT_FOUND on signal-exit / onExit-not-a-function on save). DO NOT remove as 'unused'. See docs/contributing/releasing.md › Packaging dependency pins.",
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -88,6 +89,7 @@
     "@xyflow/react": "^12.11.2",
     "electron": "^42.3.3",
     "electron-builder": "^26.15.5",
+    "electron-builder-squirrel-windows": "^26.15.5",
     "electron-vite": "^5.0.0",
     "elkjs": "^0.12.0",
     "esbuild": "^0.28.1",
