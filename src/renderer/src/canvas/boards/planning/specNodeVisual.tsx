@@ -96,6 +96,49 @@ export function SpecNodeBody({
           {node.detail}
         </div>
       )}
+      {node.rows && node.rows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, margin: '5px 0 0 19px' }}>
+          {node.rows.map((r, i) => (
+            <div
+              key={`${r.left}#${i}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                font: '450 9px/12px var(--mono)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <span
+                style={{
+                  color: 'var(--text-2)',
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+              >
+                {r.left}
+              </span>
+              {r.right !== undefined && (
+                <span
+                  style={{
+                    flex: 'none',
+                    maxWidth: '55%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    ...(r.accent
+                      ? { color: 'var(--accent)', opacity: 0.85 }
+                      : { color: 'var(--text-3)' })
+                  }}
+                >
+                  {r.right}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </>
   )
 }

@@ -31,6 +31,13 @@ describe('specNodeBox', () => {
     expect(specNodeBox({ kind: 'note' })).toEqual({ w: 200, h: 32 })
     expect(specNodeBox({ kind: 'decision' })).toEqual({ w: 168, h: 32 })
   })
+
+  it('grows by member rows (Phase 5): rows*15 + 2, stacking with detail', () => {
+    const rows = [{ left: 'id', right: 'uuid' }, { left: 'status' }]
+    expect(specNodeBox({ rows })).toEqual({ w: 168, h: 32 + 2 * 15 + 2 })
+    expect(specNodeBox({ detail: 'x', rows })).toEqual({ w: 168, h: 49 + 2 * 15 + 2 })
+    expect(specNodeBox({ rows: [] })).toEqual({ w: 168, h: 32 })
+  })
 })
 
 describe('specToElkGraph', () => {

@@ -23,6 +23,8 @@ export const SPEC_TITLE_MAX = 200
 export const SPEC_ICON_MAX = 64
 export const SPEC_HREF_FILE_MAX = 256
 export const SPEC_THEME_MAX = 64
+export const SPEC_MAX_ROWS = 12
+export const SPEC_ROW_TEXT_MAX = 80
 
 /** Closed status vocabulary → colour+glyph via specTheme.ts. Mirrors DIAGRAM_STATUS_CLASSES
  *  (the Phase-0 Mermaid `:::done` set) plus the explicit 'neutral' default. */
@@ -45,6 +47,17 @@ export type SpecNodeKind = (typeof SPEC_NODE_KINDS)[number]
 export const SPEC_EDGE_KINDS = ['flow', 'data', 'dependency'] as const
 export type SpecEdgeKind = (typeof SPEC_EDGE_KINDS)[number]
 
+/** One member row of a rowed node (Phase 5 — the Data-Flow entity-field surface): a left/right
+ *  mono pair (`key` / `type label`), `accent` inking the right cell in the id accent. */
+export interface SpecNodeRow {
+  /** Left cell, ≤ 80 ch. Rendered as a text node. */
+  left: string
+  /** Right cell (right-aligned), ≤ 80 ch. */
+  right?: string
+  /** Right cell renders in the accent ink (id-like member). */
+  accent?: boolean
+}
+
 export interface SpecNode {
   /** Slug (`[A-Za-z0-9._-]`, ≤ 64) — THE incremental-update key (Phase-3 specOps upsert by id). */
   id: string
@@ -52,6 +65,8 @@ export interface SpecNode {
   label: string
   /** Secondary mono line, ≤ 300 ch. Absent ⇒ single-line node. */
   detail?: string
+  /** Member rows under the header (≤ 12) — the entity/record surface (Phase 5, Data-Flow unify). */
+  rows?: SpecNodeRow[]
   /** Shape/icon selector. Absent ⇒ 'step'. */
   kind?: SpecNodeKind
   /** Colour+glyph selector. Absent ⇒ 'neutral'. */
@@ -233,6 +248,24 @@ export function assertDiagramSpec(
       fail('diagram spec node label is not a non-empty string within the cap')
     }
     optCapped(n.detail, SPEC_DETAIL_MAX, 'node detail')
+    if (n.rows !== undefined) {
+      if (!Array.isArray(n.rows)) fail('diagram spec node rows is not an array')
+      if (n.rows.length > SPEC_MAX_ROWS) fail('diagram spec node exceeds the row cap')
+      for (const r of n.rows as unknown[]) {
+        if (!isRecord(r)) fail('diagram spec node row is not an object')
+        if (
+          typeof r.left !== 'string' ||
+          r.left.length === 0 ||
+          r.left.length > SPEC_ROW_TEXT_MAX
+        ) {
+          fail('diagram spec node row left is not a non-empty string within the cap')
+        }
+        optCapped(r.right, SPEC_ROW_TEXT_MAX, 'node row right')
+        if (r.accent !== undefined && typeof r.accent !== 'boolean') {
+          fail('diagram spec node row accent is not a boolean')
+        }
+      }
+    }
     if (n.kind !== undefined && !isOneOf(n.kind, SPEC_NODE_KINDS)) {
       fail('diagram spec node kind is not in the closed vocabulary')
     }

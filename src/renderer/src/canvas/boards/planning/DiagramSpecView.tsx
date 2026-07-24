@@ -343,6 +343,8 @@ export function DiagramSpecView({
               <g
                 key={`${e.id}#l${layoutGen}`}
                 className={`pl-spec-edge${dim ? ' pl-spec-dim' : ''}`}
+                data-kind={e.kind ?? 'flow'}
+                data-status={e.status ?? 'neutral'}
                 style={{ '--i': ei } as CSSProperties}
               >
                 <path
@@ -392,6 +394,8 @@ export function DiagramSpecView({
             <div
               key={pulseGen ? `${n.id}#p${pulseGen}` : n.id}
               className={`pl-spec-node pl-spec-${sil}${chip ? ' pl-spec-chip' : ''}${pulseGen ? ' pl-spec-pulse' : ''}${dim ? ' pl-spec-dim' : ''}`}
+              data-kind={n.kind ?? 'step'}
+              data-status={n.status ?? 'neutral'}
               style={nodeStyle}
             >
               <SpecNodeBody node={n} sil={sil} status={status} />

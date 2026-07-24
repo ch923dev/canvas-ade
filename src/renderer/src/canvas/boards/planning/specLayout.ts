@@ -16,6 +16,9 @@ const NOTE_W = 200
 const NODE_H = 32
 /** The secondary mono `detail` line adds one 14px row + 3px gap. */
 const DETAIL_H = 17
+/** Each member row (Phase 5): 12px line + 3px gap; the block adds a 5px top margin. */
+const ROW_H = 15
+const ROWS_MARGIN = 2
 /** Group padding: label clearance on top, breathing room around children. */
 export const GROUP_PAD = { top: 22, side: 14, bottom: 14 }
 
@@ -25,10 +28,11 @@ export interface SpecNodeBox {
 }
 
 /** Estimated rendered box of a node (deterministic — no DOM measurement). */
-export function specNodeBox(node: Pick<SpecNode, 'kind' | 'detail'>): SpecNodeBox {
+export function specNodeBox(node: Pick<SpecNode, 'kind' | 'detail' | 'rows'>): SpecNodeBox {
   const sil = specKindSilhouette(node.kind)
   const w = sil === 'actor' ? ACTOR_W : sil === 'note' ? NOTE_W : NODE_W
-  const h = NODE_H + (node.detail ? DETAIL_H : 0)
+  const rows = node.rows?.length ?? 0
+  const h = NODE_H + (node.detail ? DETAIL_H : 0) + (rows > 0 ? rows * ROW_H + ROWS_MARGIN : 0)
   return { w, h }
 }
 

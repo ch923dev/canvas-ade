@@ -1,7 +1,8 @@
 /**
  * Data-Flow graph model (JD-4) — pure: turn the JD-3 inventory/entity model + the JD-4 lineage edges
  * into a navigable node/edge graph for the Data-Flow board, plus the focus-subgraph + idempotent-diff
- * helpers. No React, no layout math (that is `graphLayout.ts`), no values — entity fields carry only
+ * helpers. No React, no layout math (the spec renderer's ELK engine owns placement since Phase 5,
+ * via `dfSpecAdapter.ts`), no values — entity fields carry only
  * names + a type LABEL (the inferred model is already value-less, ADR 0010).
  *
  * **Never fabricates edges:** entity→entity edges come ONLY from `model.relationships` (name+type
