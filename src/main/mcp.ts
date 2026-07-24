@@ -5,6 +5,7 @@ import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
 import { getCurrentDir } from './projectStore'
 import { recordBoardProject } from './mcpBoardProjects'
+import { makeLeadAuthority } from './leadAuthority'
 import {
   isOrchestrationEnabled,
   __setTerminalTokenMinter,
@@ -186,6 +187,26 @@ export interface RunningMcp {
    * `mintConnectedToken` (a re-spawn revokes the board's prior token).
    */
   revokeAllConnected(): void
+  /**
+   * Orchestration Phase 1 (precondition X): the currently-designated lead board id, or null.
+   * Runtime-only (the designation dies with the session — a deliberate consent posture).
+   */
+  getLeadBoardId(): string | null
+  /**
+   * 🔒 Consent-gated grant of the wire-facing LEAD role to ONE terminal board (single-active-lead,
+   * Q2 default). Validates the target is a live terminal board, then designates it; the actual
+   * lead-tier token is minted by the EXISTING spawn-time provisioning seam when that board's
+   * terminal (re)spawns — no silent mid-session mint. Refused (`already-active` + holder) while a
+   * DIFFERENT board holds the designation; `not-found` for an id that is not a live terminal.
+   */
+  grantLead(
+    boardId: string
+  ):
+    | { ok: true }
+    | { ok: false; reason: 'not-found' }
+    | { ok: false; reason: 'already-active'; holder: string }
+  /** Drop the lead designation and revoke its live token (if minted). Idempotent. */
+  revokeLead(): void
   close(): Promise<void>
 }
 
@@ -218,9 +239,16 @@ export async function startMcpServer(
     // token now dies THE MOMENT the lifecycle closes it (the human-gated close_board tool), not
     // only on a re-spawn rotation or a full consent-revoke.
     const connected = makeConnectedTokenTracker((token) => tokens.revoke(token))
+    // 🔒 Orchestration Phase 1 (precondition X): the single-active-lead designation + its token
+    // lifecycle (leadAuthority.ts). Built beside the connected tracker so board close kills a lead
+    // token exactly like a connected one (BUG-019 discipline).
+    const lead = makeLeadAuthority((token) => tokens.revoke(token))
     const orchestrator = buildOrchestrator(registry, {
       cap: opts.cap,
-      onBoardClosed: (boardId) => connected.revoke(boardId)
+      onBoardClosed: (boardId) => {
+        connected.revoke(boardId)
+        lead.onBoardClosed(boardId)
+      }
     })
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
@@ -251,7 +279,22 @@ export async function startMcpServer(
       recordBoardProject(boardId, getCurrentDir())
       return { token, tier: 'connected', port: server.port }
     }
-    __setTerminalTokenMinter(mintConnectedToken)
+    // 🔒 Phase 1: mint the LEAD-tier token for the designated lead board. Same discipline as
+    // mintConnectedToken (tracked for rotate/revoke, project recorded, NEVER logged); only ever
+    // reached through the minter routing below, which consults the designation.
+    const mintLeadToken = (boardId: string): TerminalToken => {
+      const token = mintBoardToken(tokens, { boardId, tier: 'lead' }).token
+      lead.track(boardId, token)
+      recordBoardProject(boardId, getCurrentDir())
+      return { token, tier: 'lead', port: server.port }
+    }
+    // The spawn-time provisioning seam stays UNCHANGED: the provisioner calls the one registered
+    // minter with the spawning board's id; the ROUTING here decides the tier — the explicitly-
+    // granted lead board gets a lead token, every other board gets connected (exactly today's
+    // behavior). No silent lead minting: the designation only exists via the consent-gated grant.
+    __setTerminalTokenMinter((boardId) =>
+      boardId === lead.designated() ? mintLeadToken(boardId) : mintConnectedToken(boardId)
+    )
     // NOTE (2026-07-02): the T3.4 idle-reap sweep that ran here on an interval was REMOVED —
     // boards are deleted ONLY by the user or via the human-gated close_board tool.
     return {
@@ -278,11 +321,29 @@ export async function startMcpServer(
       focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
       tidyCanvas: (input) => orchestrator.tidyCanvas(input),
       boardCards: (boardId) => orchestrator.boardCards(boardId),
-      revokeAllConnected: () => connected.revokeAll(),
+      // Consent revoke kills EVERY orchestration bearer this host minted for terminals — the
+      // connected tokens AND the lead token/designation (a lead bearer on disk must die with the
+      // consent it rode in on).
+      revokeAllConnected: () => {
+        connected.revokeAll()
+        lead.revoke()
+      },
+      getLeadBoardId: () => lead.designated(),
+      grantLead: (boardId) => {
+        // Validate against the LIVE board mirror: only an existing terminal board may hold the
+        // lead role (a planning/browser/stale id can never be designated).
+        const board = registry.listBoards().find((b) => b.id === boardId)
+        if (!board || board.type !== 'terminal') {
+          return { ok: false, reason: 'not-found' as const }
+        }
+        return lead.grant(boardId)
+      },
+      revokeLead: () => lead.revoke(),
       close: () => {
         // Clear the seam minter so a post-close `mintTerminalToken` fails loud (no bogus token).
         __setTerminalTokenMinter(null)
         connected.clear()
+        lead.clear()
         return server.close()
       }
     }

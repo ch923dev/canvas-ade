@@ -1650,4 +1650,98 @@ test.describe('@core @planning @mcp S5 file context on canvas://boards (over the
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  // ── Orchestration Phase 1 (precondition X): the lead tier, structurally (no live CLI). ──
+  // Proves over the REAL loopback server: (1) single-active-lead grant/refuse/revoke, (2) the
+  // spawn-time seam ROUTES the designated board to a lead-tier token and everyone else to
+  // connected, (3) a lead session's tools/list is the orchestration core with the app-resident
+  // surfaces absent, and (4) dispatch is own-board-bound — a spoofed source is rejected at the
+  // wire while the own-board route reaches the host's cable gate.
+  test('lead tier (Phase 1): grant routing, tool surface, own-board dispatch binding', async ({
+    electronApp,
+    page,
+    mcp
+  }) => {
+    // A real terminal board to hold the lead role (registry-validated by grantLead).
+    const leadBoard = await seed(page, 'terminal')
+    const otherBoard = await seed(page, 'terminal')
+
+    // Grant: refuses a second board while the first holds it (Q2 single-active-lead).
+    const grant = await mainCall<{ ok: boolean } | null>(electronApp, 'mcpLeadGrant', leadBoard)
+    expect(grant).toEqual({ ok: true })
+    const second = await mainCall<{ ok: boolean; reason?: string; holder?: string } | null>(
+      electronApp,
+      'mcpLeadGrant',
+      otherBoard
+    )
+    expect(second).toEqual({ ok: false, reason: 'already-active', holder: leadBoard })
+    // A non-terminal / unknown id can never be designated.
+    const bogus = await mainCall<{ ok: boolean; reason?: string } | null>(
+      electronApp,
+      'mcpLeadGrant',
+      'no-such-board'
+    )
+    expect(bogus).toEqual({ ok: false, reason: 'not-found' })
+
+    // The REAL spawn-time seam routes by designation: lead board → lead tier; others → connected.
+    const leadMint = await mainCall<{ token: string; port: number; tier: string } | null>(
+      electronApp,
+      'mcpLeadMintViaSeam',
+      leadBoard
+    )
+    expect(leadMint?.tier).toBe('lead')
+    const otherMint = await mainCall<{ token: string; port: number; tier: string } | null>(
+      electronApp,
+      'mcpLeadMintViaSeam',
+      otherBoard
+    )
+    expect(otherMint?.tier).toBe('connected')
+
+    const lead = await connect(`http://127.0.0.1:${mcp.info.port}/mcp`, leadMint!.token)
+    try {
+      // (3) Structural surface: the orchestration core registers; the app-resident-only tools don't.
+      for (const t of [
+        'spawn_board',
+        'spawn_group',
+        'relay_prompt',
+        'relay_prompts',
+        'assign_prompt',
+        'wait_for_all',
+        'wait_for_idle',
+        'write_result'
+      ]) {
+        expect(lead.tools, `lead tools/list should include ${t}`).toContain(t)
+      }
+      for (const t of ['orchestrator_ping', 'handoff_prompt', 'interrupt', 'close_board']) {
+        expect(lead.tools, `lead tools/list should omit ${t}`).not.toContain(t)
+      }
+
+      // (4) Own-board binding: a spoofed source is rejected AT THE WIRE (isError, no modal)...
+      const spoof = await lead.call('relay_prompt', {
+        sourceId: otherBoard,
+        targetId: leadBoard,
+        prompt: 'spoofed'
+      })
+      expect(rejected(spoof)).toBe(true)
+      expect(okText(spoof)).toBe('')
+      // ...while the own-board route passes the wire binding and reaches the HOST's cable gate —
+      // no lead→other orchestration cable exists, so the host rejects on the cable check (an
+      // isError mentioning the missing cable/authorization, NEVER the wire's own-board message).
+      const ownRoute = await lead.call('relay_prompt', {
+        sourceId: leadBoard,
+        targetId: otherBoard,
+        prompt: 'own-board route'
+      })
+      expect(rejected(ownRoute)).toBe(true)
+      const detail = ownRoute.ok ? resultText(ownRoute.result) : ''
+      expect(detail).not.toContain('may only relay from its own board')
+
+      // Revoke → the designation clears AND the minted lead token dies (401 on the next call).
+      expect(await mainCall<boolean>(electronApp, 'mcpLeadRevoke')).toBe(true)
+      const afterRevoke = await lead.call('ping')
+      expect(afterRevoke.ok).toBe(false)
+    } finally {
+      await lead.close().catch(() => {})
+    }
+  })
 })

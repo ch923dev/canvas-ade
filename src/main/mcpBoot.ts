@@ -38,6 +38,8 @@ import { listBoardMirror, listConnectors, listGroups, subscribeBoardStatus } fro
 import { sendMcpCommand } from './mcpCommand'
 import { appendAuditEntry } from './auditIpc'
 import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
+import { registerOrchestrationLeadHandlers } from './orchestrationLead'
+import { getCurrentDir } from './projectStore'
 
 export interface McpBootDeps {
   /** index.ts's trusted BrowserWindow getter (frame-guard target for the confirm/command IPC). */
@@ -117,6 +119,25 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     cap: () => readOrchestrationConfig(userData).spawnCap
   }
   // Memoized so concurrent triggers (ENABLE onChange · open-of-consented-project · e2e warm) share
-  // ONE boot; publish writes the resolved server into index.ts's `mcp` for the () => mcp getters.
-  return singleFlight(() => startMcpServer(registry, opts), publish)
+  // ONE boot; publish writes the resolved server into index.ts's `mcp` for the () => mcp getters
+  // (and into the local handle the lead IPC below reads).
+  let current: RunningMcp | null = null
+  const ensure = singleFlight(
+    () => startMcpServer(registry, opts),
+    (m) => {
+      current = m
+      publish(m)
+    }
+  )
+  // Lead-terminal grant/revoke/status (orchestration Phase 1, precondition X) — the consent-gated
+  // path that designates ONE terminal board as the wire-facing `lead`; the spawn-time provisioner
+  // then mints its token at the lead tier via the minter routing in mcp.ts. Registered HERE (not
+  // index.ts, which sits at the max-lines ratchet) because this module owns the ensureMcp latch +
+  // the live server handle the handlers need. Frame-guarded inside the module.
+  registerOrchestrationLeadHandlers(ipcMain, getWin, {
+    getCurrentDir,
+    ensureMcp: ensure,
+    getMcp: () => current
+  })
+  return ensure
 }

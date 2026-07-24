@@ -1027,6 +1027,8 @@ app.whenReady().then(async () => {
   })
 
   // The Sync modal's data plane (status + manual sync), frame-guarded inside the module.
+  // (The Phase 1 lead-terminal grant/revoke/status IPC registers inside createMcpBoot — it owns
+  // the ensureMcp latch + the live server handle the handlers need.)
   registerOrchestrationProvisionHandlers(ipcMain, () => mainWindow, getCurrentDir)
 
   // ── Recap map watcher (Task 10 Step 3): learned transcript paths → renderer ──────────
