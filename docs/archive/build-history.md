@@ -3547,3 +3547,24 @@ not PR content. Root cause: a stale peer auto-install resolution kept
 `sca-audit` clean at threshold (isolated fresh-worktree install); lockfile −1096 lines = the dead
 25.x subtree. Surfaced by (and equivalently patched in) #382, extracted to land first per Route-2
 decision. **Version:** 0.30.0 → **0.30.1** (patch). Squash `e85c5058`.
+
+## 2026-07-25 — PR #382: diagram Phase 5 Card 2 — extract @expanse-ade/diagram, consume published 0.1.0 (v0.31.0)
+
+The shared spec-diagram engine (DiagramSpec model + validator + caps, ELK layered layout,
+token-driven static React renderer, theming, collapse/focus) extracted to the standalone MIT package
+**`@expanse-ade/diagram` 0.1.0** — sibling repo github.com/ch923dev/expanse-diagram, published to
+npmjs via the mcp-style tag→OIDC trusted-publishing workflow (first publish manual by the user —
+first-time package has no trusted publisher — then the publisher was registered for future tags).
+tsup dual ESM+CJS; exports `.` (React renderer) / `./spec` (pure validator leaf, main-process-safe)
+/ `./styles.css`; peer deps react>=18 + elkjs>=0.9 only; 85 vitest tests; zero Electron surface.
+App swap: renderer imports → package root; lib/main/shared consumers → `/spec`; moved copies
+DELETED. Extraction seams wired app-side in `diagramPackageBridge.tsx` (side-effect import from
+main.tsx): `configureSpecElkWorker` (Vite `?worker` can't publish — app injects; no factory ⇒
+in-thread elk.bundled fallback = the unit-test path), `registerSpecIconRenderer` + `specHostIcons.ts`
+satisfies-pin narrow with a set-equality sync test, package styles.css = the planning.css
+§DiagramSpec motion block verbatim. Behavior byte-identical across Planning spec cards, the Phase-4
+focus editor, and the Data-Flow board. Verified: full matrix green on the published pin (Win 324P ·
+Linux Docker 322P/0F), post-rebase units 5987P, dev check title-stamped + three surfaces
+screenshot-verified. Landed after the #383 SCA unblock (Route 2); branch rebuilt on v0.30.1 main as
+one commit. Reviewer: FULL review ×2 (pre + post rebase), zero findings. **Version:** 0.30.1 →
+**0.31.0** (minor — subsystem extraction). Squash `4a9a2ea9`.
