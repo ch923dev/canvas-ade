@@ -62,6 +62,12 @@ export interface WorkerConfig {
    * registry lives in `lib/rolePacks.ts`); optional so pre-pack fixtures/configs stay valid.
    */
   rolePackId?: string | null
+  /**
+   * The role brief as shown (editable) in the dialog for a pack dispatch — the user may extend /
+   * trim the pack's default standing orders per dispatch, and the remembered value pre-fills the
+   * next one. `null`/absent = Custom dispatch (no brief).
+   */
+  roleBrief?: string | null
 }
 
 /** One orchestrator task. Phase C adds the requested `composition` + the spawned `group` (runtime). */
@@ -92,6 +98,12 @@ export interface CommandTask {
    * Custom dispatch (pre-pack semantics, no role gate beyond the global cap).
    */
   rolePackId?: string
+  /**
+   * The (possibly user-edited) role brief committed with a pack dispatch — prepended to the
+   * gated REPL write in place of the pack's default. Absent = use the pack default (pre-feature
+   * tasks); '' = brief explicitly cleared for this dispatch.
+   */
+  roleBrief?: string
   /** Phase D — the worker's settled result (status·summary·refs), snapshotted at settle. */
   result?: TaskResult
   /** Phase D — the raw `git diff HEAD` captured at settle (cached for the chip + view-diff; '' = none). */
@@ -179,7 +191,7 @@ interface CommandState {
    */
   setTaskConfig: (
     id: string,
-    config: { launchCommand: string; prompt: string; rolePackId?: string }
+    config: { launchCommand: string; prompt: string; rolePackId?: string; roleBrief?: string }
   ) => void
   /** Remember the dialog's config to pre-fill the next dispatch. */
   setLastWorkerConfig: (config: WorkerConfig) => void
@@ -247,8 +259,9 @@ export const useCommandStore = create<CommandState>((set) => ({
               ...t,
               launchCommand: config.launchCommand,
               prompt: config.prompt,
-              // A reconfigure back to Custom must CLEAR a previously-committed pack, not keep it.
-              rolePackId: config.rolePackId
+              // A reconfigure back to Custom must CLEAR a previously-committed pack + brief.
+              rolePackId: config.rolePackId,
+              roleBrief: config.roleBrief
             }
           : t
       )

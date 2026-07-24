@@ -197,11 +197,14 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       await sleep(WORKER_BOOT_SETTLE_MS)
       if (stale()) return
       const dispatchPrompt = api.dispatchPrompt
-      // Phase 0 role packs: the pack's role brief is prepended to the engineered prompt HERE (the
-      // gated REPL write), never the shell launch line — the launch stays a BARE command and the
-      // brief pays the same single human confirm as the task prompt it rides.
+      // Phase 0 role packs: the role brief (the dialog-committed, possibly user-edited text —
+      // pack default as fallback) is prepended to the engineered prompt HERE (the gated REPL
+      // write), never the shell launch line — the launch stays a BARE command and the brief pays
+      // the same single human confirm as the task prompt it rides.
       const pack = rolePackById(task.rolePackId)
-      const prompt = singleLinePrompt(packDispatchPrompt(pack, task.prompt ?? task.title))
+      const prompt = singleLinePrompt(
+        packDispatchPrompt(pack, task.prompt ?? task.title, task.roleBrief)
+      )
       await retryUntilReady(() => dispatchPrompt(terminalId, prompt))
       // Authoritative done/failed verdict — awaitSettled resolves on output silence after the worker
       // finishes (read-only; the board is already addressable here, but guard the window anyway).
@@ -269,7 +272,8 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       store.setTaskConfig(taskId, {
         launchCommand: result.launchCommand,
         prompt: result.prompt,
-        rolePackId: result.config.rolePackId ?? undefined
+        rolePackId: result.config.rolePackId ?? undefined,
+        roleBrief: result.config.roleBrief ?? undefined
       })
       store.setLastWorkerConfig(result.config)
       store.setConfiguring(null)

@@ -292,11 +292,13 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     const dialog = page.getByTestId('worker-config-dialog')
     await expect(dialog).toBeVisible()
 
-    // Explorer (read posture, cheap model) — the pack's data becomes the composed command.
+    // Explorer (read posture, cheap model) — the pack's data becomes the composed command, and
+    // the role brief is shown EDITABLE, seeded from the pack ("extend the prompt").
     await dialog.getByTestId('worker-role-explorer').click()
     await expect(dialog.getByTestId('worker-command')).toHaveValue(
       'claude --model haiku --effort low --permission-mode plan'
     )
+    await expect(dialog.getByTestId('worker-role-brief')).toHaveValue(/You are an Explorer:/)
     await expect(dialog.getByTestId('worker-role-write-warning')).toHaveCount(0)
 
     // Builder (write posture) — swapping the pack swaps the shape, and the Phase-0 write cap is

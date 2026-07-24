@@ -318,10 +318,33 @@ describe('useCommandDispatch', () => {
     // …and the role brief rides the gated REPL dispatch, collapsed to one line with the task.
     await waitFor(() => expect(api.dispatchPrompt).toHaveBeenCalled())
     const delivered = api.dispatchPrompt.mock.calls[0][1] as string
-    expect(delivered).toMatch(/^You are a CODE-REVIEWER worker\./)
+    expect(delivered).toMatch(/^You are a Code Reviewer:/)
     expect(delivered).toContain('Review the diff on feat/x.')
     expect(delivered).not.toMatch(/[\r\n]/)
     expect(useCommandStore.getState().tasks[0].rolePackId).toBe('code-reviewer')
+  })
+
+  it('a dialog-edited role brief overrides the pack default on the dispatched line', async () => {
+    const api = setupApi()
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('scout it', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, {
+      launchCommand: 'claude --model haiku --effort low --permission-mode plan',
+      prompt: 'Find the cap.',
+      config: {
+        presetId: 'claude',
+        values: {},
+        rawOverride: null,
+        rolePackId: 'explorer',
+        roleBrief: 'You are a scout. Cite path:line only.'
+      }
+    })
+    await waitFor(() => expect(api.dispatchPrompt).toHaveBeenCalled())
+    expect(api.dispatchPrompt.mock.calls[0][1]).toBe(
+      'You are a scout. Cite path:line only. Find the cap.'
+    )
   })
 
   it('write-role cap: a 2nd builder waits while the 1st runs; an explorer passes it', async () => {

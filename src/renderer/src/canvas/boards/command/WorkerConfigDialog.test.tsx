@@ -2,6 +2,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { WorkerConfigDialog } from './WorkerConfigDialog'
+import { rolePackById } from '../../../lib/rolePacks'
+
+const packBrief = (id: string): string => rolePackById(id)?.systemPrompt ?? ''
 
 // The dialog's Modal portals to document.body; unmount each render so the portal can't leak into the
 // next test (duplicate test-ids). RTL auto-cleanup is not wired in this project's vitest setup.
@@ -41,7 +44,8 @@ describe('WorkerConfigDialog', () => {
         presetId: 'claude',
         values: { 'skip-permissions': true },
         rawOverride: null,
-        rolePackId: null // Custom — the pre-pack default is unchanged
+        rolePackId: null, // Custom — the pre-pack default is unchanged
+        roleBrief: null
       }
     })
   })
@@ -81,6 +85,11 @@ describe('WorkerConfigDialog', () => {
     // Read role → no write-cap warning.
     expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
 
+    // The pack's brief is shown editable, seeded from pack data.
+    expect((screen.getByTestId('worker-role-brief') as HTMLTextAreaElement).value).toBe(
+      packBrief('explorer')
+    )
+
     fireEvent.click(screen.getByTestId('worker-dispatch'))
     expect(onDispatch).toHaveBeenCalledWith({
       launchCommand: 'claude --model haiku --effort low --permission-mode plan',
@@ -89,9 +98,66 @@ describe('WorkerConfigDialog', () => {
         presetId: 'claude',
         values: { model: 'haiku', effort: 'low', 'permission-mode': 'plan' },
         rawOverride: null,
-        rolePackId: 'explorer'
+        rolePackId: 'explorer',
+        roleBrief: packBrief('explorer')
       }
     })
+  })
+
+  it('the role brief is editable ("extend the prompt") and the EDITED text is committed', () => {
+    const onDispatch = vi.fn()
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={onDispatch}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-explorer'))
+    const extended = packBrief('explorer') + ' Also list every caller you find.'
+    fireEvent.change(screen.getByTestId('worker-role-brief'), { target: { value: extended } })
+    fireEvent.click(screen.getByTestId('worker-dispatch'))
+    expect(onDispatch.mock.calls[0][0].config.roleBrief).toBe(extended)
+    // Re-picking a pack RESEEDS the brief from pack data (a stale edit never leaks across roles).
+    cleanup()
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-builder'))
+    expect((screen.getByTestId('worker-role-brief') as HTMLTextAreaElement).value).toBe(
+      packBrief('builder')
+    )
+  })
+
+  it('a remembered EDITED brief pre-fills the next dispatch; Custom shows no brief field', () => {
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={{
+          presetId: 'claude',
+          values: { model: 'haiku', effort: 'low', 'permission-mode': 'plan' },
+          rawOverride: null,
+          rolePackId: 'explorer',
+          roleBrief: 'Custom standing orders.'
+        }}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    expect((screen.getByTestId('worker-role-brief') as HTMLTextAreaElement).value).toBe(
+      'Custom standing orders.'
+    )
+    fireEvent.click(screen.getByTestId('worker-role-custom'))
+    expect(screen.queryByTestId('worker-role-brief')).toBeNull()
   })
 
   it('swapping the pack swaps the launch shape — builder vs code-reviewer (data, not a fork)', () => {
@@ -156,6 +222,7 @@ describe('WorkerConfigDialog', () => {
     expect(screen.getByTestId('worker-role-custom').getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(screen.getByTestId('worker-dispatch'))
     expect(onDispatch.mock.calls[0][0].config.rolePackId).toBeNull()
+    expect(onDispatch.mock.calls[0][0].config.roleBrief).toBeNull() // no brief on a Custom dispatch
   })
 
   it('pre-fills the remembered pack from a prior config (initial.rolePackId)', () => {

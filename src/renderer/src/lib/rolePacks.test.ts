@@ -181,10 +181,25 @@ describe('packDispatchPrompt', () => {
     expect(packDispatchPrompt(undefined, 'as-is')).toBe('as-is')
   })
 
+  it('an edited brief override wins; an explicitly EMPTIED override means "no brief"', () => {
+    // "What the user SAW is what ships": the dialog commits the editable brief with the config.
+    const extended = pack('explorer').systemPrompt + ' Also list every caller you find.'
+    expect(packDispatchPrompt(pack('explorer'), 'Where is the cap?', extended)).toBe(
+      `${extended}\n\nWhere is the cap?`
+    )
+    expect(packDispatchPrompt(pack('explorer'), 'Where is the cap?', '   ')).toBe(
+      'Where is the cap?'
+    )
+    // Absent override (pre-feature task) falls back to the pack default.
+    expect(
+      packDispatchPrompt(pack('explorer'), 'q', undefined).startsWith(pack('explorer').systemPrompt)
+    ).toBe(true)
+  })
+
   it('collapses to one gated-write-safe line through singleLinePrompt', () => {
     const line = singleLinePrompt(packDispatchPrompt(pack('builder'), 'Add the toggle.'))
     expect(line).not.toMatch(/[\r\n]/)
-    expect(line).toContain('BUILDER worker')
+    expect(line).toContain('You are a Builder')
     expect(line).toContain('Add the toggle.')
   })
 })

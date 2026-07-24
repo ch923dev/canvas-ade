@@ -13,9 +13,11 @@
  * Orchestration Phase 0 adds the ROLE row: picking a pack (builder / code-reviewer / explorer /
  * planner) pre-fills the claude builder values from the pack's DATA (`packOptionValues` — model
  * tier, effort, permission posture) and commits `rolePackId` with the config so the dispatch
- * prepends the pack's role brief and the pump applies the write-role gate. "Custom" is the
- * pre-pack escape hatch (agent-agnostic, unchanged). Pack values stay user-editable — the pack is
- * the DEFAULT shape, the composed command remains the source of truth; switching the AGENT preset
+ * prepends the role brief and the pump applies the write-role gate. The brief itself is SHOWN in
+ * an editable textarea (seeded from the pack, reseeded on pack pick, remembered per session) —
+ * what the user sees is exactly what is prepended on dispatch. "Custom" is the pre-pack escape
+ * hatch (agent-agnostic, unchanged, no brief). Pack values stay user-editable — the pack is the
+ * DEFAULT shape, the composed command remains the source of truth; switching the AGENT preset
  * drops back to Custom (packs are claude-hosted in Phase 0, Q8).
  */
 import { useCallback, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
@@ -67,6 +69,13 @@ export function WorkerConfigDialog({
   const [values, setValues] = useState<OptionValues>(initial?.values ?? DEFAULT_WORKER_VALUES)
   const [rawOverride, setRawOverride] = useState<string | null>(initial?.rawOverride ?? null)
   const [rolePackId, setRolePackId] = useState<string | null>(initial?.rolePackId ?? null)
+  // The role brief SHOWN is the brief SENT: editable per dispatch ("extend the prompt"), seeded
+  // from the remembered config (else the pack default) and reseeded on every pack pick.
+  const [roleBrief, setRoleBrief] = useState<string>(
+    initial?.rolePackId
+      ? (initial?.roleBrief ?? rolePackById(initial.rolePackId)?.systemPrompt ?? '')
+      : ''
+  )
   const [prompt, setPrompt] = useState(engineeredPrompt)
 
   const preset = presetById(presetId) ?? AGENT_PRESETS[0]
@@ -89,6 +98,7 @@ export function WorkerConfigDialog({
   /** Role row: a pack pre-fills the claude builder values from its data; null = Custom (as-is). */
   const pickRole = useCallback((pack: RolePack | null): void => {
     setRolePackId(pack ? pack.id : null)
+    setRoleBrief(pack ? pack.systemPrompt : '')
     if (pack) {
       setPresetId(DEFAULT_PRESET)
       setValues(packOptionValues(pack))
@@ -105,9 +115,26 @@ export function WorkerConfigDialog({
     onDispatch({
       launchCommand: command.trim(),
       prompt: prompt.trim() || engineeredPrompt,
-      config: { presetId, values, rawOverride, rolePackId }
+      config: {
+        presetId,
+        values,
+        rawOverride,
+        rolePackId,
+        // Committed only for a pack dispatch; an emptied textarea is an explicit "no brief".
+        roleBrief: rolePackId !== null ? roleBrief : null
+      }
     })
-  }, [command, prompt, engineeredPrompt, presetId, values, rawOverride, rolePackId, onDispatch])
+  }, [
+    command,
+    prompt,
+    engineeredPrompt,
+    presetId,
+    values,
+    rawOverride,
+    rolePackId,
+    roleBrief,
+    onDispatch
+  ])
 
   return (
     <Modal
@@ -153,7 +180,7 @@ export function WorkerConfigDialog({
         {rolePack && (
           <div style={roleNote}>
             {roleWritePosture ? 'write posture' : 'read-only posture'} · model{' '}
-            {packOptionValues(rolePack).model} · role brief is prepended to the prompt on dispatch
+            {packOptionValues(rolePack).model}
           </div>
         )}
         {roleWritePosture && (
@@ -163,6 +190,20 @@ export function WorkerConfigDialog({
           </div>
         )}
       </div>
+
+      {rolePack && (
+        <label style={fieldWrap}>
+          <span style={fieldLabel}>Role brief (prepended to the task on dispatch — editable)</span>
+          <textarea
+            style={promptArea}
+            spellCheck={false}
+            rows={4}
+            value={roleBrief}
+            onChange={(e) => setRoleBrief(e.target.value)}
+            data-testid="worker-role-brief"
+          />
+        </label>
+      )}
 
       <div>
         <div style={sectionLabel}>Agent</div>

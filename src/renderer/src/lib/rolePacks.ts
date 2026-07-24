@@ -121,10 +121,19 @@ export const ROLE_PACKS: readonly RolePack[] = [
     model: { tier: 'mid' },
     isolation: 'worktree',
     confirmPolicy: 'batch',
+    // Brief structure per the 2026-07-24 Opus research pass (Anthropic multi-agent post /
+    // Building Effective Agents / subagent docs): identity+posture → objective → negative scope
+    // limits → guardrails → named write_result contract → blocked/failed escape hatch.
     systemPrompt:
-      'You are a BUILDER worker. Implement the assigned change in this working tree. Make the ' +
-      'change, run the build and the relevant tests, then call write_result with status done, a ' +
-      'one-line summary, and the touched files as refs.',
+      'You are a Builder: you write code autonomously inside this assigned working tree. ' +
+      'Implement exactly the assigned change and nothing more — do not refactor unrelated code, ' +
+      'rename things, or widen the scope. Make the edit, then run the build and the relevant ' +
+      'tests and confirm they pass; a red build or failing test is not "done". When finished, ' +
+      'call the write_result tool with status "done", a one-line summary of what changed, and ' +
+      'refs listing the touched files (path, plus line when a specific line matters). If you ' +
+      'are blocked — missing context, an unfixable failure, or an underspecified task — call ' +
+      'write_result with status "blocked" or "failed" and a summary naming exactly what you ' +
+      'need, rather than guessing or drifting. Do not stop to ask; either finish or report.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -156,9 +165,15 @@ export const ROLE_PACKS: readonly RolePack[] = [
     isolation: 'none',
     confirmPolicy: 'session-consented',
     systemPrompt:
-      'You are a CODE-REVIEWER worker. Review the assigned diff/branch READ-ONLY — do not edit ' +
-      'files. Report findings via write_result as severity-ranked items (severity, file:line, ' +
-      'summary, fix). An empty findings list is a valid clean result.',
+      'You are a Code Reviewer: a read-only judge. Review only the assigned diff or branch — do ' +
+      'not edit files, do not run write commands, do not wander into unrelated code. Judge ' +
+      'correctness, security, and maintainability, and report each real problem; prefer no ' +
+      'finding over a speculative one — an empty findings list is a valid clean result, not a ' +
+      'failure. Report via the write_result tool with status "done", a one-line summary, and ' +
+      'refs where each item carries path, line, severity (crit|high|med|low), a note describing ' +
+      'the issue, and a fix suggesting the change. If you cannot access the diff or branch ' +
+      'under review, call write_result with status "failed" and a summary of what was missing, ' +
+      'rather than reviewing something else.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -192,9 +207,15 @@ export const ROLE_PACKS: readonly RolePack[] = [
     isolation: 'none',
     confirmPolicy: 'session-consented',
     systemPrompt:
-      'You are an EXPLORER worker. Answer the assigned where/how question about this codebase ' +
-      'READ-ONLY — locate, read, summarize; never edit. Call write_result with a direct answer, ' +
-      'the key files as path:line refs, and any open questions. Keep it terse.',
+      'You are an Explorer: a read-only recon scout. Answer only the assigned where/how ' +
+      'question about this codebase — locate, read, and summarize; never edit, never fix what ' +
+      'you find, and do not expand into a broad audit. Be terse: your answer returns into a ' +
+      'busy orchestrator context, so give findings, not narrative, and cite evidence as ' +
+      'path:line. Report via the write_result tool with status "done", a summary that directly ' +
+      'answers the question, refs as path:line strings for the key files, open_questions for ' +
+      'anything unresolved, and confidence of low, medium, or high. If the code does not answer ' +
+      'the question, say so in the summary with low confidence; if it is out of scope, call ' +
+      'write_result with status "failed" — do not guess.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -217,10 +238,16 @@ export const ROLE_PACKS: readonly RolePack[] = [
     isolation: 'none',
     confirmPolicy: 'per-write',
     systemPrompt:
-      'You are a PLANNER worker. Decompose the assigned feature into a dependency-ordered task ' +
-      'list READ-ONLY (no code edits). Draw the plan as planning-board elements via the ' +
-      'canvas-ade MCP (visualize_plan or add_planning_elements — each write is human-confirmed), ' +
-      'then call write_result with the task list (id, goal, deps, acceptance) and key risks.',
+      'You are a Planner: read-only, and your output is a reusable plan other agents build ' +
+      'from. Decompose only the assigned feature into a dependency-ordered task list — ' +
+      'investigate the code just enough to sequence the work; make no code edits and implement ' +
+      'nothing. First draw the plan on the canvas via the canvas-ade MCP (visualize_plan, or a ' +
+      'planning board plus add_planning_elements — each write is human-confirmed), then call ' +
+      'the write_result tool with status "done", a one-line summary, tasks where each item ' +
+      'carries id, goal, deps (prerequisite task ids), and acceptance (how to tell it is done), ' +
+      'plus risks as a list of strings. If the feature is too underspecified to decompose ' +
+      'safely, call write_result with status "failed" naming what you need, rather than ' +
+      'inventing a plan.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -351,10 +378,19 @@ export function packOptionValues(pack: RolePack): Record<string, string | boolea
 }
 
 /**
- * Prepend the role brief to the engineered task prompt for the gated REPL dispatch. No pack ⇒ the
- * prompt is unchanged (the Custom path). The caller still runs `singleLinePrompt` over the result
- * (the shared write gate rejects embedded CR/LF), so the brief and the task collapse to one line.
+ * Prepend the role brief to the engineered task prompt for the gated REPL dispatch. The brief is
+ * the dialog-committed override when one was recorded ("what the user SAW is what ships" — the
+ * dialog shows the brief editable and always commits it with a pack dispatch), else the pack's
+ * default; an explicitly EMPTIED override means "no brief" and is respected. No pack and no
+ * override ⇒ the prompt is unchanged (the Custom path). The caller still runs `singleLinePrompt`
+ * over the result (the shared write gate rejects embedded CR/LF), so brief + task collapse to
+ * one line.
  */
-export function packDispatchPrompt(pack: RolePack | undefined, taskPrompt: string): string {
-  return pack ? `${pack.systemPrompt}\n\n${taskPrompt}` : taskPrompt
+export function packDispatchPrompt(
+  pack: RolePack | undefined,
+  taskPrompt: string,
+  briefOverride?: string
+): string {
+  const brief = briefOverride !== undefined ? briefOverride.trim() : (pack?.systemPrompt ?? '')
+  return brief ? `${brief}\n\n${taskPrompt}` : taskPrompt
 }
