@@ -43,6 +43,11 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     expect(dataFill).toBe('rgb(26, 26, 29)')
     // focus-on-node default dims part of the surface (some node is not bright)
     expect(await node.locator('.pl-spec-node.pl-spec-dim').count()).toBeGreaterThan(0)
+    // clicking empty canvas CLEARS focus past the default (the Phase-5 unfocus fix): everything
+    // brightens and the legend flips to "full surface"
+    await node.locator('.df-specstage').click({ position: { x: 4, y: 4 } })
+    await expect.poll(() => node.locator('.pl-spec-node.pl-spec-dim').count()).toBe(0)
+    await expect(node.locator('.df-legend-meta')).toContainText('full surface')
     // visual dev-check artifact
     await node.screenshot({ path: 'test-results/jd4-dataflow-board.png' })
 

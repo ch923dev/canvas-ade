@@ -164,7 +164,8 @@ export function DataFlowBoard({
     )
     return pick?.key
   }, [groups, model])
-  const focusId = view?.focusId ?? defaultFocus
+  // Tri-state: undefined = unset → the default focus applies; null = user-cleared → full surface.
+  const focusId = view?.focusId === null ? undefined : (view?.focusId ?? defaultFocus)
 
   const filled = groups.filter((g) => {
     const st = schemas[g.key]
@@ -299,7 +300,8 @@ export function DataFlowBoard({
               graph={graph}
               diff={diff}
               focusId={focusId}
-              onFocus={(id) => setFocus(board.id, id === focusId ? undefined : id)}
+              onFocus={(id) => setFocus(board.id, id === focusId ? null : id)}
+              onClearFocus={() => setFocus(board.id, null)}
             />
           ) : (
             <SequenceView groups={groups} lineage={lineage} />

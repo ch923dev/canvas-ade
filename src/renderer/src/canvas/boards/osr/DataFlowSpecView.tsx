@@ -24,7 +24,8 @@ export function DataFlowSpecView({
   graph,
   diff,
   focusId,
-  onFocus
+  onFocus,
+  onClearFocus
 }: {
   graph: DfGraph
   /** Regenerate diff — added/changed bake into node statuses (active ● / warn !). */
@@ -32,6 +33,8 @@ export function DataFlowSpecView({
   /** Focused Df node id (the board's focus-subgraph state); neighbours stay lit, the rest dim. */
   focusId: string | undefined
   onFocus: (id: string) => void
+  /** Empty-canvas / group click → full surface (the DiagramCard M3 clear contract). */
+  onClearFocus: () => void
 }): ReactElement {
   const { spec, toSlug, fromSlug } = useMemo(() => dfGraphToSpec(graph, diff), [graph, diff])
   const { layout, error } = useSpecLayout(spec)
@@ -56,7 +59,9 @@ export function DataFlowSpecView({
     if (hit?.kind === 'node') {
       const dfId = fromSlug.get(hit.id)
       if (dfId !== undefined) onFocus(dfId)
+      return
     }
+    onClearFocus() // empty canvas (or a group body) → full surface
   }
 
   if (error) {

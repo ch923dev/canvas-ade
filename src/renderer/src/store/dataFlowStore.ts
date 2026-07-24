@@ -16,8 +16,11 @@ export type DfTab = 'graph' | 'sequence'
 
 export interface DfBoardView {
   tab: DfTab
-  /** Focused node id (focus-on-node). Absent ⇒ the board picks a sensible default (busiest endpoint). */
-  focusId?: string
+  /** Focused node id (focus-on-node). ABSENT (undefined) ⇒ the board picks a sensible default
+   *  (busiest endpoint); explicit NULL ⇒ the user cleared focus (full surface, nothing dims) —
+   *  the tri-state that makes unfocus reachable past the default (Phase-5 fix; matches the
+   *  DiagramCard M3 canvas-click-clears contract). */
+  focusId?: string | null
   /** Graph snapshot at the last "Regenerate" — the diff baseline. Absent ⇒ no diff shown yet. */
   baseline?: DfGraph
   /** The MAIN body-side lineage edge list from the last opt-in pass (value-less, request-keyed). */
@@ -33,7 +36,7 @@ const EMPTY: DfBoardView = { tab: 'graph' }
 interface DataFlowState {
   byBoard: Record<string, DfBoardView>
   setTab: (id: string, tab: DfTab) => void
-  setFocus: (id: string, focusId: string | undefined) => void
+  setFocus: (id: string, focusId: string | null | undefined) => void
   setBaseline: (id: string, baseline: DfGraph) => void
   setBodyLineage: (id: string, edges: RequestLineageEdge[]) => void
   setApiOnly: (id: string, on: boolean) => void
