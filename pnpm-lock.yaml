@@ -7,7 +7,7 @@ settings:
 overrides:
   tar: '>=7.5.19'
   esbuild: '>=0.28.1'
-  postcss: ^8.5.18
+  postcss: '>=8.5.18'
   form-data: '>=4.0.6'
   hono: '>=4.12.25'
   undici@>=7.23.0 <7.28.0: '>=7.28.0 <8'
