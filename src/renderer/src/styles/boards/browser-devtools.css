@@ -1761,76 +1761,12 @@
   background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
   background-size: 20px 20px;
 }
-.df-canvas {
-  position: relative;
-}
-.df-edges {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-}
-.df-edges path {
-  stroke-width: 1.2px;
-}
-.df-e-call path,
-.df-e-ret path {
-  stroke: var(--text-3);
-}
-.df-e-rel path {
-  stroke: var(--connector);
-  stroke-width: 1.3px;
-}
-.df-e-lin path {
-  stroke: var(--accent);
-  stroke-width: 1.4px;
-  stroke-dasharray: 4 3;
-}
-.df-edges .df-dim {
-  opacity: 0.4;
-}
-.df-elabel {
-  fill: var(--accent);
-  font-family: var(--mono);
-  font-size: 9px;
-}
-
-/* graph node card */
-.df-gn {
-  position: absolute;
-  z-index: 2;
-  border: 1px solid var(--border);
-  border-radius: var(--r-inner);
-  background: var(--surface-raised);
-  overflow: hidden;
-  cursor: pointer;
-}
-.df-gn.df-gn-entity,
-.df-gn.df-gn-shape {
-  background: var(--surface);
-}
-.df-gn.df-focused {
-  box-shadow: 0 0 0 1.5px var(--accent);
-}
-.df-gn.df-dim {
-  opacity: 0.52;
-}
-.df-gn.df-added {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
-}
-.df-gn.df-changed {
-  border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
-}
-.df-gh {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  font-family: var(--mono);
-  font-size: 10px;
+/* The graph tab renders through the shared spec renderer (Phase 5 — DataFlowSpecView →
+   DiagramSpecView); its node/edge chrome lives in specTheme.ts + planning.css. Only the
+   sequence tab's method chip below is still board-local. */
+.df-specstage {
+  /* room for the renderer's "laying out…" state before the first ELK result sizes the stage */
+  min-height: 120px;
 }
 .df-gm {
   font-size: 9px;
@@ -1840,64 +1776,6 @@
   border-radius: 3px;
   color: var(--text-2);
   background: var(--surface-overlay);
-}
-.df-gn-entity .df-gm,
-.df-gn-shape .df-gm {
-  color: var(--text-3);
-}
-.df-gep {
-  color: var(--text);
-}
-.df-gmeta {
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 9px;
-}
-.df-chip {
-  margin-left: auto;
-  font-size: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 1px 5px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-overlay);
-}
-.df-chip-add {
-  color: var(--ok);
-}
-.df-chip-chg {
-  color: var(--warn);
-}
-.df-gb {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 5px 8px;
-}
-.df-gf {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 9px;
-  white-space: nowrap;
-}
-.df-gk {
-  color: var(--text-2);
-}
-.df-gty {
-  margin-left: auto;
-  color: var(--text-3);
-}
-.df-gty.df-id {
-  color: var(--accent);
-  opacity: 0.85;
-}
-.df-gmore {
-  font-family: var(--mono);
-  font-size: 9px;
-  color: var(--text-3);
 }
 
 /* sequence layout */

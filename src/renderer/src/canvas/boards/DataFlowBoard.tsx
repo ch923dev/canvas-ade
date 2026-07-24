@@ -34,12 +34,12 @@ import {
   mergeLineage,
   type RequestLineageEdge
 } from '../../lib/lineage'
-import { buildGraph, focusSubgraph, diffGraphs } from '../../lib/dataFlowGraph'
+import { buildGraph, diffGraphs } from '../../lib/dataFlowGraph'
 import { filterNetRecords, urlDomain } from '../../lib/netFilter'
-import { layoutGraph } from '../../lib/graphLayout'
 import { toErMermaid, erDiagramSize } from '../../lib/erMermaid'
 import { useSharedOsrNet } from './osr/useSharedOsrNet'
-import { GraphCanvas, SequenceView } from './osr/DataFlowGraphView'
+import { DataFlowSpecView } from './osr/DataFlowSpecView'
+import { SequenceView } from './osr/DataFlowSequenceView'
 import { DataFlowInspector } from './dataflow/DataFlowInspector'
 import { useInspectorSlot } from '../inspector/inspectorSlotStore'
 
@@ -150,7 +150,6 @@ export function DataFlowBoard({
     return mergeLineage(body, url)
   }, [records, bodyLineage])
   const graph = useMemo(() => buildGraph(groups, model, lineage), [groups, model, lineage])
-  const layout = useMemo(() => layoutGraph(graph), [graph])
   const diff = useMemo(() => diffGraphs(baseline, graph), [baseline, graph])
 
   const tab = view?.tab ?? 'graph'
@@ -166,7 +165,6 @@ export function DataFlowBoard({
     return pick?.key
   }, [groups, model])
   const focusId = view?.focusId ?? defaultFocus
-  const bright = useMemo(() => focusSubgraph(graph, focusId), [graph, focusId])
 
   const filled = groups.filter((g) => {
     const st = schemas[g.key]
@@ -297,10 +295,8 @@ export function DataFlowBoard({
               </div>
             </div>
           ) : tab === 'graph' ? (
-            <GraphCanvas
-              layout={layout}
-              edges={graph.edges}
-              bright={bright}
+            <DataFlowSpecView
+              graph={graph}
               diff={diff}
               focusId={focusId}
               onFocus={(id) => setFocus(board.id, id === focusId ? undefined : id)}
@@ -311,9 +307,10 @@ export function DataFlowBoard({
         </div>
 
         <div className="df-legend">
-          <span className="df-lg df-lg-call">— call</span>
-          <span className="df-lg df-lg-ret">— returns</span>
-          <span className="df-lg df-lg-lin">┄ id-lineage</span>
+          <span className="df-lg df-lg-call">→ call</span>
+          <span className="df-lg df-lg-ret">┈→ returns</span>
+          <span className="df-lg df-lg-rel">╌→ relation</span>
+          <span className="df-lg df-lg-lin">╌→ id-lineage</span>
           <span className="df-spacer" />
           <span className="df-legend-meta">
             {focusId ? 'focus subgraph' : 'full surface'} · {groups.length} routes ·{' '}

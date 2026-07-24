@@ -8,6 +8,8 @@ import {
   SPEC_LABEL_MAX,
   SPEC_DETAIL_MAX,
   SPEC_EDGE_LABEL_MAX,
+  SPEC_MAX_ROWS,
+  SPEC_ROW_TEXT_MAX,
   type DiagramSpec,
   type SpecNode,
   type SpecEdge
@@ -229,6 +231,54 @@ describe('assertDiagramSpec — caps', () => {
 
   it('rejects an empty node label (labels are required, unlike optional detail)', () => {
     expect(() => check(base({ nodes: [{ id: 'a', label: '' }], edges: [] }))).toThrow(/node label/)
+  })
+
+  it('accepts valid member rows and enforces the row caps (Phase 5)', () => {
+    const rows = [{ left: 'id', right: 'uuid', accent: true }, { left: '+2 more' }]
+    expect(() => check(base({ nodes: [{ id: 'a', label: 'A', rows }], edges: [] }))).not.toThrow()
+    expect(() =>
+      check(
+        base({
+          nodes: [
+            {
+              id: 'a',
+              label: 'A',
+              rows: Array.from({ length: SPEC_MAX_ROWS + 1 }, () => ({ left: 'x' }))
+            }
+          ],
+          edges: []
+        })
+      )
+    ).toThrow(/row cap/)
+    expect(() =>
+      check(
+        base({
+          nodes: [{ id: 'a', label: 'A', rows: [{ left: 'x'.repeat(SPEC_ROW_TEXT_MAX + 1) }] }],
+          edges: []
+        })
+      )
+    ).toThrow(/row left/)
+    expect(() =>
+      check(
+        base({
+          nodes: [
+            { id: 'a', label: 'A', rows: [{ left: 'k', right: 'x'.repeat(SPEC_ROW_TEXT_MAX + 1) }] }
+          ],
+          edges: []
+        })
+      )
+    ).toThrow(/row right/)
+    expect(() =>
+      check(base({ nodes: [{ id: 'a', label: 'A', rows: [{ left: '' }] }], edges: [] }))
+    ).toThrow(/row left/)
+    expect(() =>
+      check(
+        base({
+          nodes: [{ id: 'a', label: 'A', rows: [{ left: 'k', accent: 1 as never }] }],
+          edges: []
+        })
+      )
+    ).toThrow(/row accent/)
   })
 })
 

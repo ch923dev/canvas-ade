@@ -24,13 +24,25 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
 
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
-    // the graph backbone: at least one endpoint card + one inferred entity card
-    await expect(node.locator('.df-gn-endpoint').first()).toBeVisible({ timeout: 5000 })
-    await expect(node.locator('.df-gn-entity').first()).toBeVisible()
-    // the dashed id-lineage edge (the JD-4 flagship)
-    await expect(node.locator('.df-e-lin').first()).toBeAttached()
+    // the graph backbone renders through the SHARED spec renderer (Phase 5): at least one
+    // endpoint (service) node + one inferred entity (data) node
+    await expect(node.locator('.pl-spec-node[data-kind="service"]').first()).toBeVisible({
+      timeout: 5000
+    })
+    await expect(node.locator('.pl-spec-node[data-kind="data"]').first()).toBeVisible()
+    // the id-lineage edge (the JD-4 flagship) — dependency-dash + active (accent) status
+    const lineage = node.locator('g.pl-spec-edge[data-kind="dependency"][data-status="active"]')
+    await expect(lineage.first()).toBeAttached()
+    // two-engine token pin (REVIEW risk 7): the lineage stroke must derive from --accent and a
+    // neutral data node's fill from --surface-raised — Data-Flow-via-spec respects the tokens.
+    expect(await lineage.first().locator('path').getAttribute('stroke')).toMatch(/79,\s*140,\s*255/)
+    const dataFill = await node
+      .locator('.pl-spec-node[data-kind="data"][data-status="neutral"]')
+      .first()
+      .evaluate((el) => (globalThis as any).getComputedStyle(el).backgroundColor as string)
+    expect(dataFill).toBe('rgb(26, 26, 29)')
     // focus-on-node default dims part of the surface (some node is not bright)
-    expect(await node.locator('.df-gn.df-dim').count()).toBeGreaterThan(0)
+    expect(await node.locator('.pl-spec-node.pl-spec-dim').count()).toBeGreaterThan(0)
     // visual dev-check artifact
     await node.screenshot({ path: 'test-results/jd4-dataflow-board.png' })
 
@@ -86,9 +98,11 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
-    await expect(node.locator('.df-gn-endpoint').first()).toBeVisible({ timeout: 5000 })
-    expect(await node.locator('.df-e-rel').count()).toBe(0)
-    expect(await node.locator('.df-e-lin').count()).toBe(0)
+    await expect(node.locator('.pl-spec-node[data-kind="service"]').first()).toBeVisible({
+      timeout: 5000
+    })
+    // rel AND lineage both map to dependency-kind edges — a flat API draws none of either
+    expect(await node.locator('g.pl-spec-edge[data-kind="dependency"]').count()).toBe(0)
   })
 
   test('noise filters are on by default and hide non-API records (toggleable)', async ({
@@ -105,7 +119,9 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     )
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
-    await expect(node.locator('.df-gn-endpoint').first()).toBeVisible({ timeout: 5000 })
+    await expect(node.locator('.pl-spec-node[data-kind="service"]').first()).toBeVisible({
+      timeout: 5000
+    })
     // P5: the "hidden N" roll-up lives in the Inspector's Filters section — select to reveal.
     // Default API-only filter hides the non-API `document` record → the Hidden meta is shown.
     await selectForInspector(page, df)
