@@ -41,11 +41,20 @@ import {
 import {
   SPEC_DETAIL_MAX,
   SPEC_LABEL_MAX,
+  SpecNodeBody,
+  specEdgeStyle,
+  specKindSilhouette,
+  specNodeBox,
+  specNodeChrome,
+  specStatusStyle,
+  specThemePreset,
   type DiagramSpec,
+  type SpecLayoutResult,
   type SpecNode,
   type SpecNodeKind,
-  type SpecStatus
-} from '../../../lib/diagramSpec'
+  type SpecStatus,
+  type SpecThemePreset
+} from '@expanse-ade/diagram'
 import {
   addEdge as specAddEdge,
   addNode as specAddNode,
@@ -58,16 +67,6 @@ import {
   uniqueSpecId
 } from '../../../lib/specEditorOps'
 import { DiagramPalette } from './DiagramPalette'
-import { specNodeBox, type SpecLayoutResult } from './specLayout'
-import {
-  specEdgeStyle,
-  specKindSilhouette,
-  specNodeChrome,
-  specStatusStyle,
-  specThemePreset,
-  type SpecThemePreset
-} from './specTheme'
-import { SpecNodeBody } from './specNodeVisual'
 import { DiagramNodeComment } from './DiagramNodeComment'
 
 /** Context so the custom RF node can read the theme/direction and drive inline editing WITHOUT the

@@ -12,9 +12,7 @@
 import { useMemo, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react'
 import type { DfGraph, GraphDiff } from '../../../lib/dataFlowGraph'
 import { dfGraphToSpec } from '../../../lib/dfSpecAdapter'
-import { DiagramSpecView } from '../planning/DiagramSpecView'
-import { specHitTest } from '../planning/specLayout'
-import { useSpecLayout } from '../planning/useSpecLayout'
+import { DiagramSpecView, specHitTest, useSpecLayout } from '@expanse-ade/diagram'
 import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import { useReducedMotion } from '../planning/useReducedMotion'
 

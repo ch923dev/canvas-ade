@@ -5,7 +5,7 @@
  * (diagramCommentRelay). It is an ACTION — nothing is written to the diagram spec.
  */
 import { useMemo, useState, type ReactElement } from 'react'
-import type { SpecNode } from '../../../lib/diagramSpec'
+import type { SpecNode } from '@expanse-ade/diagram'
 import { useCanvasStore } from '../../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
 import { composeNodeComment, sendNodeComment } from './diagramCommentRelay'

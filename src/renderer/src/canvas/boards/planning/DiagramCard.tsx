@@ -35,18 +35,17 @@ import {
   diagramTypeLabel
 } from './diagramTheme'
 import { DiagramRevScrubber } from './DiagramRevScrubber'
-import { DiagramSpecView } from './DiagramSpecView'
+import { DiagramSpecView, applyCollapse, specChipGroupId } from '@expanse-ade/diagram'
+import { specEffectiveCollapsed, specHitTest, useSpecLayout } from '@expanse-ade/diagram'
+import type { SpecHit, SpecLayoutResult } from '@expanse-ade/diagram'
 import { DiagramEditor } from './DiagramEditor'
 import { DiagramEditToggle } from './DiagramEditToggle'
 import { DiagramZoomControls } from './DiagramZoomControls'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 import { useDiagramConvert } from './useDiagramConvert'
-import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
-import { specHitTest, type SpecHit, type SpecLayoutResult } from './specLayout'
 import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import { useReducedMotion } from './useReducedMotion'
-import { useSpecLayout } from './useSpecLayout'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450

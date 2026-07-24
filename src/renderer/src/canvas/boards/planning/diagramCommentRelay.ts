@@ -5,7 +5,7 @@
  * PTY write; this is trusted-user input only. The comment is an ACTION — it writes nothing to the
  * diagram spec (no persistence, no schema field).
  */
-import type { SpecNode } from '../../../lib/diagramSpec'
+import type { SpecNode } from '@expanse-ade/diagram'
 import { getTerminalInput } from '../terminal/terminalInputRegistry'
 import { useTerminalRuntimeStore } from '../../../store/terminalRuntimeStore'
 

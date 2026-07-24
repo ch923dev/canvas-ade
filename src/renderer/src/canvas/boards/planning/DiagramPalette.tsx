@@ -7,13 +7,16 @@
  */
 import { useState, type ReactElement } from 'react'
 import {
+  SPEC_KIND_PATHS,
   SPEC_NODE_KINDS,
   SPEC_STATUSES,
+  SPEC_STATUS_GLYPHS,
+  specStatusStyle,
   type SpecNodeKind,
   type SpecStatus
-} from '../../../lib/diagramSpec'
+} from '@expanse-ade/diagram'
 import { Icon, type IconName } from '../../Icon'
-import { SPEC_ICON_NAMES, SPEC_KIND_PATHS, SPEC_STATUS_GLYPHS, specStatusStyle } from './specTheme'
+import { SPEC_HOST_ICONS } from './specHostIcons'
 
 const KIND_LABEL: Record<SpecNodeKind, string> = {
   step: 'step',
@@ -159,7 +162,7 @@ export function DiagramPalette({ onAddNode }: DiagramPaletteProps): ReactElement
         >
           ∅
         </button>
-        {SPEC_ICON_NAMES.map((name) => (
+        {SPEC_HOST_ICONS.map((name) => (
           <button
             key={name}
             type="button"

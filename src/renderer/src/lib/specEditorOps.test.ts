@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { DiagramSpec } from './diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import {
   addEdge,
   addNode,

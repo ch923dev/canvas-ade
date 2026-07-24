@@ -1,4 +1,4 @@
-import type { DiagramSpec, SpecEdge, SpecGroup, SpecNode } from './diagramSpec'
+import type { DiagramSpec, SpecEdge, SpecGroup, SpecNode } from '@expanse-ade/diagram/spec'
 
 /**
  * Semantic DiagramSpec differ + lint (diagram Phase 3 — the confirm-gate half of MCP contract v2).

@@ -1,6 +1,6 @@
 import type { ConfirmDiff, PlanningOp, PlanningOpTint } from '../shared/mcpTypes'
-import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
-import { assertDiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
+import { assertDiagramSpec } from '@expanse-ade/diagram/spec'
 import { diffSpecs, lintSpec } from '../renderer/src/lib/specDiff'
 
 /**
@@ -135,7 +135,7 @@ function isFiniteNum(v: unknown): v is number {
 
 /**
  * 🔒 The MAIN-authoritative gate for ONE structured DiagramSpec (Phase 3). Reuses the renderer's
- * canonical `assertDiagramSpec` (lib/diagramSpec.ts — an import-free LEAF designed for exactly
+ * canonical `assertDiagramSpec` (@expanse-ade/diagram/spec — an import-free LEAF designed for exactly
  * this cross-bundle reuse: shape, caps, closed enums, referential integrity), then adds the two
  * checks that are MCP-specific: a control-character REJECT over every string (unlike prose
  * fields, a spec is not sanitized-in-place — it arrives atomically from one author, so a control

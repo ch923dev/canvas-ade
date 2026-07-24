@@ -38,8 +38,12 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import { assertTerminalContent } from './terminalBoardSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
-import { assertDiagramSpec, assertDiagramRevisions, DIAGRAM_REVISION_CAP } from './diagramSpec'
-import type { DiagramSpec, DiagramRevision } from './diagramSpec'
+import {
+  assertDiagramSpec,
+  assertDiagramRevisions,
+  DIAGRAM_REVISION_CAP
+} from '@expanse-ade/diagram/spec'
+import type { DiagramSpec, DiagramRevision } from '@expanse-ade/diagram/spec'
 export type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef }
 export type { DiagramSpec, DiagramRevision }
 export { DIAGRAM_REVISION_CAP }

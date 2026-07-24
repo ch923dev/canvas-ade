@@ -5,7 +5,7 @@ import type {
   PlanningEditOp,
   PlanningEditPatch
 } from '../shared/mcpTypes'
-import type { DiagramSpec } from '../renderer/src/lib/diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import type { SpecOp } from '../renderer/src/lib/specOps'
 import { applySpecOps } from '../renderer/src/lib/specOps'
 import { diffSpecs, lintSpec } from '../renderer/src/lib/specDiff'

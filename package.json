@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.30.1",
+  "version": "0.31.0",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -54,6 +54,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@expanse-ade/diagram": "0.1.0",
     "@expanse-ade/mcp": "0.21.0",
     "@uiw/codemirror-extensions-langs": "^4.25.10",
     "codemirror-lang-mermaid": "^0.5.0",

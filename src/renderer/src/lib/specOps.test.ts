@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DiagramSpec } from './diagramSpec'
+import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import { applySpecOps } from './specOps'
 
 /**

@@ -218,7 +218,7 @@ describe('B1 status-palette gate — token↔fallback parity (drift tripwire)', 
   it('tokens.css values match the specTheme/diagramTheme hard fallbacks', async () => {
     // The theme bridges read tokens live and fall back to literals when headless; a token edit
     // that skips the fallbacks would let tests validate one palette while the app renders another.
-    const { specStatusStyle } = await import('../src/renderer/src/canvas/boards/planning/specTheme')
+    const { specStatusStyle } = await import('@expanse-ade/diagram')
     expect(cssToken('--accent')).toBe('#4f8cff')
     expect(cssToken('--ok')).toBe('#3ecf8e')
     expect(cssToken('--warn')).toBe('#e8b339')
