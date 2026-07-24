@@ -90,6 +90,23 @@ export function isWriteRolePack(pack: Pick<RolePack, 'permissionMode'>): boolean
 }
 
 /**
+ * Does an ACTUAL committed launch command still prove the read-only posture a read pack declared?
+ * The composed command stays user-editable after a pack pre-fills it (the pack is the DEFAULT, not
+ * a lock), so the write-role gate and the dialog's write warning must key off the command a worker
+ * will really launch with, not the pack's static declaration (PR #381 review). Read-only evidence =
+ * the LAST `--permission-mode` value is `plan` (the CLI honours the last flag) AND no
+ * `--dangerously-skip-permissions`. Anything else — flag removed, mode changed, bypass toggled,
+ * a different CLI hand-typed — fails CLOSED to write posture: over-gating only serializes a
+ * dispatch; under-gating lets two writers share one working tree.
+ */
+export function launchLooksReadOnly(launchCommand: string | undefined): boolean {
+  if (typeof launchCommand !== 'string') return false
+  if (/--dangerously-skip-permissions\b/.test(launchCommand)) return false
+  const modes = [...launchCommand.matchAll(/--permission-mode[= ]+(\w+)/g)]
+  return modes.length > 0 && modes[modes.length - 1][1] === 'plan'
+}
+
+/**
  * The Phase-0 catalog: builder + code-reviewer (the two proof instances from `03` item 2) plus
  * explorer (proves the cheap-read axis) and planner (its artifact is planning-board elements),
  * per the `08` §4 rollout. The pairs differ ONLY in data — same spawn path, same dispatch path,

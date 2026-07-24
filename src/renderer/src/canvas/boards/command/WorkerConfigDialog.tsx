@@ -26,6 +26,7 @@ import { CommandBuilder } from '../terminal/CommandBuilder'
 import { composeCommand, type OptionValues } from '../terminal/composeCommand'
 import {
   isWriteRolePack,
+  launchLooksReadOnly,
   packOptionValues,
   ROLE_PACKS,
   rolePackById,
@@ -72,6 +73,11 @@ export function WorkerConfigDialog({
   const composed = useMemo(() => composeCommand(preset, values), [preset, values])
   const command = rawOverride ?? composed
   const rolePack = rolePackById(rolePackId)
+  // Effective posture mirrors the pump's gate (`isWriteRoleTask`): the pack declares, but the
+  // ACTUAL editable command decides — a read pack whose command was edited past read-only proof
+  // (plan mode dropped / bypass toggled) is disclosed AND dispatched as a write role, fail-closed.
+  const roleWritePosture =
+    rolePack !== undefined && (isWriteRolePack(rolePack) || !launchLooksReadOnly(command.trim()))
 
   const pickPreset = useCallback((id: string): void => {
     setPresetId(id)
@@ -146,11 +152,11 @@ export function WorkerConfigDialog({
         </div>
         {rolePack && (
           <div style={roleNote}>
-            {isWriteRolePack(rolePack) ? 'write posture' : 'read-only posture'} · model{' '}
+            {roleWritePosture ? 'write posture' : 'read-only posture'} · model{' '}
             {packOptionValues(rolePack).model} · role brief is prepended to the prompt on dispatch
           </div>
         )}
-        {rolePack && isWriteRolePack(rolePack) && (
+        {roleWritePosture && (
           <div style={roleWarn} data-testid="worker-role-write-warning">
             Write role — no workspace isolation yet: concurrent write workers are capped at{' '}
             {WRITE_ROLE_CONCURRENCY_CAP} (queued write tasks wait; read roles still dispatch).

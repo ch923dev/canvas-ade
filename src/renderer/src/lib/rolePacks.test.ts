@@ -4,6 +4,7 @@ import {
   ROLE_PACKS,
   WRITE_ROLE_CONCURRENCY_CAP,
   isWriteRolePack,
+  launchLooksReadOnly,
   packDispatchPrompt,
   packOptionValues,
   rolePackById,
@@ -140,6 +141,35 @@ describe('packOptionValues → composeCommand (the launch is DATA through the ex
     expect(build).not.toBe(review)
     expect(build).toContain('--dangerously-skip-permissions') // write posture
     expect(review).toContain('--permission-mode plan') // read posture
+  })
+})
+
+describe('launchLooksReadOnly (the gate reads the ACTUAL command — PR #381 review)', () => {
+  it('accepts a command whose LAST --permission-mode is plan with no bypass flag', () => {
+    expect(launchLooksReadOnly('claude --model haiku --permission-mode plan')).toBe(true)
+    expect(launchLooksReadOnly('claude --permission-mode=plan')).toBe(true)
+    expect(launchLooksReadOnly('claude --permission-mode plan --add-dir ../docs')).toBe(true)
+    // Every read pack's own composed launch proves its posture.
+    for (const id of ['code-reviewer', 'explorer', 'planner']) {
+      expect(launchLooksReadOnly(composeCommand(claudePreset, packOptionValues(pack(id))))).toBe(
+        true
+      )
+    }
+  })
+
+  it('fails CLOSED on anything else — bypass, mode changed, last-flag override, no flag, no cmd', () => {
+    expect(
+      launchLooksReadOnly('claude --permission-mode plan --dangerously-skip-permissions')
+    ).toBe(false)
+    expect(launchLooksReadOnly('claude --permission-mode bypassPermissions')).toBe(false)
+    // The CLI honours the LAST flag — so must the check.
+    expect(
+      launchLooksReadOnly('claude --permission-mode plan --permission-mode bypassPermissions')
+    ).toBe(false)
+    expect(launchLooksReadOnly('claude --model haiku')).toBe(false)
+    expect(launchLooksReadOnly('codex --full-auto')).toBe(false)
+    expect(launchLooksReadOnly('')).toBe(false)
+    expect(launchLooksReadOnly(undefined)).toBe(false)
   })
 })
 

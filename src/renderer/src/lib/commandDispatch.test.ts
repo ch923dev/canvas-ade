@@ -90,21 +90,50 @@ describe('nextQueuedTask', () => {
 })
 
 describe('write-role gate (orchestration Phase 0)', () => {
-  // A configured task under a role pack. builder = the only write-posture catalog pack;
-  // code-reviewer/explorer/planner are read-posture ('plan').
+  // A configured task under a role pack, carrying the launch shape its pack composes (the gate
+  // reads the ACTUAL committed command, not just the pack — see the divergence cases below).
+  // builder = the only write-posture catalog pack; code-reviewer/explorer/planner are 'plan'.
+  const READ_LAUNCH = 'claude --model haiku --permission-mode plan'
   const packed = (id: string, status: TaskStatus, rolePackId: string): CommandTask => ({
     ...task(id, status),
-    launchCommand: 'claude',
+    launchCommand: rolePackId === 'builder' ? 'claude --model sonnet' : READ_LAUNCH,
     rolePackId
   })
 
-  it('isWriteRoleTask: true only for a write-posture pack; Custom/unknown packs are not gated', () => {
-    expect(isWriteRoleTask({ rolePackId: 'builder' })).toBe(true)
-    expect(isWriteRoleTask({ rolePackId: 'code-reviewer' })).toBe(false)
-    expect(isWriteRoleTask({ rolePackId: 'explorer' })).toBe(false)
-    expect(isWriteRoleTask({ rolePackId: 'planner' })).toBe(false)
-    expect(isWriteRoleTask({ rolePackId: undefined })).toBe(false) // Custom dispatch
-    expect(isWriteRoleTask({ rolePackId: 'no-such-pack' })).toBe(false) // degrade to Custom
+  it('isWriteRoleTask: true for a write-posture pack; Custom/unknown packs are not gated', () => {
+    expect(isWriteRoleTask({ rolePackId: 'builder', launchCommand: 'claude' })).toBe(true)
+    for (const id of ['code-reviewer', 'explorer', 'planner']) {
+      expect(isWriteRoleTask({ rolePackId: id, launchCommand: READ_LAUNCH })).toBe(false)
+    }
+    // Custom dispatches keep pre-pack semantics regardless of command shape.
+    expect(isWriteRoleTask({ rolePackId: undefined, launchCommand: 'claude' })).toBe(false)
+    expect(isWriteRoleTask({ rolePackId: 'no-such-pack', launchCommand: 'claude' })).toBe(false)
+  })
+
+  it('a read-pack task whose EDITED command no longer proves read posture fails CLOSED to write', () => {
+    // PR #381 review: the composed command stays editable after the pack pre-fills it, so the
+    // gate must key off the committed launchCommand, not the pack's static declaration.
+    expect(
+      isWriteRoleTask({
+        rolePackId: 'explorer',
+        launchCommand: 'claude --model haiku --permission-mode bypassPermissions'
+      })
+    ).toBe(true)
+    expect(
+      isWriteRoleTask({
+        rolePackId: 'explorer',
+        launchCommand: 'claude --model haiku --permission-mode plan --dangerously-skip-permissions'
+      })
+    ).toBe(true)
+    expect(isWriteRoleTask({ rolePackId: 'explorer', launchCommand: 'claude' })).toBe(true)
+    expect(isWriteRoleTask({ rolePackId: 'explorer', launchCommand: undefined })).toBe(true)
+    // A harmless edit that KEEPS the read-only proof keeps the exemption.
+    expect(
+      isWriteRoleTask({
+        rolePackId: 'explorer',
+        launchCommand: 'claude --model haiku --permission-mode plan --add-dir ../docs'
+      })
+    ).toBe(false)
   })
 
   it('writeRoleInFlight counts routing/executing write-role tasks only', () => {

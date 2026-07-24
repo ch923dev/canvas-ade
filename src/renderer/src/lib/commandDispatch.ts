@@ -5,7 +5,12 @@
  * verdict reading, and the raw-status→kanban transition. No React, no `window`, no store.
  */
 import type { CommandTask, Composition, TaskGroup, TaskStatus } from '../store/commandStore'
-import { isWriteRolePack, rolePackById, WRITE_ROLE_CONCURRENCY_CAP } from './rolePacks'
+import {
+  isWriteRolePack,
+  launchLooksReadOnly,
+  rolePackById,
+  WRITE_ROLE_CONCURRENCY_CAP
+} from './rolePacks'
 
 export type { Composition, TaskGroup } from '../store/commandStore'
 
@@ -119,13 +124,18 @@ export function canDispatch(
 }
 
 /**
- * A task dispatched under a WRITE-posture role pack (orchestration Phase 0). Custom dispatches
- * (no pack) keep their pre-pack semantics — only the global cap gates them — so this is false for
- * an absent or unknown pack id.
+ * A pack-dispatched task the write-role gate must count (orchestration Phase 0). Write posture is
+ * derived from BOTH sources: the pack's declaration, and — because the composed command stays
+ * user-editable after the pack pre-fills it — the task's actual committed `launchCommand`. A
+ * read-pack task keeps its gate exemption only while the command still proves read posture
+ * (`launchLooksReadOnly`); an edit that drops plan mode / toggles bypass fails CLOSED to
+ * write-gated (PR #381 review). Custom dispatches (no/unknown pack) keep their pre-pack
+ * semantics — only the global cap gates them.
  */
-export function isWriteRoleTask(task: Pick<CommandTask, 'rolePackId'>): boolean {
+export function isWriteRoleTask(task: Pick<CommandTask, 'rolePackId' | 'launchCommand'>): boolean {
   const pack = rolePackById(task.rolePackId)
-  return pack ? isWriteRolePack(pack) : false
+  if (!pack) return false
+  return isWriteRolePack(pack) || !launchLooksReadOnly(task.launchCommand)
 }
 
 /** In-flight (routing/executing) tasks holding the write-role slot. */

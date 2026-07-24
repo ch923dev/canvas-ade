@@ -115,6 +115,31 @@ describe('WorkerConfigDialog', () => {
     expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
   })
 
+  it("editing a read pack's command past read-only proof flips the disclosure to write posture", () => {
+    // PR #381 review: the pack declares, the ACTUAL editable command decides — mirroring the
+    // pump's isWriteRoleTask, which fail-closes the same divergence to write-gated.
+    render(
+      <WorkerConfigDialog
+        zoneName="Z"
+        engineeredPrompt="p"
+        initial={null}
+        onDispatch={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTestId('worker-role-explorer'))
+    expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
+    fireEvent.change(screen.getByTestId('worker-command'), {
+      target: { value: 'claude --model haiku --permission-mode bypassPermissions' }
+    })
+    expect(screen.getByTestId('worker-role-write-warning')).not.toBeNull()
+    // Restoring a read-only command restores the exemption.
+    fireEvent.change(screen.getByTestId('worker-command'), {
+      target: { value: 'claude --model haiku --permission-mode plan' }
+    })
+    expect(screen.queryByTestId('worker-role-write-warning')).toBeNull()
+  })
+
   it('switching the AGENT preset drops back to Custom (packs are claude-hosted in Phase 0)', () => {
     const onDispatch = vi.fn()
     render(
