@@ -28,6 +28,14 @@ import {
   settleSwitchTransitionIn,
   clearSwitchTransition
 } from './switchTransitionStore'
+import {
+  beginSwitch,
+  markSwitch,
+  recordAskTime,
+  reportMainOpen,
+  endSwitch,
+  markPaintableAndEnd
+} from './switchMetrics'
 
 export type SwitchOutcome =
   | 'switched'
@@ -78,12 +86,18 @@ async function decideKeep(
   if (!info || info.dir !== outgoingDir) return false
   if (info.terminals + info.previews === 0) return false
   if (info.policy === 'keep') return true
+  // R1: the dialog is HUMAN think-time, not switch cost. Time it here — and only it, not the
+  // `askOnSwitchInfo()` IPC above, which is machine work — so `switchMetrics` can subtract it from
+  // `arm` and `total`. Without the exclusion a user who deliberates for ten seconds registers as a
+  // ten-second switch and every latency number becomes noise.
+  const askStartedAt = performance.now()
   const choice = await requestAskOnSwitch({
     outgoingName: useCanvasStore.getState().project.name ?? 'this project',
     incomingName,
     terminals: info.terminals,
     previews: info.previews
   })
+  recordAskTime(performance.now() - askStartedAt)
   if (choice.action === 'cancel') return 'cancelled'
   if (choice.action === 'stop') {
     // Review fix: the Phase-4 single-gesture policy reset belongs to the USER'S explicit
@@ -114,7 +128,11 @@ export async function performProjectSwitch(
   // open/create) — without the shared lock a second click interleaves two open pipelines and
   // the renderer can settle on project B while MAIN's currentDir points at C, after which
   // autosave writes B's canvas into C's canvas.json.
+  // A 'locked' return is deliberately NOT measured: the lock rejected this call before any work
+  // happened, so there is no switch here to time — recording one would pollute the record with
+  // zero-length runs and clobber the real switch already in flight.
   if (!acquireProjectSwitchLock()) return 'locked'
+  beginSwitch()
   try {
     const outgoingDir = useCanvasStore.getState().project.dir
     // Phase 4: decide the handover BEFORE any side effect (lock → dialog → save, per the
@@ -123,7 +141,11 @@ export async function performProjectSwitch(
       outgoingDir !== null
         ? await decideKeep(outgoingDir, opts?.keepBackground, opts?.incomingName ?? null)
         : false
-    if (keepDecision === 'cancelled') return 'cancelled'
+    if (keepDecision === 'cancelled') {
+      endSwitch('cancelled')
+      return 'cancelled'
+    }
+    markSwitch('decided')
     const keep = keepDecision === true
     // PERSIST-B: kill any pending debounced autosave armed editing the outgoing project.
     // The explicit flush below is the authoritative final write; a leftover timer would
@@ -149,6 +171,7 @@ export async function performProjectSwitch(
       useSaveStatusStore
         .getState()
         .setSaveFailure('Project could not be saved — switch cancelled to avoid losing edits')
+      endSwitch('save-failed')
       return 'save-failed'
     }
     // M1: write the session sidecar authoritatively too. The doc save above persists the inline
@@ -179,11 +202,13 @@ export async function performProjectSwitch(
     // now, or the global store carries the old project's stale message into the new one
     // (it would flash on the next project until its first autosave).
     useSaveStatusStore.getState().markSaved()
+    markSwitch('flushed')
     // Phase 4b (project dock): snapshot the outgoing canvas for its dock card. MUST run
     // BEFORE the setProjectLoading() unmount below (after it the canvas DOM is gone) and
     // covers BOTH the keep and stop paths. Best-effort: capturePage is env-flaky, so a
     // failed capture is a normal outcome (the dock shows its dot-grid placeholder).
     if (outgoingDir !== null) await captureProjectThumb()
+    markSwitch('thumbed')
     // Phase 4c: arm the switch-transition overlay BEFORE the setProjectLoading() unmount —
     // the overlay is what stands in for the outgoing canvas the moment it disappears.
     // Cancel/locked/save-failed all returned above, so those paths arm NOTHING; the
@@ -195,6 +220,9 @@ export async function performProjectSwitch(
         incomingName: opts?.incomingName ?? null,
         outgoingName: useCanvasStore.getState().project.name
       })
+      // R1: the overlay is now standing in for the outgoing canvas, so the user can finally see
+      // that something happened. Everything before this point is PS-1's dead air.
+      markSwitch('armed')
     }
     // 2. Hand over live resources, then suppress autosave + unmount.
     if (keep && outgoingDir !== null) {
@@ -211,6 +239,7 @@ export async function performProjectSwitch(
           .getState()
           .setSaveFailure('Could not move the project to the background — switch cancelled')
         clearSwitchTransition()
+        endSwitch('background-failed')
         return 'background-failed'
       }
       useCanvasStore.getState().setProjectLoading()
@@ -235,7 +264,14 @@ export async function performProjectSwitch(
     //    error path so the app settles to 'error' (carrying the message) and stays recoverable.
     const applyOpenResult = useCanvasStore.getState().applyOpenResult
     try {
-      await applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
+      const loaded = await load()
+      // R1: `project:open` reports its own handler duration (optional, additive). Fold it in before
+      // applying so the record carries MAIN's share too. Duck-typed rather than narrowed: `load` is
+      // `() => Promise<unknown>` because it also fronts project:create and the .bak reopen, neither
+      // of which reports a time — anything without the field simply contributes nothing.
+      const mainMs = (loaded as { openMs?: unknown } | null)?.openMs
+      if (typeof mainMs === 'number') reportMainOpen(mainMs)
+      await applyOpenResult(loaded as Parameters<typeof applyOpenResult>[0])
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'failed to load project'
       await applyOpenResult({ ok: false, error: msg })
@@ -244,8 +280,19 @@ export async function performProjectSwitch(
     // the freshly mounted canvas; anything else (load error, .bak retry that also failed)
     // drops the overlay IMMEDIATELY so the error screen is reachable. Both are no-ops
     // when nothing was armed (welcome-screen open).
-    if (useCanvasStore.getState().project.status === 'open') settleSwitchTransitionIn()
-    else clearSwitchTransition()
+    markSwitch('loaded')
+    if (useCanvasStore.getState().project.status === 'open') {
+      settleSwitchTransitionIn()
+      // R1: close the record on the first frame that actually painted the new canvas — see
+      // `markPaintableAndEnd`. Fire-and-forget by design: the switch must not wait on measurement.
+      markPaintableAndEnd('switched')
+    } else {
+      clearSwitchTransition()
+      // Settled to an error screen (load failed, and the .bak retry failed too). No painted canvas
+      // will follow, so close the record now rather than leaving the window open for the next switch
+      // to inherit. `total`/`paint` stay null — the honest reading of a switch that never landed.
+      endSwitch('switched')
+    }
     return 'switched'
   } finally {
     releaseProjectSwitchLock()

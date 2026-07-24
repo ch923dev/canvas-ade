@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSwitchMetricsStore, bucketOf, type SwitchBucket } from '../store/switchMetrics'
 
 // Chromium exposes a non-standard `performance.memory`; type it minimally so
 // the heap read is strict-safe without `@ts-ignore`. Optional everywhere.
@@ -74,15 +75,71 @@ export default function DiagOverlay() {
       <Row label="frame" value={`${fmt(sample.ms)} ms`} />
       <Row label="fps" value={fmt(sample.fps, 0)} />
       <Row label="heap" value={sample.heapMb === null ? '—' : `${fmt(sample.heapMb)} MB`} />
+      <SwitchRows />
     </div>
   )
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+/** Human duration: sub-second reads in whole ms, past a second in seconds. Switch latencies
+ *  straddle that boundary, and "1240 ms" is harder to bucket at a glance than "1.24 s". */
+const dur = (ms: number): string =>
+  ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${Math.round(ms)} ms`
+
+/**
+ * Last project switch, segmented (audit R1). Renders nothing until a switch has been measured, so
+ * the overlay stays three rows tall on boot rather than showing a block of em-dashes.
+ *
+ * Only `switch` (the headline) and `arm` (the segment with a stated budget — PS-1/R3) are tinted.
+ * `load` and `paint` are diagnostic breakdown; colouring every row turns the overlay into a
+ * traffic light and violates the design reference's "one accent, functional only".
+ */
+function SwitchRows() {
+  const last = useSwitchMetricsStore((s) => s.last)
+  if (last === null) return null
+  return (
+    <>
+      <div style={ruleStyle} />
+      <Row
+        label="switch"
+        value={last.total === null ? '—' : dur(last.total)}
+        tone={bucketOf(last.total)}
+      />
+      {last.arm !== null && (
+        <Row label="arm" value={dur(last.arm)} tone={bucketOf(last.arm)} indent />
+      )}
+      {last.load !== null && <Row label="load" value={dur(last.load)} indent />}
+      {last.paint !== null && <Row label="paint" value={dur(last.paint)} indent />}
+      {/* Only when a dialog actually appeared. Shown so the exclusion from `switch`/`arm` is
+          visible — a silently-subtracted number is one nobody can audit. */}
+      {last.ask !== null && <Row label="ask" value={dur(last.ask)} indent />}
+    </>
+  )
+}
+
+/** Bucket → token. Buckets come from the NN/g response-time limits (see `switchMetrics`). */
+const toneColor: Record<SwitchBucket, string> = {
+  ok: 'var(--ok)',
+  warn: 'var(--warn)',
+  err: 'var(--err)'
+}
+
+function Row({
+  label,
+  value,
+  tone,
+  indent
+}: {
+  label: string
+  value: string
+  tone?: SwitchBucket | null
+  indent?: boolean
+}) {
   return (
     <div style={rowStyle}>
-      <span style={labelStyle}>{label}</span>
-      <span style={valueStyle}>{value}</span>
+      <span style={indent === true ? indentLabelStyle : labelStyle}>{label}</span>
+      <span style={tone == null ? valueStyle : { ...valueStyle, color: toneColor[tone] }}>
+        {value}
+      </span>
     </div>
   )
 }
@@ -115,6 +172,19 @@ const rowStyle: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = {
   color: 'var(--text-3)'
+}
+
+/** Sub-segments sit under their total. `paddingLeft` rather than a nested container so the
+ *  space-between row layout still right-aligns every value on the same edge. */
+const indentLabelStyle: React.CSSProperties = {
+  color: 'var(--text-3)',
+  paddingLeft: 8
+}
+
+/** Hairline between the frame stats and the switch block. */
+const ruleStyle: React.CSSProperties = {
+  borderTop: '1px solid var(--border-subtle)',
+  margin: '4px 0'
 }
 
 const valueStyle: React.CSSProperties = {

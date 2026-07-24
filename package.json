@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.32.1",
+  "version": "0.33.0",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -30,6 +30,9 @@
     "pretest:e2e": "set CANVAS_E2E=1&& electron-vite build",
     "pretest:e2e:smoke": "set CANVAS_E2E=1&& electron-vite build",
     "test:e2e:smoke": "playwright test --grep @core",
+    "prebench": "set CANVAS_E2E=1&& electron-vite build",
+    "bench": "playwright test --config playwright.bench.config.ts",
+    "bench:baseline": "node scripts/bench-baseline.mjs",
     "test:e2e:linux": "docker build -f Dockerfile.e2e -t canvas-e2e-linux . && docker run --rm canvas-e2e-linux && docker builder prune -f --filter until=168h",
     "test:e2e:matrix": "pnpm test:e2e && pnpm test:e2e:linux",
     "stt:record": "node scripts/stt-eval/record.mjs",

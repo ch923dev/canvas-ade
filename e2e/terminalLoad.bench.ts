@@ -25,6 +25,11 @@
 //   pnpm build && pnpm exec playwright test --config playwright.bench.config.ts
 import { test, expect } from './fixtures'
 import { evalIn, seed } from './helpers'
+import { recordBench } from './benchSink'
+
+/** Round to 3dp — `fitZoom` is a layout-derived float and full precision only adds diff noise to
+ *  the committed baseline. */
+const round2 = (n: number): number => Math.round(n * 1000) / 1000
 
 // One PTY line: an infinite loop of colored lines. [char]27 (not `e) so it streams under
 // pwsh 7 AND Windows PowerShell 5.1. The 7-way colour cycle forces the DOM renderer to emit
@@ -156,26 +161,47 @@ async function seedStreamingGrid(
   return { ids, fitZoom }
 }
 
-/** Confirm the streams are actually flowing: every terminal's buffer must grow.
+/** Confirm the streams are actually flowing: every terminal's buffer must CHANGE.
  *
- *  This POLLS for growth rather than sampling once over a fixed window. The fixed-window version
- *  measured daemon warm-up, not streaming: in a full bench run the failures were monotonic in
- *  warm-up — N=1 got 0/1 growing, N=4 got 0/4, N=8 got 7/8, and the last test passed 1/1, because
- *  the ptyHost daemon and pwsh are cold for the first test in a run and warm by the last. That made
- *  the harness unable to produce a baseline at all (every early N failed before `measurePhase` ever
- *  ran, so no fps was recorded). Waiting for the precondition instead of assuming it is the fix;
- *  the measured phases below are unchanged, so the numbers stay comparable to earlier reports. */
+ *  Two harness defects have been fixed here, in order.
+ *
+ *  1. The original sampled once over a fixed 1.5 s window right after `terminalMounted` — but mount
+ *     is not streaming. Between mount and the first PTY byte sit the `pty:spawn` IPC, a possible
+ *     ptyHost daemon COLD START, the shell's boot, and `STREAM_CMD` being written as the first PTY
+ *     line. Failures were monotonic in warm-up across a run (N=1 → 0/1 growing, N=4 → 0/4, N=8 →
+ *     7/8, last test 1/1), so the harness could not produce a baseline at all. Fixed by POLLING for
+ *     the precondition instead of assuming it.
+ *
+ *  2. Polling for *length* growth then failed the opposite way, at the other end of a long run:
+ *     `terminal 1/1 never streamed (buffer never grew past 82436)`. That terminal had already
+ *     emitted 82 KB — it was streaming fine. xterm's scrollback is BOUNDED, so once the buffer
+ *     saturates, old lines are trimmed as fast as new ones arrive and the length plateaus forever.
+ *     Length is only a liveness signal while the buffer is still filling; a bench whose whole point
+ *     is sustained streaming is guaranteed to leave that regime.
+ *
+ *  So compare a CONTENT fingerprint instead — length plus the last 256 chars, computed in-page so
+ *  each poll ships a short string rather than the whole 80 KB buffer across the bridge. `STREAM_CMD`
+ *  emits a 400-line cycle continuously, so any terminal that is alive changes its tail between
+ *  polls, saturated or not.
+ *
+ *  The measured phases below are untouched, so numbers stay comparable to earlier reports. */
 async function assertStreaming(page: Parameters<typeof evalIn>[0], ids: string[]): Promise<void> {
-  const lenOf = (id: string): Promise<number> =>
-    evalIn<number>(page, `(window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? '').length`)
-  const before = await Promise.all(ids.map(lenOf))
+  const fingerprintOf = (id: string): Promise<string> =>
+    evalIn<string>(
+      page,
+      `(() => {
+         const s = window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? ''
+         return s.length + ':' + s.slice(-256)
+       })()`
+    )
+  const before = await Promise.all(ids.map(fingerprintOf))
   for (const [i, id] of ids.entries()) {
     await expect
-      .poll(() => lenOf(id), {
+      .poll(() => fingerprintOf(id), {
         timeout: STREAM_WARMUP_MS,
-        message: `terminal ${i + 1}/${ids.length} never streamed (buffer never grew past ${before[i]})`
+        message: `terminal ${i + 1}/${ids.length} never streamed (buffer content never changed)`
       })
-      .toBeGreaterThan(before[i])
+      .not.toBe(before[i])
   }
 }
 
@@ -197,6 +223,8 @@ function report(n: number, fitZoom: number, phases: PhaseStats[]): void {
     `\n=== TERMINAL LOAD BENCH — N=${n} terminals streaming, fitZoom=${fitZoom.toFixed(3)}` +
       `${fitZoom < 0.4 ? ' (BELOW LOD — not live!)' : ' (live)'} ===\n${phaseRows(phases)}\n`
   )
+  // R2: same numbers, machine-readable, for the committed baseline artifact.
+  recordBench({ bench: 'terminal-load', config: { n, fitZoom: round2(fitZoom) }, data: phases })
 }
 
 test.describe('@bench terminal DOM renderer under streaming load', () => {
@@ -318,6 +346,15 @@ test.describe('@bench terminal liveness gating (off-screen streamers cost ~0)', 
           `  ^ this should track N=${visible} ALL-VISIBLE — Lane A keeps the visible fps there\n` +
           `    regardless of the ${hiddenIds.length} off-screen streamers (vs N=${n} all-visible's lower fps).`
       )
+      // R2: the gating configs belong in the baseline too. They are the measurement that proves the
+      // Lane A property (off-screen streamers cost ~0), so a baseline without them cannot show that
+      // property regressing. Held bytes travel with the phases — a gated stream that stopped holding
+      // would read as "gating still fast" on fps alone.
+      recordBench({
+        bench: 'terminal-liveness-gating',
+        config: { n, visible, fitZoom: round2(fitZoom) },
+        data: { phases, heldBytes: heldTotals }
+      })
       for (const p of phases) {
         expect(p.frames, `${p.mode}: rAF actually ran`).toBeGreaterThan(10)
       }

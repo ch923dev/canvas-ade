@@ -14,6 +14,11 @@ import type { Tool } from '../store/canvasStore'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import type { CommandTask } from '../store/commandStore'
+import type { SwitchMetrics } from '../store/switchMetrics'
+
+/** Audit R1 switch-latency record as the harness sees it. Aliased rather than redeclared so the
+ *  probe can never drift from what `switchMetrics` actually commits. */
+export type SwitchMetricsSnapshot = SwitchMetrics
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 export interface RuntimeProbe {
@@ -327,6 +332,17 @@ export interface CanvasE2E {
     dir: string,
     keep: boolean
   ) => Promise<{ outcome: string; status: string; dir: string | null; boardCount: number }>
+  /**
+   * Audit R1: the last measured project switch, or null before any switch this session. Segments
+   * are `arm` (the dead air — PS-1), `load`, `paint`, and `total` (= start→paintable minus `ask`);
+   * `ask` is the ask-on-switch dialog's human think-time, EXCLUDED from `arm`/`total` and reported
+   * separately. Any segment whose marks did not both land is null, never 0.
+   *
+   * `paintable` is marked two frames after the switch promise resolves, so a caller that reads this
+   * the instant `switchProjectFromDisk` settles may still see the previous record — poll on a fresh
+   * `at` timestamp. This is the surface the switch-latency bench (R2) measures through.
+   */
+  lastSwitchMetrics: () => SwitchMetricsSnapshot | null
   /**
    * Phase 4: the DEFAULT switch pipeline (no explicit keep) — the per-project policy decides,
    * and the ask-on-switch dialog appears when the outgoing project has live resources. The
