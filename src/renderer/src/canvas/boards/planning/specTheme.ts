@@ -12,8 +12,33 @@
  *  - KIND = a 13px line icon + a calm silhouette tweak (decision = clipped corners, actor = pill,
  *    note = dashed); step/data/service/artifact share the base rect and differ by icon alone.
  */
+import type { CSSProperties } from 'react'
 import { withAlpha } from './diagramTheme'
 import type { SpecEdge, SpecNodeKind, SpecStatus } from '../../../lib/diagramSpec'
+import type { IconName } from '../../Icon'
+
+/** The CLOSED icon vocabulary a DiagramSpec node may use — a curated, diagram-relevant subset of the
+ *  host Icon registry. The Phase-4 palette offers exactly this set and the renderer gates `node.icon`
+ *  on it, so an unknown/typo'd name shows the KIND glyph, never the registry's diamond fallback.
+ *  Closed-vocab doctrine (like status/kind): colour/shape/icon all come from a fixed set, never raw. */
+export const SPEC_ICON_NAMES: readonly IconName[] = [
+  'play',
+  'stop',
+  'cpu',
+  'globe',
+  'file',
+  'download',
+  'settings',
+  'plug',
+  'activity',
+  'bell'
+]
+const SPEC_ICON_SET = new Set<string>(SPEC_ICON_NAMES)
+
+/** Narrow a free string to a spec-supported icon name (unknown ⇒ the kind glyph renders instead). */
+export function isSpecIcon(v: string | undefined | null): v is IconName {
+  return typeof v === 'string' && SPEC_ICON_SET.has(v)
+}
 
 /** Resolve a CSS custom property off :root (same discipline as diagramTheme.token). */
 function token(name: string, fallback: string): string {
@@ -185,6 +210,33 @@ export function specKindSilhouette(kind: SpecNodeKind | undefined): SpecSilhouet
     default:
       return 'rect'
   }
+}
+
+/** Decision silhouette: clipped corners (the approved mock's calm octagon). */
+export const DECISION_CLIP =
+  'polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), ' +
+  'calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px)'
+
+/**
+ * Silhouette + status → a node div's CHROME (background/border/radius/clip/padding + opacity).
+ * Positioning/sizing is the caller's job — the static `DiagramSpecView` adds absolute left/top/w/h;
+ * the Phase-4 editor's React Flow node is positioned by RF and sized from the layout box. Shared so
+ * the two renderers can never drift (risk R7).
+ */
+export function specNodeChrome(sil: SpecSilhouette, status: SpecStatusStyle): CSSProperties {
+  const style: CSSProperties = {
+    boxSizing: 'border-box',
+    background: sil === 'note' ? 'var(--surface)' : status.fill,
+    border: `1px ${sil === 'note' ? 'dashed' : 'solid'} ${status.border}`,
+    borderRadius: sil === 'actor' ? 'var(--r-pill)' : 'var(--r-inner)',
+    opacity: status.opacity,
+    padding: sil === 'actor' ? '7px 9px 7px 12px' : '7px 9px 7px 8px'
+  }
+  if (sil === 'decision') {
+    style.clipPath = DECISION_CLIP
+    style.borderRadius = 0
+  }
+  return style
 }
 
 /**

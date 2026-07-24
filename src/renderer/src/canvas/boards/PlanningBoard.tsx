@@ -325,6 +325,15 @@ export function PlanningBoard({
       commit((cur) => convertDiagramElement(cur, id, spec, importedFrom)),
     [commit]
   )
+  // Focus-mode editor spec commit (Phase 4): replace the expanse `spec`. The editor arms ONE undo
+  // checkpoint per gesture via onEditStart(beginChange) before calling, and passes an already-valid
+  // spec; boardPatch captures the displaced spec onto `revisions` (free). Live-read commit → stable
+  // identity so the memo'd DiagramCard isn't re-created (BUG-023-safe).
+  const changeDiagramSpec = useCallback(
+    (id: string, spec: DiagramSpec) =>
+      commit((cur) => patchElement<DiagramElement>(cur, id, (d) => ({ ...d, spec }))),
+    [commit]
+  )
   // Persist a freshly-rendered SVG assetId — UNTRACKED (derived artifact, never an undo step).
   const onDiagramCache = useCallback(
     (id: string, assetId: string) =>
@@ -776,6 +785,7 @@ export function PlanningBoard({
                   onSelect={selectOnPress}
                   onChangeSource={setDiagramSource}
                   onConvert={convertDiagram}
+                  onChangeSpec={changeDiagramSpec}
                   onEditStart={beginChange}
                   onCache={onDiagramCache}
                   onResize={resizeDiagram}

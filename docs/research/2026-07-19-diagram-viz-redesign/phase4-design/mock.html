@@ -1,0 +1,1276 @@
+<title>Diagram Phase 4 — Focus-mode editor (design mock)</title>
+<style>
+  :root {
+    /* verbatim from src/renderer/src/styles/tokens.css */
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --void: #0a0a0b;
+    --grid-dot: #202022;
+    --surface: #141416;
+    --surface-raised: #1a1a1d;
+    --surface-overlay: #1e1e22;
+    --inset: #0e0e10;
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --text: #ededee;
+    --text-2: #9b9ba1;
+    --text-3: #7b7b81;
+    --text-faint: #46464b;
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+    --accent-wash: rgba(79, 140, 255, 0.14);
+    --ok: #3ecf8e;
+    --ok-wash: rgba(62, 207, 142, 0.14);
+    --warn: #e8b339;
+    --warn-wash: rgba(232, 179, 57, 0.12);
+    --err: #f2545b;
+    --err-wash: rgba(242, 84, 91, 0.14);
+    --r-board: 8px;
+    --r-inner: 6px;
+    --r-ctl: 5px;
+    --r-pill: 999px;
+    --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--text);
+    font-family: var(--ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1140px;
+    margin: 0 auto;
+    padding: 40px 28px 96px;
+  }
+
+  /* ── page header ─────────────────────────────────────────── */
+  .masthead {
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 22px;
+    margin-bottom: 34px;
+  }
+  .eyebrow {
+    font: 500 10px/14px var(--ui);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font: 600 24px/28px var(--ui);
+    letter-spacing: -0.01em;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .sub {
+    font: 400 13px/20px var(--ui);
+    color: var(--text-2);
+    max-width: 68ch;
+    margin: 0;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .tag {
+    font: 450 11px/16px var(--mono);
+    color: var(--text-3);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-pill);
+    padding: 2px 10px;
+  }
+  .tag b {
+    color: var(--text-2);
+    font-weight: 500;
+  }
+
+  /* ── section scaffold ────────────────────────────────────── */
+  section {
+    margin-top: 42px;
+  }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .sec-num {
+    font: 500 11px/16px var(--mono);
+    color: var(--accent);
+  }
+  .sec-title {
+    font: 600 15px/22px var(--ui);
+    margin: 0;
+  }
+  .sec-note {
+    font: 400 12px/18px var(--ui);
+    color: var(--text-3);
+    margin: 0 0 0 auto;
+    max-width: 46ch;
+    text-align: right;
+  }
+
+  .stage {
+    background: var(--void);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    position: relative;
+    overflow: hidden;
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
+  .caption {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-top: 12px;
+    font: 400 12px/18px var(--ui);
+    color: var(--text-2);
+  }
+  .caption .k {
+    flex: none;
+    font: 500 11px/18px var(--mono);
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    min-width: 62px;
+  }
+
+  /* ── the diagram card chrome (mirrors DiagramCard.tsx) ───── */
+  .card {
+    position: absolute;
+    background: var(--surface);
+    border-radius: var(--r-inner);
+    box-shadow: var(--shadow-board);
+    overflow: hidden;
+  }
+  .card.sel {
+    border: 1px solid var(--accent);
+    outline: 0.5px solid var(--accent);
+  }
+  .card.unsel {
+    border: 1px solid var(--border);
+  }
+  .card-head {
+    height: 22px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    font: 500 10px/16px var(--ui);
+    color: var(--text-3);
+  }
+  .card-title {
+    color: var(--text-2);
+  }
+  .spring {
+    flex: 1;
+  }
+  .hbtn {
+    font: 500 10px/16px var(--mono);
+    color: var(--text-3);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 1px 6px;
+    cursor: default;
+  }
+  .hbtn.ghost {
+    color: var(--text-faint);
+  }
+  .hbtn.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-wash);
+  }
+  .hbtn.io {
+    color: var(--text-3);
+  }
+
+  .well {
+    position: relative;
+  }
+
+  /* ── spec node (mirrors DiagramSpecView specNodeStyle/specNodeBody) ── */
+  .node {
+    position: absolute;
+    box-sizing: border-box;
+    padding: 7px 9px 7px 8px;
+    border-radius: var(--r-inner);
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+  }
+  .node .row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 16px;
+  }
+  .node .ico {
+    flex: none;
+    width: 13px;
+    height: 13px;
+  }
+  .node .ico svg {
+    display: block;
+  }
+  .node .lbl {
+    flex: 1;
+    font: 500 12px/16px var(--ui);
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .node .glyph {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 600 10px/14px var(--mono);
+  }
+  .node .detail {
+    font: 450 10px/14px var(--mono);
+    color: var(--text-3);
+    margin: 3px 0 0 19px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .node.active {
+    background: var(--accent-wash);
+    border-color: var(--accent);
+  }
+  .node.done {
+    background: var(--ok-wash);
+    border-color: rgba(62, 207, 142, 0.5);
+  }
+  .node.warn {
+    background: var(--warn-wash);
+    border-color: rgba(232, 179, 57, 0.5);
+  }
+  .node.decision {
+    border-radius: 0;
+    clip-path: polygon(
+      9px 0,
+      calc(100% - 9px) 0,
+      100% 9px,
+      100% calc(100% - 9px),
+      calc(100% - 9px) 100%,
+      9px 100%,
+      0 calc(100% - 9px),
+      0 9px
+    );
+  }
+  .node.actor {
+    border-radius: var(--r-pill);
+    padding: 7px 9px 7px 12px;
+  }
+  .node.note {
+    background: var(--surface);
+    border-style: dashed;
+  }
+  .node.note .lbl {
+    font: 400 11px/15px var(--ui);
+    color: var(--text-2);
+  }
+
+  /* editor-only affordances */
+  .node.editing {
+    border-color: var(--accent);
+    outline: 0.5px solid var(--accent);
+  }
+  .node.editing .lbl {
+    color: var(--text);
+  }
+  .caret {
+    display: inline-block;
+    width: 1px;
+    height: 13px;
+    background: var(--accent);
+    margin-left: 1px;
+    vertical-align: -2px;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .caret {
+      animation: none;
+    }
+  }
+  .charcap {
+    position: absolute;
+    right: 6px;
+    bottom: 4px;
+    font: 450 9px/12px var(--mono);
+    color: var(--text-faint);
+  }
+  /* drag handle ring + move ghost */
+  .dot {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1.5px solid var(--accent);
+  }
+  .posbadge {
+    position: absolute;
+    font: 500 9px/12px var(--mono);
+    color: var(--accent);
+    background: var(--accent-wash);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 0 4px;
+    white-space: nowrap;
+  }
+  .pin {
+    position: absolute;
+    font: 10px/1 var(--mono);
+    color: var(--accent);
+  }
+
+  svg.edges {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  /* floating palette rail */
+  .palette {
+    position: absolute;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-pop);
+    padding: 8px;
+    width: 168px;
+  }
+  .palette .ph {
+    font: 500 10px/14px var(--ui);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin: 2px 2px 8px;
+  }
+  .palette .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+  }
+  .swatch {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    color: var(--text-2);
+  }
+  .swatch.sel {
+    border-color: var(--accent);
+    background: var(--accent-wash);
+    color: var(--text);
+  }
+  .swatch svg {
+    display: block;
+  }
+  .palette .divider {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 9px 0;
+  }
+  .palette .search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--inset);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    padding: 4px 7px;
+    font: 400 11px/16px var(--ui);
+    color: var(--text-3);
+    margin-bottom: 7px;
+  }
+
+  /* editor toolbar (top-right in the well) */
+  .etoolbar {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    box-shadow: var(--shadow-pop);
+    padding: 3px;
+  }
+  .etoolbar .tbtn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font: 500 11px/16px var(--ui);
+    color: var(--text-2);
+  }
+  .etoolbar .tbtn.primary {
+    color: var(--accent);
+  }
+  .etoolbar .sepv {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border-subtle);
+    margin: 2px 1px;
+  }
+
+  /* T3 comment popover */
+  .cpop {
+    position: absolute;
+    width: 268px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-pop);
+    padding: 10px;
+  }
+  .cpop .ctitle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font: 500 11px/16px var(--ui);
+    color: var(--text-2);
+    margin-bottom: 8px;
+  }
+  .cpop .ctitle .nid {
+    font: 450 10px/16px var(--mono);
+    color: var(--accent);
+    background: var(--accent-wash);
+    border-radius: 4px;
+    padding: 0 5px;
+  }
+  .cpop .ta {
+    background: var(--inset);
+    border: 1px solid var(--border);
+    border-radius: var(--r-inner);
+    padding: 7px 8px;
+    font: 400 12px/17px var(--ui);
+    color: var(--text);
+    min-height: 46px;
+  }
+  .cpop .ta .ph {
+    color: var(--text-faint);
+  }
+  .cpop .route {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 9px;
+    font: 450 11px/16px var(--mono);
+    color: var(--text-3);
+  }
+  .cpop .picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    padding: 3px 8px;
+    color: var(--text-2);
+    font: 500 11px/16px var(--ui);
+  }
+  .cpop .picker .caret-d {
+    color: var(--text-3);
+  }
+  .cpop .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 11px;
+  }
+  .cpop .send {
+    margin-left: auto;
+    background: var(--accent);
+    color: #08122a;
+    border-radius: var(--r-ctl);
+    padding: 4px 12px;
+    font: 600 11px/16px var(--ui);
+  }
+  .cpop .cancel {
+    color: var(--text-3);
+    font: 500 11px/16px var(--ui);
+    padding: 4px 8px;
+  }
+  .cpop .hint {
+    font: 400 11px/15px var(--ui);
+    color: var(--text-faint);
+    margin-top: 8px;
+  }
+  /* the picker menu, opened */
+  .pmenu {
+    position: absolute;
+    width: 210px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-inner);
+    box-shadow: var(--shadow-pop);
+    padding: 4px;
+  }
+  .pmenu .item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font: 450 11px/16px var(--ui);
+    color: var(--text-2);
+  }
+  .pmenu .item.sel {
+    background: var(--accent-wash);
+    color: var(--text);
+  }
+  .pmenu .item .st {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex: none;
+  }
+  .pmenu .item .st.idle {
+    background: var(--text-faint);
+  }
+  .pmenu .item .badge {
+    margin-left: auto;
+    font: 450 9px/14px var(--mono);
+    color: var(--text-faint);
+  }
+
+  /* callout pin dots for the annotations */
+  .anno {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .anno .num {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #08122a;
+    font: 700 10px/18px var(--mono);
+    text-align: center;
+    flex: none;
+  }
+  .anno .txt {
+    font: 450 11px/15px var(--ui);
+    color: var(--text-2);
+    background: rgba(20, 20, 22, 0.86);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    padding: 3px 8px;
+    white-space: nowrap;
+  }
+
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 26px;
+    margin-top: 18px;
+  }
+  .legend .li {
+    display: flex;
+    gap: 10px;
+    font: 400 12px/18px var(--ui);
+    color: var(--text-2);
+  }
+  .legend .li b {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .legend .li .n {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font: 700 10px/16px var(--mono);
+    text-align: center;
+  }
+
+  .foot {
+    margin-top: 52px;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 18px;
+    font: 400 12px/19px var(--ui);
+    color: var(--text-3);
+  }
+  .foot b {
+    color: var(--text-2);
+    font-weight: 500;
+  }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <p class="eyebrow">Diagram lane · Phase 4 · ADR 0013</p>
+    <h1>Focus-mode editor for expanse diagrams</h1>
+    <p class="sub">
+      Direct-manipulation editing for <code>engine:'expanse'</code> diagram cards — drag, re-route,
+      palette, inline labels, and node→agent comments — without leaving the calm-UI contract. Static
+      render stays the default; the editor mounts only on focus. Built with the live
+      <code>index.css</code> tokens; dark-only, matching the app.
+    </p>
+    <div class="meta-row">
+      <span class="tag"><b>scope</b> full L</span>
+      <span class="tag"><b>schema</b> no bump (pos in v22)</span>
+      <span class="tag"><b>engine</b> React Flow (already bundled)</span>
+      <span class="tag"><b>T1 Tweaks row</b> left out</span>
+      <span class="tag"><b>T3 comments</b> included</span>
+    </div>
+  </header>
+
+  <!-- ══ 1 · ENTRY ═══════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2 class="sec-title">Entering the editor</h2>
+      <p class="sec-note">
+        The unfocused card is the cheap static view. Two ways in — a header ✎ toggle, or
+        double-click a node to edit it directly.
+      </p>
+    </div>
+    <div class="stage" style="height: 250px">
+      <!-- unfocused static card -->
+      <div class="card sel" style="left: 60px; top: 34px; width: 330px; height: 182px">
+        <div class="card-head">
+          <span class="card-title">Deploy pipeline</span>
+          <span class="spring"></span>
+          <span class="hbtn on" title="Edit — enter focus mode">✎ Edit</span>
+          <span class="hbtn io" title="Zoom">⊟ 100%</span>
+        </div>
+        <div class="well" style="position: absolute; inset: 22px 0 0 0">
+          <svg class="edges">
+            <defs>
+              <marker
+                id="ah1"
+                viewBox="0 0 8 8"
+                refX="7"
+                refY="4"
+                markerWidth="7"
+                markerHeight="7"
+                orient="auto"
+              >
+                <path d="M0 0 L8 4 L0 8 z" fill="var(--border-strong)" />
+              </marker>
+            </defs>
+            <path
+              d="M118 44 L150 44"
+              fill="none"
+              stroke="var(--border-strong)"
+              stroke-width="1.5"
+              marker-end="url(#ah1)"
+            />
+            <path
+              d="M258 44 L286 44"
+              fill="none"
+              stroke="var(--border-strong)"
+              stroke-width="1.5"
+              marker-end="url(#ah1)"
+            />
+          </svg>
+          <div class="node" style="left: 20px; top: 30px; width: 96px">
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+              ><span class="lbl">build</span>
+            </div>
+          </div>
+          <div class="node done" style="left: 152px; top: 30px; width: 104px">
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+              ><span class="lbl">test</span><span class="glyph" style="color: var(--ok)">✓</span>
+            </div>
+          </div>
+          <div class="node active" style="left: 288px; top: 30px; width: 96px">
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+              ><span class="lbl">deploy</span
+              ><span class="glyph" style="color: var(--accent)">●</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno" style="left: 214px; top: 20px">
+        <span class="num">A</span
+        ><span class="txt">✎ appears on the header when the card is selected</span>
+      </div>
+      <div class="anno" style="left: 430px; top: 128px">
+        <span class="num">B</span
+        ><span class="txt">double-click any node → focus mode, that node ready to edit</span>
+      </div>
+    </div>
+    <div class="caption">
+      <span class="k">Contract</span>
+      <span
+        >Unfocused = the same <code>pointer-events:none</code> static divs shipped in Phase 1/2 — no
+        React Flow instance, no perf cost. Mermaid cards keep only <code>&lt;/&gt;</code> +
+        <code>⧉</code>; they get <b>no</b> ✎ (the zero-source-edit pin holds).</span
+      >
+    </div>
+  </section>
+
+  <!-- ══ 2 · THE EDITOR ══════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2 class="sec-title">Focus-mode editor</h2>
+      <p class="sec-note">
+        A nested React Flow instance replaces the static view. Drag, re-route, drop, and relabel —
+        every edit re-validates and lands as one spec mutation.
+      </p>
+    </div>
+    <div class="stage" style="height: 430px">
+      <!-- editor card fills most of the stage -->
+      <div
+        class="card sel"
+        style="left: 26px; top: 22px; right: 26px; bottom: 22px; position: absolute"
+      >
+        <div class="card-head">
+          <span class="card-title">Deploy pipeline</span>
+          <span class="hbtn ghost">· editing</span>
+          <span class="spring"></span>
+          <span class="hbtn io">⊟ 100%</span>
+        </div>
+        <div class="well" style="position: absolute; inset: 22px 0 0 0">
+          <svg class="edges">
+            <defs>
+              <marker
+                id="ah2"
+                viewBox="0 0 8 8"
+                refX="7"
+                refY="4"
+                markerWidth="7"
+                markerHeight="7"
+                orient="auto"
+              >
+                <path d="M0 0 L8 4 L0 8 z" fill="var(--border-strong)" />
+              </marker>
+              <marker
+                id="ah2a"
+                viewBox="0 0 8 8"
+                refX="7"
+                refY="4"
+                markerWidth="7"
+                markerHeight="7"
+                orient="auto"
+              >
+                <path d="M0 0 L8 4 L0 8 z" fill="var(--accent)" />
+              </marker>
+            </defs>
+            <!-- solid flow edges -->
+            <path
+              d="M250 92 L300 92"
+              fill="none"
+              stroke="var(--border-strong)"
+              stroke-width="1.5"
+              marker-end="url(#ah2)"
+            />
+            <!-- edge being re-routed: accent, endpoint lifted -->
+            <path
+              d="M300 128 L360 190"
+              fill="none"
+              stroke="var(--accent)"
+              stroke-width="1.5"
+              stroke-dasharray="none"
+              marker-end="url(#ah2a)"
+            />
+            <!-- animated flow edge (dashed accent) -->
+            <path
+              d="M470 92 L520 150"
+              fill="none"
+              stroke="var(--accent)"
+              stroke-width="1.5"
+              stroke-dasharray="6 5"
+              marker-end="url(#ah2a)"
+            />
+          </svg>
+
+          <!-- build (neutral) with drag handles -->
+          <div class="node" style="left: 150px; top: 74px; width: 100px">
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+              ><span class="lbl">build</span>
+            </div>
+          </div>
+
+          <!-- test (done) — selected, showing re-route endpoint handles -->
+          <div
+            class="node done sel"
+            style="
+              left: 302px;
+              top: 74px;
+              width: 108px;
+              border: 1px solid var(--accent);
+              outline: 0.5px solid var(--accent);
+            "
+          >
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+              ><span class="lbl">test</span><span class="glyph" style="color: var(--ok)">✓</span>
+            </div>
+          </div>
+          <span class="dot" style="left: 298px; top: 88px"></span>
+          <span class="dot" style="left: 406px; top: 88px"></span>
+
+          <!-- deploy (active) being dragged → pos badge -->
+          <div class="node active" style="left: 336px; top: 176px; width: 100px">
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--accent)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+              ><span class="lbl">deploy</span
+              ><span class="glyph" style="color: var(--accent)">●</span>
+            </div>
+          </div>
+          <span class="pin" style="left: 330px; top: 170px">📌</span>
+          <span class="posbadge" style="left: 336px; top: 200px">pos 336,176 · pinned</span>
+
+          <!-- a decision node mid inline-label-edit -->
+          <div
+            class="node decision editing"
+            style="left: 508px; top: 132px; width: 132px; height: 40px"
+          >
+            <div class="row">
+              <span class="ico"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 3 L21 12 L12 21 L3 12 Z" /></svg></span
+              ><span class="lbl">gate: coverage&nbsp;<span class="caret"></span></span>
+            </div>
+            <span class="charcap">18 / 200</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- floating palette rail (left) -->
+      <div class="palette" style="left: 44px; top: 92px">
+        <div class="ph">Node kind</div>
+        <div class="grid">
+          <div class="swatch sel" title="step">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 7h16M4 12h16M4 17h10" />
+            </svg>
+          </div>
+          <div class="swatch" title="decision">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            >
+              <path d="M12 3 L21 12 L12 21 L3 12 Z" />
+            </svg>
+          </div>
+          <div class="swatch" title="data">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path d="M20 6a8 3 0 1 1-16 0a8 3 0 1 1 16 0" />
+              <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+            </svg>
+          </div>
+          <div class="swatch" title="service">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            >
+              <path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+              <path d="M9 9h6v6H9z" />
+            </svg>
+          </div>
+          <div class="swatch" title="artifact">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            >
+              <path d="M21 8 L12 3 L3 8 v8 l9 5 9-5 z" />
+              <path d="M3 8 l9 5 9-5" />
+              <path d="M12 13 v8" />
+            </svg>
+          </div>
+          <div class="swatch" title="actor">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path d="M16 8a4 4 0 1 1-8 0a4 4 0 0 1 8 0" />
+              <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
+            </svg>
+          </div>
+          <div class="swatch" title="note">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-dasharray="2.4 2.2"
+            >
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="ph">Status</div>
+        <div class="grid" style="grid-template-columns: repeat(6, 1fr)">
+          <div class="swatch" title="neutral" style="color: var(--text-3)">–</div>
+          <div class="swatch sel" title="active" style="color: var(--accent)">●</div>
+          <div class="swatch" title="done" style="color: var(--ok)">✓</div>
+          <div class="swatch" title="warn" style="color: var(--warn)">!</div>
+          <div class="swatch" title="error" style="color: var(--err)">✕</div>
+          <div class="swatch" title="muted" style="color: var(--text-faint)">–</div>
+        </div>
+        <div class="divider"></div>
+        <div class="search">🔍 <span>icon… (host registry)</span></div>
+        <div class="grid">
+          <div class="swatch" style="color: var(--text-2)">◇</div>
+          <div class="swatch" style="color: var(--text-2)">⚙</div>
+          <div class="swatch" style="color: var(--text-2)">▤</div>
+          <div class="swatch" style="color: var(--text-2)">⧉</div>
+        </div>
+      </div>
+
+      <!-- editor toolbar (top-right) -->
+      <div class="etoolbar" style="right: 44px; top: 40px">
+        <span class="tbtn">↺ undo</span>
+        <span class="sepv"></span>
+        <span class="tbtn">＋ node</span>
+        <span class="sepv"></span>
+        <span class="tbtn primary">✓ Done</span>
+      </div>
+
+      <!-- callouts -->
+      <div class="anno" style="left: 150px; top: 300px">
+        <span class="num">1</span
+        ><span class="txt">drag writes <code>pos</code> · one undo step per gesture</span>
+      </div>
+      <div class="anno" style="left: 360px; top: 262px">
+        <span class="num">2</span
+        ><span class="txt"
+          >re-route: drag an endpoint to a new node — dangling refs impossible</span
+        >
+      </div>
+      <div class="anno" style="left: 470px; top: 342px">
+        <span class="num">3</span
+        ><span class="txt">inline label edit · live char cap · Enter commits</span>
+      </div>
+    </div>
+    <div class="caption">
+      <span class="k">Flow</span>
+      <span
+        >Every edit → build the next <code>DiagramSpec</code> (reusing
+        <code>applySpecOps</code> semantics) → <code>assertDiagramSpec</code> →
+        <code>boardPatch</code>. Undo, revision capture (<code>withSpecRevisions</code>), and JSON
+        persistence come free. No new persistence code.</span
+      >
+    </div>
+  </section>
+
+  <!-- ══ 3 · PALETTE ═════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2 class="sec-title">Palette — closed vocabulary only</h2>
+      <p class="sec-note">
+        Kind (shape), status (color), and an optional icon from the host
+        <code>Icon.tsx</code> registry. No freeform colors or shapes — the calm contract, enforced.
+      </p>
+    </div>
+    <div
+      class="stage"
+      style="
+        height: 172px;
+        background-image: none;
+        display: flex;
+        align-items: center;
+        padding: 0 30px;
+      "
+    >
+      <div
+        class="legend"
+        style="
+          margin: 0;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 14px 26px;
+          width: 100%;
+        "
+      >
+        <div class="li">
+          <span class="n">K</span
+          ><span
+            ><b>Kind → silhouette + line icon.</b> step · decision (octagon) · data · service ·
+            artifact · actor (pill) · note (dashed). Drives shape; never color.</span
+          >
+        </div>
+        <div class="li">
+          <span class="n">S</span
+          ><span
+            ><b>Status → the one palette.</b> neutral · active (accent) · done (ok) · warn · error ·
+            muted. Wash + half-border + glyph — color is never the sole carrier.</span
+          >
+        </div>
+        <div class="li">
+          <span class="n">I</span
+          ><span
+            ><b>Icon → host registry.</b> Search <code>Icon.tsx</code>; unknown name renders none.
+            Agents & users can pick from the closed set, never raw hex.</span
+          >
+        </div>
+      </div>
+    </div>
+    <div class="caption">
+      <span class="k">Guardrail</span>
+      <span
+        >The palette exposes exactly the enums MAIN already validates. A dropped node is a normal
+        <code>upsertNode</code> spec op — same caps, same confirm path an agent's write takes.</span
+      >
+    </div>
+  </section>
+
+  <!-- ══ 4 · T3 COMMENT ROUTING ══════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2 class="sec-title">Node comment → agent (T3)</h2>
+      <p class="sec-note">
+        Ask the owning agent about a node. Routes as a <code>relay_prompt</code> over the
+        terminal-input path — an action, not persisted diagram state.
+      </p>
+    </div>
+    <div class="stage" style="height: 340px">
+      <!-- a node on the canvas, selected -->
+      <div
+        class="node active"
+        style="
+          left: 120px;
+          top: 130px;
+          width: 118px;
+          position: absolute;
+          box-shadow: var(--shadow-board);
+        "
+      >
+        <div class="row">
+          <span class="ico"
+            ><svg
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="var(--accent)"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 7h16M4 12h16M4 17h10" /></svg></span
+          ><span class="lbl">deploy</span><span class="glyph" style="color: var(--accent)">●</span>
+        </div>
+        <div class="detail">infra/deploy.ts</div>
+      </div>
+      <svg class="edges" style="left: 0; top: 0; width: 100%; height: 100%">
+        <path
+          d="M240 150 C 300 150, 300 96, 356 96"
+          fill="none"
+          stroke="var(--border-strong)"
+          stroke-width="1.5"
+          stroke-dasharray="3 3"
+        />
+      </svg>
+
+      <!-- comment popover -->
+      <div class="cpop" style="left: 356px; top: 56px">
+        <div class="ctitle">💬 Comment on <span class="nid">deploy</span></div>
+        <div class="ta">
+          <span>Why is </span
+          ><span class="ph">this step still active — what's blocking the rollout?</span
+          ><span class="caret"></span>
+        </div>
+        <div class="route">
+          route to
+          <span class="picker">→ claude · terminal “api” <span class="caret-d">▾</span></span>
+          <span style="color: var(--text-faint)">remembered</span>
+        </div>
+        <div class="actions">
+          <span class="cancel">Cancel</span>
+          <span class="send">Send to agent</span>
+        </div>
+        <div class="hint">
+          Sends the comment + node context as a prompt. Nothing is written to the diagram.
+        </div>
+      </div>
+
+      <!-- the opened target picker (floats beside the popover, not over the CTA) -->
+      <div class="pmenu" style="left: 640px; top: 120px">
+        <div class="item sel">
+          <span class="st"></span>terminal “api” · claude<span class="badge">running</span>
+        </div>
+        <div class="item">
+          <span class="st"></span>terminal “web” · claude<span class="badge">running</span>
+        </div>
+        <div class="item">
+          <span class="st idle"></span>terminal “infra” · codex<span class="badge">idle</span>
+        </div>
+      </div>
+
+      <div class="anno" style="left: 120px; top: 250px">
+        <span class="num">1</span><span class="txt">select a node → 💬 opens the composer</span>
+      </div>
+      <div class="anno" style="left: 636px; top: 226px">
+        <span class="num">2</span
+        ><span class="txt">pick a live Terminal board (last target remembered per diagram)</span>
+      </div>
+    </div>
+    <div class="caption">
+      <span class="k">Safety</span>
+      <span
+        >Reuses the vetted terminal-input relay (bracketed paste + one <code>\r</code>), MAIN-owned
+        PTY write, trusted-user input only. No new spec/element field, no schema bump. A durable
+        "owning agent" connector is a later refinement — v1 is an explicit, remembered picker.</span
+      >
+    </div>
+  </section>
+
+  <footer class="foot">
+    <b>Open sign-off points.</b> (1) Entry affordance — ✎ header toggle
+    <i>and</i> double-click-to-edit, or just one? (2) Palette placement — floating rail (shown) vs a
+    docked strip. (3) T3 default target — remembered-per-diagram picker (shown) is v1; durable
+    connector deferred. · <b>Not in scope:</b>
+    per-diagram Tweaks row (T1, left out); any Mermaid-card editing (stays inert). ADR 0013,
+    accepted.
+  </footer>
+</div>

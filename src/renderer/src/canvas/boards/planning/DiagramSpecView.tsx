@@ -28,20 +28,16 @@ import {
   type SpecLayoutResult
 } from './specLayout'
 import {
-  SPEC_KIND_PATHS,
   specEdgeStyle,
   specGroupStyle,
   specKindSilhouette,
+  specNodeChrome,
   specStatusStyle,
   specThemePreset,
   type SpecSilhouette,
   type SpecStatusStyle
 } from './specTheme'
-
-/** Decision silhouette: clipped corners (the approved mock's calm octagon). */
-const DECISION_CLIP =
-  'polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), ' +
-  'calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px)'
+import { SpecNodeBody } from './specNodeVisual'
 
 /** Status-flip pulse duration — MUST match the pl-spec-pulse keyframe (planning.css). */
 const PULSE_MS = 620
@@ -61,104 +57,22 @@ interface GhostNode {
   box: PositionedSpecNode
 }
 
-/** Box + silhouette + status → the node div's inline style (shared by live nodes and ghosts). */
+/** Box + silhouette + status → the node div's inline style (shared by live nodes and ghosts).
+ *  Position/size stays here; the token chrome comes from the shared specNodeChrome (Phase-4
+ *  extraction — the editor's React Flow node reuses the same chrome so the two engines can't drift). */
 function specNodeStyle(
   box: PositionedSpecNode,
   sil: SpecSilhouette,
   status: SpecStatusStyle
 ): CSSProperties {
-  const style: CSSProperties = {
+  return {
     position: 'absolute',
     left: box.x,
     top: box.y,
     width: box.w,
     height: box.h,
-    boxSizing: 'border-box',
-    background: sil === 'note' ? 'var(--surface)' : status.fill,
-    border: `1px ${sil === 'note' ? 'dashed' : 'solid'} ${status.border}`,
-    borderRadius: sil === 'actor' ? 'var(--r-pill)' : 'var(--r-inner)',
-    opacity: status.opacity,
-    padding: sil === 'actor' ? '7px 9px 7px 12px' : '7px 9px 7px 8px'
+    ...specNodeChrome(sil, status)
   }
-  if (sil === 'decision') {
-    style.clipPath = DECISION_CLIP
-    style.borderRadius = 0
-  }
-  return style
-}
-
-/** Node interior (kind mark + label + glyph + detail) — shared by live nodes and exit ghosts. */
-function specNodeBody(n: SpecNode, sil: SpecSilhouette, status: SpecStatusStyle): ReactElement {
-  const paths = SPEC_KIND_PATHS[n.kind ?? 'step']
-  return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 16 }}>
-        {paths.length > 0 && (
-          <svg
-            viewBox="0 0 24 24"
-            style={{
-              flex: 'none',
-              width: 13,
-              height: 13,
-              stroke: 'var(--text-3)',
-              strokeWidth: 1.5,
-              fill: 'none',
-              strokeLinecap: 'round',
-              strokeLinejoin: 'round'
-            }}
-            aria-hidden
-          >
-            {paths.map((d) => (
-              <path key={d} d={d} />
-            ))}
-          </svg>
-        )}
-        <span
-          style={{
-            font: sil === 'note' ? '400 11px/15px var(--ui)' : '500 12px/16px var(--ui)',
-            color: sil === 'note' ? 'var(--text-2)' : 'var(--text)',
-            flex: 1,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          {n.label}
-        </span>
-        {status.glyph && (
-          <span
-            className="pl-spec-glyph"
-            style={{
-              flex: 'none',
-              font: '600 10px/14px var(--mono)',
-              width: 14,
-              height: 14,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: status.glyphColor
-            }}
-          >
-            {status.glyph}
-          </span>
-        )}
-      </div>
-      {n.detail && (
-        <div
-          style={{
-            font: '450 10px/14px var(--mono)',
-            color: 'var(--text-3)',
-            margin: '3px 0 0 19px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          {n.detail}
-        </div>
-      )}
-    </>
-  )
 }
 
 /** The lit neighbourhood of a focused node: itself, every edge touching it, both endpoints of
@@ -480,7 +394,7 @@ export function DiagramSpecView({
               className={`pl-spec-node pl-spec-${sil}${chip ? ' pl-spec-chip' : ''}${pulseGen ? ' pl-spec-pulse' : ''}${dim ? ' pl-spec-dim' : ''}`}
               style={nodeStyle}
             >
-              {specNodeBody(n, sil, status)}
+              <SpecNodeBody node={n} sil={sil} status={status} />
             </div>
           )
         })}
@@ -494,7 +408,7 @@ export function DiagramSpecView({
               className={`pl-spec-node-exit pl-spec-${sil}`}
               style={specNodeStyle(g.box, sil, status)}
             >
-              {specNodeBody(g.node, sil, status)}
+              <SpecNodeBody node={g.node} sil={sil} status={status} />
             </div>
           )
         })}

@@ -36,12 +36,14 @@ import {
 } from './diagramTheme'
 import { DiagramRevScrubber } from './DiagramRevScrubber'
 import { DiagramSpecView } from './DiagramSpecView'
+import { DiagramEditor } from './DiagramEditor'
+import { DiagramEditToggle } from './DiagramEditToggle'
 import { DiagramZoomControls } from './DiagramZoomControls'
 import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 import { useDiagramConvert } from './useDiagramConvert'
 import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
-import { specHitTest } from './specLayout'
+import { specHitTest, type SpecHit, type SpecLayoutResult } from './specLayout'
 import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import { useReducedMotion } from './useReducedMotion'
 import { useSpecLayout } from './useSpecLayout'
@@ -70,6 +72,24 @@ function ensureDiagramEditorLoaded(): void {
     })
 }
 
+/** Invert the viewport render transform for a pointer event and hit-test the positioned spec layout.
+ *  The static renderer is pointer-inert, so a click/dblclick resolves to the card, which maps screen
+ *  → board-local coords itself. Shared by the focus click and the ADR-0013 entry double-click. */
+function hitTestViewport(
+  e: ReactMouseEvent,
+  layout: SpecLayoutResult,
+  geo: { w: number; h: number; pan: Vec2; zoom: number }
+): SpecHit {
+  const host = e.currentTarget as HTMLElement
+  const rect = host.getBoundingClientRect()
+  const screenScale = host.offsetWidth > 0 ? rect.width / host.offsetWidth : 1
+  const point = {
+    x: (e.clientX - rect.left) / screenScale,
+    y: (e.clientY - rect.top) / screenScale
+  }
+  return specHitTest(point, { w: geo.w, h: Math.max(0, geo.h - 22) }, geo.pan, geo.zoom, layout)
+}
+
 export interface DiagramCardProps {
   element: DiagramElement
   /** Owning board id — for the untracked svgCache write-back. */
@@ -88,6 +108,10 @@ export interface DiagramCardProps {
    *  original Mermaid text as `importedFrom`, deleting `source`/`svgCache` (the expanse body
    *  contract in boardSchema). Fired only with an already-validated spec — never a partial one. */
   onConvert: (id: string, spec: DiagramSpec, importedFrom: string) => void
+  /** Tracked spec commit from the focus-mode editor (Phase 4): replaces the expanse `spec`. Every
+   *  replacement captures a revision via boardPatch (free); the editor arms the checkpoint per
+   *  gesture with onEditStart. Only ever called with an already-validated spec. */
+  onChangeSpec: (id: string, spec: DiagramSpec) => void
   /** Arm one undo checkpoint at the start of an editing session OR a resize drag (beginChange). */
   onEditStart: () => void
   /** Persist a freshly-rendered SVG assetId (UNTRACKED — derived artifact). */
@@ -105,6 +129,7 @@ export const DiagramCard = memo(function DiagramCard({
   onSelect,
   onChangeSource,
   onConvert,
+  onChangeSpec,
   onEditStart,
   onCache,
   onResize
@@ -136,11 +161,20 @@ export const DiagramCard = memo(function DiagramCard({
     // A capture/removal that shrinks the list under a scrub must not index past the end.
     setRevIndex((i) => (i !== null && i >= revisions.length ? null : i))
   }, [revisions.length])
-  const displaySpec = revIndex === null ? (element.spec ?? null) : revisions[revIndex].spec
+  // Focus-mode editor (Phase 4, ADR 0013): expanse only. Editing always targets the LIVE head with
+  // collapse OFF (you edit the true spec, not a folded/peeked view). Ephemeral session state.
+  const [specEditing, setSpecEditing] = useState(false)
+  // ADR 0013 double-click entry: the node hit-tested at the entry double-click, seeded into the
+  // editor as "ready to edit". Ephemeral; cleared on deselect and on a ✎-toggle (blank) entry.
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null)
+  const displaySpec =
+    revIndex === null || specEditing ? (element.spec ?? null) : revisions[revIndex].spec
   const effectiveSpec = useMemo(() => {
     if (!expanse || !displaySpec) return null
+    // The editor drives the raw head; the static view applies session collapse.
+    if (specEditing) return displaySpec
     return applyCollapse(displaySpec, specEffectiveCollapsed(displaySpec, collapseToggled))
-  }, [expanse, displaySpec, collapseToggled])
+  }, [expanse, displaySpec, collapseToggled, specEditing])
   // Phase 2: the card owns the spec layout (null spec on the mermaid branch — hook runs
   // unconditionally) so it can hit-test focus clicks against the positioned boxes.
   const specLayout = useSpecLayout(effectiveSpec)
@@ -332,14 +366,7 @@ export const DiagramCard = memo(function DiagramCard({
       }
       const layout = specLayout.layout
       if (!layout) return
-      const host = e.currentTarget as HTMLElement
-      const rect = host.getBoundingClientRect()
-      const screenScale = host.offsetWidth > 0 ? rect.width / host.offsetWidth : 1
-      const point = {
-        x: (e.clientX - rect.left) / screenScale,
-        y: (e.clientY - rect.top) / screenScale
-      }
-      const hit = specHitTest(point, { w, h: Math.max(0, h - 22) }, pan, zoom, layout)
+      const hit = hitTestViewport(e, layout, { w, h, pan, zoom })
       if (hit?.kind === 'node') {
         const chipGroup = specChipGroupId(hit.id)
         if (chipGroup !== null) {
@@ -358,6 +385,25 @@ export const DiagramCard = memo(function DiagramCard({
     [expanse, selected, interactive, editing, specLayout.layout, w, h, pan, zoom, toggleCollapse]
   )
 
+  // ADR 0013 entry: double-click a static node → open the focus-mode editor with THAT node ready to
+  // edit. The renderer is pointer-inert, so hit-test the entry point ourselves (same transform
+  // inversion as onViewportClick); a hit on a real node seeds it, a collapse chip / empty hit opens a
+  // blank editor. Only while SELECTED (the double-click on the first, selecting press can't fire this).
+  const onViewportDoubleClick = useCallback(
+    (e: ReactMouseEvent) => {
+      if (!expanse || !selected || !interactive || specEditing) return
+      let seed: string | null = null
+      const layout = specLayout.layout
+      if (layout) {
+        const hit = hitTestViewport(e, layout, { w, h, pan, zoom })
+        if (hit?.kind === 'node' && specChipGroupId(hit.id) === null) seed = hit.id
+      }
+      setPendingEditId(seed)
+      setSpecEditing(true)
+    },
+    [expanse, selected, interactive, specEditing, specLayout.layout, w, h, pan, zoom]
+  )
+
   // Snap back to a clean fit thumbnail whenever the element loses focus.
   useEffect(() => {
     if (!selected) {
@@ -365,6 +411,8 @@ export const DiagramCard = memo(function DiagramCard({
       setPan({ x: 0, y: 0 })
       setFocusId(null)
       setRevIndex(null) // a revision scrub is a peek — deselect returns to the live head
+      setSpecEditing(false) // leaving the card exits the focus-mode editor
+      setPendingEditId(null)
     }
   }, [selected])
 
@@ -532,15 +580,25 @@ export const DiagramCard = memo(function DiagramCard({
             {expanse ? (displaySpec?.title ?? 'expanse') : diagramTypeLabel(source)}
           </span>
           <span style={{ flex: 1 }} />
-          {!editing && expanse && revisions.length > 0 && (
+          {!editing && expanse && !specEditing && revisions.length > 0 && (
             <DiagramRevScrubber
               count={revisions.length}
               revIndex={revIndex}
               onScrub={setRevIndex}
             />
           )}
-          {!editing && (expanse || svgUrl) && (
+          {!editing && !specEditing && (expanse || svgUrl) && (
             <DiagramZoomControls zoom={zoom} onZoom={applyZoom} />
+          )}
+          {expanse && !editing && (
+            <DiagramEditToggle
+              editing={specEditing}
+              onToggle={() => {
+                // Header entry opens a BLANK editor — clear any prior double-click seed first.
+                if (!specEditing) setPendingEditId(null)
+                setSpecEditing((v) => !v)
+              }}
+            />
           )}
           {!expanse && !editing && (
             <button
@@ -661,6 +719,28 @@ export const DiagramCard = memo(function DiagramCard({
             }}
           />
         )
+      ) : expanse && specEditing && effectiveSpec && specLayout.layout ? (
+        // Focus-mode editor (Phase 4): the nested React Flow instance replaces the static view. It
+        // owns interaction (its own pan/zoom/drag); the card body just hosts it below the header.
+        <div
+          className="pl-diagram-edit"
+          style={{
+            position: 'absolute',
+            inset: showHeader ? '22px 0 0 0' : 0,
+            overflow: 'hidden'
+          }}
+        >
+          <DiagramEditor
+            spec={effectiveSpec}
+            layout={specLayout.layout}
+            diagramId={id}
+            initialEditId={pendingEditId}
+            w={w}
+            h={Math.max(0, h - (showHeader ? 22 : 0))}
+            onEditStart={onEditStart}
+            onChangeSpec={(next) => onChangeSpec(id, next)}
+          />
+        </div>
       ) : expanse || svgUrl ? (
         <div
           className={'pl-diagram-view' + (selected ? ' nowheel nodrag nopan' : '')}
@@ -669,6 +749,7 @@ export const DiagramCard = memo(function DiagramCard({
           onPointerMove={onViewportPointerMove}
           onPointerUp={onViewportPointerUp}
           onPointerCancel={onViewportPointerUp}
+          onDoubleClick={expanse && selected && !specEditing ? onViewportDoubleClick : undefined}
           onClick={expanse ? onViewportClick : undefined}
           style={{
             position: 'absolute',

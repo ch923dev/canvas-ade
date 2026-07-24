@@ -267,6 +267,7 @@ describe('DiagramCard engine branch (expanse)', () => {
         onDragStart={noop}
         onChangeSource={noop}
         onConvert={noop}
+        onChangeSpec={noop}
         onEditStart={noop}
         onCache={noop}
         onResize={noop}
@@ -294,6 +295,7 @@ describe('DiagramCard engine branch (expanse)', () => {
         onDragStart={noop}
         onChangeSource={noop}
         onConvert={noop}
+        onChangeSpec={noop}
         onEditStart={noop}
         onCache={noop}
         onResize={noop}
@@ -321,6 +323,7 @@ describe('DiagramCard engine branch (expanse)', () => {
         onDragStart={noop}
         onChangeSource={noop}
         onConvert={noop}
+        onChangeSpec={noop}
         onEditStart={noop}
         onCache={noop}
         onResize={noop}
@@ -330,7 +333,9 @@ describe('DiagramCard engine branch (expanse)', () => {
     expect(screen.getByText('2/2')).toBeTruthy() // head of a 1-revision history
     fireEvent.click(screen.getByTitle('Older revision'))
     await waitFor(() => expect(screen.getByText('OldNode')).toBeTruthy())
-    expect(screen.queryByText('Lint')).toBeNull() // the peek replaces the live render…
+    // The peek replaces the live render; the displaced 'Lint' node lingers one EXIT_MS exit-fade
+    // ghost, so await its disappearance (a bare sync assert races the async layout vs the fade).
+    await waitFor(() => expect(screen.queryByText('Lint')).toBeNull())
     expect(screen.getByText('1/2')).toBeTruthy()
     expect(screen.getByText('Old pipeline')).toBeTruthy() // …title chip follows the peek
     fireEvent.click(screen.getByTitle('Newer revision'))
@@ -349,6 +354,7 @@ describe('DiagramCard engine branch (expanse)', () => {
           onDragStart={noop}
           onChangeSource={noop}
           onConvert={noop}
+          onChangeSpec={noop}
           onEditStart={noop}
           onCache={noop}
           onResize={noop}
