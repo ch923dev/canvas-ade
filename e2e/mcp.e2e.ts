@@ -1665,6 +1665,10 @@ test.describe('@core @planning @mcp S5 file context on canvas://boards (over the
     // A real terminal board to hold the lead role (registry-validated by grantLead).
     const leadBoard = await seed(page, 'terminal')
     const otherBoard = await seed(page, 'terminal')
+    // grantLead validates against MAIN's board MIRROR, which syncs asynchronously after a
+    // renderer seed — wait until both boards are visible over the wire before granting.
+    await expect.poll(() => boardStatus(mcp.orch, leadBoard), { timeout: 8000 }).not.toBeNull()
+    await expect.poll(() => boardStatus(mcp.orch, otherBoard), { timeout: 8000 }).not.toBeNull()
 
     // Grant: refuses a second board while the first holds it (Q2 single-active-lead).
     const grant = await mainCall<{ ok: boolean } | null>(electronApp, 'mcpLeadGrant', leadBoard)
