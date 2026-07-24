@@ -3480,3 +3480,28 @@ fix head `a84e18d8`** (Windows 324P · Linux Docker 321P; every failure a docume
 renderer+e2e diff — rerun/retry-green). Manual dev check title-stamped `PR#diagram-phase4` (`pnpm dev`,
 user eyeball "Looks good"). **Version:** 0.28.0 → **0.29.0** (minor — new subsystem). Squash
 `bdff6192`. Worktree `.worktrees/diagram-phase4-editor` teardown after this docs commit.
+
+## 2026-07-24 — PR #380: diagram Phase 5 Card 1 — Data-Flow board onto the shared spec renderer (v0.29.1)
+
+**The second consumer that battle-tests the spec API** (REVIEW.md §5, the §6 extraction gate).
+`lib/dfSpecAdapter.ts`: pure render-time `DfGraph → DiagramSpec` (never persisted — Data-Flow stays
+ephemeral/derived; framing user-confirmed up front). Kinds page→actor · endpoint→service ·
+entity/shape→data(+muted); edges call→flow · returns→data · rel→dependency · lineage→dependency+active
+(accent dash); regenerate diff added→active ● / changed→warn !; ids slugified deterministically with a
+reverse map for focus clicks; spec caps enforced by truncation. **Spec API grew `SpecNode.rows`**
+(signed-off design artifact, Option B): optional member rows (≤12, ≤80 ch, accent cell), validated +
+sized + rendered by the shared `SpecNodeBody` — entity field-table parity; the one API churn Card 1
+surfaced. `osr/DataFlowSpecView.tsx` renders at ELK natural extent inside the scrolling `.df-body`
+(scroll UX kept) and owns focus via `specHitTest`. **Unfocus fix** (user-reported live): Data-Flow
+focus is tri-state (`undefined`=default busiest-endpoint, `null`=user-cleared → full surface);
+re-click or empty-canvas click clears (DiagramCard M3 contract) — the old `focusId ?? defaultFocus`
+fallback made clearing impossible. **Deleted** `DataFlowGraphView.tsx` + `graphLayout.ts`(+test) +
+dead `df-*` CSS; `SequenceView` relocated intact. `DiagramSpecView` nodes/edges stamp
+`data-kind`/`data-status` (semantic e2e surface). **e2e seeded-capture race fixed**: the bound Browser
+board's real MAIN 'replay' batch REPLACES seeded records (the long-ambient dataFlow flake,
+near-deterministic on Docker) — render asserts poll with detect-wipe re-seed; export re-asserts +
+retries; true-entity pin restored. Reviewer round: 1 warning (row overflow) → fixed `8a96b903`,
+inline-dispositioned, re-review clean. **Full matrix green** (Windows 324P · Linux Docker 322P/0F).
+Manual dev check title-stamped `P5-Card1 diagram-phase5`. **Version:** 0.29.0 → **0.29.1** (patch —
+unify/refactor, Card 1 alone). Squash `2b5fa858`. Card 2 (`@expanse-ade/diagram` extraction) decided
+separately post-merge. Worktree `.worktrees/diagram-phase5` teardown deferred to the Card-2 decision.
