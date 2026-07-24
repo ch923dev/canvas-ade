@@ -3568,3 +3568,30 @@ Linux Docker 322P/0F), post-rebase units 5987P, dev check title-stamped + three 
 screenshot-verified. Landed after the #383 SCA unblock (Route 2); branch rebuilt on v0.30.1 main as
 one commit. Reviewer: FULL review ×2 (pre + post rebase), zero findings. **Version:** 0.30.1 →
 **0.31.0** (minor — subsystem extraction). Squash `4a9a2ea9`.
+## 2026-07-25 — PR #384: orchestration Phase 1 — precondition X: terminal-held board-id-bound `lead` token (v0.32.0)
+
+The invalidation spike (`M:/expanse/docs/orchestration/04-roadmap.md` Phase 1). **Verdict: X HOLDS —
+the hard-coded `commandBoardId:'app'` relay binding generalizes cleanly; the documented app-resident
+fallback was not needed.** Paired broker release: **`@expanse-ade/mcp` 0.22.0 → 0.22.1**
+(canvas-ade-mcp PR #13, squash `00d6764`) — a new `lead` tier whose dispatch authority binds to the
+CALLER'S own token-derived board id: own-board-bound `relay_prompt(s)`, `assign_prompt` routed
+through the relay path (the cable is the authorization), spawn auto-cable extended to lead
+(+ additive `SpawnGroupInput.sourceBoardId`), barriers, `write_result`; `commandBoardId` ignored at
+lead (it stays the `'app'` path's designation — zero regression, contract-pinned). App side:
+`leadAuthority.ts` (single-active-lead Q2 invariant, rotate/revoke lifecycle, runtime-only
+designation), minter ROUTING at the untouched spawn-time provisioning seam (designated board → lead,
+else connected), frame-guarded consent-gated grant/revoke/status IPC (registered in `createMcpBoot`),
+Settings › Orchestration "Lead terminal" two-step-grant section — **a temporary proof surface by
+user directive, to be REMOVED when the orchestration-UX revamp (lead-at-creation / swarm board)
+lands; the plumbing is the deliverable and carries over unchanged.** Best catch: 0.22.0's lead
+silently collapsed to `worker` at the HTTP boundary (`ctxFromAuth` closed tier vocabulary) —
+invisible to every in-memory contract test, found by this branch's structural e2e against the live
+loopback server, fixed + pinned by a new HTTP-layer live test (0.22.1). The audit table (every
+`commandBoardId` consumer + the dispatch-guard nonce space) lives in the PR description. Carried
+repo-wide: postcss override `>=8.5.18` (GHSA-r28c-9q8g-f849, published mid-lane — the SCA gate
+blocked every branch). Verified: drift/parity green at the pinned pair (F25 + new lead-tier
+structural block), broker contract 308 + live 35, app units 6097+ (ambient classes isolated-green),
+structural lead e2e green on 0.22.1, full matrix green both legs ×2 (pre-rebase + merge gate: Win
+326P + menuShell rerun-green · Linux exit-0 324P/1 flaky-recovered), dev check user-eyeballed
+(title-stamped). Reviewer: FULL ×2 rounds, zero findings. **Version:** 0.31.0 → **0.32.0** (minor —
+new capability tier). Squash `c0ad896d`.
