@@ -3533,3 +3533,17 @@ matrix green** on `8e12540`-line, fix head, AND the rebased merge head `e5a7daac
 Linux Docker exit-0 323P; menuShell = documented flake, rerun-green ×4). Manual dev check ×2 user
 eyeball rounds (title-stamped). OpenRouter per-role policy confirmed S1 scope. **Version:** 0.29.1 →
 **0.30.0** (minor — new subsystem). Squash `77548a76`.
+
+## 2026-07-25 — PR #383: SCA gate unblock — stale electron-builder-squirrel-windows@25 peer chain (v0.30.1)
+
+Two freshly published HIGH advisories (`app-builder-lib@25.1.8` AppImage search path,
+GHSA-7g7r-gx96-252g; `builder-util-runtime@9.2.10` cross-origin credential leak,
+GHSA-p2f4-r6v6-j797) tripped the CI SCA gate on EVERY PR branched from main — advisory-feed drift,
+not PR content. Root cause: a stale peer auto-install resolution kept
+`electron-builder-squirrel-windows@25.1.8` (and its whole 25.x subtree) in the lockfile even though
+`app-builder-lib@26.15.5` exact-peer-pins `26.15.5`. pnpm overrides don't apply to peer auto-install
+(pnpm#4214), so the fix is an explicit devDependency `^26.15.5` + `//sca-pins` comment
+(squirrel-windows is not a build target — win = nsis only; the dep purely pins the peer resolution).
+`sca-audit` clean at threshold (isolated fresh-worktree install); lockfile −1096 lines = the dead
+25.x subtree. Surfaced by (and equivalently patched in) #382, extracted to land first per Route-2
+decision. **Version:** 0.30.0 → **0.30.1** (patch). Squash `e85c5058`.
