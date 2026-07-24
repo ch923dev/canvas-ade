@@ -583,6 +583,25 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     await expect(page.locator('.pl-editor-flow')).toHaveCount(0)
   })
 
+  test('phase-4: double-clicking a static node opens the editor with THAT node ready to edit (ADR 0013 entry)', async ({
+    page
+  }) => {
+    await seedSpecDiagram(page)
+    await expect(page.locator('.pl-spec-node')).toHaveCount(4, { timeout: 20000 })
+    await page.locator('.pl-diagram').click({ position: { x: 8, y: 8 } }) // select first
+    // The static renderer is pointer-inert, so target it with a RAW double-click at the node's box
+    // (the focus-click test's technique) — it bubbles to the card viewport hit-test, which seeds the
+    // hit node into the editor as "ready to edit" (its inline label input, focused).
+    const gate = page.locator('.pl-spec-node', { hasText: 'Matrix green?' })
+    const gb = await gate.boundingBox()
+    if (!gb) throw new Error('gate node has no bounding box')
+    await page.mouse.dblclick(gb.x + gb.width / 2, gb.y + gb.height / 2)
+    await expect(page.locator('.pl-editor-flow')).toBeVisible({ timeout: 10000 })
+    const input = page.locator('.pl-editor-inline input[aria-label="Node label"]')
+    await expect(input).toBeFocused({ timeout: 10000 })
+    await expect(input).toHaveValue('Matrix green?')
+  })
+
   test('phase-4: the palette adds a node (upsertNode → 5 nodes, kind persisted)', async ({
     page
   }) => {

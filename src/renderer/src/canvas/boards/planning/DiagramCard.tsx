@@ -43,7 +43,7 @@ import { resizeFromDrag } from './diagramResize'
 import { wheelZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 import { useDiagramConvert } from './useDiagramConvert'
 import { applyCollapse, specChipGroupId, specEffectiveCollapsed } from './specCollapse'
-import { specHitTest } from './specLayout'
+import { specHitTest, type SpecHit, type SpecLayoutResult } from './specLayout'
 import { useDiagramMotionStore } from '../../../store/diagramMotionStore'
 import { useReducedMotion } from './useReducedMotion'
 import { useSpecLayout } from './useSpecLayout'
@@ -70,6 +70,24 @@ function ensureDiagramEditorLoaded(): void {
     .catch(() => {
       diagramEditorLoad = null // chunk fetch failed → retry on the next card mount
     })
+}
+
+/** Invert the viewport render transform for a pointer event and hit-test the positioned spec layout.
+ *  The static renderer is pointer-inert, so a click/dblclick resolves to the card, which maps screen
+ *  → board-local coords itself. Shared by the focus click and the ADR-0013 entry double-click. */
+function hitTestViewport(
+  e: ReactMouseEvent,
+  layout: SpecLayoutResult,
+  geo: { w: number; h: number; pan: Vec2; zoom: number }
+): SpecHit {
+  const host = e.currentTarget as HTMLElement
+  const rect = host.getBoundingClientRect()
+  const screenScale = host.offsetWidth > 0 ? rect.width / host.offsetWidth : 1
+  const point = {
+    x: (e.clientX - rect.left) / screenScale,
+    y: (e.clientY - rect.top) / screenScale
+  }
+  return specHitTest(point, { w: geo.w, h: Math.max(0, geo.h - 22) }, geo.pan, geo.zoom, layout)
 }
 
 export interface DiagramCardProps {
@@ -146,6 +164,9 @@ export const DiagramCard = memo(function DiagramCard({
   // Focus-mode editor (Phase 4, ADR 0013): expanse only. Editing always targets the LIVE head with
   // collapse OFF (you edit the true spec, not a folded/peeked view). Ephemeral session state.
   const [specEditing, setSpecEditing] = useState(false)
+  // ADR 0013 double-click entry: the node hit-tested at the entry double-click, seeded into the
+  // editor as "ready to edit". Ephemeral; cleared on deselect and on a ✎-toggle (blank) entry.
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null)
   const displaySpec =
     revIndex === null || specEditing ? (element.spec ?? null) : revisions[revIndex].spec
   const effectiveSpec = useMemo(() => {
@@ -345,14 +366,7 @@ export const DiagramCard = memo(function DiagramCard({
       }
       const layout = specLayout.layout
       if (!layout) return
-      const host = e.currentTarget as HTMLElement
-      const rect = host.getBoundingClientRect()
-      const screenScale = host.offsetWidth > 0 ? rect.width / host.offsetWidth : 1
-      const point = {
-        x: (e.clientX - rect.left) / screenScale,
-        y: (e.clientY - rect.top) / screenScale
-      }
-      const hit = specHitTest(point, { w, h: Math.max(0, h - 22) }, pan, zoom, layout)
+      const hit = hitTestViewport(e, layout, { w, h, pan, zoom })
       if (hit?.kind === 'node') {
         const chipGroup = specChipGroupId(hit.id)
         if (chipGroup !== null) {
@@ -371,6 +385,25 @@ export const DiagramCard = memo(function DiagramCard({
     [expanse, selected, interactive, editing, specLayout.layout, w, h, pan, zoom, toggleCollapse]
   )
 
+  // ADR 0013 entry: double-click a static node → open the focus-mode editor with THAT node ready to
+  // edit. The renderer is pointer-inert, so hit-test the entry point ourselves (same transform
+  // inversion as onViewportClick); a hit on a real node seeds it, a collapse chip / empty hit opens a
+  // blank editor. Only while SELECTED (the double-click on the first, selecting press can't fire this).
+  const onViewportDoubleClick = useCallback(
+    (e: ReactMouseEvent) => {
+      if (!expanse || !selected || !interactive || specEditing) return
+      let seed: string | null = null
+      const layout = specLayout.layout
+      if (layout) {
+        const hit = hitTestViewport(e, layout, { w, h, pan, zoom })
+        if (hit?.kind === 'node' && specChipGroupId(hit.id) === null) seed = hit.id
+      }
+      setPendingEditId(seed)
+      setSpecEditing(true)
+    },
+    [expanse, selected, interactive, specEditing, specLayout.layout, w, h, pan, zoom]
+  )
+
   // Snap back to a clean fit thumbnail whenever the element loses focus.
   useEffect(() => {
     if (!selected) {
@@ -379,6 +412,7 @@ export const DiagramCard = memo(function DiagramCard({
       setFocusId(null)
       setRevIndex(null) // a revision scrub is a peek — deselect returns to the live head
       setSpecEditing(false) // leaving the card exits the focus-mode editor
+      setPendingEditId(null)
     }
   }, [selected])
 
@@ -557,7 +591,14 @@ export const DiagramCard = memo(function DiagramCard({
             <DiagramZoomControls zoom={zoom} onZoom={applyZoom} />
           )}
           {expanse && !editing && (
-            <DiagramEditToggle editing={specEditing} onToggle={() => setSpecEditing((v) => !v)} />
+            <DiagramEditToggle
+              editing={specEditing}
+              onToggle={() => {
+                // Header entry opens a BLANK editor — clear any prior double-click seed first.
+                if (!specEditing) setPendingEditId(null)
+                setSpecEditing((v) => !v)
+              }}
+            />
           )}
           {!expanse && !editing && (
             <button
@@ -693,6 +734,7 @@ export const DiagramCard = memo(function DiagramCard({
             spec={effectiveSpec}
             layout={specLayout.layout}
             diagramId={id}
+            initialEditId={pendingEditId}
             w={w}
             h={Math.max(0, h - (showHeader ? 22 : 0))}
             onEditStart={onEditStart}
@@ -707,9 +749,7 @@ export const DiagramCard = memo(function DiagramCard({
           onPointerMove={onViewportPointerMove}
           onPointerUp={onViewportPointerUp}
           onPointerCancel={onViewportPointerUp}
-          onDoubleClick={
-            expanse && selected && !specEditing ? () => setSpecEditing(true) : undefined
-          }
+          onDoubleClick={expanse && selected && !specEditing ? onViewportDoubleClick : undefined}
           onClick={expanse ? onViewportClick : undefined}
           style={{
             position: 'absolute',

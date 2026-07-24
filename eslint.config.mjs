@@ -349,6 +349,13 @@ export default tseslint.config(
     rules: { 'max-lines': ['error', { max: 668, skipBlankLines: true, skipComments: true }] }
   },
   {
+    // Diagram Phase 4 (ADR 0013): the focus-mode entry (✎ toggle + hit-tested double-click seeding)
+    // pushed the card past 700 even after extracting DiagramEditToggle + the shared hitTestViewport
+    // helper. Held tight here rather than a fourth split of an already-cohesive card.
+    files: ['src/renderer/src/canvas/boards/planning/DiagramCard.tsx'],
+    rules: { 'max-lines': ['error', { max: 719, skipBlankLines: true, skipComments: true }] }
+  },
+  {
     files: ['src/renderer/src/store/canvasStore.ts'],
     // #BUG-006 + #BUG-007 both land here and both bind to the module-PRIVATE pendingCheckpoint
     // machinery. BUG-006: the four untracked layout writers (growBoard*/reposition/setDiagramCache)

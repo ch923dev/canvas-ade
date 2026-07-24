@@ -284,6 +284,9 @@ export interface DiagramEditorProps {
   onEditStart: () => void
   /** Commit a fresh, already-valid spec (→ boardPatch: undo + revision capture free). */
   onChangeSpec: (next: DiagramSpec) => void
+  /** ADR 0013 double-click entry: seed the editor with this node "ready to edit" (its inline label
+   *  editor open on mount). Null / omitted ⇒ the ✎-toggle path opens a blank editor. */
+  initialEditId?: string | null
 }
 
 /** Inner editor (inside the provider so the RF hooks resolve). */
@@ -294,13 +297,17 @@ function DiagramEditorInner({
   w,
   h,
   onEditStart,
-  onChangeSpec
+  onChangeSpec,
+  initialEditId
 }: DiagramEditorProps): ReactElement {
   const rf = useReactFlow()
   const preset = specThemePreset(spec.theme)
   const [nodes, setNodes, onNodesChange] = useNodesState<SpecFlowNode>(deriveNodes(spec, layout))
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(deriveEdges(spec, preset))
-  const [editingId, setEditingId] = useState<string | null>(null)
+  // Seeded once at mount — the editor remounts per focus session, so a fresh double-click entry
+  // re-seeds; the ✎-toggle path passes null (blank editor). A stale id (node removed before mount)
+  // simply opens nothing (no node renders its inline editor) — safe, no guard needed.
+  const [editingId, setEditingId] = useState<string | null>(initialEditId ?? null)
   const [commentId, setCommentId] = useState<string | null>(null)
 
   // Re-derive the RF working copy whenever the spec/layout changes from OUTSIDE the pane (our own
