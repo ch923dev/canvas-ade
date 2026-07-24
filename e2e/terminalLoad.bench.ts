@@ -36,6 +36,11 @@ const PINNED = 12.5
 const CELL_W = 480
 const CELL_H = 400
 const PHASE_MS = 4000
+// Mount is NOT streaming. Between `terminalMounted` and the first PTY byte sit the pty:spawn IPC,
+// a possible ptyHost daemon COLD START, the shell's own boot, and STREAM_CMD being written as the
+// first PTY line for PowerShell to parse. Generous because only the SLOWEST terminal pays it — the
+// rest have already warmed up by the time their poll runs.
+const STREAM_WARMUP_MS = 45_000
 
 interface PhaseStats {
   mode: string
@@ -151,15 +156,27 @@ async function seedStreamingGrid(
   return { ids, fitZoom }
 }
 
-/** Confirm the streams are actually flowing: every terminal's buffer must grow over ~1.5s. */
+/** Confirm the streams are actually flowing: every terminal's buffer must grow.
+ *
+ *  This POLLS for growth rather than sampling once over a fixed window. The fixed-window version
+ *  measured daemon warm-up, not streaming: in a full bench run the failures were monotonic in
+ *  warm-up — N=1 got 0/1 growing, N=4 got 0/4, N=8 got 7/8, and the last test passed 1/1, because
+ *  the ptyHost daemon and pwsh are cold for the first test in a run and warm by the last. That made
+ *  the harness unable to produce a baseline at all (every early N failed before `measurePhase` ever
+ *  ran, so no fps was recorded). Waiting for the precondition instead of assuming it is the fix;
+ *  the measured phases below are unchanged, so the numbers stay comparable to earlier reports. */
 async function assertStreaming(page: Parameters<typeof evalIn>[0], ids: string[]): Promise<void> {
   const lenOf = (id: string): Promise<number> =>
     evalIn<number>(page, `(window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? '').length`)
   const before = await Promise.all(ids.map(lenOf))
-  await page.waitForTimeout(1500)
-  const after = await Promise.all(ids.map(lenOf))
-  const growing = ids.filter((_, i) => after[i] > before[i]).length
-  expect(growing, `all ${ids.length} terminals streaming (buffer growing)`).toBe(ids.length)
+  for (const [i, id] of ids.entries()) {
+    await expect
+      .poll(() => lenOf(id), {
+        timeout: STREAM_WARMUP_MS,
+        message: `terminal ${i + 1}/${ids.length} never streamed (buffer never grew past ${before[i]})`
+      })
+      .toBeGreaterThan(before[i])
+  }
 }
 
 /** Format the per-phase stat lines (shared by both the all-visible report and the gating report). */
