@@ -5,6 +5,7 @@
  * verdict reading, and the raw-status→kanban transition. No React, no `window`, no store.
  */
 import type { CommandTask, Composition, TaskGroup, TaskStatus } from '../store/commandStore'
+import { isWriteRolePack, rolePackById, WRITE_ROLE_CONCURRENCY_CAP } from './rolePacks'
 
 export type { Composition, TaskGroup } from '../store/commandStore'
 
@@ -118,12 +119,42 @@ export function canDispatch(
 }
 
 /**
+ * A task dispatched under a WRITE-posture role pack (orchestration Phase 0). Custom dispatches
+ * (no pack) keep their pre-pack semantics — only the global cap gates them — so this is false for
+ * an absent or unknown pack id.
+ */
+export function isWriteRoleTask(task: Pick<CommandTask, 'rolePackId'>): boolean {
+  const pack = rolePackById(task.rolePackId)
+  return pack ? isWriteRolePack(pack) : false
+}
+
+/** In-flight (routing/executing) tasks holding the write-role slot. */
+export function writeRoleInFlight(tasks: ReadonlyArray<CommandTask>): number {
+  return tasks.filter(
+    (t) => (t.status === 'routing' || t.status === 'executing') && isWriteRoleTask(t)
+  ).length
+}
+
+/**
  * The oldest queued task that is READY to spawn — queued, no group yet, AND configured (a
  * `launchCommand` was committed via the config dialog, C2d). Un-configured queued tasks (still in /
  * cancelled out of the config dialog) are skipped until the user dispatches them.
+ *
+ * Phase 0 write-role gate: until worktree isolation exists (Phase 3), two write-role workers would
+ * share one working tree — so while a write-role task is in flight, further write-role tasks are
+ * SKIPPED (not blocked FIFO: read-role/Custom tasks behind them still dispatch). Disclosed in the
+ * worker-config dialog ({@link WRITE_ROLE_CONCURRENCY_CAP}); the slot frees on settle/board-gone,
+ * and the existing pump re-fires on both.
  */
 export function nextQueuedTask(tasks: ReadonlyArray<CommandTask>): CommandTask | undefined {
-  return tasks.find((t) => t.status === 'queued' && !t.group && typeof t.launchCommand === 'string')
+  const writeBusy = writeRoleInFlight(tasks) >= WRITE_ROLE_CONCURRENCY_CAP
+  return tasks.find(
+    (t) =>
+      t.status === 'queued' &&
+      !t.group &&
+      typeof t.launchCommand === 'string' &&
+      !(writeBusy && isWriteRoleTask(t))
+  )
 }
 
 /**

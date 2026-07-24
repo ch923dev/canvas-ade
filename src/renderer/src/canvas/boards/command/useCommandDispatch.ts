@@ -42,6 +42,7 @@ import {
   type Composition,
   type EngineeredDispatch
 } from '../../../lib/commandDispatch'
+import { packDispatchPrompt, rolePackById } from '../../../lib/rolePacks'
 
 /**
  * Engineer the dispatch: ask the in-app LLM to turn the user's terse task into BOTH a short intent
@@ -196,7 +197,11 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       await sleep(WORKER_BOOT_SETTLE_MS)
       if (stale()) return
       const dispatchPrompt = api.dispatchPrompt
-      const prompt = singleLinePrompt(task.prompt ?? task.title)
+      // Phase 0 role packs: the pack's role brief is prepended to the engineered prompt HERE (the
+      // gated REPL write), never the shell launch line — the launch stays a BARE command and the
+      // brief pays the same single human confirm as the task prompt it rides.
+      const pack = rolePackById(task.rolePackId)
+      const prompt = singleLinePrompt(packDispatchPrompt(pack, task.prompt ?? task.title))
       await retryUntilReady(() => dispatchPrompt(terminalId, prompt))
       // Authoritative done/failed verdict — awaitSettled resolves on output silence after the worker
       // finishes (read-only; the board is already addressable here, but guard the window anyway).
@@ -261,7 +266,11 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       result: { launchCommand: string; prompt: string; config: WorkerConfig }
     ): void => {
       const store = useCommandStore.getState()
-      store.setTaskConfig(taskId, { launchCommand: result.launchCommand, prompt: result.prompt })
+      store.setTaskConfig(taskId, {
+        launchCommand: result.launchCommand,
+        prompt: result.prompt,
+        rolePackId: result.config.rolePackId ?? undefined
+      })
       store.setLastWorkerConfig(result.config)
       store.setConfiguring(null)
       pumpRef.current?.()

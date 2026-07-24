@@ -5,6 +5,8 @@ import {
   inFlightSlots,
   canDispatch,
   nextQueuedTask,
+  isWriteRoleTask,
+  writeRoleInFlight,
   memberTags,
   isFailureResult,
   isCapError,
@@ -84,6 +86,61 @@ describe('nextQueuedTask', () => {
     expect(nextQueuedTask([task('x', 'executing')])).toBeUndefined()
     // An un-configured queued task (still in / cancelled out of the dialog) is not dispatchable.
     expect(nextQueuedTask([task('q', 'queued')])).toBeUndefined()
+  })
+})
+
+describe('write-role gate (orchestration Phase 0)', () => {
+  // A configured task under a role pack. builder = the only write-posture catalog pack;
+  // code-reviewer/explorer/planner are read-posture ('plan').
+  const packed = (id: string, status: TaskStatus, rolePackId: string): CommandTask => ({
+    ...task(id, status),
+    launchCommand: 'claude',
+    rolePackId
+  })
+
+  it('isWriteRoleTask: true only for a write-posture pack; Custom/unknown packs are not gated', () => {
+    expect(isWriteRoleTask({ rolePackId: 'builder' })).toBe(true)
+    expect(isWriteRoleTask({ rolePackId: 'code-reviewer' })).toBe(false)
+    expect(isWriteRoleTask({ rolePackId: 'explorer' })).toBe(false)
+    expect(isWriteRoleTask({ rolePackId: 'planner' })).toBe(false)
+    expect(isWriteRoleTask({ rolePackId: undefined })).toBe(false) // Custom dispatch
+    expect(isWriteRoleTask({ rolePackId: 'no-such-pack' })).toBe(false) // degrade to Custom
+  })
+
+  it('writeRoleInFlight counts routing/executing write-role tasks only', () => {
+    expect(
+      writeRoleInFlight([
+        packed('a', 'routing', 'builder'),
+        packed('b', 'executing', 'builder'),
+        packed('c', 'executing', 'explorer'), // read role — not counted
+        packed('d', 'queued', 'builder'), // not in flight
+        packed('e', 'done', 'builder') // settled — slot freed
+      ])
+    ).toBe(2)
+  })
+
+  it('nextQueuedTask SKIPS a queued write-role task while one is in flight — read roles pass', () => {
+    const tasks = [
+      packed('w1', 'executing', 'builder'), // holds the single write slot
+      packed('w2', 'queued', 'builder'), // write-blocked → skipped, stays queued
+      packed('r1', 'queued', 'explorer') // read role behind it still dispatches
+    ]
+    expect(nextQueuedTask(tasks)?.id).toBe('r1')
+  })
+
+  it('a queued write-role task dispatches once the write slot frees (settled/gone)', () => {
+    const done = [packed('w1', 'done', 'builder'), packed('w2', 'queued', 'builder')]
+    expect(nextQueuedTask(done)?.id).toBe('w2')
+    const failed = [packed('w1', 'failed', 'builder'), packed('w2', 'queued', 'builder')]
+    expect(nextQueuedTask(failed)?.id).toBe('w2')
+  })
+
+  it('Custom (pack-less) dispatches keep pre-pack semantics — never write-gated', () => {
+    const tasks = [
+      packed('w1', 'executing', 'builder'),
+      { ...task('c1', 'queued'), launchCommand: 'claude' } // Custom: only the global cap applies
+    ]
+    expect(nextQueuedTask(tasks)?.id).toBe('c1')
   })
 })
 
