@@ -3439,3 +3439,44 @@ screenshot. **Version:** #370/#371/#372 took 0.25/0.26/0.27 mid-cycle → cloud 
 (rebase past #371 xterm-6.0, merge past #372 diagram — force-push to the feature branch is
 permission-blocked; the diagram diff is disjoint from voice so the version was the only resolution).
 Squash `1e671f48`. Worktree `.worktrees/voice-cloud-tts` teardown after this docs commit.
+
+## PR #379 — diagram Phase 4: focus-mode nested editor for `engine:'expanse'` diagram cards (full L + T3) (v0.28.0 → 0.29.0) — 2026-07-24
+
+Interactive editing for structured (`expanse`) diagram cards on Planning boards. A nested React Flow
+instance replaces the static `DiagramSpecView` **only while a card is focused** (`DiagramCard` gates
+it), so an unfocused/off-screen diagram never carries a live RF instance (the canvas-perf contract
+holds). **Zero new deps** (React Flow already bundled); **no schema bump** (`SpecNode.pos` already in
+v22). **HARD GATE cleared before any code (ADR 0013 — whiteboard-shapes, user-signed):** a
+token-faithful design mock rendered + signed off (`docs/research/2026-07-19-diagram-viz-redesign/
+phase4-design/mock.html` + published artifact), and the plan drawn + kept live on the canvas via the
+`canvas-ade` MCP. **Scope (confirmed with user):** full **L** — drag→`pos` (one undo/drag), edge
+re-route/connect/delete, collapsible floating palette (kind/status/host-`Icon`, closed vocab), inline
+label/detail edit — plus **T3** (per-node 💬 → `relay_prompt` to a remembered live-terminal picker;
+action-not-persisted). **T1 (per-diagram Tweaks row) left out** as decided. **Architecture:**
+`specEditorOps.ts` pure builders (edit/setPos/reroute/add/remove + `isValidSpec`) all layered on the
+Phase-3 `applySpecOps`; every edit → `assertDiagramSpec` → `boardPatch` (undo + revision capture free,
+one checkpoint per gesture via `onEditStart`); the editor never persists an invalid spec. Shared
+`SpecNodeBody`/`specNodeChrome` extracted so the editor and static view never drift; `DiagramEditToggle`
+extracted to hold the card ratchet. `diagramCommentRelay` reuses the vetted terminal-input seam
+(bracketed paste → settle → one `\r`, re-checks `running[id]`), mirroring voice inject; node-pty stays
+MAIN-only; spec strings render as React text nodes only (no `innerHTML`) — sandbox/isolation untouched.
+**e2e caught + fixed 2 real bugs** before review: palette occluded the leftmost nodes → made the rail
+collapsible; the T3 composer's new-array `useCanvasStore` selector tripped React 19's "getSnapshot
+should be cached" → select stable `boards` + `useMemo`. **Bot review 1 `[warning]`:** double-click
+entered focus mode but opened a BLANK editor — it did not seed the double-clicked node, contradicting
+the signed ADR ("double-click-a-node … with that node ready to edit"); none of the 5 new specs
+exercised that entry path (all used the `✎` toggle). **FIXED `a84e18d`:** `onViewportDoubleClick`
+hit-tests the entry point (new shared `hitTestViewport` helper, factored out of `onViewportClick`) →
+`pendingEditId` → `DiagramEditor`'s new `initialEditId` seeds `editingId` at mount so the node's inline
+editor opens focused (chip/empty hit ⇒ blank; `✎`-toggle clears the seed; deselect resets); + a new
+`@planning` entry spec (dbl-click the static `Matrix green?` node → its label input focused). Inline
+dispositioned, incremental re-review **0 crit / 0 warn**. **Verification:** typecheck (3 tiers) / lint
+0-err (DiagramCard max-lines override 719 after the helper extraction) / prettier; **new units** —
+`specEditorOps` (26), `DiagramPalette` (5), `diagramCommentRelay` (6); **diagram `@planning` e2e 19/19**
+(13 existing incl. the zero-source-edit Phase-4 gate pin + 6 Phase-4: editor mount / palette add /
+drag+undo / inline label / T3 composer / ADR-entry double-click). **Full matrix both legs GREEN on the
+fix head `a84e18d8`** (Windows 324P · Linux Docker 321P; every failure a documented `@chrome` ambient
+`menuShell`/`accounts` scrim-leak flake — confirmed 3/3 green in isolation, zero relevant files in the
+renderer+e2e diff — rerun/retry-green). Manual dev check title-stamped `PR#diagram-phase4` (`pnpm dev`,
+user eyeball "Looks good"). **Version:** 0.28.0 → **0.29.0** (minor — new subsystem). Squash
+`bdff6192`. Worktree `.worktrees/diagram-phase4-editor` teardown after this docs commit.
