@@ -109,14 +109,28 @@ export function SpecNodeBody({
                 whiteSpace: 'nowrap'
               }}
             >
-              <span style={{ color: 'var(--text-2)' }}>{r.left}</span>
+              <span
+                style={{
+                  color: 'var(--text-2)',
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+              >
+                {r.left}
+              </span>
               {r.right !== undefined && (
                 <span
-                  style={
-                    r.accent
-                      ? { marginLeft: 'auto', color: 'var(--accent)', opacity: 0.85 }
-                      : { marginLeft: 'auto', color: 'var(--text-3)' }
-                  }
+                  style={{
+                    flex: 'none',
+                    maxWidth: '55%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    ...(r.accent
+                      ? { color: 'var(--accent)', opacity: 0.85 }
+                      : { color: 'var(--text-3)' })
+                  }}
                 >
                   {r.right}
                 </span>
