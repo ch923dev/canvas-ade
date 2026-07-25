@@ -109,12 +109,26 @@ export const useSwitchMetricsStore = create<SwitchMetricsState>((set) => ({
  *  switch on the animation-critical path, and a Zustand set per mark would churn every subscriber
  *  mid-switch — the overlay only ever wants the COMPLETED record. */
 interface Run {
+  /** Generation stamp. `markPaintableAndEnd` resolves two frames later, by which point a NEW switch
+   *  may own `run` — the callback compares this to decide whether it is still the current run. */
+  epoch: number
   t: Partial<Record<SwitchMark, number>>
   askMs: number | null
   mainOpenMs: number | null
 }
 
 let run: Run | null = null
+let epochSeq = 0
+
+/** Handle of the outer frame queued by `markPaintableAndEnd`, so a superseding switch can drop it. */
+let pendingPaintFrame: number | null = null
+
+function cancelPendingPaintFrame(): void {
+  if (pendingPaintFrame !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(pendingPaintFrame)
+  }
+  pendingPaintFrame = null
+}
 
 /** Best-effort `performance.mark`. Never throws into the switch pipeline: instrumentation that can
  *  break a project switch is worse than no instrumentation. */
@@ -139,7 +153,8 @@ function nativeMeasure(name: string, start: string, end: string): void {
  *  the cross-surface switch lock makes overlap impossible in practice, and if one ever did occur
  *  the newer switch is the one the user is waiting on. */
 export function beginSwitch(): void {
-  run = { t: {}, askMs: null, mainOpenMs: null }
+  cancelPendingPaintFrame()
+  run = { epoch: ++epochSeq, t: {}, askMs: null, mainOpenMs: null }
   markSwitch('start')
 }
 
@@ -224,17 +239,29 @@ export function endSwitch(outcome: SwitchMetricsOutcome): SwitchMetrics | null {
  *  A single `requestAnimationFrame` callback runs BEFORE that frame's paint, so it would time the
  *  React commit and not the pixels. Waiting one more frame means the callback runs after the
  *  browser has presented the frame the new canvas first appeared in — which is the moment the user
- *  sees the new project. */
+ *  sees the new project.
+ *
+ *  Those two frames are the catch. The caller (`performProjectSwitch`) invokes this fire-and-forget
+ *  and then releases the switch lock in its `finally`, i.e. BEFORE the frames elapse — so a rapid
+ *  second switch can legitimately open a new run inside the window. Without a guard the queued
+ *  callback would stamp `paintable` on that new run and close it, reporting the OLD switch's paint
+ *  as the new one's and truncating a measurement still in progress. The epoch check makes a
+ *  superseded callback a no-op; cancelling the outer frame usually stops it before it ever runs. */
 export function markPaintableAndEnd(outcome: SwitchMetricsOutcome): void {
   if (run === null) return
+  const epoch = run.epoch
   if (typeof requestAnimationFrame !== 'function') {
     // Non-browser host (unit tests, headless smoke): close the record without a paint sample
     // instead of hanging the window open forever.
     endSwitch(outcome)
     return
   }
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
+  cancelPendingPaintFrame()
+  pendingPaintFrame = requestAnimationFrame(() => {
+    pendingPaintFrame = requestAnimationFrame(() => {
+      pendingPaintFrame = null
+      // Superseded by a newer switch (or reset) — that run owns its own paintable/end.
+      if (run === null || run.epoch !== epoch) return
       markSwitch('paintable')
       endSwitch(outcome)
     })
@@ -243,6 +270,7 @@ export function markPaintableAndEnd(outcome: SwitchMetricsOutcome): void {
 
 /** Test/e2e seam: drop any in-flight run. */
 export function resetSwitchMetrics(): void {
+  cancelPendingPaintFrame()
   run = null
   useSwitchMetricsStore.getState().reset()
 }

@@ -35,7 +35,6 @@ export function recordBench(record: BenchRecord): void {
     mkdirSync(dirname(target), { recursive: true })
     appendFileSync(target, `${JSON.stringify(record)}\n`, 'utf8')
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn(`[bench] could not append to BENCH_JSON (${String(err)})`)
   }
 }

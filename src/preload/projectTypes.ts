@@ -9,5 +9,14 @@ export interface RecentProject {
   lastOpenedAt: number
 }
 export type ProjectResult =
-  | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }
+  | {
+      ok: true
+      dir: string
+      name: string
+      doc: unknown
+      session?: unknown
+      /** MAIN-measured `project:open` duration (ms), for switch instrumentation. Optional: older
+       *  MAIN builds and non-instrumented paths omit it. Mirrors `src/main/projectStore.ts`. */
+      openMs?: number
+    }
   | { ok: false; error: string }

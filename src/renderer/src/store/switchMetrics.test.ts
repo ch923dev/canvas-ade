@@ -273,3 +273,88 @@ describe('run-window lifecycle', () => {
     expect(useSwitchMetricsStore.getState().last).toBeNull()
   })
 })
+
+/** `markPaintableAndEnd` resolves TWO frames after it is called, and `performProjectSwitch` releases
+ *  the switch lock before then — so a second switch can legitimately start inside that window. These
+ *  pin that the late callback belongs to the run that queued it and cannot touch a newer one. */
+describe('markPaintableAndEnd — superseded by a newer switch', () => {
+  /** Manual rAF pump: queued callbacks run only when `flushFrames` says so. */
+  function manualRaf(): { flushFrames: (n: number) => void; cancelled: number[] } {
+    let seq = 0
+    const queue = new Map<number, FrameRequestCallback>()
+    const cancelled: number[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      const id = ++seq
+      queue.set(id, cb)
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
+      if (queue.delete(id)) cancelled.push(id)
+    })
+    const flushFrames = (n: number): void => {
+      for (let i = 0; i < n; i++) {
+        const due = [...queue.entries()]
+        queue.clear()
+        for (const [, cb] of due) cb(0)
+      }
+    }
+    return { flushFrames, cancelled }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('does NOT stamp paintable on, or close, a run started after it was queued', async () => {
+    const { flushFrames } = manualRaf()
+    const { markPaintableAndEnd } = await import('./switchMetrics')
+
+    scriptClock([0, 100, 200, 1000, 1100, 1200, 1300])
+    beginSwitch()
+    markSwitch('armed')
+    markSwitch('loaded')
+    markPaintableAndEnd('switched') // queued — two frames pending
+
+    // A second switch begins before those frames land (the lock is already released).
+    beginSwitch()
+    expect(isSwitchMeasuring()).toBe(true)
+
+    flushFrames(2)
+
+    // The stale callback must not have closed the NEW run.
+    expect(isSwitchMeasuring()).toBe(true)
+    // ...and must not have committed a record for it.
+    expect(useSwitchMetricsStore.getState().last).toBeNull()
+  })
+
+  it('a new switch cancels the pending frame rather than leaving it to fire', async () => {
+    const { cancelled } = manualRaf()
+    const { markPaintableAndEnd } = await import('./switchMetrics')
+
+    scriptClock([0, 100, 200, 300])
+    beginSwitch()
+    markSwitch('armed')
+    markSwitch('loaded')
+    markPaintableAndEnd('switched')
+
+    beginSwitch()
+    expect(cancelled.length).toBe(1)
+  })
+
+  it('still commits normally when nothing supersedes it', async () => {
+    const { flushFrames } = manualRaf()
+    const { markPaintableAndEnd } = await import('./switchMetrics')
+
+    scriptClock([0, 100, 200, 300])
+    beginSwitch()
+    markSwitch('armed')
+    markSwitch('loaded')
+    markPaintableAndEnd('switched')
+    flushFrames(2)
+
+    expect(isSwitchMeasuring()).toBe(false)
+    const last = useSwitchMetricsStore.getState().last
+    expect(last?.outcome).toBe('switched')
+    expect(last?.total).toBe(300)
+  })
+})
