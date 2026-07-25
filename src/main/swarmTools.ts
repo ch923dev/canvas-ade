@@ -29,6 +29,7 @@ import {
   singleLinePrompt,
   type RolePack
 } from '../shared/rolePacks'
+import type { ConfirmChoices } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
 
 const MAX_NAME = 80
@@ -79,7 +80,12 @@ export interface SwarmRunCtx {
   /** Worker board id → its dispatched role id (await_worker reads it for provenance labels). */
   workerRoles: Map<string, string>
   emit: (ev: SwarmRunEvent) => void
-  confirm: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+  /** The shared fail-closed confirm; `choices` rides the P5 chooser (spawn's model picker). */
+  confirm: (req: {
+    title: string
+    body: string
+    choices?: ConfirmChoices
+  }) => Promise<{ approved: boolean; choice?: string }>
 }
 
 /** Names that run WITHOUT a confirm (pure reads; await_worker only observes settle). */
@@ -256,14 +262,23 @@ export async function executeSwarmTool(
         const model = SWARM_MODEL_OVERRIDES.find((m) => m === modelArg)
         if (modelArg && !model)
           return refuse(`unknown model — pick one of: ${SWARM_MODEL_OVERRIDES.join(', ')}`)
-        // Compose ONCE: the launch line the human approves in the confirm below is byte-identical
-        // to the one the worker spawns with.
-        const launch = composeRoleLaunch(pack, model)
         // The Jarvis-pattern pre-gate: spawn_board is cap-checked but un-gated for MCP agents;
-        // the swarm brain pays an explicit human confirm so every mutating tool is gated.
-        const { approved } = await ctx.confirm({
+        // the swarm brain pays an explicit human confirm so every mutating tool is gated. The
+        // P5 chooser makes the worker's MODEL the human's pick at approval time — the brain's
+        // override (validated above) only pre-selects the default.
+        const ROLE_DEFAULT = 'role-default'
+        const roleAlias = pack.model.pin ?? MODEL_TIER_CLAUDE_ALIAS[pack.model.tier]
+        const { approved, choice } = await ctx.confirm({
           title: 'Spawn a swarm worker?',
-          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${launch}`
+          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${composeRoleLaunch(pack, model)} — the Model pick below sets --model.`,
+          choices: {
+            label: 'Model',
+            options: [
+              { id: ROLE_DEFAULT, label: `Role default — ${roleAlias}` },
+              ...SWARM_MODEL_OVERRIDES.map((m) => ({ id: m, label: m }))
+            ],
+            default: model ?? ROLE_DEFAULT
+          }
         })
         if (!approved)
           return {
@@ -272,6 +287,12 @@ export async function executeSwarmTool(
             denied: true,
             summary: 'spawn denied'
           }
+        // 🔒 Re-validate the pick against the bounded set (P5 discipline): a whitelisted model
+        // wins; 'role-default' clears the override; anything else falls back to the DEFAULT the
+        // dialog showed — a forged/off-set choice can never widen the launch line.
+        const picked = SWARM_MODEL_OVERRIDES.find((m) => m === choice)
+        const finalModel = picked ?? (choice === ROLE_DEFAULT ? undefined : model)
+        const launch = composeRoleLaunch(pack, finalModel)
         const spawned = await facet.spawnBoard({
           type: 'terminal',
           title: workerName,

@@ -40,6 +40,7 @@ import {
   executeSwarmTool,
   SWARM_AUTO_ALLOW,
   type SwarmCanvasFacet,
+  type SwarmRunCtx,
   type SwarmRunEvent
 } from './swarmTools'
 
@@ -81,7 +82,8 @@ export interface SwarmIpcDeps {
   budget?: BudgetStore
   /** The lazily-ensured RunningMcp (structural superset of SwarmCanvasFacet); null = no canvas. */
   getFacet?: () => Promise<SwarmCanvasFacet | null>
-  confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+  /** The shared fail-closed confirm; the P5 `choices` chooser rides through untouched. */
+  confirm?: SwarmRunCtx['confirm']
   stream?: JarvisStreamDeps
 }
 
