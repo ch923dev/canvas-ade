@@ -378,6 +378,19 @@ export function packOptionValues(pack: RolePack): Record<string, string | boolea
 }
 
 /**
+ * Collapse a composed dispatch prompt to a SINGLE line for the gated REPL write. The prompt is
+ * delivered into the agent's input box (the gated `dispatchPrompt` PTY write) — NOT a shell
+ * command — so it is never shell-parsed: no quoting/escaping, only whitespace collapse, because
+ * the shared write gate REJECTS an embedded CR/LF (one approval = one line; see
+ * `dispatchSanitize.ts`). Lives in shared so BOTH the renderer command dispatch and MAIN's swarm
+ * tool executor use the same collapse — the S1 swarm bug was MAIN composing a multi-line spec
+ * and skipping this step, so every dispatch died in the sanitizer before its confirm.
+ */
+export function singleLinePrompt(prompt: string): string {
+  return prompt.replace(/\s+/g, ' ').trim()
+}
+
+/**
  * Prepend the role brief to the engineered task prompt for the gated REPL dispatch. The brief is
  * the dialog-committed override when one was recorded ("what the user SAW is what ships" — the
  * dialog shows the brief editable and always commits it with a pack dispatch), else the pack's

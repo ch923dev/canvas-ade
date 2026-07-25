@@ -26,6 +26,7 @@ import {
   isWriteRolePack,
   packDispatchPrompt,
   rolePackById,
+  singleLinePrompt,
   type RolePack
 } from '../shared/rolePacks'
 import type { JarvisToolDef } from './jarvisTools'
@@ -127,6 +128,11 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
         properties: {
           name: { type: 'string', description: 'Short worker name shown on its board' },
           role: { enum: roleIds, description: 'Role pack shaping flags + standing orders' },
+          model: {
+            enum: [...SWARM_MODEL_OVERRIDES],
+            description:
+              "Optional model override for this worker (e.g. the human asked for opus); omit to use the role's default tier"
+          },
           cwd: { type: 'string', description: 'Working directory (defaults to the project)' }
         }
       }
@@ -164,9 +170,17 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
   ]
 }
 
+/**
+ * The ONLY model values a spawn_worker `model` override may take. The value is spliced into the
+ * worker's launch command, so it must stay a CLOSED vocabulary — free text here would be command
+ * injection into the PTY launch line (the ctxFromAuth closed-vocabulary lesson).
+ */
+export const SWARM_MODEL_OVERRIDES = ['haiku', 'sonnet', 'opus'] as const
+export type SwarmModelOverride = (typeof SWARM_MODEL_OVERRIDES)[number]
+
 /** Compose the role-shaped claude launch line (MAIN-side; the 400-char spawn clamp re-checks). */
-export function composeRoleLaunch(pack: RolePack): string {
-  const model = pack.model.pin ?? MODEL_TIER_CLAUDE_ALIAS[pack.model.tier]
+export function composeRoleLaunch(pack: RolePack, modelOverride?: SwarmModelOverride): string {
+  const model = modelOverride ?? pack.model.pin ?? MODEL_TIER_CLAUDE_ALIAS[pack.model.tier]
   const parts = ['claude', '--model', model]
   if (pack.model.effort) parts.push('--effort', pack.model.effort)
   if (pack.permissionMode === 'bypassPermissions') parts.push('--dangerously-skip-permissions')
@@ -236,11 +250,20 @@ export async function executeSwarmTool(
         if (!workerName) return refuse('spawn_worker needs a name')
         if (!pack)
           return refuse(`unknown role — pick one of: ${ROLE_PACKS.map((p) => p.id).join(', ')}`)
+        // Closed-vocabulary model override (the value is spliced into the launch line — anything
+        // outside the whitelist is refused, never passed through).
+        const modelArg = str(args.model, 20)
+        const model = SWARM_MODEL_OVERRIDES.find((m) => m === modelArg)
+        if (modelArg && !model)
+          return refuse(`unknown model — pick one of: ${SWARM_MODEL_OVERRIDES.join(', ')}`)
+        // Compose ONCE: the launch line the human approves in the confirm below is byte-identical
+        // to the one the worker spawns with.
+        const launch = composeRoleLaunch(pack, model)
         // The Jarvis-pattern pre-gate: spawn_board is cap-checked but un-gated for MCP agents;
         // the swarm brain pays an explicit human confirm so every mutating tool is gated.
         const { approved } = await ctx.confirm({
           title: 'Spawn a swarm worker?',
-          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${composeRoleLaunch(pack)}`
+          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${launch}`
         })
         if (!approved)
           return {
@@ -252,7 +275,7 @@ export async function executeSwarmTool(
         const spawned = await facet.spawnBoard({
           type: 'terminal',
           title: workerName,
-          prompt: composeRoleLaunch(pack),
+          prompt: launch,
           ...(str(args.cwd, 1024) ? { cwd: str(args.cwd, 1024) } : {})
         })
         ctx.workerRoles.set(spawned.id, pack.id)
@@ -291,7 +314,12 @@ export async function executeSwarmTool(
         const activity = str(args.activity, MAX_NAME)
         try {
           // The orchestrator's OWN human gate lives inside dispatchPrompt — no double confirm.
-          const r = await facet.dispatchPrompt(workerId, packDispatchPrompt(pack, spec, undefined))
+          // singleLinePrompt is MANDATORY: the write gate REJECTS embedded CR/LF (one approval
+          // = one line), and both the four-field spec and the role brief are multi-line.
+          const r = await facet.dispatchPrompt(
+            workerId,
+            singleLinePrompt(packDispatchPrompt(pack, spec, undefined))
+          )
           if (activity) ctx.emit({ kind: 'activity', workerId, text: activity })
           return {
             content: JSON.stringify({ delivery: r?.delivery ?? 'ready' }),
@@ -305,7 +333,10 @@ export async function executeSwarmTool(
             content: `dispatch failed: ${msg}`,
             isError: true,
             denied,
-            summary: 'dispatch failed'
+            // The chat statusline renders ONLY the summary — carry the reason so a failing
+            // dispatch is diagnosable from the board (the S1 eyeball found bare "dispatch
+            // failed" ×6 with the real sanitizer error invisible).
+            summary: `dispatch failed — ${singleLinePrompt(msg).slice(0, 120)}`
           }
         }
       }

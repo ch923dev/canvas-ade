@@ -59,6 +59,8 @@ export function composeSwarmSystem(paused: boolean): string {
     '',
     'WORKER ROLES (pick by purpose; the role brief is attached to your dispatch automatically):',
     roleCatalog(),
+    "Each role has a default model tier; pass spawn_worker's optional model (haiku|sonnet|opus)",
+    'only when the human asks for a specific model or the task clearly warrants a stronger one.',
     '',
     'Reply style: terse and factual, like a good engineering lead. Present tense for in-flight',
     'work ("dispatching builder-1"), past for landed facts. No filler.'

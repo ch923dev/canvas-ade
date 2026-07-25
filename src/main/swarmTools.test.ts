@@ -9,6 +9,7 @@ import {
   type SwarmRunEvent
 } from './swarmTools'
 import { ROLE_PACKS, rolePackById } from '../shared/rolePacks'
+import { sanitizeDispatchText } from './dispatchSanitize'
 
 const facetStub = (over: Partial<SwarmCanvasFacet> = {}): SwarmCanvasFacet => ({
   describeApp: vi.fn(async () => ({
@@ -49,6 +50,13 @@ describe('composeRoleLaunch — role pack → claude launch line', () => {
     expect(composeRoleLaunch(builder)).toContain('--dangerously-skip-permissions')
     expect(composeRoleLaunch(builder)).toContain('claude --model')
     expect(composeRoleLaunch(reviewer)).toContain('--permission-mode plan')
+  })
+
+  it('model override wins over the pack tier; absent ⇒ tier alias', () => {
+    const builder = rolePackById('builder')!
+    expect(composeRoleLaunch(builder)).toContain('--model sonnet')
+    expect(composeRoleLaunch(builder, 'opus')).toContain('--model opus')
+    expect(composeRoleLaunch(builder, 'opus')).not.toContain('sonnet')
   })
 
   it('stays under the 400-char MAIN spawn clamp for every shipped pack', () => {
@@ -115,6 +123,28 @@ describe('executeSwarmTool', () => {
     expect(ctx.events[0]).toMatchObject({ kind: 'workerSpawned', workerId: 'spawned-1' })
   })
 
+  it('spawn_worker honors a closed-vocabulary model override; junk model is refused', async () => {
+    const facet = facetStub()
+    await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-opus', role: 'builder', model: 'opus' },
+      facet,
+      ctxStub()
+    )
+    expect(facet.spawnBoard).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.stringContaining('--model opus') })
+    )
+    // The value splices into the launch line — anything off-whitelist must refuse, never pass.
+    const bad = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'x', role: 'builder', model: 'opus; rm -rf /' },
+      facetStub(),
+      ctxStub()
+    )
+    expect(bad.isError).toBe(true)
+    expect(bad.content).toContain('haiku, sonnet, opus')
+  })
+
   it('spawn_worker rejects an unknown role naming the catalog', async () => {
     const out = await executeSwarmTool(
       'spawn_worker',
@@ -151,6 +181,40 @@ describe('executeSwarmTool', () => {
     expect(sent).toContain(rolePackById('code-reviewer')!.systemPrompt.slice(0, 40))
     expect(sent).toContain('OBJECTIVE: o')
     expect(sent).toContain('BOUNDARIES: b')
+  })
+
+  it('dispatch_task payload is a SINGLE line (the write gate rejects embedded CR/LF)', async () => {
+    // The S1 eyeball bug: the four-field spec + role brief are multi-line by construction, and
+    // the shared dispatch sanitizer REJECTS any embedded newline BEFORE the human confirm —
+    // every dispatch died with no dialog. The executor must collapse via singleLinePrompt.
+    const facet = facetStub()
+    const ctx = ctxStub()
+    ctx.workerRoles.set('w1', 'builder')
+    await executeSwarmTool(
+      'dispatch_task',
+      { workerId: 'w1', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+      facet,
+      ctx
+    )
+    const sent = (facet.dispatchPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1] as string
+    expect(sent).not.toMatch(/[\r\n]/)
+    expect(() => sanitizeDispatchText(sent)).not.toThrow()
+  })
+
+  it('dispatch_task failure surfaces the REASON in the summary (the chat statusline)', async () => {
+    const facet = facetStub({
+      dispatchPrompt: vi.fn(async () => {
+        throw new Error('assign_prompt: board not found: w9')
+      })
+    })
+    const out = await executeSwarmTool(
+      'dispatch_task',
+      { workerId: 'w9', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+      facet,
+      ctxStub()
+    )
+    expect(out.isError).toBe(true)
+    expect(out.summary).toContain('board not found')
   })
 
   it('write serialization: a second un-settled write-role dispatch is refused, disclosed; await frees the slot', async () => {
