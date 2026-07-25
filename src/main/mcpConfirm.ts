@@ -42,6 +42,26 @@ export interface ConfirmChoices {
   default: string
 }
 
+/**
+ * 🔒 Swarm spawn gate (S1): when present the renderer renders the FULL worker-config dialog
+ * (role row + agent presets + CommandBuilder + editable launch line — the command board's
+ * spawn surface) instead of the plain approve/deny modal. The decision then carries the
+ * dialog-committed `launchCommand` + `rolePackId` back; the requesting gate re-validates both
+ * (single line, bounded length, known pack id) before acting — the renderer reply proposes,
+ * MAIN disposes.
+ */
+export interface ConfirmWorkerConfig {
+  /** The worker name the orchestrator proposed (dialog heading). */
+  workerName: string
+  /** The requested role pack id — pre-selects the dialog's role row. */
+  roleId: string
+  /** Whitelisted model override the brain suggested; pre-fills the builder's model value. */
+  modelDefault?: string
+  /** The launch line composed from the role pack — the dialog's starting point + the
+   *  approve-without-config fallback (an approve-only surface approves exactly this line). */
+  defaultLaunch: string
+}
+
 export interface ConfirmRequest {
   /** Short modal title (e.g. "Dispatch to terminal"). */
   title: string
@@ -52,6 +72,8 @@ export interface ConfirmRequest {
   denyLabel?: string
   /** 🔒 P5: an optional layout chooser — when set, the modal renders the options + returns `choice`. */
   choices?: ConfirmChoices
+  /** 🔒 S1: swarm spawn — when set, the renderer shows the worker-config dialog (see type doc). */
+  workerConfig?: ConfirmWorkerConfig
   /**
    * Diagram Phase 3 (Option B): an optional STRUCTURED semantic diff for a diagram-spec write —
    * coloured rows + lint chips the modal renders in place of dumping the spec. PRESENTATION
@@ -74,6 +96,11 @@ export interface ConfirmDecision {
   approved: boolean
   /** 🔒 P5: the option id the human picked when the request carried `choices`; absent otherwise. */
   choice?: string
+  /** 🔒 S1: the dialog-committed launch line for a `workerConfig` request — OPAQUE here; the
+   *  requesting gate re-validates (single line, bounded, non-empty) and refuses off-contract. */
+  launchCommand?: string
+  /** 🔒 S1: the dialog-committed role pack id — re-validated against the pack registry. */
+  rolePackId?: string
 }
 
 /** One row in a BATCH confirm (relay_prompts) — a short label + the EXACT (sanitized) command shown. */
@@ -178,7 +205,16 @@ export function requestConfirm(
       // on an approve, and the requesting gate re-validates it against the offered option set (falling
       // back to `default`), so a forged/garbage value here can never widen the action.
       const choice = typeof d?.choice === 'string' ? d.choice : undefined
-      finish(choice !== undefined ? { approved, choice } : { approved })
+      // 🔒 S1: same opaque-carry for the worker-config commit — the swarm spawn gate re-validates
+      // both (single-line/bounded launch, registry-known pack) and refuses anything off-contract.
+      const launchCommand = typeof d?.launchCommand === 'string' ? d.launchCommand : undefined
+      const rolePackId = typeof d?.rolePackId === 'string' ? d.rolePackId : undefined
+      finish({
+        approved,
+        ...(choice !== undefined ? { choice } : {}),
+        ...(launchCommand !== undefined ? { launchCommand } : {}),
+        ...(rolePackId !== undefined ? { rolePackId } : {})
+      })
     }
     // Backstop safety timeout (deny on expiry). Defaults to DEFAULT_TIMEOUT_MS so a frozen
     // renderer can't hang the awaiting tool forever (BUG-010). Arm only for a finite

@@ -52,7 +52,8 @@ export function WorkerConfigDialog({
   engineeredPrompt,
   initial,
   onDispatch,
-  onCancel
+  onCancel,
+  mode = 'dispatch'
 }: {
   /** The smart zone/group name (the spawned group is named this). */
   zoneName: string
@@ -64,6 +65,12 @@ export function WorkerConfigDialog({
   onDispatch: (result: { launchCommand: string; prompt: string; config: WorkerConfig }) => void
   /** Dismiss without dispatching (the task stays queued-not-ready). */
   onCancel: () => void
+  /**
+   * 'spawn' (swarm S1): the dialog gates a WORKER SPAWN only — no task prompt exists yet (the
+   * dispatch pays its own gate later), so the prompt editor is hidden and the primary button
+   * reads "Spawn". Everything else — role row, presets, builder, editable launch — is identical.
+   */
+  mode?: 'dispatch' | 'spawn'
 }): ReactElement {
   const [presetId, setPresetId] = useState(initial?.presetId ?? DEFAULT_PRESET)
   const [values, setValues] = useState<OptionValues>(initial?.values ?? DEFAULT_WORKER_VALUES)
@@ -146,7 +153,7 @@ export function WorkerConfigDialog({
     >
       <div style={title}>Configure worker</div>
       <div style={zone}>
-        Zone: <span style={zoneNameStyle}>{zoneName}</span>
+        {mode === 'spawn' ? 'Worker' : 'Zone'}: <span style={zoneNameStyle}>{zoneName}</span>
       </div>
 
       <div>
@@ -254,24 +261,26 @@ export function WorkerConfigDialog({
         />
       </label>
 
-      <label style={fieldWrap}>
-        <span style={fieldLabel}>Task prompt (engineered, editable)</span>
-        <textarea
-          style={promptArea}
-          spellCheck={false}
-          rows={5}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          data-testid="worker-prompt"
-        />
-      </label>
+      {mode === 'dispatch' && (
+        <label style={fieldWrap}>
+          <span style={fieldLabel}>Task prompt (engineered, editable)</span>
+          <textarea
+            style={promptArea}
+            spellCheck={false}
+            rows={5}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            data-testid="worker-prompt"
+          />
+        </label>
+      )}
 
       <div style={footer}>
         <button type="button" style={btnGhost} onClick={onCancel} data-testid="worker-cancel">
           Cancel
         </button>
         <button type="button" style={btnPrimary} onClick={dispatch} data-testid="worker-dispatch">
-          Dispatch
+          {mode === 'spawn' ? 'Spawn' : 'Dispatch'}
         </button>
       </div>
     </Modal>

@@ -29,7 +29,7 @@ import {
   singleLinePrompt,
   type RolePack
 } from '../shared/rolePacks'
-import type { ConfirmChoices } from './mcpConfirm'
+import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
 
 const MAX_NAME = 80
@@ -80,12 +80,19 @@ export interface SwarmRunCtx {
   /** Worker board id → its dispatched role id (await_worker reads it for provenance labels). */
   workerRoles: Map<string, string>
   emit: (ev: SwarmRunEvent) => void
-  /** The shared fail-closed confirm; `choices` rides the P5 chooser (spawn's model picker). */
+  /** The shared fail-closed confirm; `workerConfig` routes to the full worker-config dialog
+   *  (the swarm spawn gate), `choices` to the P5 chooser. */
   confirm: (req: {
     title: string
     body: string
     choices?: ConfirmChoices
-  }) => Promise<{ approved: boolean; choice?: string }>
+    workerConfig?: ConfirmWorkerConfig
+  }) => Promise<{
+    approved: boolean
+    choice?: string
+    launchCommand?: string
+    rolePackId?: string
+  }>
 }
 
 /** Names that run WITHOUT a confirm (pure reads; await_worker only observes settle). */
@@ -264,46 +271,58 @@ export async function executeSwarmTool(
           return refuse(`unknown model — pick one of: ${SWARM_MODEL_OVERRIDES.join(', ')}`)
         // The Jarvis-pattern pre-gate: spawn_board is cap-checked but un-gated for MCP agents;
         // the swarm brain pays an explicit human confirm so every mutating tool is gated. The
-        // P5 chooser makes the worker's MODEL the human's pick at approval time — the brain's
-        // override (validated above) only pre-selects the default.
-        const ROLE_DEFAULT = 'role-default'
-        const roleAlias = pack.model.pin ?? MODEL_TIER_CLAUDE_ALIAS[pack.model.tier]
-        const { approved, choice } = await ctx.confirm({
+        // request carries `workerConfig`, so the renderer shows the FULL worker-config dialog
+        // (the command board's spawn surface — role row, agent presets, builder, editable
+        // launch line) and the human COMMITS the worker's real config, not just approve/deny.
+        const defaultLaunch = composeRoleLaunch(pack, model)
+        const decision = await ctx.confirm({
           title: 'Spawn a swarm worker?',
-          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${composeRoleLaunch(pack, model)} — the Model pick below sets --model.`,
-          choices: {
-            label: 'Model',
-            options: [
-              { id: ROLE_DEFAULT, label: `Role default — ${roleAlias}` },
-              ...SWARM_MODEL_OVERRIDES.map((m) => ({ id: m, label: m }))
-            ],
-            default: model ?? ROLE_DEFAULT
+          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${defaultLaunch}`,
+          workerConfig: {
+            workerName,
+            roleId: pack.id,
+            ...(model ? { modelDefault: model } : {}),
+            defaultLaunch
           }
         })
-        if (!approved)
+        if (!decision.approved)
           return {
             content: 'denied by the human',
             isError: true,
             denied: true,
             summary: 'spawn denied'
           }
-        // 🔒 Re-validate the pick against the bounded set (P5 discipline): a whitelisted model
-        // wins; 'role-default' clears the override; anything else falls back to the DEFAULT the
-        // dialog showed — a forged/off-set choice can never widen the launch line.
-        const picked = SWARM_MODEL_OVERRIDES.find((m) => m === choice)
-        const finalModel = picked ?? (choice === ROLE_DEFAULT ? undefined : model)
-        const launch = composeRoleLaunch(pack, finalModel)
+        // 🔒 Re-validate the dialog commit (the reply proposes, MAIN disposes): the launch line
+        // must be ONE bounded non-empty line — anything else refuses (never silently "fixed"),
+        // and an absent launchCommand (an approve-only surface) approves exactly defaultLaunch.
+        // The role id must be registry-known; off-set falls back to the requested pack.
+        let launch = defaultLaunch
+        if (decision.launchCommand !== undefined) {
+          const committed = decision.launchCommand.trim()
+          if (!committed || /[\r\n]/.test(committed) || committed.length > 400) {
+            return refuse(
+              'worker config commit invalid — the launch command must be one non-empty line ≤400 chars'
+            )
+          }
+          launch = committed
+        }
+        const finalPack = rolePackById(str(decision.rolePackId ?? '', 40)) ?? pack
         const spawned = await facet.spawnBoard({
           type: 'terminal',
           title: workerName,
           prompt: launch,
           ...(str(args.cwd, 1024) ? { cwd: str(args.cwd, 1024) } : {})
         })
-        ctx.workerRoles.set(spawned.id, pack.id)
-        ctx.emit({ kind: 'workerSpawned', workerId: spawned.id, role: pack.id, title: workerName })
+        ctx.workerRoles.set(spawned.id, finalPack.id)
+        ctx.emit({
+          kind: 'workerSpawned',
+          workerId: spawned.id,
+          role: finalPack.id,
+          title: workerName
+        })
         return {
           content: JSON.stringify({ workerId: spawned.id }),
-          summary: `spawned ${workerName} (${pack.id})`
+          summary: `spawned ${workerName} (${finalPack.id})`
         }
       }
       case 'dispatch_task': {

@@ -123,30 +123,15 @@ describe('executeSwarmTool', () => {
     expect(ctx.events[0]).toMatchObject({ kind: 'workerSpawned', workerId: 'spawned-1' })
   })
 
-  it('spawn_worker confirm carries the P5 model chooser; the human pick sets --model', async () => {
+  it('spawn_worker confirm carries workerConfig; the dialog commit sets launch + role', async () => {
     const facet = facetStub()
-    // Human approves AND picks opus in the dialog (the brain suggested nothing).
-    const ctx = ctxStub({ confirm: vi.fn(async () => ({ approved: true, choice: 'opus' })) })
-    await executeSwarmTool('spawn_worker', { name: 'w', role: 'builder' }, facet, ctx)
-    const req = (ctx.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(req.choices).toMatchObject({ label: 'Model', default: 'role-default' })
-    expect(req.choices.options.map((o: { id: string }) => o.id)).toEqual([
-      'role-default',
-      'haiku',
-      'sonnet',
-      'opus'
-    ])
-    expect(facet.spawnBoard).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: expect.stringContaining('--model opus') })
-    )
-  })
-
-  it("spawn_worker chooser: the brain's model pre-selects the default; a forged choice falls back to it", async () => {
-    // Forged/off-set choice from a compromised reply must NEVER widen the launch line (P5
-    // discipline) — it falls back to the default the dialog showed (the brain's validated pick).
-    const facet = facetStub()
+    // The human commits an edited launch + a different role in the worker-config dialog.
     const ctx = ctxStub({
-      confirm: vi.fn(async () => ({ approved: true, choice: 'gpt-999; rm -rf /' }))
+      confirm: vi.fn(async () => ({
+        approved: true,
+        launchCommand: 'claude --model opus --dangerously-skip-permissions',
+        rolePackId: 'code-reviewer'
+      }))
     })
     await executeSwarmTool(
       'spawn_worker',
@@ -155,24 +140,53 @@ describe('executeSwarmTool', () => {
       ctx
     )
     const req = (ctx.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(req.choices.default).toBe('opus')
-    expect(facet.spawnBoard).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: expect.stringContaining('--model opus') })
-    )
-    // And 'role-default' explicitly clears a brain override back to the role tier.
-    const facet2 = facetStub()
-    const ctx2 = ctxStub({
-      confirm: vi.fn(async () => ({ approved: true, choice: 'role-default' }))
+    expect(req.workerConfig).toMatchObject({
+      workerName: 'w',
+      roleId: 'builder',
+      modelDefault: 'opus'
     })
-    await executeSwarmTool(
-      'spawn_worker',
-      { name: 'w2', role: 'builder', model: 'opus' },
-      facet2,
-      ctx2
+    expect(req.workerConfig.defaultLaunch).toContain('--model opus')
+    expect(facet.spawnBoard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'claude --model opus --dangerously-skip-permissions'
+      })
     )
-    expect(facet2.spawnBoard).toHaveBeenCalledWith(
+    // The committed role (not the requested one) is what the dispatch bookkeeping records.
+    expect(ctx.workerRoles.get('spawned-1')).toBe('code-reviewer')
+  })
+
+  it('spawn_worker commit validation: multi-line/oversize launch refuses; absent commit approves the default; junk role falls back', async () => {
+    // 🔒 The reply proposes, MAIN disposes: an off-contract launch line REFUSES (never silently
+    // fixed), an approve without a commit approves exactly the defaultLaunch the body showed,
+    // and an unknown rolePackId falls back to the requested pack.
+    const multiline = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'w', role: 'builder' },
+      facetStub(),
+      ctxStub({
+        confirm: vi.fn(async () => ({ approved: true, launchCommand: 'claude\nrm -rf /' }))
+      })
+    )
+    expect(multiline.isError).toBe(true)
+    expect(multiline.content).toContain('one non-empty line')
+    const oversize = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'w', role: 'builder' },
+      facetStub(),
+      ctxStub({
+        confirm: vi.fn(async () => ({ approved: true, launchCommand: 'x'.repeat(401) }))
+      })
+    )
+    expect(oversize.isError).toBe(true)
+    const facet = facetStub()
+    const ctx = ctxStub({
+      confirm: vi.fn(async () => ({ approved: true, rolePackId: 'not-a-pack' }))
+    })
+    await executeSwarmTool('spawn_worker', { name: 'w', role: 'builder' }, facet, ctx)
+    expect(facet.spawnBoard).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: expect.stringContaining('--model sonnet') })
     )
+    expect(ctx.workerRoles.get('spawned-1')).toBe('builder')
   })
 
   it('spawn_worker honors a closed-vocabulary model override; junk model is refused', async () => {
