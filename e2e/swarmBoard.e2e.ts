@@ -39,7 +39,10 @@ test('@core composer round-trips a real MAIN turn (mock brain): user bubble + st
 }) => {
   await mainCall(electronApp, 'setLlmMock', true)
   try {
-    await seed(page, 'swarm')
+    const id = await seed(page, 'swarm')
+    // Camera-based canvas: under the FULL suite prior specs' seeds push the cursor far right,
+    // so the board lands off-viewport and clicks fail actionability — fit it first.
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     const board = page.locator('[data-test="swarm-board"]')
     await board.locator('[data-test="swarm-composer"]').fill('hello swarm')
     await board.locator('[data-test="swarm-send"]').click()
@@ -87,7 +90,8 @@ test('@core multi-instance: two swarm boards hold two independent runs (no state
 })
 
 test('@core pause toggles + is narrated in the chat spine', async ({ page }) => {
-  await seed(page, 'swarm')
+  const id = await seed(page, 'swarm')
+  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
   const board = page.locator('[data-test="swarm-board"]')
   await board.locator('[data-test="swarm-pause"]').click()
   await expect(board.locator('[data-test="swarm-pause"]')).toContainText('Resume')
