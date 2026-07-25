@@ -26,7 +26,10 @@ Three things are nevertheless true:
 
 **Headline recommendation: instrument before optimizing.** Phase 0 (2–3 days) buys a switch-latency number and a committed bench baseline; every later phase is then falsifiable. Three findings below (P-6 full-document rewrite, DL-4 thumbnail base64) were **de-prioritized by measurement** in this audit — real docs on this machine max out at 24 KB / 5 boards, so the "full-document rewrite" that reads alarming in code is not currently hot. That is exactly the value Phase 0 buys repeatedly.
 
-**Effort to close everything below: ~19.5 dev-days across 5 phases.** Phases are independently shippable and ordered so each one's result informs the next. Two open design questions were decided by the user on 2026-07-25 and are folded in — see §9.
+**Effort to close everything below: ~19.5 dev-days across 5 phases** — of which **Phase 0 (3 d) is
+built**, leaving ~16.5 d, and **R3's 1.5 d is now TBD** pending a re-measurement. Phases are
+independently shippable and ordered so each one's result informs the next. Two open design questions
+were decided by the user on 2026-07-25 and are folded in — see §9.
 
 ---
 
@@ -209,15 +212,15 @@ Effort is dev-days for one engineer including tests and the mandatory dev check.
 |---|---|---|---|---|
 | **R1** | **Instrument the switch.** `performance.mark` at `switch:start` / `switch:paintable` / `switch:interactive` in the renderer; `perf_hooks` marks around `project:open` in main; a dev-visible readout in `DiagOverlay` plus an opt-in production toggle. Bucket against 0.1 s / 1 s / 10 s. | P-9 | **2 d** | Enables everything else |
 | **R2** | **Add `pnpm bench` + commit a baseline artifact.** Wire `playwright.bench.config.ts` into `package.json`; emit `docs/reviews/<date>-bench/BASELINE.json`; add a switch-latency bench beside the terminal one. | P-9 | **1 d** | Makes regressions detectable |
-| **R3** | **Arm the transition overlay first.** Reorder step 7↔8: fetch the *cached* thumb and arm the overlay immediately (target <100 ms), then capture the fresh thumb behind the overlay where its 400 ms is invisible. Drop `SNAPSHOT_FETCH_BUDGET_MS` accordingly. | PS-1 | **1.5 d** | Highest user-visible win |
+| **R3** | ⚠️ **RE-SCOPE BEFORE STARTING (Phase 0 measured it).** Arm the transition overlay first: reorder step 7↔8 — fetch the *cached* thumb and arm immediately (target <100 ms), then capture the fresh thumb behind the overlay where its 400 ms is invisible. Drop `SNAPSHOT_FETCH_BUDGET_MS` accordingly. **The ~800 ms premise did not survive measurement — `arm` is 41–49 ms median on a board-only canvas.** Still the largest single segment (49 of 101 ms at 0 boards), so the direction holds at a smaller magnitude. Re-measure with live terminals + previews + assets before committing the effort. | PS-1 | **1.5 d → TBD** | Was "highest user-visible win"; now unproven |
 | **R4** | **Unify the open paths.** Make WelcomeScreen and boot call a shared `openProject()` primitive with explicit "no outgoing project" semantics; lock-guard boot. | PS-2 | **2 d** | Removes 3 divergent doors |
-| **R5** | **Memo boundary at `App`.** Move `useMcpPublish`'s subscription into a render-nothing leaf; `useShallow` for object picks; `memo()` the 12 root children. Verify with a React Profiler recording before/after. | P-1 | **1.5 d** | ~60 fps of wasted renders |
+| **R5** | ⭐ **PROMOTED (Phase 0 found supporting evidence the audit missed).** Memo boundary at `App`: move `useMcpPublish`'s subscription into a render-nothing leaf; `useShallow` for object picks; `memo()` the 12 root children. Verify with a React Profiler recording before/after. **`paint` — React mount plus first frame — is the steepest per-board cost in the switch (11 → 35 → 47 ms across 0 → 8 → 24 boards), the only Phase 2 item with a measured number behind it.** | P-1 | **1.5 d** | Now the best-evidenced perf item |
 | **R6** | **Observer-based liveness.** Replace per-frame `getBoundingClientRect()` in both liveness managers with `ResizeObserver` + cached viewport; extend the diff-skip to the read side. | P-2 | **1.5 d** | 2 forced layouts/frame |
 | **R7** | **PTY flow control on hop 1.** Port VS Code's watermark protocol into `ptyHost`: ack from main, `pause()` at 100k unacked chars, `resume()` at 5k, 5k ack size; coalesce same-tick daemon writes before `encodeLine`. | P-3 | **3 d** | Guards against runaway agent output |
 | **R8** | **DECIDED 2026-07-25 — gate `startLocalServer` off in production entirely.** Not "lazy": its URL has zero production consumers (see P-4). Start it only under `CANVAS_E2E` / `CANVAS_SMOKE` / dev, eagerly in those modes so the 26 `@preview` specs and the smoke self-test are unchanged. Keep the BUG-026/027 error handling. Separately audit the 17 handler registrations for anything deferrable past `ready-to-show`. Measure boot before/after with R1's marks. | P-4 | **0.5 d** | Removes a loopback bind from every user's boot |
 | **R9** | **Unit-test `projectSwitch.ts`** — all 5 return codes, `decideKeep` branches, the cancel-autosave→flush→sidecar ordering. Add a `backgroundSessions.ts` test file. Add an e2e that **commits** a hotkey switch. | PS-3, SM-3 | **2 d** | 253 LOC of untested orchestration |
 | **R10** | **Invalidate resident lists on `project:bgLifecycle`.** One shared `useResidentProjects()` hook subscribing to the push channel; delete the three local copies and the three `foreverDirs` copies. | PS-4, SM-2 | **1.5 d** | Stale-UI class |
-| **R11** | **Move GC and summary rehydration off the open path.** Defer `readBak` + `gcAssets` to idle; batch `rehydrateMissingSummaries` into one `readdir` instead of N `existsSync`. | DL-1, DL-2 | **1 d** | 24→~15 sync fs calls per open |
+| **R11** | ⚠️ **DE-PRIORITIZED (Phase 0 measured it).** Move GC and summary rehydration off the open path: defer `readBak` + `gcAssets` to idle; batch `rehydrateMissingSummaries` into one `readdir` instead of N `existsSync`. **MAIN's whole `project:open` handler — which contains both costs — is flat at ~12 ms from 0 to 24 boards.** Caveat: the sweep varies *boards*, and `gcAssets` scales with *assets*, which the synthetic bench projects have none of (Appendix A found a real 44-file / 3.58 MB assets dir). Do not delete — re-measure asset-bearing before dismissing. | DL-1, DL-2 | **1 d** | Not hot at measured sizes |
 | **R12** | **Lazy-load the diagram bridge; drop `addon-webgl`.** Register the seam on first Planning/Data-flow board mount instead of `main.tsx`. Remove the unused xterm WebGL addon. Add a gzip budget assertion to `pr.yml`. | P-5 | **1.5 d** | Entry chunk + CI guard |
 | **R13** | **Kill the always-on timers.** Gate `useBrowserAutoConnect` on `browserBoards.length > 0`; hoist `useRunTimer`'s output into a leaf so it doesn't re-render `TerminalBoard`; make `ptyLifecycleMonitor` event-driven off `onData` quiescence. Delete `ensuredDirs` entries on board removal. | P-7, P-8 | **1.5 d** | Idle CPU |
 | **R14** | **Enforce the dir invariant once.** A `withProjectDir(handler)` wrapper in `ipcGuard.ts` that pins `expectedDir` for every project-scoped write, replacing the three hand-rolled checks. | SM-1 | **1 d** | Prevents the next BUG-009 |
@@ -230,10 +233,16 @@ Effort is dev-days for one engineer including tests and the mandatory dev check.
 
 ## 7. Phased implementation roadmap
 
-**Phase 0 — Measure (3 d): R1, R2.**
-Gate: a committed switch-latency number and a committed bench baseline exist. Nothing in Phase 2/3 ships without a before/after against these. *Nothing else starts until this lands.*
+**Phase 0 — Measure (3 d): R1, R2. ✅ BUILT 2026-07-25 (`feat/switch-instrumentation`, v0.33.0).**
+Gate: a committed switch-latency number and a committed bench baseline exist — both now do
+([`../2026-07-25-bench/`](../2026-07-25-bench/), 8/8 configs, machine state recorded). Nothing in
+Phase 2/3 ships without a before/after against these. **Phase 0 changed the phases it was gating:
+R3 lost its 800 ms premise, R11 lost its justification, R5 gained one.** See §9.
 
-**Phase 1 — Switch UX & correctness (6.5 d): R3, R4, R16, R9, R10.**
+**Phase 1 — Switch UX & correctness (6.5 d, now **5 d + R3 TBD**): R3, R4, R16, R9, R10.**
+⚠️ **R3 is no longer a safe start.** Its 1.5 d was bought by PS-1's ~800 ms; the measured figure is
+41–49 ms. Either re-measure with live resources first, or start Phase 1 on R4/R16/R9/R10 (5 d, all
+unaffected) and fold R3 in once it has a number.
 Gate: switch-to-first-paint under 100 ms measured by R1; commit-on-release working with a queued racing press; all 5 `performProjectSwitch` return codes unit-tested; one e2e that **commits** a hotkey switch (this now covers R16 as well); the three resident lists collapsed to one hook. Fits one coherent feature slice under the repo's plan-viz-first + worktree conventions.
 
 **Phase 2 — Renderer perf (3 d): R5, R6.**
