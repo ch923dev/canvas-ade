@@ -20,6 +20,8 @@ import type { SettingsSectionId } from './settings/settingsSections'
 import { BackdropPicker } from './BackdropPicker'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { RecapConsentModal } from './RecapConsentModal'
+import { isE2E } from '../smoke/e2eRegistry'
+import { registerChromeOverlayCloser } from '../smoke/chromeOverlayGate'
 import { SidePanel } from './SidePanel'
 import { BoardInspector } from './BoardInspector'
 import { OrchestrationModals } from './OrchestrationModals'
@@ -81,6 +83,22 @@ function AppChromeImpl({ onTidy, onFocusGroup }: AppChromeProps): ReactElement {
     }
     window.addEventListener('expanse:open-settings', onOpen)
     return () => window.removeEventListener('expanse:open-settings', onOpen)
+  }, [])
+  // E2E isolation: these three overlays are the chrome's only full-viewport surfaces, and each
+  // one's scrim intercepts pointer events. With workers:1 ONE Electron app is reused across every
+  // spec file, so a spec that leaves Settings open (mcpServers.e2e.ts did) makes the next spec's
+  // real OS clicks land on the scrim instead of the app — `menuShell.e2e.ts` burned its full 30 s
+  // timeout that way. `reset()` closes every other ephemeral surface for this reason; these three
+  // are unreachable from there because they are local state in a sibling of `CanvasInner`, hence
+  // this seam. Registration is e2e-only — a production build registers nothing.
+  useEffect(() => {
+    if (!isE2E()) return
+    return registerChromeOverlayCloser(() => {
+      setShowSettings(false)
+      setSettingsSection(null)
+      setShowSignIn(false)
+      setAskRecap(false)
+    })
   }, [])
   return (
     <>

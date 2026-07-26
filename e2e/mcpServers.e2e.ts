@@ -53,6 +53,11 @@ test('@chrome @mcp settings: add an external MCP server and see it listed', asyn
     page,
     `window.api.mcpServers.list().then(l => Promise.all(l.filter(s=>s.name==='e2e-ui-server').map(s=>window.api.mcpServers.remove(s.id))))`
   )
+  // Close Settings. `reset()` closes it too now (and was verified to fix this on its own), but a
+  // test should not hand the next one a full-viewport scrim to begin with: leaving it open is what
+  // made menuShell.e2e.ts spend 30 s watching `[data-test="settings-scrim"]` swallow its clicks.
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-test="settings-panel"]')).toHaveCount(0)
 })
 
 test('@mcp on-disk: an enabled server is written into a spawned claude terminal, then removed on disable', async ({
