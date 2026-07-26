@@ -43,6 +43,9 @@ import {
   type SwarmRunCtx,
   type SwarmRunEvent
 } from './swarmTools'
+import { createSwarmLedgerStore, type SwarmLedgerStore } from './swarmLedger'
+import { SWARM_TRIAGE_ACTIONS } from '../shared/swarmLedgerTypes'
+import { createSwarmLedgerSession, type SwarmLedgerSession } from './swarmLedgerSession'
 
 const MAX_TURN_TEXT_LEN = 8000
 const MAX_HISTORY_TURNS = 200
@@ -74,6 +77,8 @@ interface SwarmSession {
   paused: boolean
   writeInFlight: Set<string>
   workerRoles: Map<string, string>
+  /** S2: this run's durable ledger view. Present even with no project — its methods no-op then. */
+  ledger: SwarmLedgerSession
 }
 
 export interface SwarmIpcDeps {
@@ -85,6 +90,13 @@ export interface SwarmIpcDeps {
   /** The shared fail-closed confirm; the P5 `choices` chooser rides through untouched. */
   confirm?: SwarmRunCtx['confirm']
   stream?: JarvisStreamDeps
+  /**
+   * S2: the ACTIVE project dir — the run ledger lives at `<project>/.canvas/memory/` (design D1),
+   * so with no project every ledger call no-ops and the run behaves exactly like S1 (ephemeral).
+   */
+  getProjectDir?: () => string | null
+  /** S2: ledger-store seam (tests inject an in-memory one). Default: the real project sidecar. */
+  ledgerStore?: SwarmLedgerStore
 }
 
 export function registerSwarmHandlers(
@@ -103,6 +115,10 @@ export function registerSwarmHandlers(
   const budget = deps.budget ?? createBudgetStore(getUserData(), () => new Date())
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
+  const ledgerStore =
+    deps.ledgerStore ??
+    createSwarmLedgerStore({ getProjectDir: deps.getProjectDir ?? ((): string | null => null) })
+
   const sessions = new Map<string, SwarmSession>()
   const sessionFor = (runId: string): SwarmSession => {
     let s = sessions.get(runId)
@@ -112,7 +128,8 @@ export function registerSwarmHandlers(
         abort: null,
         paused: false,
         writeInFlight: new Set(),
-        workerRoles: new Map()
+        workerRoles: new Map(),
+        ledger: createSwarmLedgerSession(runId, { store: ledgerStore })
       }
       sessions.set(runId, s)
     }
@@ -129,6 +146,16 @@ export function registerSwarmHandlers(
     } catch {
       /* window died mid-send — the run mirror re-syncs on the next event */
     }
+  }
+
+  /**
+   * Push this run's durable projection to the renderer. Called after every tool round (so a
+   * dispatch/settle is visible immediately) and after a rehydrate. A run with no ledger pushes
+   * nothing — the renderer keeps rendering S1's ephemeral mirror, which is the honest degradation.
+   */
+  const pushLedger = (runId: string, opts?: { restored?: boolean }): void => {
+    const snapshot = sessions.get(runId)?.ledger.snapshot(opts)
+    if (snapshot) push('swarm:runEvent', { runId, ev: { kind: 'ledger', snapshot } })
   }
 
   const sharedConfig = (): LlmConfig => readLlmConfig(getUserData())
@@ -154,6 +181,10 @@ export function registerSwarmHandlers(
       // One turn per RUN (independent runs stream concurrently). A busy run refuses rather
       // than aborting — mid-run steering lands as the NEXT turn, it never kills tool work.
       if (session.abort !== null) return { ok: false, reason: 'busy' }
+      // S2: the run becomes durable on its FIRST turn (not at board mount) — an untouched swarm
+      // board should not litter `.canvas/memory/` with an empty ledger. The opening prompt is the
+      // run's title; `ensure` only sets it on create, so later turns never rename the run.
+      session.ledger.ensure(text)
 
       const abort = new AbortController()
       session.abort = abort
@@ -279,7 +310,10 @@ export function registerSwarmHandlers(
       workerRoles: session.workerRoles,
       emit: (ev: SwarmRunEvent) =>
         push('swarm:runEvent', { runId, ev } satisfies SwarmRunEventPush),
-      confirm
+      confirm,
+      // S2: durable recording. The facet doubles as the planning reader (RunningMcp exposes
+      // boardPlanning), so a task can join the checklist item it fulfils.
+      ledger: session.ledger.hooks(() => facet)
     }
     for (const tu of toolUses) {
       const gated = !SWARM_AUTO_ALLOW.has(tu.name)
@@ -323,6 +357,9 @@ export function registerSwarmHandlers(
         summary: outcome.summary,
         phase: outcome.denied ? 'denied' : outcome.isError || signal.aborted ? 'error' : 'ok'
       })
+      // The ledger may have moved (a dispatch became an assignment, a settle became a result) —
+      // reproject after EVERY tool, so the board is never a round behind the durable truth.
+      pushLedger(runId)
     }
     return results
   }
@@ -343,6 +380,70 @@ export function registerSwarmHandlers(
     const runId = typeof p?.runId === 'string' ? p.runId : ''
     if (!runId || typeof p?.paused !== 'boolean') return { ok: false }
     sessionFor(runId).paused = p.paused
+    return { ok: true }
+  })
+
+  const runIdOf = (payload: unknown): string => {
+    const v = (payload as { runId?: unknown } | null)?.runId
+    return typeof v === 'string' ? v : ''
+  }
+
+  /**
+   * S2 restore — the one moment the ledger is visible. A swarm board asks on mount; if a durable
+   * run exists for this board in THIS project, its projection comes back and the header shows the
+   * `restored` chip. `{ restored: false }` = a fresh board, no ledger, or no project: the board
+   * renders S1's empty state and nothing is invented.
+   */
+  ipcMain.handle('swarm:restore', (e, payload: unknown): { restored: boolean } => {
+    if (guard(e)) return { restored: false }
+    const runId = runIdOf(payload)
+    if (!runId) return { restored: false }
+    // Read WITHOUT creating: mounting a board must never mint a ledger for a run that never ran.
+    const snapshot = sessionFor(runId).ledger.snapshot({ restored: true })
+    if (!snapshot) return { restored: false }
+    push('swarm:runEvent', { runId, ev: { kind: 'ledger', snapshot } })
+    return { restored: true }
+  })
+
+  /** S2: the human has read the run up to now — bounds which results count as unreviewed. */
+  ipcMain.handle('swarm:markSeen', (e, payload: unknown): { ok: boolean } => {
+    if (guard(e)) return { ok: false }
+    const runId = runIdOf(payload)
+    if (!runId) return { ok: false }
+    sessionFor(runId).ledger.markSeen()
+    pushLedger(runId)
+    return { ok: true }
+  })
+
+  /**
+   * 🔒 S2 triage action — the renderer PROPOSES a row id + an action name; MAIN re-derives
+   * everything else from the ledger and refuses anything off-contract. Nothing here writes to a
+   * PTY: a `reassign` comes back as a PROMPT the renderer sends as the next orchestrator turn, so
+   * the actual re-dispatch still pays the normal per-write confirm gate and gets narrated in chat.
+   */
+  ipcMain.handle(
+    'swarm:triageAction',
+    (e, payload: unknown): { ok: boolean; prompt?: string } => {
+      if (guard(e)) return { ok: false }
+      const p = payload as { runId?: unknown; taskId?: unknown; action?: unknown } | null
+      const runId = runIdOf(payload)
+      const taskId = typeof p?.taskId === 'string' ? p.taskId : ''
+      // Closed vocabulary — a forged/unknown action name can never widen into an unhandled path.
+      const action = SWARM_TRIAGE_ACTIONS.find((a) => a === p?.action)
+      if (!runId || !taskId || !action) return { ok: false }
+      const outcome = sessionFor(runId).ledger.applyAction(taskId, action)
+      if (outcome.ok) pushLedger(runId)
+      return outcome
+    }
+  )
+
+  /** S2: the swarm board was deleted — the durable run goes with it (no orphan sidecars). */
+  ipcMain.handle('swarm:destroyRun', (e, payload: unknown): { ok: boolean } => {
+    if (guard(e)) return { ok: false }
+    const runId = runIdOf(payload)
+    if (!runId) return { ok: false }
+    sessions.get(runId)?.ledger.destroy()
+    sessions.delete(runId)
     return { ok: true }
   })
 }

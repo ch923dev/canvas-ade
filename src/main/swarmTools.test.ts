@@ -27,6 +27,7 @@ const facetStub = (over: Partial<SwarmCanvasFacet> = {}): SwarmCanvasFacet => ({
   dispatchPrompt: vi.fn(async () => ({ delivery: 'ready' as const })),
   awaitSettled: vi.fn(async () => ({ status: 'done', summary: 'ok', synthesized: true })),
   visualizePlan: vi.fn(async () => ({ id: 'plan-1' })),
+  boardPlanning: vi.fn(async () => ({ elements: [] })),
   ...over
 })
 

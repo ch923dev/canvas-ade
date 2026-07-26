@@ -58,6 +58,29 @@
   padding: 0 8px;
   font-size: 11px;
 }
+/* S2 — the primary action in a triage row (Reassign / Open). One accent, functional only. */
+.sw-btn.go {
+  border-color: rgba(79, 140, 255, 0.4);
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.sw-btn.go:hover,
+.sw-btn.go:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+/* S2 — header chip: this run was rehydrated from the durable ledger after a reload. */
+.sw-restored {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ok);
+  border: 1px solid rgba(62, 207, 142, 0.35);
+  background: var(--ok-wash);
+  border-radius: var(--r-ctl);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
 
 .sw-plan {
   display: flex;
@@ -340,6 +363,14 @@
 .sw-card.done {
   opacity: 0.85;
 }
+/* S2 LOST — the worker died mid-task; its result was salvaged. Uses --err, and deliberately NOT
+   the --warn ring: that language belongs to needs-input alone (a human is the blocker). */
+.sw-card.lost {
+  border-color: rgba(242, 84, 91, 0.5);
+  background: linear-gradient(var(--err-wash), var(--err-wash)), var(--surface-raised);
+}
+/* S2 STALLED — no border change at all. A stalled worker is not asking anyone for anything; the
+   signal is the FROZEN dot + the amber timer + the disclosed threshold on the third line. */
 .sw-card.ghost {
   border-style: dashed;
   align-items: center;
@@ -384,6 +415,11 @@
   color: var(--text-faint);
   flex: none;
 }
+/* S2 — the TIMER is the stall signal; the card border stays neutral. */
+.sw-card-t.stale {
+  color: var(--warn);
+  font-weight: 500;
+}
 .sw-st {
   width: 8px;
   height: 8px;
@@ -416,6 +452,18 @@
 .sw-st.error {
   background: var(--err);
 }
+/* S2 stalled — the working blue, FROZEN (no pulse) and hollowed: "nominally running, nothing has
+   moved", which is exactly the truth. */
+.sw-st.stalled {
+  background: transparent;
+  border: 2px solid var(--accent);
+  opacity: 0.55;
+}
+/* S2 lost — hollow --err: the worker is absent, not erroring. */
+.sw-st.lost {
+  background: transparent;
+  border: 2px solid var(--err);
+}
 .sw-activity {
   font-size: 12px;
   color: var(--text-2);
@@ -427,6 +475,19 @@
   color: var(--warn);
   font-weight: 500;
 }
+/* S2 — the mono disclosure line: the threshold that fired, the exit reason, the provenance.
+   Composed MAIN-side so there is ONE source for these strings. */
+.sw-disclose {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sw-card.lost .sw-disclose {
+  color: rgba(242, 84, 91, 0.85);
+}
 
 /* ── region 4 · needs-you strip ── */
 .sw-needs {
@@ -436,7 +497,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: 132px;
+  /* S2: the queue is a real work surface now, not a jump list. */
+  max-height: 196px;
 }
 .sw-needs-head {
   flex: none;
@@ -486,6 +548,11 @@
   border-color: var(--warn);
   background: var(--warn-wash);
 }
+/* S2 — a lost/failing row leans --err; a stalled row stays NEUTRAL (it is not an alarm). */
+.sw-tri.bad {
+  border-color: rgba(242, 84, 91, 0.45);
+  background: linear-gradient(var(--err-wash), var(--err-wash)), var(--surface-raised);
+}
 .sw-tri-ico {
   font-family: var(--mono);
   font-size: 11px;
@@ -496,6 +563,31 @@
 }
 .sw-tri.hot .sw-tri-ico {
   color: var(--warn);
+}
+.sw-tri.bad .sw-tri-ico {
+  color: var(--err);
+}
+/* S2 — the blocked TAG chip: a closed vocabulary you can write a rule against, never prose. */
+.sw-tri-tag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.sw-tri.hot .sw-tri-tag {
+  color: var(--warn);
+  border-color: rgba(232, 179, 57, 0.4);
+}
+.sw-tri.bad .sw-tri-tag {
+  color: var(--err);
+  border-color: rgba(242, 84, 91, 0.4);
 }
 .sw-tri-txt {
   flex: 1;
@@ -508,6 +600,12 @@
 .sw-tri-txt b {
   color: var(--text);
   font-weight: 500;
+}
+/* S2 — row actions sit right, fixed, and never wrap. */
+.sw-tri-acts {
+  flex: none;
+  display: flex;
+  gap: 5px;
 }
 
 @keyframes sw-blink {

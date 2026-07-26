@@ -142,6 +142,7 @@ export function triageRows(
   for (const task of ledger.tasks) {
     const boardId = task.assignment?.boardId
     if (!boardId) continue
+    if (task.dismissed === true) continue
     if (task.snoozedUntil !== undefined && now < task.snoozedUntil) continue
     const pos = planPosition(ledger, task)
     const on = pos !== null ? ` on task ${pos}` : ''

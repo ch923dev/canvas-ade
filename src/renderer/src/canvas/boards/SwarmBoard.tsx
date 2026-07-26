@@ -27,6 +27,8 @@ import { useAttentionStore } from '../../store/attentionStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { SwarmWorkerCards } from './swarm/SwarmWorkerCards'
 import { SwarmPlanStrip } from './swarm/SwarmPlanStrip'
+import { SwarmTriage } from './swarm/SwarmTriage'
+import type { SwarmTriageAction, SwarmTriageRow } from '../../../../shared/swarmLedgerTypes'
 
 /** Focus/select a board on the canvas (the notifications focus intent — camera-fit + select). */
 function jumpToBoard(boardId: string): void {
@@ -78,6 +80,13 @@ export function SwarmBoard({
     if (nearBottom) el.scrollTop = el.scrollHeight
   }, [run.messages])
 
+  // S2: ask MAIN to re-push this run's durable projection. A board that mounts after a reload
+  // gets its run back here; a fresh board (or a project with no ledger) simply gets nothing and
+  // renders S1's empty state. Runs ONCE per board — later updates arrive on the run-event channel.
+  useEffect(() => {
+    void window.api?.swarm?.restore?.(board.id)
+  }, [board.id])
+
   const send = useCallback((): void => {
     const text = draft.trim()
     if (!text) return
@@ -115,16 +124,42 @@ export function SwarmBoard({
       .addStatusLine(board.id, next ? 'run paused — dispatch tools refuse' : 'run resumed')
   }, [board.id, run.paused])
 
-  // Needs-you rows: this run's workers carrying an attention mark, needs-input first.
-  const needsYou = run.workerIds
-    .filter((id) => attention[id] !== undefined)
-    .sort(
-      (a, b) =>
-        (attention[a] === 'needs-input' ? -1 : 0) - (attention[b] === 'needs-input' ? -1 : 0)
-    )
-  const needsInputCount = needsYou.filter((id) => attention[id] === 'needs-input').length
   const boards = useCanvasStore((s) => s.boards)
   const titleOf = (id: string): string => boards.find((b) => b.id === id)?.title ?? id
+
+  /**
+   * S2: a triage row's non-`open` action. The button PROPOSES — MAIN re-validates the row against
+   * the ledger and decides. A `reassign` comes back as a prompt rather than a dispatch, which we
+   * send as the next orchestrator turn so the re-dispatch still pays the confirm gate and the
+   * chat narrates it in one voice.
+   */
+  const onTriageAction = useCallback(
+    (row: SwarmTriageRow, action: SwarmTriageAction): void => {
+      const api = window.api?.swarm
+      if (!api?.triageAction) return
+      void api.triageAction(board.id, row.id, action).then((r) => {
+        if (!r.ok) {
+          useSwarmStore.getState().addStatusLine(board.id, `triage: ${action} no longer applies`)
+          return
+        }
+        if (!r.prompt) return
+        useSwarmStore.getState().addUserMessage(board.id, r.prompt)
+        void api.startTurn?.(board.id, r.prompt).then((t) => {
+          if (!t.ok) {
+            useSwarmStore
+              .getState()
+              .addStatusLine(
+                board.id,
+                t.reason === 'busy'
+                  ? 'reassign queued — the orchestrator is mid-turn, ask again when it settles'
+                  : `reassign failed: ${t.reason ?? 'unknown'}`
+              )
+          }
+        })
+      })
+    },
+    [board.id]
+  )
 
   return (
     <BoardFrame
@@ -153,6 +188,15 @@ export function SwarmBoard({
                 ? `run ${fmtElapsed(Math.max(0, now - run.startedAt))}`
                 : 'no run yet'}
             </span>
+            {/* S2: the ledger's one visible moment — this run came back from disk. Honest about
+                what survived: the run's FACTS did, a dead worker's live PTY did not. */}
+            {run.restored && run.ledger && (
+              <span className="sw-restored" data-test="swarm-restored">
+                restored · {run.ledger.counts.workers} worker
+                {run.ledger.counts.workers === 1 ? '' : 's'} · {run.ledger.counts.results} result
+                {run.ledger.counts.results === 1 ? '' : 's'}
+              </span>
+            )}
             <span className="sw-spacer" />
             <button
               type="button"
@@ -241,34 +285,14 @@ export function SwarmBoard({
             onOpen={jumpToBoard}
           />
 
-          {/* ── region 4 · needs-you strip ── */}
-          <div className="sw-needs" data-test="swarm-needs-you">
-            <div className="sw-needs-head">
-              Needs you{needsInputCount > 0 ? ` · ${needsInputCount}` : ''}
-              <span className="sw-needs-scope">approve/deny · batching · stall watch → S2</span>
-            </div>
-            <div className="sw-needs-list">
-              {needsYou.length === 0 && <div className="sw-needs-quiet">nothing needs you</div>}
-              {needsYou.map((id) => (
-                <div key={id} className={`sw-tri${attention[id] === 'needs-input' ? ' hot' : ''}`}>
-                  <span className="sw-tri-ico">
-                    {attention[id] === 'needs-input' ? '!' : attention[id] === 'error' ? '×' : '✓'}
-                  </span>
-                  <span className="sw-tri-txt">
-                    <b>{titleOf(id)}</b>
-                    {attention[id] === 'needs-input'
-                      ? ' is waiting on input — answer in the terminal'
-                      : attention[id] === 'error'
-                        ? ' hit an error'
-                        : ' finished'}
-                  </span>
-                  <button type="button" className="sw-btn sm" onClick={() => jumpToBoard(id)}>
-                    Open ▸
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* ── region 4 · triage queue ── */}
+          <SwarmTriage
+            run={run}
+            attention={attention}
+            titleOf={titleOf}
+            onOpen={jumpToBoard}
+            onAction={onTriageAction}
+          />
         </div>
       </div>
     </BoardFrame>

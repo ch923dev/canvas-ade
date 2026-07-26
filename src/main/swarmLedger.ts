@@ -173,6 +173,7 @@ function coerceTask(v: unknown, now: number): SwarmTask | null {
   if (typeof o.snoozedUntil === 'number' && Number.isFinite(o.snoozedUntil)) {
     task.snoozedUntil = o.snoozedUntil
   }
+  if (o.dismissed === true) task.dismissed = true
   return task
 }
 

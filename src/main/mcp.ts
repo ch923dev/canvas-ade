@@ -3,6 +3,7 @@ import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
+import type { BoardPlanning } from './mcpBoardPlanning'
 import { getCurrentDir } from './projectStore'
 import { recordBoardProject } from './mcpBoardProjects'
 import { makeLeadAuthority } from './leadAuthority'
@@ -183,6 +184,13 @@ export interface RunningMcp {
   tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
   boardCards(boardId: string): Promise<unknown>
   /**
+   * S2 (swarm run ledger): one Planning board's elements + their REAL ids — the same projection
+   * served as `canvas://board/{id}/planning`. In-process seam alongside `boardCards`, so the
+   * swarm ledger can join a task to the checklist item it fulfils without minting plan-item ids
+   * of its own (the renderer owns those). Read-only; no gate.
+   */
+  boardPlanning(boardId: string): Promise<BoardPlanning>
+  /**
    * FIND-015: revoke every live `connected`-tier token (across all boards). Called on orchestration
    * consent REVOKE so a bearer left on disk in a CLI config is dead immediately — not only after
    * the next app restart. Per-board accretion is separately bounded by rotate-on-respawn in
@@ -338,6 +346,7 @@ export async function startMcpServer(
       focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
       tidyCanvas: (input) => orchestrator.tidyCanvas(input),
       boardCards: (boardId) => orchestrator.boardCards(boardId),
+      boardPlanning: (boardId) => orchestrator.boardPlanning(boardId),
       // Consent revoke kills EVERY orchestration bearer this host minted for terminals — the
       // connected tokens AND the lead token/designation (a lead bearer on disk must die with the
       // consent it rode in on).

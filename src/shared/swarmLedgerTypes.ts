@@ -146,6 +146,9 @@ export interface SwarmTask {
   result?: SwarmTaskResult
   /** The human pressed Wait on a stall row — suppresses re-surfacing until this timestamp. */
   snoozedUntil?: number
+  /** The human pressed Dismiss — this task never returns to the triage queue. Unlike `accept`
+   *  it makes no claim about the RESULT; it only says "I have seen this and dealt with it". */
+  dismissed?: true
 }
 
 /** The bounded event tail. Enough to count stalls and narrate; not yet a full event log (D3). */

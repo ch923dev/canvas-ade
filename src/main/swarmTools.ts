@@ -32,6 +32,21 @@ import {
 import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
 import { sanitizeDispatchText } from './dispatchSanitize'
+import type { SwarmLedgerSnapshot, SwarmTaskSpec } from '../shared/swarmLedgerTypes'
+
+/**
+ * S2: a ledger write must never break the run it is recording. Every hook call is wrapped so a
+ * disk error / permission failure degrades that run to ephemeral-only instead of failing the
+ * dispatch the human already approved.
+ */
+async function record(fn: (() => Promise<void>) | undefined): Promise<void> {
+  if (!fn) return
+  try {
+    await fn()
+  } catch (err) {
+    console.warn('[swarmLedger] record failed (non-fatal — run continues ephemerally)', err)
+  }
+}
 
 const MAX_NAME = 80
 const MAX_FIELD = 4000
@@ -61,6 +76,19 @@ export interface SwarmCanvasFacet {
     suggested?: 'kanban' | 'grid' | 'checklist' | 'columns'
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
+  /**
+   * S2: read a Planning board's elements + their REAL ids (the `canvas://board/{id}/planning`
+   * projection). The ledger syncs its `planItems` through this so a task can be joined to the
+   * checklist item it fulfils — MAIN never mints plan-item ids, the renderer does.
+   */
+  boardPlanning(boardId: string): Promise<{
+    elements: Array<{
+      id: string
+      kind: string
+      title?: string
+      items?: Array<{ id: string; label: string; done: boolean }>
+    }>
+  }>
 }
 
 /** Run events the executor emits so the renderer's swarm board mirrors the run live. */
@@ -74,10 +102,44 @@ export type SwarmRunEvent =
       provenance: 'claimed' | 'synthesized'
       status: string
     }
+  /**
+   * S2: the durable projection. Rides the EXISTING run-event channel rather than a second sync
+   * path (the kickoff's rule), so the renderer has ONE subscription and MAIN has ONE push.
+   */
+  | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
+
+/**
+ * S2: the DURABLE side-effects of a tool call. Supplied by the swarm session when a project (and
+ * therefore a ledger) exists; **optional throughout** — with no project, an unwritable
+ * `.canvas/memory/`, or a ledger written by a newer app version, every hook is simply absent and
+ * the run behaves exactly like S1 (ephemeral-only). A ledger failure must never fail a dispatch.
+ */
+export interface SwarmLedgerHooks {
+  /** The run drew (or redrew) its plan — record the board and re-sync the plan items from it. */
+  planDrawn(planBoardId: string): Promise<void>
+  /** A task was dispatched into a worker. `planItem` is the 1-based plan-strip position, if given. */
+  dispatched(input: {
+    workerId: string
+    role: string
+    spec: SwarmTaskSpec
+    activity?: string
+    planItem?: number
+  }): Promise<void>
+  /** A worker settled — attach its result with the provenance it actually carries. */
+  settled(input: {
+    workerId: string
+    status: string
+    summary: string
+    refs: string[]
+    provenance: 'claimed' | 'synthesized'
+  }): Promise<void>
+}
 
 /** Per-run mutable state the executor threads (owned by the swarm session in swarmChatIpc). */
 export interface SwarmRunCtx {
   paused: () => boolean
+  /** S2: durable recording. Absent ⇒ the run is ephemeral-only (S1 behaviour), never an error. */
+  ledger?: SwarmLedgerHooks
   /** Worker board ids dispatched with a WRITE-role and not yet settled (the serialization cap). */
   writeInFlight: Set<string>
   /** Worker board id → its dispatched role id (await_worker reads it for provenance labels). */
@@ -170,6 +232,12 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
           activity: {
             type: 'string',
             description: 'Present-continuous card line, e.g. "Migrating settings schema…"'
+          },
+          planItem: {
+            type: 'integer',
+            minimum: 1,
+            description:
+              'The 1-based plan-strip position this task fulfils (as drawn by draw_plan). Links the task to its plan item so the strip shows who owns it.'
           }
         }
       }
@@ -255,6 +323,7 @@ export async function executeSwarmTool(
         if (items.length === 0) return refuse('draw_plan needs at least one item')
         const r = await facet.visualizePlan({ items, suggested: 'checklist', title })
         ctx.emit({ kind: 'planDrawn', planBoardId: r.id })
+        await record(ctx.ledger && (() => ctx.ledger!.planDrawn(r.id)))
         return {
           content: JSON.stringify({ planBoardId: r.id }),
           summary: `plan: ${items.length} items`
@@ -375,6 +444,14 @@ export async function executeSwarmTool(
           `OBJECTIVE: ${objective}\n\nCONTEXT: ${context}\n\nBOUNDARIES: ${boundaries}\n\n` +
           `OUTPUT FORMAT: ${outputFormat}`
         const activity = str(args.activity, MAX_NAME)
+        // S2: the 1-based plan-strip position this task fulfils. Model output → bounded to a
+        // positive integer here; the ledger maps it to the REAL checklist item id (which only the
+        // renderer mints), and an out-of-range position simply leaves the task unmapped.
+        const planItemRaw = args.planItem
+        const planItem =
+          typeof planItemRaw === 'number' && Number.isInteger(planItemRaw) && planItemRaw > 0
+            ? Math.min(planItemRaw, MAX_ITEMS)
+            : undefined
         try {
           // The orchestrator's OWN human gate lives inside dispatchPrompt — no double confirm.
           // singleLinePrompt is MANDATORY: the write gate REJECTS embedded CR/LF (one approval
@@ -384,6 +461,19 @@ export async function executeSwarmTool(
             singleLinePrompt(packDispatchPrompt(pack, spec, undefined))
           )
           if (activity) ctx.emit({ kind: 'activity', workerId, text: activity })
+          // Record AFTER the gate: only a dispatch the human actually approved becomes a
+          // durable assignment (a denied dispatch throws above and never reaches here).
+          await record(
+            ctx.ledger &&
+              (() =>
+                ctx.ledger!.dispatched({
+                  workerId,
+                  role: pack?.id ?? 'worker',
+                  spec: { objective, context, boundaries, outputFormat },
+                  ...(activity ? { activity } : {}),
+                  ...(planItem !== undefined ? { planItem } : {})
+                }))
+          )
           return {
             content: JSON.stringify({ delivery: r?.delivery ?? 'ready' }),
             summary: `dispatched → ${workerId}`
@@ -410,6 +500,17 @@ export async function executeSwarmTool(
         ctx.writeInFlight.delete(workerId)
         const provenance: 'claimed' | 'synthesized' = result.synthesized ? 'synthesized' : 'claimed'
         ctx.emit({ kind: 'workerSettled', workerId, provenance, status: result.status ?? 'done' })
+        await record(
+          ctx.ledger &&
+            (() =>
+              ctx.ledger!.settled({
+                workerId,
+                status: result.status ?? 'unknown',
+                summary: result.summary ?? '',
+                refs: result.refs ?? [],
+                provenance
+              }))
+        )
         return {
           content: JSON.stringify({
             status: result.status ?? 'unknown',

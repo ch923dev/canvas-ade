@@ -78,6 +78,10 @@ export function wireLlmJarvis(
         return null
       }
     },
-    confirm: (req) => requestConfirm(ipcMain, getWin, req)
+    confirm: (req) => requestConfirm(ipcMain, getWin, req),
+    // Orchestration S2: the run ledger is a PROJECT sidecar (`<project>/.canvas/memory/`, design
+    // D1) — the same `getCurrentDir` Jarvis keys its history by. No project ⇒ no ledger ⇒ the run
+    // is ephemeral exactly as in S1.
+    getProjectDir: deps.getCurrentDir
   })
 }

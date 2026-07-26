@@ -86,6 +86,9 @@ export function useSwarmEvents(): void {
         store.setWorkerMeta(runId, ev.workerId, { activity: ev.text })
       } else if (ev.kind === 'workerSettled') {
         store.setWorkerMeta(runId, ev.workerId, { provenance: ev.provenance })
+      } else if (ev.kind === 'ledger') {
+        // S2: MAIN's durable projection — worker states, triage rows, plan board, restored flag.
+        store.setLedger(runId, ev.snapshot)
       }
     })
 
@@ -116,8 +119,12 @@ export function useSwarmEvents(): void {
       if (gone.length === 0) return
       const swarm = useSwarmStore.getState()
       for (const b of gone) {
-        if (b.type === 'swarm') swarm.removeRun(b.id)
-        else {
+        if (b.type === 'swarm') {
+          swarm.removeRun(b.id)
+          // S2: the durable run dies with its board — otherwise a deleted swarm board leaves an
+          // orphan ledger that the retention sweep would keep alive for 19 more runs.
+          void window.api?.swarm?.destroyRun?.(b.id)
+        } else {
           for (const [runId, run] of swarm.runs) {
             if (run.workerIds.includes(b.id)) swarm.removeWorker(runId, b.id)
           }
