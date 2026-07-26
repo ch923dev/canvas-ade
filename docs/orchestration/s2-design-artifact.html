@@ -1102,7 +1102,7 @@
 
 <div class="wrap">
   <header class="doc-head">
-    <div class="kicker">Orchestration · S2 · design gate — sign-off required before any implementation code</div>
+    <div class="kicker">Orchestration · S2 · design gate — SIGNED OFF 2026-07-26 (surface approved as drawn; D1 decided project-scoped)</div>
     <h1>Run ledger + triage — making a swarm run survivable instead of a demo</h1>
     <p class="meta">
       lane <code>feat/swarm-s2</code> · base <code>19b1f2a7</code> (v0.34.0, S1 = #386) · target
@@ -1889,27 +1889,42 @@
   </div>
 
   <h3 class="sub">Where it lives and what it holds</h3>
-  <pre class="ascii">  <i>&lt;userData&gt;/</i><b>swarm-runs.json</b>            <i>— atomic (write-file-atomic) · cap-bounded · versioned</i>
+  <pre class="ascii">  <i>&lt;project&gt;/.canvas/memory/</i><b>run-&lt;boardId&gt;.json</b>     <i>— one file per run, beside the board recaps</i>
+                                              <i>atomic (write-file-atomic) · capped · versioned</i>
+  .canvas/
+    canvas.json
+    memory/
+      board-&lt;id&gt;.md · board-&lt;id&gt;.recap.json    <i>the existing sidecars</i>
+      <b>run-&lt;boardId&gt;.json</b>                      <i>← the ledger (same id guard, same writer)</i>
 
-  { version: 1,
-    runs: {                                <i>keyed by project dir, mcpPendingCommands-style</i>
-      "&lt;projectDir&gt;": [
-        { <b>runId</b>, <b>boardId</b>,                    <i>runId ↔ the swarm board id</i>
-          title, createdAt, lastActiveAt, lastSeenAt,   <i>timestamps live HERE, not on the board</i>
-          state: "live" | "interrupted" | "done",
-          planBoardId,
-          <b>planItems</b>: [ { id, label, done, ownerTaskId? } ],
-          <b>tasks</b>: [
-            { taskId, planItemId, content, activeForm,   <i>the dual-label rule (09 §3)</i>
-              state: "pending"|"in_progress"|"blocked"|"done"|"failed"|"cancelled",
-              blockedTag?: "needs_input"|"lost"|"failing_check"|"stalled"|"dependency"|"unreviewed",
-              <b>assignment</b>: { boardId, role, spec:{objective,context,boundaries,outputFormat},
-                            dispatchedAt, lastActivityAt, stallCount,
-                            <b>worktree: null</b>, <b>branch: null</b> },   <i>← written null; S3 fills</i>
-              <b>result</b>?: { status, summary, refs[], provenance:"claimed"|"synthesized",
-                          acceptedByHuman?: true } } ],
-          <b>events</b>: [ … ]                          <i>bounded tail — stall counting + narration</i>
-        } ] } }</pre>
+  { <b>version</b>: 1,
+    <b>runId</b>, <b>boardId</b>,                          <i>runId IS the swarm board id — the join key</i>
+    title, createdAt, lastActiveAt, lastSeenAt,   <i>timestamps live HERE, not on the board</i>
+    state: "live" | "interrupted" | "done",
+    planBoardId,
+    <b>planItems</b>: [ { id, label, done, ownerTaskId? } ],
+    <b>tasks</b>: [
+      { taskId, planItemId, content, activeForm,   <i>the dual-label rule (09 §3)</i>
+        state: "pending"|"in_progress"|"blocked"|"done"|"failed"|"cancelled",
+        blockedTag?: "needs_input"|"lost"|"failing_check"|"stalled"|"dependency"|"unreviewed",
+        <b>assignment</b>: { boardId, role, spec:{objective,context,boundaries,outputFormat},
+                      dispatchedAt, lastActivityAt, stallCount,
+                      <b>worktree: null</b>, <b>branch: null</b> },   <i>← written null; S3 fills</i>
+        <b>result</b>?: { status, summary, refs[], provenance:"claimed"|"synthesized",
+                    acceptedByHuman?: true } } ],
+    <b>events</b>: [ … ]                            <i>bounded tail — stall counting + narration</i>
+  }
+
+  <i>Retention: newest 20 runs per project (09 Q16 default), pruned by lastActiveAt on write.</i></pre>
+  <p class="note">
+    One file per run rather than one file for all of them, because the run id
+    <b class="hi">is</b> the swarm board id — so restore is a filename lookup, the existing
+    <code>isSafeId</code> path guard applies verbatim, and a corrupt ledger poisons exactly one run
+    instead of every run in the project. Written through <code>canvasMemory</code>'s existing
+    atomic writer, so run ledgers inherit the recap sidecars' <b class="hi">commit behaviour
+    exactly</b>: ignored by default, versioned alongside <code>memory/</code> when the project has
+    opted in to committing canvas data (ADR 0009).
+  </p>
 
   <table class="tbl">
     <tr>
@@ -1989,10 +2004,12 @@
   </table>
 
   <!-- ==================================================================== -->
-  <h2 class="sec"><span class="num">7</span>Decisions that need your nod</h2>
+  <h2 class="sec"><span class="num">7</span>Decisions — signed off</h2>
   <p class="lede">
-    Eight calls. Five are mine to make and I have made them; three (marked) either diverge from a
-    written default or are genuinely yours. Nothing below is implemented yet.
+    Eight calls. Three were marked as needing the user's nod; all three are now settled
+    (<b class="hi">signed off 2026-07-26</b>, surface approved as drawn). <b>D1 was decided against
+    my recommendation</b> — the ledger is project-scoped, not userData — and the schema in §6
+    reflects the decision, not the proposal.
   </p>
 
   <table class="tbl">
@@ -2004,19 +2021,20 @@
     <tr>
       <td>D1</td>
       <td>
-        <b class="hi">Ledger lives in userData</b>, keyed by project dir —
-        <code>&lt;userData&gt;/swarm-runs.json</code>
-        <span class="tag rec">your call</span>
+        <b class="hi">Ledger lives with the project</b> —
+        <code>&lt;project&gt;/.canvas/memory/run-&lt;boardId&gt;.json</code>
+        <span class="tag new">signed off</span>
       </td>
       <td>
-        Follows the precedent the kickoff names (<code>mcpPendingCommands</code>), keeps run state
-        out of the user's repo, and needs no <code>.canvas/</code> layout or gitignore churn.
-        <b class="hi">Diverges from <code>09 §7 Q14</code></b>, whose default was
-        <code>&lt;project&gt;/.canvas/memory/run-&lt;id&gt;.*</code> beside the board recaps. The
-        real trade: <code>.canvas/</code> travels with the project (a moved/renamed project folder
-        keeps its runs); userData does not, but survives a <code>git clean</code> and never appears
-        in a diff. <b>I recommend userData</b> — the kickoff is explicit and runs are session-scoped
-        working state, not project content.
+        <b class="hi">Decided by the user; overrides my userData recommendation.</b> Takes
+        <code>09 §7 Q14</code>'s written default: runs are project-scoped and should travel with the
+        project folder, and the file sits beside the board recap sidecars it is a sibling of. It
+        therefore rides <code>canvasMemory</code>'s existing atomic writer + <code>isSafeId</code>
+        path guard rather than a new file module, and inherits the recap sidecars' commit
+        behaviour (ignored by default, versioned under the ADR 0009 opt-in). What I gave up by
+        being overruled: it no longer survives a <code>git clean</code> of an opted-in project, and
+        it is one more thing in the user's folder. What it buys: a moved or renamed project keeps
+        its runs, which userData keying by absolute path would silently lose.
       </td>
     </tr>
     <tr>
@@ -2118,7 +2136,7 @@
     <div class="panel pick">
       <h4>In this lane</h4>
       <ul class="pts">
-        <li><b>Run ledger</b> — userData sidecar, atomic, cap-bounded, versioned; restores a run across a reload.</li>
+        <li><b>Run ledger</b> — <code>.canvas/memory/run-&lt;boardId&gt;.json</code>, atomic, capped, versioned; restores a run across a reload.</li>
         <li><b>Failure case A</b> — worker dies mid-task: detect, salvage via the existing <code>write_result</code> + <code>boardResultSynth</code> path, mark, re-queue, narrate.</li>
         <li><b>Failure case B</b> — orchestrator dies with live workers: clean shutdown (drain / salvage / preserve).</li>
         <li><b>Stall detection + reassignment</b> — counted, thresholded, disclosed; card state + triage row + a gated reassign path.</li>
@@ -2143,9 +2161,10 @@
   </div>
 
   <div class="call ask" style="margin-top: 26px">
-    <b>Sign-off asked for.</b> Approve the surface as drawn, and confirm the three marked calls —
-    <b>D1</b> (ledger in userData vs <code>.canvas/</code>), <b>D2</b> (always-live plan edits vs an
-    edit mode), and <b>D5</b> (clean shutdown preserves worker boards vs closes them). Implementation
-    starts on your nod, not before.
+    <b>Signed off 2026-07-26.</b> Surface approved as drawn; the three marked calls settled as —
+    <b>D1</b> — ledger in <code>&lt;project&gt;/.canvas/memory/</code> (user’s call, overriding my
+    userData recommendation) · <b>D2</b> — always-live plan edits · <b>D5</b> — clean shutdown
+    preserves worker boards. The surface is approved as drawn and implementation has started from
+    Phase 1 (the run ledger).
   </div>
 </div>
