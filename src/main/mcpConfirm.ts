@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
-import type { ConfirmDiff } from '../shared/mcpTypes'
+import type {
+  ConfirmChoices,
+  ConfirmDiff,
+  ConfirmReplyDecision,
+  ConfirmWorkerConfig
+} from '../shared/mcpTypes'
 import { isForeignSender } from './ipcGuard'
 import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
 
@@ -20,27 +25,10 @@ import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
  * into another agent's shell.
  */
 
-/** One selectable option in a confirm CHOOSER (P5). `id` is the bounded value the host acts on. */
-export interface ConfirmChoiceOption {
-  id: string
-  label: string
-}
-
-/**
- * 🔒 An optional CHOOSER attached to a confirm request (P5 — the upgraded `visualize_plan` gate). When
- * present, the modal renders the options and the human's pick rides back on the decision's `choice`.
- * The option ids are a BOUNDED, host-defined set — the requesting gate re-validates `decision.choice`
- * against `options` and falls back to `default` for anything off-set, so a garbage/forged choice can
- * never widen the action (the decision authority + the value space both stay MAIN's).
- */
-export interface ConfirmChoices {
-  /** Segment label above the options (e.g. "Visualization"). */
-  label?: string
-  /** The selectable options (bounded, host-defined). */
-  options: ConfirmChoiceOption[]
-  /** The pre-selected option id (one of `options[].id`) — the agent's suggestion. */
-  default: string
-}
+// P5 chooser + S1 worker-config contract types are CANONICAL in src/shared/mcpTypes.ts (both
+// sides import them — a MAIN/renderer field drift is a compile error, the McpCommand W1-D/F9
+// discipline). Re-exported here so MAIN-side callers keep their './mcpConfirm' import path.
+export type { ConfirmChoiceOption, ConfirmChoices, ConfirmWorkerConfig } from '../shared/mcpTypes'
 
 export interface ConfirmRequest {
   /** Short modal title (e.g. "Dispatch to terminal"). */
@@ -52,6 +40,8 @@ export interface ConfirmRequest {
   denyLabel?: string
   /** 🔒 P5: an optional layout chooser — when set, the modal renders the options + returns `choice`. */
   choices?: ConfirmChoices
+  /** 🔒 S1: swarm spawn — when set, the renderer shows the worker-config dialog (see type doc). */
+  workerConfig?: ConfirmWorkerConfig
   /**
    * Diagram Phase 3 (Option B): an optional STRUCTURED semantic diff for a diagram-spec write —
    * coloured rows + lint chips the modal renders in place of dumping the spec. PRESENTATION
@@ -70,11 +60,12 @@ export interface ConfirmRequest {
   origin?: 'jarvis'
 }
 
-export interface ConfirmDecision {
-  approved: boolean
-  /** 🔒 P5: the option id the human picked when the request carried `choices`; absent otherwise. */
-  choice?: string
-}
+/**
+ * The decision {@link requestConfirm} resolves. Canonical shape = the shared
+ * {@link ConfirmReplyDecision} (the renderer's reply speaks the same type); every field beyond
+ * `approved` is OPAQUE here — onReply shape-checks, the requesting gate re-validates.
+ */
+export type ConfirmDecision = ConfirmReplyDecision
 
 /** One row in a BATCH confirm (relay_prompts) — a short label + the EXACT (sanitized) command shown. */
 export interface ConfirmBatchItem {
@@ -178,7 +169,34 @@ export function requestConfirm(
       // on an approve, and the requesting gate re-validates it against the offered option set (falling
       // back to `default`), so a forged/garbage value here can never widen the action.
       const choice = typeof d?.choice === 'string' ? d.choice : undefined
-      finish(choice !== undefined ? { approved, choice } : { approved })
+      // 🔒 S1: same opaque-carry for the worker-config commit — the swarm spawn gate re-validates
+      // both (single-line/bounded launch, registry-known pack) and refuses anything off-contract.
+      const launchCommand = typeof d?.launchCommand === 'string' ? d.launchCommand : undefined
+      const rolePackId = typeof d?.rolePackId === 'string' ? d.rolePackId : undefined
+      // 🔒 v20: OpenRouter intent — carry ONLY a well-shaped `{ enabled: true, model? }` (an
+      // explicit boolean + optional string); anything else drops the field (fail-closed to
+      // "no routing"), and the requesting gate still re-validates the slug before acting.
+      const orRaw = (d as { openRouter?: unknown } | null)?.openRouter
+      const or =
+        orRaw !== null &&
+        typeof orRaw === 'object' &&
+        (orRaw as { enabled?: unknown }).enabled === true &&
+        ((orRaw as { model?: unknown }).model === undefined ||
+          typeof (orRaw as { model?: unknown }).model === 'string')
+          ? {
+              enabled: true as const,
+              ...((orRaw as { model?: string }).model !== undefined
+                ? { model: (orRaw as { model?: string }).model }
+                : {})
+            }
+          : undefined
+      finish({
+        approved,
+        ...(choice !== undefined ? { choice } : {}),
+        ...(launchCommand !== undefined ? { launchCommand } : {}),
+        ...(rolePackId !== undefined ? { rolePackId } : {}),
+        ...(or !== undefined ? { openRouter: or } : {})
+      })
     }
     // Backstop safety timeout (deny on expiry). Defaults to DEFAULT_TIMEOUT_MS so a frozen
     // renderer can't hang the awaiting tool forever (BUG-010). Arm only for a finite

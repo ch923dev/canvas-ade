@@ -9,6 +9,7 @@ import { mcpServersApi } from './mcpServersApi'
 import { mcpApi } from './mcpApi'
 import { closeGuardApi } from './closeGuardApi'
 import { forwardVoicePort, forwardVoiceTtsPort, forwardVoiceWakePort, voiceApi } from './voice'
+import { swarmApi } from './swarm'
 import { jarvisApi } from './jarvis'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
@@ -949,8 +950,19 @@ const api = {
       ipcRenderer.invoke('orchestration:getLeadStatus'),
     grantLead: (boardId: string): Promise<OrchestrationLeadGrantResult> =>
       ipcRenderer.invoke('orchestration:grantLead', boardId),
-    revokeLead: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('orchestration:revokeLead')
+    revokeLead: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('orchestration:revokeLead'),
+    // S1: MAIN pushes every lead-designation change (grant / revoke / lead-board close / consent
+    // revoke) so the LEAD badge + board-menu state + creation-time row stay live without polling.
+    // Returns an unsubscribe fn. Carries only the designated board id — never token material.
+    onLeadChanged: (handler: (boardId: string | null) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, boardId: string | null): void => handler(boardId)
+      ipcRenderer.on('orchestration:leadChanged', listener)
+      return () => ipcRenderer.removeListener('orchestration:leadChanged', listener)
+    }
   },
+
+  // Swarm boards (orchestration S1) — extracted to ./swarm for the max-lines ratchet.
+  swarm: swarmApi,
 
   // ── External MCP servers: register the user's OWN MCP servers, written into each selected agent
   //    CLI's config so terminal agents can use them (factored to mcpServersApi.ts). ──

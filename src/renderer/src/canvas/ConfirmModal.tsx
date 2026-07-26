@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ConfirmDiff } from '../../../shared/mcpTypes'
+import type {
+  ConfirmChoices,
+  ConfirmDiff,
+  ConfirmReplyDecision,
+  ConfirmWorkerConfig
+} from '../../../shared/mcpTypes'
 import { Modal } from './Modal'
 import { useJarvisStore } from '../store/jarvisStore'
+import { WorkerConfigDialog } from './boards/command/WorkerConfigDialog'
+import { packOptionValues, rolePackById } from '../lib/rolePacks'
 
 /**
  * 🔒 Human-confirm modal (T4.2). MAIN posts a confirm request over `mcp:confirm`
@@ -19,18 +26,16 @@ import { useJarvisStore } from '../store/jarvisStore'
  * modal — it must DENY first (BUG-005).
  */
 
-/** P5: an optional layout chooser attached to a request (mirrors main `ConfirmChoices`). */
-interface ConfirmChoices {
-  label?: string
-  options: Array<{ id: string; label: string }>
-  default: string
-}
+// P5 chooser + S1 worker-config + the reply decision are the CANONICAL shared contract types
+// (src/shared/mcpTypes.ts) — the same declarations MAIN's mcpConfirm.ts uses, so a field drift
+// between the two sides is a compile error, not a runtime surprise (the McpCommand discipline).
 interface ConfirmRequest {
   title: string
   body: string
   confirmLabel?: string
   denyLabel?: string
   choices?: ConfirmChoices
+  workerConfig?: ConfirmWorkerConfig
   /** Diagram Phase 3 (Option B): optional structured semantic diff for a diagram-spec write —
    *  rendered as coloured rows + lint chips above the plain body. Presentation only; the body
    *  stays the complete fallback (and the ONLY thing the Jarvis panel route renders). */
@@ -38,7 +43,7 @@ interface ConfirmRequest {
   /** J4: MAIN-stamped Jarvis-tool origin (see routing note in the subscribe effect). */
   origin?: 'jarvis'
 }
-type Reply = (decision: { approved: boolean; choice?: string }) => void
+type Reply = (decision: ConfirmReplyDecision) => void
 interface Pending extends ConfirmRequest {
   reply: Reply
   // P5: the current chooser pick, initialized to `choices.default` on enqueue. Held ON the queue
@@ -77,7 +82,12 @@ export default function ConfirmModal(): React.ReactElement | null {
       // a CHOOSER request (visualize_plan) keeps this modal (the layout tiles need it —
       // user-decided 2026-07-16), and a closed panel falls back here too (no dead gates).
       const r = request as ConfirmRequest
-      if (r.origin === 'jarvis' && !r.choices && useJarvisStore.getState().panelOpen) {
+      if (
+        r.origin === 'jarvis' &&
+        !r.choices &&
+        !r.workerConfig &&
+        useJarvisStore.getState().panelOpen
+      ) {
         useJarvisStore.getState().confirmRequested({ title: r.title, body: r.body }, reply)
         return
       }
@@ -86,6 +96,58 @@ export default function ConfirmModal(): React.ReactElement | null {
   }, [])
 
   if (!current) return null
+
+  // 🔒 S1 swarm spawn: a workerConfig request renders the FULL worker-config dialog (the command
+  // board's spawn surface — role row, presets, builder, editable launch) instead of the plain
+  // approve/deny card. Commit replies the dialog's launch line + role; Cancel/Esc denies. MAIN
+  // re-validates the reply (single-line/bounded launch, registry-known pack) before spawning.
+  if (current.workerConfig) {
+    const wc = current.workerConfig
+    const pack = rolePackById(wc.roleId)
+    return (
+      <WorkerConfigDialog
+        mode="spawn"
+        zoneName={wc.workerName}
+        engineeredPrompt=""
+        initial={
+          pack
+            ? {
+                presetId: 'claude',
+                values: {
+                  ...packOptionValues(pack),
+                  ...(wc.modelDefault ? { model: wc.modelDefault } : {})
+                },
+                rawOverride: null,
+                rolePackId: pack.id,
+                roleBrief: pack.systemPrompt
+              }
+            : null
+        }
+        onDispatch={({ launchCommand, config }) => {
+          setQueue((q) => {
+            const [head, ...rest] = q
+            head?.reply({
+              approved: true,
+              launchCommand,
+              ...(config.rolePackId ? { rolePackId: config.rolePackId } : {}),
+              // v20: the dialog's OpenRouter intent rides only when ON; MAIN re-validates the
+              // slug (single clean token) before it reaches the spawn.
+              ...(config.openRouter?.enabled
+                ? {
+                    openRouter: {
+                      enabled: true,
+                      ...(config.openRouter.model ? { model: config.openRouter.model } : {})
+                    }
+                  }
+                : {})
+            })
+            return rest
+          })
+        }}
+        onCancel={() => answer(false)}
+      />
+    )
+  }
 
   return (
     <Modal

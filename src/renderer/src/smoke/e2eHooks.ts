@@ -11,6 +11,7 @@
  */
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
+import { DEFAULT_BOARD_SIZE } from '../lib/boardDefaults'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
@@ -80,6 +81,17 @@ export interface E2EHostHooks {
 }
 
 let seedX = 0
+/**
+ * Advance the seed cursor past the board just seeded. The floor stays the historical 760 —
+ * every pre-S1 spec's canvas geometry (board spacing → the no-arg fitView zoom → real-mouse
+ * hit-target sizes) is EXACTLY what it always was; only a board WIDER than that (swarm, 1180)
+ * pushes further so it can't overlap the next seed. A uniform bump to 1240 spread ALL seeds
+ * out, shrank every board under fitView-all on the small Docker xvfb screen, and broke the
+ * planningCrossBoardDrag grip-press hit-testing on the Linux leg only (2026-07-26).
+ */
+function advanceSeedX(type: keyof typeof DEFAULT_BOARD_SIZE): void {
+  seedX += Math.max(760, DEFAULT_BOARD_SIZE[type].w + 60)
+}
 /** M2: the source board of an in-flight harness-driven connector drag (startConnect). */
 let connectFrom: string | null = null
 
@@ -89,14 +101,14 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     seedBoard(type, patch) {
       const store = useCanvasStore.getState()
       const id = store.addBoard(type, { x: seedX, y: 0 })
-      seedX += 760 // wider than the largest default board (browser 700) → no overlap
+      advanceSeedX(type)
       if (patch) store.updateBoard(id, patch)
       return id
     },
     seedConfigPendingTerminal() {
       const store = useCanvasStore.getState()
       const id = store.addBoard('terminal', { x: seedX, y: 0 }, { configPending: true })
-      seedX += 760
+      advanceSeedX('terminal')
       return id
     },
     getConfigPendingId() {

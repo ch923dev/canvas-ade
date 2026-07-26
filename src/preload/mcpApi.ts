@@ -138,6 +138,8 @@ export const mcpApi = {
     browser?: boolean
     // Agentic CLI the worker terminal boots (e.g. 'claude'); MAIN sanitizes it to a single line.
     launchCommand?: string
+    // v20: the worker-config dialog's OpenRouter routing intent; MAIN validates shape + slug.
+    openRouter?: { enabled: boolean; model?: string }
   }): Promise<{ groupId: string; terminalId: string; planningId?: string; browserId?: string }> =>
     ipcRenderer.invoke('mcp:spawnGroup', input),
   dispatchPrompt: (boardId: string, text: string): Promise<void> =>

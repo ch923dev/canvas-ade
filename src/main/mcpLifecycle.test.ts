@@ -448,6 +448,58 @@ describe('createMcpLifecycle.spawnGroup (PR-5b — feature-zone cluster)', () =>
       expect(launchOf(sent[0])).toBeUndefined()
     })
   })
+
+  describe('🔒 v20: spawn-time openRouter routing intent (sanitizeOpenRouter)', () => {
+    const orOf = (cmd: { [k: string]: unknown }): unknown =>
+      (cmd.members as { terminal: { openRouter?: unknown } }).terminal.openRouter
+
+    it('spawnGroup carries a validated enabled intent on the terminal member; absent/disabled ⇒ omitted', async () => {
+      const { registry, sent } = recordingReg()
+      const life = makeLife(registry)
+      await life.spawnGroup({
+        name: 'zone',
+        openRouter: { enabled: true, model: '  anthropic/claude-sonnet-4.5  ' }
+      })
+      expect(orOf(sent[0])).toEqual({ enabled: true, model: 'anthropic/claude-sonnet-4.5' })
+      await life.spawnGroup({ name: 'zone2' })
+      expect(orOf(sent[1])).toBeUndefined()
+      // Disabled intent is represented by ABSENCE (the board field is simply never written).
+      await life.spawnGroup({ name: 'zone3', openRouter: { enabled: false, model: 'x' } })
+      expect(orOf(sent[2])).toBeUndefined()
+    })
+
+    it('rejects a malformed openRouter shape / multi-line slug BEFORE any send (no orphan zone)', async () => {
+      const { registry, sent } = recordingReg()
+      const life = makeLife(registry)
+      await expect(
+        life.spawnGroup({ name: 'z', openRouter: { enabled: 'yes' } as never })
+      ).rejects.toThrow(/openRouter/)
+      await expect(
+        life.spawnGroup({
+          name: 'z',
+          openRouter: { enabled: true, model: 'a' + String.fromCharCode(10) + 'b' }
+        })
+      ).rejects.toThrow(/newline|single command line/i)
+      expect(sent).toHaveLength(0)
+    })
+
+    it('spawnBoard: openRouter is terminal-only (reject precedes side effects) and rides the addBoard spec', async () => {
+      const { registry, sent } = recordingReg()
+      const life = makeLife(registry)
+      await expect(
+        life.spawnBoard({ type: 'planning', openRouter: { enabled: true } })
+      ).rejects.toThrow(/terminal/)
+      expect(sent).toHaveLength(0)
+      await life.spawnBoard({
+        type: 'terminal',
+        openRouter: { enabled: true, model: 'moonshotai/kimi-k2' }
+      })
+      expect((sent[0].board as { openRouter?: unknown }).openRouter).toEqual({
+        enabled: true,
+        model: 'moonshotai/kimi-k2'
+      })
+    })
+  })
 })
 
 describe('createMcpLifecycle.spawnBoard — title (2b)', () => {

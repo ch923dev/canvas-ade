@@ -55,7 +55,10 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   // adds the column-axis pair (`columnAxis`/`axisLabel`) — set by the board-header toggle. #346's
   // per-card `attachments` is a CARD field (like description/tags/fileRefs) — it rides inside the
   // whole-card `cards` patch, so it needs NO separate board-level key here.
-  kanban: [...COMMON_KEYS, 'columns', 'cards', 'columnAxis', 'axisLabel']
+  kanban: [...COMMON_KEYS, 'columns', 'cards', 'columnAxis', 'axisLabel'],
+  // v23 swarm board (orchestration S1): no per-type persisted fields — run state is ephemeral
+  // swarmStore state (scene/session split), never routed through a board patch.
+  swarm: [...COMMON_KEYS]
 }
 
 /**

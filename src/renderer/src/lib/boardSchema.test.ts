@@ -208,9 +208,9 @@ describe('kanban board (v17)', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('stamps the breaking reader floor (minReaderVersion 21) on write', () => {
+  it('stamps the breaking reader floor (minReaderVersion — the current floor) on write', () => {
     const doc = toObject([createBoard('kanban', { id: 'k5', x: 0, y: 0 })], null)
-    expect(doc.minReaderVersion).toBe(21)
+    expect(doc.minReaderVersion).toBe(MIN_READER_VERSION)
   })
 })
 
@@ -418,8 +418,8 @@ describe('kanban card-detail (v19 — description / tags[] / fileRefs[])', () =>
       boards: []
     } as unknown as CanvasDoc)
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(22)
-    expect(MIN_READER_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(23)
+    expect(MIN_READER_VERSION).toBe(23)
   })
 })
 
@@ -436,7 +436,8 @@ describe('size constants', () => {
       command: { w: 760, h: 440 },
       file: { w: 520, h: 380 },
       dataflow: { w: 760, h: 520 },
-      kanban: { w: 900, h: 520 }
+      kanban: { w: 900, h: 520 },
+      swarm: { w: 1180, h: 660 }
     })
   })
 })
@@ -1096,8 +1097,8 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(22)
-    expect(MIN_READER_VERSION).toBe(21)
+    expect(SCHEMA_VERSION).toBe(23)
+    expect(MIN_READER_VERSION).toBe(23)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
@@ -1199,7 +1200,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v15) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(21) // the v21 expanse-engine breaking floor
+    expect(MIN_READER_VERSION).toBe(23) // the v23 swarm-board breaking floor
     expect(out.boards).toEqual(v15.boards)
   })
 
@@ -1231,7 +1232,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v16) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(21) // the v21 expanse-engine breaking floor
+    expect(MIN_READER_VERSION).toBe(23) // the v23 swarm-board breaking floor
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note, arrow])
   })
 
@@ -1299,8 +1300,41 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v21) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(21) // v22 is additive — the floor stays at the v21 break
+    expect(MIN_READER_VERSION).toBe(23) // the v23 swarm-board breaking floor
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([expanseDiagram])
+  })
+
+  // v23 — the `swarm` board type (orchestration S1). BoardCommon-only persisted shape (run
+  // state is ephemeral swarmStore state); a new board type is breaking → floor 23.
+  it('creates, validates, and round-trips a swarm board (v23 — BoardCommon only)', () => {
+    const b = createBoard('swarm', { id: 's1', x: 10, y: 20, title: 'migrate run' })
+    expect(b).toEqual({
+      id: 's1',
+      type: 'swarm',
+      x: 10,
+      y: 20,
+      w: 1180,
+      h: 660,
+      title: 'migrate run'
+    })
+    const doc = toObject([b], null)
+    expect(doc.minReaderVersion).toBe(23) // breaking: pre-23 assertBoard throws on the type
+    const back = fromObject(structuredClone(doc))
+    expect(back.boards).toEqual([b])
+  })
+
+  it('migrate bumps a v22 doc to current (v23) — identity, boards untouched', () => {
+    const v22 = {
+      schemaVersion: 22,
+      minReaderVersion: 21,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [{ id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 420, h: 340 }]
+    }
+    const out = migrate(structuredClone(v22) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(out.boards).toEqual(v22.boards)
   })
 
   // v18 round-trip: opacity + stroke tokens survive toObject → wire → fromObject byte-for-byte, and
@@ -1514,15 +1548,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(22)
+  it('SCHEMA_VERSION is current', () => {
+    expect(SCHEMA_VERSION).toBe(23)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 22,
-      minReaderVersion: 21,
+      schemaVersion: SCHEMA_VERSION,
+      minReaderVersion: MIN_READER_VERSION,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -1707,8 +1741,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(22)
+  it('SCHEMA_VERSION is current', () => {
+    expect(SCHEMA_VERSION).toBe(23)
   })
 
   it('round-trips a valid image element', () => {
@@ -1761,8 +1795,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 19', () => {
-    expect(SCHEMA_VERSION).toBe(22)
+  it('SCHEMA_VERSION is current', () => {
+    expect(SCHEMA_VERSION).toBe(23)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -2418,8 +2452,8 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     // `diagram` element kind, the v12 `command` board type, the v13 `file` board + `fileref` element
     // kinds, the v14 `dataflow` board type, the v15 `qhd`/`uhd` viewport presets, and the v17 `kanban`
     // board type (v16 theming was additive). toObject stamps the CURRENT floor (MIN_READER_VERSION = 17).
-    expect(toObject([], null).minReaderVersion).toBe(21)
-    expect(MIN_READER_VERSION).toBe(21)
+    expect(toObject([], null).minReaderVersion).toBe(MIN_READER_VERSION)
+    expect(MIN_READER_VERSION).toBe(23)
   })
 
   it('round-trips agentKind + monitorActivity', () => {
@@ -2510,7 +2544,7 @@ describe('schema v20 — terminal openRouter field', () => {
       boards: []
     } as never)
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(MIN_READER_VERSION).toBe(21)
+    expect(MIN_READER_VERSION).toBe(23)
   })
 })
 
