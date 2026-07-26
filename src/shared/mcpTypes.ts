@@ -132,6 +132,68 @@ export interface ConfirmDiff {
   lints: string[]
 }
 
+// ── Confirm chooser / worker-config contract (P5 + S1 — MAIN ⇄ renderer, both sides import) ──
+// Formerly hand-mirrored in mcpConfirm.ts (MAIN) + ConfirmModal.tsx (renderer): a field-name
+// drift between the two would pass both sides' unit tests and only surface at runtime. ONE
+// canonical declaration here makes any drift a compile error on the side that lags (the same
+// W1-D/F9 rationale as McpCommand).
+
+/** One selectable option in a confirm CHOOSER (P5). `id` is the bounded value the host acts on. */
+export interface ConfirmChoiceOption {
+  id: string
+  label: string
+}
+
+/**
+ * 🔒 An optional CHOOSER attached to a confirm request (P5). The option ids are a BOUNDED,
+ * host-defined set — the requesting gate re-validates the decision's `choice` against `options`
+ * and falls back to `default` for anything off-set, so a garbage/forged choice can never widen
+ * the action (the decision authority + the value space both stay MAIN's).
+ */
+export interface ConfirmChoices {
+  /** Segment label above the options (e.g. "Visualization"). */
+  label?: string
+  /** The selectable options (bounded, host-defined). */
+  options: ConfirmChoiceOption[]
+  /** The pre-selected option id (one of `options[].id`) — the agent's suggestion. */
+  default: string
+}
+
+/**
+ * 🔒 Swarm spawn gate (S1): when present the renderer renders the FULL worker-config dialog
+ * (the command board's spawn surface) instead of the plain approve/deny modal; the decision
+ * carries the dialog-committed launch/role/routing back, which the requesting gate re-validates
+ * ("the reply proposes, MAIN disposes").
+ */
+export interface ConfirmWorkerConfig {
+  /** The worker name the orchestrator proposed (dialog heading). */
+  workerName: string
+  /** The requested role pack id — pre-selects the dialog's role row. */
+  roleId: string
+  /** Whitelisted model override the brain suggested; pre-fills the builder's model value. */
+  modelDefault?: string
+  /** The launch line composed from the role pack — the dialog's starting point + the
+   *  approve-without-config fallback (an approve-only surface approves exactly this line). */
+  defaultLaunch: string
+}
+
+/**
+ * The renderer's confirm reply payload (the decision shape both sides speak). Every field
+ * beyond `approved` is OPAQUE at the transport layer — MAIN's onReply shape-checks, and the
+ * REQUESTING gate re-validates semantically before acting (fail-closed at every hop).
+ */
+export interface ConfirmReplyDecision {
+  approved: boolean
+  /** 🔒 P5: the option id the human picked when the request carried `choices`. */
+  choice?: string
+  /** 🔒 S1: the dialog-committed launch line for a `workerConfig` request. */
+  launchCommand?: string
+  /** 🔒 S1: the dialog-committed role pack id — re-validated against the pack registry. */
+  rolePackId?: string
+  /** 🔒 v20: the dialog-committed OpenRouter routing intent (never the key). */
+  openRouter?: { enabled: boolean; model?: string }
+}
+
 /**
  * One SANITIZED planning-element edit op (S6), MAIN → renderer. `update` carries the resolved
  * `elementId`, its `kind` (so the renderer can re-assert the patch matches, defense in depth), and the

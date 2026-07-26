@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
-import type { ConfirmDiff } from '../shared/mcpTypes'
+import type {
+  ConfirmChoices,
+  ConfirmDiff,
+  ConfirmReplyDecision,
+  ConfirmWorkerConfig
+} from '../shared/mcpTypes'
 import { isForeignSender } from './ipcGuard'
 import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
 
@@ -20,47 +25,10 @@ import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
  * into another agent's shell.
  */
 
-/** One selectable option in a confirm CHOOSER (P5). `id` is the bounded value the host acts on. */
-export interface ConfirmChoiceOption {
-  id: string
-  label: string
-}
-
-/**
- * 🔒 An optional CHOOSER attached to a confirm request (P5 — the upgraded `visualize_plan` gate). When
- * present, the modal renders the options and the human's pick rides back on the decision's `choice`.
- * The option ids are a BOUNDED, host-defined set — the requesting gate re-validates `decision.choice`
- * against `options` and falls back to `default` for anything off-set, so a garbage/forged choice can
- * never widen the action (the decision authority + the value space both stay MAIN's).
- */
-export interface ConfirmChoices {
-  /** Segment label above the options (e.g. "Visualization"). */
-  label?: string
-  /** The selectable options (bounded, host-defined). */
-  options: ConfirmChoiceOption[]
-  /** The pre-selected option id (one of `options[].id`) — the agent's suggestion. */
-  default: string
-}
-
-/**
- * 🔒 Swarm spawn gate (S1): when present the renderer renders the FULL worker-config dialog
- * (role row + agent presets + CommandBuilder + editable launch line — the command board's
- * spawn surface) instead of the plain approve/deny modal. The decision then carries the
- * dialog-committed `launchCommand` + `rolePackId` back; the requesting gate re-validates both
- * (single line, bounded length, known pack id) before acting — the renderer reply proposes,
- * MAIN disposes.
- */
-export interface ConfirmWorkerConfig {
-  /** The worker name the orchestrator proposed (dialog heading). */
-  workerName: string
-  /** The requested role pack id — pre-selects the dialog's role row. */
-  roleId: string
-  /** Whitelisted model override the brain suggested; pre-fills the builder's model value. */
-  modelDefault?: string
-  /** The launch line composed from the role pack — the dialog's starting point + the
-   *  approve-without-config fallback (an approve-only surface approves exactly this line). */
-  defaultLaunch: string
-}
+// P5 chooser + S1 worker-config contract types are CANONICAL in src/shared/mcpTypes.ts (both
+// sides import them — a MAIN/renderer field drift is a compile error, the McpCommand W1-D/F9
+// discipline). Re-exported here so MAIN-side callers keep their './mcpConfirm' import path.
+export type { ConfirmChoiceOption, ConfirmChoices, ConfirmWorkerConfig } from '../shared/mcpTypes'
 
 export interface ConfirmRequest {
   /** Short modal title (e.g. "Dispatch to terminal"). */
@@ -92,20 +60,12 @@ export interface ConfirmRequest {
   origin?: 'jarvis'
 }
 
-export interface ConfirmDecision {
-  approved: boolean
-  /** 🔒 P5: the option id the human picked when the request carried `choices`; absent otherwise. */
-  choice?: string
-  /** 🔒 S1: the dialog-committed launch line for a `workerConfig` request — OPAQUE here; the
-   *  requesting gate re-validates (single line, bounded, non-empty) and refuses off-contract. */
-  launchCommand?: string
-  /** 🔒 S1: the dialog-committed role pack id — re-validated against the pack registry. */
-  rolePackId?: string
-  /** 🔒 v20: the dialog-committed OpenRouter routing intent — shape-checked here (explicit
-   *  boolean + string slug), semantically re-validated by the requesting gate before it rides
-   *  a spawn. The key itself never crosses this channel — presence intent only. */
-  openRouter?: { enabled: boolean; model?: string }
-}
+/**
+ * The decision {@link requestConfirm} resolves. Canonical shape = the shared
+ * {@link ConfirmReplyDecision} (the renderer's reply speaks the same type); every field beyond
+ * `approved` is OPAQUE here — onReply shape-checks, the requesting gate re-validates.
+ */
+export type ConfirmDecision = ConfirmReplyDecision
 
 /** One row in a BATCH confirm (relay_prompts) — a short label + the EXACT (sanitized) command shown. */
 export interface ConfirmBatchItem {

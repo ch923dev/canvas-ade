@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ConfirmDiff } from '../../../shared/mcpTypes'
+import type {
+  ConfirmChoices,
+  ConfirmDiff,
+  ConfirmReplyDecision,
+  ConfirmWorkerConfig
+} from '../../../shared/mcpTypes'
 import { Modal } from './Modal'
 import { useJarvisStore } from '../store/jarvisStore'
 import { WorkerConfigDialog } from './boards/command/WorkerConfigDialog'
@@ -21,19 +26,9 @@ import { packOptionValues, rolePackById } from '../lib/rolePacks'
  * modal — it must DENY first (BUG-005).
  */
 
-/** P5: an optional layout chooser attached to a request (mirrors main `ConfirmChoices`). */
-interface ConfirmChoices {
-  label?: string
-  options: Array<{ id: string; label: string }>
-  default: string
-}
-/** S1: swarm spawn — MAIN asks for a full worker-config commit (mirrors main `ConfirmWorkerConfig`). */
-interface ConfirmWorkerConfig {
-  workerName: string
-  roleId: string
-  modelDefault?: string
-  defaultLaunch: string
-}
+// P5 chooser + S1 worker-config + the reply decision are the CANONICAL shared contract types
+// (src/shared/mcpTypes.ts) — the same declarations MAIN's mcpConfirm.ts uses, so a field drift
+// between the two sides is a compile error, not a runtime surprise (the McpCommand discipline).
 interface ConfirmRequest {
   title: string
   body: string
@@ -48,13 +43,7 @@ interface ConfirmRequest {
   /** J4: MAIN-stamped Jarvis-tool origin (see routing note in the subscribe effect). */
   origin?: 'jarvis'
 }
-type Reply = (decision: {
-  approved: boolean
-  choice?: string
-  launchCommand?: string
-  rolePackId?: string
-  openRouter?: { enabled: boolean; model?: string }
-}) => void
+type Reply = (decision: ConfirmReplyDecision) => void
 interface Pending extends ConfirmRequest {
   reply: Reply
   // P5: the current chooser pick, initialized to `choices.default` on enqueue. Held ON the queue

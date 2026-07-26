@@ -2,6 +2,7 @@ import { render, cleanup, act, fireEvent, screen } from '@testing-library/react'
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import ConfirmModal from './ConfirmModal'
 import { packOptionValues, rolePackById } from '../lib/rolePacks'
+import type { ConfirmWorkerConfig } from '../../../shared/mcpTypes'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -25,15 +26,18 @@ afterEach(() => {
   delete (window as any).api
 })
 
+// Typed with the SHARED contract type (the same declaration MAIN's requestConfirm posts) so
+// this fixture cannot drift from the real envelope — the cross-process field-name bridge.
+const WORKER_CONFIG: ConfirmWorkerConfig = {
+  workerName: 'builder-1',
+  roleId: 'builder',
+  modelDefault: 'opus',
+  defaultLaunch: 'claude --model opus --dangerously-skip-permissions'
+}
 const REQUEST = {
   title: 'Spawn a swarm worker?',
   body: 'spawn…',
-  workerConfig: {
-    workerName: 'builder-1',
-    roleId: 'builder',
-    modelDefault: 'opus',
-    defaultLaunch: 'claude --model opus --dangerously-skip-permissions'
-  }
+  workerConfig: WORKER_CONFIG
 }
 
 describe('ConfirmModal — S1 swarm workerConfig routing', () => {
