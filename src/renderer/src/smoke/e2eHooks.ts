@@ -57,6 +57,7 @@ import { listScenes } from '../canvas/backdrop/sceneRegistry'
 // the file-size ratchet; the two move in lock-step (installE2EHooks assigns `const api: CanvasE2E`).
 import type { CanvasE2E } from './e2eHooks.types'
 import { flushAllTerminalSnapshots } from '../store/terminalSnapshotRegistry'
+import { closeChromeOverlays } from './chromeOverlayGate'
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
 export interface E2EHostHooks {
@@ -483,6 +484,13 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       host.closeGroupPicker()
       // And the tab right-click context menu (a fixed overlay) — same ephemeral-mode parity.
       host.closeGroupMenu()
+      // The app-chrome overlays (Settings / Sign-in / recap consent) are the same class, one step
+      // further out: their scrims eat pointer events for the WHOLE viewport, so a spec that leaves
+      // one open makes every later spec's real OS click land on the scrim. mcpServers.e2e.ts opened
+      // Settings and never closed it, which cost menuShell.e2e.ts its full 30s click timeout — read
+      // as a flake only because a failed test relaunches the worker, so the retry got a clean app.
+      // Not reachable through `host` (that is CanvasInner's surface; these live in AppChrome).
+      closeChromeOverlays()
       // Drop any switch-latency record (audit R1). One app is reused across every spec file, so a
       // measurement left by an earlier spec would otherwise be read as this spec's own switch —
       // and a stale in-flight window would swallow the next switch's `start` mark.
