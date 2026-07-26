@@ -1102,7 +1102,10 @@
 
 <div class="wrap">
   <header class="doc-head">
-    <div class="kicker">Orchestration · S2 · design gate — SIGNED OFF 2026-07-26 (surface approved as drawn; D1 decided project-scoped)</div>
+    <div class="kicker">
+      Orchestration · S2 · design gate — SIGNED OFF 2026-07-26 (surface approved as drawn; D1
+      decided project-scoped)
+    </div>
     <h1>Run ledger + triage — making a swarm run survivable instead of a demo</h1>
     <p class="meta">
       lane <code>feat/swarm-s2</code> · base <code>19b1f2a7</code> (v0.34.0, S1 = #386) · target
@@ -1131,36 +1134,65 @@
     </tr>
     <tr>
       <td>2 · plan strip</td>
-      <td>Read-only chips projected from the run's Planning board. Click = jump. Trailing note literally reads “editing → S2”.</td>
-      <td><b class="hi">Editable mid-run.</b> Each chip gains a real checkbox, inline rename, remove, and a trailing <code>＋</code> add chip. A chip owned by a live worker carries that worker's state dot. Human edits are direct; orchestrator edits stay gated.</td>
+      <td>
+        Read-only chips projected from the run's Planning board. Click = jump. Trailing note
+        literally reads “editing → S2”.
+      </td>
+      <td>
+        <b class="hi">Editable mid-run.</b> Each chip gains a real checkbox, inline rename, remove,
+        and a trailing <code>＋</code> add chip. A chip owned by a live worker carries that worker's
+        state dot. Human edits are direct; orchestrator edits stay gated.
+      </td>
     </tr>
     <tr>
       <td>3 · worker cards</td>
-      <td>Five states: needs-input / working / done / error / idle. Timer + role badge + activity line.</td>
-      <td><b class="hi">Two new states</b> — <code>stalled</code> (nominally running, nothing has moved) and <code>lost</code> (died mid-task, result salvaged). Each carries a mono <b class="hi">disclosure line</b>: the threshold that fired, or the provenance of the salvaged result.</td>
+      <td>
+        Five states: needs-input / working / done / error / idle. Timer + role badge + activity
+        line.
+      </td>
+      <td>
+        <b class="hi">Two new states</b> — <code>stalled</code> (nominally running, nothing has
+        moved) and <code>lost</code> (died mid-task, result salvaged). Each carries a mono
+        <b class="hi">disclosure line</b>: the threshold that fired, or the provenance of the
+        salvaged result.
+      </td>
     </tr>
     <tr>
       <td>4 · needs-you strip</td>
-      <td>A flat jump list of run workers carrying an attention mark. One action: <code>Open ▸</code>. Head literally reads “approve/deny · batching · stall watch → S2”.</td>
-      <td><b class="hi">A real triage queue.</b> Risk-ordered rows from two sources (attention marks + ledger state), each with a closed-vocabulary <b class="hi">blocked tag</b> and inline actions (Reassign / Accept / Open / Dismiss). Taller (132→196px), counted, scrollable.</td>
+      <td>
+        A flat jump list of run workers carrying an attention mark. One action: <code>Open ▸</code>.
+        Head literally reads “approve/deny · batching · stall watch → S2”.
+      </td>
+      <td>
+        <b class="hi">A real triage queue.</b> Risk-ordered rows from two sources (attention marks +
+        ledger state), each with a closed-vocabulary <b class="hi">blocked tag</b> and inline
+        actions (Reassign / Accept / Open / Dismiss). Taller (132→196px), counted, scrollable.
+      </td>
     </tr>
     <tr>
       <td>5 · header</td>
       <td>Run timer + Pause all.</td>
-      <td>Adds one chip: <code>restored</code> — this run came back from the ledger after a reload, with what survived.</td>
+      <td>
+        Adds one chip: <code>restored</code> — this run came back from the ledger after a reload,
+        with what survived.
+      </td>
     </tr>
     <tr>
       <td>— · confirms</td>
       <td>One modal per dispatch. A 4-worker fan-out = 4 sequential modals.</td>
-      <td><b class="hi">Batched.</b> A multi-dispatch round raises ONE per-row modal. <span class="tag">reuses the shipped <code>BatchConfirmModal</code> verbatim — no new modal design</span></td>
+      <td>
+        <b class="hi">Batched.</b> A multi-dispatch round raises ONE per-row modal.
+        <span class="tag"
+          >reuses the shipped <code>BatchConfirmModal</code> verbatim — no new modal design</span
+        >
+      </td>
     </tr>
   </table>
 
   <div class="call">
     <b>The exit proof this design has to serve (07 §6):</b> kill a worker mid-run — the board shows
-    the stall, the orchestrator salvages/reassigns, and the chat narrates it. Reload the app
-    mid-run — the ledger restores the run. Every pixel below is in service of one of those two
-    sentences.
+    the stall, the orchestrator salvages/reassigns, and the chat narrates it. Reload the app mid-run
+    — the ledger restores the run. Every pixel below is in service of one of those two sentences.
   </div>
 
   <!-- ==================================================================== -->
@@ -1279,16 +1311,15 @@
                 <div class="sw-card attn">
                   <span class="sw-card-top"
                     ><span class="sw-st needs-input"></span
-                    ><span class="sw-card-name">builder-1</span
-                    ><span class="sw-role">builder</span><span class="sw-card-t">7m</span></span
+                    ><span class="sw-card-name">builder-1</span><span class="sw-role">builder</span
+                    ><span class="sw-card-t">7m</span></span
                   >
                   <span class="sw-activity">Waiting on input</span>
                   <span class="sw-disclose">asks: overwrite tests/fixtures/settings.json?</span>
                 </div>
                 <div class="sw-card">
                   <span class="sw-card-top"
-                    ><span class="sw-st stalled"></span
-                    ><span class="sw-card-name">builder-4</span
+                    ><span class="sw-st stalled"></span><span class="sw-card-name">builder-4</span
                     ><span class="sw-role">builder</span
                     ><span class="sw-card-t stale">18m</span></span
                   >
@@ -1305,8 +1336,7 @@
                 </div>
                 <div class="sw-card">
                   <span class="sw-card-top"
-                    ><span class="sw-st working"></span
-                    ><span class="sw-card-name">builder-3</span
+                    ><span class="sw-st working"></span><span class="sw-card-name">builder-3</span
                     ><span class="sw-role">builder</span><span class="sw-card-t">12m</span></span
                   >
                   <span class="sw-activity">Migrating readers…</span>
@@ -1314,8 +1344,7 @@
                 </div>
                 <div class="sw-card">
                   <span class="sw-card-top"
-                    ><span class="sw-st working"></span
-                    ><span class="sw-card-name">reviewer-1</span
+                    ><span class="sw-st working"></span><span class="sw-card-name">reviewer-1</span
                     ><span class="sw-role">reviewer</span><span class="sw-card-t">4m</span></span
                   >
                   <span class="sw-activity">Reviewing the v2 type diff…</span>
@@ -1323,8 +1352,7 @@
                 </div>
                 <div class="sw-card">
                   <span class="sw-card-top"
-                    ><span class="sw-st working"></span
-                    ><span class="sw-card-name">recon-2</span
+                    ><span class="sw-st working"></span><span class="sw-card-name">recon-2</span
                     ><span class="sw-role">recon</span><span class="sw-card-t">2m</span></span
                   >
                   <span class="sw-activity">Tracing the legacy import path…</span>
@@ -1352,21 +1380,17 @@
 
             <!-- region 4 triage queue -->
             <div class="sw-needs">
-              <div class="sw-needs-head">
-                Triage · 4 <b>(1 needs you now)</b>
-              </div>
+              <div class="sw-needs-head">Triage · 4 <b>(1 needs you now)</b></div>
               <div class="sw-needs-list">
                 <div class="sw-tri hot">
-                  <span class="sw-tri-ico">!</span
-                  ><span class="sw-tri-tag">needs input</span>
+                  <span class="sw-tri-ico">!</span><span class="sw-tri-tag">needs input</span>
                   <span class="sw-tri-txt"
                     ><b>builder-1</b> asks: overwrite tests/fixtures/settings.json?</span
                   >
                   <span class="sw-tri-acts"><button class="sw-btn sm go">Open ▸</button></span>
                 </div>
                 <div class="sw-tri bad">
-                  <span class="sw-tri-ico">×</span
-                  ><span class="sw-tri-tag">lost</span>
+                  <span class="sw-tri-ico">×</span><span class="sw-tri-tag">lost</span>
                   <span class="sw-tri-txt"
                     ><b>builder-2</b> died on task 3 — result salvaged (derived, 6 files)</span
                   >
@@ -1376,8 +1400,7 @@
                   >
                 </div>
                 <div class="sw-tri">
-                  <span class="sw-tri-ico">◌</span
-                  ><span class="sw-tri-tag">stalled</span>
+                  <span class="sw-tri-ico">◌</span><span class="sw-tri-tag">stalled</span>
                   <span class="sw-tri-txt"
                     ><b>builder-4</b> silent 18m on task 4 — threshold 10m</span
                   >
@@ -1387,8 +1410,7 @@
                   >
                 </div>
                 <div class="sw-tri">
-                  <span class="sw-tri-ico">✓</span
-                  ><span class="sw-tri-tag">unreviewed</span>
+                  <span class="sw-tri-ico">✓</span><span class="sw-tri-tag">unreviewed</span>
                   <span class="sw-tri-txt"
                     ><b>recon-1</b> reported 14 findings — agent-claimed, unverified</span
                   >
@@ -1409,8 +1431,8 @@
     <b class="hi">amber stays reserved for “a human is blocking progress”</b> (needs-input, and the
     stall <i>timer</i> only), and <b class="hi">red means the worker is gone</b>. A stalled card
     deliberately keeps its neutral border — a stalled worker is not asking you for anything, and
-    promoting it to the needs-input language would recreate exactly the “everything is amber” failure
-    the research names as the #1 dashboard complaint.
+    promoting it to the needs-input language would recreate exactly the “everything is amber”
+    failure the research names as the #1 dashboard complaint.
   </p>
 
   <!-- ==================================================================== -->
@@ -1418,8 +1440,8 @@
   <p class="lede">
     S1's chip is one button: click = jump to the Planning board. S2 needs four verbs (tick, rename,
     remove, add) without losing the jump and without letting a stray click silently rewrite the plan
-    of record mid-run. The answer is to split the chip into <b class="hi">spatially distinct hit
-    targets</b> rather than adding a mode.
+    of record mid-run. The answer is to split the chip into
+    <b class="hi">spatially distinct hit targets</b> rather than adding a mode.
   </p>
 
   <div class="stage">
@@ -1458,8 +1480,10 @@
       <div style="background: var(--surface-raised); padding: 10px; border-radius: 5px">
         <div class="sw-plan" style="padding: 0">
           <span class="sw-task" style="border-color: var(--border-strong)"
-            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate
-            readers<span class="sw-task-own"></span><span class="sw-task-pen" style="color: var(--text-2)">⋯</span></span
+            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate readers<span
+              class="sw-task-own"
+            ></span
+            ><span class="sw-task-pen" style="color: var(--text-2)">⋯</span></span
           >
         </div>
       </div>
@@ -1518,12 +1542,12 @@
 
   <div class="call ask">
     <b>Decision D2 needs your nod.</b> The alternative to the always-live checkbox is an explicit
-    <b>edit mode</b>: an <code>Edit</code> button at the right of the strip; off = S1 exactly
-    (chips are inert jump buttons), on = checkboxes and rename go live and a <code>Done</code>
+    <b>edit mode</b>: an <code>Edit</code> button at the right of the strip; off = S1 exactly (chips
+    are inert jump buttons), on = checkboxes and rename go live and a <code>Done</code>
     exits. It is strictly safer against stray clicks and costs one extra click per tick.
     <b>Recommendation: the always-live checkbox above</b> — ticking is the highest-value, most
-    frequent action, the three hit targets are spatially unambiguous, and the edit is undoable.
-    Say the word and it becomes a mode instead.
+    frequent action, the three hit targets are spatially unambiguous, and the edit is undoable. Say
+    the word and it becomes a mode instead.
   </div>
 
   <!-- ==================================================================== -->
@@ -1536,7 +1560,10 @@
   </p>
 
   <div class="stage">
-    <div class="sw-cards" style="grid-template-columns: repeat(3, 1fr); max-width: 900px; margin: 0 auto">
+    <div
+      class="sw-cards"
+      style="grid-template-columns: repeat(3, 1fr); max-width: 900px; margin: 0 auto"
+    >
       <div class="sw-card">
         <span class="sw-card-top"
           ><span class="sw-st working"></span><span class="sw-card-name">builder-3</span
@@ -1623,7 +1650,9 @@
     </tr>
     <tr>
       <td><b class="hi">lost</b> <span class="tag new">new</span></td>
-      <td>hollow <code>--err</code> ring, <code>--err</code> border + wash, timer <code>—</code></td>
+      <td>
+        hollow <code>--err</code> ring, <code>--err</code> border + wash, timer <code>—</code>
+      </td>
       <td>
         The worker died mid-task. Hollow (not solid) because it is absent, not erroring. The
         disclosure line carries the exit reason and the salvaged result's provenance, which is
@@ -1648,12 +1677,15 @@
   </p>
 
   <!-- ==================================================================== -->
-  <h2 class="sec"><span class="num">5</span>Region 4 — the needs-you strip becomes a triage queue</h2>
+  <h2 class="sec">
+    <span class="num">5</span>Region 4 — the needs-you strip becomes a triage queue
+  </h2>
   <p class="lede">
     S1's strip answered one question (“which board has an attention mark?”) with one verb (“open
-    it”). The queue answers the harder one: <b class="hi">what should I deal with, in what order,
-    and can I deal with it from here?</b> Rows now come from two sources, carry a closed-vocabulary
-    tag you can write a rule against, and end in actions rather than a jump.
+    it”). The queue answers the harder one:
+    <b class="hi">what should I deal with, in what order, and can I deal with it from here?</b> Rows
+    now come from two sources, carry a closed-vocabulary tag you can write a rule against, and end
+    in actions rather than a jump.
   </p>
 
   <div class="stage">
@@ -1667,9 +1699,7 @@
       "
     >
       <div class="sw-needs" style="max-height: none; border-top: none">
-        <div class="sw-needs-head">
-          Triage · 5 <b>(1 needs you now)</b>
-        </div>
+        <div class="sw-needs-head">Triage · 5 <b>(1 needs you now)</b></div>
         <div class="sw-needs-list">
           <div class="sw-tri hot">
             <span class="sw-tri-ico">!</span><span class="sw-tri-tag">needs input</span>
@@ -1720,7 +1750,9 @@
   </div>
 
   <h3 class="sub">Ordering is risk, not time</h3>
-  <pre class="ascii">  <b>needs input</b>    a human is the blocker RIGHT NOW              amber row      → Open ▸
+  <pre
+    class="ascii"
+  >  <b>needs input</b>    a human is the blocker RIGHT NOW              amber row      → Open ▸
   <b>lost</b>          a worker died; its work needs a decision      red row        → Accept · Reassign
   <b>failing check</b> a claim did not survive its acceptance check  red row        → Dismiss · Reassign
   <b>stalled</b>       past the threshold, still nominally alive     neutral row    → Wait · Reassign
@@ -1729,9 +1761,9 @@
   <i>done + seen rows leave the queue entirely — the queue is work, not history.</i></pre>
   <p class="note">
     The tags are a <b class="hi">closed vocabulary</b> (09 §3: “you cannot write a triage rule
-    against a paragraph”) — <code>needs_input · lost · failing_check · stalled · dependency ·
-    unreviewed</code>. They are ledger fields, so the ordering is mechanical and testable rather
-    than a heuristic over prose.
+    against a paragraph”) —
+    <code>needs_input · lost · failing_check · stalled · dependency · unreviewed</code>. They are
+    ledger fields, so the ordering is mechanical and testable rather than a heuristic over prose.
   </p>
 
   <h3 class="sub">What each action actually does</h3>
@@ -1743,18 +1775,18 @@
     <tr>
       <td>Open ▸</td>
       <td>
-        S1's jump — camera-fit + select the worker's real terminal board. An answer to a
-        needs-input question is typed <b class="hi">into that terminal</b>. S2 deliberately does not
-        add a reply box here: forking terminal input would fork terminal behaviour, which the Q11
-        lens model exists to prevent.
+        S1's jump — camera-fit + select the worker's real terminal board. An answer to a needs-input
+        question is typed <b class="hi">into that terminal</b>. S2 deliberately does not add a reply
+        box here: forking terminal input would fork terminal behaviour, which the Q11 lens model
+        exists to prevent.
       </td>
     </tr>
     <tr>
       <td>Reassign</td>
       <td>
         Asks the orchestrator to re-dispatch this task to a fresh or existing worker. Goes through
-        the normal dispatch confirm — the button is a <i>request</i>, MAIN re-validates and the human
-        still approves the actual write. The chat narrates it in the orchestrator's voice.
+        the normal dispatch confirm — the button is a <i>request</i>, MAIN re-validates and the
+        human still approves the actual write. The chat narrates it in the orchestrator's voice.
       </td>
     </tr>
     <tr>
@@ -1785,10 +1817,10 @@
   <p class="note" style="margin-bottom: 8px">
     Note what the queue therefore does <b class="hi">not</b> get: a “Review N pending ▸” launcher in
     its header. A batch confirm is raised <i>by</i> the dispatch round and blocks it; there is
-    nothing for a launcher to open when no round is in flight, and when one is, the modal is
-    already up. A button that is inert most of the time and redundant the rest of the time is worse
-    than no button. (Multi-selecting queue rows to batch several <i>reassigns</i> into one confirm
-    is a real idea — and deliberately out of scope here.)
+    nothing for a launcher to open when no round is in flight, and when one is, the modal is already
+    up. A button that is inert most of the time and redundant the rest of the time is worse than no
+    button. (Multi-selecting queue rows to batch several <i>reassigns</i> into one confirm is a real
+    idea — and deliberately out of scope here.)
   </p>
 
   <div class="stage modal-stage">
@@ -1802,21 +1834,33 @@
         <span class="mbox">✓</span>
         <span>
           <span class="mlabel">orchestrator → builder-3 · task 3 “migrate readers”</span>
-          <span class="mbody">OBJECTIVE: migrate every settings reader to the v2 schema. CONTEXT: v2 types landed in src/shared/settingsV2.ts. BOUNDARIES: do not touch writers or tests. OUTPUT FORMAT: write_result with touched files.</span>
+          <span class="mbody"
+            >OBJECTIVE: migrate every settings reader to the v2 schema. CONTEXT: v2 types landed in
+            src/shared/settingsV2.ts. BOUNDARIES: do not touch writers or tests. OUTPUT FORMAT:
+            write_result with touched files.</span
+          >
         </span>
       </div>
       <div class="mrow on">
         <span class="mbox">✓</span>
         <span>
           <span class="mlabel">orchestrator → recon-2 · task 5 “legacy import path”</span>
-          <span class="mbody">OBJECTIVE: trace every legacy settings import path. CONTEXT: the v1 loader is src/main/settingsLoad.ts. BOUNDARIES: read-only, no edits. OUTPUT FORMAT: write_result with file:line refs.</span>
+          <span class="mbody"
+            >OBJECTIVE: trace every legacy settings import path. CONTEXT: the v1 loader is
+            src/main/settingsLoad.ts. BOUNDARIES: read-only, no edits. OUTPUT FORMAT: write_result
+            with file:line refs.</span
+          >
         </span>
       </div>
       <div class="mrow">
         <span class="mbox"></span>
         <span>
           <span class="mlabel">orchestrator → builder-6 · task 4 “migrate writers” (reassign)</span>
-          <span class="mbody">OBJECTIVE: take over task 4 from the stalled builder-4. CONTEXT: builder-4 has been silent 18m; its partial work is on disk. BOUNDARIES: writers only. OUTPUT FORMAT: write_result with touched files.</span>
+          <span class="mbody"
+            >OBJECTIVE: take over task 4 from the stalled builder-4. CONTEXT: builder-4 has been
+            silent 18m; its partial work is on disk. BOUNDARIES: writers only. OUTPUT FORMAT:
+            write_result with touched files.</span
+          >
         </span>
       </div>
       <div class="mfoot">
@@ -1834,7 +1878,9 @@
   </p>
 
   <!-- ==================================================================== -->
-  <h2 class="sec"><span class="num">6</span>The invisible half — the ledger, and what “restored” looks like</h2>
+  <h2 class="sec">
+    <span class="num">6</span>The invisible half — the ledger, and what “restored” looks like
+  </h2>
   <p class="lede">
     The ledger has no UI of its own. It earns its keep in exactly one visible moment: you reload the
     app mid-run and the board comes back instead of coming back empty. That moment has to be
@@ -1861,8 +1907,9 @@
             ><span class="sw-task-box">✓</span><span class="sw-task-n">2</span> write v2 types</span
           >
           <span class="sw-task"
-            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate
-            readers<span class="sw-task-own"></span
+            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate readers<span
+              class="sw-task-own"
+            ></span
           ></span>
           <span class="sw-task sw-task-add">＋ add</span>
         </div>
@@ -1876,7 +1923,9 @@
           padding: 12px;
         "
       >
-        <div class="sw-statusline" style="margin-bottom: 10px">run restored from ledger · 4m ago</div>
+        <div class="sw-statusline" style="margin-bottom: 10px">
+          run restored from ledger · 4m ago
+        </div>
         <div class="sw-msg orch">
           <div class="sw-who">orch</div>
           <p>
@@ -1889,7 +1938,9 @@
   </div>
 
   <h3 class="sub">Where it lives and what it holds</h3>
-  <pre class="ascii">  <i>&lt;project&gt;/.canvas/memory/</i><b>run-&lt;boardId&gt;.json</b>     <i>— one file per run, beside the board recaps</i>
+  <pre
+    class="ascii"
+  >  <i>&lt;project&gt;/.canvas/memory/</i><b>run-&lt;boardId&gt;.json</b>     <i>— one file per run, beside the board recaps</i>
                                               <i>atomic (write-file-atomic) · capped · versioned</i>
   .canvas/
     canvas.json
@@ -1920,10 +1971,10 @@
     One file per run rather than one file for all of them, because the run id
     <b class="hi">is</b> the swarm board id — so restore is a filename lookup, the existing
     <code>isSafeId</code> path guard applies verbatim, and a corrupt ledger poisons exactly one run
-    instead of every run in the project. Written through <code>canvasMemory</code>'s existing
-    atomic writer, so run ledgers inherit the recap sidecars' <b class="hi">commit behaviour
-    exactly</b>: ignored by default, versioned alongside <code>memory/</code> when the project has
-    opted in to committing canvas data (ADR 0009).
+    instead of every run in the project. Written through <code>canvasMemory</code>'s existing atomic
+    writer, so run ledgers inherit the recap sidecars' <b class="hi">commit behaviour exactly</b>:
+    ignored by default, versioned alongside <code>memory/</code> when the project has opted in to
+    committing canvas data (ADR 0009).
   </p>
 
   <table class="tbl">
@@ -1934,8 +1985,10 @@
     <tr>
       <td>scene/session split</td>
       <td>
-        <b class="hi">Zero new board-schema fields. No <code>PATCHABLE_KEYS</code> change. No schema
-        bump.</b> The ledger is a separate sidecar, exactly like <code>mcpPendingCommands</code>. The
+        <b class="hi"
+          >Zero new board-schema fields. No <code>PATCHABLE_KEYS</code> change. No schema bump.</b
+        >
+        The ledger is a separate sidecar, exactly like <code>mcpPendingCommands</code>. The
         persisted <code>SwarmBoard</code> stays <code>BoardCommon</code> only.
       </td>
     </tr>
@@ -1966,8 +2019,8 @@
     <tr>
       <td>degrade, never throw</td>
       <td>
-        A missing or corrupt sidecar degrades to “no runs” and is rewritten clean on the next write —
-        the <code>mcpPendingCommands</code> discipline. A poisoned ledger must never block boot.
+        A missing or corrupt sidecar degrades to “no runs” and is rewritten clean on the next write
+        — the <code>mcpPendingCommands</code> discipline. A poisoned ledger must never block boot.
       </td>
     </tr>
   </table>
@@ -1986,9 +2039,9 @@
         derived from the transcript — S2 reuses that machinery and rebuilds none of it.
         <b class="hi">Mark</b> the ledger task <code>failed</code> +
         <code>blockedTag: "lost"</code> with the salvaged result at
-        <code>provenance: "synthesized"</code>. <b class="hi">Recover</b> by re-queueing —
-        the human sees a <code>lost</code> card, a red triage row, and the orchestrator's own
-        sentence in chat. One voice; no raw worker output ever reaches the spine.
+        <code>provenance: "synthesized"</code>. <b class="hi">Recover</b> by re-queueing — the human
+        sees a <code>lost</code> card, a red triage row, and the orchestrator's own sentence in
+        chat. One voice; no raw worker output ever reaches the spine.
       </td>
     </tr>
     <tr>
@@ -1997,8 +2050,8 @@
         <b class="hi">v1 = clean shutdown.</b> On swarm-board close / app quit, MAIN drains: salvage
         every un-settled worker's current result into the ledger, mark the run
         <code>interrupted</code>, and <b class="hi">preserve</b>. Re-attach is Phase 5 and
-        explicitly not this lane. See decision D5 — the shutdown deliberately does
-        <i>not</i> kill the worker boards.
+        explicitly not this lane. See decision D5 — the shutdown deliberately does <i>not</i> kill
+        the worker boards.
       </td>
     </tr>
   </table>
@@ -2006,10 +2059,11 @@
   <!-- ==================================================================== -->
   <h2 class="sec"><span class="num">7</span>Decisions — signed off</h2>
   <p class="lede">
-    Eight calls. Three were marked as needing the user's nod; all three are now settled
-    (<b class="hi">signed off 2026-07-26</b>, surface approved as drawn). <b>D1 was decided against
-    my recommendation</b> — the ledger is project-scoped, not userData — and the schema in §6
-    reflects the decision, not the proposal.
+    Eight calls. Three were marked as needing the user's nod; all three are now settled (<b
+      class="hi"
+      >signed off 2026-07-26</b
+    >, surface approved as drawn). <b>D1 was decided against my recommendation</b> — the ledger is
+    project-scoped, not userData — and the schema in §6 reflects the decision, not the proposal.
   </p>
 
   <table class="tbl">
@@ -2029,12 +2083,12 @@
         <b class="hi">Decided by the user; overrides my userData recommendation.</b> Takes
         <code>09 §7 Q14</code>'s written default: runs are project-scoped and should travel with the
         project folder, and the file sits beside the board recap sidecars it is a sibling of. It
-        therefore rides <code>canvasMemory</code>'s existing atomic writer + <code>isSafeId</code>
-        path guard rather than a new file module, and inherits the recap sidecars' commit
-        behaviour (ignored by default, versioned under the ADR 0009 opt-in). What I gave up by
-        being overruled: it no longer survives a <code>git clean</code> of an opted-in project, and
-        it is one more thing in the user's folder. What it buys: a moved or renamed project keeps
-        its runs, which userData keying by absolute path would silently lose.
+        therefore rides <code>canvasMemory</code>'s existing atomic writer +
+        <code>isSafeId</code> path guard rather than a new file module, and inherits the recap
+        sidecars' commit behaviour (ignored by default, versioned under the ADR 0009 opt-in). What I
+        gave up by being overruled: it no longer survives a <code>git clean</code> of an opted-in
+        project, and it is one more thing in the user's folder. What it buys: a moved or renamed
+        project keeps its runs, which userData keying by absolute path would silently lose.
       </td>
     </tr>
     <tr>
@@ -2045,8 +2099,8 @@
       </td>
       <td>
         Fewer clicks on the highest-frequency action; three spatially distinct hit targets; the edit
-        is undoable. The alternative (explicit <code>Edit</code> mode) is safer against stray
-        clicks — §3 shows both. <b>I recommend always-live.</b>
+        is undoable. The alternative (explicit <code>Edit</code> mode) is safer against stray clicks
+        — §3 shows both. <b>I recommend always-live.</b>
       </td>
     </tr>
     <tr>
@@ -2058,9 +2112,9 @@
       <td>
         One file, one atomic write path, cap-bounded — the discipline the kickoff asks for. The
         <code>events[]</code> array exists in the schema now (bounded), so S3 can grow it into
-        <code>09 §3</code>'s full event log without a schema break. Softens
-        <code>09 §3</code>'s <code>run-&lt;id&gt;.ledger.jsonl</code> shape; S2 does not need the
-        run narrative that motivated it.
+        <code>09 §3</code>'s full event log without a schema break. Softens <code>09 §3</code>'s
+        <code>run-&lt;id&gt;.ledger.jsonl</code> shape; S2 does not need the run narrative that
+        motivated it.
       </td>
     </tr>
     <tr>
@@ -2083,13 +2137,13 @@
         not kill them <span class="tag rec">your call</span>
       </td>
       <td>
-        <b class="hi">Diverges from <code>03 item 7</code></b>, which phrases the v1 fallback as
-        “<code>interrupt</code>+<code>close_board</code> its live workers”. Two reasons to soften
-        it: workers are ordinary terminal boards under the Q11 lens model, and closing the human's
-        boards out from under them is exactly the silent-destructive move the repo's
-        dirty-worktree rule refuses elsewhere. The ledger records <code>interrupted</code>; the
-        boards stay; the human decides. <b>I recommend preserve.</b> Say so and it becomes
-        drain-and-close.
+        <b class="hi">Diverges from <code>03 item 7</code></b
+        >, which phrases the v1 fallback as “<code>interrupt</code>+<code>close_board</code> its
+        live workers”. Two reasons to soften it: workers are ordinary terminal boards under the Q11
+        lens model, and closing the human's boards out from under them is exactly the
+        silent-destructive move the repo's dirty-worktree rule refuses elsewhere. The ledger records
+        <code>interrupted</code>; the boards stay; the human decides.
+        <b>I recommend preserve.</b> Say so and it becomes drain-and-close.
       </td>
     </tr>
     <tr>
@@ -2118,9 +2172,7 @@
     </tr>
     <tr>
       <td>D8</td>
-      <td>
-        <b class="hi">Run timestamps live in the ledger</b>, not on the board schema
-      </td>
+      <td><b class="hi">Run timestamps live in the ledger</b>, not on the board schema</td>
       <td>
         <code>09 §6</code> lists persisted timestamps as S2 with “a small schema bump”. Putting
         <code>createdAt / lastActiveAt / lastSeenAt</code> in the ledger gets the same capability
@@ -2136,26 +2188,73 @@
     <div class="panel pick">
       <h4>In this lane</h4>
       <ul class="pts">
-        <li><b>Run ledger</b> — <code>.canvas/memory/run-&lt;boardId&gt;.json</code>, atomic, capped, versioned; restores a run across a reload.</li>
-        <li><b>Failure case A</b> — worker dies mid-task: detect, salvage via the existing <code>write_result</code> + <code>boardResultSynth</code> path, mark, re-queue, narrate.</li>
-        <li><b>Failure case B</b> — orchestrator dies with live workers: clean shutdown (drain / salvage / preserve).</li>
-        <li><b>Stall detection + reassignment</b> — counted, thresholded, disclosed; card state + triage row + a gated reassign path.</li>
-        <li><b>Editable plan strip</b> — human and (gated) orchestrator, writing through to the Planning board.</li>
-        <li><b>Triage queue</b> — risk-ordered, tagged, actionable, over the existing attention system.</li>
-        <li><b>Batched confirms</b> — a plural dispatch through the shipped <code>BatchConfirmModal</code>.</li>
-        <li><b>Tests</b> — unit + a real-channel integration test + e2e; full matrix at the merge gate.</li>
+        <li>
+          <b>Run ledger</b> — <code>.canvas/memory/run-&lt;boardId&gt;.json</code>, atomic, capped,
+          versioned; restores a run across a reload.
+        </li>
+        <li>
+          <b>Failure case A</b> — worker dies mid-task: detect, salvage via the existing
+          <code>write_result</code> + <code>boardResultSynth</code> path, mark, re-queue, narrate.
+        </li>
+        <li>
+          <b>Failure case B</b> — orchestrator dies with live workers: clean shutdown (drain /
+          salvage / preserve).
+        </li>
+        <li>
+          <b>Stall detection + reassignment</b> — counted, thresholded, disclosed; card state +
+          triage row + a gated reassign path.
+        </li>
+        <li>
+          <b>Editable plan strip</b> — human and (gated) orchestrator, writing through to the
+          Planning board.
+        </li>
+        <li>
+          <b>Triage queue</b> — risk-ordered, tagged, actionable, over the existing attention
+          system.
+        </li>
+        <li>
+          <b>Batched confirms</b> — a plural dispatch through the shipped
+          <code>BatchConfirmModal</code>.
+        </li>
+        <li>
+          <b>Tests</b> — unit + a real-channel integration test + e2e; full matrix at the merge
+          gate.
+        </li>
       </ul>
     </div>
     <div class="panel">
       <h4>Explicitly not</h4>
       <ul class="pts">
-        <li><b>Worktree allocation, parallel-writer enforcement, overlap-detection UI</b> — S3. S2 writes the ledger field as <code>null</code> and renders no chip.</li>
-        <li><b>Orchestrator re-attach to live workers</b> — Phase 5. S2's failure model is clean-shutdown v1, stated as such on the surface.</li>
-        <li><b>Docked lead-terminal chat, <code>session-consented</code> autonomy, cost metering / budget ceiling</b> — S4 / Q10.</li>
-        <li><b>Auto-merge of worker branches</b> — deferred; branches are surfaced for human merge.</li>
-        <li><b>A reply box in the triage queue.</b> Answering a needs-input question happens in the real terminal — forking terminal input would fork terminal behaviour.</li>
-        <li><b>Any broker wire change.</b> Everything here is host-side; no <code>@expanse-ade/mcp</code> publish, no parity lockstep.</li>
-        <li><b>Any canvas schema bump.</b> Zero new board fields, no <code>PATCHABLE_KEYS</code> change.</li>
+        <li>
+          <b>Worktree allocation, parallel-writer enforcement, overlap-detection UI</b> — S3. S2
+          writes the ledger field as <code>null</code> and renders no chip.
+        </li>
+        <li>
+          <b>Orchestrator re-attach to live workers</b> — Phase 5. S2's failure model is
+          clean-shutdown v1, stated as such on the surface.
+        </li>
+        <li>
+          <b
+            >Docked lead-terminal chat, <code>session-consented</code> autonomy, cost metering /
+            budget ceiling</b
+          >
+          — S4 / Q10.
+        </li>
+        <li>
+          <b>Auto-merge of worker branches</b> — deferred; branches are surfaced for human merge.
+        </li>
+        <li>
+          <b>A reply box in the triage queue.</b> Answering a needs-input question happens in the
+          real terminal — forking terminal input would fork terminal behaviour.
+        </li>
+        <li>
+          <b>Any broker wire change.</b> Everything here is host-side; no
+          <code>@expanse-ade/mcp</code> publish, no parity lockstep.
+        </li>
+        <li>
+          <b>Any canvas schema bump.</b> Zero new board fields, no
+          <code>PATCHABLE_KEYS</code> change.
+        </li>
       </ul>
     </div>
   </div>
