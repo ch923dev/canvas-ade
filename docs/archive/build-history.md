@@ -3595,3 +3595,68 @@ structural lead e2e green on 0.22.1, full matrix green both legs ×2 (pre-rebase
 326P + menuShell rerun-green · Linux exit-0 324P/1 flaky-recovered), dev check user-eyeballed
 (title-stamped). Reviewer: FULL ×2 rounds, zero findings. **Version:** 0.31.0 → **0.32.0** (minor —
 new capability tier). Squash `c0ad896d`.
+
+## 2026-07-26 — PR #388: unblock the SCA gate on GHSA-mh99-v99m-4gvg (brace-expansion) (v0.32.1)
+
+A repo-wide **time-of-check** failure, not a regression in any branch: the advisory published
+`2026-07-24T21:53Z`, and #385's `pr` run 1h48m earlier was SUCCESS while every run after it failed.
+The obvious fix — override the vulnerable 1.x/2.x lines forward — was **proven impossible** rather
+than assumed: 5.x's CJS entry exports an OBJECT (`{EXPANSION_MAX, EXPANSION_MAX_LENGTH, expand}`)
+where 1.x/2.x export a bare callable, and `minimatch@3` does `var expand = require('brace-expansion')`
+and calls it directly (`typeof export: object` → `THROWS -> be5 is not a function`). Upstream shipped
+no 1.1.17 / 2.1.3, so those lines have nothing to move to. Split by what is actually fixable: **bump
+5.x** (real patch, `>=5.0.8 <6` in `pnpm.overrides`) and **waive 1.x/2.x**. New `WAIVERS` mechanism in
+`scripts/sca-audit.mjs`, deliberately hard to abuse — a waiver matches on **GHSA id + package name +
+semver range** (never package alone), carries a mandatory reason and revisit trigger, and **a waiver
+that stops matching anything FAILS the run** so it cannot quietly outlive its reason. Guardrails
+tested red-green: swapping the GHSA id makes both findings BLOCK again (exit 1); a stale waiver exits
+1; unmodified exits 0 with 2 waived. Reachability justified the scope — `pnpm why minimatch --prod`
+is empty, every affected copy arrives via `glob@7` / `filelist` / `dir-compare` inside the
+electron-builder and eslint trees, and none ship in the packaged app. Lockfile resolved with
+`pnpm install --lockfile-only` in a scratch dir (the worktree `node_modules` is a junction to MAIN's).
+**Version:** 0.32.0 → **0.32.1** (patch). Squash `e6343b32`.
+
+## 2026-07-26 — PR #385: bench readiness gate — wait for PTY first output before measuring (v0.32.2)
+
+`assertStreaming` sampled terminal buffer growth once over a fixed 1.5 s window immediately after
+`terminalMounted` — but mount is not streaming: between them sit the `pty:spawn` IPC, a possible
+ptyHost daemon cold start, the shell's boot, and `STREAM_CMD` being written as the first PTY line.
+Failures were monotonic in warm-up across a run (N=1 → 0/1, N=4 → 0/4, N=8 → 7/8, K=1 → 1/1 ✓), so
+**the harness could not produce a baseline at all** — four of five tests died at the precondition with
+no fps ever recorded. Fixed by polling per terminal for real growth (`STREAM_WARMUP_MS = 45_000`);
+only the slowest terminal pays, and the measured phases are untouched so numbers stay comparable.
+Ships `docs/reviews/2026-07-25-bench-baseline/BASELINE.md`, whose real content is a **negative
+result**: a −30…−39% N=4 fps delta vs the 2026-06-25 reference was chased through three eliminations,
+all direct measurements, **all negative** — current main + current deps 78.9 fps; app `78088bbc` +
+current deps 75.6 (**app source exonerated**); app `78088bbc` + **its own lockfile** in a standalone
+clone 82.5 (**dependencies exonerated**, xterm 5.5.0 confirmed in `node_modules`, Electron 42.3.3 in
+both trees). `@xterm/xterm` 5.5→6.x was the prime suspect and is REFUTED. Nothing in the repository
+explains the delta, so a bisect over the 365 intervening commits would have found nothing. Remaining
+candidate is measurement contention (76% CPU at rest, 37 × Code / 24 × node / 10 × pwsh / Docker),
+which fits the shape: the N=1 control matches the reference within noise (153.7–160 vs ~163, p50
+6.1 ms both) while N=4 does not. **Consequence: the 2026-06-25 numbers are not a valid regression
+target and should not be chased further.** **Version:** 0.32.1 → **0.32.2** (patch). Squash `52f3b559`.
+
+## 2026-07-26 — PR #387: instrument the project switch + commit a bench baseline (audit Phase 0, v0.33.0)
+
+R1 + R2 of the 2026-07-25 project-switch & perf audit, whose write-up (`docs/reviews/
+2026-07-25-project-switch-perf-audit/AUDIT.md`) ships here. Before this the app had **zero** timing
+instrumentation — `performance.mark` appeared nowhere in `src/`. `switchMetrics.ts` lays marks along
+`performProjectSwitch` and derives four segments: `arm` (`start`→`armed`, the dead air, budget
+<100 ms), `load`, `paint`, and `total` minus `ask`. The ask-on-switch dialog is measured separately
+and **subtracted** — human think-time would make every other number meaningless — but still reported
+so the exclusion is auditable. No `interactive` mark, deliberately: it would mostly measure the
+*agent's* boot (`pty:spawn`, offscreen window start), so `paintable` — via double-rAF, since a single
+rAF runs before paint — is where `total` honestly stops. Surfaced as `DiagOverlay` rows
+(Ctrl/⌘+Shift+D), exposed to e2e via `lastSwitchMetrics()`, plus `pnpm bench` / `bench:baseline`, an
+NDJSON `benchSink.ts` (append-only so concurrent workers cannot clobber) and `projectSwitch.bench.ts`.
+**Phase 0 falsified its own roadmap**, which is the point of measuring first: R3's premise of ~800 ms
+dead air measured **41–49 ms**, R11 is dead (`project:open` flat ~12 ms), R5 promoted. The reviewer
+caught a **real race** — `markPaintableAndEnd` resolves two frames late, but the caller releases the
+switch lock in its `finally` *before* those frames elapse, so a rapid second switch would have the old
+callback stamp `paintable` on the new run and close it, reporting the old paint as the new one's and
+truncating a live measurement. Fixed with a `Run.epoch` generation stamp plus outer-frame
+cancellation; 3 new tests drive a manual rAF pump, verified red-green. Verified: full matrix green
+both legs (Win 326P/1F · Linux 324P/1F), units 6039P (5 known worktree-environmental fails), SCA clean
+with exactly the 2 intended waivers, reviewer FULL pass ×2 rounds ending 0 findings, dev check
+title-stamped. **Version:** 0.32.2 → **0.33.0** (minor — new subsystem). Squash `6134cbb5`.
