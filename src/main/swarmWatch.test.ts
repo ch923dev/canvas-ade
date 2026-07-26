@@ -93,8 +93,8 @@ function harness(opts: { salvage?: SwarmSalvage } = {}): Harness {
     narrate: (runId, n) => narrations.push({ runId, ...n }),
     changed: (runId) => changed.push(runId),
     now: () => clock,
-    setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
-    clearIntervalFn: () => {}
+    // No real timer: the sweep is driven explicitly via `watch.tick()`.
+    startSweep: () => () => {}
   })
   watch.start()
 
@@ -377,8 +377,7 @@ describe('swarmWatch — lifecycle', () => {
       readResult: () => ({ present: false }),
       narrate: vi.fn(),
       changed: vi.fn(),
-      setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
-      clearIntervalFn: () => {}
+      startSweep: () => () => {}
     })
     watch.start()
     watch.start()

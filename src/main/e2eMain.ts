@@ -179,6 +179,15 @@ export interface E2EMain {
    */
   writeRecapMd(boardId: string, md: string): Promise<boolean>
   /**
+   * Orchestration S2: persist a canned run ledger for `boardId` into the CURRENT project's
+   * `.canvas/memory/run-<boardId>.json` through the CANONICAL writer, so an e2e can prove the
+   * restore path against a run this session never created — the "reload restores the run" half of
+   * the S2 exit proof. Mints a throwaway project first if none is current (writeRecapMd's shape).
+   */
+  writeSwarmRun(boardId: string, ledger: unknown): Promise<boolean>
+  /** Orchestration S2: read a run ledger back, to assert what a triage action actually changed. */
+  readSwarmRun(boardId: string): unknown
+  /**
    * MCP tier-smoke port (e2e/mcp.e2e.ts) — the loopback MCP server's port + the two
    * tier tokens, so the test process can connect its own orchestrator + worker clients
    * over 127.0.0.1 (the client moved out of MAIN into the Playwright runner). The worker
@@ -432,6 +441,21 @@ async function writeRecapMdToCurrentProject(boardId: string, md: string): Promis
   return createCanvasMemory(dir).writeBoard(boardId, md)
 }
 
+/**
+ * Orchestration S2: the same shape for a run ledger — write through `createCanvasMemory(dir)
+ * .writeRun`, the exact writer the app uses, so the path guard and the atomic write are the ones
+ * under test rather than a hand-rolled fixture drop.
+ */
+async function writeSwarmRunToCurrentProject(boardId: string, ledger: unknown): Promise<boolean> {
+  let dir = getCurrentDir()
+  if (!dir) {
+    dir = mkdtempSync(join(tmpdir(), 'canvas-e2e-swarm-'))
+    await createProject(dir, 'swarm-e2e', {})
+    setCurrentDir(dir)
+  }
+  return createCanvasMemory(dir).writeRun(boardId, ledger)
+}
+
 // Recap redesign S1 (N1): seedRecapTranscript mutates process.env.CLAUDE_CONFIG_DIR so MAIN's
 // trust check (isTrustedTranscriptPath / resolveLiveTranscriptPath both default to process.env)
 // accepts the throwaway fixture root DURING the facts test. We capture the prior value here and
@@ -551,6 +575,11 @@ export function installE2EMain(
     },
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)
+    },
+    writeSwarmRun: (boardId, ledger) => writeSwarmRunToCurrentProject(boardId, ledger),
+    readSwarmRun(boardId) {
+      const dir = getCurrentDir()
+      return dir ? (createCanvasMemory(dir).readRun(boardId) ?? null) : null
     },
     async createTempProject(prefix, name) {
       const tmp = mkdtempSync(join(tmpdir(), prefix))

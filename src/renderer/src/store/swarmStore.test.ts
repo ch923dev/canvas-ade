@@ -94,6 +94,77 @@ describe('swarmStore — per-board run isolation', () => {
     expect(useSwarmStore.getState().runs.size).toBe(0)
   })
 
+  it('setLedger adopts MAIN’s projection: membership, plan board, timer origin, restored latch', () => {
+    const s = useSwarmStore.getState()
+    s.addWorker('a', 'w1', { role: 'builder' })
+    s.setLedger('a', {
+      runId: 'a',
+      state: 'live',
+      restored: true,
+      createdAt: 5000,
+      planBoardId: 'plan-1',
+      counts: { workers: 2, results: 1 },
+      planOwners: { p1: 'working' },
+      workers: [
+        { boardId: 'w1', activity: 'Migrating…', state: 'stalled' },
+        { boardId: 'w2', role: 'reviewer', provenance: 'synthesized' }
+      ],
+      triage: []
+    })
+    const run = runFor(useSwarmStore.getState().runs, 'a')
+    // A worker only the LEDGER knows about joins the run; this session's order is preserved.
+    expect(run.workerIds).toEqual(['w1', 'w2'])
+    expect(run.workerMeta.w2).toMatchObject({ role: 'reviewer', provenance: 'synthesized' })
+    // A restored worker has no spawn event, so the ledger supplies the card timer's origin.
+    expect(run.workerMeta.w2.joinedAt).toBe(5000)
+    expect(run.planBoardId).toBe('plan-1')
+    expect(run.startedAt).toBe(5000)
+    expect(run.restored).toBe(true)
+  })
+
+  it('restored LATCHES — later pushes carry restored:false by design and must not clear it', () => {
+    const s = useSwarmStore.getState()
+    const snap = (restored: boolean): Parameters<typeof s.setLedger>[1] => ({
+      runId: 'a',
+      state: 'live',
+      restored,
+      createdAt: 1,
+      planBoardId: null,
+      counts: { workers: 0, results: 0 },
+      planOwners: {},
+      workers: [],
+      triage: []
+    })
+    s.setLedger('a', snap(true))
+    s.setLedger('a', snap(false))
+    expect(runFor(useSwarmStore.getState().runs, 'a').restored).toBe(true)
+  })
+
+  it('setLedger never overwrites a plan board this session already knows', () => {
+    const s = useSwarmStore.getState()
+    s.setPlanBoard('a', 'live-plan')
+    s.setLedger('a', {
+      runId: 'a',
+      state: 'live',
+      restored: false,
+      createdAt: 1,
+      planBoardId: 'stale-plan',
+      counts: { workers: 0, results: 0 },
+      planOwners: {},
+      workers: [],
+      triage: []
+    })
+    expect(runFor(useSwarmStore.getState().runs, 'a').planBoardId).toBe('live-plan')
+  })
+
+  it('addOrchMessage lands a COMPLETE bubble (a between-turns narration never streams)', () => {
+    const s = useSwarmStore.getState()
+    s.addOrchMessage('a', 'builder-2 died on task 3')
+    const [msg] = runFor(useSwarmStore.getState().runs, 'a').messages
+    expect(msg).toMatchObject({ role: 'orch', text: 'builder-2 died on task 3' })
+    expect(msg.streaming).toBeUndefined()
+  })
+
   it('runFor returns the empty shape for an unknown board without creating it', () => {
     const run = runFor(useSwarmStore.getState().runs, 'ghost')
     expect(run.messages).toEqual([])

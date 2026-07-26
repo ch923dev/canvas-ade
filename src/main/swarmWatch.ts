@@ -86,8 +86,12 @@ export interface SwarmWatchDeps {
   now?: () => number
   tickMs?: number
   thresholdMs?: number
-  setIntervalFn?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>
-  clearIntervalFn?: (h: ReturnType<typeof setInterval>) => void
+  /**
+   * Start the sweep and return its CANCEL. A cancel closure rather than a handle: `setInterval` is
+   * overloaded (Node's `Timeout` vs the DOM's `number`) and letting that handle type escape into
+   * an interface makes it resolve differently per position. Tests pass a no-op and drive `tick()`.
+   */
+  startSweep?: (fn: () => void, ms: number) => () => void
 }
 
 export interface SwarmWatch {
@@ -142,11 +146,15 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
   const now = deps.now ?? Date.now
   const thresholdMs = deps.thresholdMs ?? SWARM_STALL_THRESHOLD_MS
   const tickMs = deps.tickMs ?? TICK_MS
-  const setIntervalFn = deps.setIntervalFn ?? setInterval
-  const clearIntervalFn = deps.clearIntervalFn ?? clearInterval
+  const startSweep =
+    deps.startSweep ??
+    ((fn: () => void, ms: number): (() => void) => {
+      const h = setInterval(fn, ms)
+      return () => clearInterval(h)
+    })
 
   let unsubscribe: (() => void) | null = null
-  let handle: ReturnType<typeof setInterval> | null = null
+  let stopSweep: (() => void) | null = null
   const notices = new Map<string, string[]>()
 
   const note = (runId: string, line: string): void => {
@@ -363,13 +371,13 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
   return {
     start() {
       if (unsubscribe === null) unsubscribe = deps.subscribeStatus(onStatus)
-      if (handle === null) handle = setIntervalFn(tick, tickMs)
+      if (stopSweep === null) stopSweep = startSweep(tick, tickMs)
     },
     stop() {
       unsubscribe?.()
       unsubscribe = null
-      if (handle !== null) clearIntervalFn(handle)
-      handle = null
+      stopSweep?.()
+      stopSweep = null
     },
     drain,
     takeNotices(runId) {

@@ -240,7 +240,7 @@ it never runs as a scoped subset — only in the full matrix (see its row):
 
 | Tag | Specs | Source it guards |
 |---|---|---|
-| `@core` | `recovery` · `reset-isolation` · `placement` · `evidence` | boot / persistence / placement / native-capture — relevant to **any** change, so always included in a scoped run |
+| `@core` | `recovery` · `reset-isolation` · `placement` · `evidence` · `swarmBoard` · `swarmLedger` | boot / persistence / placement / native-capture — relevant to **any** change, so always included in a scoped run. The two swarm specs ride `@core` because the surface they guard is mostly `src/main/**` (always FULL) and the board is cheap to mount; `swarmLedger` covers the S2 run ledger: restore-from-disk, the lost/stalled card states, a triage action round-trip, and the plan strip's write-through. |
 | `@terminal` | `terminal*` · `processTree` · `recap` | `boards/terminal*`, `boards/TerminalBoard`, recap, `src/main/pty*` |
 | `@preview` | `browser*` · `preview*` · `previewLink` · `fullview` | `boards/Browser*`, `usePreviewManager`, `src/main/preview*`, `localServer` |
 | `@planning` | `whiteboard` · `textCreate` · `textToolbar` · `noteTint` · `planningKeyboard` | `boards/planning/**`, `boards/PlanningBoard`, vendored `perfect-freehand` |

@@ -490,7 +490,11 @@ export function registerSwarmHandlers(
     if (guard(e)) return { ok: false }
     const runId = runIdOf(payload)
     if (!runId) return { ok: false }
-    sessions.get(runId)?.ledger.destroy()
+    // `sessionFor`, NOT `sessions.get`: a board deleted without ever having been TOUCHED this
+    // session (reopened project, never sent a turn) has no in-memory session — and reading through
+    // `get` there would silently leave its sidecar behind as an orphan the retention sweep keeps
+    // alive for 19 more runs. Building the session is free; it only wraps the store.
+    sessionFor(runId).ledger.destroy()
     sessions.delete(runId)
     return { ok: true }
   })

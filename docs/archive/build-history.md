@@ -3759,3 +3759,54 @@ terminal-load doc. Verified: full matrix green both legs at pre-push, CI 4/4, re
 findings (independently re-derived the `decideKeep` and `settle()` claims and cross-checked
 `RESOURCES.json` against the prose), dev check title-stamped `PR#390`. **Version:** 0.34.1 →
 **0.34.2** (patch — measurement/test work). Squash `f62bc169`.
+## 2026-07-27 — PR #TBD: orchestration S2 — durable run ledger, failure model, triage queue (v0.35.0)
+
+**Made a swarm run survivable instead of a demo.** S1 put the whole run — chat, membership, statuses,
+results — in the ephemeral `swarmStore` + MAIN's in-memory `SwarmSession`, so a reload erased it.
+Design gate first (`docs/orchestration/s2-design-artifact.html`, signed off 2026-07-26: surface
+approved as drawn; **D1 decided AGAINST the artifact's recommendation** — the ledger lives in
+`<project>/.canvas/memory/run-<boardId>.json`, not userData).
+
+**The ledger** (`shared/swarmLedgerTypes` · `swarmLedger` · `swarmLedgerProject` · `swarmLedgerSession`):
+one sidecar per run beside the board recaps, written through `canvasMemory` (so the existing `isSafeId`
+guard applies verbatim) with **fsync ON** — unlike the regenerable recaps, a lost ledger loses the run.
+`runId === boardId` makes restore a filename lookup. Hostile-input coerce on every read; a sidecar whose
+body claims a different board is refused (the filename is authoritative); a **future** `version` is never
+parsed and never overwritten. Cap-bounded, newest-20 retention. Zero canvas-schema change (D8) — the
+scene/session split holds. The S3 `worktree`/`branch` fields exist today, written `null`.
+
+**The failure model** (`swarmWatch` — the progress ledger to the ledger's task ledger). Both cases fall
+BETWEEN turns, so neither can live in the tool loop. **A · worker dies:** detection is the existing
+`subscribeBoardStatus` stream (`gone`/`failed`; `idle` deliberately is NOT death — `awaitSettled` already
+reads silence as a settle); salvage reads `boardResults` directly (sync, so it also works in the quit
+chain); the task lands `blocked` + `blockedTag:'lost'` — **not** the `failed` the artifact sketched, since
+a terminal state clears the very tag the card and row key off (artifact cell corrected in-commit).
+**B · orchestrator dies:** a synchronous `drain()` in `shutdown()` ahead of the PTY drain — salvage, mark
+the run `interrupted`, and **preserve the worker boards** (D5). **Stall watch (D4):** the tick folds real
+PTY silence into `lastActivityAt` (forward only) and counts one stall per EPISODE, the guard living in the
+ledger itself so it survives a restart. Narration is deterministic and MAIN-composed (no LLM call, no
+budget spend), riding the existing run-event channel as the sentence TAIL + a board id — the renderer
+resolves the title, because MAIN is not a title authority. `takeNotices`/`withRunNotices` prefix the next
+user turn so the brain stops awaiting a worker it has been told is dead.
+
+**The surface:** restored chip · lost/stalled card states with their reason in the visible string · the
+triage queue as a risk-ordered actionable list built from TWO sources that know nothing about each other
+(live `attentionStore` needs-input + MAIN's ledger tags, merged on the shared `SWARM_BLOCKED_TAGS` order)
+· the plan strip **editable mid-run** (D2 always-live: checkbox · label-jumps · owner dot · `⋯` rename ·
+`＋` add), writing THROUGH to the Planning board via its own element helpers + undo checkpoint, so ⌘Z
+works and the strip never becomes a second copy of the plan. Human edits direct, orchestrator edits
+confirmed (D6, `tick_plan_item` through the existing planning-edit gate).
+
+**Batched confirms (D7):** `mcpDispatchBatch` — `dispatchPrompts`, the plural of `dispatchPrompt`, built
+to `mcpRelayBatch`'s proven shape: validate+sanitize every row → ONE per-row modal → each approved row
+through the shared write gate INDEPENDENTLY (own nonce · own TOCTOU re-check · own audit) via
+`confirmOverride`. It never widens one approval into N writes; no confirmBatch wired ⇒ fail closed.
+Host-side only: no broker wire change, no package publish.
+
+Extract-on-touch: `awaitSettled`'s settle policy moved to `mcpAwaitSettled.ts` (mcpOrchestrator was at
+the 700 cap, no override added); `index.ts` 707→710, documented, for three choke-point wiring lines.
+Two bugs the tests caught, not review: `swarm:destroyRun` used `sessions.get`, so deleting a board whose
+run was never touched this session orphaned its ledger; and a `.tsx` under `src/main` dragged DOM types
+into `tsconfig.node` and broke the e2e specs' typecheck (the real-channel bridge test moved to the
+renderer tree). **Verified:** units 5811 green (only the 5 documented box ambients), integration 390
+green, e2e — **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).

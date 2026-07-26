@@ -11,6 +11,7 @@
  */
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
+import { useSwarmStore } from '../store/swarmStore'
 import { DEFAULT_BOARD_SIZE } from '../lib/boardDefaults'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
@@ -118,6 +119,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getBoards() {
       return useCanvasStore.getState().boards
+    },
+    swarmSetPlanBoard(runId, planBoardId) {
+      useSwarmStore.getState().setPlanBoard(runId, planBoardId)
     },
     setSelection(ids) {
       useCanvasStore.getState().setSelection(ids)
