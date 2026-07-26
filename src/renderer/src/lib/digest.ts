@@ -196,6 +196,16 @@ function digestBoard(b: Board, d: DigestDoc): BoardDigest {
       return digestDataFlow(b)
     case 'kanban':
       return digestKanban(b)
+    case 'swarm':
+      // The Swarm board persists no content (its run state is ephemeral swarmStore state), so the
+      // Tier-1 digest is just its identity — one chat-driven orchestration run / feature zone.
+      return {
+        boardId: b.id,
+        type: 'swarm',
+        title: b.title,
+        status: 'swarm run',
+        lines: ['Chat-driven orchestration run (one orchestrator voice, worker terminal cards)']
+      }
   }
 }
 

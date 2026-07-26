@@ -185,7 +185,10 @@ export function useCommandDispatch(cap: number): CommandDispatch {
         name: task.zoneName ?? task.title,
         planning: comp.planning,
         browser: comp.browser,
-        ...(typeof task.launchCommand === 'string' ? { launchCommand: task.launchCommand } : {})
+        ...(typeof task.launchCommand === 'string' ? { launchCommand: task.launchCommand } : {}),
+        // v20: the config-committed OpenRouter intent — MAIN validates + lands it on the worker
+        // terminal so its spawn env routes through OpenRouter (key resolved MAIN-side only).
+        ...(task.openRouter?.enabled ? { openRouter: task.openRouter } : {})
       })
       if (stale()) return // superseded while spawning — don't overwrite the live state
       const { terminalId } = group
@@ -273,7 +276,16 @@ export function useCommandDispatch(cap: number): CommandDispatch {
         launchCommand: result.launchCommand,
         prompt: result.prompt,
         rolePackId: result.config.rolePackId ?? undefined,
-        roleBrief: result.config.roleBrief ?? undefined
+        roleBrief: result.config.roleBrief ?? undefined,
+        // v20: routing intent rides only when ON (absent = direct — a reconfigure opt-out clears).
+        openRouter: result.config.openRouter?.enabled
+          ? {
+              enabled: true,
+              ...(result.config.openRouter.model.trim()
+                ? { model: result.config.openRouter.model.trim() }
+                : {})
+            }
+          : undefined
       })
       store.setLastWorkerConfig(result.config)
       store.setConfiguring(null)

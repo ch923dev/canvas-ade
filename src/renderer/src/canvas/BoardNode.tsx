@@ -60,6 +60,9 @@ const DataFlowBoard = lazy(() =>
 const KanbanBoard = lazy(() =>
   import('./boards/KanbanBoard').then((m) => ({ default: m.KanbanBoard }))
 )
+const SwarmBoard = lazy(() =>
+  import('./boards/SwarmBoard').then((m) => ({ default: m.SwarmBoard }))
+)
 
 /** Hidden, non-connectable anchor handles so RF can attach the preview edge to any
  *  board without exposing a connection UX or stealing pointer events (Slice C′). */
@@ -331,6 +334,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
             {board.type === 'file' && <FileBoard board={board} {...common} {...actions} />}
             {board.type === 'dataflow' && <DataFlowBoard board={board} {...common} {...actions} />}
             {board.type === 'kanban' && <KanbanBoard board={board} {...common} {...actions} />}
+            {board.type === 'swarm' && <SwarmBoard board={board} {...common} {...actions} />}
           </ErrorBoundary>
         </Suspense>
       </div>

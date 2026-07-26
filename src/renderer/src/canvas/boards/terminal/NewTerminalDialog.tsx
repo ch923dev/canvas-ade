@@ -16,18 +16,61 @@
  * shared Modal (scrim + focus-trap + Esc), so explicit Cancel/Apply replace the old non-modal
  * popover's unsaved-changes guard.
  */
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactElement
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Modal } from '../../Modal'
 import { Icon } from '../../Icon'
 import { useCanvasStore } from '../../../store/canvasStore'
+import { OrchestratorLeadRow, grantLeadWithRetry, useLeadRowGate } from './OrchestratorLeadRow'
+import {
+  Field,
+  box,
+  boxOn,
+  btnGhost,
+  btnPrimary,
+  card,
+  check,
+  checkHint,
+  checkLbl,
+  dot,
+  dots,
+  fld,
+  fontChip,
+  fontChipName,
+  fontChipSample,
+  fontRow,
+  fontVal,
+  footer,
+  presetBtn,
+  presetName,
+  presetNameSel,
+  presets,
+  preview,
+  pvLine,
+  ringOff,
+  ringOn,
+  sbChip,
+  sbChipOn,
+  sbHint,
+  sbRow,
+  sbSub,
+  sectionLabel,
+  seg,
+  segBtn,
+  segOn,
+  shellOpt,
+  stepBtn,
+  stepOff,
+  themeCard,
+  themeCardOn,
+  themeGrid,
+  themeName,
+  themeNameOn,
+  themePin,
+  tile,
+  tileSel,
+  title
+} from './newTerminalStyles'
+
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import { AGENT_PRESETS, presetById } from './agentPresets'
 import { CommandBuilder } from './CommandBuilder'
@@ -121,6 +164,12 @@ export function NewTerminalDialog({
   const [themeId, setThemeId] = useState(seedTheme)
   const seedFontFamily = resolveInitialFontFamilyId(board.fontFamilyId)
   const [fontFamilyId, setFontFamilyId] = useState(seedFontFamily)
+  // Orchestration S1 — the creation-time lead grant (row + gate + retry logic extracted to
+  // OrchestratorLeadRow.tsx at the max-lines ratchet). CREATE-ONLY; see that module's header.
+  const leadGate = useLeadRowGate(board.id)
+  const [asOrchestrator, setAsOrchestrator] = useState(false)
+  const [leadErr, setLeadErr] = useState<string | null>(null)
+  const [applying, setApplying] = useState(false)
 
   // Shell list (OS-aware). Only PERSIST a shell the user actually picked: the select auto-seeds
   // to list[0] for display when the board has no explicit shell, but persisting that auto-seed
@@ -169,7 +218,8 @@ export function NewTerminalDialog({
     setRawOverride(null)
   }, [])
 
-  const apply = useCallback((): void => {
+  /** The board-patch half of Create/Apply (unchanged from pre-S1) — runs AFTER a lead grant. */
+  const applyPatch = useCallback((): void => {
     beginChange()
     updateBoard(board.id, {
       title: name.trim() || board.title,
@@ -222,6 +272,27 @@ export function NewTerminalDialog({
     editing,
     onClose
   ])
+
+  /**
+   * Create/Apply. S1: a ticked "Spawn as orchestrator" must land its DESIGNATION before the
+   * held spawn is released (applyPatch → onClose clears configPendingId → the spawn effect
+   * mints by designation). Grant failure keeps the dialog OPEN with the reason inline and the
+   * board un-spawned — a ticked box is never silently downgraded to a plain terminal. The
+   * board reaches MAIN's mirror on a ~150ms debounce, so `not-found` retries briefly.
+   */
+  const apply = useCallback((): void => {
+    if (editing || !asOrchestrator || leadGate.disabled) {
+      applyPatch()
+      return
+    }
+    setApplying(true)
+    setLeadErr(null)
+    void grantLeadWithRetry(board.id).then((err) => {
+      setApplying(false)
+      if (err === null) applyPatch()
+      else setLeadErr(err) // dialog stays OPEN, board un-spawned — never a silent downgrade
+    })
+  }, [editing, asOrchestrator, leadGate.disabled, applyPatch, board.id])
 
   return (
     <Modal
@@ -329,6 +400,17 @@ export function NewTerminalDialog({
               data-test="new-terminal-command"
             />
           </Field>
+          {!editing && (
+            <OrchestratorLeadRow
+              gate={leadGate}
+              ticked={asOrchestrator}
+              error={leadErr}
+              onToggle={() => {
+                setAsOrchestrator((v) => !v)
+                setLeadErr(null)
+              }}
+            />
+          )}
           <OpenRouterSection presetId={presetId} value={openRouter} onChange={onOpenRouterChange} />
           <Field label="Working dir">
             <input
@@ -472,307 +554,19 @@ export function NewTerminalDialog({
         <button type="button" style={btnGhost} onClick={onClose} data-test="new-terminal-cancel">
           Cancel
         </button>
-        <button type="button" style={btnPrimary} onClick={apply} data-test="new-terminal-create">
-          {editing ? 'Apply & restart' : 'Create'}
+        <button
+          type="button"
+          style={{ ...btnPrimary, ...(applying ? { opacity: 0.6, cursor: 'default' } : null) }}
+          disabled={applying}
+          onClick={apply}
+          data-test="new-terminal-create"
+        >
+          {editing ? 'Apply & restart' : applying ? 'Granting…' : 'Create'}
         </button>
       </div>
     </Modal>
   )
 }
 
-function Field({ label, children }: { label: string; children: ReactElement }): ReactElement {
-  return (
-    <label style={fieldWrap}>
-      <span style={fieldLabel}>{label}</span>
-      {children}
-    </label>
-  )
-}
-
-// Inline-styled fields can't use :focus-visible — mirror the §6 select-ring on focus/blur
-// (matches TerminalConfig's ringOn/ringOff).
-const ringOn = (e: { currentTarget: HTMLElement }): void => {
-  e.currentTarget.style.boxShadow = '0 0 0 1.5px var(--accent)'
-}
-const ringOff = (e: { currentTarget: HTMLElement }): void => {
-  e.currentTarget.style.boxShadow = ''
-}
-
-const card: CSSProperties = {
-  width: 460,
-  maxWidth: '92vw',
-  maxHeight: '92vh',
-  overflowY: 'auto',
-  scrollbarWidth: 'thin',
-  scrollbarColor: 'var(--border-strong) transparent',
-  padding: 18,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 13
-}
-const title: CSSProperties = {
-  textAlign: 'center',
-  fontSize: 15,
-  lineHeight: '22px',
-  fontWeight: 600,
-  letterSpacing: '-0.01em',
-  color: 'var(--text)'
-}
-const sectionLabel: CSSProperties = {
-  fontSize: 10,
-  lineHeight: '14px',
-  fontWeight: 500,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase',
-  color: 'var(--text-3)',
-  marginBottom: 6
-}
-const presets: CSSProperties = { display: 'flex', gap: 8, justifyContent: 'space-between' }
-const presetBtn: CSSProperties = {
-  flex: 1,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: 5,
-  border: 'none',
-  background: 'transparent',
-  padding: 0,
-  cursor: 'pointer'
-}
-const tile: CSSProperties = {
-  width: '100%',
-  maxWidth: 54,
-  height: 46,
-  borderRadius: 'var(--r-inner)',
-  background: 'var(--surface-overlay)',
-  border: '1px solid var(--border-subtle)',
-  display: 'grid',
-  placeItems: 'center',
-  color: 'var(--text-2)'
-}
-const tileSel: CSSProperties = {
-  background: 'var(--accent-wash)',
-  borderColor: 'var(--accent)',
-  color: 'var(--accent)',
-  boxShadow: '0 0 0 1px var(--accent)'
-}
-const presetName: CSSProperties = {
-  fontSize: 11,
-  lineHeight: '13px',
-  color: 'var(--text-3)',
-  textAlign: 'center'
-}
-const presetNameSel: CSSProperties = { color: 'var(--text-2)' }
-const seg: CSSProperties = {
-  alignSelf: 'center',
-  display: 'inline-flex',
-  gap: 2,
-  padding: 2,
-  background: 'var(--inset)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--r-ctl)'
-}
-const segBtn: CSSProperties = {
-  height: 24,
-  padding: '0 14px',
-  border: 'none',
-  borderRadius: 4,
-  background: 'transparent',
-  color: 'var(--text-3)',
-  fontFamily: 'var(--ui)',
-  fontSize: 12,
-  cursor: 'pointer'
-}
-const segOn: CSSProperties = {
-  ...segBtn,
-  background: 'var(--accent-wash)',
-  color: 'var(--accent)',
-  fontWeight: 500
-}
-const fieldWrap: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4 }
-const fieldLabel: CSSProperties = { fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }
-const fld: CSSProperties = {
-  height: 30,
-  padding: '0 9px',
-  borderRadius: 'var(--r-ctl)',
-  border: '1px solid var(--border-subtle)',
-  background: 'var(--inset)',
-  color: 'var(--text)',
-  fontFamily: 'var(--ui)',
-  fontSize: 12.5,
-  outline: 'none',
-  // Render the native Shell dropdown popup with dark chrome (harmless for the text inputs).
-  colorScheme: 'dark'
-}
-// Explicit per-option colors so the native Shell popup is always readable on dark.
-const shellOpt: CSSProperties = { background: 'var(--surface-overlay)', color: 'var(--text)' }
-const check: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  border: 'none',
-  background: 'transparent',
-  padding: 0,
-  cursor: 'pointer',
-  textAlign: 'left'
-}
-const box: CSSProperties = {
-  width: 16,
-  height: 16,
-  flex: 'none',
-  borderRadius: 4,
-  border: '1px solid var(--border-strong)',
-  background: 'transparent',
-  display: 'grid',
-  placeItems: 'center'
-}
-const boxOn: CSSProperties = { background: 'var(--accent)', borderColor: 'var(--accent)' }
-const checkLbl: CSSProperties = { fontSize: 12.5, color: 'var(--text)' }
-const checkHint: CSSProperties = { fontSize: 11, color: 'var(--text-3)' }
-const fontRow: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 }
-const stepBtn: CSSProperties = {
-  height: 28,
-  width: 36,
-  borderRadius: 'var(--r-ctl)',
-  border: '1px solid var(--border-subtle)',
-  background: 'var(--inset)',
-  color: 'var(--text)',
-  fontFamily: 'var(--ui)',
-  fontSize: 13,
-  cursor: 'pointer'
-}
-const stepOff: CSSProperties = { opacity: 0.35, cursor: 'default' }
-const fontVal: CSSProperties = {
-  minWidth: 80,
-  textAlign: 'center',
-  fontFamily: 'var(--mono)',
-  fontSize: 12,
-  color: 'var(--text-2)'
-}
-const sbRow: CSSProperties = { display: 'flex', gap: 6 }
-const sbChip: CSSProperties = {
-  flex: 1,
-  height: 32,
-  borderRadius: 'var(--r-ctl)',
-  border: '1px solid var(--border-subtle)',
-  background: 'var(--inset)',
-  color: 'var(--text-2)',
-  fontFamily: 'var(--ui)',
-  fontSize: 12.5,
-  cursor: 'pointer',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  lineHeight: 1.1
-}
-const sbChipOn: CSSProperties = {
-  background: 'var(--accent-wash)',
-  borderColor: 'var(--accent)',
-  color: 'var(--accent)',
-  boxShadow: '0 0 0 1px var(--accent)'
-}
-const sbSub: CSSProperties = {
-  fontSize: 9,
-  letterSpacing: '0.06em',
-  textTransform: 'uppercase',
-  opacity: 0.85,
-  marginTop: 1
-}
-const sbHint: CSSProperties = {
-  fontSize: 11,
-  lineHeight: '15px',
-  color: 'var(--text-3)',
-  marginTop: 2
-}
-// ── Theme picker (Lane B) — 2-col swatch grid with a live mini-terminal preview ──
-const themeGrid: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }
-const themeCard: CSSProperties = {
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--r-inner)',
-  background: 'var(--inset)',
-  padding: 7,
-  cursor: 'pointer',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 6,
-  textAlign: 'left'
-}
-const themeCardOn: CSSProperties = {
-  borderColor: 'var(--accent)',
-  background: 'var(--accent-wash)',
-  boxShadow: '0 0 0 1px var(--accent)'
-}
-const preview: CSSProperties = {
-  borderRadius: 4,
-  padding: '7px 8px',
-  fontFamily: 'var(--term-mono)',
-  fontSize: 10.5,
-  lineHeight: 1.5,
-  overflow: 'hidden',
-  whiteSpace: 'nowrap',
-  border: '1px solid rgba(255,255,255,0.05)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2
-}
-const pvLine: CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis' }
-const dots: CSSProperties = { display: 'inline-flex', gap: 3 }
-const dot: CSSProperties = { width: 7, height: 7, borderRadius: 'var(--r-pill)', flex: 'none' }
-const themeName: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  fontSize: 12,
-  fontWeight: 500,
-  color: 'var(--text-2)'
-}
-const themeNameOn: CSSProperties = { color: 'var(--accent)' }
-const themePin: CSSProperties = {
-  fontSize: 9,
-  letterSpacing: '0.06em',
-  textTransform: 'uppercase',
-  opacity: 0.85
-}
-// Font-family chips — like the scrollback chips but taller (name + glyph sample), each in its own face.
-const fontChip: CSSProperties = {
-  flex: 1,
-  height: 40,
-  borderRadius: 'var(--r-ctl)',
-  border: '1px solid var(--border-subtle)',
-  background: 'var(--inset)',
-  color: 'var(--text-2)',
-  cursor: 'pointer',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 1,
-  lineHeight: 1.15
-}
-const fontChipName: CSSProperties = { fontSize: 12.5 }
-const fontChipSample: CSSProperties = { fontSize: 11, opacity: 0.85 }
-const footer: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: 8,
-  marginTop: 2
-}
-const btnGhost: CSSProperties = {
-  height: 30,
-  padding: '0 14px',
-  borderRadius: 'var(--r-ctl)',
-  border: '1px solid var(--border-subtle)',
-  background: 'transparent',
-  color: 'var(--text-2)',
-  fontFamily: 'var(--ui)',
-  fontSize: 12.5,
-  cursor: 'pointer'
-}
-const btnPrimary: CSSProperties = {
-  ...btnGhost,
-  border: '1px solid var(--accent)',
-  background: 'var(--accent-wash)',
-  color: 'var(--accent)',
-  fontWeight: 600
-}
+// Field + focus-ring helpers + every style const live in ./newTerminalStyles (extracted at
+// the S1 max-lines ratchet); visuals unchanged.

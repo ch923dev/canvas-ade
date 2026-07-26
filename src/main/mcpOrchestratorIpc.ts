@@ -63,18 +63,36 @@ export function registerOrchestratorIpc(
     const mcp = resolve(e)
     const name = asString((input as { name?: unknown })?.name)
     if (name === null) throw new Error('mcp:spawnGroup requires a string name')
-    const { planning, browser, launchCommand } = (input ?? {}) as {
+    const { planning, browser, launchCommand, openRouter } = (input ?? {}) as {
       planning?: unknown
       browser?: unknown
       launchCommand?: unknown
+      openRouter?: unknown
     }
+    // v20: forward the dialog's OpenRouter routing intent ONLY when well-shaped (an explicit
+    // `enabled === true` + optional string slug) — anything else is dropped here (fail-closed
+    // to "no routing"); mcpLifecycle's sanitizeOpenRouter still re-validates the slug.
+    const or =
+      openRouter !== null &&
+      typeof openRouter === 'object' &&
+      (openRouter as { enabled?: unknown }).enabled === true &&
+      ((openRouter as { model?: unknown }).model === undefined ||
+        typeof (openRouter as { model?: unknown }).model === 'string')
+        ? {
+            enabled: true,
+            ...((openRouter as { model?: string }).model !== undefined
+              ? { model: (openRouter as { model?: string }).model }
+              : {})
+          }
+        : undefined
     // Booleans coerced defensively; the orchestrator validates/clamps the name, sanitizes the
     // launchCommand to a single PTY line, and caps the cluster.
     return mcp.spawnGroup({
       name,
       planning: planning === true,
       browser: browser === true,
-      ...(typeof launchCommand === 'string' ? { launchCommand } : {})
+      ...(typeof launchCommand === 'string' ? { launchCommand } : {}),
+      ...(or ? { openRouter: or } : {})
     })
   })
 

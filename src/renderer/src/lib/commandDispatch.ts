@@ -42,16 +42,11 @@ export const DISPATCH_ENGINEER_SYSTEM =
   'Output only that — no preamble, no surrounding quotes, no markdown headings, no commentary.'
 
 /**
- * Collapse the engineered prompt to a SINGLE line for the gated REPL write (C2f). The prompt is
- * delivered into the agent's input box (the gated `dispatchPrompt` PTY write) — NOT a shell command —
- * so it is NEVER shell-parsed: no shell quoting/escaping is applied (that was both unsafe — `$`/
- * backtick command-substitution — and pointless for REPL text). We only collapse whitespace because
- * the shared write gate rejects an embedded CR/LF (one approval = one line); a paragraph prompt
- * becomes one line the agent reads as a single message.
+ * Collapse the engineered prompt to a SINGLE line for the gated REPL write (C2f). Moved to
+ * `src/shared/rolePacks.ts` (orchestration S1) so MAIN's swarm tool executor shares the exact
+ * collapse the write gate demands; re-exported here so every renderer consumer is unchanged.
  */
-export function singleLinePrompt(prompt: string): string {
-  return prompt.replace(/\s+/g, ' ').trim()
-}
+export { singleLinePrompt } from '../../../shared/rolePacks'
 
 /** A short, non-LLM fallback zone name from the raw task (first ~5 words, clamped). */
 export function fallbackTitle(task: string): string {

@@ -25,7 +25,8 @@ import { Modal } from '../../Modal'
 import { Icon } from '../../Icon'
 import { AGENT_PRESETS, presetById } from '../terminal/agentPresets'
 import { CommandBuilder } from '../terminal/CommandBuilder'
-import { composeCommand, type OptionValues } from '../terminal/composeCommand'
+import { applyOpenRouterModel, composeCommand, type OptionValues } from '../terminal/composeCommand'
+import { OpenRouterSection, type OpenRouterValue } from '../terminal/OpenRouterSection'
 import {
   isWriteRolePack,
   launchLooksReadOnly,
@@ -52,7 +53,8 @@ export function WorkerConfigDialog({
   engineeredPrompt,
   initial,
   onDispatch,
-  onCancel
+  onCancel,
+  mode = 'dispatch'
 }: {
   /** The smart zone/group name (the spawned group is named this). */
   zoneName: string
@@ -64,6 +66,12 @@ export function WorkerConfigDialog({
   onDispatch: (result: { launchCommand: string; prompt: string; config: WorkerConfig }) => void
   /** Dismiss without dispatching (the task stays queued-not-ready). */
   onCancel: () => void
+  /**
+   * 'spawn' (swarm S1): the dialog gates a WORKER SPAWN only — no task prompt exists yet (the
+   * dispatch pays its own gate later), so the prompt editor is hidden and the primary button
+   * reads "Spawn". Everything else — role row, presets, builder, editable launch — is identical.
+   */
+  mode?: 'dispatch' | 'spawn'
 }): ReactElement {
   const [presetId, setPresetId] = useState(initial?.presetId ?? DEFAULT_PRESET)
   const [values, setValues] = useState<OptionValues>(initial?.values ?? DEFAULT_WORKER_VALUES)
@@ -77,9 +85,21 @@ export function WorkerConfigDialog({
       : ''
   )
   const [prompt, setPrompt] = useState(engineeredPrompt)
+  // v20 OpenRouter routing (compile-gated — OpenRouterSection renders null in ungated builds, so
+  // this state can only ever change in a gated build): enabled/model as ONE value, seeded from the
+  // remembered config so repeated dispatches keep the routing choice.
+  const [openRouter, setOpenRouter] = useState<OpenRouterValue>({
+    enabled: initial?.openRouter?.enabled ?? false,
+    model: initial?.openRouter?.model ?? ''
+  })
 
   const preset = presetById(presetId) ?? AGENT_PRESETS[0]
-  const composed = useMemo(() => composeCommand(preset, values), [preset, values])
+  // The OpenRouter slug overlays the composed command's model flag (applyOpenRouterModel is a
+  // no-op when disabled/blank/incapable — mirrors NewTerminalDialog).
+  const composed = useMemo(() => {
+    const orModel = openRouter.enabled ? openRouter.model : undefined
+    return composeCommand(preset, applyOpenRouterModel(presetId, values, orModel))
+  }, [preset, presetId, values, openRouter])
   const command = rawOverride ?? composed
   const rolePack = rolePackById(rolePackId)
   // Effective posture mirrors the pump's gate (`isWriteRoleTask`): the pack declares, but the
@@ -111,6 +131,13 @@ export function WorkerConfigDialog({
     setRawOverride(null)
   }, [])
 
+  // OR controls are compose inputs too: toggling routing / editing the slug recomposes and takes
+  // back control from a manual command edit (mirrors onBuilderChange / NewTerminalDialog).
+  const onOpenRouterChange = useCallback((next: OpenRouterValue): void => {
+    setOpenRouter(next)
+    setRawOverride(null)
+  }, [])
+
   const dispatch = useCallback((): void => {
     onDispatch({
       launchCommand: command.trim(),
@@ -121,7 +148,11 @@ export function WorkerConfigDialog({
         rawOverride,
         rolePackId,
         // Committed only for a pack dispatch; an emptied textarea is an explicit "no brief".
-        roleBrief: rolePackId !== null ? roleBrief : null
+        roleBrief: rolePackId !== null ? roleBrief : null,
+        // v20: routing intent rides only when ON (off = absent, so the spawn stays direct).
+        ...(openRouter.enabled
+          ? { openRouter: { enabled: true, model: openRouter.model.trim() } }
+          : {})
       }
     })
   }, [
@@ -133,6 +164,7 @@ export function WorkerConfigDialog({
     rawOverride,
     rolePackId,
     roleBrief,
+    openRouter,
     onDispatch
   ])
 
@@ -146,7 +178,7 @@ export function WorkerConfigDialog({
     >
       <div style={title}>Configure worker</div>
       <div style={zone}>
-        Zone: <span style={zoneNameStyle}>{zoneName}</span>
+        {mode === 'spawn' ? 'Worker' : 'Zone'}: <span style={zoneNameStyle}>{zoneName}</span>
       </div>
 
       <div>
@@ -240,6 +272,8 @@ export function WorkerConfigDialog({
         />
       )}
 
+      <OpenRouterSection presetId={presetId} value={openRouter} onChange={onOpenRouterChange} />
+
       <label style={fieldWrap}>
         <span style={fieldLabel}>
           {preset.options ? 'Command (composed, editable)' : 'Command'}
@@ -254,24 +288,26 @@ export function WorkerConfigDialog({
         />
       </label>
 
-      <label style={fieldWrap}>
-        <span style={fieldLabel}>Task prompt (engineered, editable)</span>
-        <textarea
-          style={promptArea}
-          spellCheck={false}
-          rows={5}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          data-testid="worker-prompt"
-        />
-      </label>
+      {mode === 'dispatch' && (
+        <label style={fieldWrap}>
+          <span style={fieldLabel}>Task prompt (engineered, editable)</span>
+          <textarea
+            style={promptArea}
+            spellCheck={false}
+            rows={5}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            data-testid="worker-prompt"
+          />
+        </label>
+      )}
 
       <div style={footer}>
         <button type="button" style={btnGhost} onClick={onCancel} data-testid="worker-cancel">
           Cancel
         </button>
         <button type="button" style={btnPrimary} onClick={dispatch} data-testid="worker-dispatch">
-          Dispatch
+          {mode === 'spawn' ? 'Spawn' : 'Dispatch'}
         </button>
       </div>
     </Modal>

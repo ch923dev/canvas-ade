@@ -459,3 +459,102 @@ describe('P1-A abort wiring', () => {
     await expect(p).resolves.toEqual({ approved: true })
   })
 })
+
+// ── S1: the swarm spawn gate's workerConfig round trip over the REAL confirm channel ──
+// The gap unit tests can't close (both sides stub their peer): here the REAL executeSwarmTool
+// drives the REAL requestConfirm — the posted `mcp:confirm` envelope is exactly what the
+// renderer's ConfirmModal consumes (the shared ConfirmWorkerConfig type), and the reply is
+// exactly what its WorkerConfigDialog commit sends (the shared ConfirmReplyDecision) — so a
+// field-name drift or envelope bug surfaces HERE, not at runtime.
+describe('S1 workerConfig round trip (executeSwarmTool ⇄ requestConfirm over the confirm channel)', () => {
+  it('spawn_worker posts the workerConfig envelope; the dialog-shaped commit reply drives the spawn', async () => {
+    const { executeSwarmTool } = await import('./swarmTools')
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const spawnBoard = vi.fn(async () => ({ id: 'worker-1' }))
+    const facet = {
+      describeApp: vi.fn(),
+      spawnBoard,
+      dispatchPrompt: vi.fn(),
+      awaitSettled: vi.fn(),
+      visualizePlan: vi.fn()
+    }
+    const ctx = {
+      paused: () => false,
+      writeInFlight: new Set<string>(),
+      workerRoles: new Map<string, string>(),
+      emit: () => {},
+      // The REAL confirm gate — no hand-authored reply stub on either side.
+      confirm: (req: Parameters<typeof requestConfirm>[2]) => requestConfirm(bus, () => win, req)
+    }
+    const p = executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder' },
+      facet as never,
+      ctx as never
+    )
+    // The posted envelope is the renderer's dialog input (shared ConfirmWorkerConfig).
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0].channel).toBe('mcp:confirm')
+    expect(sent[0].payload.request.workerConfig).toMatchObject({
+      workerName: 'builder-1',
+      roleId: 'builder',
+      defaultLaunch: expect.stringContaining('claude')
+    })
+    // The renderer commit (WorkerConfigDialog's exact reply shape) flows back through the real
+    // onReply carry into the gate's re-validation and out to the spawn.
+    reply(
+      { senderFrame: mainFrame },
+      {
+        approved: true,
+        launchCommand: 'claude --model haiku',
+        rolePackId: 'code-reviewer',
+        openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+      }
+    )
+    const out = await p
+    expect(out.isError).toBeUndefined()
+    expect(spawnBoard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'terminal',
+        prompt: 'claude --model haiku',
+        openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+      })
+    )
+    expect(ctx.workerRoles.get('worker-1')).toBe('code-reviewer')
+  })
+
+  it('🔒 a deny over the real channel spawns nothing (fail-closed end to end)', async () => {
+    const { executeSwarmTool } = await import('./swarmTools')
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const spawnBoard = vi.fn(async () => ({ id: 'worker-1' }))
+    const facet = {
+      describeApp: vi.fn(),
+      spawnBoard,
+      dispatchPrompt: vi.fn(),
+      awaitSettled: vi.fn(),
+      visualizePlan: vi.fn()
+    }
+    const ctx = {
+      paused: () => false,
+      writeInFlight: new Set<string>(),
+      workerRoles: new Map<string, string>(),
+      emit: () => {},
+      confirm: (req: Parameters<typeof requestConfirm>[2]) => requestConfirm(bus, () => win, req)
+    }
+    const p = executeSwarmTool(
+      'spawn_worker',
+      { name: 'w', role: 'builder' },
+      facet as never,
+      ctx as never
+    )
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+    reply({ senderFrame: mainFrame }, { approved: false })
+    const out = await p
+    expect(out.denied).toBe(true)
+    expect(spawnBoard).not.toHaveBeenCalled()
+  })
+})
