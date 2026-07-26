@@ -3660,3 +3660,34 @@ cancellation; 3 new tests drive a manual rAF pump, verified red-green. Verified:
 both legs (Win 326P/1F · Linux 324P/1F), units 6039P (5 known worktree-environmental fails), SCA clean
 with exactly the 2 intended waivers, reviewer FULL pass ×2 rounds ending 0 findings, dev check
 title-stamped. **Version:** 0.32.2 → **0.33.0** (minor — new subsystem). Squash `6134cbb5`.
+
+## 2026-07-26 — PR #386: orchestration S1 — swarm board on the app-resident brain + lead-entry revamp (v0.34.0)
+
+The Stage-1 swarm surface: a new **`swarm` board type** (schema v23 / floor 23 — multi-instance by
+design, one board = one run; persisted shape is just `BoardCommon`, all run state lives in the
+ephemeral per-board `swarmStore`) whose chat spine drives an **app-resident orchestrator brain**
+(`swarmChatIpc` + `swarmTools` on the shared Context·LLM config/key/budget plumbing) with five tools
+on the existing gated rails: `list_workers` · `draw_plan` (visualizePlan) · `spawn_worker` ·
+`dispatch_task` (role-brief + four-field spec through the orchestrator's own confirm gate) ·
+`await_worker`. Write serialization caps un-settled write-role dispatches at 1 until worktree
+isolation (S3). Lead entry moved off the Settings picker onto the New Terminal dialog checkbox +
+board menu + badge. The eyeball loop reshaped the spawn gate three times, ending at **the FULL
+worker-config dialog as the swarm spawn confirm** (`ConfirmModal` routes a `workerConfig` request to
+the command board's dialog — role row, agent presets, builder, editable launch; the reply carries
+launch/role back and MAIN re-validates: "the reply proposes, MAIN disposes"). Eyeball also caught the
+dispatch sanitizer killing every multi-line spec pre-confirm → `singleLinePrompt` collapse at the
+composition seam (+ failure reason surfaced in the chat statusline). **v20 OpenRouter routing** landed
+in the same dialog (both spawn surfaces): compile-gated section, slug overlay via
+`applyOpenRouterModel`, intent validated at every hop (`sanitizeOpenRouter` in mcpLifecycle, applier
+shape re-check, PATCHABLE_KEYS.terminal landing) — key never leaves MAIN. The reviewer's one
+[warning] (hand-mirrored confirm interfaces + no cross-process test) was closed by moving the
+confirm contract to `shared/mcpTypes.ts` (drift = compile error) + a real-channel IPC round trip
+(`executeSwarmTool` ⇄ real `requestConfirm`). **The pre-merge Linux leg caught a real regression**:
+the uniform e2e seed-stride bump (760→1240 for the 1180-wide swarm board) shrank fitView-all
+geometry on Docker's xvfb screen and broke `planningCrossBoardDrag` ×2 deterministically — fixed
+with a per-type stride `max(760, width+60)` (pre-S1 specs keep byte-identical geometry). Verified:
+full matrix green both legs (Linux 329P/0F · Win 330P + only the 3 documented box ambients), units
+green (5 documented ambients), CI ×3 green on every head, dev check title-stamped ×3 rounds.
+Mid-flight the branch double-rebased over #388/#385/#387 (its duplicate SCA fix dropped for main's
+in-range brace-expansion pins) and **0.33.0 was taken by #387** → **Version:** 0.33.0 → **0.34.0**
+(minor — new board type + subsystem). Squash `3ebf2732`.
