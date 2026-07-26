@@ -477,6 +477,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* The NAME wins the leftover space: it is how the human identifies the worker. Before this the
+     role badge was flex:none, so a long role (`TEST-WRITER`) squeezed the name to `w-bui…`. */
+  flex: 1 1 auto;
   min-width: 0;
 }
 .sw-role {
@@ -489,7 +492,12 @@
   border: 1px solid var(--border-subtle);
   border-radius: 3px;
   padding: 0 5px;
-  flex: none;
+  /* Secondary to the name: the badge shrinks (and ellipsizes) first when the card is narrow. */
+  flex: 0 1 auto;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sw-card-t {
   margin-left: auto;

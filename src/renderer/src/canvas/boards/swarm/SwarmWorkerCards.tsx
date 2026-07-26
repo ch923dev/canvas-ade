@@ -62,7 +62,7 @@ function activityLine(state: CardState, meta: SwarmRun['workerMeta'][string]): s
     case 'needs-input':
       return 'Waiting on input'
     case 'lost':
-      return 'Lost mid-task — result salvaged'
+      return 'Lost mid-task — salvaged'
     case 'error':
       return 'Hit an error'
     case 'done':
