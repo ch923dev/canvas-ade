@@ -3691,3 +3691,32 @@ green (5 documented ambients), CI ×3 green on every head, dev check title-stamp
 Mid-flight the branch double-rebased over #388/#385/#387 (its duplicate SCA fix dropped for main's
 in-range brace-expansion pins) and **0.33.0 was taken by #387** → **Version:** 0.33.0 → **0.34.0**
 (minor — new board type + subsystem). Squash `3ebf2732`.
+
+## 2026-07-26 — PR #389: close the chrome overlays in `reset()` — the menuShell "flake" was an ordering bug (v0.34.1)
+
+`menuShell.e2e.ts:10` failed on every leg of the previous three PRs — Windows and Linux, six
+consecutive appearances — and always passed on retry. **Not a timing flake.** `mcpServers.e2e.ts`
+opens Settings and never closes it; with `workers:1` ONE Electron app is reused across every spec
+file, and the Settings scrim is a full-viewport pointer-intercepting layer, so the next spec to issue
+a REAL OS click spent its whole 30 s timeout watching `<div data-test="settings-scrim">` swallow every
+attempt. Three things disguised a deterministic ordering bug as randomness: a failed test makes
+Playwright discard and relaunch the worker, so the retry always got a clean app; scoped pushes never
+run `mcpServers`, so only the full matrix saw it; and `menu.e2e.ts` sits between the two and passes
+because it clicks through `evalIn` — a programmatic DOM click ignores the scrim entirely. Fixed where
+the isolation contract already lives: `__canvasE2E.reset()` closes the digest panel, group popovers,
+toasts, the library panel and the switch overlay for exactly this reason, and Settings was missing —
+unreachable from there because Settings, Sign-in and the recap prompt are local `useState` in
+`AppChrome`, a SIBLING of `CanvasInner`, so neither a store nor `E2EHostHooks` can touch them. New
+`src/renderer/src/smoke/chromeOverlayGate.ts` is a module singleton (same shape as the existing
+`clearClipboard` / `clearSwitchTransition` seams) that `AppChrome` registers an overlay-closer into
+under `isE2E()`; production registers nothing and the call is a no-op. Fixes the class, not the test —
+the same leak was found once before for `askRecap` across a project switch (`AppChrome.tsx:62`).
+Verified red→green at `--retries=0` on `mcpServers → menu → menuShell`: 1 failed/5 passed → 6 passed,
+`menuShell:10` in 150 ms instead of a 30 s timeout; and re-run with the `mcpServers.e2e.ts` cleanup
+REVERTED still 6 passed, proving the `reset()` fix carries it alone (the test-hygiene close is
+defence in depth). Full matrix green both legs twice, pre- and post-#386-merge (Win 326→332, Linux
+324→330), `menuShell` clean on every leg. Reviewer: FULL review, zero findings. **Side finding, filed
+not fixed:** `projectSwitcher.e2e.ts:96` now flakes on both legs — this PR did not cause it, it
+stopped hiding it (that spec sorts AFTER `menuShell`, so menuShell's failure had been handing it a
+freshly relaunched worker every run; it passes alone, after both changed specs, and in a 7-spec chain,
+failing only in the full ~330-spec run). **Version:** 0.34.0 → **0.34.1** (patch). Squash `99219f6f`.
