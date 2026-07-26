@@ -132,6 +132,8 @@ export interface RunningMcp {
     cwd?: string
     title?: string
     sourceBoardId?: string
+    /** v20/S1: terminal-only OpenRouter routing intent (validated in mcpLifecycle). */
+    openRouter?: { enabled: boolean; model?: string }
   }): Promise<{ id: string }>
   /**
    * Phase C / C1: dispatch a prompt into a board's PTY through the SAME gated path the

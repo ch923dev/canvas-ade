@@ -18,6 +18,7 @@ import {
   type Connector,
   type ConnectorKind,
   type NamedGroup,
+  type TerminalBoard,
   createBoard,
   fromObject,
   toObject,
@@ -184,8 +185,9 @@ export interface CanvasState {
     group: { id: string; name: string }
     members: {
       // Phase C: an optional agentic-CLI launchCommand (MAIN-sanitized) the terminal boots, so a
-      // dispatched prompt reaches an agent, not a bare shell.
-      terminal: { id: string; launchCommand?: string }
+      // dispatched prompt reaches an agent, not a bare shell. `openRouter` (v20) is the routing
+      // intent the worker-config dialog committed — landed on the board so the spawn forwards it.
+      terminal: { id: string; launchCommand?: string; openRouter?: TerminalBoard['openRouter'] }
       planning?: { id: string }
       browser?: { id: string }
     }
@@ -709,13 +711,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // Wire the browser member to the terminal: previewSourceId is the runtime SoT the preview
       // edge derives from (the cluster's only "connector" — orchestration cables are terminal↔
       // terminal, N/A within a single-worker zone).
-      if (board.type === 'browser' && members.browser) {
-        return { ...board, previewSourceId: members.terminal.id }
-      }
+      if (board.type === 'browser' && members.browser) board.previewSourceId = members.terminal.id
       // Phase C: boot the terminal member's agentic CLI (the dispatched prompt then reaches an
-      // agent, not a bare shell). MAIN already sanitized the launchCommand to a single PTY line.
-      if (board.type === 'terminal' && typeof members.terminal.launchCommand === 'string') {
-        return { ...board, launchCommand: members.terminal.launchCommand }
+      // agent, not a bare shell). MAIN already sanitized the launchCommand to a single PTY line;
+      // openRouter (v20) rides along so `useTerminalSpawn` forwards it at first spawn. The board
+      // is a fresh local from createBoard, so stamping it pre-insert mutates nothing shared.
+      if (board.type === 'terminal') {
+        const t = members.terminal
+        if (typeof t.launchCommand === 'string') board.launchCommand = t.launchCommand
+        if (t.openRouter) board.openRouter = t.openRouter
       }
       return board
     })

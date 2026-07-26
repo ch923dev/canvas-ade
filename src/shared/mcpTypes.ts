@@ -307,6 +307,12 @@ export type McpCommand =
         launchCommand?: string
         cwd?: string
         url?: string
+        // TERMINAL-ONLY (v20 OpenRouter routing, S1 worker spawn): the human-committed routing
+        // intent from the worker-config dialog. MAIN validated shape + single-line model slug;
+        // the applier re-validates (the launchCommand/cwd discipline) and lands it via
+        // PATCHABLE_KEYS.terminal so `useTerminalSpawn` forwards it for MAIN-side env injection.
+        // The key itself NEVER rides here — presence-only intent, resolved at spawn in MAIN.
+        openRouter?: { enabled: boolean; model?: string }
       }
       connector?: { sourceId: string }
     }
@@ -340,7 +346,13 @@ export type McpCommand =
       members: {
         // Phase C: the terminal member may boot an agentic CLI (sanitized to a single line in
         // `mcpLifecycle.spawnGroup`) so a dispatched prompt reaches an agent, not a bare shell.
-        terminal: { id: string; launchCommand?: string }
+        // `openRouter` mirrors addBoard's terminal-only routing intent (v20 — the command
+        // dispatch dialog's commit; validated in MAIN, re-validated by the applier).
+        terminal: {
+          id: string
+          launchCommand?: string
+          openRouter?: { enabled: boolean; model?: string }
+        }
         planning?: { id: string }
         browser?: { id: string }
       }

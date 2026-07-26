@@ -68,6 +68,12 @@ export interface WorkerConfig {
    * next one. `null`/absent = Custom dispatch (no brief).
    */
   roleBrief?: string | null
+  /**
+   * v20 OpenRouter routing intent from the dialog's gated section (absent in ungated builds /
+   * when routing is off). Structural mirror of `OpenRouterValue` — kept inline so the store
+   * stays a leaf. Rides the spawn so MAIN injects the provider env for the worker terminal.
+   */
+  openRouter?: { enabled: boolean; model: string }
 }
 
 /** One orchestrator task. Phase C adds the requested `composition` + the spawned `group` (runtime). */
@@ -104,6 +110,11 @@ export interface CommandTask {
    * tasks); '' = brief explicitly cleared for this dispatch.
    */
   roleBrief?: string
+  /**
+   * v20: the OpenRouter routing intent committed with the config (enabled-only — the pump passes
+   * it to `spawnGroup` so the worker terminal's env routes through OpenRouter). Absent = direct.
+   */
+  openRouter?: { enabled: boolean; model?: string }
   /** Phase D — the worker's settled result (status·summary·refs), snapshotted at settle. */
   result?: TaskResult
   /** Phase D — the raw `git diff HEAD` captured at settle (cached for the chip + view-diff; '' = none). */
@@ -191,7 +202,13 @@ interface CommandState {
    */
   setTaskConfig: (
     id: string,
-    config: { launchCommand: string; prompt: string; rolePackId?: string; roleBrief?: string }
+    config: {
+      launchCommand: string
+      prompt: string
+      rolePackId?: string
+      roleBrief?: string
+      openRouter?: { enabled: boolean; model?: string }
+    }
   ) => void
   /** Remember the dialog's config to pre-fill the next dispatch. */
   setLastWorkerConfig: (config: WorkerConfig) => void
@@ -259,9 +276,11 @@ export const useCommandStore = create<CommandState>((set) => ({
               ...t,
               launchCommand: config.launchCommand,
               prompt: config.prompt,
-              // A reconfigure back to Custom must CLEAR a previously-committed pack + brief.
+              // A reconfigure back to Custom must CLEAR a previously-committed pack + brief
+              // (and a routing opt-out must clear a previously-committed openRouter intent).
               rolePackId: config.rolePackId,
-              roleBrief: config.roleBrief
+              roleBrief: config.roleBrief,
+              openRouter: config.openRouter
             }
           : t
       )

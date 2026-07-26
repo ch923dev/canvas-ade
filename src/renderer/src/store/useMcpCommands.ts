@@ -62,7 +62,7 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type, title, launchCommand, cwd, url } = command.board
+      const { id, type, title, launchCommand, cwd, url, openRouter } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
@@ -79,6 +79,21 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       }
       if ((launchCommand !== undefined || cwd !== undefined) && type !== 'terminal') {
         return { ok: false, error: 'addBoard: launchCommand/cwd are terminal-only' }
+      }
+      // v20 OpenRouter routing intent is terminal-only (the launchCommand/cwd discipline). MAIN
+      // validated shape + slug on the real path; re-validate the SHAPE here (defense in depth) so
+      // a forged payload can't land a malformed object in the board doc.
+      if (
+        openRouter !== undefined &&
+        (openRouter === null ||
+          typeof openRouter !== 'object' ||
+          typeof openRouter.enabled !== 'boolean' ||
+          (openRouter.model !== undefined && typeof openRouter.model !== 'string'))
+      ) {
+        return { ok: false, error: 'invalid addBoard openRouter' }
+      }
+      if (openRouter !== undefined && type !== 'terminal') {
+        return { ok: false, error: 'addBoard: openRouter is terminal-only' }
       }
       // url is BROWSER-ONLY (H3 — the spawn_board url path). MAIN already validated genuine
       // http(s) + clamped; re-validate shape + type + a cheap protocol prefix here (defense in
@@ -121,12 +136,20 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // whole configured board (the fields never split the history). Kept out of `canvasStore.
       // addBoard` on purpose — MCP-only behavior stays in the MCP applier (file-size doctrine:
       // canvasStore is pinned).
-      if (launchCommand !== undefined || cwd !== undefined || url !== undefined) {
+      if (
+        launchCommand !== undefined ||
+        cwd !== undefined ||
+        url !== undefined ||
+        openRouter !== undefined
+      ) {
         store.updateBoard(id, {
           ...(launchCommand ? { launchCommand } : {}),
           ...(cwd ? { cwd } : {}),
           // PATCHABLE_KEYS.browser carries 'url' — the preview boots on it at first mount (H3).
-          ...(url ? { url } : {})
+          ...(url ? { url } : {}),
+          // PATCHABLE_KEYS.terminal carries 'openRouter' (v20) — useTerminalSpawn forwards it at
+          // first spawn for MAIN-side env injection.
+          ...(openRouter ? { openRouter } : {})
         })
       }
       // 🔒 Auto-cable (rc.6): MAIN asks for a directed ORCHESTRATION connector spawner → spawned
@@ -363,6 +386,18 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       }
       if (members.browser !== undefined && !validId(members.browser)) {
         return { ok: false, error: `invalid spawnGroup browser member` }
+      }
+      // v20: the terminal member's OpenRouter intent must be well-shaped when present (defense
+      // in depth, mirroring addBoard's check) — reject rather than land a malformed object.
+      const or = members.terminal.openRouter
+      if (
+        or !== undefined &&
+        (or === null ||
+          typeof or !== 'object' ||
+          typeof or.enabled !== 'boolean' ||
+          (or.model !== undefined && typeof or.model !== 'string'))
+      ) {
+        return { ok: false, error: 'invalid spawnGroup terminal openRouter' }
       }
       // Idempotent by group id (mirrors addBoard): a re-delivered spawnGroup whose group already
       // exists is a no-op + ack ok, so it can't push a duplicate zone.

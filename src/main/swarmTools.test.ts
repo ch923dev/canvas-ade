@@ -155,6 +155,47 @@ describe('executeSwarmTool', () => {
     expect(ctx.workerRoles.get('spawned-1')).toBe('code-reviewer')
   })
 
+  it('spawn_worker openRouter commit rides the spawn; absent commit stays direct', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub({
+      confirm: vi.fn(async () => ({
+        approved: true,
+        openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+      }))
+    })
+    await executeSwarmTool('spawn_worker', { name: 'w', role: 'builder' }, facet, ctx)
+    expect(facet.spawnBoard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+      })
+    )
+    // No intent on the reply → no field on the spawn (a direct worker).
+    const facet2 = facetStub()
+    await executeSwarmTool('spawn_worker', { name: 'w', role: 'builder' }, facet2, ctxStub())
+    const arg = (facet2.spawnBoard as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(arg.openRouter).toBeUndefined()
+  })
+
+  it('🔒 spawn_worker refuses a malformed openRouter commit (whitespace/control slug, forged enabled) — never silently stripped', async () => {
+    for (const openRouter of [
+      { enabled: true, model: 'evil slug' }, // whitespace = not one token
+      { enabled: true, model: 'x'.repeat(201) }, // over the clamp
+      { enabled: true, model: 'a' + String.fromCharCode(7) + 'b' }, // control char (sanitize would strip => off-contract)
+      { enabled: false, model: 'anthropic/claude-sonnet-4.5' } // forged: only enabled=true rides
+    ]) {
+      const facet = facetStub()
+      const out = await executeSwarmTool(
+        'spawn_worker',
+        { name: 'w', role: 'builder' },
+        facet,
+        ctxStub({ confirm: vi.fn(async () => ({ approved: true, openRouter })) })
+      )
+      expect(out.isError).toBe(true)
+      expect(out.content).toMatch(/OpenRouter model/)
+      expect(facet.spawnBoard).not.toHaveBeenCalled()
+    }
+  })
+
   it('spawn_worker commit validation: multi-line/oversize launch refuses; absent commit approves the default; junk role falls back', async () => {
     // 🔒 The reply proposes, MAIN disposes: an off-contract launch line REFUSES (never silently
     // fixed), an approve without a commit approves exactly the defaultLaunch the body showed,

@@ -31,6 +31,7 @@ import {
 } from '../shared/rolePacks'
 import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
+import { sanitizeDispatchText } from './dispatchSanitize'
 
 const MAX_NAME = 80
 const MAX_FIELD = 4000
@@ -44,6 +45,8 @@ export interface SwarmCanvasFacet {
     prompt?: string
     cwd?: string
     title?: string
+    /** v20: the human-committed OpenRouter routing intent (validated again in mcpLifecycle). */
+    openRouter?: { enabled: boolean; model?: string }
   }): Promise<{ id: string }>
   dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   awaitSettled(boardId: string): Promise<{
@@ -92,6 +95,7 @@ export interface SwarmRunCtx {
     choice?: string
     launchCommand?: string
     rolePackId?: string
+    openRouter?: { enabled: boolean; model?: string }
   }>
 }
 
@@ -307,11 +311,30 @@ export async function executeSwarmTool(
           launch = committed
         }
         const finalPack = rolePackById(str(decision.rolePackId ?? '', 40)) ?? pack
+        // 🔒 v20 OpenRouter intent from the dialog commit: only an explicit `enabled === true`
+        // with a clean single-line slug rides the spawn; a malformed commit refuses (never
+        // silently stripped — the launch-line discipline). mcpLifecycle re-validates again.
+        let openRouter: { enabled: true; model?: string } | undefined
+        if (decision.openRouter !== undefined) {
+          const o = decision.openRouter
+          const slug = typeof o.model === 'string' ? o.model.trim() : undefined
+          if (
+            o.enabled !== true ||
+            (slug !== undefined &&
+              (/\s/.test(slug) || slug.length > 200 || sanitizeDispatchText(slug) !== slug))
+          ) {
+            return refuse(
+              'worker config commit invalid — the OpenRouter model must be one clean line ≤200 chars'
+            )
+          }
+          openRouter = { enabled: true, ...(slug ? { model: slug } : {}) }
+        }
         const spawned = await facet.spawnBoard({
           type: 'terminal',
           title: workerName,
           prompt: launch,
-          ...(str(args.cwd, 1024) ? { cwd: str(args.cwd, 1024) } : {})
+          ...(str(args.cwd, 1024) ? { cwd: str(args.cwd, 1024) } : {}),
+          ...(openRouter ? { openRouter } : {})
         })
         ctx.workerRoles.set(spawned.id, finalPack.id)
         ctx.emit({

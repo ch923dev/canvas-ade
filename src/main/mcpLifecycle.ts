@@ -68,6 +68,43 @@ const sanitizeLaunch = (raw: unknown): string | undefined => {
   const clean = sanitizeDispatchText(raw).trim().slice(0, SPAWN_LAUNCH_MAX)
   return clean || undefined
 }
+
+/** Cap on an OpenRouter model slug (e.g. 'anthropic/claude-sonnet-4.5' — generous headroom). */
+const SPAWN_OPENROUTER_MODEL_MAX = 200
+
+/** The validated spawn-time OpenRouter routing intent (v20 — terminal-only, mirrors `TerminalBoard.openRouter`). */
+export interface SpawnOpenRouter {
+  enabled: boolean
+  model?: string
+}
+
+/**
+ * 🔒 Validate a spawn-time OpenRouter routing intent → `{ enabled: true, model? }` or undefined.
+ * Only an EXPLICIT `enabled === true` carries (disabled intent is represented by absence — the
+ * board field simply isn't written). The model slug is human-typed dialog text that lands in the
+ * board doc and backs an env var at spawn (never shell-parsed), but it still pays the single-line
+ * control-char discipline via `sanitizeDispatchText` (DispatchPayloadError on embedded CR/LF
+ * propagates — reject, never flatten) + a clamp. A malformed object throws (the caller learns the
+ * spec was bad — the prompt/cwd discipline), it is never silently dropped.
+ */
+const sanitizeOpenRouter = (raw: unknown): SpawnOpenRouter | undefined => {
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error('spawn: openRouter must be an object')
+  }
+  const o = raw as { enabled?: unknown; model?: unknown }
+  if (typeof o.enabled !== 'boolean') {
+    throw new Error('spawn: openRouter.enabled must be a boolean')
+  }
+  if (o.model !== undefined && typeof o.model !== 'string') {
+    throw new Error('spawn: openRouter.model must be a string')
+  }
+  if (!o.enabled) return undefined
+  const model = o.model
+    ? sanitizeDispatchText(o.model).trim().slice(0, SPAWN_OPENROUTER_MODEL_MAX)
+    : ''
+  return { enabled: true, ...(model ? { model } : {}) }
+}
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -100,6 +137,12 @@ export interface SpawnGroupInput {
    * agent-callable `spawn_group` tool (PR-5c) MUST gate/validate this as an exec vector.
    */
   launchCommand?: string
+  /**
+   * v20 OpenRouter routing intent for the terminal member (the worker-config dialog's commit).
+   * Validated here (`sanitizeOpenRouter` — explicit enabled boolean, single-line clamped slug);
+   * lands on the created board so `useTerminalSpawn` forwards it for MAIN-side env injection.
+   */
+  openRouter?: { enabled: boolean; model?: string }
 }
 
 /** The minted ids a {@link McpLifecycle.spawnGroup} returns so the orchestrator can address the zone. */
@@ -131,6 +174,12 @@ export interface McpLifecycle {
      * renderer creates the spawner→spawned orchestration cable. Otherwise silently ignored.
      */
     sourceBoardId?: string
+    /**
+     * TERMINAL-ONLY (v20 / S1 swarm spawn gate): the human-committed OpenRouter routing intent.
+     * Validated here (`sanitizeOpenRouter`); rejected on a non-terminal type (the prompt/cwd
+     * discipline). Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
+     */
+    openRouter?: { enabled: boolean; model?: string }
   }): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
@@ -171,6 +220,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     title?: string
     url?: string
     sourceBoardId?: string
+    openRouter?: { enabled: boolean; model?: string }
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
@@ -197,6 +247,12 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if ((hasPrompt || hasCwd) && input.type !== 'terminal') {
       throw new Error('spawn_board: prompt/cwd are only valid for a terminal board')
     }
+    // v20 OpenRouter routing intent is TERMINAL-ONLY (the prompt/cwd discipline): validate the
+    // shape + slug BEFORE any side effect; reject on a mismatched type rather than silently drop.
+    if (input.openRouter !== undefined && input.type !== 'terminal') {
+      throw new Error('spawn_board: openRouter is only valid for a terminal board')
+    }
+    const openRouter = sanitizeOpenRouter(input.openRouter)
     // H3: url is BROWSER-ONLY — same pre-side-effect mismatch discipline as prompt/cwd. Validate
     // as genuine http(s) here (the trust boundary) BEFORE the cap reservation, so a rejected url
     // burns no slot and creates no orphan board.
@@ -244,7 +300,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           ...(title ? { title } : {}),
           ...(launchCommand ? { launchCommand } : {}),
           ...(cwd ? { cwd } : {}),
-          ...(url ? { url } : {})
+          ...(url ? { url } : {}),
+          ...(openRouter ? { openRouter } : {})
         },
         ...(wantCable ? { connector: { sourceId: input.sourceBoardId! } } : {})
       })
@@ -270,6 +327,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // same one `spawnBoard`'s prompt uses, so the two spawn paths can't drift). Empty ⇒ a bare
     // shell (legacy contract); DispatchPayloadError (multiline) propagates — reject, never flatten.
     const launchCommand = sanitizeLaunch(input.launchCommand)
+    // v20: the worker terminal's OpenRouter routing intent (same validator as spawnBoard —
+    // the two spawn paths can't drift). Undefined when absent/disabled; throws on a bad shape.
+    const openRouter = sanitizeOpenRouter(input.openRouter)
     // Compose the cluster: terminal always; planning/browser opt-in. The member COUNT is the
     // cap budget this spawn consumes (the group record itself isn't a board, so it's uncapped).
     const wantPlanning = input.planning === true
@@ -306,7 +366,11 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         type: 'spawnGroup',
         group: { id: groupId, name },
         members: {
-          terminal: { id: terminalId, ...(launchCommand ? { launchCommand } : {}) },
+          terminal: {
+            id: terminalId,
+            ...(launchCommand ? { launchCommand } : {}),
+            ...(openRouter ? { openRouter } : {})
+          },
           ...(planningId ? { planning: { id: planningId } } : {}),
           ...(browserId ? { browser: { id: browserId } } : {})
         }

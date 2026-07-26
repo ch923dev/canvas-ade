@@ -147,6 +147,40 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect('cwd' in b && b.cwd !== undefined).toBe(false)
   })
 
+  it('addBoard lands openRouter on a terminal board (v20 — the worker spawn routing intent)', () => {
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: {
+        id: 'srv-1',
+        type: 'terminal',
+        openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+      }
+    })
+    expect(ack).toEqual({ ok: true, type: 'addBoard' })
+    expect(useCanvasStore.getState().boards[0]).toMatchObject({
+      id: 'srv-1',
+      openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+    })
+  })
+
+  it('addBoard rejects an off-type / malformed openRouter WITHOUT adding a board (terminal-only, shape-checked)', () => {
+    const offType = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'p-1', type: 'planning', openRouter: { enabled: true } }
+    })
+    const badShape = applyMcpCommand({
+      type: 'addBoard',
+      board: {
+        id: 'srv-1',
+        type: 'terminal',
+        openRouter: { enabled: 'yes' } as unknown as { enabled: boolean }
+      }
+    })
+    expect(offType.ok).toBe(false)
+    expect(badShape.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
   it('addBoard with a connector creates the board AND the spawner→spawned orchestration cable (rc.6)', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'src-term', type: 'terminal' } })
     const ack = applyMcpCommand({

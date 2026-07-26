@@ -53,6 +53,7 @@ type Reply = (decision: {
   choice?: string
   launchCommand?: string
   rolePackId?: string
+  openRouter?: { enabled: boolean; model?: string }
 }) => void
 interface Pending extends ConfirmRequest {
   reply: Reply
@@ -139,7 +140,17 @@ export default function ConfirmModal(): React.ReactElement | null {
             head?.reply({
               approved: true,
               launchCommand,
-              ...(config.rolePackId ? { rolePackId: config.rolePackId } : {})
+              ...(config.rolePackId ? { rolePackId: config.rolePackId } : {}),
+              // v20: the dialog's OpenRouter intent rides only when ON; MAIN re-validates the
+              // slug (single clean token) before it reaches the spawn.
+              ...(config.openRouter?.enabled
+                ? {
+                    openRouter: {
+                      enabled: true,
+                      ...(config.openRouter.model ? { model: config.openRouter.model } : {})
+                    }
+                  }
+                : {})
             })
             return rest
           })

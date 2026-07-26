@@ -101,6 +101,10 @@ export interface ConfirmDecision {
   launchCommand?: string
   /** 🔒 S1: the dialog-committed role pack id — re-validated against the pack registry. */
   rolePackId?: string
+  /** 🔒 v20: the dialog-committed OpenRouter routing intent — shape-checked here (explicit
+   *  boolean + string slug), semantically re-validated by the requesting gate before it rides
+   *  a spawn. The key itself never crosses this channel — presence intent only. */
+  openRouter?: { enabled: boolean; model?: string }
 }
 
 /** One row in a BATCH confirm (relay_prompts) — a short label + the EXACT (sanitized) command shown. */
@@ -209,11 +213,29 @@ export function requestConfirm(
       // both (single-line/bounded launch, registry-known pack) and refuses anything off-contract.
       const launchCommand = typeof d?.launchCommand === 'string' ? d.launchCommand : undefined
       const rolePackId = typeof d?.rolePackId === 'string' ? d.rolePackId : undefined
+      // 🔒 v20: OpenRouter intent — carry ONLY a well-shaped `{ enabled: true, model? }` (an
+      // explicit boolean + optional string); anything else drops the field (fail-closed to
+      // "no routing"), and the requesting gate still re-validates the slug before acting.
+      const orRaw = (d as { openRouter?: unknown } | null)?.openRouter
+      const or =
+        orRaw !== null &&
+        typeof orRaw === 'object' &&
+        (orRaw as { enabled?: unknown }).enabled === true &&
+        ((orRaw as { model?: unknown }).model === undefined ||
+          typeof (orRaw as { model?: unknown }).model === 'string')
+          ? {
+              enabled: true as const,
+              ...((orRaw as { model?: string }).model !== undefined
+                ? { model: (orRaw as { model?: string }).model }
+                : {})
+            }
+          : undefined
       finish({
         approved,
         ...(choice !== undefined ? { choice } : {}),
         ...(launchCommand !== undefined ? { launchCommand } : {}),
-        ...(rolePackId !== undefined ? { rolePackId } : {})
+        ...(rolePackId !== undefined ? { rolePackId } : {}),
+        ...(or !== undefined ? { openRouter: or } : {})
       })
     }
     // Backstop safety timeout (deny on expiry). Defaults to DEFAULT_TIMEOUT_MS so a frozen
