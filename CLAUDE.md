@@ -227,6 +227,13 @@ Get the user's nod on the artifact, THEN write the implementation plan. No UI de
 Every PR MUST get a **manual dev check in a running app** before it is opened/merged — a green
 typecheck/lint/unit run is NOT "verified working" (the black-screen-regression class of bug). Launch
 the feature with `pnpm dev` and actually look at the change in the live app.
+- **Order: dev check BEFORE `git push`, not after.** `git push` fires the e2e pre-push gate
+  (Windows leg always, Linux + full matrix per the rules in Status) — a several-minute-to-30min cost.
+  Do the dev check first on the pre-commit-clean tree so a wrong assumption gets caught while it's
+  still cheap to fix, THEN push once. Pushing before the dev check (or before it's clean) means: e2e
+  runs, dev check then finds the real bug anyway, you fix it, and e2e must re-run from scratch on the
+  fix — the matrix bought you nothing the first time. Sequence per PR: implement → pre-commit gate →
+  **dev check (title-stamped) clean** → push (e2e gate) → open/merge.
 - **The dev build MUST carry a distinguishing window title** so you can tell *which* PR/build you are
   inspecting when several dev instances (or several feature checkouts) are open at once. Dev builds
   already auto-stamp the title with the checkout's worktree folder name (`<folder> — Canvas ADE
