@@ -1,0 +1,406 @@
+{
+  "capturedAt": "2026-07-24T20:51:16.163Z",
+  "appVersion": "0.33.0",
+  "commit": "37bf7dd85f28b3e86705d2227785e03b781306d2",
+  "complete": true,
+  "machine": {
+    "platform": "win32 10.0.26200",
+    "arch": "x64",
+    "cpuModel": "AMD Ryzen 7 5800X 8-Core Processor             ",
+    "logicalProcessors": 16,
+    "totalMemGb": 31.9,
+    "freeMemGb": 10.1,
+    "cpuLoadAtRestPct": 49.2,
+    "display": {
+      "Name": "NVIDIA GeForce RTX 4060",
+      "DriverVersion": "32.0.15.9636",
+      "CurrentRefreshRate": 164,
+      "CurrentHorizontalResolution": 2560,
+      "CurrentVerticalResolution": 1440
+    },
+    "contendingProcesses": [
+      {
+        "name": "Code",
+        "count": 37
+      },
+      {
+        "name": "com.docker.backend",
+        "count": 2
+      },
+      {
+        "name": "com.docker.build",
+        "count": 1
+      },
+      {
+        "name": "docker",
+        "count": 1
+      },
+      {
+        "name": "Docker Desktop",
+        "count": 5
+      },
+      {
+        "name": "docker-sandbox",
+        "count": 1
+      },
+      {
+        "name": "electron",
+        "count": 1
+      },
+      {
+        "name": "msedgewebview2",
+        "count": 24
+      },
+      {
+        "name": "node",
+        "count": 24
+      },
+      {
+        "name": "powershell",
+        "count": 1
+      },
+      {
+        "name": "pwsh",
+        "count": 9
+      }
+    ],
+    "node": "v22.17.0"
+  },
+  "runs": [
+    {
+      "bench": "switch-latency",
+      "config": {
+        "boards": 0,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 101.2,
+          "min": 74.1,
+          "max": 135.5
+        },
+        "arm": {
+          "median": 49.3,
+          "min": 31.7,
+          "max": 93
+        },
+        "load": {
+          "median": 34.3,
+          "min": 26.3,
+          "max": 48.6
+        },
+        "paint": {
+          "median": 11.1,
+          "min": 8.2,
+          "max": 16.5
+        },
+        "mainOpen": {
+          "median": 12.5,
+          "min": 10.8,
+          "max": 13.8
+        }
+      }
+    },
+    {
+      "bench": "switch-latency",
+      "config": {
+        "boards": 8,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 123.7,
+          "min": 96.8,
+          "max": 190
+        },
+        "arm": {
+          "median": 46.6,
+          "min": 37,
+          "max": 106
+        },
+        "load": {
+          "median": 38.6,
+          "min": 32.7,
+          "max": 51.9
+        },
+        "paint": {
+          "median": 35.2,
+          "min": 27.1,
+          "max": 40.5
+        },
+        "mainOpen": {
+          "median": 11.5,
+          "min": 10.6,
+          "max": 14.4
+        }
+      }
+    },
+    {
+      "bench": "switch-latency",
+      "config": {
+        "boards": 24,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 136.4,
+          "min": 130.4,
+          "max": 215.8
+        },
+        "arm": {
+          "median": 41,
+          "min": 37.6,
+          "max": 121.3
+        },
+        "load": {
+          "median": 48.7,
+          "min": 44,
+          "max": 50.3
+        },
+        "paint": {
+          "median": 46.5,
+          "min": 45.1,
+          "max": 48.9
+        },
+        "mainOpen": {
+          "median": 14.9,
+          "min": 12,
+          "max": 15.6
+        }
+      }
+    },
+    {
+      "bench": "terminal-load",
+      "config": {
+        "n": 1,
+        "fitZoom": 1
+      },
+      "data": [
+        {
+          "mode": "static",
+          "frames": 622,
+          "durationMs": 4005,
+          "fps": 155.3,
+          "p50": 6.1,
+          "p95": 6.5,
+          "p99": 12.3,
+          "max": 17.8,
+          "jank30": 0,
+          "jank50": 0
+        },
+        {
+          "mode": "pan",
+          "frames": 464,
+          "durationMs": 4005,
+          "fps": 115.8,
+          "p50": 6.1,
+          "p95": 12.3,
+          "p99": 18.3,
+          "max": 30.3,
+          "jank30": 0,
+          "jank50": 0
+        },
+        {
+          "mode": "zoom",
+          "frames": 467,
+          "durationMs": 4005,
+          "fps": 116.6,
+          "p50": 6.1,
+          "p95": 12.3,
+          "p99": 18.1,
+          "max": 24.3,
+          "jank30": 0,
+          "jank50": 0
+        }
+      ]
+    },
+    {
+      "bench": "terminal-load",
+      "config": {
+        "n": 4,
+        "fitZoom": 0.88
+      },
+      "data": [
+        {
+          "mode": "static",
+          "frames": 334,
+          "durationMs": 4013,
+          "fps": 83.2,
+          "p50": 12.1,
+          "p95": 18.3,
+          "p99": 24.3,
+          "max": 30.3,
+          "jank30": 0,
+          "jank50": 0
+        },
+        {
+          "mode": "pan",
+          "frames": 427,
+          "durationMs": 4003,
+          "fps": 106.7,
+          "p50": 6.2,
+          "p95": 18.1,
+          "p99": 18.4,
+          "max": 30.3,
+          "jank30": 0,
+          "jank50": 0
+        },
+        {
+          "mode": "zoom",
+          "frames": 493,
+          "durationMs": 4003,
+          "fps": 123.2,
+          "p50": 6.1,
+          "p95": 12.2,
+          "p99": 18.3,
+          "max": 30.3,
+          "jank30": 0,
+          "jank50": 0
+        }
+      ]
+    },
+    {
+      "bench": "terminal-load",
+      "config": {
+        "n": 8,
+        "fitZoom": 0.571
+      },
+      "data": [
+        {
+          "mode": "static",
+          "frames": 190,
+          "durationMs": 4009,
+          "fps": 47.4,
+          "p50": 18.3,
+          "p95": 30.4,
+          "p99": 48.6,
+          "max": 54.4,
+          "jank30": 4.7,
+          "jank50": 0.5
+        },
+        {
+          "mode": "pan",
+          "frames": 235,
+          "durationMs": 4004,
+          "fps": 58.7,
+          "p50": 18.1,
+          "p95": 30.2,
+          "p99": 48.4,
+          "max": 60.7,
+          "jank30": 2.6,
+          "jank50": 0.9
+        },
+        {
+          "mode": "zoom",
+          "frames": 545,
+          "durationMs": 4003,
+          "fps": 136.2,
+          "p50": 6.1,
+          "p95": 12.2,
+          "p99": 18.1,
+          "max": 24.3,
+          "jank30": 0,
+          "jank50": 0
+        }
+      ]
+    },
+    {
+      "bench": "terminal-liveness-gating",
+      "config": {
+        "n": 8,
+        "visible": 2,
+        "fitZoom": 1
+      },
+      "data": {
+        "phases": [
+          {
+            "mode": "static",
+            "frames": 476,
+            "durationMs": 4005,
+            "fps": 118.8,
+            "p50": 6.1,
+            "p95": 12.2,
+            "p99": 18.1,
+            "max": 36.2,
+            "jank30": 0.2,
+            "jank50": 0
+          },
+          {
+            "mode": "pan",
+            "frames": 537,
+            "durationMs": 4002,
+            "fps": 134.2,
+            "p50": 6.1,
+            "p95": 12.2,
+            "p99": 12.3,
+            "max": 24.2,
+            "jank30": 0,
+            "jank50": 0
+          },
+          {
+            "mode": "zoom",
+            "frames": 456,
+            "durationMs": 4001,
+            "fps": 114,
+            "p50": 6.1,
+            "p95": 12.3,
+            "p99": 18.3,
+            "max": 42.5,
+            "jank30": 0.2,
+            "jank50": 0
+          }
+        ],
+        "heldBytes": [931250, 185744, 139860, 773734, 184307, 194967]
+      }
+    },
+    {
+      "bench": "terminal-liveness-gating",
+      "config": {
+        "n": 8,
+        "visible": 1,
+        "fitZoom": 1
+      },
+      "data": {
+        "phases": [
+          {
+            "mode": "static",
+            "frames": 599,
+            "durationMs": 4004,
+            "fps": 149.6,
+            "p50": 6.1,
+            "p95": 12.1,
+            "p99": 12.3,
+            "max": 18.2,
+            "jank30": 0,
+            "jank50": 0
+          },
+          {
+            "mode": "pan",
+            "frames": 556,
+            "durationMs": 4008,
+            "fps": 138.7,
+            "p50": 6.1,
+            "p95": 12.2,
+            "p99": 12.3,
+            "max": 18.2,
+            "jank30": 0,
+            "jank50": 0
+          },
+          {
+            "mode": "zoom",
+            "frames": 549,
+            "durationMs": 4005,
+            "fps": 137.1,
+            "p50": 6.1,
+            "p95": 12.2,
+            "p99": 12.4,
+            "max": 18.2,
+            "jank30": 0,
+            "jank50": 0
+          }
+        ],
+        "heldBytes": [632320, 648825, 218714, 180468, 212662, 689825, 125573]
+      }
+    }
+  ]
+}

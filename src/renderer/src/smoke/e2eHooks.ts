@@ -37,6 +37,7 @@ import {
 import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { performProjectSwitch } from '../store/projectSwitch'
+import { useSwitchMetricsStore, resetSwitchMetrics } from '../store/switchMetrics'
 import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useToastStore } from '../store/toastStore'
 import { useAttentionStore } from '../store/attentionStore'
@@ -482,6 +483,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       host.closeGroupPicker()
       // And the tab right-click context menu (a fixed overlay) — same ephemeral-mode parity.
       host.closeGroupMenu()
+      // Drop any switch-latency record (audit R1). One app is reused across every spec file, so a
+      // measurement left by an earlier spec would otherwise be read as this spec's own switch —
+      // and a stale in-flight window would swallow the next switch's `start` mark.
+      resetSwitchMetrics()
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
       //    connector survives reset() and pollutes the next test. ALSO restore the
@@ -660,6 +665,13 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         error: p.error ?? null,
         boardCount: useCanvasStore.getState().boards.length
       }
+    },
+    lastSwitchMetrics() {
+      // Audit R1/R2: the machine-readable half of the switch instrumentation. `performProjectSwitch`
+      // returns as soon as the new project is applied, but `paintable` is marked two frames later
+      // (see `markPaintableAndEnd`), so a spec that reads this the instant the switch resolves can
+      // legitimately see the PREVIOUS record or null — poll for a fresh `at` rather than assuming.
+      return useSwitchMetricsStore.getState().last
     },
     async switchProjectFromDisk(dir, keep) {
       const outcome = await performProjectSwitch(() => window.api.project.open(dir), {

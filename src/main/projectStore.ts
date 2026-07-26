@@ -79,7 +79,18 @@ export const SCHEMA_VERSION = 22
 export const MIN_READER_VERSION = 21
 
 export type ProjectResult =
-  | { ok: true; dir: string; name: string; doc: unknown; session?: unknown }
+  | {
+      ok: true
+      dir: string
+      name: string
+      doc: unknown
+      session?: unknown
+      /** Audit R1: how long MAIN's `project:open` handler took, in ms — disk read, asset GC, memory
+       *  re-observe and summary rehydration. Optional and additive: only the `project:open` path
+       *  sets it, and the renderer folds it into the switch record purely as a diagnostic. Every
+       *  other producer of a ProjectResult omits it. */
+      openMs?: number
+    }
   | { ok: false; error: string }
 
 let currentDir: string | null = null

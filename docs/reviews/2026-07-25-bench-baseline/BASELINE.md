@@ -184,10 +184,9 @@ by run 3).
    were captured under unrecorded machine conditions that no longer hold.
 2. **The tables above become the reference** for this machine — but only as long as the load is
    comparable.
-3. **Any committed bench baseline must record machine state alongside the numbers** — core count, CPU
-   load at rest, refresh rate, notable running processes. A bench number without its conditions is what
-   produced this entire investigation. (This lands as a scope extension to the "bench + baseline"
-   recommendation of the 2026-07-25 project-switch & perf audit, whose write-up ships in a follow-up PR.)
+3. **R2 must record machine state with the numbers** (core count, CPU load at rest, refresh rate, notable
+   running processes). A bench number without its conditions is what produced this entire investigation.
+   This extends R2's scope in `docs/reviews/2026-07-25-project-switch-perf-audit/AUDIT.md`.
 4. **P-1 / P-2 / P-3 remain valid findings on their own merits.** They simply did not cause this delta.
 
 ## Reproducing

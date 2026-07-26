@@ -4,6 +4,7 @@
  * reject foreign senders (BUG-033 defense-in-depth), matching pty/preview.
  */
 import path from 'node:path'
+import { performance as nodePerformance } from 'node:perf_hooks'
 import { dialog } from 'electron'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
@@ -25,6 +26,12 @@ import {
   type ProjectResult
 } from './projectStore'
 import { scaffoldProjectMemory, createCanvasMemory, safeBoardId } from './canvasMemory'
+
+/** Monotonic clock for the R1 open timing. Wrapped so the unit tests, which stub large parts of the
+ *  electron/fs surface, cannot be broken by a missing `perf_hooks` in a constrained environment. */
+const perfNow = (): number =>
+  typeof nodePerformance?.now === 'function' ? nodePerformance.now() : Date.now()
+
 import {
   listRecents,
   touchRecent,
@@ -265,6 +272,12 @@ export function registerProjectHandlers(
   }
 
   ipcMain.handle('project:open', async (e, dir: string): Promise<ProjectResult> => {
+    // Audit R1: MAIN's own share of the switch. The renderer's `load` segment covers this plus the
+    // IPC round trip; this isolates the part that is actually filesystem work, which is what DL-1
+    // (readBak + gcAssets on the open path) and DL-2 (N × existsSync in rehydrateMissingSummaries)
+    // are about. Measured across the whole handler including the guards, since a rejected open that
+    // takes real time is worth seeing too.
+    const openStartedAt = perfNow()
     if (guard(e)) return { ok: false, error: 'forbidden' }
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     // BUG-006: constrain the target to a user-approved location (dialog pick / recents /
@@ -312,7 +325,10 @@ export function registerProjectHandlers(
         console.warn('[memoryEngine] reset/observe on open failed (non-fatal)', err)
       }
     }
-    return r
+    // Attach the duration only to a successful open — the failure branch is a bare `{ok:false}`
+    // union member and widening it would buy nothing (a rejected open has no switch to attribute
+    // time to).
+    return r.ok ? { ...r, openMs: perfNow() - openStartedAt } : r
   })
 
   // T5: renderer-reported deep-validation recovery. After `fromObject` throws on a
