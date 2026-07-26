@@ -1,0 +1,283 @@
+{
+  "capturedAt": "2026-07-26T17:08:46.167Z",
+  "appVersion": "0.34.2",
+  "commit": "539e2e6b92c2fb708c9067bac353a9bae147c7f2",
+  "complete": true,
+  "machine": {
+    "platform": "win32 10.0.26200",
+    "arch": "x64",
+    "cpuModel": "AMD Ryzen 7 5800X 8-Core Processor             ",
+    "logicalProcessors": 16,
+    "totalMemGb": 31.9,
+    "freeMemGb": 10.2,
+    "cpuLoadAtRestPct": 38.1,
+    "display": {
+      "Name": "NVIDIA GeForce RTX 4060",
+      "DriverVersion": "32.0.15.9636",
+      "CurrentRefreshRate": 164,
+      "CurrentHorizontalResolution": 2560,
+      "CurrentVerticalResolution": 1440
+    },
+    "contendingProcesses": [
+      {
+        "name": "chrome",
+        "count": 7
+      },
+      {
+        "name": "Code",
+        "count": 16
+      },
+      {
+        "name": "com.docker.backend",
+        "count": 2
+      },
+      {
+        "name": "com.docker.build",
+        "count": 1
+      },
+      {
+        "name": "Docker Desktop",
+        "count": 5
+      },
+      {
+        "name": "docker-sandbox",
+        "count": 1
+      },
+      {
+        "name": "msedgewebview2",
+        "count": 31
+      },
+      {
+        "name": "node",
+        "count": 52
+      },
+      {
+        "name": "powershell",
+        "count": 1
+      },
+      {
+        "name": "pwsh",
+        "count": 4
+      }
+    ],
+    "node": "v22.17.0"
+  },
+  "runs": [
+    {
+      "bench": "switch-latency-resources",
+      "config": {
+        "config": "terminals",
+        "terminalsSeeded": 3,
+        "previewsSeeded": 0,
+        "assetsSeeded": 0,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 136.2,
+          "min": 123.7,
+          "max": 205.8
+        },
+        "arm": {
+          "median": 35.6,
+          "min": 30.9,
+          "max": 99.7
+        },
+        "load": {
+          "median": 72,
+          "min": 66.6,
+          "max": 88.2
+        },
+        "paint": {
+          "median": 27.7,
+          "min": 20.8,
+          "max": 29.8
+        },
+        "mainOpen": {
+          "median": 9.8,
+          "min": 8.6,
+          "max": 10.6
+        },
+        "live": {
+          "terminals": {
+            "median": 3,
+            "min": 3,
+            "max": 3
+          },
+          "osrOpen": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "osrPainting": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      }
+    },
+    {
+      "bench": "switch-latency-resources",
+      "config": {
+        "config": "previews",
+        "terminalsSeeded": 0,
+        "previewsSeeded": 6,
+        "assetsSeeded": 0,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 206.5,
+          "min": 194.6,
+          "max": 233.9
+        },
+        "arm": {
+          "median": 71.6,
+          "min": 38.6,
+          "max": 103.5
+        },
+        "load": {
+          "median": 57.4,
+          "min": 55.1,
+          "max": 85.3
+        },
+        "paint": {
+          "median": 72.2,
+          "min": 70.7,
+          "max": 77.6
+        },
+        "mainOpen": {
+          "median": 13,
+          "min": 11.1,
+          "max": 19.3
+        },
+        "live": {
+          "terminals": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "osrOpen": {
+            "median": 8,
+            "min": 7,
+            "max": 8
+          },
+          "osrPainting": {
+            "median": 2,
+            "min": 2,
+            "max": 3
+          }
+        }
+      }
+    },
+    {
+      "bench": "switch-latency-resources",
+      "config": {
+        "config": "assets",
+        "terminalsSeeded": 0,
+        "previewsSeeded": 0,
+        "assetsSeeded": 44,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 157.1,
+          "min": 136.8,
+          "max": 220
+        },
+        "arm": {
+          "median": 60.2,
+          "min": 36,
+          "max": 112.7
+        },
+        "load": {
+          "median": 83.8,
+          "min": 74.6,
+          "max": 96.6
+        },
+        "paint": {
+          "median": 13.4,
+          "min": 4.2,
+          "max": 21.3
+        },
+        "mainOpen": {
+          "median": 65.4,
+          "min": 60.1,
+          "max": 78
+        },
+        "live": {
+          "terminals": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "osrOpen": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "osrPainting": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      }
+    },
+    {
+      "bench": "switch-latency-resources",
+      "config": {
+        "config": "full",
+        "terminalsSeeded": 3,
+        "previewsSeeded": 6,
+        "assetsSeeded": 44,
+        "switches": 5
+      },
+      "data": {
+        "total": {
+          "median": 321.2,
+          "min": 304.5,
+          "max": 410.9
+        },
+        "arm": {
+          "median": 86.6,
+          "min": 53.9,
+          "max": 213.1
+        },
+        "load": {
+          "median": 158.3,
+          "min": 123.7,
+          "max": 208.3
+        },
+        "paint": {
+          "median": 66.1,
+          "min": 57.2,
+          "max": 74.7
+        },
+        "mainOpen": {
+          "median": 74.1,
+          "min": 58.9,
+          "max": 92.3
+        },
+        "live": {
+          "terminals": {
+            "median": 3,
+            "min": 3,
+            "max": 3
+          },
+          "osrOpen": {
+            "median": 8,
+            "min": 6,
+            "max": 8
+          },
+          "osrPainting": {
+            "median": 4,
+            "min": 2,
+            "max": 4
+          }
+        }
+      }
+    }
+  ]
+}

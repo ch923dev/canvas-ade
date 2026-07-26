@@ -13,6 +13,7 @@
  */
 import { app, clipboard, ipcMain, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
+import { createHash } from 'crypto'
 import {
   appendFileSync,
   existsSync,
@@ -25,7 +26,7 @@ import {
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { captureOsrPng, debugCrashOsr, debugReplayOsrReadyInvalidations } from './previewOsrCapture'
-import { getOsrWindow } from './previewOsr'
+import { getOsrEntries, getOsrWindow } from './previewOsr'
 import {
   debugSeedOutput,
   debugSessionCounts,
@@ -38,7 +39,7 @@ import { isTrayResident, reopenFromTray } from './trayResidency'
 import { createLifecycleDeliver, type LifecycleBoard } from './lifecycleNotifications'
 import { DEFAULT_NOTIFICATIONS, type NotificationsConfig } from './notificationsConfig'
 import type { LifecycleEvent } from './agentLifecycle'
-import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
+import { assetsDirOf, createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
@@ -119,6 +120,25 @@ export interface E2EMain {
    * cascade then reads back. `name` must be a bare filename (no separator / `..`).
    */
   writeProjectFile(tmp: string, name: string, contents: string): void
+  /**
+   * Seed `count` blob files into `<tmp>/.canvas/assets/`, returning their `assets/<sha1>.<ext>`
+   * ids. `writeProjectFile` deliberately cannot reach a nested directory (it rejects separators),
+   * and the resource-bearing switch bench needs an asset-BEARING canvas on disk: DL-1's `gcAssets`
+   * sweep runs over this directory at every `project:open`, and the audit's own field survey found
+   * a real project carrying 44 files / 3.58 MB there.
+   *
+   * Names are the sha1 of the bytes, matching `writeAsset`, so every id is one a real doc could
+   * legitimately reference. Each blob is filled with an index-derived pattern so no two dedupe to
+   * the same hash.
+   */
+  seedProjectAssets(tmp: string, count: number, bytes: number): string[]
+  /**
+   * Census of the OPEN offscreen Browser windows, MAIN-side. The renderer's liveness manager caps
+   * how many previews may exist (`OSR_MAX_LIVE`) and paint-gates the off-screen/below-LOD ones, so
+   * "I seeded N Browser boards" says nothing about how many are actually live. A measurement taken
+   * against previews has to report what it really had, or the number means nothing.
+   */
+  osrCounts(): { open: number; painting: number; ready: number }
   /** Put a w×h opaque-red RGBA bitmap on the system clipboard (for the paste sliver). */
   putRedBitmapOnClipboard(w: number, h: number): void
   /** True if an absolute path exists on disk (assert a pasted blob landed). */
@@ -558,6 +578,31 @@ export function installE2EMain(
       }
       if (inCanvas) mkdirSync(join(tmp, '.canvas'), { recursive: true })
       writeFileSync(join(tmp, inCanvas ? '.canvas' : '.', leaf), contents, 'utf8')
+    },
+    seedProjectAssets(tmp, count, bytes) {
+      const dir = assetsDirOf(tmp)
+      mkdirSync(dir, { recursive: true })
+      const ids: string[] = []
+      for (let i = 0; i < count; i++) {
+        // Vary the fill per index so each blob hashes differently — identical bytes would
+        // collapse to one file and silently seed a 1-asset directory.
+        const buf = Buffer.alloc(bytes, (i % 251) + 1)
+        const sha1 = createHash('sha1').update(buf).digest('hex')
+        writeFileSync(join(dir, `${sha1}.png`), buf)
+        ids.push(`assets/${sha1}.png`)
+      }
+      return ids
+    },
+    osrCounts() {
+      let open = 0
+      let painting = 0
+      let ready = 0
+      for (const [, e] of getOsrEntries()) {
+        open++
+        if (e.painting) painting++
+        if (e.ready) ready++
+      }
+      return { open, painting, ready }
     },
     putRedBitmapOnClipboard(w, h) {
       const buf = Buffer.alloc(w * h * 4)

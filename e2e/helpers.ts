@@ -62,3 +62,30 @@ export async function openInspectorSection(page: Page, label: string): Promise<v
 export async function deselectInspector(page: Page): Promise<void> {
   await evalIn(page, `window.__canvasE2E.select(null)`)
 }
+
+/**
+ * Seed a terminal board and wait until its PTY actually EXISTS in MAIN. Returns `{ id, pid }`.
+ *
+ * Shared (lifted out of `projectBackgroundDialog.e2e.ts`) because everything that measures or
+ * asserts against a resource-BEARING canvas needs the same precondition: `seedBoard('terminal')`
+ * returns the instant the board is in the store, but `TerminalBoard`'s mount only *kicks off* an
+ * async `pty:spawn`. A switch measured (or a keep policy asserted) against a board whose PTY has
+ * not landed yet is measuring an empty canvas while claiming otherwise — `askOnSwitchInfo` would
+ * count zero terminals and the dialog would never even appear.
+ *
+ * Polls MAIN's own pid registry rather than any renderer-side flag: the pid is the only evidence
+ * that a real process exists.
+ */
+export async function seedLiveTerminal(
+  page: Page,
+  app: ElectronApplication,
+  timeoutMs = 20_000
+): Promise<{ id: string; pid: number }> {
+  const id = await seed(page, 'terminal')
+  await expect
+    .poll(async () => ((await mainCall<number | null>(app, 'terminalPid', id)) ?? 0) > 0, {
+      timeout: timeoutMs
+    })
+    .toBe(true)
+  return { id, pid: (await mainCall<number | null>(app, 'terminalPid', id)) as number }
+}

@@ -17,6 +17,12 @@ Expanse switches projects **in place inside one BrowserWindow**, keeping up to 3
 > [`../2026-07-25-bench/BASELINE.md`](../2026-07-25-bench/BASELINE.md). Point 1's text is left intact
 > below because it is what motivated Phase 0, and because R3 is not refuted — only unproven in the
 > configuration measured so far.
+>
+> **⚠️ FURTHER UPDATE 2026-07-27 — point 1 is now REFUTED, and R3 with it.** The re-measurement that
+> box asked for was taken with 3 live PTYs, the offscreen-window cap saturated (8 open / 4 painting)
+> and 44 assets on disk: **`arm` = 86.6 ms median, worst sample 213.1 ms.** Neither 400 ms budget
+> fires in any sample. Point 1 is off by roughly 9×, and R3 is dropped —
+> [`../2026-07-25-bench/BASELINE.md` §6](../2026-07-25-bench/BASELINE.md#6-resource-bearing-re-measurement--r3-refuted-r11-revived).
 
 Three things are nevertheless true:
 
@@ -27,7 +33,7 @@ Three things are nevertheless true:
 **Headline recommendation: instrument before optimizing.** Phase 0 (2–3 days) buys a switch-latency number and a committed bench baseline; every later phase is then falsifiable. Three findings below (P-6 full-document rewrite, DL-4 thumbnail base64) were **de-prioritized by measurement** in this audit — real docs on this machine max out at 24 KB / 5 boards, so the "full-document rewrite" that reads alarming in code is not currently hot. That is exactly the value Phase 0 buys repeatedly.
 
 **Effort to close everything below: ~19.5 dev-days across 5 phases** — of which **Phase 0 (3 d) is
-built**, leaving ~16.5 d, and **R3's 1.5 d is now TBD** pending a re-measurement. Phases are
+built** and **R3 (1.5 d) is refuted and dropped** (2026-07-27), leaving ~15 d. Phases are
 independently shippable and ordered so each one's result informs the next. Two open design questions
 were decided by the user on 2026-07-25 and are folded in — see §9.
 
@@ -212,7 +218,7 @@ Effort is dev-days for one engineer including tests and the mandatory dev check.
 |---|---|---|---|---|
 | **R1** | **Instrument the switch.** `performance.mark` at `switch:start` / `switch:paintable` / `switch:interactive` in the renderer; `perf_hooks` marks around `project:open` in main; a dev-visible readout in `DiagOverlay` plus an opt-in production toggle. Bucket against 0.1 s / 1 s / 10 s. | P-9 | **2 d** | Enables everything else |
 | **R2** | **Add `pnpm bench` + commit a baseline artifact.** Wire `playwright.bench.config.ts` into `package.json`; emit `docs/reviews/<date>-bench/BASELINE.json`; add a switch-latency bench beside the terminal one. | P-9 | **1 d** | Makes regressions detectable |
-| **R3** | ⚠️ **RE-SCOPE BEFORE STARTING (Phase 0 measured it).** Arm the transition overlay first: reorder step 7↔8 — fetch the *cached* thumb and arm immediately (target <100 ms), then capture the fresh thumb behind the overlay where its 400 ms is invisible. Drop `SNAPSHOT_FETCH_BUDGET_MS` accordingly. **The ~800 ms premise did not survive measurement — `arm` is 41–49 ms median on a board-only canvas.** Still the largest single segment (49 of 101 ms at 0 boards), so the direction holds at a smaller magnitude. Re-measure with live terminals + previews + assets before committing the effort. | PS-1 | **1.5 d → TBD** | Was "highest user-visible win"; now unproven |
+| **R3** | ❌ **REFUTED — DROP IT (re-measured 2026-07-27).** Was: arm the transition overlay first (reorder step 7↔8), on PS-1's claim of ~800 ms of dead air. That claim was arithmetic on two 400 ms *timeouts*, never a measurement. Phase 0 measured `arm` at 41–49 ms on a board-only canvas, which left R3 *unproven*; the resource-bearing re-measurement then took it with **3 live PTYs + the offscreen-window cap saturated (8 open, 4 painting) + 44 assets** and got **`arm` = 86.6 ms median, worst sample 213.1 ms**. Neither 400 ms budget fires in any sample; the premise is off ~9×, and `arm` stays under the NN/g 100 ms threshold even fully loaded. If the switch is re-attacked, `load` (34 → 158 ms under load) is the target, not `arm`. | PS-1 | **1.5 d → 0** | **Dropped.** Same death as R11's original premise |
 | **R4** | **Unify the open paths.** Make WelcomeScreen and boot call a shared `openProject()` primitive with explicit "no outgoing project" semantics; lock-guard boot. | PS-2 | **2 d** | Removes 3 divergent doors |
 | **R5** | ⭐ **PROMOTED (Phase 0 found supporting evidence the audit missed).** Memo boundary at `App`: move `useMcpPublish`'s subscription into a render-nothing leaf; `useShallow` for object picks; `memo()` the 12 root children. Verify with a React Profiler recording before/after. **`paint` — React mount plus first frame — is the steepest per-board cost in the switch (11 → 35 → 47 ms across 0 → 8 → 24 boards), the only Phase 2 item with a measured number behind it.** | P-1 | **1.5 d** | Now the best-evidenced perf item |
 | **R6** | **Observer-based liveness.** Replace per-frame `getBoundingClientRect()` in both liveness managers with `ResizeObserver` + cached viewport; extend the diff-skip to the read side. | P-2 | **1.5 d** | 2 forced layouts/frame |
@@ -301,8 +307,8 @@ rather than estimated, and both need re-scoping before their effort is committed
 
 | Item | Audit said | Phase 0 measured | Consequence |
 |---|---|---|---|
-| **R3** (1.5 d) — arm the overlay first, "highest user-visible win" | PS-1: ~800 ms of dead air before the overlay arms | `arm` **33–44 ms median** (tail to 121 ms) across 0/8/24 boards | The 800 ms was inferred by summing two 400 ms *timeouts* (`SNAPSHOT_FETCH_BUDGET_MS` + the thumb capture), never measured. Timeouts only bite when the underlying work is slow — which the measured configuration (planning boards, no terminals, no previews, no assets) never triggers. **R3 is not refuted, it is unproven.** Re-measure with live terminals + Browser boards + a real asset-bearing canvas before spending the 1.5 d. |
-| **R11** (1 d) — move GC + summary rehydration off the open path | DL-1 `readBak` + `gcAssets`, DL-2's N × `existsSync` | MAIN's whole `project:open` handler is **flat at ~10 ms** from 0 to 24 boards | Neither cost is hot at these sizes, and neither scales in the measured range. **De-prioritize R11** until a measurement at realistic asset counts (Appendix A found a 44-file / 3.58 MB assets dir) says otherwise. |
+| **R3** (1.5 d) — arm the overlay first, "highest user-visible win" | PS-1: ~800 ms of dead air before the overlay arms | `arm` **33–44 ms median** (tail to 121 ms) across 0/8/24 boards | The 800 ms was inferred by summing two 400 ms *timeouts* (`SNAPSHOT_FETCH_BUDGET_MS` + the thumb capture), never measured. Timeouts only bite when the underlying work is slow — which the measured configuration (planning boards, no terminals, no previews, no assets) never triggers. **R3 was not refuted, only unproven.** ❌ **Now refuted (2026-07-27):** re-measured with 3 live PTYs + 8 offscreen windows (4 painting) + 44 assets, `arm` = **86.6 ms median**, no budget ever firing. R3 dropped. |
+| **R11** (1 d) — move GC + summary rehydration off the open path | DL-1 `readBak` + `gcAssets`, DL-2's N × `existsSync` | MAIN's whole `project:open` handler is **flat at ~10 ms** from 0 to 24 boards | Neither cost is hot at these sizes, and neither scales in the measured range. **De-prioritize R11** until a measurement at realistic asset counts (Appendix A found a 44-file / 3.58 MB assets dir) says otherwise. 🔁 **That measurement landed 2026-07-27 and it moves:** `mainOpen` 9.8–13.0 ms → **65.4 ms** at 44 assets. R11 re-opens at a smaller scope — the seeded assets are unreferenced, so that is `gcAssets`’ worst path. |
 
 Phase 0 also produced a finding the audit did not anticipate: **`paint` is the steepest per-board
 cost** (15 → 29 → 48 ms across 0 → 8 → 24 boards), which is React mount plus first frame. That is
@@ -312,10 +318,11 @@ behind it.
 ### Remaining
 
 1. Approve or re-order the phase list. Phase 0 is done; nothing else has started.
-2. **Re-measure `arm` with live resources before committing to R3** (see the table above). A terminal- and preview-bearing switch is the configuration PS-1 actually described.
-3. Verify the ask-time exclusion against a real ask-on-switch dialog. It is unit-proven, but the metric is only meaningful if human think-time is genuinely excluded in the live pipeline.
+2. ✅ **DONE 2026-07-27 — `arm` re-measured with live resources; R3 is refuted and should be dropped.** 86.6 ms median fully loaded, no budget ever firing. Numbers, method and the two harness findings: [`../2026-07-25-bench/BASELINE.md` §6](../2026-07-25-bench/BASELINE.md#6-resource-bearing-re-measurement--r3-refuted-r11-revived) · artifact `RESOURCES.json` · bench `e2e/projectSwitchResources.bench.ts`.
+3. ✅ **DONE 2026-07-27 — ask-time exclusion verified against the real dialog.** `e2e/switchAskExclusion.e2e.ts` drives `switchProjectAsk` (the default pipeline, so `decideKeep` does not early-return on an explicit keep), holds the real modal open 1.5 s, and asserts `ask` covers the hold while `arm` and `total` exclude it. The branch had never executed outside a unit test — every other automated switch passes an explicit keep, which returns before `recordAskTime`. Proven non-vacuous by disabling `minusAsk` and watching the spec fail.
 4. Confirm the R8 gate condition covers every dev workflow that expects the fixture pages (`/static`, `/download`, `/json`) — `pnpm dev` must keep serving them.
-5. Decide whether the switch bench should sweep a terminal-bearing configuration too, given it currently sweeps planning boards only (a deliberate choice — see the bench's module doc).
+5. ✅ **DONE 2026-07-27 — settled as "yes, in a second bench".** `e2e/projectSwitchResources.bench.ts` sweeps terminals / previews / assets / combined; the committed 0/8/24 planning sweep is deliberately left byte-identical so the baseline stays comparable.
+6. 🔁 **NEW — re-open R11 at a smaller scope.** The same run found `mainOpen` is asset-sensitive after all (9.8–13.0 ms → **65.4 ms** at 44 assets), which is the measurement §3 of the baseline said R11 was pending. The seeded assets are unreferenced, so that figure is `gcAssets`' worst path; the next question is what the *referenced*-asset path costs, not a straight resurrection of the original 1 d estimate.
 
 ---
 

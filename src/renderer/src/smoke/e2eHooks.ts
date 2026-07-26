@@ -40,6 +40,7 @@ import { disposeLiveResources } from '../store/disposeLiveResources'
 import { performProjectSwitch } from '../store/projectSwitch'
 import { useSwitchMetricsStore, resetSwitchMetrics } from '../store/switchMetrics'
 import { clearSwitchTransition } from '../store/switchTransitionStore'
+import { useAskOnSwitchStore } from '../store/askOnSwitchStore'
 import { useToastStore } from '../store/toastStore'
 import { useAttentionStore } from '../store/attentionStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
@@ -571,6 +572,14 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // a full-viewport input-eating layer over the next spec (the cross-spec global-state
       // class). Drop it and its timers now.
       clearSwitchTransition()
+      // Phase 4: the ask-on-switch modal is the OTHER full-viewport switch surface, and a spec
+      // torn down while it is open leaks a centred dialog + its scrim over the next spec — the
+      // exact class PR #389 was written to close, and now reachable from more than one file since
+      // switchAskExclusion.e2e.ts also drives it. `settle` is used rather than a bare state wipe
+      // because the pending entry owns an unresolved promise that `performProjectSwitch` is
+      // awaiting: dropping it would strand that switch mid-pipeline holding the switch lock, so
+      // every later spec's switch would settle 'locked'. Cancel is the no-side-effect answer.
+      useAskOnSwitchStore.getState().settle({ action: 'cancel' })
       // Voice V1: a spec that started mic capture must not leak a live session (mic held,
       // frames still pumping) or its level/frames counters into the next spec. stop() is
       // idempotent in MAIN; the store is ephemeral session-state so a direct reset is safe.
