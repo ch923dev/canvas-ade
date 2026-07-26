@@ -89,6 +89,16 @@ export interface SwarmCanvasFacet {
       items?: Array<{ id: string; label: string; done: boolean }>
     }>
   }>
+  /**
+   * S2: tick / relabel ONE plan-strip item, through the SHARED human-confirmed planning-edit gate
+   * (design D6 — the human's own strip edits are direct; an agent-proposed one is confirmed and
+   * MAIN re-validates it). Passive content: no PTY, no nonce, nothing executes.
+   */
+  updatePlanningElement(
+    boardId: string,
+    elementId: string,
+    patch: { setItems?: Array<{ id: string; done?: boolean; label?: string }> }
+  ): Promise<void>
 }
 
 /** Run events the executor emits so the renderer's swarm board mirrors the run live. */
@@ -152,6 +162,12 @@ export interface SwarmRunCtx {
   writeInFlight: Set<string>
   /** Worker board id → its dispatched role id (await_worker reads it for provenance labels). */
   workerRoles: Map<string, string>
+  /**
+   * S2: the run's Planning board, written by `draw_plan` and read by `tick_plan_item`. A mutable
+   * holder rather than a ledger read, so the plan strip still works for a run with NO ledger
+   * (no project) — exactly the S1 degradation everything else in S2 keeps.
+   */
+  planBoard: { current: string | null }
   emit: (ev: SwarmRunEvent) => void
   /** The shared fail-closed confirm; `workerConfig` routes to the full worker-config dialog
    *  (the swarm spawn gate), `choices` to the P5 chooser. */
@@ -251,6 +267,23 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
       }
     },
     {
+      name: 'tick_plan_item',
+      description:
+        "Tick (or untick) ONE item on the run's plan strip — call it as work actually lands, so the plan the human sees stays true. The human confirms first.",
+      input_schema: {
+        type: 'object',
+        required: ['planItem'],
+        properties: {
+          planItem: {
+            type: 'integer',
+            minimum: 1,
+            description: 'The 1-based plan-strip position, as drawn by draw_plan'
+          },
+          done: { type: 'boolean', description: 'Defaults to true' }
+        }
+      }
+    },
+    {
       name: 'await_worker',
       description:
         "Wait for a worker to settle and return its structured result (status · summary · provenance). Use after dispatching; don't busy-poll.",
@@ -330,6 +363,7 @@ export async function executeSwarmTool(
           .filter((x): x is { title: string; status?: string } => x !== null)
         if (items.length === 0) return refuse('draw_plan needs at least one item')
         const r = await facet.visualizePlan({ items, suggested: 'checklist', title })
+        ctx.planBoard.current = r.id
         ctx.emit({ kind: 'planDrawn', planBoardId: r.id })
         await record(ctx.ledger && (() => ctx.ledger!.planDrawn(r.id)))
         return {
@@ -499,6 +533,37 @@ export async function executeSwarmTool(
             // failed" ×6 with the real sanitizer error invisible).
             summary: `dispatch failed — ${singleLinePrompt(msg).slice(0, 120)}`
           }
+        }
+      }
+      case 'tick_plan_item': {
+        if (ctx.paused()) return refuse('run paused — the human must resume first')
+        const planBoardId = ctx.planBoard.current
+        if (!planBoardId) return refuse('no plan drawn yet — call draw_plan first')
+        const raw = args.planItem
+        if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+          return refuse('tick_plan_item needs a 1-based planItem position')
+        }
+        const done = args.done !== false
+        // Resolve the position against the LIVE board, not a remembered list: the human may have
+        // added, renamed or removed rows since the plan was drawn, and MAIN mints no item ids.
+        const planning = await facet.boardPlanning(planBoardId)
+        const list = planning.elements.find((e) => e.kind === 'checklist' && Array.isArray(e.items))
+        const item = list?.items?.[Math.min(raw, MAX_ITEMS) - 1]
+        if (!list || !item) return refuse(`plan item ${raw} does not exist`)
+        if (item.done === done) {
+          // Not an error — a no-op tick must not burn a human confirm on nothing.
+          return {
+            content: JSON.stringify({ changed: false }),
+            summary: `item ${raw} already ${done ? 'done' : 'open'}`
+          }
+        }
+        // The planning-edit gate raises the human confirm and re-validates the patch itself.
+        await facet.updatePlanningElement(planBoardId, list.id, {
+          setItems: [{ id: item.id, done }]
+        })
+        return {
+          content: JSON.stringify({ changed: true, done }),
+          summary: `${done ? 'ticked' : 'unticked'} plan item ${raw}`
         }
       }
       case 'await_worker': {

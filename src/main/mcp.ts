@@ -191,6 +191,17 @@ export interface RunningMcp {
    */
   boardPlanning(boardId: string): Promise<BoardPlanning>
   /**
+   * S2 (editable plan strip): tick / relabel ONE checklist item on a Planning board through the
+   * SAME human-confirmed planning-edit gate the `update_planning_element` MCP tool uses — the
+   * swarm orchestrator's half of the plan strip (design D6: the human's own edits are direct, an
+   * agent-proposed one is confirmed and MAIN re-validates it). In-process seam only.
+   */
+  updatePlanningElement(
+    boardId: string,
+    elementId: string,
+    patch: { setItems?: Array<{ id: string; done?: boolean; label?: string }> }
+  ): Promise<void>
+  /**
    * FIND-015: revoke every live `connected`-tier token (across all boards). Called on orchestration
    * consent REVOKE so a bearer left on disk in a CLI config is dead immediately — not only after
    * the next app restart. Per-board accretion is separately bounded by rotate-on-respawn in
@@ -347,6 +358,8 @@ export async function startMcpServer(
       tidyCanvas: (input) => orchestrator.tidyCanvas(input),
       boardCards: (boardId) => orchestrator.boardCards(boardId),
       boardPlanning: (boardId) => orchestrator.boardPlanning(boardId),
+      updatePlanningElement: (boardId, elementId, patch) =>
+        orchestrator.updatePlanningElement(boardId, elementId, patch),
       // Consent revoke kills EVERY orchestration bearer this host minted for terminals — the
       // connected tokens AND the lead token/designation (a lead bearer on disk must die with the
       // consent it rode in on).

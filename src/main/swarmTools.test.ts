@@ -28,6 +28,7 @@ const facetStub = (over: Partial<SwarmCanvasFacet> = {}): SwarmCanvasFacet => ({
   awaitSettled: vi.fn(async () => ({ status: 'done', summary: 'ok', synthesized: true })),
   visualizePlan: vi.fn(async () => ({ id: 'plan-1' })),
   boardPlanning: vi.fn(async () => ({ elements: [] })),
+  updatePlanningElement: vi.fn(async () => {}),
   ...over
 })
 
@@ -37,6 +38,7 @@ const ctxStub = (over: Partial<SwarmRunCtx> = {}): SwarmRunCtx & { events: Swarm
     paused: () => false,
     writeInFlight: new Set<string>(),
     workerRoles: new Map<string, string>(),
+    planBoard: { current: null },
     emit: (ev) => events.push(ev),
     confirm: vi.fn(async () => ({ approved: true })),
     events,
@@ -88,6 +90,72 @@ describe('executeSwarmTool', () => {
       expect.objectContaining({ suggested: 'checklist', title: 'Run' })
     )
     expect(ctx.events).toEqual([{ kind: 'planDrawn', planBoardId: 'plan-1' }])
+  })
+
+  it('draw_plan records the plan board so tick_plan_item can find it later', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    await executeSwarmTool('draw_plan', { title: 'Run', items: [{ title: 'recon' }] }, facet, ctx)
+    expect(ctx.planBoard.current).toBe('plan-1')
+  })
+
+  it('tick_plan_item resolves the position against the LIVE board and pays the edit gate', async () => {
+    const facet = facetStub({
+      boardPlanning: vi.fn(async () => ({
+        elements: [
+          {
+            id: 'cl-1',
+            kind: 'checklist',
+            items: [
+              { id: 'i1', label: 'recon', done: false },
+              { id: 'i2', label: 'migrate', done: false }
+            ]
+          }
+        ]
+      }))
+    })
+    const ctx = ctxStub({ planBoard: { current: 'plan-1' } })
+    const out = await executeSwarmTool('tick_plan_item', { planItem: 2 }, facet, ctx)
+    expect(out.isError).toBeUndefined()
+    // The REAL item id, read back from the board — MAIN never mints plan-item ids.
+    expect(facet.updatePlanningElement).toHaveBeenCalledWith('plan-1', 'cl-1', {
+      setItems: [{ id: 'i2', done: true }]
+    })
+  })
+
+  it('tick_plan_item refuses with no plan, a bad position, or a position past the end', async () => {
+    const facet = facetStub({
+      boardPlanning: vi.fn(async () => ({
+        elements: [
+          { id: 'cl-1', kind: 'checklist', items: [{ id: 'i1', label: 'a', done: false }] }
+        ]
+      }))
+    })
+    const noPlan = await executeSwarmTool('tick_plan_item', { planItem: 1 }, facet, ctxStub())
+    expect(noPlan.isError).toBe(true)
+    expect(noPlan.content).toContain('draw_plan')
+
+    const ctx = ctxStub({ planBoard: { current: 'plan-1' } })
+    for (const bad of [0, -1, 2.5, 'x']) {
+      const out = await executeSwarmTool('tick_plan_item', { planItem: bad }, facet, ctx)
+      expect(out.isError).toBe(true)
+    }
+    const past = await executeSwarmTool('tick_plan_item', { planItem: 9 }, facet, ctx)
+    expect(past.isError).toBe(true)
+    expect(facet.updatePlanningElement).not.toHaveBeenCalled()
+  })
+
+  it('tick_plan_item is a no-op (no confirm burned) when the item is already in that state', async () => {
+    const facet = facetStub({
+      boardPlanning: vi.fn(async () => ({
+        elements: [{ id: 'cl-1', kind: 'checklist', items: [{ id: 'i1', label: 'a', done: true }] }]
+      }))
+    })
+    const ctx = ctxStub({ planBoard: { current: 'plan-1' } })
+    const out = await executeSwarmTool('tick_plan_item', { planItem: 1 }, facet, ctx)
+    expect(out.isError).toBeUndefined()
+    expect(out.content).toContain('"changed":false')
+    expect(facet.updatePlanningElement).not.toHaveBeenCalled()
   })
 
   it('spawn_worker pays the human confirm; a denial spawns nothing', async () => {
@@ -367,7 +435,8 @@ describe('executeSwarmTool', () => {
       [
         'dispatch_task',
         { workerId: 'w', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
-      ]
+      ],
+      ['tick_plan_item', { planItem: 1 }]
     ] as const) {
       const out = await executeSwarmTool(name, input, facet, ctx)
       expect(out.isError).toBe(true)

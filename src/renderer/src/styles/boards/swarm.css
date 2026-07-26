@@ -137,6 +137,89 @@
   color: var(--text-faint);
 }
 
+/* ── S2: the chip becomes editable (design §3, D2 always-live) ──
+   Four spatially distinct hit targets instead of a mode: checkbox · label · owner dot · ⋯. */
+.sw-task-box {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ok);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.sw-task-box:hover {
+  border-color: var(--accent);
+}
+.sw-task.done .sw-task-box {
+  border-color: var(--ok);
+}
+.sw-task-lbl {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+/* The owner dot: a live worker holds this item. Amber = that worker has stalled. */
+.sw-task-own {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.sw-task-own.stalled {
+  background: var(--warn);
+}
+/* The rename handle only materialises on hover/focus, so the resting strip stays as quiet as S1's. */
+.sw-task-edit {
+  border: 0;
+  background: none;
+  padding: 0 1px;
+  font: inherit;
+  line-height: 1;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+}
+.sw-task:hover .sw-task-edit,
+.sw-task-edit:focus-visible {
+  opacity: 1;
+}
+.sw-task-edit:hover {
+  color: var(--text-2);
+}
+/* Editing is IN PLACE — same metrics, no popover, no layout jump. */
+.sw-task.editing {
+  border-color: var(--border-strong);
+}
+.sw-task-input {
+  min-width: 90px;
+  border: 0;
+  border-bottom: 1px solid var(--accent);
+  border-radius: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-1);
+  outline: none;
+}
+.sw-task-add {
+  color: var(--text-faint);
+}
+.sw-task-add:hover {
+  color: var(--text-2);
+}
+
 /* ── body grid: chat spine | worker canvas / needs-you ── */
 .sw-body {
   flex: 1;

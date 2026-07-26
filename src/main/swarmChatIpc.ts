@@ -83,6 +83,8 @@ interface SwarmSession {
   paused: boolean
   writeInFlight: Set<string>
   workerRoles: Map<string, string>
+  /** S2: the run's Planning board (draw_plan writes it, tick_plan_item reads it). */
+  planBoard: { current: string | null }
   /** S2: this run's durable ledger view. Present even with no project — its methods no-op then. */
   ledger: SwarmLedgerSession
 }
@@ -157,6 +159,7 @@ export function registerSwarmHandlers(
         paused: false,
         writeInFlight: new Set(),
         workerRoles: new Map(),
+        planBoard: { current: null },
         ledger: createSwarmLedgerSession(runId, { store: ledgerStore })
       }
       sessions.set(runId, s)
@@ -355,6 +358,7 @@ export function registerSwarmHandlers(
       paused: () => session.paused,
       writeInFlight: session.writeInFlight,
       workerRoles: session.workerRoles,
+      planBoard: session.planBoard,
       emit: (ev: SwarmRunEvent) =>
         push('swarm:runEvent', { runId, ev } satisfies SwarmRunEventPush),
       confirm,

@@ -30,6 +30,9 @@ import { SwarmPlanStrip } from './swarm/SwarmPlanStrip'
 import { SwarmTriage } from './swarm/SwarmTriage'
 import type { SwarmTriageAction, SwarmTriageRow } from '../../../../shared/swarmLedgerTypes'
 
+/** Reference-stable empty owner map — a fresh `{}` per render would re-render the strip forever. */
+const EMPTY_OWNERS: Record<string, 'working' | 'stalled'> = {}
+
 /** Focus/select a board on the canvas (the notifications focus intent — camera-fit + select). */
 function jumpToBoard(boardId: string): void {
   useCanvasStore.setState({ pendingFocusId: boardId })
@@ -208,7 +211,11 @@ export function SwarmBoard({
               {run.paused ? 'Resume' : 'Pause all'}
             </button>
           </div>
-          <SwarmPlanStrip planBoardId={run.planBoardId} onOpen={jumpToBoard} />
+          <SwarmPlanStrip
+            planBoardId={run.planBoardId}
+            owners={run.ledger?.planOwners ?? EMPTY_OWNERS}
+            onOpen={jumpToBoard}
+          />
         </div>
 
         <div className="sw-body">

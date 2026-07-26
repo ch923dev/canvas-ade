@@ -222,6 +222,25 @@ export function sortTriage(rows: SwarmTriageRow[]): SwarmTriageRow[] {
     .map((e) => e.row)
 }
 
+/**
+ * Which plan items a live worker currently holds, and how that worker is doing. A settled or
+ * unassigned task contributes nothing — an item with no dot is simply nobody's right now.
+ */
+export function planOwners(
+  ledger: SwarmRunLedger,
+  now: number,
+  thresholdMs: number = SWARM_STALL_THRESHOLD_MS
+): Record<string, 'working' | 'stalled'> {
+  const out: Record<string, 'working' | 'stalled'> = {}
+  for (const item of ledger.planItems) {
+    if (!item.ownerTaskId) continue
+    const task = ledger.tasks.find((t) => t.taskId === item.ownerTaskId)
+    if (!task || task.state !== 'in_progress' || !task.assignment) continue
+    out[item.id] = isStalled(task, now, thresholdMs) ? 'stalled' : 'working'
+  }
+  return out
+}
+
 /** The whole renderer-facing projection. `restored` is true only on the post-rehydrate push. */
 export function buildSnapshot(
   ledger: SwarmRunLedger,
@@ -239,6 +258,7 @@ export function buildSnapshot(
       workers: workers.length,
       results: ledger.tasks.filter((t) => t.result !== undefined).length
     },
+    planOwners: planOwners(ledger, opts.now, thresholdMs),
     workers,
     triage: triageRows(ledger, opts.now, thresholdMs)
   }

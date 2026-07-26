@@ -243,6 +243,12 @@ export interface SwarmLedgerSnapshot {
   createdAt: number
   planBoardId: string | null
   counts: { workers: number; results: number }
+  /**
+   * Plan-item id → the state of the worker holding it, for the strip's owner dot. Only OWNERSHIP
+   * lives here: the chip's label and `done` are read from the live Planning board (the canvas is
+   * the plan's source of truth), so the ledger never becomes a second, drifting copy of the plan.
+   */
+  planOwners: Record<string, 'working' | 'stalled'>
   workers: SwarmWorkerLedgerState[]
   /** Already risk-ordered by `SWARM_BLOCKED_TAGS` order; the renderer does not re-sort. */
   triage: SwarmTriageRow[]
