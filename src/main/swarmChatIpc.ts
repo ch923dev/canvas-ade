@@ -46,6 +46,12 @@ import {
 import { createSwarmLedgerStore, type SwarmLedgerStore } from './swarmLedger'
 import { SWARM_TRIAGE_ACTIONS } from '../shared/swarmLedgerTypes'
 import { createSwarmLedgerSession, type SwarmLedgerSession } from './swarmLedgerSession'
+import {
+  createSwarmWatch,
+  withRunNotices,
+  type SwarmWatch,
+  type SwarmWatchDeps
+} from './swarmWatch'
 
 const MAX_TURN_TEXT_LEN = 8000
 const MAX_HISTORY_TURNS = 200
@@ -97,13 +103,35 @@ export interface SwarmIpcDeps {
   getProjectDir?: () => string | null
   /** S2: ledger-store seam (tests inject an in-memory one). Default: the real project sidecar. */
   ledgerStore?: SwarmLedgerStore
+  /**
+   * S2 failure model: the board-status stream + the sync salvage read + PTY silence, injected so
+   * `swarmWatch` stays unit-testable and this module keeps its "no MAIN singletons" shape. ABSENT
+   * ⇒ no watcher at all: runs still record and restore, they just don't detect a death or a stall
+   * (the honest degradation for a test/smoke boot that has no board registry).
+   */
+  watch?: Pick<SwarmWatchDeps, 'subscribeStatus' | 'readResult' | 'activityStaleMs'>
+}
+
+/** What the boot wiring keeps a handle on after registration (the quit-path drain). */
+export interface SwarmHandlers {
+  /**
+   * 🔒 Failure case B — call from the quit chain. Synchronous: salvages every un-settled worker's
+   * result into its ledger and marks each live run `interrupted`. Never kills a worker board (D5).
+   *
+   * NON-THROWING BY CONTRACT: the caller is `shutdown()`, where an exception would abort the PTY
+   * drain behind it and orphan an agent process tree. A ledger we cannot write is a lost ledger,
+   * never a lost teardown.
+   */
+  drainRuns(): void
+  /** Stop the watcher (teardown / test cleanup). */
+  dispose(): void
 }
 
 export function registerSwarmHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   deps: SwarmIpcDeps = {}
-): void {
+): SwarmHandlers {
   const getUserData = deps.getUserData ?? ((): string => '')
   const keyStore: KeyStore | undefined = deps.encryptor
     ? createKeyStore(getUserData(), deps.encryptor)
@@ -154,9 +182,24 @@ export function registerSwarmHandlers(
    * nothing — the renderer keeps rendering S1's ephemeral mirror, which is the honest degradation.
    */
   const pushLedger = (runId: string, opts?: { restored?: boolean }): void => {
-    const snapshot = sessions.get(runId)?.ledger.snapshot(opts)
+    const snapshot = sessionFor(runId).ledger.snapshot(opts)
     if (snapshot) push('swarm:runEvent', { runId, ev: { kind: 'ledger', snapshot } })
   }
+
+  /**
+   * S2 failure model. The watcher lives here because it needs the ledger store AND the push — but
+   * it is deliberately dependency-injected (status stream / salvage read / PTY silence), so this
+   * module still imports no MAIN singleton and the unit tests drive it with plain functions.
+   */
+  const watch: SwarmWatch | null = deps.watch
+    ? createSwarmWatch({
+        store: ledgerStore,
+        ...deps.watch,
+        narrate: (runId, n) => push('swarm:runEvent', { runId, ev: { kind: 'narrate', ...n } }),
+        changed: (runId) => pushLedger(runId)
+      })
+    : null
+  watch?.start()
 
   const sharedConfig = (): LlmConfig => readLlmConfig(getUserData())
   const providerKey = (cfg: LlmConfig): string | undefined =>
@@ -185,6 +228,10 @@ export function registerSwarmHandlers(
       // board should not litter `.canvas/memory/` with an empty ledger. The opening prompt is the
       // run's title; `ensure` only sets it on create, so later turns never rename the run.
       session.ledger.ensure(text)
+      // S2: fold in whatever happened BETWEEN turns (a worker died, a worker stalled). Without
+      // this the brain would happily `await_worker` a board the watcher already buried. It rides
+      // the user turn as a prefix — a second assistant turn would break provider alternation.
+      const prompt = withRunNotices(text, watch?.takeNotices(runId) ?? [])
 
       const abort = new AbortController()
       session.abort = abort
@@ -204,7 +251,7 @@ export function registerSwarmHandlers(
         ]
         let system = systemBlocks(session.paused)
         const tools = toolsAttached ? buildSwarmToolDefs() : undefined
-        const messages: JarvisMessage[] = composeMessages(session.history, text)
+        const messages: JarvisMessage[] = composeMessages(session.history, prompt)
         const key = providerKey(shared) ?? ''
         const requestCfg: LlmConfig = isJarvisMockEnabled(streamDeps.env)
           ? { ...shared, provider: 'anthropic' }
@@ -275,7 +322,7 @@ export function registerSwarmHandlers(
         if (session.abort === abort) session.abort = null
         const spoken = spokenParts.join(' ')
         if (spoken.trim().length > 0) {
-          session.history.push({ role: 'user', text })
+          session.history.push({ role: 'user', text: prompt })
           session.history.push({
             role: 'assistant',
             text: cancelled ? `${spoken} — (interrupted)` : spoken
@@ -421,21 +468,18 @@ export function registerSwarmHandlers(
    * PTY: a `reassign` comes back as a PROMPT the renderer sends as the next orchestrator turn, so
    * the actual re-dispatch still pays the normal per-write confirm gate and gets narrated in chat.
    */
-  ipcMain.handle(
-    'swarm:triageAction',
-    (e, payload: unknown): { ok: boolean; prompt?: string } => {
-      if (guard(e)) return { ok: false }
-      const p = payload as { runId?: unknown; taskId?: unknown; action?: unknown } | null
-      const runId = runIdOf(payload)
-      const taskId = typeof p?.taskId === 'string' ? p.taskId : ''
-      // Closed vocabulary — a forged/unknown action name can never widen into an unhandled path.
-      const action = SWARM_TRIAGE_ACTIONS.find((a) => a === p?.action)
-      if (!runId || !taskId || !action) return { ok: false }
-      const outcome = sessionFor(runId).ledger.applyAction(taskId, action)
-      if (outcome.ok) pushLedger(runId)
-      return outcome
-    }
-  )
+  ipcMain.handle('swarm:triageAction', (e, payload: unknown): { ok: boolean; prompt?: string } => {
+    if (guard(e)) return { ok: false }
+    const p = payload as { runId?: unknown; taskId?: unknown; action?: unknown } | null
+    const runId = runIdOf(payload)
+    const taskId = typeof p?.taskId === 'string' ? p.taskId : ''
+    // Closed vocabulary — a forged/unknown action name can never widen into an unhandled path.
+    const action = SWARM_TRIAGE_ACTIONS.find((a) => a === p?.action)
+    if (!runId || !taskId || !action) return { ok: false }
+    const outcome = sessionFor(runId).ledger.applyAction(taskId, action)
+    if (outcome.ok) pushLedger(runId)
+    return outcome
+  })
 
   /** S2: the swarm board was deleted — the durable run goes with it (no orphan sidecars). */
   ipcMain.handle('swarm:destroyRun', (e, payload: unknown): { ok: boolean } => {
@@ -446,4 +490,15 @@ export function registerSwarmHandlers(
     sessions.delete(runId)
     return { ok: true }
   })
+
+  return {
+    drainRuns: () => {
+      try {
+        watch?.drain()
+      } catch (err) {
+        console.warn('[swarm] run drain failed on quit (non-fatal — teardown continues)', err)
+      }
+    },
+    dispose: () => watch?.stop()
+  }
 }

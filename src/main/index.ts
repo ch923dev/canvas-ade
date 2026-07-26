@@ -163,6 +163,9 @@ let stopRecapWatch: (() => void) | null = null
 let recapWatcher: RecapWatcher | null = null
 // File-tree epic (S2): the chokidar tree watcher; re-pointed on project open, closed on quit.
 let fileWatcher: FileWatcher | null = null
+// Orchestration S2: the swarm IPC handle — kept only so shutdown() can run the failure-case-B
+// run drain (salvage + mark `interrupted`) before the PTY trees go.
+let swarmHandlers: ReturnType<typeof wireLlmJarvis> | null = null
 // PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
 // when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
 let resultSynth: ResultSynthesizer | null = null
@@ -863,7 +866,8 @@ app.whenReady().then(async () => {
     thumbsDir: () => join(app.getPath('userData'), 'project-thumbs')
   })
   // LLM key store + Jarvis brain (wiring in jarvisBoot.ts — max-lines ratchet).
-  wireLlmJarvis(ipcMain, () => mainWindow, { llmDataDir, llmEncryptor, getCurrentDir, ensureMcp })
+  const jarvisDeps = { llmDataDir, llmEncryptor, getCurrentDir, ensureMcp }
+  swarmHandlers = wireLlmJarvis(ipcMain, () => mainWindow, jarvisDeps)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
   // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated
   // llmDataDir; the orchestrator reads the same file via the `cap` getter passed to startMcpServer.
@@ -1132,6 +1136,10 @@ app.whenReady().then(async () => {
  * hooks fire it best-effort without awaiting (an uncaughtException handler can't).
  */
 function shutdown(): Promise<void> {
+  // Orchestration S2 · failure case B: bank every un-settled worker's result into its run ledger
+  // and mark the run `interrupted` — BEFORE the PTY drain below, while the boards still exist.
+  // Sync + non-throwing by contract (see SwarmHandlers.drainRuns); never closes a worker (D5).
+  swarmHandlers?.drainRuns()
   // Phase 5 (bg sessions): background parks' post-park output lives ONLY in their rings
   // (the renderer flush serializes just the ACTIVE project's mounted xterms) — append each
   // tail to its owning project's sidecar BEFORE the rings die in the PTY drain. Sync +

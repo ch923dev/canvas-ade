@@ -42,6 +42,8 @@ export interface SwarmRunEventPayload {
      * dependency-free and type-only here, so MAIN, preload and the renderer cannot drift.
      */
     | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
+    /** S2: a between-turns run event narrated in the orchestrator's voice (worker died/stalled). */
+    | { kind: 'narrate'; boardId?: string; status?: string; text: string }
 }
 
 export const swarmApi = {

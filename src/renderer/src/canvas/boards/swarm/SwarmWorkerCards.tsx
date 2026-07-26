@@ -94,7 +94,12 @@ export function SwarmWorkerCards({
   const cards = run.workerIds
     .map((id) => {
       const led = byBoard.get(id)
-      return { id, state: stateOf(id, attention, running, led), meta: run.workerMeta[id] ?? {}, led }
+      return {
+        id,
+        state: stateOf(id, attention, running, led),
+        meta: run.workerMeta[id] ?? {},
+        led
+      }
     })
     .sort((a, b) => ORDER[a.state] - ORDER[b.state])
   const counts = cards.reduce(
@@ -137,7 +142,11 @@ export function SwarmWorkerCards({
               <span className={`sw-card-t${state === 'stalled' ? ' stale' : ''}`}>
                 {/* A lost worker has no live clock — an incrementing timer would imply it is
                     still going. Show an em dash instead. */}
-                {state === 'lost' ? '—' : meta.joinedAt && now > 0 ? fmtMins(now - meta.joinedAt) : ''}
+                {state === 'lost'
+                  ? '—'
+                  : meta.joinedAt && now > 0
+                    ? fmtMins(now - meta.joinedAt)
+                    : ''}
               </span>
             </span>
             <span className="sw-activity">{activityLine(state, meta)}</span>

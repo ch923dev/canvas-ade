@@ -28,6 +28,17 @@ const ACT_LINE: Record<string, (summary: string) => string | null> = {
   ok: () => null
 }
 
+/**
+ * A worker's display name for a narration: the LIVE canvas title first (the human may have renamed
+ * the board), then the title it was spawned with — which is the only one left once the board has
+ * been deleted, i.e. exactly the "a worker died" case. Falls back to '' so the sentence still
+ * reads, rather than printing a raw uuid at the human.
+ */
+function workerTitle(runId: string, boardId: string): string {
+  const live = useCanvasStore.getState().boards.find((b) => b.id === boardId)?.title
+  return live ?? useSwarmStore.getState().runs.get(runId)?.workerMeta[boardId]?.title ?? ''
+}
+
 export function useSwarmEvents(): void {
   useEffect(() => {
     const api = window.api?.swarm
@@ -79,7 +90,11 @@ export function useSwarmEvents(): void {
     const offRun = api.onRunEvent(({ runId, ev }) => {
       const store = useSwarmStore.getState()
       if (ev.kind === 'workerSpawned') {
-        store.addWorker(runId, ev.workerId, { role: ev.role, activity: 'Spawning…' })
+        store.addWorker(runId, ev.workerId, {
+          role: ev.role,
+          title: ev.title,
+          activity: 'Spawning…'
+        })
       } else if (ev.kind === 'planDrawn') {
         store.setPlanBoard(runId, ev.planBoardId)
       } else if (ev.kind === 'activity') {
@@ -89,6 +104,12 @@ export function useSwarmEvents(): void {
       } else if (ev.kind === 'ledger') {
         // S2: MAIN's durable projection — worker states, triage rows, plan board, restored flag.
         store.setLedger(runId, ev.snapshot)
+      } else if (ev.kind === 'narrate') {
+        // S2: a between-turns event (worker died / stalled). MAIN sends the sentence TAIL and a
+        // board id; the TITLE is resolved here, because the renderer is the only title authority.
+        const who = ev.boardId ? workerTitle(runId, ev.boardId) : ''
+        if (ev.status) store.addStatusLine(runId, who ? `${who} · ${ev.status}` : ev.status)
+        store.addOrchMessage(runId, who ? `${who} ${ev.text}` : ev.text)
       }
     })
 

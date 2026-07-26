@@ -19,8 +19,11 @@ import type { BrowserWindow, IpcMain } from 'electron'
 import type { RunningMcp } from './mcp'
 import { registerJarvisHandlers, type JarvisIpcDeps } from './jarvisIpc'
 import { registerLlmHandlers } from './llmIpc'
-import { registerSwarmHandlers } from './swarmChatIpc'
+import { registerSwarmHandlers, type SwarmHandlers } from './swarmChatIpc'
 import { requestConfirm } from './mcpConfirm'
+import { subscribeBoardStatus } from './boardRegistry'
+import { isResultSynthesized, readBoardResult } from './boardResults'
+import { getTerminalActivityStaleMs } from './pty'
 
 interface LlmJarvisBootDeps {
   llmDataDir: string
@@ -31,11 +34,15 @@ interface LlmJarvisBootDeps {
   ensureMcp: () => Promise<RunningMcp | null | undefined>
 }
 
+/**
+ * Wire the LLM/Jarvis/swarm IPC surfaces. Returns the swarm handle so index.ts can run the S2
+ * failure-case-B drain from its quit chain (the ONE thing registration can't own itself).
+ */
 export function wireLlmJarvis(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   deps: LlmJarvisBootDeps
-): void {
+): SwarmHandlers {
   registerLlmHandlers(ipcMain, getWin, deps.llmDataDir, undefined, deps.llmEncryptor)
   // Jarvis J3: the voice-brain session. Key = the llmKeyStore `anthropic` slot (same
   // encryptor as the LLM handlers above).
@@ -68,7 +75,7 @@ export function wireLlmJarvis(
   // sessions on the SAME shared Context·LLM config/key/budget plumbing (Q9 default). RunningMcp
   // is the tool facet (structural superset of SwarmCanvasFacet); the same fail-closed
   // requestConfirm gates spawn_worker (dispatch confirms inside the orchestrator gate).
-  registerSwarmHandlers(ipcMain, getWin, {
+  return registerSwarmHandlers(ipcMain, getWin, {
     getUserData: () => deps.llmDataDir,
     encryptor: deps.llmEncryptor,
     getFacet: async () => {
@@ -82,6 +89,20 @@ export function wireLlmJarvis(
     // Orchestration S2: the run ledger is a PROJECT sidecar (`<project>/.canvas/memory/`, design
     // D1) — the same `getCurrentDir` Jarvis keys its history by. No project ⇒ no ledger ⇒ the run
     // is ephemeral exactly as in S1.
-    getProjectDir: deps.getCurrentDir
+    getProjectDir: deps.getCurrentDir,
+    // Orchestration S2 failure model. All three signals are MAIN singletons, bound HERE (the boot
+    // wiring) rather than imported inside swarmChatIpc, so the watcher stays injectable:
+    //   - subscribeBoardStatus → a worker board going 'gone'/'failed' IS the death signal;
+    //   - readBoardResult      → the SYNC salvage read (usable inside the quit chain, unlike the
+    //                            async MCP facet, which may already be closed by then);
+    //   - activityStaleMs      → real PTY silence, folded into the ledger by the stall sweep.
+    watch: {
+      subscribeStatus: (listener) => subscribeBoardStatus(listener),
+      readResult: (boardId) => ({
+        ...readBoardResult(boardId),
+        synthesized: isResultSynthesized(boardId)
+      }),
+      activityStaleMs: (boardId) => getTerminalActivityStaleMs(boardId)
+    }
   })
 }

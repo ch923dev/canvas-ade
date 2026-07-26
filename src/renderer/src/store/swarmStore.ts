@@ -30,6 +30,12 @@ export interface SwarmMessage {
 export interface SwarmWorkerMeta {
   /** Role-pack id/label shown as the card's role badge (e.g. 'builder'). */
   role?: string
+  /**
+   * S2: the title the worker was spawned with. Remembered here so a narration about a worker whose
+   * BOARD has since been deleted ("builder-2 died…") still reads as a name rather than a raw id —
+   * the canvas can no longer resolve it, and MAIN never carries titles.
+   */
+  title?: string
   /** The current task's activeForm line ("Migrating settings schema…"). */
   activity?: string
   /** Wall-clock ms the worker joined the run — drives the card timer. */
@@ -99,6 +105,12 @@ interface SwarmState {
   settleOrchMessage: (boardId: string, msgId: number, finalText?: string) => void
   /** Append a collapsed one-line status divider (worker events the orchestrator narrates). */
   addStatusLine: (boardId: string, text: string) => void
+  /**
+   * S2: append a COMPLETE (non-streaming) orchestrator bubble. Used for the between-turns
+   * narrations MAIN composes when a worker dies or stalls — the same one voice as a turn reply,
+   * just not streamed, because no turn is running.
+   */
+  addOrchMessage: (boardId: string, text: string) => void
   setTurnActive: (boardId: string, active: boolean) => void
   /** Record a worker board joining this run (idempotent; spawn order preserved). */
   addWorker: (boardId: string, workerBoardId: string, meta?: SwarmWorkerMeta) => void
@@ -210,6 +222,10 @@ export const useSwarmStore = create<SwarmState>((set) => ({
   addStatusLine: (boardId, text) =>
     set((s) => ({
       runs: patch(s.runs, boardId, (r) => pushMessage(r, { id: ++msgSeq, role: 'status', text }))
+    })),
+  addOrchMessage: (boardId, text) =>
+    set((s) => ({
+      runs: patch(s.runs, boardId, (r) => pushMessage(r, { id: ++msgSeq, role: 'orch', text }))
     })),
   setTurnActive: (boardId, active) =>
     set((s) => ({

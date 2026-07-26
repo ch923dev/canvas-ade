@@ -107,6 +107,14 @@ export type SwarmRunEvent =
    * path (the kickoff's rule), so the renderer has ONE subscription and MAIN has ONE push.
    */
   | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
+  /**
+   * S2: something happened to the run BETWEEN turns (a worker died, a worker stalled) and the
+   * orchestrator says so in its own voice. `text` is the sentence TAIL — the renderer prefixes the
+   * worker's title, because MAIN carries board ids and never titles (the `SwarmTriageRow` rule).
+   * Composed deterministically in MAIN: no LLM call, no budget spend, and it can only state facts
+   * the ledger actually holds.
+   */
+  | { kind: 'narrate'; boardId?: string; status?: string; text: string }
 
 /**
  * S2: the DURABLE side-effects of a tool call. Supplied by the swarm session when a project (and

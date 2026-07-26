@@ -86,7 +86,9 @@ function nextTaskId(existing: ReadonlyArray<{ taskId: string }>): string {
 
 /** The plan's first checklist, projected to ledger plan items (ids are the renderer's, not ours). */
 export function planItemsFrom(
-  planning: { elements: Array<{ kind: string; items?: Array<{ id: string; label: string; done: boolean }> }> } | null
+  planning: {
+    elements: Array<{ kind: string; items?: Array<{ id: string; label: string; done: boolean }> }>
+  } | null
 ): SwarmPlanItem[] {
   const list = planning?.elements.find((e) => e.kind === 'checklist' && Array.isArray(e.items))
   if (!list?.items) return []
@@ -151,8 +153,7 @@ export function createSwarmLedgerSession(
           if (planItem !== undefined) await syncPlan(reader())
           store.update(boardId, (l) => {
             const at = now()
-            const planItemId =
-              planItem !== undefined ? l.planItems[planItem - 1]?.id : undefined
+            const planItemId = planItem !== undefined ? l.planItems[planItem - 1]?.id : undefined
             const taskId = nextTaskId(l.tasks)
             const content = spec.objective.slice(0, MAX_LEDGER_LINE)
             l.tasks.push({
@@ -264,7 +265,8 @@ export function createSwarmLedgerSession(
         })
       } else if (action === 'reassign') {
         const pos = before.planItems.findIndex((p) => p.id === task.planItemId)
-        const label = pos >= 0 ? `plan item ${pos + 1} ("${before.planItems[pos].label}")` : `"${task.content}"`
+        const label =
+          pos >= 0 ? `plan item ${pos + 1} ("${before.planItems[pos].label}")` : `"${task.content}"`
         const why =
           task.blockedTag === 'lost'
             ? 'its worker died mid-task'

@@ -313,7 +313,12 @@ export default tseslint.config(
     // sit beside the other terminal handlers (+ its import). Store lives in terminalDisplayConfig.ts.
     // 704→707 (Phase 2 voice cloud STT): the safeStorage encryptor moved above registerVoiceHandlers
     // and its now-3-line deps arg ({ encryptor, getProjectDir }) is the cloud-selection key gate.
-    rules: { 'max-lines': ['error', { max: 707, skipBlankLines: true, skipComments: true }] }
+    // 707→710 (orchestration S2, failure case B): THREE choke-point lines that cannot live
+    // elsewhere — the `swarmHandlers` handle, its assignment at the wireLlmJarvis call, and the
+    // `swarmHandlers?.drainRuns()` line inside shutdown(), which must run BEFORE the PTY drain in
+    // that same function. The drain itself (salvage + mark `interrupted`) lives in swarmWatch.ts;
+    // nothing here but wiring. Ratchet DOWNWARD when index.ts is next split.
+    rules: { 'max-lines': ['error', { max: 710, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
