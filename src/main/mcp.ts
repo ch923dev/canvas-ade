@@ -146,6 +146,21 @@ export interface RunningMcp {
    */
   dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   /**
+   * Orchestration S2 (design D7): the BATCH sibling of `dispatchPrompt` — N tasks reviewed in ONE
+   * per-row confirm modal, then each row through the same shared write gate INDEPENDENTLY (its own
+   * nonce, TOCTOU re-check and audit row). One approval is still one write; the batch only spares
+   * the human N sequential modals, which is what makes the Nth one get read instead of clicked.
+   * Host-side only — no broker wire change. Results are positionally 1:1 with the input.
+   */
+  dispatchPrompts(items: Array<{ boardId: string; text: string }>): Promise<
+    Array<{
+      boardId: string
+      status: 'dispatched' | 'denied' | 'rejected'
+      delivery?: 'ready' | 'unconfirmed'
+      detail?: string
+    }>
+  >
+  /**
    * Phase C / C2: dispatch a prompt AND await the worker's two-gate settle (PR-0), resolving with
    * its `BoardResult`. The Command board's authoritative done/failed signal — same gate as
    * `dispatchPrompt`, plus the await-idle. A long-pending call (resolves on settle).
@@ -358,6 +373,7 @@ export async function startMcpServer(
       tidyCanvas: (input) => orchestrator.tidyCanvas(input),
       boardCards: (boardId) => orchestrator.boardCards(boardId),
       boardPlanning: (boardId) => orchestrator.boardPlanning(boardId),
+      dispatchPrompts: (items) => orchestrator.dispatchPrompts(items),
       updatePlanningElement: (boardId, elementId, patch) =>
         orchestrator.updatePlanningElement(boardId, elementId, patch),
       // Consent revoke kills EVERY orchestration bearer this host minted for terminals — the

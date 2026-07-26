@@ -29,6 +29,13 @@ const facetStub = (over: Partial<SwarmCanvasFacet> = {}): SwarmCanvasFacet => ({
   visualizePlan: vi.fn(async () => ({ id: 'plan-1' })),
   boardPlanning: vi.fn(async () => ({ elements: [] })),
   updatePlanningElement: vi.fn(async () => {}),
+  dispatchPrompts: vi.fn(async (items: Array<{ boardId: string; text: string }>) =>
+    items.map((it) => ({
+      boardId: it.boardId,
+      status: 'dispatched' as const,
+      delivery: 'ready' as const
+    }))
+  ),
   ...over
 })
 
@@ -90,6 +97,130 @@ describe('executeSwarmTool', () => {
       expect.objectContaining({ suggested: 'checklist', title: 'Run' })
     )
     expect(ctx.events).toEqual([{ kind: 'planDrawn', planBoardId: 'plan-1' }])
+  })
+
+  it('dispatch_tasks sends the whole round through ONE batch call and records each landed row', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    ctx.workerRoles.set('w1', 'builder')
+    ctx.workerRoles.set('w2', 'code-reviewer')
+    const ledger = { planDrawn: vi.fn(), dispatched: vi.fn(), settled: vi.fn() }
+    const out = await executeSwarmTool(
+      'dispatch_tasks',
+      {
+        tasks: [
+          {
+            workerId: 'w1',
+            objective: 'o1',
+            context: 'c',
+            boundaries: 'b',
+            outputFormat: 'f',
+            activity: 'Doing one…',
+            planItem: 1
+          },
+          { workerId: 'w2', objective: 'o2', context: 'c', boundaries: 'b', outputFormat: 'f' }
+        ]
+      },
+      facet,
+      { ...ctx, ledger }
+    )
+    expect(out.isError).toBeUndefined()
+    expect(facet.dispatchPrompts).toHaveBeenCalledTimes(1) // ONE modal, not two
+    const sent = (facet.dispatchPrompts as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as Array<{ boardId: string; text: string }>
+    expect(sent.map((r) => r.boardId)).toEqual(['w1', 'w2'])
+    expect(sent.every((r) => !r.text.includes('\n') && !r.text.includes('\r'))).toBe(true) // one approval = one line
+    expect(out.summary).toContain('dispatched 2/2')
+    expect(ledger.dispatched).toHaveBeenCalledTimes(2)
+    expect(ctx.events).toContainEqual({ kind: 'activity', workerId: 'w1', text: 'Doing one…' })
+  })
+
+  it('dispatch_tasks names the declined + failed rows in the summary (statusline shows summary only)', async () => {
+    const facet = facetStub({
+      dispatchPrompts: vi.fn(async () => [
+        { boardId: 'w1', status: 'dispatched' as const, delivery: 'ready' as const },
+        { boardId: 'w2', status: 'denied' as const, detail: 'declined by the human gate' },
+        { boardId: 'w3', status: 'rejected' as const, detail: 'target vanished during confirm' }
+      ])
+    })
+    const ctx = ctxStub()
+    const task = (id: string): Record<string, unknown> => ({
+      workerId: id,
+      objective: 'o',
+      context: 'c',
+      boundaries: 'b',
+      outputFormat: 'f'
+    })
+    const out = await executeSwarmTool(
+      'dispatch_tasks',
+      { tasks: [task('w1'), task('w2'), task('w3')] },
+      facet,
+      ctx
+    )
+    expect(out.summary).toContain('dispatched 1/3')
+    expect(out.summary).toContain('1 declined')
+    expect(out.summary).toContain('target vanished')
+  })
+
+  it('dispatch_tasks refuses the WHOLE round rather than half-validating it', async () => {
+    const facet = facetStub()
+    const out = await executeSwarmTool(
+      'dispatch_tasks',
+      {
+        tasks: [
+          { workerId: 'w1', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+          { workerId: 'w2', objective: 'o' }
+        ]
+      },
+      facet,
+      ctxStub()
+    )
+    expect(out.isError).toBe(true)
+    expect(facet.dispatchPrompts).not.toHaveBeenCalled()
+  })
+
+  it('dispatch_tasks refuses a round that would exceed the write cap, and NAMES the cap', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    ctx.workerRoles.set('w1', 'builder')
+    ctx.workerRoles.set('w2', 'builder')
+    const task = (id: string): Record<string, unknown> => ({
+      workerId: id,
+      objective: 'o',
+      context: 'c',
+      boundaries: 'b',
+      outputFormat: 'f'
+    })
+    const out = await executeSwarmTool(
+      'dispatch_tasks',
+      { tasks: [task('w1'), task('w2')] },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBe(true)
+    expect(out.content).toContain('write cap')
+    expect(out.content).toContain('working tree')
+    expect(facet.dispatchPrompts).not.toHaveBeenCalled()
+    expect(ctx.writeInFlight.size).toBe(0) // nothing reserved by a refused round
+  })
+
+  it('dispatch_tasks releases the write slot of a row the human declined', async () => {
+    const facet = facetStub({
+      dispatchPrompts: vi.fn(async () => [{ boardId: 'w1', status: 'denied' as const }])
+    })
+    const ctx = ctxStub()
+    ctx.workerRoles.set('w1', 'builder')
+    await executeSwarmTool(
+      'dispatch_tasks',
+      {
+        tasks: [
+          { workerId: 'w1', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
+        ]
+      },
+      facet,
+      ctx
+    )
+    expect(ctx.writeInFlight.size).toBe(0)
   })
 
   it('draw_plan records the plan board so tick_plan_item can find it later', async () => {
@@ -436,7 +567,15 @@ describe('executeSwarmTool', () => {
         'dispatch_task',
         { workerId: 'w', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
       ],
-      ['tick_plan_item', { planItem: 1 }]
+      ['tick_plan_item', { planItem: 1 }],
+      [
+        'dispatch_tasks',
+        {
+          tasks: [
+            { workerId: 'w', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
+          ]
+        }
+      ]
     ] as const) {
       const out = await executeSwarmTool(name, input, facet, ctx)
       expect(out.isError).toBe(true)

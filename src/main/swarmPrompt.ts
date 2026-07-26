@@ -54,6 +54,9 @@ export function composeSwarmSystem(paused: boolean): string {
     '  the human can open any worker card for the real terminal.',
     '- HUMAN GATE: every spawn and every dispatch pays a human confirmation before it lands. If a',
     '  confirm is denied, accept it — do not retry the same action.',
+    '- BATCH A ROUND: when you are handing out several tasks together, use dispatch_tasks (plural)',
+    '  rather than repeated dispatch_task. The human reviews every row in ONE confirm and approves',
+    '  them individually; some rows may come back denied, and you must say which and carry on.',
     paused
       ? '- THE RUN IS PAUSED: dispatch/spawn tools will refuse. Answer questions, refine the plan,'
       : '- PAUSE: if the human pauses the run, dispatch/spawn tools refuse until resumed.',

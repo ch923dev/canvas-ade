@@ -33,6 +33,7 @@ import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
 import { sanitizeDispatchText } from './dispatchSanitize'
 import type { SwarmLedgerSnapshot, SwarmTaskSpec } from '../shared/swarmLedgerTypes'
+import { MAX_DISPATCH_BATCH } from './mcpDispatchBatch'
 
 /**
  * S2: a ledger write must never break the run it is recording. Every hook call is wrapped so a
@@ -51,6 +52,10 @@ async function record(fn: (() => Promise<void>) | undefined): Promise<void> {
 const MAX_NAME = 80
 const MAX_FIELD = 4000
 const MAX_ITEMS = 30
+
+/** Model output → a 1-based plan-strip position, or undefined. Bounded to the plan's own cap. */
+const planItemOf = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, MAX_ITEMS) : undefined
 
 /** The canvas facet the swarm executor drives — RunningMcp is a structural superset. */
 export interface SwarmCanvasFacet {
@@ -99,6 +104,19 @@ export interface SwarmCanvasFacet {
     elementId: string,
     patch: { setItems?: Array<{ id: string; done?: boolean; label?: string }> }
   ): Promise<void>
+  /**
+   * S2 (design D7): dispatch a ROUND of tasks behind ONE per-row confirm modal. Each row still
+   * travels the shared write gate independently (own nonce · TOCTOU re-check · audit) — the batch
+   * spares the human N sequential modals, it never widens one approval into N writes.
+   */
+  dispatchPrompts(items: Array<{ boardId: string; text: string }>): Promise<
+    Array<{
+      boardId: string
+      status: 'dispatched' | 'denied' | 'rejected'
+      delivery?: 'ready' | 'unconfirmed'
+      detail?: string
+    }>
+  >
 }
 
 /** Run events the executor emits so the renderer's swarm board mirrors the run live. */
@@ -262,6 +280,35 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
             minimum: 1,
             description:
               'The 1-based plan-strip position this task fulfils (as drawn by draw_plan). Links the task to its plan item so the strip shows who owns it.'
+          }
+        }
+      }
+    },
+    {
+      name: 'dispatch_tasks',
+      description:
+        'Dispatch a ROUND of tasks at once — the human reviews every row in ONE confirm and approves them individually. Prefer this over repeated dispatch_task when you are handing out several tasks together.',
+      input_schema: {
+        type: 'object',
+        required: ['tasks'],
+        properties: {
+          tasks: {
+            type: 'array',
+            minItems: 1,
+            maxItems: MAX_DISPATCH_BATCH,
+            items: {
+              type: 'object',
+              required: ['workerId', 'objective', 'context', 'boundaries', 'outputFormat'],
+              properties: {
+                workerId: { type: 'string' },
+                objective: { type: 'string' },
+                context: { type: 'string' },
+                boundaries: { type: 'string' },
+                outputFormat: { type: 'string' },
+                activity: { type: 'string' },
+                planItem: { type: 'integer', minimum: 1 }
+              }
+            }
           }
         }
       }
@@ -533,6 +580,104 @@ export async function executeSwarmTool(
             // failed" ×6 with the real sanitizer error invisible).
             summary: `dispatch failed — ${singleLinePrompt(msg).slice(0, 120)}`
           }
+        }
+      }
+      case 'dispatch_tasks': {
+        if (ctx.paused()) return refuse('run paused — the human must resume first')
+        const rows = Array.isArray(args.tasks) ? args.tasks.slice(0, MAX_DISPATCH_BATCH) : []
+        if (rows.length === 0) return refuse('dispatch_tasks needs at least one task')
+        const parsed: Array<{
+          workerId: string
+          spec: SwarmTaskSpec
+          pack?: RolePack
+          activity?: string
+          planItem?: number
+        }> = []
+        for (const raw of rows) {
+          const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+          const workerId = str(o.workerId, 128)
+          const objective = str(o.objective, MAX_FIELD)
+          const context = str(o.context, MAX_FIELD)
+          const boundaries = str(o.boundaries, MAX_FIELD)
+          const outputFormat = str(o.outputFormat, MAX_FIELD)
+          if (!workerId || !objective || !context || !boundaries || !outputFormat) {
+            // 🔒 All-or-nothing on VALIDATION: a half-valid round would put a modal in front of
+            // the human that does not match what the model asked for. Fix the input and retry.
+            return refuse(
+              'every task in dispatch_tasks needs workerId + all four fields (objective, context, boundaries, outputFormat)'
+            )
+          }
+          const pack = rolePackById(ctx.workerRoles.get(workerId))
+          parsed.push({
+            workerId,
+            spec: { objective, context, boundaries, outputFormat },
+            ...(pack ? { pack } : {}),
+            ...(str(o.activity, MAX_NAME) ? { activity: str(o.activity, MAX_NAME) } : {}),
+            ...(planItemOf(o.planItem) !== undefined ? { planItem: planItemOf(o.planItem) } : {})
+          })
+        }
+        // Write serialization, unchanged and DISCLOSED: workers share one working tree until S3,
+        // so a round carrying more write-role tasks than the cap is refused whole rather than
+        // silently trimmed — the model splits it and says why in chat (no silent caps, 06 §2).
+        const newWrites = new Set(
+          parsed
+            .filter((p) => p.pack && isWriteRolePack(p.pack) && !ctx.writeInFlight.has(p.workerId))
+            .map((p) => p.workerId)
+        )
+        if (ctx.writeInFlight.size + newWrites.size > WRITE_ROLE_CONCURRENCY_CAP) {
+          return refuse(
+            `write cap: this round needs ${ctx.writeInFlight.size + newWrites.size} concurrent write-role workers but only ${WRITE_ROLE_CONCURRENCY_CAP} may run while workers share one working tree — dispatch the write task alone (or await the running one) and disclose this to the human`
+          )
+        }
+        for (const id of newWrites) ctx.writeInFlight.add(id)
+        const outcomes = await facet.dispatchPrompts(
+          parsed.map((p) => ({
+            boardId: p.workerId,
+            text: singleLinePrompt(
+              packDispatchPrompt(
+                p.pack,
+                `OBJECTIVE: ${p.spec.objective}\n\nCONTEXT: ${p.spec.context}\n\n` +
+                  `BOUNDARIES: ${p.spec.boundaries}\n\nOUTPUT FORMAT: ${p.spec.outputFormat}`,
+                undefined
+              )
+            )
+          }))
+        )
+        let landed = 0
+        for (let i = 0; i < parsed.length; i++) {
+          const p = parsed[i]
+          const outcome = outcomes[i]
+          if (outcome?.status !== 'dispatched') {
+            // A denied/rejected row never held the tree — release its slot immediately.
+            ctx.writeInFlight.delete(p.workerId)
+            continue
+          }
+          landed += 1
+          if (p.activity) ctx.emit({ kind: 'activity', workerId: p.workerId, text: p.activity })
+          await record(
+            ctx.ledger &&
+              (() =>
+                ctx.ledger!.dispatched({
+                  workerId: p.workerId,
+                  role: p.pack?.id ?? 'worker',
+                  spec: p.spec,
+                  ...(p.activity ? { activity: p.activity } : {}),
+                  ...(p.planItem !== undefined ? { planItem: p.planItem } : {})
+                }))
+          )
+        }
+        const declined = outcomes.filter((o) => o?.status === 'denied').length
+        const failed = outcomes.filter((o) => o?.status === 'rejected')
+        return {
+          content: JSON.stringify(outcomes),
+          // Every non-landed row is named in the summary — the statusline renders `summary` only,
+          // so a reason that is not in this string is a reason the human never sees.
+          summary:
+            `dispatched ${landed}/${parsed.length}` +
+            (declined > 0 ? ` · ${declined} declined` : '') +
+            (failed.length > 0
+              ? ` · ${failed.length} failed (${singleLinePrompt(failed[0].detail ?? 'unknown').slice(0, 80)})`
+              : '')
         }
       }
       case 'tick_plan_item': {

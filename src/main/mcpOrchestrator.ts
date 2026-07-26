@@ -12,6 +12,10 @@ import type { AuditInput } from './auditLog'
 import { createDispatchGuard } from './dispatchGuard'
 import { createGatedWriter } from './dispatchGate'
 import { createRelayBatchMethod } from './mcpRelayBatch'
+import { createDispatchBatchMethod, type HostOrchestrator } from './mcpDispatchBatch'
+// Re-exported below so `mcp.ts` and the suites keep one import path for the host orchestrator.
+export type { HostOrchestrator } from './mcpDispatchBatch'
+import { createAwaitSettledMethod } from './mcpAwaitSettled'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import {
@@ -38,7 +42,6 @@ import {
   MCP_SPAWN_GRACE_MS,
   type BoardRegistry,
   type DispatchStatus,
-  type LifecycleOrchestrator,
   type OrchestratorOpts
 } from './mcpRegistry'
 
@@ -121,7 +124,7 @@ const MCP_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000
 export function buildOrchestrator(
   registry: BoardRegistry,
   opts: OrchestratorOpts = {}
-): LifecycleOrchestrator {
+): HostOrchestrator {
   const now = opts.now ?? Date.now
   // The spawn cap may be a fixed number OR a getter (the live Settings-backed config). Normalize to
   // a getter so the lifecycle's cap check + describeApp's reported rule always read the CURRENT
@@ -297,6 +300,27 @@ export function buildOrchestrator(
   // the shared write gate INDEPENDENTLY (own nonce/TOCTOU/audit) via the gate's confirmOverride seam.
   // Extracted into ./mcpRelayBatch (max-lines doctrine, like the kanban/planning-edit gates); spread
   // into the returned object below.
+  // 🔒 assign_prompts (batch, orchestration S2 D7) — the plural of dispatchPrompt, same shape as the
+  // relay batch above: validate every row → ONE per-row modal → each row through the shared write
+  // gate independently via confirmOverride. Built in ./mcpDispatchBatch; spread in below.
+  const dispatchBatchMethods = createDispatchBatchMethod({
+    listBoards: () => registry.listBoards(),
+    confirmBatch: registry.confirmBatch ? (req) => registry.confirmBatch!(req) : undefined,
+    runGatedWrite,
+    audit: writeAudit
+  })
+
+  // 🔒 await_settled (C2e) — the read-only settle policy, built in ./mcpAwaitSettled (extracted
+  // 2026-07-27 under the max-lines doctrine when the S2 dispatch batch landed).
+  const awaitSettledMethod = createAwaitSettledMethod({
+    listBoards: () => registry.listBoards(),
+    readResult: (id) => registry.readResult(id),
+    boardActivityStaleMs: registry.boardActivityStaleMs?.bind(registry),
+    onResultSettled,
+    startBackstop,
+    handoffTimeoutMs
+  })
+
   const relayBatchMethods = createRelayBatchMethod({
     listBoards: () => registry.listBoards(),
     listConnectors: () => registry.listConnectors(),
@@ -776,55 +800,7 @@ export function buildOrchestrator(
       }
       return result
     },
-    /**
-     * Await a dispatched worker's task to SETTLE without a write (C2e) — the verdict half of a
-     * dispatch whose prompt was delivered as a LAUNCH ARG (`claude "<prompt>"`), so there is no
-     * handoff write to gate. READ-ONLY: no nonce, no confirm, no PTY write. A live agent shell never
-     * flips its derived status off 'running', so we settle on OUTPUT SILENCE — the PTY has been quiet
-     * for `SETTLE_QUIET_MS` AFTER first showing activity (via the registry's
-     * `boardActivityStaleMs`). A worker recording its OWN result (write_result) settles immediately
-     * (fast-path); a board leaving the canvas settles; a one-shot backstop bounds the wait. Returns
-     * the board's result (the same shape `handoffPrompt` returns).
-     */
-    async awaitSettled(boardId: BoardId): Promise<BoardResult> {
-      const SETTLE_QUIET_MS = 6000 // PTY silence that reads as "the worker finished its task"
-      const SETTLE_POLL_MS = 1000
-      const board = registry.listBoards().find((b) => b.id === boardId)
-      if (!board) throw new Error(`await_settled: board not found: ${boardId}`)
-      if (board.type !== 'terminal') {
-        throw new Error(`await_settled: target is not a terminal (${board.type})`)
-      }
-      await new Promise<void>((resolve) => {
-        let done = false
-        let sawActivity = false
-        let poll: ReturnType<typeof setInterval> | null = null
-        let unsubResult = (): void => {}
-        let cancelBackstop = (): void => {}
-        const finish = (): void => {
-          if (done) return
-          done = true
-          if (poll) clearInterval(poll)
-          unsubResult()
-          cancelBackstop()
-          resolve()
-        }
-        // write_result fast-path: a worker recording its own result is the real task-done marker.
-        unsubResult = onResultSettled(boardId, finish)
-        // Output-silence poll: settle once the worker — having shown activity — has been quiet for
-        // SETTLE_QUIET_MS, or the board left the canvas. `sawActivity` guards against settling on the
-        // INITIAL quiet before the agent has produced any output (still booting).
-        poll = setInterval(() => {
-          if (!registry.listBoards().some((b) => b.id === boardId)) return finish()
-          const stale = registry.boardActivityStaleMs?.(boardId)
-          if (typeof stale !== 'number') return
-          if (stale < SETTLE_QUIET_MS) sawActivity = true
-          else if (sawActivity) finish()
-        }, SETTLE_POLL_MS)
-        // One-shot backstop — bound the wait if the worker never goes quiet / never reports.
-        cancelBackstop = startBackstop(handoffTimeoutMs, finish)
-      })
-      return registry.readResult(boardId)
-    },
+    ...awaitSettledMethod,
     async dispatchPrompt(
       boardId: BoardId,
       text: string
@@ -967,6 +943,7 @@ export function buildOrchestrator(
       return { delivery }
     },
     ...relayBatchMethods,
+    ...dispatchBatchMethods,
     async interrupt(boardId: BoardId): Promise<void> {
       // 🔒 interrupt (T4.5): the content-less sibling — the SAME shared write gate, but it
       // writes a raw Ctrl-C (\x03, NO carriage return) and carries no prompt (sanitization
