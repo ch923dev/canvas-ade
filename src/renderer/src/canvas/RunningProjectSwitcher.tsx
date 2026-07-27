@@ -5,15 +5,25 @@
  * — over a frosted, dimmed whole-app backdrop, and commits the highlighted pick through the shared
  * performProjectSwitch pipeline.
  *
- * Interaction (locked design): the hotkey opens + advances the highlight; Tab / ] / arrows advance,
- * Shift+Tab / [ go back, Enter or a click opens the highlighted project, Esc cancels with no change.
- * Cold recents never appear here — the universe is running projects only, snapshotted once by the
- * store so the cycle is stable.
+ * Interaction (locked design, R16): the hotkey opens + advances the highlight; RELEASING the held
+ * Ctrl/Cmd commits the highlighted card — matching Windows Alt-Tab and VS Code's Ctrl+Tab, which
+ * are both commit-on-release with a frozen MRU order. Tab / ] / arrows advance, Shift+Tab / [ go
+ * back, Enter or a click remain explicit commits, Esc cancels with no change. Cold recents never
+ * appear here — the universe is running projects only, snapshotted once by the store so the cycle
+ * is stable.
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useRunningSwitcherStore } from '../store/runningSwitcherStore'
 import { performProjectSwitch } from '../store/projectSwitch'
 import { bgBadge, toastLockedSwitch } from './projectSessionsShared'
+
+/** How the held modifier is spelled in the footer hint (the accelerator is user-rebindable, so
+ *  this follows what MAIN actually bound rather than assuming Ctrl). */
+const HOLD_LABEL: Record<'Control' | 'Meta' | 'Alt', string> = {
+  Control: 'Ctrl',
+  Meta: '⌘',
+  Alt: 'Alt'
+}
 
 export function RunningProjectSwitcher(): ReactElement | null {
   const open = useRunningSwitcherStore((s) => s.open)
@@ -22,6 +32,8 @@ export function RunningProjectSwitcher(): ReactElement | null {
   const advance = useRunningSwitcherStore((s) => s.advance)
   const setIndex = useRunningSwitcherStore((s) => s.setIndex)
   const close = useRunningSwitcherStore((s) => s.close)
+  const holdKey = useRunningSwitcherStore((s) => s.holdKey)
+  const holdReleased = useRunningSwitcherStore((s) => s.holdReleased)
   const panelRef = useRef<HTMLDivElement>(null)
   // Cached canvas thumbnails per dir (data URLs) — a miss falls back to the dot-grid placeholder.
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
@@ -37,6 +49,16 @@ export function RunningProjectSwitcher(): ReactElement | null {
       incomingName: card.name
     }).then(toastLockedSwitch)
   }, [])
+
+  // R16 commit-on-release. The release itself is observed by useProjectSwitchHotkey (armed at
+  // chord time, because a fast tap lets go before this component even mounts); this effect is the
+  // other half — the moment an OPEN overlay sees the hold let go, the highlight is committed.
+  // Landing here already-released is the normal fast-tap case, not an edge case: the overlay
+  // flashes and the switch runs, exactly like a quick Alt+Tab.
+  useEffect(() => {
+    if (!open || holdKey === null || !holdReleased) return
+    commit(useRunningSwitcherStore.getState().index)
+  }, [open, holdKey, holdReleased, commit])
 
   // Keyboard nav while open — window capture so it works regardless of where focus sat when the
   // overlay opened. Handled keys are swallowed (Tab must not move DOM focus behind the scrim).
@@ -179,14 +201,23 @@ export function RunningProjectSwitcher(): ReactElement | null {
           </div>
         ) : (
           <div className="rps-foot">
+            {/* R16: release is the primary gesture now, so it is named FIRST — and it shares the
+                one "open" cell with Enter rather than adding a second cell that says the same
+                word twice. A modifier-free rebind (holdKey null) has nothing to release, so that
+                case keeps the original Enter-only hint. */}
+            <span>
+              {holdKey !== null && (
+                <>
+                  release <span className="rps-key">{HOLD_LABEL[holdKey]}</span> /{' '}
+                </>
+              )}
+              <span className="rps-key">↵</span> open
+            </span>
             <span>
               <span className="rps-key">Tab</span> advance
             </span>
             <span>
               <span className="rps-key">Shift+Tab</span> back
-            </span>
-            <span>
-              <span className="rps-key">↵</span> open
             </span>
             <span>
               <span className="rps-key">Esc</span> cancel

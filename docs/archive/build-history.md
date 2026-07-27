@@ -3880,3 +3880,180 @@ clean there. Run a THIRD time on the `taskForBoard` fix: Windows 334 / 3 skipped
 the same run), Linux 334 / 5 skipped / **1 flaky, exit 0**, that flaky being `projectSwitcher:96`
 yet again. Across three matrices the failure set is drawn entirely from two ambient families and
 never once includes a swarm-ledger spec. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
+
+## 2026-07-27 — PR #391: unit-test the switch orchestrator + the background-session wiring (audit R9, v0.35.1)
+
+**Audit Phase 1, item R9** (findings PS-3 / SM-3) — the first of the phase's four items, and
+tests-only by design: it is the safety net *for* R4's refactor, so it lands before the code moves.
+`performProjectSwitch` was **300 LOC of orchestration with no test file at all** (the audit says
+253; it grew via #387's instrumentation and the `Run.epoch` fix — trust the tree), reached from six
+production entry points, with five distinct return codes and an ordering contract whose failure mode
+is silent data loss. `backgroundSessions.ts` likewise had none despite active churn.
+
+**`src/renderer/src/store/projectSwitch.test.ts` (31 cases).** Every collaborator is mocked and each
+appends to ONE shared `calls` log, which is what makes the ordering contract assertable at all — the
+failure being tested is "right calls, wrong order", invisible to any per-mock assertion. All five
+codes: `'switched'`, `'locked'`, `'save-failed'`, `'background-failed'`, `'cancelled'`. Each abort
+also asserts what it must NOT have done — a `save-failed` that already handed over resources, or a
+`background-failed` that proceeds to the unmount and kills the very terminals the user chose to keep,
+are the dangerous shapes. The switch lock is a faithful mini-implementation rather than a `vi.fn()`,
+so `'locked'` is a property of a real second acquire failing; stubbing it by hand would pass against
+a pipeline that never took the lock. Ordering asserted: `cancelAutosave → save → saveSession →
+markSaved`, the decision before any side effect, `thumb`/`arm` before the unmount, park before the
+unmount on keep, unmount before the scoped close on stop (never the dispose-all).
+
+`decideKeep` gets its own block driving the **default, non-explicit** pipeline — the #390 trap:
+`if (explicit !== undefined) return explicit` means a test passing an explicit keep is not testing
+the default path at all, and one case asserts precisely that the early return skips `recordAskTime`.
+Branches covered: explicit keep/stop, torn bridge, stale dir, zero live resources, remembered
+`'keep'`, and ask→keep/stop/cancel including the forever flag and the Stop-only policy forget.
+
+**Proven non-vacuous by mutation**, per the #390 discipline: (1) moving `cancelActiveAutosave()`
+after the flush — the silent-data-loss inversion — fails the ordering case; (2) making the failed
+keep-handover fall through instead of aborting fails the `background-failed` case. Both reverted.
+
+**`src/main/backgroundSessions.test.ts` (31 cases).** MAIN file, node environment — the audit's §6
+R9 phrasing implies a renderer store; it is not. The registry's own policy is already covered by
+`projectSessions.test.ts` (541 lines) and is deliberately not re-tested; what had no coverage is
+what this module adds on top, all of it invisible from there: the Low-RAM getters read fresh per
+call, `foregroundOsr` being a *composition* (foreground, then trim to budget — the H4 fix, silently
+lost if someone passes the bare function), the ring-tail flush wiring, the forever-keep parse
+tolerating a hand-edited file, the sweep's timer discipline (idempotent arm, `unref`, clean stop, no
+stacked ticks behind a slow process-table sample, a throwing tick not killing the next), and the
+lifecycle fan-out — one `project:bgLifecycle` push per warn/close/evict with the right copy, muted
+OS notification under `CANVAS_E2E`/`CANVAS_SMOKE`, destroyed-window guards.
+
+**Verified:** typecheck · lint · format clean; the two files 62/62; full `pnpm test` 6157 passed
+with **5 pre-existing failures** (`pathSafe` symlink layer ×2, `pty.recapenv` ×3) confirmed
+identical on the MAIN checkout at `bcd4d311` — this box's floor, not a regression. Dev check
+title-stamped. **Version:** 0.35.0 → **0.35.1** (patch — tests only, no product code). Renumbered on the
+rebase onto `main`: this lane branched at 0.34.2, but #392 shipped 0.35.0 to `main` first.
+
+## 2026-07-27 — PR #391: Alt-Tab commit-on-release + the racing press is queued (audit R16, v0.36.0)
+
+**Audit Phase 1, item R16** (finding PS-3) — the decision taken 2026-07-25, not re-litigated: the
+running-projects overlay now matches Windows Alt-Tab and VS Code's Ctrl+Tab, which are both
+commit-on-release over a frozen MRU list. Expanse already had the frozen half; it committed on
+Enter. Now **releasing the held Ctrl/Cmd commits the highlighted card**; Enter and click remain
+explicit commits and Esc still cancels.
+
+**MAIN derives the hold key, because only MAIN can.** The accelerator is user-rebindable, and the
+chord's own keydown is `preventDefault`ed in `globalHotkey.onInput` — so the renderer never observes
+the modifier going *down* at all. `holdKeyOf` maps the parsed accelerator to `'Control' | 'Meta' |
+'Alt' | null` (Ctrl/Cmd wins; Alt is the fallback so an `Alt+]` rebind keeps the gesture; null for a
+modifier-free chord, which keeps the old Enter-only behaviour rather than promising a release that
+does nothing) and `project:cycleHotkey` carries it as a second, additive argument. **No new IPC
+channel was needed**: `matchesAccel` is keyDown-only, so the modifier's `keyup` is never swallowed
+and arrives in the renderer as an ordinary DOM event.
+
+**The release is observed at chord time, not at open time** — `useProjectSwitchHotkey` arms
+`noteHoldKey` synchronously and owns a passive window `keyup` listener (capture, so a focused
+xterm cannot swallow it). This is not defensive coding: the overlay only mounts after an async
+snapshot fetch, and a *fast tap releases before that lands*. A listener living in the overlay would
+miss the single commonest Alt-Tab gesture there is and strand the picker open. Landing
+already-released therefore commits immediately — the overlay flashes, exactly like a quick Alt+Tab
+(user-confirmed design decision).
+
+**Second half — the racing press is queued, not dropped.** `runningSwitcherStore:63` returned
+without ever applying the racing press's `dir`; the comment said "respect it" and the code did the
+opposite, so a fast double-tap moved one step instead of two. Now the presses accumulate as NET
+steps (a ring: next-then-prev is a round trip back to the active card) and are applied the instant
+the snapshot lands. The drop was load-bearing before and worse under commit-on-release, where
+hold-and-tap-twice is a normal gesture.
+
+**Footer** (design artifact signed off before implementation, per the repo's UI rule): release is
+named FIRST and shares one *open* cell with Enter — `release ⌃Ctrl / ⏎ open · Tab advance ·
+Shift+Tab back · Esc cancel` — so the row stays four cells and the word "open" appears once. The
+label follows the bound accelerator (`Ctrl` / `⌘` / `Alt`).
+
+**A flake got a mechanism, not a shrug.** The new commit spec passed alone and failed in the full
+~340-spec run — the exact signature of the `projectSwitcher.e2e.ts:96` flake PR #389 filed as
+*unhidden, not caused*. The suspect found: `opening` and (now) `queuedSteps` are MODULE-scoped, so
+the harness `reset()`'s store wipe cannot reach them. One spec stranding `opening = true` — an
+`openWith` whose snapshot fetch never settles — silently disables the overlay for **every later
+spec in the run**, because `openWith` then takes the queue-and-return path. Same leak class as the
+pending ask promise reset() already has to settle (#390) and the chrome-overlay scrims (#389).
+`resetRunningSwitcherInteraction()` is now called from `reset()`.
+
+**Tests.** 20 store cases (5 queue, 7 hold, incl. release-before-open, stale re-arm, stray keyup,
+no leak into the next interaction); 12 new jsdom cases at the committing surface driving REAL DOM
+keyups through the production seams — asserting not just that release commits, but that release on
+the active card, a different key, a stray keyup with the overlay closed, and a release *after* Esc
+all commit nothing (a switch the user never asked for tears down every board); 5 MAIN cases for
+`holdKeyOf` + the payload; `e2e/projectSwitchCommit.e2e.ts` commits a hotkey switch through the
+real channel and asserts the instrumented record moved — **the Phase 1 gate item PS-3 named**
+(`projectSwitcher.e2e.ts:10` says outright it "never commits the switch").
+
+**Verified:** typecheck · lint · format clean; full `pnpm test` 6186 passed with the same 5
+pre-existing failures as `main`; e2e green. Dev check title-stamped before push. **Version:**
+0.35.1 → **0.36.0** (minor — behaviour change).
+
+## 2026-07-28 — PR #393: unify the open paths + one resident list (audit R4 · R10, v0.37.0)
+
+**R4 — one `openProject()`, and the door that was actually wrong.** Three production doors opened a
+project with no outgoing project to hand over — `WelcomeScreen.openDir`, `WelcomeScreen.onCreate`,
+and the boot auto-reopen in `App.tsx` — each hand-rolling the same four steps. Two agreed; **boot
+took no switch lock at all**, so a user clicking a recent while `project.current()` was still
+resolving ran two concurrent opens: exactly #BUG-009, where MAIN's `currentDir` and the renderer's
+project disagree and the next autosave cross-writes one project's canvas into the other's file.
+That divergence — not the duplication — is why R4 exists.
+
+`src/renderer/src/store/openProject.ts` is the sibling of `performProjectSwitch`, deliberately NOT
+a variant of it: a switch must protect an outgoing project (ask → flush → sidecar → thumb →
+handover), an open has nothing to protect. What they share is the part every door re-implemented:
+the cross-surface lock, `loading` armed *before* the IPC, and routing a REJECTED ipc into
+`applyOpenResult({ok:false})` (#BUG-030) instead of sticking on the loading line. Four outcomes —
+`opened` / `none` / `locked` / `failed` — and the verdict is read off the status `applyOpenResult`
+settled, never from `r.ok`, because an envelope-valid but deep-corrupt doc is `ok:true` and still
+fails to load.
+
+Boot moved out of `App.tsx` into `store/useProjectBoot.ts`. Not tidying: inside the App root it was
+untestable, and it is the door that was broken. **Known coverage limit, stated rather than papered
+over:** under `CANVAS_E2E` the hook takes the harness branch and never opens a project, so the e2e
+suite cannot cover boot at all — `useProjectBoot.test.ts` plus the manual dev check *are* its
+coverage.
+
+**Two deliberate calls.** (1) `e2eHooks.openProjectFromDisk` stays a bare harness door. The audit
+counts three doors; specs call this one with a project already open, which is a *switch*, so
+routing it would silently promote those calls into full pipelines and change what the suite
+exercises. (2) Boot's failure handling changed — but not where the PR first claimed. **Corrected
+after review:** `project:current` never returns `{ok:false}` (`projectIpc.ts` ends
+`return r.ok ? r : null`), so a failed *read* of the last project still lands on a bare picker,
+exactly as before. The real change is the **rejection** path: the old `App.tsx` effect had no
+`.catch` anywhere on the `project.current()` chain, so a throw inside the handler (`gcAssets`,
+`scaffoldProjectMemory`, `memoryEngine` — all wrapped now, but the IPC can still reject) was an
+UNHANDLED rejection that left the app parked on the welcome screen with no loading state, no error
+and no trace. `openProject`'s try/catch routes that to `status:'error'` carrying the message. Worth
+recording because the first draft of this entry and the PR description both overstated it, and the
+reviewer caught the gap between the claim and the code.
+
+**R10 — one resident list, and the staleness nobody was handling.** "Which projects are resident,
+and which are keep-forever" is one fact that lived in two `useState` pairs (`ProjectDock`,
+`ProjectSwitcher`), each re-fetched on open and after every ✕ / ∞ — and **neither subscribed to
+`project:bgLifecycle`**. MAIN closes residents on its own schedule (idle TTL, MAX_BACKGROUND
+evicting the coldest), so an open dock or menu kept rendering a resident that no longer existed,
+with a ✕ acting on a dead registry entry. `store/useResidentProjects.ts` is one shared store with a
+ref-counted lifecycle subscription (two surfaces = one listener, one fetch) and an in-flight dedupe.
+`runningSwitcherStore` is deliberately NOT a consumer — its list is a frozen snapshot, and a live
+one would re-order the Alt-Tab cards under the user mid-cycle, the bug the snapshot was added to fix.
+The audit also names a `ProjectSessionsPane`; no such file exists (stale premise, recorded here).
+
+**Flake work, carried from #391's R16 half.** The commit spec came back `1 flaky` on the R16 push —
+failed attempt 1, passed on retry — so `resetRunningSwitcherInteraction()` was not the whole story.
+The trace showed setup complete in 0.33 s and the overlay simply never entering the DOM. Both
+switcher specs fired the cycle at `getAllWindows()`'s first live window, which is **not reliably the
+app UI**: every Browser board is a hidden offscreen `BrowserWindow`, and `closeModalKeep` /
+`ptyhostReattach` close and re-create the main one. A send to the wrong `webContents` is silent and
+total. Both now target `electronApp.browserWindow(page)`. A `runningSwitcher()` harness probe was
+added so a recurrence reports *which* link broke (`open` / `cards` / `opening`) instead of "element
+not found". Candidate mechanism + hardening + instrument — not a proven root cause.
+
+**Tests.** 9 primitive cases (all four outcomes, ordering, lock discipline, BUG-030, verdict-not-
+from-`r.ok`) + 3 boot cases + 6 resident-hook cases (bgLifecycle refresh, shared listener,
+unsubscribe on the LAST unmount, dedupe, absent-channel degradation). Mutation-checked: arming
+`loading` after the load, trusting `r.ok`, and dropping the effect's `[]` deps each kill tests.
+
+**Verified:** typecheck · lint (0 errors) · format clean; full `pnpm test` 6204 passed with the same
+5 pre-existing failures as `main` (`pathSafe` symlink ×2, `pty.recapenv` ×3). `canvasStore.ts` sits
+on its 727-line cap, so the welcome-restore is a direct `setState` in `openProject` rather than a
+new store action. **Version:** 0.36.0 → **0.37.0** (minor).

@@ -4,16 +4,10 @@
  * pick from the recent list. On success the store flips to `open` and the canvas mounts.
  */
 import { useEffect, useState } from 'react'
-import {
-  useCanvasStore,
-  acquireProjectSwitchLock,
-  releaseProjectSwitchLock,
-  type RecentProject
-} from '../store/canvasStore'
+import { useCanvasStore, type RecentProject } from '../store/canvasStore'
+import { openProject } from '../store/openProject'
 
 export default function WelcomeScreen(): React.ReactElement {
-  const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
-  const setProjectLoading = useCanvasStore((s) => s.setProjectLoading)
   const error = useCanvasStore((s) => s.project.error)
   // D0-7: this screen also renders MID-SWITCH (status 'loading' unmounts Canvas), where
   // its own `busy` flag can't see the in-flight pipeline — read the status so a project
@@ -30,24 +24,16 @@ export default function WelcomeScreen(): React.ReactElement {
   }, [])
 
   const openDir = async (dir: string): Promise<void> => {
-    // BUG-008: return early if an IPC call is already in-flight on THIS mount.
-    // BUG-009: also take the module-level switch lock — a switch started from the
-    // ProjectSwitcher (another surface) mounts this screen fresh mid-flight, so the
-    // per-mount `busy` flag alone cannot see it and two open pipelines could interleave.
-    if (busy || !acquireProjectSwitchLock()) return
+    // BUG-008: return early if an IPC call is already in-flight on THIS mount. This is the
+    // BUTTON-disabling half only; the cross-surface race (BUG-009) is the shared lock's job, and
+    // `openProject` takes it — a switch started from the ProjectSwitcher mounts this screen fresh
+    // (busy=false), so the per-mount flag alone can never see it.
+    if (busy) return
     setBusy(true)
-    setProjectLoading()
     try {
-      // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation failure).
-      await applyOpenResult(await window.api.project.open(dir))
-    } catch (err) {
-      // BUG-030: if the IPC call rejects (e.g. disk-full in touchRecent / userData), settle
-      // to status:'error' so the user can retry. Without this, status stays stuck at 'loading'.
-      const msg = err instanceof Error ? err.message : 'failed to open project'
-      await applyOpenResult({ ok: false, error: msg })
+      await openProject(() => window.api.project.open(dir))
     } finally {
       setBusy(false)
-      releaseProjectSwitchLock()
     }
   }
 
@@ -61,25 +47,18 @@ export default function WelcomeScreen(): React.ReactElement {
     if (busy) return
     const dir = await window.api.dialog.openFolder()
     if (!dir) return
-    // BUG-009: take the shared switch lock AFTER the (modal) folder dialog so a cancelled
-    // dialog never strands it; bail if another surface's switch is mid-flight.
-    if (!acquireProjectSwitchLock()) return
     setBusy(true)
-    setProjectLoading()
     const name =
       dir
         .replace(/[/\\]+$/, '')
         .split(/[/\\]/)
         .pop() || dir
     try {
-      await applyOpenResult(await window.api.project.create(dir, name, {}))
-    } catch (err) {
-      // BUG-030: if the IPC call rejects, settle to status:'error' so the user can recover.
-      const msg = err instanceof Error ? err.message : 'failed to create project'
-      await applyOpenResult({ ok: false, error: msg })
+      // BUG-009: the lock is taken inside `openProject`, i.e. AFTER the modal folder dialog above —
+      // a cancelled dialog returns before we ever get here, so it can never strand the lock.
+      await openProject(() => window.api.project.create(dir, name, {}), 'failed to create project')
     } finally {
       setBusy(false)
-      releaseProjectSwitchLock()
     }
   }
 
