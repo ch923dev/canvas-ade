@@ -28,11 +28,11 @@ import { Menu } from './Menu'
 import { CloseBackgroundModal } from './CloseBackgroundModal'
 import {
   bgBadge,
-  fetchLiveDecorations,
   pickCreateProject,
   pickOpenFolder,
   toastLockedSwitch
 } from './projectSessionsShared'
+import { useResidentProjects } from '../store/useResidentProjects'
 
 export function ProjectSwitcher(): ReactElement {
   const name = useCanvasStore((s) => s.project.name)
@@ -41,10 +41,11 @@ export function ProjectSwitcher(): ReactElement {
   const [open, setOpen] = useState(false)
   const [recents, setRecents] = useState<RecentProject[]>([])
   // Phase 4 (bg sessions): live decorations for the recents rows — backgrounded residents
-  // (dot + counts badge + ✕) and forever-keep dirs (the ∞ forget badge). Fetched with the
-  // recents on every open (cheap registry reads) + refreshed after a ✕ / ∞ action.
-  const [bgList, setBgList] = useState<BackgroundProjectInfo[]>([])
-  const [foreverDirs, setForeverDirs] = useState<string[]>([])
+  // (dot + counts badge + ✕) and forever-keep dirs (the ∞ forget badge). R10: ONE shared
+  // source (useResidentProjects), which also keeps these live off MAIN's project:bgLifecycle
+  // pushes — the local copy this replaced went stale whenever the idle sweep closed a resident
+  // while the menu was open.
+  const { bg: bgList, forever: foreverDirs, refresh: refreshLive } = useResidentProjects()
   // The ✕ confirm target (PHASE4-UX-DESIGN §3). null = no modal.
   const [closeTarget, setCloseTarget] = useState<BackgroundProjectInfo | null>(null)
   // D0-7: a project switch in flight (flush → dispose → load). The pill dims + spins so
@@ -63,12 +64,6 @@ export function ProjectSwitcher(): ReactElement {
   // under it (left-aligned) and re-clicking the pill toggles closed (the shell excludes
   // the anchor from outside-close; BUG-045 class).
   const triggerRef = useRef<HTMLButtonElement>(null)
-
-  const refreshLive = useCallback(async (): Promise<void> => {
-    const { bg, forever } = await fetchLiveDecorations()
-    setBgList(bg)
-    setForeverDirs(forever)
-  }, [])
 
   const toggle = async (): Promise<void> => {
     if (!open) {

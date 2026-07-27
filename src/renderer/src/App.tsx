@@ -16,6 +16,7 @@ import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
 import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
+import { useProjectBoot } from './store/useProjectBoot'
 import { useAccountStore, useAccountSync } from './store/accountStore'
 import { useUpdateStatusSync } from './store/useUpdateStatusSync'
 import { SignInView } from './canvas/SignInView'
@@ -27,7 +28,6 @@ import { useVoiceCapture } from './voice/useVoiceCapture'
 import { useTtsPlayback } from './voice/useTtsPlayback'
 import { VoicePill } from './voice/VoicePill'
 import { JarvisPanel } from './jarvis/JarvisPanel'
-import { isE2E } from './smoke/e2eRegistry'
 
 /**
  * App root. On boot, ask MAIN for the most-recent project (auto-reopen); fall back to
@@ -36,6 +36,8 @@ import { isE2E } from './smoke/e2eRegistry'
  */
 function App(): React.ReactElement {
   useRendererSmoke()
+  // R4: boot auto-reopen — the same lock-guarded open primitive the WelcomeScreen doors use.
+  useProjectBoot()
   useAutosave()
   // Project-switch hotkey (renderer half): MAIN's window-scoped chord forwards a direction; this
   // raises the running-projects switcher overlay. Mounted here so it survives a switch (the
@@ -61,7 +63,6 @@ function App(): React.ReactElement {
   useSwarmEvents()
 
   const status = useCanvasStore((s) => s.project.status)
-  const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
   const accountStatus = useAccountStore((s) => s.status)
   // Phase 4c: while the switch-transition overlay is armed, the welcome picker must never
   // paint (killing the mid-switch flash is the point of the HOLD phase); during IN the
@@ -106,24 +107,6 @@ function App(): React.ReactElement {
       }
     })
   }, [])
-
-  useEffect(() => {
-    // E2E (CANVAS_E2E) seeds boards directly and never opens a project. Flip to
-    // `open` so the canvas mounts (and installs `window.__canvasE2E`); the disk path
-    // (project.current) is irrelevant under the harness.
-    if (isE2E()) {
-      useCanvasStore.setState({ project: { dir: null, name: 'e2e', status: 'open' } })
-      return
-    }
-    void window.api.project.current().then((r) => {
-      // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation
-      // failure); await it INSIDE the .then so its promise (and any rejection) is owned
-      // here instead of floating unhandled.
-      if (r && r.ok) return applyOpenResult(r)
-      // null → stay on the welcome screen (initial status is 'welcome').
-      return undefined
-    })
-  }, [applyOpenResult])
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>

@@ -26,12 +26,12 @@ import { CloseBackgroundModal } from './CloseBackgroundModal'
 import {
   bgBadge,
   dockCards,
-  fetchLiveDecorations,
   pickCreateProject,
   pickOpenFolder,
   toastLockedSwitch,
   type ProjectDockCard
 } from './projectSessionsShared'
+import { useResidentProjects } from '../store/useResidentProjects'
 
 /** Bottom-edge hot zone height (window px). ~2px per the original spec proved unreachable
  *  with a REAL mouse (manual dev check 2026-07-03): windowed, the bottom few px are the OS
@@ -50,8 +50,10 @@ export function ProjectDock(): ReactElement {
   const activeDir = useCanvasStore((s) => s.project.dir)
   const activeName = useCanvasStore((s) => s.project.name)
   const [open, setOpen] = useState(false)
-  const [bgList, setBgList] = useState<BackgroundProjectInfo[]>([])
-  const [foreverDirs, setForeverDirs] = useState<string[]>([])
+  // R10: the resident list + keep-forever set come from the ONE shared source, which also keeps
+  // them live off MAIN's project:bgLifecycle pushes — the local copies this replaced went stale
+  // whenever the idle sweep closed or evicted a resident while the dock was open.
+  const { bg: bgList, forever: foreverDirs, refresh: refreshResidents } = useResidentProjects()
   const [activeCounts, setActiveCounts] = useState<{ terminals: number; previews: number } | null>(
     null
   )
@@ -75,16 +77,14 @@ export function ProjectDock(): ReactElement {
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
-    const [{ bg, forever }, info] = await Promise.all([
-      fetchLiveDecorations(),
+    const [, info] = await Promise.all([
+      refreshResidents(),
       // Promise.resolve().then wrapper: a partial window.api mock (integration tests stub
       // only what they use) must degrade to null, not throw before .catch attaches.
       Promise.resolve()
         .then(() => window.api.project.askOnSwitchInfo())
         .catch(() => null)
     ])
-    setBgList(bg)
-    setForeverDirs(forever)
     setActiveCounts(info ? { terminals: info.terminals, previews: info.previews } : null)
     // The §4 dock-open capture moment: snapshot the ACTIVE canvas, THEN pull the map so
     // the active card's thumb is fresh. Failure is normal (placeholder path).
@@ -93,7 +93,7 @@ export function ProjectDock(): ReactElement {
       .then(() => window.api.project.thumbs())
       .catch(() => ({}) as Record<string, string>)
     setThumbs(t)
-  }, [])
+  }, [refreshResidents])
 
   const openDock = useCallback((): void => {
     openRef.current = true

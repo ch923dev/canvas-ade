@@ -93,6 +93,15 @@ export function resetRunningSwitcherInteraction(): void {
   queuedSteps = 0
 }
 
+/**
+ * Read the module-scoped half (e2e diagnostics only). Without this, a stranded `opening` is
+ * invisible from a spec: the overlay just never appears and the failure reads "element not found",
+ * which says nothing about WHY. Exposing it turns that whole failure class into a named cause.
+ */
+export function runningSwitcherInteractionState(): { opening: boolean; queuedSteps: number } {
+  return { opening, queuedSteps }
+}
+
 export const useRunningSwitcherStore = create<RunningSwitcherStore>((set, get) => ({
   open: false,
   cards: [],
