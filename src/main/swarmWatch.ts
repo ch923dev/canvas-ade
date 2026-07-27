@@ -134,9 +134,17 @@ export interface SwarmWatch {
  */
 const DEATH_STATUSES: ReadonlySet<string> = new Set(['gone', 'failed'])
 
-/** The task a worker board is CURRENTLY working (a board may hold several across a run). */
+/**
+ * The task a worker board is CURRENTLY working (a board may hold several across a run — a finished
+ * task keeps its assignment as the record of who did it). Newest first, for the same reason
+ * `taskForBoard` scans that way: a reused worker must never resolve to an older row.
+ */
 function liveTaskForBoard(l: SwarmRunLedger, boardId: string): SwarmTask | undefined {
-  return l.tasks.find((t) => t.assignment?.boardId === boardId && t.state === 'in_progress')
+  for (let i = l.tasks.length - 1; i >= 0; i--) {
+    const t = l.tasks[i]
+    if (t.assignment?.boardId === boardId && t.state === 'in_progress') return t
+  }
+  return undefined
 }
 
 /** 1-based plan position, for `task 3` in a narration. `null` when the task maps to no item. */

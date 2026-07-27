@@ -115,6 +115,81 @@ describe('applyAction — the action must be one the row actually offered', () =
   })
 })
 
+describe('a REUSED worker board (the same board takes a second task)', () => {
+  it('🔒 settles onto the task the worker is currently working, not its first-ever one', async () => {
+    // A finished task keeps its `assignment` — that is the run's record of who did the work — so a
+    // board handed a second task matches two rows. A first-match lookup resolved to the FIRST one
+    // forever: task 2's result landed on task 1 (overwriting it) while task 2 never left
+    // `in_progress`, so its card spun and its plan item never released its owner dot.
+    const at = 5 * MIN
+    const store = createSwarmLedgerStore({
+      getProjectDir: () => '/proj',
+      now: () => at,
+      memoryFor: () => memoryStub()
+    })
+    const ledger = createSwarmLedgerSession('run1', { store, now: () => at })
+    ledger.ensure('ship the thing')
+    const hooks = ledger.hooks(() => null)
+    const spec = { objective: 'first', context: 'c', boundaries: 'b', outputFormat: 'f' }
+
+    await hooks.dispatched({ workerId: 'w1', role: 'builder', spec })
+    await hooks.settled({
+      workerId: 'w1',
+      status: 'ok',
+      summary: 'first done',
+      refs: [],
+      provenance: 'claimed'
+    })
+    // …the worker goes idle and the orchestrator hands it the next task.
+    await hooks.dispatched({
+      workerId: 'w1',
+      role: 'builder',
+      spec: { ...spec, objective: 'second' }
+    })
+    await hooks.settled({
+      workerId: 'w1',
+      status: 'ok',
+      summary: 'second done',
+      refs: [],
+      provenance: 'claimed'
+    })
+
+    const tasks = store.readRun('run1')!.tasks
+    expect(tasks).toHaveLength(2)
+    expect(tasks[0].state).toBe('done')
+    expect(tasks[0].result?.summary).toBe('first done') // NOT clobbered by the second settle
+    expect(tasks[1].state).toBe('done') // before the fix: stuck in_progress forever
+    expect(tasks[1].result?.summary).toBe('second done')
+  })
+
+  it('a re-settle with no open task still updates the row it belongs to (the newest finished one)', async () => {
+    const at = 5 * MIN
+    const store = createSwarmLedgerStore({
+      getProjectDir: () => '/proj',
+      now: () => at,
+      memoryFor: () => memoryStub()
+    })
+    const ledger = createSwarmLedgerSession('run1', { store, now: () => at })
+    ledger.ensure('ship the thing')
+    const hooks = ledger.hooks(() => null)
+    const spec = { objective: 'only', context: 'c', boundaries: 'b', outputFormat: 'f' }
+
+    await hooks.dispatched({ workerId: 'w1', role: 'builder', spec })
+    for (const summary of ['draft', 'revised']) {
+      await hooks.settled({
+        workerId: 'w1',
+        status: 'ok',
+        summary,
+        refs: [],
+        provenance: 'claimed'
+      })
+    }
+    const tasks = store.readRun('run1')!.tasks
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].result?.summary).toBe('revised')
+  })
+})
+
 describe('applyAction — accept', () => {
   it('🔒 accepting a LOST worker’s salvaged result closes the task, so the row and the card clear', () => {
     // Accept used to set `acceptedByHuman` and nothing else — but every consumer keys off

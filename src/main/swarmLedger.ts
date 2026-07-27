@@ -436,9 +436,29 @@ export function taskById(l: SwarmRunLedger, taskId: string): SwarmTask | undefin
   return l.tasks.find((t) => t.taskId === taskId)
 }
 
-/** The (single) task currently assigned to a worker board, if any. */
+/** Terminal task states — a task here is finished and will never be worked again. */
+const TERMINAL_TASK_STATES: ReadonlySet<SwarmTaskState> = new Set(['done', 'failed', 'cancelled'])
+
+/**
+ * The task a worker board is currently working, if any — else the last one it finished.
+ *
+ * A finished task KEEPS its `assignment`: that is the run's only record of who did the work, and
+ * the worker cards and `runWorkerIds` read it. So a board reused for a second task (an ordinary
+ * pattern — the orchestrator hands the next task to whichever worker went idle) matches several
+ * rows, and a first-match scan would resolve to its FIRST-EVER task forever: task 2's `settled()`
+ * would overwrite task 1's result while task 2 itself never left `in_progress`. Scan NEWEST first,
+ * and prefer an open task, so a re-settle (a worker rewriting its own result) still lands on the
+ * row it belongs to.
+ */
 export function taskForBoard(l: SwarmRunLedger, boardId: string): SwarmTask | undefined {
-  return l.tasks.find((t) => t.assignment?.boardId === boardId)
+  let newestFinished: SwarmTask | undefined
+  for (let i = l.tasks.length - 1; i >= 0; i--) {
+    const t = l.tasks[i]
+    if (t.assignment?.boardId !== boardId) continue
+    if (!TERMINAL_TASK_STATES.has(t.state)) return t
+    newestFinished ??= t
+  }
+  return newestFinished
 }
 
 /** Distinct worker board ids the run has ever assigned work to, in first-assignment order. */

@@ -3852,6 +3852,18 @@ in the SOURCE — blunt on purpose, since a rename is a conscious edit while a s
 nothing else catches. Also three CodeQL `js/bad-code-sanitization` notices in the e2e spec (board ids now
 passed as structured args). `index.ts` 710→711, documented.
 
+**Plus the [critical] the first round carried in its overflow, now closed:** `taskForBoard` resolved a
+worker board to its **first-ever** assigned task. A finished task keeps its `assignment` — that IS the
+run's record of who did the work, and the worker cards and `runWorkerIds` read it — so a board handed a
+second task (the ordinary pattern: the orchestrator gives the next task to whichever worker went idle)
+matched two rows and `Array.find` always returned the older one. Task 2's `settled()` overwrote task 1's
+result while task 2 itself never left `in_progress`, so its card spun forever and its plan item never
+released the owner dot. Both lookups now scan **newest first** (`taskForBoard`, and `swarmWatch`'s
+`liveTaskForBoard` for the same reason), preferring an open task and falling back to the newest finished
+one so a worker rewriting its own result still lands on the row it belongs to. The regression test drives
+the real hook pair — dispatch · settle · dispatch · settle onto one board — and was confirmed to fail
+against the pre-fix helper.
+
 **Verified:** unit + integration 6224 passed (the only 5 failures are this box's documented ambients:
 `pathSafe`'s 8.3-TEMP symlink layer + `pty.recapenv`). **Full e2e matrix, both legs, sequentially**
 (parallel legs flake), re-run after the rebase AND again after the review fixes. Windows 334 passed /
