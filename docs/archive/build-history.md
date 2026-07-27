@@ -4224,11 +4224,17 @@ Merge gate: Windows `workers:1` 339 pass / 3 skip / 0 flaky (9.2 m) + Linux Dock
 (6.3 m), matrix exit 0. Unit 6375 pass (the 2 `pathSafe` failures are machine-environmental — 8.3
 shortname TEMP + symlink privileges — and reproduce on `main`). `claude-review` 2 rounds, 0 critical /
 0 warning / 0 inline. Manual dev check passed.
-## 2026-07-28 — PR #TBD: orchestration S3 — workspace isolation, overlap detection, merge sequencing (v0.36.0)
+
+## 2026-07-28 — PR #TBD: orchestration S3 — workspace isolation, overlap detection, merge sequencing (v0.38.0)
 
 **Lane brief:** `M:/expanse/docs/orchestration/s3-kickoff.md` · rides base **Phase 3** (`04-roadmap.md`)
 · surface spec `07-swarm-board.md` §6 (S3) + §4.3 · mechanism `03-mechanism.md` item 6. Base
-`8dca6370` (v0.35.0, S2 = #392).
+`8dca6370` (v0.35.0, S2 = #392), then **rebased twice** as `main` moved under a long gate: onto
+`5ab30fbe` (#391, the switch-Phase-1 lane) and finally onto `312b1402` (#395 + #396, the
+push-cheap/merge-full e2e re-scoping). Both times only `package.json` and this file overlapped, both
+trivially — every other lane is file-disjoint from S3 in product code. The version was renumbered on
+the first rebase: this lane branched at 0.35.0 and built as 0.36.0, but #391/#395/#396 shipped 0.36.0
+through 0.37.2 to `main` first, so S3 lands as **0.38.0**.
 
 **Design gate first (signed off 2026-07-28):** `docs/orchestration/s3-design-artifact.html`, on the
 S1/S2 footing — tokens verbatim from `tokens.css`, the shipped `.sw-*` board chrome reused, every
@@ -4301,9 +4307,10 @@ SHIPPED allocator against a real `git init`ed temp project: three workers, three
 three branches, the non-repo refusal first, and clean removal — everything it creates lives inside
 the one temp project its `finally` deletes. Dev check: title-stamped boot clean from this checkout
 (per-checkout profile `swarm-s3-bef477`), and the live board screenshotted rendering the chips, the
-overlap row, and the expanded merge sequence. **Version:** 0.35.0 → **0.36.0** (minor — new subsystem).
+overlap row, and the expanded merge sequence. **Version:** 0.37.2 → **0.38.0** (minor — new subsystem;
+see the Base note above for why it is not 0.36.0).
 
-**Review round 1 — one `[critical]`, real, fixed in `8cd6db33`.** A worker handed a second task keeps
+**Review round 1 — one `[critical]`, real, fixed in `eccd8b15`.** A worker handed a second task keeps
 ONE worktree (by design), so the ledger can hold an older FINISHED task and a newer `in_progress` one
 pointing at the same tree. `dirtyWorktreeRows` walked newest-first and `continue`d on the in-progress
 record **without marking its worktree seen**, fell through to the finished task, found the tree dirty
@@ -4321,3 +4328,36 @@ real-channel integration tests cover the gate. `mergeCandidates` was already cor
 branch and drops any group with a live task) and is now pinned by a test. Everything else in the
 review was checked clean, including the allocator's destructive-path safety against the locked rules
 and the cap-as-function wiring. Inline-dispositioned on the reviewer's own thread.
+
+**Self-review, same round — the half of the TOCTOU the round-1 gate did NOT close (`45234210`).** The
+`busy` check landed *before* the modal, which closes the stale-ROW race (the row the human clicks can
+be seconds stale). It leaves the stale-ANSWER race: a human can sit on the disposition chooser for
+minutes, and the orchestrator is free to hand that worker a new task meanwhile — so Discard would
+destroy work that STARTED AFTER the question was asked. Fix = the BUG-021 discipline taken literally:
+re-derive liveness immediately before `worktrees.dispose`, not only at the gate. The regression test
+drives the race honestly — the `confirm` stub itself pushes the new `in_progress` task while the modal
+is notionally open — and was verified to FAIL against the pre-fix handler.
+
+**Review round 2 — one `[warning]`, real, fixed in `caf41494`.** That in-write recheck was applied to
+all four dispositions, including `keep` — which is an unconditional no-op (`swarmWorktree.dispose`
+returns before it touches the tree). So a worker going busy mid-modal turned a `keep` answer into
+`ok: false` carrying the detail "nothing was touched": the *intended* outcome reported as a failure,
+for the one choice the design calls safe-by-default and falls back to on cancel AND on an
+off-vocabulary answer. **Gate the write, not the no-op** — `commit`/`stash`/`discard` still refuse and
+name the worker that owns the tree; `keep` passes through and reports honestly. The sibling regression
+test drives the identical race with the opposite answer and asserts the opposite outcome, and was
+likewise verified to fail against the pre-fix condition. The reviewer's incremental round over the
+round-1 fix had already confirmed it; this is the only finding since.
+
+**Verification.** Cheap gate clean; **6478 units pass** on the final rebased tree, the only 5 failures
+being this box's documented ambients (`pathSafe`'s 8.3-TEMP symlink layer ×2 + `pty.recapenv` ×3),
+which reproduce on `main`. **Full e2e matrix GREEN,
+both legs, exit 0 each**: Windows **338 passed / 3 skipped / 1 flaky** (`orchestration.e2e.ts:45`
+@mcp, green on retry #1) · Linux Docker **336 passed / 5 skipped / 1 flaky** (`projectSwitcher:96`,
+the documented hotkey-overlay family). Three earlier heads were matrixed too — each ended with only
+ambient-family failures on Windows, every one green when rerun isolated at `--retries=0`, and every
+Linux leg exit 0. **No swarm spec failed on any leg of any head.** Those matrix runs were taken on the
+pre-rebase commits of this identical tree; the rebases carried no product-code conflict (only
+`package.json` and this file), and the merge gate re-runs the full matrix on the final head anyway.
+Dev check re-run title-stamped on each rebased head: boots clean, no renderer errors. CI check ·
+analyze · CodeQL · claude-review all PASS.
