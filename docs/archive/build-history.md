@@ -3720,3 +3720,42 @@ not fixed:** `projectSwitcher.e2e.ts:96` now flakes on both legs — this PR did
 stopped hiding it (that spec sorts AFTER `menuShell`, so menuShell's failure had been handing it a
 freshly relaunched worker every run; it passes alone, after both changed specs, and in a 7-spec chain,
 failing only in the full ~330-spec run). **Version:** 0.34.0 → **0.34.1** (patch). Squash `99219f6f`.
+
+## 2026-07-27 — PR #390: re-measure `arm` with live resources (R3 REFUTED) + prove ask exclusion (v0.34.2)
+
+The two measurement items #387 left owed. No product code: the only `src/` files touched are the
+E2E-only harness surface, compile-gated by `__ENABLE_E2E_MAIN__`/`isE2E()` and runtime-gated by
+`CANVAS_E2E`. **R3 is refuted.** Its premise — PS-1's ~800 ms of dead air — was never measured; it was
+`CAPTURE_BUDGET_MS` + `SNAPSHOT_FETCH_BUDGET_MS` summed on paper, two `Promise.race` timeouts assumed
+to fire. #387 measured `arm` at 41–49 ms, but on a canvas with no terminals, no previews and no assets
+— exactly the conditions under which those budgets *cannot* fire — so the number refuted nothing. A
+new `projectSwitchResources.bench.ts` re-measures with resources actually live, alongside the
+committed 0/8/24 sweep left byte-identical (changing it would invalidate the comparison it exists to
+provide). Medians of 5, warm-up discarded, run alone at 38.1% CPU at rest vs the baseline's 49.2%:
+`arm` 35.6 ms with 3 live PTYs · 71.6 ms with 6 Browser boards (8 offscreen windows open) · 60.2 ms
+with 44 assets · **86.6 ms fully loaded**, worst single sample 213 ms. **Neither budget fired in any of
+20 samples** — the premise is off ~9×, and `arm` clears the NN/g 100 ms bar even loaded. R3 dropped
+from the roadmap (−1.5 d; backlog R3–R16/~16.5 d → R4–R16/~15 d). **R11's premise is revived** by the
+same run: `mainOpen` is asset-sensitive — 9.8–13.0 ms → **65.4 ms** at 44 assets (`gcAssets` lives in
+`load`, not `arm`) — isolated with a fourth assets-only config rather than inferred from the `full`
+config's jump, and caveated (seeded assets are unreferenced, so mark-and-sweep takes its worst path).
+Re-opened at smaller scope as AUDIT §9 item 6. **Item B:** `decideKeep` returns early on
+`if (explicit !== undefined)`, and every bench/e2e switch passed an explicit keep, so `recordAskTime`
+had **never fired in an automated run** — the exclusion had only ever executed inside a unit test.
+`switchAskExclusion.e2e.ts` drives `switchProjectAsk`, holds the real modal 1500 ms, and asserts
+`ask ≥ 1400` + wall-clock spanned the hold + `total`/`arm` both < 1500, plus a dialog-free control
+recording `ask === null`; generous slack because this is a correctness assertion, not a latency gate.
+**Proven non-vacuous by mutation** — stubbed `minusAsk` to `return ms`, spec failed on `total`;
+restored, green. Two harness findings fell out: `fitView()`-all drives zoom below `LOD_ZOOM` 0.4 and
+takes *every* offscreen window down (the previews config measured `osr open 0` until it framed a
+single board instead), and landing on a project frames its whole canvas at zoom ~0.25, so an incoming
+project's previews arrive below LOD too; and `reset()` now settles a pending ask with `cancel` —
+a bare state wipe strands the promise `performProjectSwitch` awaits, holding the switch lock so every
+later spec settles `locked`. Same overlay-leak class as #389. `seedLiveTerminal` lifted to
+`e2e/helpers.ts`; new `seedProjectAssets`/`osrCounts` E2E-main hooks (`writeProjectFile` rejects
+separators, so it cannot reach `.canvas/assets/`). Verdict written to `docs/reviews/2026-07-25-bench/
+BASELINE.md` §6 + `RESOURCES.json` — **not** the `…-bench-baseline/` path the brief named, which is the
+terminal-load doc. Verified: full matrix green both legs at pre-push, CI 4/4, reviewer FULL review 0
+findings (independently re-derived the `decideKeep` and `settle()` claims and cross-checked
+`RESOURCES.json` against the prose), dev check title-stamped `PR#390`. **Version:** 0.34.1 →
+**0.34.2** (patch — measurement/test work). Squash `f62bc169`.
