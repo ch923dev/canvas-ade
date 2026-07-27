@@ -245,10 +245,13 @@ Gate: a committed switch-latency number and a committed bench baseline exist —
 Phase 2/3 ships without a before/after against these. **Phase 0 changed the phases it was gating:
 R3 lost its 800 ms premise, R11 lost its justification, R5 gained one.** See §9.
 
-**Phase 1 — Switch UX & correctness (6.5 d, now **5 d + R3 TBD**): R3, R4, R16, R9, R10.**
-⚠️ **R3 is no longer a safe start.** Its 1.5 d was bought by PS-1's ~800 ms; the measured figure is
-41–49 ms. Either re-measure with live resources first, or start Phase 1 on R4/R16/R9/R10 (5 d, all
-unaffected) and fold R3 in once it has a number.
+**Phase 1 — Switch UX & correctness (6.5 d, now **5 d**): R4, R16, R9, R10.**
+✅ **The R3 TBD is resolved — as a drop (2026-07-27, PR #390).** R3's 1.5 d was bought entirely by
+PS-1's ~800 ms; the resource-bearing re-measurement put `arm` at 86.6 ms median with 3 live PTYs +
+8 offscreen windows (4 painting) + 44 assets, no budget ever firing, so it left the phase rather than
+re-entering it. Phase 1 is now four unaffected items at 5 d with nothing pending. Suggested start:
+**R9** — it is the only item whose hardest path already has a harness (`e2e/switchAskExclusion.e2e.ts`
+is the first automated run to execute `decideKeep`'s non-explicit branch), and its gate subsumes R16's.
 Gate: switch-to-first-paint under 100 ms measured by R1; commit-on-release working with a queued racing press; all 5 `performProjectSwitch` return codes unit-tested; one e2e that **commits** a hotkey switch (this now covers R16 as well); the three resident lists collapsed to one hook. Fits one coherent feature slice under the repo's plan-viz-first + worktree conventions.
 
 **Phase 2 — Renderer perf (3 d): R5, R6.**
