@@ -3833,5 +3833,34 @@ clicks (`mcpServers` · `projectSettings` · `swarmBoard`) — was fixed central
 **#389**'s `closeChromeOverlays()` in `reset()`, which this branch picked up on rebase; the spec-local
 closes written here were dropped as redundant.
 
-**Verified:** units 5811 green (only the 5 documented box ambients), integration 390
-green, e2e — **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
+**Five findings from the automated review, all real, all fixed** (PR #392). **[critical] the salvage
+read was racing synthesis:** `resultSynth.onSettle` has ONE production call site — the recap watcher's
+25s transcript debounce — while a PTY exit reaches `swarmWatch` in a few hundred ms, so a worker that
+died without `write_result` read as "nothing to salvage" essentially always, and permanently (the sweep
+only revisits `in_progress`). Death IS a settle: a `synthesizeNow` dep now forces the (synchronous)
+settle immediately before the read, inside the same guard. **[warning] Accept on a lost row did nothing
+observable** — it set `acceptedByHuman` while every consumer keys off `blockedTag === 'lost'`; accepting
+a salvaged result now CLOSES the task (`done`, tag cleared, status event). **[warning] the tasks clamp
+kept the oldest 200** and dropped everything after — past the cap each new task vanished at the next
+persist while its `assigned` event survived pointing at a taskId no longer in `tasks`, so the worker's
+later `settled()` silently discarded the result; now `slice(-N)` like the events clamp. **[warning]
+`applyAction` validated only that the task exists** — `reassign` on a healthy in-progress task wiped its
+live assignment; a new `offers()` mirrors `triageRows`' per-tag vocabulary and MAIN re-derives the
+pairing before any write. **[warning] the failure-case-B ordering had no coverage**: `shutdown()` cannot
+be imported (index.ts owns the app lifetime), so `quit.test.ts` asserts the drain-before-PTY-drain order
+in the SOURCE — blunt on purpose, since a rename is a conscious edit while a silent reorder is what
+nothing else catches. Also three CodeQL `js/bad-code-sanitization` notices in the e2e spec (board ids now
+passed as structured args). `index.ts` 710→711, documented.
+
+**Verified:** unit + integration 6224 passed (the only 5 failures are this box's documented ambients:
+`pathSafe`'s 8.3-TEMP symlink layer + `pty.recapenv`). **Full e2e matrix, both legs, sequentially**
+(parallel legs flake), re-run after the rebase AND again after the review fixes. Windows 334 passed /
+3 skipped / 3 failed, all three adjudicated ambient by the same method: rerun the spec isolated at
+`--retries=0` (all green), then check the blast radius. `terminalCrisp:155` is a documented box
+ambient; `voiceCloud:127` is an 8s wait for the cloud-error chip that takes 3.9s isolated, in a
+subsystem this branch does not touch; and `planningCrossBoardDrag:91` runs at suite position #210 —
+*before* every spec this branch touches (#228 `projectSettings`, #250 `swarmLedger`, #292
+`terminalPolish`) — so it cannot be downstream of this lane, the shared seams being additive only.
+Linux (Docker, xvfb) 334 passed / 5 skipped / **1 flaky, exit 0** — `projectSwitcher:96`, the same
+hotkey-overlay class as the previous two legs, green on retry; all three Windows failures passed
+clean there. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
