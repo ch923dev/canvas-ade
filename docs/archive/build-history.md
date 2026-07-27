@@ -4057,3 +4057,95 @@ unsubscribe on the LAST unmount, dedupe, absent-channel degradation). Mutation-c
 5 pre-existing failures as `main` (`pathSafe` symlink ×2, `pty.recapenv` ×3). `canvasStore.ts` sits
 on its 727-line cap, so the welcome-restore is a direct `setState` in `openProject` rather than a
 new store action. **Version:** 0.36.0 → **0.37.0** (minor).
+
+## 2026-07-28 — PR #395: push cheap / merge full — unbreak the pre-push e2e scoping (v0.37.1)
+
+**The bug was six weeks old and never failed once.** June's pre-push scoping (two axes: which OS
+legs, which specs via Playwright `--grep` area tags) was written, tested, documented — and
+unreachable. `package.json` sat in *both* scope allowlists, and `CLAUDE.md` mandates a version bump
+in `package.json` on every PR. So every push matched `LINUX_SENSITIVE`, every push ran the full
+matrix, and the scoping code never once selected a narrower run. It never produced a wrong answer;
+it only ever produced the slowest correct one, which is why nobody noticed. The user's report —
+"this test and push took 30 minutes" — was the first signal, and the 30 minutes was the whole
+Docker path (image rebuild + a second build inside the container + 340 Linux specs + a 35.7 GB
+`docker builder prune`) that a version bump was silently buying on every single push.
+
+**Policy now stated in one line: push cheap, merge full.** Push runs the Windows leg only, scoped to
+the touched paths; Docker never runs on push. Merge runs `make check` — the full matrix, both legs —
+as a human ritual, because merges land on GitHub and no local hook can gate them. GitHub Actions
+keeps only the cheap `check` job (typecheck · lint · format · unit+integration + SCA); e2e stays out
+of Actions (billing-blocked), unchanged by this PR.
+
+**`scripts/e2e-scope.mjs` was re-shaped around evaluation order**: IGNORE → `NATIVE_AREAS` →
+`CROSS_CUTTING` → `AREAS` → `null` (FULL). The new `NATIVE_AREAS` table is the substantive change —
+it is consulted *before* `CROSS_CUTTING`, so a MAIN-process, preload, or `src/shared` file scopes by
+domain (`src/main/pty` → `@terminal`, `src/main/voice` → `@voice`, `src/main/mcp` → `@mcp`,
+`src/main/previewOsr` → `@preview`) instead of falling into the blanket `src/main/` cross-cutting
+rule. The shared entry points (`src/main/index.ts`, `src/preload/index.ts`) deliberately stay FULL.
+IGNORE grew the provably-non-runtime set: vitest specs, `__fixtures__`/`__mocks__`/`__snapshots__`,
+`.github/`, bench files, `eslint.config`, `vitest.config`, prettier/editorconfig/gitattributes,
+release + icon + SCA + stt-eval scripts, and the `marketing/` `design-reference/` `release/`
+`supabase/` `.claude/` `.agents/` `.codegraph/` trees. `tsconfig` stays cross-cutting *because it
+feeds the bundle's module resolution* — unlike eslint/vitest config, which cannot change shipped
+behaviour.
+
+**The safety contract runs in both directions.** Unknown or cross-cutting paths fail OPEN to `FULL` —
+never to a narrower set. But `NONE` (skip e2e entirely) is only reachable when *every* path is
+provably non-runtime, and an all-blank path list returns `FULL`, not `NONE`: a list carrying no
+information is unparseable, not proof of harmlessness. That distinction is a test.
+
+**The selector was validated against real history, not synthetic inputs.** Replaying 40 recent
+commits through it and ranking the FULL-drivers gave `package.json` 21/40, `smoke/e2eHooks.ts` 7,
+`pnpm-lock.yaml` 6, `eslint.config.mjs` 5, `e2eHooks.types.ts` 4, `preload/index.ts` 4,
+`main/index.ts` 4. That ranking is what drove the changes — eslint config to IGNORE, preload and
+`src/shared` into the domain map, bench files to IGNORE — rather than a guess about what "usually"
+gets touched.
+
+**Reviewer caught a real bug, and it was the dangerous class.** `claude-review` flagged
+`.githooks/pre-push:164`: the version-only `package.json` strip and its `exit 0` sat *ahead* of the
+`pushing_main` / `E2E_FULL_MATRIX` branch. A push straight to `refs/heads/main` whose diff reduced to
+nothing but the `"version"` line would strip `package.json`, find an empty change-set, print
+"version bump only — skipping e2e" and exit 0 — never reaching the full-matrix branch. That silently
+voided both the hook header's guarantee and row 1 of the decision table in `docs/testing/TESTING.md`,
+where push-to-main outranks every other row. None of the original 7 dry-run cases crossed "push to
+main" with "version-only diff", which is exactly why it survived. Fixed in `f7d33679` by hoisting the
+full-matrix block above the version-only filter and above every skip path, so row 1 holds by
+construction rather than by documentation; the `pnpm`-presence check moved up with it and the
+manual-check reminder became a `remind()` helper. **The lesson generalises: an early-exit optimisation
+placed ahead of a guarantee silently repeals the guarantee.**
+
+**Measured, worst case, same class of change:** worst-case push **~30 min → ~11 min**; a scoped push
+(`@core|@terminal`) **6.0 min**, previously impossible; a docs / unit-test / CI-config push
+**skipped entirely**, previously ~30 min. Windows all-340 = 711 s, scoped = 362 s, build floor 43 s.
+
+**The honest limit, recorded in the docs too.** A whole feature PR still routes `FULL`, because the
+remaining drivers (`pnpm-lock.yaml`, `smoke/e2eHooks{,.types}.ts`, `preload/index.ts`,
+`main/index.ts`) are genuinely cross-cutting. **The bulk of the saving is dropping the Linux leg and
+Docker from the push path, not the spec narrowing** — narrowing pays on small iterative pushes.
+`src/renderer/src/smoke/e2eHooks.ts` is the next `package.json` waiting to happen: a mandatory-touch
+file sitting inside a scoping allowlist (7/40 commits). Splitting it per-area is a real design
+change and was left out of scope.
+
+**One real coverage hole found on the way:** `e2e/newTerminal.e2e.ts` was untagged, so it was
+invisible to every scoped run even though its source (`boards/terminal/NewTerminalDialog.tsx`) maps
+to `@terminal`. One-line fix. It was harmless while scoping was dead code and would have become a
+silent gap the moment scoping went live.
+
+**Tests.** `scripts/e2e-scope.test.ts` → 62 cases: 12 MAIN-subsystem rows, 12 non-runtime rows, the
+shared-entry-point FULL guards, "a unit-test edit beside a source edit still scopes the source", and
+the all-blank-list-is-FULL case. The hook itself was verified with a stubbed-`pnpm`/`docker` dry-run
+harness across 10 cases (feature push · push-to-main · `E2E_FULL_MATRIX=1` · docs+vitest+eslint ·
+renderer+version bump · two e2e specs by path · `src/main/voiceIpc.ts` · version-only→main ·
+version-only→feature · docs-only→main).
+
+**Verified at the merge gate on `f7d33679`:** Windows leg 336 passed / 3 skipped / 3 flaky-retried
+(694 s) · Linux Docker leg 337 passed / 5 skipped (505 s), zero flakes · CI `check` · `analyze` ·
+`CodeQL` · `claude-review` round 2 with 0 new findings. **Version:** 0.37.0 → **0.37.1** (patch).
+
+**Follow-up parked by user decision:** the e2e suite *trim* is a separate PR. A recon pass found the
+suite already well-tiered (TESTING.md keep-set discipline + the prior MT-2/PR-4 trim) with only
+~10–15 s of real cuts left — coarsen the `terminalClip` sweep, demote two `jarvis` timer assertions
+to fake-timer unit tests, fix the `dataFlow` seed race the 45 s polls are papering over, and convert
+~50.9 s of `waitForTimeout` to `expect.poll`. Raising `workers` was **rejected without a spike**:
+`workers:1` has two causes, and `reset()` only addresses state leakage — native GPU / `capturePage` /
+ConPTY contention is unsolved.
