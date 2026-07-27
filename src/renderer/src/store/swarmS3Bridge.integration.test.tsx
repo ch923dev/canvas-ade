@@ -458,3 +458,64 @@ describe('🔒 S3 — the dispose gate refuses a worktree a worker is still writ
     expect(wt.disposed).toEqual([[WT1, 'stash']])
   })
 })
+
+describe('🔒 S3 — liveness is re-checked INSIDE the write, not just before the prompt', () => {
+  it('a worker that starts work while the modal is open keeps its tree', async () => {
+    // The gate before the chooser closes the stale-ROW race. This closes the stale-ANSWER one: a
+    // human can sit on the modal for minutes, and the orchestrator is free to hand this worker a
+    // new task meanwhile — at which point Discard would destroy work that began after the question
+    // was asked. (BUG-021 TOCTOU discipline: re-check inside the write.)
+    const wt = worktreeStub({ [WT1]: 4 })
+    const h = harness({
+      worktrees: wt,
+      confirm: vi.fn(async () => {
+        // Simulate the dispatch landing while the human deliberates.
+        h.store.update(RUN, (l) => {
+          l.tasks.push({
+            taskId: 't9',
+            content: 'Next task',
+            activeForm: 'Working…',
+            state: 'in_progress',
+            assignment: {
+              boardId: W1,
+              role: 'builder',
+              spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+              dispatchedAt: 0,
+              lastActivityAt: 0,
+              stallCount: 0,
+              worktree: WT1,
+              branch: 'swarm/rrrr/builder-1'
+            }
+          })
+        })
+        return { approved: true, choice: 'discard' }
+      })
+    })
+    h.store.ensureRun(RUN, 'run')
+    h.store.update(RUN, (l) => {
+      l.tasks.push({
+        taskId: 't1',
+        content: 'Migrate',
+        activeForm: 'Migrating…',
+        state: 'done',
+        assignment: {
+          boardId: W1,
+          role: 'builder',
+          spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+          dispatchedAt: 0,
+          lastActivityAt: 0,
+          stallCount: 0,
+          worktree: WT1,
+          branch: 'swarm/rrrr/builder-1'
+        },
+        result: { status: 'done', summary: 'ok', refs: ['src/a.ts'], provenance: 'claimed', at: 0 }
+      })
+    })
+
+    const out = await h.cap.invoke('swarm:worktreeDispose', { runId: RUN, taskId: 't1' })
+    expect(out).toMatchObject({ ok: false })
+    expect((out as { detail: string }).detail).toContain('while the prompt was open')
+    // The human said Discard, and it still did not run. That is the correct direction to fail.
+    expect(wt.dispose).not.toHaveBeenCalled()
+  })
+})

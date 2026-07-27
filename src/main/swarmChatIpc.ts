@@ -656,6 +656,17 @@ export function registerSwarmHandlers(
         })
         if (!sure.approved) return { ok: true, detail: 'kept on disk — discard cancelled' }
       }
+      // 🔒 Re-check liveness INSIDE the write (the BUG-021 TOCTOU discipline). The gate above ran
+      // before the modal; a human can sit on that modal for minutes, and the orchestrator is free
+      // to hand this worker a new task in the meantime — at which point `discard` would destroy
+      // work that started after the question was asked. Cheap to re-derive, and the only honest
+      // answer is to keep the tree and say why.
+      if (session.ledger.worktreeFor(taskId)?.busy === true) {
+        return {
+          ok: false,
+          detail: `${held.label} started working in that worktree while the prompt was open — nothing was touched.`
+        }
+      }
       const outcome = await worktrees.dispose(held.worktree, choice, held.label)
       await refreshWorktrees(runId).catch(() => {})
       if (outcome.ok && choice !== 'keep') {

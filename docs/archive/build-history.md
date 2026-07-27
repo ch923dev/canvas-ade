@@ -4302,3 +4302,22 @@ three branches, the non-repo refusal first, and clean removal — everything it 
 the one temp project its `finally` deletes. Dev check: title-stamped boot clean from this checkout
 (per-checkout profile `swarm-s3-bef477`), and the live board screenshotted rendering the chips, the
 overlap row, and the expanded merge sequence. **Version:** 0.35.0 → **0.36.0** (minor — new subsystem).
+
+**Review round 1 — one `[critical]`, real, fixed in `8cd6db33`.** A worker handed a second task keeps
+ONE worktree (by design), so the ledger can hold an older FINISHED task and a newer `in_progress` one
+pointing at the same tree. `dirtyWorktreeRows` walked newest-first and `continue`d on the in-progress
+record **without marking its worktree seen**, fell through to the finished task, found the tree dirty
+— dirt the still-running worker was producing — and emitted a `dirty_worktree` row anchored on the
+stale task id. Its only action is `resolve`, and Discard would have run `git checkout -- . &&
+git clean -fd` on a tree a worker was actively editing. The fix takes the framing the report points
+at: **liveness is a property of the WORKTREE, not of whichever task record is in hand.** One
+definition, `liveWorktrees(ledger)`, keyed off by both sides — the projection seeds its `seen` set
+with it (excluding a live tree wholesale), and `worktreeFor` reports `busy`, which
+`swarm:worktreeDispose` refuses on BEFORE raising the chooser (defence in depth: the clicked row can
+be seconds stale when a reused worker takes a new task between the push and the click). The projection
+regression test was verified to FAIL against the pre-fix code by reverting the single line; a
+still-rows-a-genuinely-idle-tree guard keeps the fix from silently disabling the feature, and three
+real-channel integration tests cover the gate. `mergeCandidates` was already correct (it groups by
+branch and drops any group with a live task) and is now pinned by a test. Everything else in the
+review was checked clean, including the allocator's destructive-path safety against the locked rules
+and the cap-as-function wiring. Inline-dispositioned on the reviewer's own thread.
