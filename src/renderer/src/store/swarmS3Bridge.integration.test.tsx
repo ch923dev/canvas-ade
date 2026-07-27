@@ -518,4 +518,60 @@ describe('🔒 S3 — liveness is re-checked INSIDE the write, not just before t
     // The human said Discard, and it still did not run. That is the correct direction to fail.
     expect(wt.dispose).not.toHaveBeenCalled()
   })
+
+  it('but Keep still succeeds under the same race — it is a no-op, not a write', async () => {
+    // The gate protects the WRITE. `keep` writes nothing (swarmWorktree.dispose returns before it
+    // touches the tree), so refusing it would report "nothing was touched" as a FAILURE for the one
+    // choice whose entire contract is that nothing happens — and the design calls Keep the
+    // safe default, including on cancel. Same race as above, opposite answer, opposite outcome.
+    const wt = worktreeStub({ [WT1]: 4 })
+    const h = harness({
+      worktrees: wt,
+      confirm: vi.fn(async () => {
+        h.store.update(RUN, (l) => {
+          l.tasks.push({
+            taskId: 't9',
+            content: 'Next task',
+            activeForm: 'Working…',
+            state: 'in_progress',
+            assignment: {
+              boardId: W1,
+              role: 'builder',
+              spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+              dispatchedAt: 0,
+              lastActivityAt: 0,
+              stallCount: 0,
+              worktree: WT1,
+              branch: 'swarm/rrrr/builder-1'
+            }
+          })
+        })
+        return { approved: true, choice: 'keep' }
+      })
+    })
+    h.store.ensureRun(RUN, 'run')
+    h.store.update(RUN, (l) => {
+      l.tasks.push({
+        taskId: 't1',
+        content: 'Migrate',
+        activeForm: 'Migrating…',
+        state: 'done',
+        assignment: {
+          boardId: W1,
+          role: 'builder',
+          spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+          dispatchedAt: 0,
+          lastActivityAt: 0,
+          stallCount: 0,
+          worktree: WT1,
+          branch: 'swarm/rrrr/builder-1'
+        },
+        result: { status: 'done', summary: 'ok', refs: ['src/a.ts'], provenance: 'claimed', at: 0 }
+      })
+    })
+
+    const out = await h.cap.invoke('swarm:worktreeDispose', { runId: RUN, taskId: 't1' })
+    expect(out).toMatchObject({ ok: true })
+    expect(wt.disposed).toEqual([[WT1, 'keep']])
+  })
 })

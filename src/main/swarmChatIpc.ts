@@ -661,7 +661,11 @@ export function registerSwarmHandlers(
       // to hand this worker a new task in the meantime — at which point `discard` would destroy
       // work that started after the question was asked. Cheap to re-derive, and the only honest
       // answer is to keep the tree and say why.
-      if (session.ledger.worktreeFor(taskId)?.busy === true) {
+      //
+      // `keep` is exempt: it is an unconditional no-op (`swarmWorktree.dispose` returns before it
+      // touches anything), so refusing it would report "nothing was touched" as a FAILURE for the
+      // one choice whose whole contract is that nothing happens. Gate the write, not the no-op.
+      if (choice !== 'keep' && session.ledger.worktreeFor(taskId)?.busy === true) {
         return {
           ok: false,
           detail: `${held.label} started working in that worktree while the prompt was open — nothing was touched.`
