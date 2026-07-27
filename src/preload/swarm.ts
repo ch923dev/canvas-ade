@@ -72,6 +72,13 @@ export const swarmApi = {
     action: string
   ): Promise<{ ok: boolean; prompt?: string }> =>
     ipcRenderer.invoke('swarm:triageAction', { runId, taskId, action }),
+  /**
+   * S3: dispose of a worker's dirty worktree (the `dirty_worktree` row's Resolve…). Separate from
+   * `triageAction` because it needs async git and raises its own chooser + destructive second
+   * confirm; MAIN re-derives the worktree from the ledger and never trusts anything but `taskId`.
+   */
+  worktreeDispose: (runId: string, taskId: string): Promise<{ ok: boolean; detail: string }> =>
+    ipcRenderer.invoke('swarm:worktreeDispose', { runId, taskId }),
   onTurnEvent: (handler: (ev: SwarmTurnEventPayload) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, ev: SwarmTurnEventPayload): void => handler(ev)
     ipcRenderer.on('swarm:turn:event', listener)

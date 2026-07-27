@@ -221,3 +221,131 @@ describe('applyAction — accept', () => {
     expect(t.result?.acceptedByHuman).toBe(true)
   })
 })
+
+// ── S3 · the worktree join ──
+
+describe('S3 · the ledger records the worker tree', () => {
+  it('a dispatch carries worktree + branch onto the assignment (the fields S2 wrote null)', async () => {
+    const store = createSwarmLedgerStore({
+      getProjectDir: () => '/proj',
+      now: () => 1000,
+      memoryFor: () => memoryStub()
+    })
+    const s = createSwarmLedgerSession('run1', { store, now: () => 1000 })
+    s.ensure('run')
+    await s
+      .hooks(() => null)
+      .dispatched({
+        workerId: 'w1',
+        role: 'builder',
+        spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+        worktree: 'M:/proj/.canvas/worktrees/b1',
+        branch: 'swarm/rrrr/b1'
+      })
+    const a = store.readRun('run1')!.tasks[0].assignment!
+    expect(a.worktree).toBe('M:/proj/.canvas/worktrees/b1')
+    expect(a.branch).toBe('swarm/rrrr/b1')
+  })
+
+  it('a read-only dispatch leaves both null — isolation cost is paid by writers alone', async () => {
+    const store = createSwarmLedgerStore({
+      getProjectDir: () => '/proj',
+      now: () => 1000,
+      memoryFor: () => memoryStub()
+    })
+    const s = createSwarmLedgerSession('run1', { store, now: () => 1000 })
+    s.ensure('run')
+    await s
+      .hooks(() => null)
+      .dispatched({
+        workerId: 'r1',
+        role: 'code-reviewer',
+        spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
+      })
+    const a = store.readRun('run1')!.tasks[0].assignment!
+    expect(a.worktree).toBeNull()
+    expect(a.branch).toBeNull()
+  })
+
+  it('worktreePaths de-duplicates and survives the task being long finished', async () => {
+    const store = createSwarmLedgerStore({
+      getProjectDir: () => '/proj',
+      now: () => 1000,
+      memoryFor: () => memoryStub()
+    })
+    const s = createSwarmLedgerSession('run1', { store, now: () => 1000 })
+    s.ensure('run')
+    const hooks = s.hooks(() => null)
+    const spec = { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
+    // The same worker takes two tasks: ONE tree, listed once.
+    await hooks.dispatched({
+      workerId: 'w1',
+      role: 'builder',
+      spec,
+      worktree: '/wt/a',
+      branch: 'swarm/r/a'
+    })
+    await hooks.dispatched({
+      workerId: 'w1',
+      role: 'builder',
+      spec,
+      worktree: '/wt/a',
+      branch: 'swarm/r/a'
+    })
+    await hooks.dispatched({
+      workerId: 'w2',
+      role: 'builder',
+      spec,
+      worktree: '/wt/b',
+      branch: 'swarm/r/b'
+    })
+    await hooks.settled({
+      workerId: 'w1',
+      status: 'done',
+      summary: 's',
+      refs: [],
+      provenance: 'claimed'
+    })
+    // A preserved worktree stops being visible the moment we stop asking about it, so a finished
+    // task's tree must still be listed.
+    expect(s.worktreePaths().sort()).toEqual(['/wt/a', '/wt/b'])
+  })
+
+  it('worktreeFor resolves a row id to the tree the disposition acts on, and refuses anything else', async () => {
+    const store = createSwarmLedgerStore({
+      getProjectDir: () => '/proj',
+      now: () => 1000,
+      memoryFor: () => memoryStub()
+    })
+    const s = createSwarmLedgerSession('run1', { store, now: () => 1000 })
+    s.ensure('run')
+    await s
+      .hooks(() => null)
+      .dispatched({
+        workerId: 'w1',
+        role: 'builder',
+        spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+        worktree: '/wt/a',
+        branch: 'swarm/rrrr/builder-1'
+      })
+    expect(s.worktreeFor('t1')).toEqual({
+      worktree: '/wt/a',
+      branch: 'swarm/rrrr/builder-1',
+      // The label is the branch leaf — how the human identified this worker on the card.
+      label: 'builder-1'
+    })
+    // 🔒 Nothing but a real, isolated task id resolves: the dispose IPC trusts only the id.
+    expect(s.worktreeFor('nope')).toBeNull()
+  })
+
+  it('🔒 `resolve` is not in any row vocabulary, so applyAction refuses it outright', () => {
+    const s = session({
+      state: 'blocked',
+      blockedTag: 'lost',
+      result: { status: 'failed', summary: 's', refs: [], provenance: 'synthesized', at: 0 }
+    }).ledger
+    // It needs async git, so it rides `swarm:worktreeDispose` — a half-action here would be a
+    // worktree write that never happened reported as if it had.
+    expect(s.applyAction('t1', 'resolve')).toEqual({ ok: false })
+  })
+})

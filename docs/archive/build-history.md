@@ -4224,3 +4224,81 @@ Merge gate: Windows `workers:1` 339 pass / 3 skip / 0 flaky (9.2 m) + Linux Dock
 (6.3 m), matrix exit 0. Unit 6375 pass (the 2 `pathSafe` failures are machine-environmental — 8.3
 shortname TEMP + symlink privileges — and reproduce on `main`). `claude-review` 2 rounds, 0 critical /
 0 warning / 0 inline. Manual dev check passed.
+## 2026-07-28 — PR #TBD: orchestration S3 — workspace isolation, overlap detection, merge sequencing (v0.36.0)
+
+**Lane brief:** `M:/expanse/docs/orchestration/s3-kickoff.md` · rides base **Phase 3** (`04-roadmap.md`)
+· surface spec `07-swarm-board.md` §6 (S3) + §4.3 · mechanism `03-mechanism.md` item 6. Base
+`8dca6370` (v0.35.0, S2 = #392).
+
+**Design gate first (signed off 2026-07-28):** `docs/orchestration/s3-design-artifact.html`, on the
+S1/S2 footing — tokens verbatim from `tokens.css`, the shipped `.sw-*` board chrome reused, every
+proposed surface drawn at real scale. Nine decisions, all approved as recommended: worktrees under
+`<project>/.canvas/worktrees/<slug>` (D1) · branch `swarm/<run8>/<worker-slug>`, never deleted by
+Expanse (D2) · **chip variant C** — its own mono line, isolated workers only (D3) · the dirty prompt
+is non-blocking, reached from a `dirty_worktree` triage row (D4) · reassign preserves BOTH trees and
+destroys nothing (D5) · the write cap is a FUNCTION, not a constant (D6) · `node_modules` **not**
+linked in S3, disclosed instead (D7) · overlap normalisation over-warns by design (D8) · no ledger
+format bump (D9).
+
+**What shipped.** `swarmWorktree.ts` — the MAIN-only `simple-git` allocator, honouring the locked
+`CLAUDE.md` › Git/worktrees rules for the first time in code: never `git init` (a non-repo project
+REFUSES the write-role spawn), never `rm -rf` (no recursive delete exists in the module), never a
+silent `--force`, and every destructive path guarded by `owns()` against the CURRENT project's
+worktree dir — which also makes a project switch, where every board goes `gone` at once, a no-op
+instead of a mass teardown. Allocation happens **before** `spawnBoard` and stats the directory
+itself: `safeCwd` silently redirects a missing dir to `$HOME` (A6-3), so "git said ok" is not good
+enough, and anything short of success refuses rather than falling back to the shared project tree.
+The denial path, the spawn-throws path, and a dialog commit that switches OUT of a write role all
+roll the allocation back; a commit that switches INTO one with no tree is refused ("the reply
+proposes, MAIN disposes", applied to the isolation field).
+
+`swarmOverlap.ts` — the integration half, pure and unit-tested at the function: normalise each
+`refs[]` entry (strip `:line`, **relativise against its own worktree** — the load-bearing step, since
+two builders describe the same file from two different trees — normalise separators, drop `./`),
+intersect across finished workers, and build the merge sequence in dependency order (plan-item
+position, then dispatch time) with the LATER branch marked to rebase. Comparison is case-folded and
+therefore deliberately over-detects: an over-warning costs a human one glance, an under-warning
+silently reverts somebody's work.
+
+Surface: the worker card gains a worktree line (variant C — absent entirely on a read-only role, the
+visible proof that isolation cost is paid by writers alone); triage gains three tags in the CLOSED
+vocabulary at their risk positions — `overlap` above `stalled` (a stall costs time, an unnoticed
+overlap costs work), `dirty_worktree` low (nothing is at risk, that IS the keep-on-dirty rule, but a
+preserved tree nobody is told about is disk that leaks), and `merge_ready` last, **one row per run**,
+expanding to the ordered sequence. There is no merge button anywhere: auto-merge is deferred three
+documents deep and the surface must not imply otherwise.
+
+**The cap, and the strings that changed with it.** `WRITE_ROLE_CONCURRENCY_CAP` 1 → **2**, plus
+`WRITE_ROLE_CONCURRENCY_CAP_SHARED` (1) and `writeRoleConcurrencyCap(allIsolated)` — a function,
+because the ceiling has to follow what actually provisioned. Both `swarmTools` refusal strings were
+rewritten to name WHICH case fired; the old promise ("workers share one working tree until worktree
+isolation lands") would have become a lie the moment this shipped. **The Command board was pinned to
+the SHARED cap in the same change**: it spawns every worker into the project root and has no
+isolation, so inheriting the raised constant would have silently doubled un-isolated write
+concurrency — its dialog disclosure now says why.
+
+`canvasMemory`'s commit-opt-in ignore body gains `worktrees/` (+ a legacy remap), or an opted-in
+project sees every worker's checkout as untracked noise in its own `git status`. Ledger: the
+`worktree`/`branch` fields S2 wrote `null` are populated — **no format bump, no `minReaderVersion`
+move, no canvas-schema change, no second sync path** (the projection rides the existing
+`swarm:runEvent` push). The disposition prompt reuses the shipped P5 chooser rather than adding a
+modal, with `keep` as the default, the cancel path, and the off-vocabulary fallback, and `discard`
+paying a second confirm.
+
+**Two real bugs the work found.** (1) `git worktree remove` was running with its cwd set to the
+directory it deletes — Windows refuses to delete any process's cwd, so the removal failed
+"Permission denied" and the tree leaked. Caught by the e2e against a REAL repo (the unit stub
+ignored cwd); fixed by running the removal from the project, and a unit guard now asserts the last
+git instance was rooted there. (2) `runSlug('')` fell through `slugify`'s `worker` fallback, which
+would have put `swarm/worker/builder-1` in a branch and read as a second worker name.
+
+**Verified:** unit + integration **6331 passed**, the only 5 failures being this box's documented
+ambients (`pathSafe`'s 8.3-TEMP symlink layer ×2 + `pty.recapenv` ×3). New coverage: 19 overlap ·
+32 allocator (weighted to the REFUSALS — the locked rules are what the tests are about) · 23
+projection · 5 session · 15 tool-executor · 9 real-channel integration (`swarmS3Bridge`, MAIN's real
+handlers behind `ipcTestHarness` feeding the renderer's real store) · 2 e2e. The first e2e drives the
+SHIPPED allocator against a real `git init`ed temp project: three workers, three disjoint trees,
+three branches, the non-repo refusal first, and clean removal — everything it creates lives inside
+the one temp project its `finally` deletes. Dev check: title-stamped boot clean from this checkout
+(per-checkout profile `swarm-s3-bef477`), and the live board screenshotted rendering the chips, the
+overlap row, and the expanded merge sequence. **Version:** 0.35.0 → **0.36.0** (minor — new subsystem).

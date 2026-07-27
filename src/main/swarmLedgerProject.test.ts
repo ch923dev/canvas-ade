@@ -407,3 +407,247 @@ describe('buildSnapshot', () => {
     expect(JSON.stringify(buildSnapshot(l, { now: 0 }))).not.toContain('SECRET-OBJECTIVE')
   })
 })
+
+// ── S3 · worktree isolation + integration ──
+
+/** A finished, isolated worker: its own tree, its own branch, a settled result with refs. */
+const isolated = (
+  id: string,
+  over: { refs?: string[]; state?: SwarmTask['state']; planItemId?: string } = {}
+): SwarmTask =>
+  task({
+    taskId: id,
+    state: over.state ?? 'done',
+    ...(over.planItemId ? { planItemId: over.planItemId } : {}),
+    assignment: assign({
+      boardId: `b-${id}`,
+      worktree: `M:/proj/.canvas/worktrees/${id}`,
+      branch: `swarm/rrrr/${id}`
+    }),
+    result: result({ refs: over.refs ?? [] })
+  })
+
+const wtStatuses = (
+  dirty: string[] = []
+): Record<string, { exists: boolean; dirty: boolean; changed: number }> =>
+  Object.fromEntries(
+    ['t1', 't2', 't3'].map((id) => [
+      `M:/proj/.canvas/worktrees/${id}`,
+      { exists: true, dirty: dirty.includes(id), changed: dirty.includes(id) ? 7 : 0 }
+    ])
+  )
+
+describe('S3 · worktreeChipFor — the card line (variant C)', () => {
+  it('is ABSENT for a worker with no worktree, so a read-only card is unchanged from S2', () => {
+    const states = workerStates(ledger({ tasks: [task()] }), 0)
+    expect(states[0].worktree).toBeUndefined()
+  })
+
+  it('a working isolated builder shows its live changed count', () => {
+    const t = task({ assignment: assign({ worktree: '/wt/b1', branch: 'swarm/r/b1' }) })
+    const [w] = workerStates(ledger({ tasks: [t] }), 0, SWARM_STALL_THRESHOLD_MS, {
+      '/wt/b1': { exists: true, dirty: true, changed: 4 }
+    })
+    expect(w.worktree).toMatchObject({ branch: 'swarm/r/b1', leaf: 'b1', note: '4 files' })
+    // A RUNNING worker's dirty tree is normal work in progress, never a "kept" preservation.
+    expect(w.worktree?.dirty).toBeUndefined()
+  })
+
+  it('a working builder that has changed nothing yet says so rather than implying progress', () => {
+    const t = task({ assignment: assign({ worktree: '/wt/b1', branch: 'swarm/r/b1' }) })
+    const [w] = workerStates(ledger({ tasks: [t] }), 0, SWARM_STALL_THRESHOLD_MS, {
+      '/wt/b1': { exists: true, dirty: false, changed: 0 }
+    })
+    expect(w.worktree?.note).toBe('no changes yet')
+  })
+
+  it('a finished clean worker reads as ready, with its own reported file count', () => {
+    const t = isolated('t1', { refs: ['src/a.ts', 'src/b.ts', 'src/c.ts'] })
+    const [w] = workerStates(ledger({ tasks: [t] }), 0, SWARM_STALL_THRESHOLD_MS, wtStatuses())
+    expect(w.worktree?.note).toBe('3 files · ready')
+  })
+
+  it('🔒 a finished DIRTY worker says KEPT — the string must never read as lost or deleted', () => {
+    const t = isolated('t1')
+    const [w] = workerStates(
+      ledger({ tasks: [t] }),
+      0,
+      SWARM_STALL_THRESHOLD_MS,
+      wtStatuses(['t1'])
+    )
+    expect(w.worktree?.note).toBe('kept, 7 uncommitted')
+    expect(w.worktree?.dirty).toBe(true)
+  })
+
+  it('a removed tree still shows the branch — that is what survives and what gets merged', () => {
+    const t = isolated('t1')
+    const [w] = workerStates(ledger({ tasks: [t] }), 0, SWARM_STALL_THRESHOLD_MS, {
+      'M:/proj/.canvas/worktrees/t1': { exists: false, dirty: false, changed: 0 }
+    })
+    expect(w.worktree?.note).toContain('branch only')
+  })
+
+  it('an UNKNOWN status (not statted yet) never claims clean-and-ready', () => {
+    const t = task({ assignment: assign({ worktree: '/wt/b1', branch: 'swarm/r/b1' }) })
+    const [w] = workerStates(ledger({ tasks: [t] }), 0)
+    expect(w.worktree?.note).toBe('working')
+  })
+})
+
+describe('S3 · merge sequence', () => {
+  it('is empty while any of a branch task is still in progress', () => {
+    const live = task({
+      taskId: 't1',
+      state: 'in_progress',
+      assignment: assign({ worktree: '/wt/a', branch: 'swarm/r/a' })
+    })
+    expect(buildSnapshot(ledger({ tasks: [live] }), { now: 0 }).mergeSequence).toEqual([])
+  })
+
+  it('orders by plan-item position first, then dispatch time', () => {
+    const l = ledger({
+      planItems: [
+        { id: 'p1', label: 'one', done: false },
+        { id: 'p2', label: 'two', done: false }
+      ],
+      tasks: [
+        isolated('t2', { planItemId: 'p2' }),
+        isolated('t1', { planItemId: 'p1' }),
+        isolated('t3') // no plan item → sorts after the mapped ones
+      ]
+    })
+    expect(buildSnapshot(l, { now: 0 }).mergeSequence.map((s) => s.taskId)).toEqual([
+      't1',
+      't2',
+      't3'
+    ])
+  })
+
+  it('counts DISTINCT files — `x.ts` and `x.ts:42` are one file, not two', () => {
+    const l = ledger({ tasks: [isolated('t1', { refs: ['src/x.ts', 'src/x.ts:42'] })] })
+    expect(buildSnapshot(l, { now: 0 }).mergeSequence[0].files).toBe(1)
+  })
+
+  it('collapses a second task on the same worker onto ONE branch entry carrying both refs', () => {
+    const l = ledger({
+      tasks: [
+        isolated('t1', { refs: ['src/a.ts'] }),
+        // Same board, same branch — the orchestrator handed it a second task.
+        task({
+          taskId: 't2',
+          state: 'done',
+          assignment: assign({
+            boardId: 'b-t1',
+            worktree: 'M:/proj/.canvas/worktrees/t1',
+            branch: 'swarm/rrrr/t1'
+          }),
+          result: result({ refs: ['src/b.ts'] })
+        })
+      ]
+    })
+    const seq = buildSnapshot(l, { now: 0 }).mergeSequence
+    expect(seq).toHaveLength(1)
+    expect(seq[0].files).toBe(2)
+  })
+
+  it('marks the later branch as overlapping the earlier one', () => {
+    const l = ledger({
+      tasks: [
+        isolated('t1', { refs: ['src/main/load.ts'] }),
+        isolated('t2', { refs: ['./src/main/LOAD.ts'] })
+      ]
+    })
+    const seq = buildSnapshot(l, { now: 0 }).mergeSequence
+    expect(seq[0].overlapsWith).toEqual([])
+    expect(seq[1].overlapsWith).toEqual([1])
+  })
+})
+
+describe('S3 · triage rows', () => {
+  it('an overlap row names both workers by ID (MAIN is never a title authority)', () => {
+    const l = ledger({
+      tasks: [isolated('t1', { refs: ['src/x.ts'] }), isolated('t2', { refs: ['src/x.ts'] })]
+    })
+    const rows = triageRows(l, 0, SWARM_STALL_THRESHOLD_MS, wtStatuses())
+    const overlap = rows.find((r) => r.tag === 'overlap')!
+    expect(overlap.boardId).toBe('b-t2') // the LATER one — the branch that has to rebase
+    expect(overlap.boardId2).toBe('b-t1')
+    expect(overlap.text).toContain('src/x.ts')
+    expect(overlap.text).toContain('rebase the other')
+    // No title ever leaks into MAIN's string.
+    expect(overlap.text).not.toContain('builder')
+  })
+
+  it('🔒 the dirty-worktree row says KEPT and NOTHING DISCARDED — the reassurance is the row', () => {
+    const l = ledger({ tasks: [isolated('t1')] })
+    const rows = triageRows(l, 0, SWARM_STALL_THRESHOLD_MS, wtStatuses(['t1']))
+    const row = rows.find((r) => r.tag === 'dirty_worktree')!
+    expect(row.text).toContain('7 uncommitted files')
+    expect(row.text).toContain('kept on disk, nothing discarded')
+    expect(row.actions).toEqual(['resolve'])
+  })
+
+  it('a RUNNING worker dirty tree raises no row — that would be a nag, not triage', () => {
+    const live = task({
+      taskId: 't1',
+      state: 'in_progress',
+      assignment: assign({
+        boardId: 'b-t1',
+        worktree: 'M:/proj/.canvas/worktrees/t1',
+        branch: 'swarm/rrrr/t1'
+      })
+    })
+    const rows = triageRows(
+      ledger({ tasks: [live] }),
+      0,
+      SWARM_STALL_THRESHOLD_MS,
+      wtStatuses(['t1'])
+    )
+    expect(rows.some((r) => r.tag === 'dirty_worktree')).toBe(false)
+  })
+
+  it('emits exactly ONE merge-ready row per run, however many branches there are', () => {
+    const l = ledger({ tasks: [isolated('t1'), isolated('t2'), isolated('t3')] })
+    const rows = triageRows(l, 0, SWARM_STALL_THRESHOLD_MS, wtStatuses())
+    const merge = rows.filter((r) => r.tag === 'merge_ready')
+    expect(merge).toHaveLength(1)
+    expect(merge[0].text).toContain('3 branches ready to merge')
+    // No ledger action: the sequence is the deliverable, and there is no merge button anywhere.
+    expect(merge[0].actions).toEqual([])
+  })
+
+  it('the merge-ready row discloses the overlap and dirty counts it is summarising', () => {
+    const l = ledger({
+      tasks: [isolated('t1', { refs: ['src/x.ts'] }), isolated('t2', { refs: ['src/x.ts'] })]
+    })
+    const rows = triageRows(l, 0, SWARM_STALL_THRESHOLD_MS, wtStatuses(['t2']))
+    const merge = rows.find((r) => r.tag === 'merge_ready')!
+    expect(merge.text).toContain('1 overlap')
+    expect(merge.text).toContain('1 with uncommitted changes')
+  })
+
+  it('no isolated finished worker ⇒ no integration rows at all (the queue stays quiet)', () => {
+    const rows = triageRows(ledger({ tasks: [task()] }), 0)
+    expect(rows.some((r) => ['overlap', 'dirty_worktree', 'merge_ready'].includes(r.tag))).toBe(
+      false
+    )
+  })
+
+  it('risk order: overlap outranks stalled, merge_ready sorts last', () => {
+    const stalledTask = task({
+      taskId: 't9',
+      state: 'in_progress',
+      assignment: assign({ boardId: 'b-t9', lastActivityAt: -SWARM_STALL_THRESHOLD_MS * 2 })
+    })
+    const l = ledger({
+      tasks: [
+        isolated('t1', { refs: ['src/x.ts'] }),
+        isolated('t2', { refs: ['src/x.ts'] }),
+        stalledTask
+      ]
+    })
+    const tags = triageRows(l, 0, SWARM_STALL_THRESHOLD_MS, wtStatuses()).map((r) => r.tag)
+    expect(tags.indexOf('overlap')).toBeLessThan(tags.indexOf('stalled'))
+    expect(tags[tags.length - 1]).toBe('merge_ready')
+  })
+})

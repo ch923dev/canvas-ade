@@ -9,7 +9,7 @@ import {
   isWriteRolePack,
   launchLooksReadOnly,
   rolePackById,
-  WRITE_ROLE_CONCURRENCY_CAP
+  WRITE_ROLE_CONCURRENCY_CAP_SHARED
 } from './rolePacks'
 
 export type { Composition, TaskGroup } from '../store/commandStore'
@@ -145,14 +145,19 @@ export function writeRoleInFlight(tasks: ReadonlyArray<CommandTask>): number {
  * `launchCommand` was committed via the config dialog, C2d). Un-configured queued tasks (still in /
  * cancelled out of the config dialog) are skipped until the user dispatches them.
  *
- * Phase 0 write-role gate: until worktree isolation exists (Phase 3), two write-role workers would
- * share one working tree — so while a write-role task is in flight, further write-role tasks are
- * SKIPPED (not blocked FIFO: read-role/Custom tasks behind them still dispatch). Disclosed in the
- * worker-config dialog ({@link WRITE_ROLE_CONCURRENCY_CAP}); the slot frees on settle/board-gone,
- * and the existing pump re-fires on both.
+ * Write-role gate: two write-role workers on the COMMAND board share one working tree — so while a
+ * write-role task is in flight, further write-role tasks are SKIPPED (not blocked FIFO: read-role /
+ * Custom tasks behind them still dispatch). Disclosed in the worker-config dialog; the slot frees on
+ * settle/board-gone, and the existing pump re-fires on both.
+ *
+ * 🔒 S3 deliberately keeps this at {@link WRITE_ROLE_CONCURRENCY_CAP_SHARED} (1). Worktree isolation
+ * landed on the SWARM board's spawn seam only — the Command board still spawns every worker into the
+ * project root, so raising it to the isolated ceiling here would double un-isolated write
+ * concurrency and make the dialog's own disclosure a lie. The cap follows the isolation, never the
+ * version number.
  */
 export function nextQueuedTask(tasks: ReadonlyArray<CommandTask>): CommandTask | undefined {
-  const writeBusy = writeRoleInFlight(tasks) >= WRITE_ROLE_CONCURRENCY_CAP
+  const writeBusy = writeRoleInFlight(tasks) >= WRITE_ROLE_CONCURRENCY_CAP_SHARED
   return tasks.find(
     (t) =>
       t.status === 'queued' &&

@@ -140,6 +140,18 @@ export function SwarmBoard({
     (row: SwarmTriageRow, action: SwarmTriageAction): void => {
       const api = window.api?.swarm
       if (!api?.triageAction) return
+      // 🔒 S3: `resolve` is NOT a ledger action — it disposes of a worktree, which needs async git
+      // and raises its own chooser + destructive second confirm in MAIN. It takes its own channel
+      // for exactly that reason; `applyAction` would refuse it (it is not in the row vocabulary
+      // `offers()` re-derives), so routing it here is what makes the button work at all.
+      if (action === 'resolve') {
+        void api.worktreeDispose?.(board.id, row.id).then((r) => {
+          useSwarmStore
+            .getState()
+            .addStatusLine(board.id, `worktree: ${r.detail || (r.ok ? 'done' : 'unchanged')}`)
+        })
+        return
+      }
       void api.triageAction(board.id, row.id, action).then((r) => {
         if (!r.ok) {
           useSwarmStore.getState().addStatusLine(board.id, `triage: ${action} no longer applies`)

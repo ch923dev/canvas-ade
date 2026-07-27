@@ -33,7 +33,7 @@ const IGNORE_PRIVATE = '*\n!canvas.json\n'
  * volatile state (the audit log, the terminal staging dir, the terminal snapshots, and the
  * parse-fail backup).
  */
-const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\nsession.json\n'
+const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\nworktrees/\ncanvas.json.bak\nsession.json\n'
 
 /** Old (pre-0009) ignore bodies, recognized + remapped to the new ones on migrate-on-open. */
 const LEGACY_IGNORE_PRIVATE = '*'
@@ -44,6 +44,10 @@ const LEGACY_IGNORE_COMMITTED_V2 = 'audit/\ntmp/\ncanvas.json.bak'
 /** M1: pre-session-sidecar committed body (no `session.json`) — remapped so an opted-in project
  *  starts ignoring the machine-local camera/backdrop sidecar on its next open. */
 const LEGACY_IGNORE_COMMITTED_V3 = 'audit/\ntmp/\nterminal/\ncanvas.json.bak'
+/** Orchestration S3: pre-worktree committed body. Swarm worker worktrees live under
+ *  `.canvas/worktrees/` (design D1), and without this an opted-in project sees every worker's
+ *  checkout as untracked noise in its own `git status`. Remapped on the next open. */
+const LEGACY_IGNORE_COMMITTED_V4 = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\nsession.json'
 
 /** Board ids are nanoid-style; reject anything else (and over-long) to keep writes inside memory/.
  *  MCP-07: the regex + length cap now live in the shared `safeId` module so this and boardMemory.ts
@@ -283,7 +287,8 @@ export function upgradeProjectGitignore(projectDir: string): void {
     else if (
       body === LEGACY_IGNORE_COMMITTED ||
       body === LEGACY_IGNORE_COMMITTED_V2 ||
-      body === LEGACY_IGNORE_COMMITTED_V3
+      body === LEGACY_IGNORE_COMMITTED_V3 ||
+      body === LEGACY_IGNORE_COMMITTED_V4
     )
       writeFileAtomic.sync(file, IGNORE_COMMITTED, 'utf8')
     // else: already the new format, or user-customised → leave as-is.

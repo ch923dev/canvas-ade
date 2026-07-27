@@ -41,6 +41,11 @@ import { DEFAULT_NOTIFICATIONS, type NotificationsConfig } from './notifications
 import type { LifecycleEvent } from './agentLifecycle'
 import { assetsDirOf, createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
+// Orchestration S3: the e2e worktree helpers drive the REAL allocator (and the same repo-scoped
+// git env every MAIN git seam uses), so the spec proves the shipped path rather than a fixture.
+import simpleGit from 'simple-git'
+import { repoScopedEnv } from './gitEnv'
+import { createSwarmWorktreeStore } from './swarmWorktree'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
 import { listConnectors } from './boardRegistry'
@@ -188,6 +193,29 @@ export interface E2EMain {
   writeSwarmRun(boardId: string, ledger: unknown): boolean
   /** Orchestration S2: read a run ledger back, to assert what a triage action actually changed. */
   readSwarmRun(boardId: string): unknown
+  /**
+   * Orchestration S3: turn the CURRENT temp project into a real git repo with one commit, so the
+   * worktree allocator has a HEAD to branch from. The S3 exit proof is "each builder works in its
+   * own worktree/branch with no file races", which cannot be shown against a fake git.
+   *
+   * Scoped to the caller's temp project (createTempProject / teardownProject), so everything this
+   * creates — the repo, its branches, and every worktree under `.canvas/worktrees/` — is inside
+   * one directory the spec deletes in its `finally`. Nothing is created outside it.
+   */
+  gitInitProject(): Promise<boolean>
+  /**
+   * Orchestration S3: run the REAL allocator against the current project — the same
+   * `createSwarmWorktreeStore` the swarm spawn seam uses, `simple-git` and all.
+   */
+  swarmAllocateWorktree(
+    runId: string,
+    workerName: string
+  ): Promise<{ ok: boolean; worktree?: string; branch?: string; reason?: string }>
+  /** Orchestration S3: the allocator's own status read, and its clean-only removal. */
+  swarmWorktreeStatus(
+    worktree: string
+  ): Promise<{ exists: boolean; dirty: boolean; changed: number }>
+  swarmRemoveWorktree(worktree: string): Promise<{ removed: boolean; reason?: string }>
   /**
    * MCP tier-smoke port (e2e/mcp.e2e.ts) — the loopback MCP server's port + the two
    * tier tokens, so the test process can connect its own orchestrator + worker clients
@@ -580,6 +608,33 @@ export function installE2EMain(
       win.webContents.sendInputEvent(evt)
     },
     writeSwarmRun: (boardId, ledger) => writeSwarmRunToCurrentProject(boardId, ledger),
+    async gitInitProject() {
+      const dir = getCurrentDir()
+      if (!dir) return false
+      const git = simpleGit(dir).env(repoScopedEnv())
+      await git.init()
+      // An identity + one commit, so `worktree add … HEAD` has something to branch from. Passed
+      // per-command rather than written to config: the box's global identity may be absent, and
+      // this repo is deleted with the temp project anyway.
+      writeFileSync(join(dir, 'README.md'), '# e2e worktree fixture\n', 'utf8')
+      await git.raw(['add', '-A'])
+      await git.raw([
+        '-c',
+        'user.email=e2e@example.invalid',
+        '-c',
+        'user.name=e2e',
+        'commit',
+        '-m',
+        'init'
+      ])
+      return true
+    },
+    swarmAllocateWorktree: (runId, workerName) =>
+      createSwarmWorktreeStore({ getProjectDir: getCurrentDir }).allocate(runId, workerName),
+    swarmWorktreeStatus: (worktree) =>
+      createSwarmWorktreeStore({ getProjectDir: getCurrentDir }).status(worktree),
+    swarmRemoveWorktree: (worktree) =>
+      createSwarmWorktreeStore({ getProjectDir: getCurrentDir }).removeIfClean(worktree),
     readSwarmRun(boardId) {
       const dir = getCurrentDir()
       return dir ? (createCanvasMemory(dir).readRun(boardId) ?? null) : null
