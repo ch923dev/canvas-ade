@@ -32,6 +32,8 @@ interface LlmJarvisBootDeps {
   getCurrentDir: JarvisIpcDeps['getProjectKey']
   /** The memoized lazy MCP boot from index.ts (M11). */
   ensureMcp: () => Promise<RunningMcp | null | undefined>
+  /** `resultSynth.onSettle` — S2 forces a synthesis before salvaging a dead worker (see below). */
+  synthesizeNow: (boardId: string) => void
 }
 
 /**
@@ -102,7 +104,13 @@ export function wireLlmJarvis(
         ...readBoardResult(boardId),
         synthesized: isResultSynthesized(boardId)
       }),
-      activityStaleMs: (boardId) => getTerminalActivityStaleMs(boardId)
+      activityStaleMs: (boardId) => getTerminalActivityStaleMs(boardId),
+      // - synthesizeNow    → death IS a settle. `readBoardResult` alone would almost always be
+      //                      empty here: synthesis is otherwise driven only by the recap watcher's
+      //                      25s transcript debounce, while a PTY exit reaches the watcher in a
+      //                      few hundred ms — and the sweep never revisits an already-`blocked`
+      //                      task, so a late synthesis would never be salvaged at all.
+      synthesizeNow: (boardId) => deps.synthesizeNow(boardId)
     }
   })
 }

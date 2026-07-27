@@ -11,6 +11,7 @@ import {
 } from './swarmLedger'
 import {
   MAX_LEDGER_EVENTS,
+  MAX_LEDGER_TASKS,
   MAX_LEDGER_REFS,
   MAX_RUNS_PER_PROJECT,
   SWARM_LEDGER_VERSION,
@@ -231,6 +232,29 @@ describe('swarmLedger — caps and retention', () => {
     expect(l?.events).toHaveLength(MAX_LEDGER_EVENTS)
     // The OLDEST are dropped — a stale event is worth less than a fresh one.
     expect(l?.events[l.events.length - 1].seq).toBe(l?.eventSeq)
+  })
+
+  it('🔒 clamps TASKS to the newest tail, not the oldest head', () => {
+    // A head-slice here was silently fatal in exactly the long-running run S2 exists for: every
+    // task pushed past the cap vanished at the next persist, its `assigned` event survived
+    // pointing at a taskId no longer in `tasks`, and the worker's later `settled()` found no task
+    // and dropped the result on the floor — with no error anywhere.
+    const store = storeWith(memoryStub())
+    store.ensureRun('board1', 't')
+    const l = store.update('board1', (draft) => {
+      for (let i = 0; i < MAX_LEDGER_TASKS + 25; i++) {
+        draft.tasks.push({
+          taskId: `t${i}`,
+          content: `task ${i}`,
+          activeForm: `doing ${i}`,
+          state: 'pending'
+        })
+      }
+    })
+    expect(l?.tasks).toHaveLength(MAX_LEDGER_TASKS)
+    // The LAST dispatched task — the one still being worked — survives; the oldest are dropped.
+    expect(l?.tasks[l.tasks.length - 1].taskId).toBe(`t${MAX_LEDGER_TASKS + 24}`)
+    expect(l?.tasks.find((t) => t.taskId === 't0')).toBeUndefined()
   })
 
   it('clamps a result refs array to MAX_LEDGER_REFS', () => {

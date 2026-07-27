@@ -20,13 +20,14 @@ import {
   taskForBoard,
   type SwarmLedgerStore
 } from './swarmLedger'
-import { buildSnapshot } from './swarmLedgerProject'
+import { buildSnapshot, isStalled } from './swarmLedgerProject'
 import type { SwarmLedgerHooks } from './swarmTools'
 import {
   MAX_LEDGER_LINE,
   SWARM_STALL_THRESHOLD_MS,
   type SwarmLedgerSnapshot,
   type SwarmPlanItem,
+  type SwarmTask,
   type SwarmTaskSpec,
   type SwarmTriageAction
 } from '../shared/swarmLedgerTypes'
@@ -239,6 +240,12 @@ export function createSwarmLedgerSession(
       const before = store.readRun(boardId)
       const task = before ? taskById(before, taskId) : undefined
       if (!before || !task) return { ok: false }
+      // 🔒 The pairing is re-derived, not trusted. The renderer sends `(taskId, action)`, and until
+      // this check the only validation was "the task exists" — so a stale row id (the queue moves
+      // under the human) or a buggy renderer could `reassign` a perfectly healthy in-progress task,
+      // wiping its live assignment and telling the orchestrator to dispatch it again. `offers()`
+      // mirrors the `actions` triageRows would put on THIS task right now.
+      if (!offers(task, now()).includes(action)) return { ok: false }
       const at = now()
       let prompt: string | undefined
 
@@ -246,8 +253,18 @@ export function createSwarmLedgerSession(
         if (!task.result) return { ok: false } // nothing to accept
         store.update(boardId, (l) => {
           const t = taskById(l, taskId)
+          if (!t?.result) return
           // Acceptance is NOT verification — provenance is untouched on purpose.
-          if (t?.result) t.result.acceptedByHuman = true
+          t.result.acceptedByHuman = true
+          // Accepting a DEAD worker's salvaged result is what closes that task: the work stands,
+          // so the row and the card's `lost` state must go with it. Without this the tag survives
+          // acceptance and the run shows a lost worker with an accepted result forever.
+          if (t.blockedTag === 'lost') {
+            t.state = 'done'
+            delete t.blockedTag
+            l.eventSeq += 1
+            l.events.push({ seq: l.eventSeq, at, kind: 'status', taskId, state: 'done' })
+          }
         })
       } else if (action === 'dismiss') {
         store.update(boardId, (l) => {
@@ -300,6 +317,26 @@ export function createSwarmLedgerSession(
       store.removeRun(boardId)
     }
   }
+}
+
+/**
+ * The actions a triage row for THIS task would carry right now — the applicability gate behind
+ * `applyAction`. Deliberately mirrors `triageRows`' own per-tag `actions` arrays (the same order,
+ * the same conditions), because the contract is "an action the row was never offered changes
+ * nothing": the row's vocabulary IS the authority, and a task that produces no row offers none.
+ *
+ * `open` is not listed anywhere here on purpose — it is a renderer-side jump, never a ledger write.
+ */
+function offers(task: SwarmTask, now: number): SwarmTriageAction[] {
+  if (task.blockedTag === 'lost') return task.result ? ['accept', 'reassign'] : ['reassign']
+  if (task.blockedTag === 'failing_check') return ['dismiss', 'reassign']
+  if (task.blockedTag === 'dependency') return []
+  if (isStalled(task, now)) return ['wait', 'reassign']
+  // A finished, unreviewed result: the queue offers Accept on it (the `unreviewed` row). The
+  // `lastSeenAt`/snooze filters that decide whether it is CURRENTLY listed are deliberately not
+  // repeated — they hide a row from the queue, they do not make accepting its result invalid.
+  if (task.state === 'done' && task.result && !task.result.acceptedByHuman) return ['accept']
+  return []
 }
 
 function clampSpec(spec: SwarmTaskSpec): SwarmTaskSpec {

@@ -234,7 +234,7 @@ export function coerceLedger(raw: unknown, boardId: string, now: number): SwarmR
       .map(coercePlanItem)
       .filter((i): i is SwarmPlanItem => i !== null),
     tasks: arr(o.tasks)
-      .slice(0, MAX_LEDGER_TASKS)
+      .slice(-MAX_LEDGER_TASKS)
       .map((t) => coerceTask(t, now))
       .filter((t): t is SwarmTask => t !== null),
     events,
@@ -247,7 +247,12 @@ export function coerceLedger(raw: unknown, boardId: string, now: number): SwarmR
 function clamp(l: SwarmRunLedger): SwarmRunLedger {
   l.title = l.title.slice(0, MAX_LEDGER_LINE)
   l.planItems = l.planItems.slice(0, MAX_LEDGER_PLAN_ITEMS)
-  l.tasks = l.tasks.slice(0, MAX_LEDGER_TASKS)
+  // Drop the OLDEST tasks, same reasoning as the events clamp below — and NOT the newest.
+  // `dispatched()` always pushes, so a head-slice would silently discard every task after the
+  // 200th: its `assigned` event would still land, pointing at a taskId no longer in `tasks`, and
+  // the worker's later `settled()` would find no task and drop the result on the floor. In a run
+  // long enough to hit the cap, the tail — the part still being worked — is exactly what must survive.
+  if (l.tasks.length > MAX_LEDGER_TASKS) l.tasks = l.tasks.slice(-MAX_LEDGER_TASKS)
   // Drop the OLDEST events — unlike the pending-command queue (where dropping would lose an
   // approved action), an event is a narration/counting aid and the newest tail is what matters.
   if (l.events.length > MAX_LEDGER_EVENTS) l.events = l.events.slice(-MAX_LEDGER_EVENTS)

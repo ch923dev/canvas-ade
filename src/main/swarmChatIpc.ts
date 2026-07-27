@@ -111,7 +111,10 @@ export interface SwarmIpcDeps {
    * ⇒ no watcher at all: runs still record and restore, they just don't detect a death or a stall
    * (the honest degradation for a test/smoke boot that has no board registry).
    */
-  watch?: Pick<SwarmWatchDeps, 'subscribeStatus' | 'readResult' | 'activityStaleMs'>
+  watch?: Pick<
+    SwarmWatchDeps,
+    'subscribeStatus' | 'readResult' | 'activityStaleMs' | 'synthesizeNow'
+  >
 }
 
 /** What the boot wiring keeps a handle on after registration (the quit-path drain). */

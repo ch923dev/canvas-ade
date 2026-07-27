@@ -866,7 +866,10 @@ app.whenReady().then(async () => {
     thumbsDir: () => join(app.getPath('userData'), 'project-thumbs')
   })
   // LLM key store + Jarvis brain (wiring in jarvisBoot.ts — max-lines ratchet).
-  const jarvisDeps = { llmDataDir, llmEncryptor, getCurrentDir, ensureMcp }
+  // S2: death IS a settle (rationale at jarvisBoot's `watch` wiring — without it the salvage read
+  // beats the recap watcher's 25s debounce and always finds nothing).
+  const synthesizeNow = (b: string): void => resultSynth?.onSettle(b)
+  const jarvisDeps = { llmDataDir, llmEncryptor, getCurrentDir, ensureMcp, synthesizeNow }
   swarmHandlers = wireLlmJarvis(ipcMain, () => mainWindow, jarvisDeps)
   // Configurable MCP spawn cap (orchestration:getSpawnCap / setSpawnCap, frame-guarded). Stored in
   // the REAL userData (app-wide config — the MCP server is a process singleton), never the isolated

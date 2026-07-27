@@ -37,13 +37,14 @@ interface Harness {
   read: () => SwarmRunLedger
   results: Map<string, SwarmSalvage>
   stale: Map<string, number>
+  synthesized: string[]
 }
 
 /**
  * One live run: task `t1` dispatched into worker `w1` at t=0, joined to plan item `p1`.
  * `clock` starts at 0 and is advanced explicitly — no timers, no wall clock.
  */
-function harness(opts: { salvage?: SwarmSalvage } = {}): Harness {
+function harness(opts: { salvage?: SwarmSalvage; synthesizes?: SwarmSalvage } = {}): Harness {
   const mem = memoryStub()
   let clock = 0
   const store = createSwarmLedgerStore({
@@ -75,6 +76,10 @@ function harness(opts: { salvage?: SwarmSalvage } = {}): Harness {
 
   const results = new Map<string, SwarmSalvage>()
   if (opts.salvage) results.set('w1', opts.salvage)
+  // Every `synthesizeNow(boardId)` the watcher makes, in order. `opts.synthesizes` models the REAL
+  // synthesizer: a settle that records a result the read then finds — which is the only way a dead
+  // worker's transcript ever becomes salvage.
+  const synthesized: string[] = []
   const stale = new Map<string, number>()
   const narrations: Harness['narrations'] = []
   const changed: string[] = []
@@ -89,6 +94,10 @@ function harness(opts: { salvage?: SwarmSalvage } = {}): Harness {
       }
     },
     readResult: (id) => results.get(id) ?? { present: false },
+    synthesizeNow: (id) => {
+      synthesized.push(id)
+      if (opts.synthesizes) results.set(id, opts.synthesizes)
+    },
     activityStaleMs: (id) => stale.get(id),
     narrate: (runId, n) => narrations.push({ runId, ...n }),
     changed: (runId) => changed.push(runId),
@@ -105,6 +114,7 @@ function harness(opts: { salvage?: SwarmSalvage } = {}): Harness {
     changed,
     results,
     stale,
+    synthesized,
     emit: (c) => listener?.(c),
     at: (ms) => {
       clock = ms
@@ -205,6 +215,50 @@ describe('swarmWatch — failure case A (a worker dies mid-task)', () => {
     })
     h.emit({ id: 'w1', status: 'gone' })
     expect(h.read().tasks[0].state).toBe('in_progress')
+  })
+
+  it('🔒 SETTLES the board before reading it — a death IS a settle, or there is nothing to salvage', () => {
+    // The race this closes: a PTY exit reaches the watcher in a few hundred ms, but synthesis is
+    // otherwise driven only by the recap watcher's 25s transcript debounce. `synthesizes` models
+    // the real synthesizer recording a result during that forced settle — without the call, the
+    // read would find nothing and the task would land on the "nothing to salvage" branch forever
+    // (the sweep only revisits `in_progress` tasks, so a late synthesis is never picked up).
+    const h = harness({
+      synthesizes: {
+        present: true,
+        status: 'partial',
+        summary: 'touched 6 files',
+        refs: ['a', 'b', 'c'],
+        synthesized: true
+      }
+    })
+    h.at(5 * MIN)
+    h.emit({ id: 'w1', status: 'gone' })
+
+    expect(h.synthesized, 'the dead board was settled exactly once, before the read').toEqual([
+      'w1'
+    ])
+    const task = h.read().tasks[0]
+    expect(task.result?.provenance).toBe('synthesized')
+    expect(task.result?.refs).toEqual(['a', 'b', 'c'])
+    expect(h.narrations[0].text).toContain('salvaged')
+  })
+
+  it('a throwing synthesizer never takes the salvage (or the quit chain) with it', () => {
+    const h = harness()
+    const watch = createSwarmWatch({
+      store: h.store,
+      subscribeStatus: () => () => {},
+      readResult: () => ({ present: false }),
+      synthesizeNow: () => {
+        throw new Error('synth exploded')
+      },
+      narrate: () => {},
+      changed: () => {},
+      startSweep: () => () => {}
+    })
+    expect(() => watch.onStatus({ id: 'w1', status: 'gone' })).not.toThrow()
+    expect(h.read().tasks[0].blockedTag).toBe('lost')
   })
 
   it('a throwing salvage read degrades to "nothing salvageable" instead of escaping', () => {

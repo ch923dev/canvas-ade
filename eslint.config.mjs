@@ -317,8 +317,11 @@ export default tseslint.config(
     // elsewhere — the `swarmHandlers` handle, its assignment at the wireLlmJarvis call, and the
     // `swarmHandlers?.drainRuns()` line inside shutdown(), which must run BEFORE the PTY drain in
     // that same function. The drain itself (salvage + mark `interrupted`) lives in swarmWatch.ts;
-    // nothing here but wiring. Ratchet DOWNWARD when index.ts is next split.
-    rules: { 'max-lines': ['error', { max: 710, skipBlankLines: true, skipComments: true }] }
+    // nothing here but wiring. 710→711 (S2 review follow-up): ONE more, the `synthesizeNow`
+    // binding handed to jarvisBoot — `resultSynth` is index-scoped state, so the closure that
+    // forces a settle before a dead worker's salvage read can only be tied here. Ratchet DOWNWARD
+    // when index.ts is next split.
+    rules: { 'max-lines': ['error', { max: 711, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],

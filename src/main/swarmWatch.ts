@@ -75,6 +75,19 @@ export interface SwarmWatchDeps {
   /** Sync salvage read for one board (`boardResults`). */
   readResult(boardId: string): SwarmSalvage
   /**
+   * Force a synthesis attempt for one board NOW, before we read its result — `resultSynth.onSettle`,
+   * which is synchronous (read the transcript facts, record a synthesized result unless the worker
+   * self-reported one).
+   *
+   * Without this the salvage path is dead code for the exact case it exists for. A PTY exit reaches
+   * `onStatus` in a few hundred ms, but synthesis is otherwise driven ONLY by the recap watcher's
+   * 25s transcript debounce — so a worker that died without calling `write_result` would read as
+   * "nothing to salvage" essentially every time, and permanently: once the task is `blocked` the
+   * sweep never revisits it (`tick` only walks `in_progress`), so a synthesis landing 25s later is
+   * never picked up. Death is itself a settle; this says so.
+   */
+  synthesizeNow?(boardId: string): void
+  /**
    * Ms since a board last produced PTY output (`pty.getTerminalActivityStaleMs`). `undefined` for
    * a board with no live session — which is NOT silence proof, so the tick leaves it alone.
    */
@@ -229,6 +242,15 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
    */
   const safeRead = (boardId: string): SwarmSalvage => {
     try {
+      // Settle FIRST, then read: a worker that died mid-task has a transcript on disk and no
+      // `write_result`, and nothing else will convert that into a result before the sweep stops
+      // caring. Best-effort and inside the same guard — a synthesizer that throws must not take
+      // the salvage (or the quit chain) down with it.
+      try {
+        deps.synthesizeNow?.(boardId)
+      } catch {
+        /* synthesis is opportunistic — fall through to whatever is already recorded */
+      }
       const r = deps.readResult(boardId)
       if (!r || r.present !== true) return { present: false }
       return {

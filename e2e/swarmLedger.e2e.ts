@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, seed } from './helpers'
 
@@ -59,6 +60,29 @@ const assignment = (boardId: string, at: number): Record<string, unknown> => ({
   worktree: null,
   branch: null
 })
+
+/**
+ * Read one checklist item field off the PLAN board through the store — the source of truth the
+ * strip writes through to. The board id goes in as a STRUCTURED ARG, never interpolated into the
+ * evaluated source (CodeQL js/bad-code-sanitization; the `preview-align.e2e.ts` pattern from #82).
+ */
+function planItemField<T>(page: Page, planId: string, field: 'done' | 'label'): Promise<T> {
+  return page.evaluate(
+    (a) => {
+      const b = (globalThis as any).__canvasE2E.getBoards().find((x: any) => x.id === a.id)
+      return b.elements[0].items[0][a.field]
+    },
+    { id: planId, field }
+  ) as Promise<T>
+}
+
+/** Item COUNT on the plan board's checklist — same structured-arg discipline. */
+function planItemCount(page: Page, planId: string): Promise<number> {
+  return page.evaluate((a) => {
+    const b = (globalThis as any).__canvasE2E.getBoards().find((x: any) => x.id === a)
+    return b.elements[0].items.length
+  }, planId)
+}
 
 test('@core a run restores from disk: the header chip, the worker cards and the triage queue', async ({
   page,
@@ -266,39 +290,18 @@ test('@core the plan strip edits write THROUGH to the Planning board (D2 always-
 
   // Tick the first item from the STRIP — the plan board is the source of truth, so read it back.
   await board.locator('[data-test="swarm-plan-tick"]').first().click()
-  await expect
-    .poll(() =>
-      evalIn<boolean>(
-        page,
-        `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}).elements[0].items[0].done`
-      )
-    )
-    .toBe(true)
+  await expect.poll(() => planItemField<boolean>(page, planId, 'done')).toBe(true)
 
   // Rename in place: Enter commits.
   await board.locator('[data-test="swarm-plan-rename"]').first().click()
   await board.locator('[data-test="swarm-plan-edit"]').fill('recon + notes')
   await board.locator('[data-test="swarm-plan-edit"]').press('Enter')
-  await expect
-    .poll(() =>
-      evalIn<string>(
-        page,
-        `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}).elements[0].items[0].label`
-      )
-    )
-    .toBe('recon + notes')
+  await expect.poll(() => planItemField<string>(page, planId, 'label')).toBe('recon + notes')
 
   // The ＋ chip appends a real item to the plan of record.
   await board.locator('[data-test="swarm-plan-add"]').click()
   await board.locator('[data-test="swarm-plan-edit"]').fill('ship it')
   await board.locator('[data-test="swarm-plan-edit"]').press('Enter')
   await expect(chips).toHaveCount(3)
-  await expect
-    .poll(() =>
-      evalIn<number>(
-        page,
-        `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}).elements[0].items.length`
-      )
-    )
-    .toBe(3)
+  await expect.poll(() => planItemCount(page, planId)).toBe(3)
 })
