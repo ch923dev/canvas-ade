@@ -1,5 +1,6 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
+import { seedLiveTerminal } from './helpers'
 
 /**
  * @terminal Background project sessions (Phase 4) — the ask-on-switch dialog + per-project keep
@@ -83,21 +84,6 @@ function sessionCounts(electronApp: ElectronApplication) {
   return electronApp.evaluate(({}) =>
     (globalThis as unknown as MainGlobal).__canvasE2EMain.ptySessionCounts()
   )
-}
-
-/** Seed a terminal board and wait for its PTY to actually spawn; returns { id, pid }. */
-async function seedLiveTerminal(
-  page: Page,
-  electronApp: ElectronApplication
-): Promise<{ id: string; pid: number }> {
-  const id = await page.evaluate(() =>
-    (globalThis as unknown as RendererGlobal).__canvasE2E.seedBoard('terminal')
-  )
-  await expect
-    .poll(async () => ((await pidOf(electronApp, id)) ?? 0) > 0, { timeout: 20_000 })
-    .toBe(true)
-  const pid = (await pidOf(electronApp, id)) as number
-  return { id, pid }
 }
 
 test.describe('@terminal background project sessions — ask-on-switch dialog + keep policy', () => {
