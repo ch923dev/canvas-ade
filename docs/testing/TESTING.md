@@ -185,11 +185,11 @@ self-running or auto-quitting — Playwright drives and closes the app.
 registry exclusively. Never flip the sandbox to make a test pass.
 
 **The e2e gate (T5) — LOCAL pre-push, not GitHub Actions.** e2e was billing-blocked in Actions and
-the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pre-push` hook** that
-executes the full **Windows-native + Linux-Docker matrix** (`.githooks/pre-push` →
-`pnpm test:e2e:matrix`). It moved commit→push on 2026-06-06 so local commits stay fast — `git commit`
+the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pre-push` hook**
+(`.githooks/pre-push`). It moved commit→push on 2026-06-06 so local commits stay fast — `git commit`
 has no push-intent signal, so gating "work that reaches origin" belongs on push (the hook is
-origin-only and skips docs-only pushes). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
+origin-only and skips docs-only pushes). **Since 2026-07-28 the hook is the CHEAP gate — the full
+matrix is the MERGE gate** (see *Push cheap / merge full* below). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
 Actions CI gate is now the `check` job only (typecheck · lint · format · unit + integration).
 Process-tree-kill is covered by `killTreeCommand` (unit, both platforms — Windows `taskkill /T /F`,
 POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned child prints its pid; the probe asserts
@@ -209,24 +209,57 @@ Both hooks are enabled per-clone by the `package.json` `prepare` script (`git co
 - **`.githooks/pre-push` — the e2e gate, origin pushes only.** Runs on `git push` to `origin`; skips
   non-origin remotes, no-op pushes, and docs-only pushes (the changed set is diffed across the pushed
   ref range). Sets `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env
-  flake can't false-block a push). Bypass a WIP push with `git push --no-verify`. **Two scope axes**
-  (both fail OPEN to full) keep the per-push cost low without losing coverage:
-  - **Which OS legs (QW-4 / PR-2).** A cross-platform/cross-cutting diff (`LINUX_SENSITIVE` —
-    `src/main`, `src/preload`, `e2e/`, build/test config, or the `force-full` fallback) runs the full
-    **Windows + Linux Docker** matrix (and checks Docker is up first); any other (renderer-scoped) diff
-    runs the **Windows leg only**.
-  - **Which specs (MT-1 / PR-3).** On a Windows-only push, `scripts/e2e-scope.mjs` maps the changed
-    paths to a Playwright `--grep` subset by board area (see below); a cross-cutting/unknown diff runs
-    every spec. The **full cross-OS matrix is paid once per PR at the pre-merge gate** (CLAUDE.md ›
-    parallel sessions), so deferring the Linux leg + the full suite to per-PR loses no coverage. Force
-    the full matrix anytime with `E2E_FULL_MATRIX=1`.
+  flake can't false-block a push). Bypass a WIP push with `git push --no-verify`.
+
+##### Push cheap / merge full (re-scoped 2026-07-28)
+
+**PUSH = Windows leg only, only the specs the diff can plausibly break. MERGE = the FULL matrix,
+both legs, every spec.** The Linux Docker leg NEVER runs on a plain push.
+
+*Why it changed.* The 2026-06-13 rule escalated to the full matrix whenever the diff touched a
+"cross-platform-sensitive" path — and that list included **`package.json`, which CLAUDE.md requires
+every PR to touch** (the mandatory version bump). Every real push therefore matched `LINUX_SENSITIVE`
+and paid the full matrix (~30 min measured), and the per-spec scoping below was unreachable dead
+code. Cross-OS insurance belongs at the merge gate, where it is paid exactly once per PR.
+
+The push gate now decides in this order:
+
+| # | Condition | What runs |
+|---|---|---|
+| 1 | `E2E_FULL_MATRIX=1`, **or** the push target is `refs/heads/main` (that IS a merge) | FULL matrix, both legs |
+| 2 | `package.json`'s only diff is the `"version"` line | that path is stripped from the change-set (it cannot change app behaviour) |
+| 3 | Every changed path is an `e2e/*.e2e.ts` spec | Windows leg, **exactly those spec files** by path |
+| 4 | `scripts/e2e-scope.mjs` verdict = `NONE` | **e2e skipped** — nothing that reaches the running app changed (docs · vitest `*.test.ts` · `__fixtures__` · `.github/` · release/bench/eval tooling). The pre-commit trio + the Actions `check` job own these. |
+| 5 | verdict = `FULL` | Windows leg, ALL specs |
+| 6 | verdict = `@tags` | Windows leg, `--grep` that subset (`@core` always included) |
+
+*What MAIN-process diffs do now.* `src/main/**` used to be blanket-`FULL` because it is the cross-OS
+surface. The Linux leg is deferred to the merge gate either way, so blanket-`FULL` bought spec
+breadth, not OS coverage. The well-partitioned MAIN subsystems therefore scope by area like the
+renderer — `pty*`/`terminal*`/`recap*` → `@terminal`, `previewOsr*`/`localServer` → `@preview`,
+`voice*`/`openai*` → `@voice`, `mcp*`/`swarm*`/`orchestration*` → `@mcp`. The **shared MAIN core**
+(`index.ts`, window/security, lifecycle, project/auth/llm/jarvis/git plumbing, `hooks/`,
+`cliProvisioners/`) and all of `src/preload/**` stay `FULL`.
+
+*What still routes FULL, measured.* Replaying the last 40 commits through the new selector, the
+remaining `FULL` drivers rank: `pnpm-lock.yaml`, `src/renderer/src/smoke/e2eHooks{,.types}.ts`,
+`src/preload/index.ts`, `src/main/index.ts`, `src/main/e2eMain.ts`. Those are honestly cross-cutting
+— `e2eHooks.ts` in particular is the harness's own contract with the renderer, and most feature PRs
+that add e2e coverage extend it. **So a whole feature PR usually still runs every spec — but on the
+Windows leg only, which is the bulk of the saving.** The per-area narrowing pays off on the small
+iterative pushes in between (one board file, one MAIN subsystem, a doc + a unit test).
+
+**The merge gate is unchanged and still MANDATORY:** run `make check` (cheap gate + `pnpm
+test:e2e:matrix`, both legs, every spec) before `gh pr merge`. Nothing enforces this from a hook —
+merges land on GitHub, not through a local push — so it stays a hard human ritual (CLAUDE.md ›
+parallel sessions).
 
 Run the legs directly:
 
 | Command | Leg | How |
 |---|---|---|
 | `pnpm test:e2e` | **Windows** | native (real ConPTY + WebContentsView on this OS); add `-- --grep @area` to scope |
-| `pnpm test:e2e:smoke` | **Windows** | `--grep @core` only (~8 boot / placement / recovery / isolation tests — the fast subset) |
+| `pnpm test:e2e:smoke` | **Windows** | `--grep @core` only (**55 tests / 13 files** as of 2026-07-28 — the fast subset; re-measure with `pnpm exec playwright test --list --grep @core` rather than trusting this number) |
 | `pnpm test:e2e:linux` | **Linux** | Docker (`Dockerfile.e2e`: `node:22-bookworm` + Xvfb + `xauth` + Electron libs; `pnpm install` rebuilds node-pty for the Electron ABI; `CI=1` → `--no-sandbox`) |
 | `pnpm test:e2e:matrix` | **both** | the Windows leg then the Linux leg; both must pass (the per-PR merge gate) |
 
@@ -240,23 +273,37 @@ it never runs as a scoped subset — only in the full matrix (see its row):
 
 | Tag | Specs | Source it guards |
 |---|---|---|
-| `@core` | `recovery` · `reset-isolation` · `placement` · `evidence` · `swarmBoard` · `swarmLedger` | boot / persistence / placement / native-capture — relevant to **any** change, so always included in a scoped run. The two swarm specs ride `@core` because the surface they guard is mostly `src/main/**` (always FULL) and the board is cheap to mount; `swarmLedger` covers the S2 run ledger: restore-from-disk, the lost/stalled card states, a triage action round-trip, and the plan strip's write-through. |
+| `@core` | `recovery` · `reset-isolation` · `placement` · `evidence` · `appModel` · `boardResultSynth` · `commandBoard` · `file` · `notifications` · `spawnGroup` · `swarmBoard` · `swarmLedger` (+ one describe in `mcp`) | boot / persistence / placement / native-capture — relevant to **any** change, so always included in a scoped run. **13 files / 55 tests** as of 2026-07-28 — this is the floor cost of every scoped push, so keep it deliberate: adding `@core` to a spec taxes every scoped run. The two swarm specs ride `@core` because the board is cheap to mount and the surface they guard is mostly MAIN; `swarmLedger` covers the S2 run ledger: restore-from-disk, the lost/stalled card states, a triage action round-trip, and the plan strip's write-through. |
 | `@terminal` | `terminal*` · `processTree` · `recap` | `boards/terminal*`, `boards/TerminalBoard`, recap, `src/main/pty*` |
 | `@preview` | `browser*` · `preview*` · `previewLink` · `fullview` | `boards/Browser*`, `usePreviewManager`, `src/main/preview*`, `localServer` |
 | `@planning` | `whiteboard` · `textCreate` · `textToolbar` · `noteTint` · `planningKeyboard` | `boards/planning/**`, `boards/PlanningBoard`, vendored `perfect-freehand` |
 | `@chrome` | `menu*` · `modal` · `commandPalette` · `wayfinding` · `titleEdit` · `boardKeyboard` · `groups` · `backdrop` | `AppChrome`, `SettingsModal`, menu/modal/toast/group/palette/wayfinding/backdrop chrome |
-| `@mcp` | `mcp` | the swarm layer — `src/main/mcp*` + `@expanse-ade/mcp`. Always-FULL: the scope script routes `src/main/**` (and `e2e/**`) to `FULL`, so `@mcp` runs in the full matrix at the merge gate / on any MAIN change, never as a scoped renderer subset. |
-| `@voice` | `voice` | voice dictation — `src/renderer/src/voice/**` + `voiceStore` (V1: capture pipeline + `voice:port`; V3 adds the pill/flyout). The MAIN half (`src/main/voiceIpc.ts`) routes to FULL via `src/main/**`. Runs under the fixtures-wide `CANVAS_FAKE_MEDIA=1` fake mic (a deterministic generated tone) — no OS mic/permission dependency on any leg. |
+| `@mcp` | `mcp` · `mcpPlanning` · `mcpServers` · `orchestration` | the swarm layer — `src/main/mcp*` · `src/main/swarm*` · `src/main/orchestration*` · `src/main/dispatch*` + the renderer `Orchestration*` modals + `@expanse-ade/mcp`. **No longer always-FULL** (2026-07-28): those MAIN prefixes now scope to `@core\|@mcp`. This is the heaviest area in the suite (33 real-PTY / real-loopback-MCP tests in `mcp.e2e.ts`, 15 of them `test.slow()`) — expect a scoped `@mcp` push to be the slowest scoped push. |
+| `@voice` | `voice` | voice dictation — `src/renderer/src/voice/**` + `voiceStore` (V1: capture pipeline + `voice:port`; V3 adds the pill/flyout). The MAIN half (`src/main/voice*`, `openaiTranscribe`, `openaiSpeak`, `cloud*Engine`, `micPermission`) scopes to `@core\|@voice` too since 2026-07-28. NB `--grep @voice` also substring-matches `@voicedrill` — harmless today because that spec self-skips outside its manual invocation. Runs under the fixtures-wide `CANVAS_FAKE_MEDIA=1` fake mic (a deterministic generated tone) — no OS mic/permission dependency on any leg. |
 | `@voicedrill` | `voiceCrashDrill` | MANUAL ONLY — self-skips in every suite run (needs win32 + `CANVAS_FAKE_MEDIA_WAV` + the installed Kroko model). Kills the real engine host by pid, twice, to prove the V5 crash policy live: transparent restart-once → error row → draft preserved → Restart CTA. Invoke: `CANVAS_FAKE_MEDIA_WAV=src/main/__fixtures__/voice-librispeech-16k.wav pnpm test:e2e --grep @voicedrill`. |
-| `@ptyhost` | `ptyhostReattach` | The PTY-host daemon (`src/main/ptyHost/**` — routes FULL via `src/main/**`). Win32-only (self-skips elsewhere: the staged-runtime daemon is win32-gated in PR 1). The ONE spec that relaunches the app, so it manages its OWN Electron instance on a dedicated `CANVAS_USERDATA` profile instead of the shared worker fixture: hard-kill (crash path) → relaunch → same-pid reattach + ring replay → normal close reaps + daemon idle-exits (the no-daemon-leak sweep is an assertion, plus an afterAll pid-kill belt). Also tagged `@terminal`. NOTE: the whole suite runs with the daemon at its DEFAULT (ON, win32) — terminal specs exercise the daemon path on the Windows leg, the in-proc path on the Linux leg. |
+| `@ptyhost` | `ptyhostReattach` | The PTY-host daemon (`src/main/ptyHost/**` — scopes to `@core\|@terminal` since 2026-07-28 via the `src/main/pty` prefix; the spec is also tagged `@terminal`, so it rides that subset). Win32-only (self-skips elsewhere: the staged-runtime daemon is win32-gated in PR 1). The ONE spec that relaunches the app, so it manages its OWN Electron instance on a dedicated `CANVAS_USERDATA` profile instead of the shared worker fixture: hard-kill (crash path) → relaunch → same-pid reattach + ring replay → normal close reaps + daemon idle-exits (the no-daemon-leak sweep is an assertion, plus an afterAll pid-kill belt). Also tagged `@terminal`. NOTE: the whole suite runs with the daemon at its DEFAULT (ON, win32) — terminal specs exercise the daemon path on the Windows leg, the in-proc path on the Linux leg. |
 
 `scripts/e2e-scope.mjs` is the path → tag mapping (a pure, unit-tested function — `scripts/e2e-scope.test.ts`).
-**Safety contract — it fails OPEN to `FULL`** (run every spec) for any cross-cutting or cross-OS path
-(`Canvas.tsx`, `BoardFrame`, `canvasStore`, `boardSchema`, `src/main/**`, `src/preload/**`, `e2e/**`,
-build/test config) and for any renderer path it doesn't recognise. A scoped verdict is therefore, by
-construction, renderer-area-only — which is why such pushes are safe to run on the Windows leg alone.
+**Safety contract, both directions:**
+- **Fails OPEN to `FULL`** (run every spec) for any cross-cutting path — `Canvas.tsx`, `BoardFrame`,
+  `canvasStore`, `boardSchema`, the shared MAIN core, `src/preload/**`, `e2e/**` (fixtures/helpers),
+  `package.json` deps/scripts, the lockfile, build/test config — and for any path it doesn't
+  recognise. Never guesses a narrower set.
+- **Emits `NONE`** (skip e2e) *only* for paths that provably cannot reach the running app: docs,
+  images, vitest `*.test.ts`/`*.spec.ts`, `__fixtures__`/`__mocks__`, `.github/`, `.claude/`,
+  release/icon/feed/SCA/bench/stt-eval tooling under `scripts/`, the **bench suite** (`e2e/*.bench.ts`
+  + `benchSink.ts` — a different Playwright config, `testMatch '**/*.bench.ts'`, so it cannot run in
+  the gate), and lint/format/vitest config (`eslint.config.*`, `.prettier*`, `vitest.config.*`).
+  Those are covered by the pre-commit trio and the Actions `check` job — launching Electron for them
+  buys nothing. `tsconfig*` deliberately stays cross-cutting: it feeds the bundle's module resolution.
+
 **When you add a new e2e spec, tag its title** with the right area (and, if it covers a new source
-area, extend the mapping + its test).
+area, extend the mapping + its test). An untagged spec is invisible to every scoped run — that was
+a live gap in `newTerminal.e2e.ts`, fixed 2026-07-28.
+
+**When you add a new `scripts/` file or a new MAIN subsystem, update `e2e-scope.mjs`.** An unknown
+path fails open to `FULL`, so nothing goes untested — but the push gets slow, which is the failure
+mode this whole mechanism exists to avoid.
 
 The Docker image's CMD builds then runs `xvfb-run -a … --reporter=line` — the `line` reporter streams
 without a TTY, so `docker run` works from a pnpm pipe. (The default `list` reporter does tty

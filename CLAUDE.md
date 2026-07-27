@@ -228,7 +228,8 @@ Every PR MUST get a **manual dev check in a running app** before it is opened/me
 typecheck/lint/unit run is NOT "verified working" (the black-screen-regression class of bug). Launch
 the feature with `pnpm dev` and actually look at the change in the live app.
 - **Order: dev check BEFORE `git push`, not after.** `git push` fires the e2e pre-push gate
-  (Windows leg always, Linux + full matrix per the rules in Status) — a several-minute-to-30min cost.
+  (Windows leg, scoped spec set — see Status › *push cheap / merge full*) — a minutes-scale cost,
+  and the pre-merge `make check` that follows is the expensive one.
   Do the dev check first on the pre-commit-clean tree so a wrong assumption gets caught while it's
   still cheap to fix, THEN push once. Pushing before the dev check (or before it's clean) means: e2e
   runs, dev check then finds the real bug anyway, you fix it, and e2e must re-run from scratch on the
@@ -282,9 +283,11 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
   node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
   re-running the full gate + e2e after EACH merge — **the FULL e2e matrix (`pnpm test:e2e:matrix`,
-  both legs) is mandatory here**: since the 2026-06-13 pre-push scoping, renderer-scoped pushes pay
-  the Windows leg only, so the pre-merge gate is where cross-OS insurance is paid, exactly once per
-  PR. (Native Agent Teams = broken on Windows; this is the Windows-safe substitute.)
+  both legs, every spec) is mandatory here; run `make check` before `gh pr merge`**. Since the
+  2026-07-28 re-scoping every push pays the Windows leg on a scoped spec set only, so the pre-merge
+  gate is the ONLY place cross-OS + full-suite insurance is paid — exactly once per PR. No hook can
+  enforce it (merges land on GitHub, not through a local push), so it is a hard human ritual.
+  (Native Agent Teams = broken on Windows; this is the Windows-safe substitute.)
 - **Feature work lives on a worktree, not `main`. `main` is the stable version.** Anything scoped to a
   single feature / fix / refactor — its **docs (specs, plans, roadmaps, research) AND its
   implementation** — is created and committed on that work's `feat/*` (or `fix/*`) worktree branch, never
@@ -307,15 +310,24 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 > GitHub Actions** — it was billing-blocked there, and the native/Docker e2e is cheaper + faster on
 > the dev box. The e2e gate runs **locally as a `pre-push` hook** (`.githooks/pre-push`,
 > origin-only, skips docs-only pushes), NOT pre-commit: `git commit` carries no push-intent signal,
-> so gating "work that reaches origin" is a push concern — local commits stay fast. **Scoped
-> 2026-06-13 (dx-audit QW-4):** renderer-scoped pushes run the **Windows leg only**
-> (`pnpm test:e2e`); the Linux Docker leg joins per-push only for cross-platform-sensitive diffs
-> (`src/main|preload`, `e2e/`, build/test config — `LINUX_SENSITIVE` in the hook) or
-> `E2E_FULL_MATRIX=1`; the **FULL matrix is mandatory once per PR at the pre-merge gate** (see
-> Parallel sessions). **Spec-scoped 2026-06-14 (dx-audit MT-1):** a renderer-scoped Windows push is
-> further narrowed by board area — e2e specs carry `@core/@terminal/@preview/@planning/@chrome` tags
-> and `scripts/e2e-scope.mjs` maps the changed paths to a `--grep` subset, **failing open to the full
-> suite** for any cross-cutting/unknown path (`docs/testing/TESTING.md` › E2E tags). **`pre-commit` is now the cheap trio only** (`typecheck ·
+> so gating "work that reaches origin" is a push concern — local commits stay fast.
+>
+> **PUSH CHEAP / MERGE FULL (re-scoped 2026-07-28).** A plain push runs the **Windows leg only**, and
+> only the specs the diff can plausibly break; **the Linux Docker leg never runs on a push**. The
+> **FULL matrix (`pnpm test:e2e:matrix`, both legs, every spec) is MANDATORY once per PR at the
+> pre-merge gate** — `make check` before `gh pr merge` (see Parallel sessions). Force both legs on a
+> push with `E2E_FULL_MATRIX=1`; a push straight to `refs/heads/main` forces them too.
+> *Why:* the previous rule escalated to the full matrix for any "cross-platform-sensitive" path — and
+> that list contained **`package.json`, which the version-bump convention below requires EVERY PR to
+> touch**. So every real push paid the full matrix (~30 min measured) and all the scoping was dead
+> code. The hook now strips a version-only `package.json` diff, skips e2e outright when nothing that
+> reaches the running app changed (docs · vitest specs · `.github/` · release tooling → verdict
+> `NONE`), runs just the touched spec files on an e2e-spec-only push, and otherwise narrows by board
+> area via `scripts/e2e-scope.mjs` (`@core/@terminal/@preview/@planning/@chrome/@mcp/@voice`;
+> `@core` always included), **failing open to the full suite** for any cross-cutting/unknown path.
+> Well-partitioned `src/main/**` subsystems (pty/preview/voice/mcp) now scope by area too — the
+> cross-OS insurance they used to force is paid at the merge gate instead. Full rules +
+> decision table: `docs/testing/TESTING.md` › *Push cheap / merge full*. **`pre-commit` is now the cheap trio only** (`typecheck ·
 > lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. Flake policy:
 > `retries:2` under `E2E_PRECOMMIT`, `workers:1`. Bypass with `git commit --no-verify` (cheap gate) /
 > `git push --no-verify` (e2e). **CI gate = the Actions `check` job only**

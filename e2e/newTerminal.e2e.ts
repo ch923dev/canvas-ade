@@ -25,7 +25,7 @@ const selectAndFit = (page: Page, id: string): Promise<void> =>
     e.fitView(a)
   }, id)
 
-test.describe('New Terminal dialog (place-first flow)', () => {
+test.describe('@terminal New Terminal dialog (place-first flow)', () => {
   test('pick a preset → Create → board carries the preset command + agentKind', async ({
     page
   }) => {

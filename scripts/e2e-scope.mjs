@@ -1,36 +1,149 @@
-// e2e scope selector (dx-audit MT-1 / PR-3).
+// e2e scope selector (dx-audit MT-1 / PR-3; re-scoped 2026-07-28, "push cheap / merge full").
 //
-// Maps a list of changed file paths -> either a Playwright `--grep` expression
-// (a scoped subset of the e2e suite) or the literal string `FULL` (run every
-// spec). The pre-push hook pipes its computed change-set to this script on
-// stdin and uses the verdict to scope the Windows e2e leg; `scopeForPaths` is
-// also unit-tested directly (it is a pure function of a path list).
+// Maps a list of changed file paths -> one of:
+//   * `NONE` — nothing that can change the app under test; the caller SKIPS e2e,
+//   * `FULL` — run every spec,
+//   * a Playwright `--grep` expression (a scoped subset of the e2e suite).
+// The pre-push hook pipes its computed change-set to this script on stdin and uses
+// the verdict to scope the Windows e2e leg; `scopeForPaths` is also unit-tested
+// directly (it is a pure function of a path list).
 //
 // SAFETY CONTRACT — fail OPEN to FULL, never to a narrower set:
-//   * any cross-cutting or cross-OS path (src/main, src/preload, e2e harness,
-//     build/test config, the shared canvas shell, the store/schema) -> FULL,
-//   * any renderer path that matches no known area -> FULL,
+//   * any cross-cutting path (src/preload, the e2e harness, the shared canvas
+//     shell, the store/schema, the MAIN entrypoint/lifecycle) -> FULL,
+//   * any path that matches no known area -> FULL,
 //   * an empty / unparseable input -> FULL.
-// Only when EVERY changed (non-doc) path resolves to a known board-type area do
-// we emit a scoped grep. A scoped verdict therefore implies "renderer-area only"
-// — which is why the hook runs such pushes on the Windows leg alone (the Linux
-// Docker leg, and the full matrix, are paid once per PR at the merge gate, and
-// per-push whenever a LINUX_SENSITIVE path changes; see .githooks/pre-push).
+// `NONE` is emitted ONLY for paths that provably cannot reach the running app —
+// docs, images, vitest `*.test.ts`/fixtures, build/release/eval tooling, CI
+// workflow files. Those are covered by the pre-commit trio + the Actions `check`
+// job; running Electron for them buys nothing.
 //
-// The tags mirror the e2e spec describe-title tags applied in this PR:
+// WHY MAIN-PROCESS PATHS CAN NOW SCOPE (2026-07-28). `src/main/**` used to route
+// blanket-FULL because it is the cross-OS surface. That is now handled on the OTHER
+// axis instead: the pre-push hook NEVER runs the Linux leg (it is paid once per PR
+// at the pre-merge gate, `pnpm test:e2e:matrix`). Given the Linux leg is deferred
+// either way, blanket-FULL on the Windows leg bought spec breadth, not OS coverage
+// — so the well-partitioned MAIN prefixes (pty/preview/voice/mcp/swarm) scope by
+// area like the renderer, and only the shared MAIN core stays FULL.
+//
+// The tags mirror the e2e spec describe-title tags:
 //   @core  @terminal  @preview  @planning  @chrome  @mcp  @voice
 // `@core` is ALWAYS included in a scoped grep (boot / placement / recovery /
-// isolation specs guard behaviour any board change can perturb).
-
-/** Non-runtime paths that never affect the app under test — ignored entirely. */
-const IGNORE = [/^docs\//, /\.md$/i, /\.(png|jpe?g|gif|webp|webm|mp4|svg|ico)$/i]
+// isolation specs guard behaviour any change can perturb).
 
 /**
- * Cross-cutting or cross-OS paths -> FULL. Checked FIRST so a board-area keyword
- * below can never narrow a shared file. Substring match on the normalised path.
+ * Non-runtime paths that provably never affect the app under test -> they
+ * contribute nothing, and a change-set made only of these yields `NONE`.
+ */
+const IGNORE = [
+  // docs + media
+  /^docs\//,
+  /\.md$/i,
+  /\.(png|jpe?g|gif|webp|webm|mp4|svg|ico)$/i,
+  // vitest unit/integration specs + their fixtures — the pre-commit/CI `check`
+  // job owns these; they are never bundled into the app the e2e harness launches.
+  // (`e2e/**` specs are NOT matched here — they end in `.e2e.ts`, and the hook
+  // targets touched e2e spec FILES directly.)
+  /\.(test|spec)\.[cm]?[jt]sx?$/i,
+  /(^|\/)__(fixtures|mocks|snapshots)__\//,
+  // CI/automation config — changes how CI runs, not how the app behaves.
+  /^\.github\//,
+  // Lint / format / vitest config: these govern the pre-commit trio and the unit
+  // suites. None of them is read by `electron-vite build` or by the running app, so
+  // they cannot change what the e2e harness observes. (`tsconfig*` deliberately
+  // stays cross-cutting — it DOES feed the bundle's module resolution.)
+  /^eslint\.config\./,
+  /^vitest\.config\./,
+  /^\.prettier(rc|ignore)/,
+  /^\.editorconfig$/,
+  /^\.gitattributes$/,
+  /^\.gitignore$/,
+  // The bench suite is a SEPARATE Playwright config (playwright.bench.config.ts,
+  // testMatch '**/*.bench.ts'); the gate config matches '**/*.e2e.ts' only, so a
+  // bench file can never run in the gate. `benchSink.ts` is imported by bench
+  // specs exclusively (verified: no *.e2e.ts references it).
+  /^e2e\/.*\.bench\.ts$/,
+  /^e2e\/benchSink\.ts$/,
+  // build / release / benchmark / eval tooling that never ships into the app.
+  // NB: scripts/e2e-scope.mjs + the voice asset generators are deliberately NOT
+  // here (see CROSS_CUTTING / AREAS.voice below).
+  /^scripts\/(release|gen-icon-mac|gen-icon-win|gen-updates-json|serve-local-feed|sca-audit|bench-baseline|tts-spike|status-palette-gate)/,
+  /^scripts\/stt-eval\//,
+  // non-app trees
+  /^marketing\//,
+  /^design-reference\//,
+  /^release\//,
+  /^supabase\//,
+  /^\.impeccable\//,
+  /^\.claude\//,
+  /^\.agents\//,
+  /^\.codegraph\//
+]
+
+/**
+ * MAIN-process + preload area prefixes. Checked BEFORE the cross-cutting list so the
+ * well-partitioned native subsystems scope like renderer areas; everything else under
+ * `src/main/` or `src/preload/` falls through to those blanket cross-cutting entries
+ * -> FULL. Substring match on the normalised, lower-cased path.
+ *
+ * Both trees are per-domain by file name (`pty*`, `previewOsr*`, `voice*`, `mcp*`,
+ * `swarm*` in MAIN; `terminalApi.ts`, `voice.ts`, `mcpApi.ts`, `swarm.ts` in preload),
+ * so a domain file is as scopable as its renderer counterpart. The SHARED pieces —
+ * `src/main/index.ts` + lifecycle/window/security/project/auth/llm/jarvis/git plumbing,
+ * and `src/preload/index.ts`/`index.d.ts` + the cross-domain APIs — stay FULL.
+ */
+const NATIVE_AREAS = {
+  terminal: [
+    'src/main/pty',
+    'src/main/terminal',
+    'src/main/recap',
+    'src/main/agentrecap',
+    'src/main/agenttranscript',
+    'src/main/agentmilestones',
+    'src/main/bgbusyprobe',
+    'src/main/backgroundsessions',
+    'src/preload/terminalapi',
+    'src/preload/recapapi'
+  ],
+  preview: [
+    'src/main/previewosr',
+    'src/main/previewscreenshot',
+    'src/main/previewshared',
+    'src/main/localserver',
+    'src/main/portdetect'
+  ],
+  voice: [
+    'src/main/voice',
+    'src/main/openaispeak',
+    'src/main/openaitranscribe',
+    'src/main/cloudsttengine',
+    'src/main/cloudttsengine',
+    'src/main/micpermission',
+    'src/preload/voice'
+  ],
+  mcp: [
+    'src/main/mcp',
+    'src/main/swarm',
+    'src/main/orchestration',
+    'src/main/dispatch',
+    'src/preload/mcpapi',
+    'src/preload/mcpserversapi',
+    'src/preload/swarm',
+    // shared MAIN⇄renderer type/contract modules for the same domains
+    'src/shared/mcptypes',
+    'src/shared/swarmledgertypes',
+    'src/shared/rolepacks'
+  ]
+}
+
+/**
+ * Cross-cutting paths -> FULL. Checked AFTER `MAIN_AREAS` (so a MAIN subsystem can
+ * scope) but BEFORE the renderer `AREAS` keywords (so a board-area keyword can never
+ * narrow a shared file). Substring match on the normalised, lower-cased path.
  */
 const CROSS_CUTTING = [
-  // main process / preload / e2e harness / smoke seams (also cross-OS surface)
+  // MAIN core (entrypoint, window/security, lifecycle, project/auth/llm/jarvis/git
+  // plumbing) + preload + the e2e harness + the smoke seams.
   'src/main/',
   'src/preload/',
   // S4 diagram render-worker assets (vendored Mermaid + worker HTML/bridge) — loaded by a MAIN
@@ -62,18 +175,18 @@ const CROSS_CUTTING = [
   'src/renderer/src/lib/boardschema',
   'src/renderer/src/lib/boardgeometry',
   'src/renderer/src/lib/nodechanges',
-  // build / test / CI / hook config (the e2e selection spoilers)
-  'scripts/',
-  '.github/',
+  // build / test / hook config (the e2e selection spoilers). `package.json` is
+  // cross-cutting for DEPENDENCY/script edits — the pre-push hook strips it from
+  // the change-set first when the only edited line is the `version` bump (the
+  // CLAUDE.md per-PR bump would otherwise force FULL on literally every push).
+  'scripts/e2e-scope',
   '.githooks/',
   'package.json',
   'pnpm-lock.yaml',
   'playwright.config',
   'electron.vite.config',
   'electron-builder',
-  'tsconfig',
-  'eslint.config',
-  'vitest.config',
+  'tsconfig', // feeds the bundle's module resolution — unlike eslint/vitest config (IGNOREd)
   'dockerfile',
   '.dockerignore',
   '.npmrc'
@@ -126,11 +239,11 @@ const AREAS = {
   // 'modal' keyword in `chrome` could otherwise be relied on to catch these; the two areas
   // union together so a change confined to e.g. OrchestrationConsentModal.tsx still pulls in
   // the @mcp-tagged consent-flow specs instead of silently landing in @chrome alone.
-  mcp: ['orchestration'],
+  mcp: ['orchestration', 'swarm'],
   // Voice dictation (V1+): the renderer capture pipeline + its ephemeral store (and, from
-  // V3, the pill/flyout UI — 'voice' catches VoicePill/VoiceFlyout paths too). The MAIN
-  // half (voiceIpc) is already FULL via src/main/.
-  voice: ['voice'],
+  // V3, the pill/flyout UI — 'voice' catches VoicePill/VoiceFlyout paths too). The generated
+  // TTS manifest / filler assets are runtime inputs, so their generators map here too.
+  voice: ['voice', 'scripts/gen-tts-manifest', 'scripts/gen-voice-fillers'],
   core: ['useboardplacement', 'lib/placement']
 }
 
@@ -146,22 +259,30 @@ function areasForPath(rawPath) {
   if (p === '') return new Set() // blank line — contributes nothing
   if (IGNORE.some((re) => re.test(p))) return new Set() // non-runtime — contributes nothing
   const lp = p.toLowerCase()
+  const nativeAreas = new Set()
+  for (const [area, keys] of Object.entries(NATIVE_AREAS)) {
+    if (keys.some((k) => lp.includes(k))) nativeAreas.add(area)
+  }
+  if (nativeAreas.size > 0) return nativeAreas // a partitioned MAIN/preload subsystem
   if (CROSS_CUTTING.some((frag) => lp.includes(frag))) return null // -> FULL
   const found = new Set()
   for (const [area, keys] of Object.entries(AREAS)) {
     if (keys.some((k) => lp.includes(k))) found.add(area)
   }
-  if (found.size === 0) return null // unknown renderer path -> FULL (fail open)
+  if (found.size === 0) return null // unknown path -> FULL (fail open)
   return found
 }
 
 /**
- * Pure mapping: changed paths -> 'FULL' | '@core|@area|...'.
+ * Pure mapping: changed paths -> 'NONE' | 'FULL' | '@core|@area|...'.
  * @param {string[]} paths
  * @returns {string}
  */
 export function scopeForPaths(paths) {
   if (!Array.isArray(paths) || paths.length === 0) return 'FULL'
+  // An all-blank list carries no information at all — that is "unparseable", not
+  // "provably non-runtime", so it must fail OPEN to FULL rather than skip e2e.
+  if (!paths.some((p) => normalise(p) !== '')) return 'FULL'
   const areas = new Set()
   let sawRuntimePath = false
   for (const path of paths) {
@@ -172,8 +293,9 @@ export function scopeForPaths(paths) {
       for (const a of result) areas.add(a)
     }
   }
-  // Only doc/asset/blank paths (or nothing) -> nothing scopable -> FULL.
-  if (!sawRuntimePath) return 'FULL'
+  // Every path was provably non-runtime (docs / unit tests / CI / build tooling)
+  // -> nothing the e2e harness could observe changed. Skip e2e entirely.
+  if (!sawRuntimePath) return 'NONE'
   areas.add('core') // @core is part of every scoped run
   const tags = TAG_ORDER.filter((t) => areas.has(t)).map((t) => `@${t}`)
   return tags.join('|')
