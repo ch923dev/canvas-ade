@@ -3881,7 +3881,7 @@ the same run), Linux 334 / 5 skipped / **1 flaky, exit 0**, that flaky being `pr
 yet again. Across three matrices the failure set is drawn entirely from two ambient families and
 never once includes a swarm-ledger spec. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
 
-## 2026-07-27 — PR #391: unit-test the switch orchestrator + the background-session wiring (audit R9, v0.34.3)
+## 2026-07-27 — PR #391: unit-test the switch orchestrator + the background-session wiring (audit R9, v0.35.1)
 
 **Audit Phase 1, item R9** (findings PS-3 / SM-3) — the first of the phase's four items, and
 tests-only by design: it is the safety net *for* R4's refactor, so it lands before the code moves.
@@ -3926,9 +3926,10 @@ OS notification under `CANVAS_E2E`/`CANVAS_SMOKE`, destroyed-window guards.
 **Verified:** typecheck · lint · format clean; the two files 62/62; full `pnpm test` 6157 passed
 with **5 pre-existing failures** (`pathSafe` symlink layer ×2, `pty.recapenv` ×3) confirmed
 identical on the MAIN checkout at `bcd4d311` — this box's floor, not a regression. Dev check
-title-stamped. **Version:** 0.34.2 → **0.34.3** (patch — tests only, no product code).
+title-stamped. **Version:** 0.35.0 → **0.35.1** (patch — tests only, no product code). Renumbered on the
+rebase onto `main`: this lane branched at 0.34.2, but #392 shipped 0.35.0 to `main` first.
 
-## 2026-07-27 — PR #391: Alt-Tab commit-on-release + the racing press is queued (audit R16, v0.35.0)
+## 2026-07-27 — PR #391: Alt-Tab commit-on-release + the racing press is queued (audit R16, v0.36.0)
 
 **Audit Phase 1, item R16** (finding PS-3) — the decision taken 2026-07-25, not re-litigated: the
 running-projects overlay now matches Windows Alt-Tab and VS Code's Ctrl+Tab, which are both
@@ -3985,9 +3986,9 @@ real channel and asserts the instrumented record moved — **the Phase 1 gate it
 
 **Verified:** typecheck · lint · format clean; full `pnpm test` 6186 passed with the same 5
 pre-existing failures as `main`; e2e green. Dev check title-stamped before push. **Version:**
-0.34.3 → **0.35.0** (minor — behaviour change).
+0.35.1 → **0.36.0** (minor — behaviour change).
 
-## 2026-07-28 — PR #393: unify the open paths + one resident list (audit R4 · R10, v0.36.0)
+## 2026-07-28 — PR #393: unify the open paths + one resident list (audit R4 · R10, v0.37.0)
 
 **R4 — one `openProject()`, and the door that was actually wrong.** Three production doors opened a
 project with no outgoing project to hand over — `WelcomeScreen.openDir`, `WelcomeScreen.onCreate`,
@@ -4055,4 +4056,4 @@ unsubscribe on the LAST unmount, dedupe, absent-channel degradation). Mutation-c
 **Verified:** typecheck · lint (0 errors) · format clean; full `pnpm test` 6204 passed with the same
 5 pre-existing failures as `main` (`pathSafe` symlink ×2, `pty.recapenv` ×3). `canvasStore.ts` sits
 on its 727-line cap, so the welcome-restore is a direct `setState` in `openProject` rather than a
-new store action. **Version:** 0.35.0 → **0.36.0** (minor).
+new store action. **Version:** 0.36.0 → **0.37.0** (minor).
