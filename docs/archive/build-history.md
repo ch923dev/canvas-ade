@@ -3759,3 +3759,124 @@ terminal-load doc. Verified: full matrix green both legs at pre-push, CI 4/4, re
 findings (independently re-derived the `decideKeep` and `settle()` claims and cross-checked
 `RESOURCES.json` against the prose), dev check title-stamped `PR#390`. **Version:** 0.34.1 →
 **0.34.2** (patch — measurement/test work). Squash `f62bc169`.
+## 2026-07-27 — PR #TBD: orchestration S2 — durable run ledger, failure model, triage queue (v0.35.0)
+
+**Made a swarm run survivable instead of a demo.** S1 put the whole run — chat, membership, statuses,
+results — in the ephemeral `swarmStore` + MAIN's in-memory `SwarmSession`, so a reload erased it.
+Design gate first (`docs/orchestration/s2-design-artifact.html`, signed off 2026-07-26: surface
+approved as drawn; **D1 decided AGAINST the artifact's recommendation** — the ledger lives in
+`<project>/.canvas/memory/run-<boardId>.json`, not userData).
+
+**The ledger** (`shared/swarmLedgerTypes` · `swarmLedger` · `swarmLedgerProject` · `swarmLedgerSession`):
+one sidecar per run beside the board recaps, written through `canvasMemory` (so the existing `isSafeId`
+guard applies verbatim) with **fsync ON** — unlike the regenerable recaps, a lost ledger loses the run.
+`runId === boardId` makes restore a filename lookup. Hostile-input coerce on every read; a sidecar whose
+body claims a different board is refused (the filename is authoritative); a **future** `version` is never
+parsed and never overwritten. Cap-bounded, newest-20 retention. Zero canvas-schema change (D8) — the
+scene/session split holds. The S3 `worktree`/`branch` fields exist today, written `null`.
+
+**The failure model** (`swarmWatch` — the progress ledger to the ledger's task ledger). Both cases fall
+BETWEEN turns, so neither can live in the tool loop. **A · worker dies:** detection is the existing
+`subscribeBoardStatus` stream (`gone`/`failed`; `idle` deliberately is NOT death — `awaitSettled` already
+reads silence as a settle); salvage reads `boardResults` directly (sync, so it also works in the quit
+chain); the task lands `blocked` + `blockedTag:'lost'` — **not** the `failed` the artifact sketched, since
+a terminal state clears the very tag the card and row key off (artifact cell corrected in-commit).
+**B · orchestrator dies:** a synchronous `drain()` in `shutdown()` ahead of the PTY drain — salvage, mark
+the run `interrupted`, and **preserve the worker boards** (D5). **Stall watch (D4):** the tick folds real
+PTY silence into `lastActivityAt` (forward only) and counts one stall per EPISODE, the guard living in the
+ledger itself so it survives a restart. Narration is deterministic and MAIN-composed (no LLM call, no
+budget spend), riding the existing run-event channel as the sentence TAIL + a board id — the renderer
+resolves the title, because MAIN is not a title authority. `takeNotices`/`withRunNotices` prefix the next
+user turn so the brain stops awaiting a worker it has been told is dead.
+
+**The surface:** restored chip · lost/stalled card states with their reason in the visible string · the
+triage queue as a risk-ordered actionable list built from TWO sources that know nothing about each other
+(live `attentionStore` needs-input + MAIN's ledger tags, merged on the shared `SWARM_BLOCKED_TAGS` order)
+· the plan strip **editable mid-run** (D2 always-live: checkbox · label-jumps · owner dot · `⋯` rename ·
+`＋` add), writing THROUGH to the Planning board via its own element helpers + undo checkpoint, so ⌘Z
+works and the strip never becomes a second copy of the plan. Human edits direct, orchestrator edits
+confirmed (D6, `tick_plan_item` through the existing planning-edit gate).
+
+**Batched confirms (D7):** `mcpDispatchBatch` — `dispatchPrompts`, the plural of `dispatchPrompt`, built
+to `mcpRelayBatch`'s proven shape: validate+sanitize every row → ONE per-row modal → each approved row
+through the shared write gate INDEPENDENTLY (own nonce · own TOCTOU re-check · own audit) via
+`confirmOverride`. It never widens one approval into N writes; no confirmBatch wired ⇒ fail closed.
+Host-side only: no broker wire change, no package publish.
+
+Extract-on-touch: `awaitSettled`'s settle policy moved to `mcpAwaitSettled.ts` (mcpOrchestrator was at
+the 700 cap, no override added); `index.ts` 707→710, documented, for three choke-point wiring lines.
+Two bugs the tests caught, not review: `swarm:destroyRun` used `sessions.get`, so deleting a board whose
+run was never touched this session orphaned its ledger; and a `.tsx` under `src/main` dragged DOM types
+into `tsconfig.node` and broke the e2e specs' typecheck (the real-channel bridge test moved to the
+renderer tree).
+
+**Two cross-spec isolation leaks the full matrix exposed** (one app is reused across every spec file, so
+a spec's exit state is the next spec's start state). Both are fixed AT THE SOURCE — the shared `reset()`
+is deliberately left alone here: a global sweep of the modal layer + the camera was tried first and broke
+three OTHER specs, because every spec's click targets were written against the camera the suite's ORDER
+hands it (reverted; `reset()` keeps one comment saying why).
+**(1) The camera.** `swarmLedger` fitted a swarm board seeded to the RIGHT of a plan board, parking the
+camera out there — the next spec's board, correctly seeded at the origin, landed off-viewport, where
+React Flow never renders it and a terminal never mounts or spawns (it reads exactly like a PTY failure
+and is not one: this was `terminal.e2e.ts:11`). Seed the swarm board FIRST so the fit stays framed on
+x≈0, the shape `swarmBoard.e2e.ts` already proved benign. The twin: `terminalPolish`'s first-run-hint
+click had a latent dependency on the inherited camera — seeding SELECTS a board, a single selection
+reveals the left-docked Board Inspector, and at some cameras that popover sits exactly over the hint's
+button; it deselects now, since nothing in that test is about selection.
+**(2) A leaked current dir.** The new `writeSwarmRun` e2e op minted a throwaway project and
+`setCurrentDir`'d it for the rest of the worker's life (the next spec's PTY inherits that dir as its
+cwd); it fails CLOSED now, and the spec owns its temp project through the standard
+`createTempProject`/`teardownProject` pair — so the two restore specs also dismiss the fresh-project
+recap consent and close the digest panel that opening a project brings up.
+A THIRD leak this lane hit independently — a left-open Settings modal whose scrim ate the next spec's
+clicks (`mcpServers` · `projectSettings` · `swarmBoard`) — was fixed centrally on `main` mid-lane by
+**#389**'s `closeChromeOverlays()` in `reset()`, which this branch picked up on rebase; the spec-local
+closes written here were dropped as redundant.
+
+**Five findings from the automated review, all real, all fixed** (PR #392). **[critical] the salvage
+read was racing synthesis:** `resultSynth.onSettle` has ONE production call site — the recap watcher's
+25s transcript debounce — while a PTY exit reaches `swarmWatch` in a few hundred ms, so a worker that
+died without `write_result` read as "nothing to salvage" essentially always, and permanently (the sweep
+only revisits `in_progress`). Death IS a settle: a `synthesizeNow` dep now forces the (synchronous)
+settle immediately before the read, inside the same guard. **[warning] Accept on a lost row did nothing
+observable** — it set `acceptedByHuman` while every consumer keys off `blockedTag === 'lost'`; accepting
+a salvaged result now CLOSES the task (`done`, tag cleared, status event). **[warning] the tasks clamp
+kept the oldest 200** and dropped everything after — past the cap each new task vanished at the next
+persist while its `assigned` event survived pointing at a taskId no longer in `tasks`, so the worker's
+later `settled()` silently discarded the result; now `slice(-N)` like the events clamp. **[warning]
+`applyAction` validated only that the task exists** — `reassign` on a healthy in-progress task wiped its
+live assignment; a new `offers()` mirrors `triageRows`' per-tag vocabulary and MAIN re-derives the
+pairing before any write. **[warning] the failure-case-B ordering had no coverage**: `shutdown()` cannot
+be imported (index.ts owns the app lifetime), so `quit.test.ts` asserts the drain-before-PTY-drain order
+in the SOURCE — blunt on purpose, since a rename is a conscious edit while a silent reorder is what
+nothing else catches. Also three CodeQL `js/bad-code-sanitization` notices in the e2e spec (board ids now
+passed as structured args). `index.ts` 710→711, documented.
+
+**Plus the [critical] the first round carried in its overflow, now closed:** `taskForBoard` resolved a
+worker board to its **first-ever** assigned task. A finished task keeps its `assignment` — that IS the
+run's record of who did the work, and the worker cards and `runWorkerIds` read it — so a board handed a
+second task (the ordinary pattern: the orchestrator gives the next task to whichever worker went idle)
+matched two rows and `Array.find` always returned the older one. Task 2's `settled()` overwrote task 1's
+result while task 2 itself never left `in_progress`, so its card spun forever and its plan item never
+released the owner dot. Both lookups now scan **newest first** (`taskForBoard`, and `swarmWatch`'s
+`liveTaskForBoard` for the same reason), preferring an open task and falling back to the newest finished
+one so a worker rewriting its own result still lands on the row it belongs to. The regression test drives
+the real hook pair — dispatch · settle · dispatch · settle onto one board — and was confirmed to fail
+against the pre-fix helper.
+
+**Verified:** unit + integration 6224 passed (the only 5 failures are this box's documented ambients:
+`pathSafe`'s 8.3-TEMP symlink layer + `pty.recapenv`). **Full e2e matrix, both legs, sequentially**
+(parallel legs flake), re-run after the rebase AND again after the review fixes. Windows 334 passed /
+3 skipped / 3 failed, all three adjudicated ambient by the same method: rerun the spec isolated at
+`--retries=0` (all green), then check the blast radius. `terminalCrisp:155` is a documented box
+ambient; `voiceCloud:127` is an 8s wait for the cloud-error chip that takes 3.9s isolated, in a
+subsystem this branch does not touch; and `planningCrossBoardDrag:91` runs at suite position #210 —
+*before* every spec this branch touches (#228 `projectSettings`, #250 `swarmLedger`, #292
+`terminalPolish`) — so it cannot be downstream of this lane, the shared seams being additive only.
+Linux (Docker, xvfb) 334 passed / 5 skipped / **1 flaky, exit 0** — `projectSwitcher:96`, the same
+hotkey-overlay class as the previous two legs, green on retry; all three Windows failures passed
+clean there. Run a THIRD time on the `taskForBoard` fix: Windows 334 / 3 skipped / 2 failed
+(`projectSwitcher:96` and `voiceCloud:108` — both green isolated, and both green on the Linux leg of
+the same run), Linux 334 / 5 skipped / **1 flaky, exit 0**, that flaky being `projectSwitcher:96`
+yet again. Across three matrices the failure set is drawn entirely from two ambient families and
+never once includes a swarm-ledger spec. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).

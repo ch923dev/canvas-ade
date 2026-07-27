@@ -9,6 +9,7 @@
  * (process boundary → no shared import) — keep in lockstep.
  */
 import { ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { SwarmLedgerSnapshot } from '../shared/swarmLedgerTypes'
 
 export type SwarmTurnEventPayload =
   | { runId: string; id: number; kind: 'delta'; text: string }
@@ -35,6 +36,14 @@ export interface SwarmRunEventPayload {
         provenance: 'claimed' | 'synthesized'
         status: string
       }
+    /**
+     * S2: the durable run projection. Unlike the payload shapes above (hand-mirrored across the
+     * process boundary), this one imports the SHARED declaration — `swarmLedgerTypes` is
+     * dependency-free and type-only here, so MAIN, preload and the renderer cannot drift.
+     */
+    | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
+    /** S2: a between-turns run event narrated in the orchestrator's voice (worker died/stalled). */
+    | { kind: 'narrate'; boardId?: string; status?: string; text: string }
 }
 
 export const swarmApi = {
@@ -47,6 +56,22 @@ export const swarmApi = {
     ipcRenderer.invoke('swarm:turn:cancel', { runId }),
   setPaused: (runId: string, paused: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('swarm:setPaused', { runId, paused }),
+  /** S2: ask MAIN to re-push this run's durable projection (the board calls it on mount). */
+  restore: (runId: string): Promise<{ restored: boolean }> =>
+    ipcRenderer.invoke('swarm:restore', { runId }),
+  /** S2: stamp "seen up to now" so read results stop appearing as unreviewed triage rows. */
+  markSeen: (runId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('swarm:markSeen', { runId }),
+  /** S2: the swarm board was deleted — drop its durable run too. */
+  destroyRun: (runId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('swarm:destroyRun', { runId }),
+  /** S2: apply one triage-row action. A `reassign` returns the prompt to send as the next turn. */
+  triageAction: (
+    runId: string,
+    taskId: string,
+    action: string
+  ): Promise<{ ok: boolean; prompt?: string }> =>
+    ipcRenderer.invoke('swarm:triageAction', { runId, taskId, action }),
   onTurnEvent: (handler: (ev: SwarmTurnEventPayload) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, ev: SwarmTurnEventPayload): void => handler(ev)
     ipcRenderer.on('swarm:turn:event', listener)

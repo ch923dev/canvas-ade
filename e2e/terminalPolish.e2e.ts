@@ -62,6 +62,11 @@ test.describe('@terminal terminal polish (D2-B)', () => {
     await evalIn(page, `localStorage.removeItem(${JSON.stringify(HINT_KEY)})`)
     try {
       const id = await seed(page, 'terminal') // NO launchCommand → bare shell
+      // Seeding SELECTS the board, and a single selection reveals the Board Inspector — a
+      // left-docked popover that, at the camera some spec orders hand this one, sits exactly over
+      // the hint's button and eats the click (the element reads visible/enabled/stable the whole
+      // time). Nothing here is about selection, so drop it and the popover goes with it.
+      await evalIn(page, `window.__canvasE2E.select(null)`)
       const hint = page.locator(`${node(id)} [data-test="terminal-hint"]`)
       await expect(hint).toBeVisible()
 

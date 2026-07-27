@@ -1,0 +1,2275 @@
+<meta charset="utf-8" />
+<title>S2 — Design gate: run ledger + triage (the survivability slice)</title>
+<style>
+  /* ============================================================================
+     TOKENS — verbatim from src/renderer/src/styles/tokens.css (the app contract).
+     Nothing invented. Same rule as the S1 artifact: prove the surface lands inside
+     the existing visual system instead of importing a second palette.
+     ============================================================================ */
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+
+    --void: #0a0a0b;
+    --grid-dot: #202022;
+    --surface: #141416;
+    --surface-raised: #1a1a1d;
+    --surface-overlay: #1e1e22;
+    --inset: #0e0e10;
+
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.16);
+
+    --text: #ededee;
+    --text-2: #9b9ba1;
+    --text-3: #7b7b81;
+    --text-faint: #46464b;
+
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+    --accent-wash: rgba(79, 140, 255, 0.14);
+    --ok: #3ecf8e;
+    --warn: #e8b339;
+    --warn-wash: rgba(232, 179, 57, 0.12);
+    --err: #f2545b;
+    --ok-wash: rgba(62, 207, 142, 0.14);
+    --err-wash: rgba(242, 84, 91, 0.14);
+    --scrim: rgba(0, 0, 0, 0.5);
+
+    --fs-micro: 10px;
+    --lh-micro: 14px;
+    --fw-micro: 500;
+    --tr-micro: 0.06em;
+    --fs-meta: 11px;
+    --lh-meta: 16px;
+    --fw-meta: 450;
+    --fs-label: 12px;
+    --lh-label: 16px;
+    --fw-label: 500;
+    --fs-body: 13px;
+    --lh-body: 20px;
+    --fs-term: 12.5px;
+    --lh-term: 19px;
+    --fs-h: 15px;
+    --lh-h: 22px;
+    --fw-h: 600;
+    --tr-h: -0.01em;
+
+    --r-board: 8px;
+    --r-inner: 6px;
+    --r-ctl: 5px;
+    --r-pill: 999px;
+    --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+  }
+
+  html {
+    background: var(--void);
+  }
+  body {
+    background: var(--void);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 13px;
+    line-height: 20px;
+    margin: 0;
+    padding: 0 0 72px;
+  }
+  ::selection {
+    background: var(--accent-wash);
+  }
+
+  .wrap {
+    max-width: 1340px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .doc-head {
+    padding: 40px 0 8px;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 14px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .doc-head h1 {
+    font-size: 21px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 6px 0 8px;
+  }
+  .doc-head .meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    margin: 0;
+  }
+
+  h2.sec {
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 48px 0 4px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2.sec .num {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 450;
+    color: var(--text-faint);
+  }
+  h3.sub {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 26px 0 8px;
+    color: var(--text);
+  }
+  p.lede {
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 20px;
+    margin: 6px 0 18px;
+    max-width: 88ch;
+  }
+  p.note {
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 18px;
+    margin: 10px 0 0;
+    max-width: 92ch;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  b.hi {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  table.tbl {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0 4px;
+    font-size: 12px;
+  }
+  table.tbl th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--border);
+    padding: 0 12px 6px 0;
+  }
+  table.tbl td {
+    vertical-align: top;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 12px 8px 0;
+    line-height: 18px;
+  }
+  table.tbl td:first-child {
+    color: var(--text);
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  table.tbl td .yes {
+    color: var(--ok);
+  }
+  table.tbl td .no {
+    color: var(--text-faint);
+  }
+
+  .cap {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 8px;
+  }
+  .stage {
+    background:
+      radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--void);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-board);
+    padding: 22px;
+    margin: 12px 0 4px;
+    overflow-x: auto;
+  }
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .row3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 14px 15px;
+  }
+  .panel h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .panel p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--text-2);
+  }
+  .panel.pick {
+    border-color: var(--accent);
+    background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--surface);
+  }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    color: var(--text-3);
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .tag.rec {
+    color: var(--accent);
+    border-color: rgba(79, 140, 255, 0.4);
+  }
+  .tag.new {
+    color: var(--ok);
+    border-color: rgba(62, 207, 142, 0.35);
+  }
+  .tag.s3 {
+    color: var(--text-faint);
+  }
+
+  ul.pts {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 19px;
+  }
+  ul.pts li {
+    margin-bottom: 5px;
+  }
+  ul.pts li b {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* ==========================================================================
+     BOARD CHROME — the shipped .sw-* classes copied VERBATIM from
+     src/renderer/src/styles/boards/swarm.css, plus the S2 additions marked
+     `S2 NEW`. What renders below is what ships.
+     ========================================================================== */
+  .board {
+    width: 1180px;
+    height: 660px;
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-board);
+    overflow: hidden;
+    margin: 0 auto;
+  }
+  .board-bar {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .board-bar .glyph {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--accent);
+    background: var(--accent-wash);
+  }
+  .board-body {
+    position: absolute;
+    inset: 30px 0 0;
+  }
+
+  .sw-root {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    font-family: var(--ui);
+    font-size: var(--fs-body);
+    color: var(--text);
+  }
+  .sw-head {
+    flex: none;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 6px 12px 0;
+  }
+  .sw-head-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sw-timer {
+    font-family: var(--mono);
+    font-size: var(--fs-meta);
+    color: var(--text-3);
+  }
+  .sw-spacer {
+    flex: 1;
+  }
+  .sw-btn {
+    font-family: var(--ui);
+    font-size: var(--fs-label);
+    font-weight: var(--fw-label);
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    background: var(--inset);
+    color: var(--text-2);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sw-btn:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+  .sw-btn.sm {
+    height: 21px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+  /* S2 NEW — the primary action inside a triage row (Reassign / Approve). */
+  .sw-btn.go {
+    border-color: rgba(79, 140, 255, 0.4);
+    color: var(--accent);
+    background: var(--accent-wash);
+  }
+
+  /* S2 NEW — header chip: this run was rehydrated from the durable ledger. */
+  .sw-restored {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ok);
+    border: 1px solid rgba(62, 207, 142, 0.35);
+    background: var(--ok-wash);
+    border-radius: var(--r-ctl);
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+
+  /* ── region 2 · plan strip ── */
+  .sw-plan {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 0 8px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .sw-plan-lbl {
+    flex: none;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .sw-plan-empty,
+  .sw-plan-ro {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .sw-task {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 2px 9px;
+    color: var(--text-2);
+    background: var(--surface);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .sw-task:hover {
+    border-color: var(--border-strong);
+  }
+  .sw-task.done {
+    color: var(--text-3);
+  }
+  .sw-task-n {
+    color: var(--text-faint);
+  }
+  /* S2 NEW — the chip's LEFT hit target is a real checkbox; the label stays the jump. */
+  .sw-task {
+    padding-left: 3px;
+  }
+  .sw-task-box {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    border-radius: 3px;
+    border: 1px solid var(--border-strong);
+    background: var(--inset);
+    color: var(--void);
+    font-size: 9px;
+    line-height: 11px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .sw-task-box:hover {
+    border-color: var(--accent);
+  }
+  .sw-task.done .sw-task-box {
+    background: var(--ok);
+    border-color: var(--ok);
+  }
+  /* S2 NEW — a chip currently owned by a live worker carries its state dot. */
+  .sw-task-own {
+    width: 5px;
+    height: 5px;
+    border-radius: var(--r-pill);
+    flex: none;
+    background: var(--accent);
+  }
+  .sw-task-own.stalled {
+    background: var(--warn);
+  }
+  /* S2 NEW — inline rename: the chip becomes an input in place, same metrics. */
+  .sw-task.editing {
+    border-color: var(--accent);
+    background: var(--inset);
+  }
+  .sw-task-input {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text);
+    width: 190px;
+    padding: 0;
+  }
+  /* S2 NEW — the trailing add affordance. */
+  .sw-task-add {
+    border-style: dashed;
+    color: var(--text-faint);
+    padding-left: 9px;
+  }
+  .sw-task-add:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  /* S2 NEW — per-chip edit handle; appears on hover (always shown in the mock). */
+  .sw-task-pen {
+    color: var(--text-faint);
+    font-size: 10px;
+  }
+  .sw-task:hover .sw-task-pen {
+    color: var(--text-2);
+  }
+
+  /* ── body grid ── */
+  .sw-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(220px, 30%) 1fr;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+  }
+  .sw-chat {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+  }
+  .sw-chat-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: var(--fs-label);
+  }
+  .sw-orch-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-pill);
+    background: var(--accent);
+    flex: none;
+  }
+  .sw-brain-chip {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+  .sw-msgs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    scrollbar-width: thin;
+  }
+  .sw-msg {
+    max-width: 90%;
+  }
+  .sw-msg .sw-who {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 2px 3px;
+  }
+  .sw-msg p {
+    margin: 0;
+    padding: 7px 10px;
+    border-radius: var(--r-inner);
+    font-size: 12.5px;
+    line-height: 18px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .sw-msg.you {
+    align-self: flex-end;
+  }
+  .sw-msg.you p {
+    background: var(--accent-wash);
+    border: 1px solid rgba(79, 140, 255, 0.22);
+    color: var(--text);
+  }
+  .sw-msg.orch p {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-2);
+  }
+  .sw-statusline {
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    padding: 0 2px;
+  }
+  .sw-statusline::before,
+  .sw-statusline::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .sw-composer {
+    flex: none;
+    border-top: 1px solid var(--border-subtle);
+    padding: 9px 11px 8px;
+  }
+  .sw-composer-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 6px 8px;
+    background: var(--inset);
+  }
+  .sw-composer-box .ph {
+    flex: 1;
+    color: var(--text-faint);
+    font-size: 12.5px;
+  }
+  .sw-hint {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-faint);
+    margin: 5px 2px 0;
+  }
+
+  /* ── region 3 · worker canvas ── */
+  .sw-canvas {
+    padding: 10px 12px;
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-width: thin;
+    background:
+      radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--void);
+  }
+  .sw-canvas-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .sw-canvas-lbl {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .sw-canvas-counts {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+  .sw-canvas-counts b {
+    color: var(--warn);
+    font-weight: 500;
+  }
+  .sw-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+  }
+  .sw-card {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-height: 58px;
+    box-sizing: border-box;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    font-family: var(--ui);
+  }
+  .sw-card:hover {
+    border-color: var(--border-strong);
+  }
+  .sw-card.attn {
+    border-color: var(--warn);
+    background: var(--warn-wash);
+    box-shadow: 0 0 0 1px var(--warn);
+  }
+  .sw-card.done {
+    opacity: 0.85;
+  }
+  .sw-card.ghost {
+    border-style: dashed;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    background: transparent;
+  }
+  /* S2 NEW — LOST: the worker died mid-task; its result was salvaged. Uses --err, but
+     deliberately NOT the --warn ring (that language belongs to needs-input alone). */
+  .sw-card.lost {
+    border-color: rgba(242, 84, 91, 0.5);
+    background: linear-gradient(var(--err-wash), var(--err-wash)), var(--surface-raised);
+  }
+  /* S2 NEW — STALLED: no border change at all. The signal is the frozen dot + the amber
+     TIMER + the disclosed activity line. A stalled worker is not asking for anything. */
+  .sw-card-top {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+  .sw-card-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .sw-role {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    flex: none;
+  }
+  .sw-card-t {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    flex: none;
+  }
+  /* S2 NEW — the timer IS the stall signal. */
+  .sw-card-t.stale {
+    color: var(--warn);
+    font-weight: 500;
+  }
+  .sw-st {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: var(--r-pill);
+    position: relative;
+  }
+  .sw-st.working {
+    background: var(--accent);
+  }
+  .sw-st.needs-input {
+    background: var(--warn);
+  }
+  .sw-st.needs-input::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 1px solid var(--warn);
+    border-radius: var(--r-pill);
+  }
+  .sw-st.idle {
+    background: transparent;
+    border: 1px dashed var(--text-faint);
+  }
+  .sw-st.done {
+    background: var(--ok);
+  }
+  .sw-st.error {
+    background: var(--err);
+  }
+  /* S2 NEW — stalled: the working blue, FROZEN (no pulse) and hollowed. Reads as
+     "nominally running, but nothing has moved" — which is exactly the truth. */
+  .sw-st.stalled {
+    background: transparent;
+    border: 2px solid var(--accent);
+    opacity: 0.55;
+  }
+  /* S2 NEW — lost: hollow --err (the worker is gone, not erroring). */
+  .sw-st.lost {
+    background: transparent;
+    border: 2px solid var(--err);
+  }
+  .sw-activity {
+    font-size: 12px;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sw-card.attn .sw-activity {
+    color: var(--warn);
+    font-weight: 500;
+  }
+  /* S2 NEW — the disclosure line: threshold + provenance, never silent. */
+  .sw-disclose {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sw-card.lost .sw-disclose {
+    color: rgba(242, 84, 91, 0.85);
+  }
+
+  /* ── region 4 · TRIAGE QUEUE (was: needs-you strip) ── */
+  .sw-needs {
+    grid-column: 2;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: 196px; /* S2: 132 → 196, the queue is a real work surface */
+  }
+  .sw-needs-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px 5px;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .sw-needs-head b {
+    color: var(--warn);
+  }
+  .sw-needs-list {
+    overflow-y: auto;
+    padding: 0 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    scrollbar-width: thin;
+  }
+  .sw-needs-quiet {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    padding: 2px;
+  }
+  .sw-tri {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 6px 10px;
+    font-size: 12px;
+    background: var(--surface-raised);
+  }
+  .sw-tri.hot {
+    border-color: var(--warn);
+    background: var(--warn-wash);
+  }
+  /* S2 NEW — a lost/failed row leans --err; a stalled row stays neutral (not an alarm). */
+  .sw-tri.bad {
+    border-color: rgba(242, 84, 91, 0.45);
+    background: linear-gradient(var(--err-wash), var(--err-wash)), var(--surface-raised);
+  }
+  .sw-tri-ico {
+    font-family: var(--mono);
+    font-size: 11px;
+    flex: none;
+    width: 12px;
+    text-align: center;
+    color: var(--text-faint);
+  }
+  .sw-tri.hot .sw-tri-ico {
+    color: var(--warn);
+  }
+  .sw-tri.bad .sw-tri-ico {
+    color: var(--err);
+  }
+  /* S2 NEW — the blocked TAG chip. A closed vocabulary you can write a rule against,
+     never prose (09 §3). */
+  .sw-tri-tag {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    color: var(--text-3);
+  }
+  .sw-tri.hot .sw-tri-tag {
+    color: var(--warn);
+    border-color: rgba(232, 179, 57, 0.4);
+  }
+  .sw-tri.bad .sw-tri-tag {
+    color: var(--err);
+    border-color: rgba(242, 84, 91, 0.4);
+  }
+  .sw-tri-txt {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sw-tri-txt b {
+    color: var(--text);
+    font-weight: 500;
+  }
+  /* S2 NEW — the row's actions live at the right, fixed width, never wrapping. */
+  .sw-tri-acts {
+    flex: none;
+    display: flex;
+    gap: 5px;
+  }
+
+  /* the callout blocks */
+  .call {
+    border-left: 2px solid var(--accent);
+    background: var(--accent-wash);
+    padding: 10px 14px;
+    border-radius: 0 var(--r-inner) var(--r-inner) 0;
+    margin: 16px 0;
+    font-size: 12px;
+    line-height: 19px;
+    color: var(--text-2);
+    max-width: 92ch;
+  }
+  .call b {
+    color: var(--text);
+  }
+  .call.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-wash);
+  }
+  .call.ask {
+    border-left-color: var(--ok);
+    background: var(--ok-wash);
+  }
+
+  /* the modal replica */
+  .modal-stage {
+    position: relative;
+    background: var(--scrim);
+    border-radius: var(--r-inner);
+    padding: 26px;
+    display: grid;
+    place-items: center;
+  }
+  .modal {
+    width: 520px;
+    max-width: 100%;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-pop);
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  .modal h2 {
+    margin: 0;
+    font-size: var(--fs-h);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .modal .sub {
+    margin: 8px 0 16px;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: var(--text-2);
+  }
+  .mrow {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 10px 11px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border-subtle);
+    background: var(--surface);
+    margin-bottom: 8px;
+  }
+  .mrow.on {
+    border-color: var(--accent);
+    background: var(--accent-wash);
+  }
+  .mbox {
+    margin-top: 1px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    background: var(--inset);
+    color: var(--void);
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+  }
+  .mrow.on .mbox {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  .mlabel {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-meta);
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    margin-bottom: 3px;
+  }
+  .mbody {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-term);
+    line-height: var(--lh-term);
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .mfoot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .btn-ghost {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border-subtle);
+    background: var(--inset);
+    color: var(--text-2);
+  }
+  .btn-primary {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--void);
+  }
+
+  pre.ascii {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 17px;
+    color: var(--text-2);
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 12px 0 4px;
+  }
+  pre.ascii b {
+    color: var(--accent);
+    font-weight: 400;
+  }
+  pre.ascii i {
+    color: var(--text-faint);
+    font-style: normal;
+  }
+</style>
+
+<div class="wrap">
+  <header class="doc-head">
+    <div class="kicker">
+      Orchestration · S2 · design gate — SIGNED OFF 2026-07-26 (surface approved as drawn; D1
+      decided project-scoped)
+    </div>
+    <h1>Run ledger + triage — making a swarm run survivable instead of a demo</h1>
+    <p class="meta">
+      lane <code>feat/swarm-s2</code> · base <code>19b1f2a7</code> (v0.34.0, S1 = #386) · target
+      <code>0.35.0</code> · rides base Phase 2 (<code>04-roadmap.md</code>) · specs
+      <code>07-swarm-board.md</code> §3/§4/§6 · <code>03-mechanism.md</code> 6–8 ·
+      <code>09-progress-recap.md</code> §3/§4
+    </p>
+  </header>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">1</span>What S2 actually changes</h2>
+  <p class="lede">
+    S1 shipped the surface. Every fact it renders — the chat transcript, worker membership,
+    statuses, results — lives in the ephemeral per-board <code>swarmStore</code> and MAIN's
+    in-memory <code>SwarmSession</code>, and <b class="hi">dies with a reload</b>. S2 adds the
+    durable half (a host-side run ledger), the failure model on top of it, and the triage surface
+    that makes both visible and actionable. Three regions change visually; one new thing is
+    invisible until something goes wrong, which is exactly when it must be legible.
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 150px">Region</th>
+      <th style="width: 300px">S1 (shipped)</th>
+      <th>S2 (this gate)</th>
+    </tr>
+    <tr>
+      <td>2 · plan strip</td>
+      <td>
+        Read-only chips projected from the run's Planning board. Click = jump. Trailing note
+        literally reads “editing → S2”.
+      </td>
+      <td>
+        <b class="hi">Editable mid-run.</b> Each chip gains a real checkbox, inline rename, remove,
+        and a trailing <code>＋</code> add chip. A chip owned by a live worker carries that worker's
+        state dot. Human edits are direct; orchestrator edits stay gated.
+      </td>
+    </tr>
+    <tr>
+      <td>3 · worker cards</td>
+      <td>
+        Five states: needs-input / working / done / error / idle. Timer + role badge + activity
+        line.
+      </td>
+      <td>
+        <b class="hi">Two new states</b> — <code>stalled</code> (nominally running, nothing has
+        moved) and <code>lost</code> (died mid-task, result salvaged). Each carries a mono
+        <b class="hi">disclosure line</b>: the threshold that fired, or the provenance of the
+        salvaged result.
+      </td>
+    </tr>
+    <tr>
+      <td>4 · needs-you strip</td>
+      <td>
+        A flat jump list of run workers carrying an attention mark. One action: <code>Open ▸</code>.
+        Head literally reads “approve/deny · batching · stall watch → S2”.
+      </td>
+      <td>
+        <b class="hi">A real triage queue.</b> Risk-ordered rows from two sources (attention marks +
+        ledger state), each with a closed-vocabulary <b class="hi">blocked tag</b> and inline
+        actions (Reassign / Accept / Open / Dismiss). Taller (132→196px), counted, scrollable.
+      </td>
+    </tr>
+    <tr>
+      <td>5 · header</td>
+      <td>Run timer + Pause all.</td>
+      <td>
+        Adds one chip: <code>restored</code> — this run came back from the ledger after a reload,
+        with what survived.
+      </td>
+    </tr>
+    <tr>
+      <td>— · confirms</td>
+      <td>One modal per dispatch. A 4-worker fan-out = 4 sequential modals.</td>
+      <td>
+        <b class="hi">Batched.</b> A multi-dispatch round raises ONE per-row modal.
+        <span class="tag"
+          >reuses the shipped <code>BatchConfirmModal</code> verbatim — no new modal design</span
+        >
+      </td>
+    </tr>
+  </table>
+
+  <div class="call">
+    <b>The exit proof this design has to serve (07 §6):</b> kill a worker mid-run — the board shows
+    the stall, the orchestrator salvages/reassigns, and the chat narrates it. Reload the app mid-run
+    — the ledger restores the run. Every pixel below is in service of one of those two sentences.
+  </div>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">2</span>The board, mid-incident, at realistic scale</h2>
+  <p class="lede">
+    Eight workers on a real run. One is asking a question, one has gone quiet past the threshold,
+    one died and was salvaged, three are working, two are done (one claimed, one derived). The run
+    was restored from the ledger four minutes ago. This is the state the design has to stay calm in.
+  </p>
+
+  <div class="stage">
+    <div class="board">
+      <div class="board-bar">
+        <span class="glyph"></span> migrate settings to v2 schema
+        <span style="margin-left: auto; color: var(--text-faint)">swarm</span>
+      </div>
+      <div class="board-body">
+        <div class="sw-root">
+          <!-- region 5 header + region 2 plan strip -->
+          <div class="sw-head">
+            <div class="sw-head-row">
+              <span class="sw-timer">run 41m 06s</span>
+              <span class="sw-restored">restored · 8 workers · 5 results</span>
+              <span class="sw-spacer"></span>
+              <button class="sw-btn">Pause all</button>
+            </div>
+            <div class="sw-plan">
+              <span class="sw-plan-lbl">Plan</span>
+              <span class="sw-task done"
+                ><span class="sw-task-box">✓</span><span class="sw-task-n">1</span> recon current
+                schema</span
+              >
+              <span class="sw-task done"
+                ><span class="sw-task-box">✓</span><span class="sw-task-n">2</span> write v2
+                types</span
+              >
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate
+                readers<span class="sw-task-own"></span
+              ></span>
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">4</span> migrate
+                writers<span class="sw-task-own stalled"></span
+              ></span>
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">5</span> legacy import
+                path<span class="sw-task-pen">⋯</span></span
+              >
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">6</span> tests</span
+              >
+              <span class="sw-task sw-task-add">＋ add</span>
+            </div>
+          </div>
+
+          <div class="sw-body">
+            <!-- region 1 chat spine -->
+            <aside class="sw-chat">
+              <div class="sw-chat-head">
+                <span class="sw-orch-dot"></span><b>Orchestrator</b>
+                <span class="sw-brain-chip">app-resident</span>
+              </div>
+              <div class="sw-msgs">
+                <div class="sw-statusline">run restored from ledger · 4m ago</div>
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>
+                    Back up. The ledger had 8 workers and 5 results; builder-2 and builder-4 were
+                    mid-task. Re-reading their state now.
+                  </p>
+                </div>
+                <div class="sw-msg you">
+                  <div class="sw-who">you</div>
+                  <p>also cover the legacy import path</p>
+                </div>
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>Added as plan item 5. I'll dispatch it once a write slot frees.</p>
+                </div>
+                <div class="sw-statusline">builder-4 · no activity 18m</div>
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>
+                    builder-4 has been silent for 18m — past the 10m stall threshold. It's still
+                    running, so I haven't touched it. Reassign task 4, or give it longer?
+                  </p>
+                </div>
+                <div class="sw-statusline">builder-2 · exited (code 1)</div>
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>
+                    builder-2 died on task 3 before reporting. I salvaged a result from its
+                    transcript — 6 files touched, derived not claimed, so treat it as unverified.
+                    Re-queueing task 3.
+                  </p>
+                </div>
+              </div>
+              <div class="sw-composer">
+                <div class="sw-composer-box">
+                  <span class="ph">Steer the run…</span>
+                  <button class="sw-btn sm">Send</button>
+                </div>
+                <div class="sw-hint">one voice — workers never post here</div>
+              </div>
+            </aside>
+
+            <!-- region 3 worker canvas -->
+            <main class="sw-canvas">
+              <div class="sw-canvas-head">
+                <span class="sw-canvas-lbl">Workers · 8</span>
+                <span class="sw-canvas-counts"
+                  ><b>1 needs input</b> · 1 stalled · 1 lost · 3 working · 2 done</span
+                >
+              </div>
+              <div class="sw-cards">
+                <div class="sw-card attn">
+                  <span class="sw-card-top"
+                    ><span class="sw-st needs-input"></span
+                    ><span class="sw-card-name">builder-1</span><span class="sw-role">builder</span
+                    ><span class="sw-card-t">7m</span></span
+                  >
+                  <span class="sw-activity">Waiting on input</span>
+                  <span class="sw-disclose">asks: overwrite tests/fixtures/settings.json?</span>
+                </div>
+                <div class="sw-card">
+                  <span class="sw-card-top"
+                    ><span class="sw-st stalled"></span><span class="sw-card-name">builder-4</span
+                    ><span class="sw-role">builder</span
+                    ><span class="sw-card-t stale">18m</span></span
+                  >
+                  <span class="sw-activity">Migrating writers…</span>
+                  <span class="sw-disclose">stalled 18m · threshold 10m</span>
+                </div>
+                <div class="sw-card lost">
+                  <span class="sw-card-top"
+                    ><span class="sw-st lost"></span><span class="sw-card-name">builder-2</span
+                    ><span class="sw-role">builder</span><span class="sw-card-t">—</span></span
+                  >
+                  <span class="sw-activity">Lost mid-task — result salvaged</span>
+                  <span class="sw-disclose">exit 1 · derived · 6 files</span>
+                </div>
+                <div class="sw-card">
+                  <span class="sw-card-top"
+                    ><span class="sw-st working"></span><span class="sw-card-name">builder-3</span
+                    ><span class="sw-role">builder</span><span class="sw-card-t">12m</span></span
+                  >
+                  <span class="sw-activity">Migrating readers…</span>
+                  <span class="sw-disclose">task 3 · dispatched 12m ago</span>
+                </div>
+                <div class="sw-card">
+                  <span class="sw-card-top"
+                    ><span class="sw-st working"></span><span class="sw-card-name">reviewer-1</span
+                    ><span class="sw-role">reviewer</span><span class="sw-card-t">4m</span></span
+                  >
+                  <span class="sw-activity">Reviewing the v2 type diff…</span>
+                  <span class="sw-disclose">read-only</span>
+                </div>
+                <div class="sw-card">
+                  <span class="sw-card-top"
+                    ><span class="sw-st working"></span><span class="sw-card-name">recon-2</span
+                    ><span class="sw-role">recon</span><span class="sw-card-t">2m</span></span
+                  >
+                  <span class="sw-activity">Tracing the legacy import path…</span>
+                  <span class="sw-disclose">task 5 · dispatched 2m ago</span>
+                </div>
+                <div class="sw-card done">
+                  <span class="sw-card-top"
+                    ><span class="sw-st done"></span><span class="sw-card-name">recon-1</span
+                    ><span class="sw-role">recon</span><span class="sw-card-t">31m</span></span
+                  >
+                  <span class="sw-activity">Done — agent-claimed, unverified</span>
+                  <span class="sw-disclose">task 1 · 14 findings</span>
+                </div>
+                <div class="sw-card done">
+                  <span class="sw-card-top"
+                    ><span class="sw-st done"></span><span class="sw-card-name">builder-5</span
+                    ><span class="sw-role">builder</span><span class="sw-card-t">22m</span></span
+                  >
+                  <span class="sw-activity">Done — derived from transcript</span>
+                  <span class="sw-disclose">task 2 · 4 files</span>
+                </div>
+                <div class="sw-card ghost">ask the orchestrator to spawn workers</div>
+              </div>
+            </main>
+
+            <!-- region 4 triage queue -->
+            <div class="sw-needs">
+              <div class="sw-needs-head">Triage · 4 <b>(1 needs you now)</b></div>
+              <div class="sw-needs-list">
+                <div class="sw-tri hot">
+                  <span class="sw-tri-ico">!</span><span class="sw-tri-tag">needs input</span>
+                  <span class="sw-tri-txt"
+                    ><b>builder-1</b> asks: overwrite tests/fixtures/settings.json?</span
+                  >
+                  <span class="sw-tri-acts"><button class="sw-btn sm go">Open ▸</button></span>
+                </div>
+                <div class="sw-tri bad">
+                  <span class="sw-tri-ico">×</span><span class="sw-tri-tag">lost</span>
+                  <span class="sw-tri-txt"
+                    ><b>builder-2</b> died on task 3 — result salvaged (derived, 6 files)</span
+                  >
+                  <span class="sw-tri-acts"
+                    ><button class="sw-btn sm">Accept</button
+                    ><button class="sw-btn sm go">Reassign</button></span
+                  >
+                </div>
+                <div class="sw-tri">
+                  <span class="sw-tri-ico">◌</span><span class="sw-tri-tag">stalled</span>
+                  <span class="sw-tri-txt"
+                    ><b>builder-4</b> silent 18m on task 4 — threshold 10m</span
+                  >
+                  <span class="sw-tri-acts"
+                    ><button class="sw-btn sm">Wait</button
+                    ><button class="sw-btn sm go">Reassign</button></span
+                  >
+                </div>
+                <div class="sw-tri">
+                  <span class="sw-tri-ico">✓</span><span class="sw-tri-tag">unreviewed</span>
+                  <span class="sw-tri-txt"
+                    ><b>recon-1</b> reported 14 findings — agent-claimed, unverified</span
+                  >
+                  <span class="sw-tri-acts"
+                    ><button class="sw-btn sm">Dismiss</button
+                    ><button class="sw-btn sm">Open ▸</button></span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    Nothing about the calm chrome changed. Two colours carry all the new meaning:
+    <b class="hi">amber stays reserved for “a human is blocking progress”</b> (needs-input, and the
+    stall <i>timer</i> only), and <b class="hi">red means the worker is gone</b>. A stalled card
+    deliberately keeps its neutral border — a stalled worker is not asking you for anything, and
+    promoting it to the needs-input language would recreate exactly the “everything is amber”
+    failure the research names as the #1 dashboard complaint.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">3</span>Region 2 — the plan strip becomes editable</h2>
+  <p class="lede">
+    S1's chip is one button: click = jump to the Planning board. S2 needs four verbs (tick, rename,
+    remove, add) without losing the jump and without letting a stray click silently rewrite the plan
+    of record mid-run. The answer is to split the chip into
+    <b class="hi">spatially distinct hit targets</b> rather than adding a mode.
+  </p>
+
+  <div class="stage">
+    <pre class="ascii">   ┌────────────────────────────────────────────────┐
+   │  <b>[✓]</b>  <i>3</i>  migrate readers          <b>●</b>   <i>⋯</i>  │
+   └───┬──────┬──────────────────────┬───────┬──────┘
+       │      │                      │       │
+       │      │                      │       └─ <b>⋯  hover-only handle</b> → rename in place
+       │      │                      │            (⌫ on an empty rename removes the item)
+       │      │                      └─ <b>●  owner dot</b> — a live worker holds this item
+       │      │                          blue = working · amber = stalled · absent = unassigned
+       │      └─ <b>label</b> → click JUMPS to the Planning board (S1 behaviour, unchanged)
+       └─ <b>[✓] checkbox</b>, 13×13 → click TOGGLES done. Writes through immediately.</pre>
+  </div>
+
+  <div class="row3" style="margin-top: 18px">
+    <div class="panel">
+      <div class="cap">idle</div>
+      <div style="background: var(--surface-raised); padding: 10px; border-radius: 5px">
+        <div class="sw-plan" style="padding: 0">
+          <span class="sw-task done"
+            ><span class="sw-task-box">✓</span><span class="sw-task-n">2</span> write v2 types</span
+          >
+          <span class="sw-task"
+            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate readers</span
+          >
+        </div>
+      </div>
+      <p style="margin-top: 10px">
+        Reads as S1 did, plus a real checkbox glyph. Done items go <code>--ok</code> in the box, and
+        the label greys — the check is the state, not a decoration.
+      </p>
+    </div>
+    <div class="panel">
+      <div class="cap">hover — the edit handle appears</div>
+      <div style="background: var(--surface-raised); padding: 10px; border-radius: 5px">
+        <div class="sw-plan" style="padding: 0">
+          <span class="sw-task" style="border-color: var(--border-strong)"
+            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate readers<span
+              class="sw-task-own"
+            ></span
+            ><span class="sw-task-pen" style="color: var(--text-2)">⋯</span></span
+          >
+        </div>
+      </div>
+      <p style="margin-top: 10px">
+        The <code>⋯</code> only materialises on hover/focus, so the resting strip stays as quiet as
+        S1's. Keyboard: <code>Tab</code> to the chip, <code>Space</code> toggles,
+        <code>Enter</code> renames.
+      </p>
+    </div>
+    <div class="panel">
+      <div class="cap">editing — inline, same metrics</div>
+      <div style="background: var(--surface-raised); padding: 10px; border-radius: 5px">
+        <div class="sw-plan" style="padding: 0">
+          <span class="sw-task editing"
+            ><span class="sw-task-box"></span><span class="sw-task-n">3</span
+            ><span class="sw-task-input" style="border-bottom: 1px solid var(--accent)"
+              >migrate readers + fallback|</span
+            ></span
+          >
+        </div>
+      </div>
+      <p style="margin-top: 10px">
+        The chip becomes an input <i>in place</i> — no popover, no layout jump.
+        <code>Enter</code> commits, <code>Esc</code> reverts, blur commits. Same for the
+        <code>＋ add</code> chip, which opens empty at the end of the strip.
+      </p>
+    </div>
+  </div>
+
+  <h3 class="sub">Who may edit, and what it costs</h3>
+  <table class="tbl">
+    <tr>
+      <th style="width: 130px">Actor</th>
+      <th style="width: 130px">Gate</th>
+      <th>Why</th>
+    </tr>
+    <tr>
+      <td>human</td>
+      <td><span class="yes">direct</span></td>
+      <td>
+        It is the human's own board and their own plan. A confirm modal for “did you mean to tick
+        that box?” is the approval-flooding anti-pattern (07 §4.7) and would train the click-through
+        reflex that buries the real decisions. The write goes through the Planning board's normal
+        undoable edit, so a mis-tick is one <code>⌘Z</code> away.
+      </td>
+    </tr>
+    <tr>
+      <td>orchestrator</td>
+      <td><span class="no">confirmed</span></td>
+      <td>
+        Unchanged from every other MCP write — an agent-proposed plan edit is human-confirmed before
+        it lands, and MAIN re-validates the proposal. “The reply proposes, MAIN disposes.”
+      </td>
+    </tr>
+  </table>
+
+  <div class="call ask">
+    <b>Decision D2 needs your nod.</b> The alternative to the always-live checkbox is an explicit
+    <b>edit mode</b>: an <code>Edit</code> button at the right of the strip; off = S1 exactly (chips
+    are inert jump buttons), on = checkboxes and rename go live and a <code>Done</code>
+    exits. It is strictly safer against stray clicks and costs one extra click per tick.
+    <b>Recommendation: the always-live checkbox above</b> — ticking is the highest-value, most
+    frequent action, the three hit targets are spatially unambiguous, and the edit is undoable. Say
+    the word and it becomes a mode instead.
+  </div>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">4</span>Region 3 — two new worker-card states</h2>
+  <p class="lede">
+    Every card gains a third line: a mono <b class="hi">disclosure line</b> under the activity line.
+    It is where the threshold that fired, the provenance of a result, and the reason a failure
+    failed all live — because the statusline renders <code>summary</code> only, and an S1 eyeball
+    bug proved that a reason not carried in the visible string is a reason that does not exist.
+  </p>
+
+  <div class="stage">
+    <div
+      class="sw-cards"
+      style="grid-template-columns: repeat(3, 1fr); max-width: 900px; margin: 0 auto"
+    >
+      <div class="sw-card">
+        <span class="sw-card-top"
+          ><span class="sw-st working"></span><span class="sw-card-name">builder-3</span
+          ><span class="sw-role">builder</span><span class="sw-card-t">12m</span></span
+        >
+        <span class="sw-activity">Migrating readers…</span>
+        <span class="sw-disclose">task 3 · dispatched 12m ago</span>
+      </div>
+      <div class="sw-card attn">
+        <span class="sw-card-top"
+          ><span class="sw-st needs-input"></span><span class="sw-card-name">builder-1</span
+          ><span class="sw-role">builder</span><span class="sw-card-t">7m</span></span
+        >
+        <span class="sw-activity">Waiting on input</span>
+        <span class="sw-disclose">asks: overwrite tests/fixtures/settings.json?</span>
+      </div>
+      <div class="sw-card">
+        <span class="sw-card-top"
+          ><span class="sw-st stalled"></span><span class="sw-card-name">builder-4</span
+          ><span class="sw-role">builder</span><span class="sw-card-t stale">18m</span></span
+        >
+        <span class="sw-activity">Migrating writers…</span>
+        <span class="sw-disclose">stalled 18m · threshold 10m</span>
+      </div>
+      <div class="sw-card lost">
+        <span class="sw-card-top"
+          ><span class="sw-st lost"></span><span class="sw-card-name">builder-2</span
+          ><span class="sw-role">builder</span><span class="sw-card-t">—</span></span
+        >
+        <span class="sw-activity">Lost mid-task — result salvaged</span>
+        <span class="sw-disclose">exit 1 · derived · 6 files</span>
+      </div>
+      <div class="sw-card done">
+        <span class="sw-card-top"
+          ><span class="sw-st done"></span><span class="sw-card-name">recon-1</span
+          ><span class="sw-role">recon</span><span class="sw-card-t">31m</span></span
+        >
+        <span class="sw-activity">Done — agent-claimed, unverified</span>
+        <span class="sw-disclose">task 1 · 14 findings</span>
+      </div>
+      <div class="sw-card done">
+        <span class="sw-card-top"
+          ><span class="sw-st done"></span><span class="sw-card-name">builder-5</span
+          ><span class="sw-role">builder</span><span class="sw-card-t">22m</span></span
+        >
+        <span class="sw-activity">Done — derived from transcript</span>
+        <span class="sw-disclose">task 2 · 4 files</span>
+      </div>
+    </div>
+  </div>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 110px">State</th>
+      <th style="width: 190px">Signal</th>
+      <th>Rule</th>
+    </tr>
+    <tr>
+      <td>working</td>
+      <td>solid <code>--accent</code> dot, pulsing</td>
+      <td>Unchanged from S1.</td>
+    </tr>
+    <tr>
+      <td>needs-input</td>
+      <td><code>--warn</code> dot + ring, <code>--warn</code> card border + wash</td>
+      <td>
+        Unchanged from S1, and <b class="hi">nothing else is allowed to borrow this language</b>.
+        Amber on a card means exactly one thing: a human is the blocker.
+      </td>
+    </tr>
+    <tr>
+      <td><b class="hi">stalled</b> <span class="tag new">new</span></td>
+      <td>
+        <b class="hi">hollow</b> <code>--accent</code> ring, <b class="hi">frozen</b> (no pulse) +
+        the timer turns <code>--warn</code>
+      </td>
+      <td>
+        Border stays neutral. The honest reading is “nominally running, nothing has moved” — so the
+        dot keeps the working colour but stops moving, and the <i>timer</i> is what goes amber. The
+        disclosure line names the threshold inline: <code>stalled 18m · threshold 10m</code> — a
+        disclosed cap, never a silent one (06 §2). It is kept deliberately terse because the card
+        grid's minimum column is 180px and a truncated disclosure discloses nothing.
+      </td>
+    </tr>
+    <tr>
+      <td><b class="hi">lost</b> <span class="tag new">new</span></td>
+      <td>
+        hollow <code>--err</code> ring, <code>--err</code> border + wash, timer <code>—</code>
+      </td>
+      <td>
+        The worker died mid-task. Hollow (not solid) because it is absent, not erroring. The
+        disclosure line carries the exit reason and the salvaged result's provenance, which is
+        always <code>derived</code> when the worker never self-reported.
+      </td>
+    </tr>
+    <tr>
+      <td>done</td>
+      <td>solid <code>--ok</code> dot, card at 85% opacity</td>
+      <td>
+        Unchanged, and the S1 provenance split stays: “agent-claimed, unverified” vs “derived from
+        transcript”. S2 never upgrades a claim to a verification.
+      </td>
+    </tr>
+  </table>
+
+  <p class="note">
+    <b class="hi">Not built here (S3):</b> the worktree/branch chip. S2 writes the ledger field and
+    leaves it <code>null</code>, so the schema exists when S3 needs it — but no chip renders, and
+    the card layout does not reserve space for one.
+    <span class="tag s3">S3</span>
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec">
+    <span class="num">5</span>Region 4 — the needs-you strip becomes a triage queue
+  </h2>
+  <p class="lede">
+    S1's strip answered one question (“which board has an attention mark?”) with one verb (“open
+    it”). The queue answers the harder one:
+    <b class="hi">what should I deal with, in what order, and can I deal with it from here?</b> Rows
+    now come from two sources, carry a closed-vocabulary tag you can write a rule against, and end
+    in actions rather than a jump.
+  </p>
+
+  <div class="stage">
+    <div
+      style="
+        width: 820px;
+        margin: 0 auto;
+        background: var(--surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-inner);
+      "
+    >
+      <div class="sw-needs" style="max-height: none; border-top: none">
+        <div class="sw-needs-head">Triage · 5 <b>(1 needs you now)</b></div>
+        <div class="sw-needs-list">
+          <div class="sw-tri hot">
+            <span class="sw-tri-ico">!</span><span class="sw-tri-tag">needs input</span>
+            <span class="sw-tri-txt"
+              ><b>builder-1</b> asks: overwrite tests/fixtures/settings.json?</span
+            >
+            <span class="sw-tri-acts"><button class="sw-btn sm go">Open ▸</button></span>
+          </div>
+          <div class="sw-tri bad">
+            <span class="sw-tri-ico">×</span><span class="sw-tri-tag">lost</span>
+            <span class="sw-tri-txt"
+              ><b>builder-2</b> died on task 3 — result salvaged (derived, 6 files)</span
+            >
+            <span class="sw-tri-acts"
+              ><button class="sw-btn sm">Accept</button
+              ><button class="sw-btn sm go">Reassign</button></span
+            >
+          </div>
+          <div class="sw-tri bad">
+            <span class="sw-tri-ico">×</span><span class="sw-tri-tag">failing check</span>
+            <span class="sw-tri-txt"><b>builder-5</b> reported done but git_diff is empty</span>
+            <span class="sw-tri-acts"
+              ><button class="sw-btn sm">Dismiss</button
+              ><button class="sw-btn sm go">Reassign</button></span
+            >
+          </div>
+          <div class="sw-tri">
+            <span class="sw-tri-ico">◌</span><span class="sw-tri-tag">stalled</span>
+            <span class="sw-tri-txt"><b>builder-4</b> silent 18m on task 4 — threshold 10m</span>
+            <span class="sw-tri-acts"
+              ><button class="sw-btn sm">Wait</button
+              ><button class="sw-btn sm go">Reassign</button></span
+            >
+          </div>
+          <div class="sw-tri">
+            <span class="sw-tri-ico">✓</span><span class="sw-tri-tag">unreviewed</span>
+            <span class="sw-tri-txt"
+              ><b>recon-1</b> reported 14 findings — agent-claimed, unverified</span
+            >
+            <span class="sw-tri-acts"
+              ><button class="sw-btn sm">Dismiss</button
+              ><button class="sw-btn sm">Open ▸</button></span
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sub">Ordering is risk, not time</h3>
+  <pre
+    class="ascii"
+  >  <b>needs input</b>    a human is the blocker RIGHT NOW              amber row      → Open ▸
+  <b>lost</b>          a worker died; its work needs a decision      red row        → Accept · Reassign
+  <b>failing check</b> a claim did not survive its acceptance check  red row        → Dismiss · Reassign
+  <b>stalled</b>       past the threshold, still nominally alive     neutral row    → Wait · Reassign
+  <b>dependency</b>    blocked on another task's result              neutral row    → Open ▸
+  <b>unreviewed</b>    a claimed-done result nobody has looked at    neutral row    → Dismiss · Open ▸
+  <i>done + seen rows leave the queue entirely — the queue is work, not history.</i></pre>
+  <p class="note">
+    The tags are a <b class="hi">closed vocabulary</b> (09 §3: “you cannot write a triage rule
+    against a paragraph”) —
+    <code>needs_input · lost · failing_check · stalled · dependency · unreviewed</code>. They are
+    ledger fields, so the ordering is mechanical and testable rather than a heuristic over prose.
+  </p>
+
+  <h3 class="sub">What each action actually does</h3>
+  <table class="tbl">
+    <tr>
+      <th style="width: 110px">Action</th>
+      <th>Behaviour</th>
+    </tr>
+    <tr>
+      <td>Open ▸</td>
+      <td>
+        S1's jump — camera-fit + select the worker's real terminal board. An answer to a needs-input
+        question is typed <b class="hi">into that terminal</b>. S2 deliberately does not add a reply
+        box here: forking terminal input would fork terminal behaviour, which the Q11 lens model
+        exists to prevent.
+      </td>
+    </tr>
+    <tr>
+      <td>Reassign</td>
+      <td>
+        Asks the orchestrator to re-dispatch this task to a fresh or existing worker. Goes through
+        the normal dispatch confirm — the button is a <i>request</i>, MAIN re-validates and the
+        human still approves the actual write. The chat narrates it in the orchestrator's voice.
+      </td>
+    </tr>
+    <tr>
+      <td>Accept</td>
+      <td>
+        Marks a salvaged result as good enough — the ledger records the human's acceptance
+        (provenance stays <code>derived</code>; acceptance is not verification), and the row leaves
+        the queue.
+      </td>
+    </tr>
+    <tr>
+      <td>Wait / Dismiss</td>
+      <td>
+        Snoozes the row. <code>Wait</code> resets the stall clock once (and says so); each is
+        recorded, so “I already looked at this” survives a reload.
+      </td>
+    </tr>
+  </table>
+
+  <h3 class="sub">Batched confirms — no new modal</h3>
+  <p class="lede">
+    “Batched confirms” and “the triage queue” are two different mechanisms and the design should not
+    blur them. The queue holds <i>state that needs a decision</i>. The batch confirm is how a
+    <i>multi-dispatch round</i> is presented: instead of four sequential modals for a four-worker
+    fan-out, the orchestrator's plural dispatch raises <b class="hi">one per-row modal</b> — which
+    already exists and ships today for <code>relay_prompts</code>. S2 reuses it verbatim.
+  </p>
+  <p class="note" style="margin-bottom: 8px">
+    Note what the queue therefore does <b class="hi">not</b> get: a “Review N pending ▸” launcher in
+    its header. A batch confirm is raised <i>by</i> the dispatch round and blocks it; there is
+    nothing for a launcher to open when no round is in flight, and when one is, the modal is already
+    up. A button that is inert most of the time and redundant the rest of the time is worse than no
+    button. (Multi-selecting queue rows to batch several <i>reassigns</i> into one confirm is a real
+    idea — and deliberately out of scope here.)
+  </p>
+
+  <div class="stage modal-stage">
+    <div class="modal">
+      <h2>Dispatch 3 tasks</h2>
+      <p class="sub">
+        Review each command. Only the rows you approve will run — each is written into its own
+        terminal as a single, confirmed line.
+      </p>
+      <div class="mrow on">
+        <span class="mbox">✓</span>
+        <span>
+          <span class="mlabel">orchestrator → builder-3 · task 3 “migrate readers”</span>
+          <span class="mbody"
+            >OBJECTIVE: migrate every settings reader to the v2 schema. CONTEXT: v2 types landed in
+            src/shared/settingsV2.ts. BOUNDARIES: do not touch writers or tests. OUTPUT FORMAT:
+            write_result with touched files.</span
+          >
+        </span>
+      </div>
+      <div class="mrow on">
+        <span class="mbox">✓</span>
+        <span>
+          <span class="mlabel">orchestrator → recon-2 · task 5 “legacy import path”</span>
+          <span class="mbody"
+            >OBJECTIVE: trace every legacy settings import path. CONTEXT: the v1 loader is
+            src/main/settingsLoad.ts. BOUNDARIES: read-only, no edits. OUTPUT FORMAT: write_result
+            with file:line refs.</span
+          >
+        </span>
+      </div>
+      <div class="mrow">
+        <span class="mbox"></span>
+        <span>
+          <span class="mlabel">orchestrator → builder-6 · task 4 “migrate writers” (reassign)</span>
+          <span class="mbody"
+            >OBJECTIVE: take over task 4 from the stalled builder-4. CONTEXT: builder-4 has been
+            silent 18m; its partial work is on disk. BOUNDARIES: writers only. OUTPUT FORMAT:
+            write_result with touched files.</span
+          >
+        </span>
+      </div>
+      <div class="mfoot">
+        <button class="btn-ghost">Deny all</button>
+        <button class="btn-primary">Approve 2</button>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    <b class="hi">Batching does not weaken the gate.</b> Each row still runs the shared write gate
+    independently — its own single-use nonce, its own TOCTOU re-check, its own audit row — with the
+    human's per-row decision fed in. One approval is still exactly one sanitized command line. This
+    is the identical discipline <code>mcpRelayBatch.ts</code> already enforces; S2 adds the swarm
+    caller, not a new gate.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec">
+    <span class="num">6</span>The invisible half — the ledger, and what “restored” looks like
+  </h2>
+  <p class="lede">
+    The ledger has no UI of its own. It earns its keep in exactly one visible moment: you reload the
+    app mid-run and the board comes back instead of coming back empty. That moment has to be
+    <b class="hi">honest about what survived</b> — the run's facts survive; a dead worker's live PTY
+    does not.
+  </p>
+
+  <div class="stage">
+    <div style="max-width: 740px; margin: 0 auto">
+      <div class="sw-head" style="border-radius: var(--r-inner) var(--r-inner) 0 0">
+        <div class="sw-head-row">
+          <span class="sw-timer">run 41m 06s</span>
+          <span class="sw-restored">restored · 8 workers · 5 results</span>
+          <span class="sw-spacer"></span>
+          <button class="sw-btn">Pause all</button>
+        </div>
+        <div class="sw-plan">
+          <span class="sw-plan-lbl">Plan</span>
+          <span class="sw-task done"
+            ><span class="sw-task-box">✓</span><span class="sw-task-n">1</span> recon current
+            schema</span
+          >
+          <span class="sw-task done"
+            ><span class="sw-task-box">✓</span><span class="sw-task-n">2</span> write v2 types</span
+          >
+          <span class="sw-task"
+            ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate readers<span
+              class="sw-task-own"
+            ></span
+          ></span>
+          <span class="sw-task sw-task-add">＋ add</span>
+        </div>
+      </div>
+      <div
+        style="
+          background: var(--surface);
+          border: 1px solid var(--border-subtle);
+          border-top: none;
+          border-radius: 0 0 var(--r-inner) var(--r-inner);
+          padding: 12px;
+        "
+      >
+        <div class="sw-statusline" style="margin-bottom: 10px">
+          run restored from ledger · 4m ago
+        </div>
+        <div class="sw-msg orch">
+          <div class="sw-who">orch</div>
+          <p>
+            Back up. The ledger had 8 workers and 5 results; builder-2 and builder-4 were mid-task.
+            Re-reading their state now.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sub">Where it lives and what it holds</h3>
+  <pre
+    class="ascii"
+  >  <i>&lt;project&gt;/.canvas/memory/</i><b>run-&lt;boardId&gt;.json</b>     <i>— one file per run, beside the board recaps</i>
+                                              <i>atomic (write-file-atomic) · capped · versioned</i>
+  .canvas/
+    canvas.json
+    memory/
+      board-&lt;id&gt;.md · board-&lt;id&gt;.recap.json    <i>the existing sidecars</i>
+      <b>run-&lt;boardId&gt;.json</b>                      <i>← the ledger (same id guard, same writer)</i>
+
+  { <b>version</b>: 1,
+    <b>runId</b>, <b>boardId</b>,                          <i>runId IS the swarm board id — the join key</i>
+    title, createdAt, lastActiveAt, lastSeenAt,   <i>timestamps live HERE, not on the board</i>
+    state: "live" | "interrupted" | "done",
+    planBoardId,
+    <b>planItems</b>: [ { id, label, done, ownerTaskId? } ],
+    <b>tasks</b>: [
+      { taskId, planItemId, content, activeForm,   <i>the dual-label rule (09 §3)</i>
+        state: "pending"|"in_progress"|"blocked"|"done"|"failed"|"cancelled",
+        blockedTag?: "needs_input"|"lost"|"failing_check"|"stalled"|"dependency"|"unreviewed",
+        <b>assignment</b>: { boardId, role, spec:{objective,context,boundaries,outputFormat},
+                      dispatchedAt, lastActivityAt, stallCount,
+                      <b>worktree: null</b>, <b>branch: null</b> },   <i>← written null; S3 fills</i>
+        <b>result</b>?: { status, summary, refs[], provenance:"claimed"|"synthesized",
+                    acceptedByHuman?: true } } ],
+    <b>events</b>: [ … ]                            <i>bounded tail — stall counting + narration</i>
+  }
+
+  <i>Retention: newest 20 runs per project (09 Q16 default), pruned by lastActiveAt on write.</i></pre>
+  <p class="note">
+    One file per run rather than one file for all of them, because the run id
+    <b class="hi">is</b> the swarm board id — so restore is a filename lookup, the existing
+    <code>isSafeId</code> path guard applies verbatim, and a corrupt ledger poisons exactly one run
+    instead of every run in the project. Written through <code>canvasMemory</code>'s existing atomic
+    writer, so run ledgers inherit the recap sidecars' <b class="hi">commit behaviour exactly</b>:
+    ignored by default, versioned alongside <code>memory/</code> when the project has opted in to
+    committing canvas data (ADR 0009).
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 220px">Constraint</th>
+      <th>How it is honoured</th>
+    </tr>
+    <tr>
+      <td>scene/session split</td>
+      <td>
+        <b class="hi"
+          >Zero new board-schema fields. No <code>PATCHABLE_KEYS</code> change. No schema bump.</b
+        >
+        The ledger is a separate sidecar, exactly like <code>mcpPendingCommands</code>. The
+        persisted <code>SwarmBoard</code> stays <code>BoardCommon</code> only.
+      </td>
+    </tr>
+    <tr>
+      <td>MAIN owns the truth</td>
+      <td>
+        The renderer's <code>swarmStore</code> stays the live mirror; MAIN's ledger is durable
+        truth. Restore and every subsequent update push over the <b class="hi">existing</b>
+        <code>swarm:runEvent</code> channel — no second sync path is invented.
+      </td>
+    </tr>
+    <tr>
+      <td>the reply proposes, MAIN disposes</td>
+      <td>
+        Every renderer-originated mutation (plan tick/rename/add, Reassign, Wait, Accept, Dismiss)
+        is re-validated MAIN-side against the ledger before it lands. S1's <code>spawn_worker</code>
+        re-validation of the dialog commit is the worked example.
+      </td>
+    </tr>
+    <tr>
+      <td>contract types</td>
+      <td>
+        Every new MAIN⇄renderer shape lands in <code>src/shared/mcpTypes.ts</code> (or a sibling
+        <code>swarmLedgerTypes.ts</code> under the same rule) so a field drift is a compile error —
+        plus a <b class="hi">real-channel integration test</b>, not two stubs facing each other.
+      </td>
+    </tr>
+    <tr>
+      <td>degrade, never throw</td>
+      <td>
+        A missing or corrupt sidecar degrades to “no runs” and is rewritten clean on the next write
+        — the <code>mcpPendingCommands</code> discipline. A poisoned ledger must never block boot.
+      </td>
+    </tr>
+  </table>
+
+  <h3 class="sub">The two failure cases, as the board renders them</h3>
+  <table class="tbl">
+    <tr>
+      <th style="width: 190px">Case</th>
+      <th>Detect → salvage → recover → narrate</th>
+    </tr>
+    <tr>
+      <td>A · worker dies mid-task</td>
+      <td>
+        <b class="hi">Detect</b> the board leaving the mirror, the PTY exit, or a failure settle.
+        <b class="hi">Salvage</b> by reading the result <code>boardResultSynth</code> already
+        derived from the transcript — S2 reuses that machinery and rebuilds none of it.
+        <b class="hi">Mark</b> the ledger task <code>blocked</code> +
+        <code>blockedTag: "lost"</code>, with the salvaged result carrying whatever provenance it
+        actually has.
+        <i
+          >(Corrected in build from this artifact's earlier <code>failed</code>: a terminal state
+          clears <code>blockedTag</code>, and <code>lost</code> is the very tag the card and the
+          triage row key off. A dead worker's task is not finished — it needs a human.)</i
+        >
+        <b class="hi">Recover</b> by re-queueing — the human sees a <code>lost</code> card, a red
+        triage row, and the orchestrator's own sentence in chat. One voice; no raw worker output
+        ever reaches the spine.
+      </td>
+    </tr>
+    <tr>
+      <td>B · orchestrator dies with live workers</td>
+      <td>
+        <b class="hi">v1 = clean shutdown.</b> On swarm-board close / app quit, MAIN drains: salvage
+        every un-settled worker's current result into the ledger, mark the run
+        <code>interrupted</code>, and <b class="hi">preserve</b>. Re-attach is Phase 5 and
+        explicitly not this lane. See decision D5 — the shutdown deliberately does <i>not</i> kill
+        the worker boards.
+      </td>
+    </tr>
+  </table>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">7</span>Decisions — signed off</h2>
+  <p class="lede">
+    Eight calls. Three were marked as needing the user's nod; all three are now settled (<b
+      class="hi"
+      >signed off 2026-07-26</b
+    >, surface approved as drawn). <b>D1 was decided against my recommendation</b> — the ledger is
+    project-scoped, not userData — and the schema in §6 reflects the decision, not the proposal.
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 46px">#</th>
+      <th style="width: 260px">Decision</th>
+      <th>Rationale · what it diverges from</th>
+    </tr>
+    <tr>
+      <td>D1</td>
+      <td>
+        <b class="hi">Ledger lives with the project</b> —
+        <code>&lt;project&gt;/.canvas/memory/run-&lt;boardId&gt;.json</code>
+        <span class="tag new">signed off</span>
+      </td>
+      <td>
+        <b class="hi">Decided by the user; overrides my userData recommendation.</b> Takes
+        <code>09 §7 Q14</code>'s written default: runs are project-scoped and should travel with the
+        project folder, and the file sits beside the board recap sidecars it is a sibling of. It
+        therefore rides <code>canvasMemory</code>'s existing atomic writer +
+        <code>isSafeId</code> path guard rather than a new file module, and inherits the recap
+        sidecars' commit behaviour (ignored by default, versioned under the ADR 0009 opt-in). What I
+        gave up by being overruled: it no longer survives a <code>git clean</code> of an opted-in
+        project, and it is one more thing in the user's folder. What it buys: a moved or renamed
+        project keeps its runs, which userData keying by absolute path would silently lose.
+      </td>
+    </tr>
+    <tr>
+      <td>D2</td>
+      <td>
+        <b class="hi">Plan-strip edits are always live</b> (checkbox + hover ⋯), not behind an edit
+        mode <span class="tag rec">your call</span>
+      </td>
+      <td>
+        Fewer clicks on the highest-frequency action; three spatially distinct hit targets; the edit
+        is undoable. The alternative (explicit <code>Edit</code> mode) is safer against stray clicks
+        — §3 shows both. <b>I recommend always-live.</b>
+      </td>
+    </tr>
+    <tr>
+      <td>D3</td>
+      <td>
+        <b class="hi">Ledger is a reduced snapshot with a bounded event tail</b>, not a separate
+        append-only JSONL
+      </td>
+      <td>
+        One file, one atomic write path, cap-bounded — the discipline the kickoff asks for. The
+        <code>events[]</code> array exists in the schema now (bounded), so S3 can grow it into
+        <code>09 §3</code>'s full event log without a schema break. Softens <code>09 §3</code>'s
+        <code>run-&lt;id&gt;.ledger.jsonl</code> shape; S2 does not need the run narrative that
+        motivated it.
+      </td>
+    </tr>
+    <tr>
+      <td>D4</td>
+      <td>
+        <b class="hi">Stall threshold = 10 minutes</b> of no ledger-observable activity, disclosed
+        inline, not user-configurable in S2
+      </td>
+      <td>
+        Sits between the transcript-idle threshold (<code>IDLE_AFTER_MS</code> = 60s — far too
+        eager; a coding agent thinks for minutes) and the barrier backstop (30m — far too late to be
+        useful triage). A named constant, printed on the card and the triage row, so the cap is
+        disclosed rather than silent. A settings surface can come later if 10m proves wrong in use.
+      </td>
+    </tr>
+    <tr>
+      <td>D5</td>
+      <td>
+        <b class="hi">Clean shutdown preserves worker boards</b> — it drains and salvages, it does
+        not kill them <span class="tag rec">your call</span>
+      </td>
+      <td>
+        <b class="hi">Diverges from <code>03 item 7</code></b
+        >, which phrases the v1 fallback as “<code>interrupt</code>+<code>close_board</code> its
+        live workers”. Two reasons to soften it: workers are ordinary terminal boards under the Q11
+        lens model, and closing the human's boards out from under them is exactly the
+        silent-destructive move the repo's dirty-worktree rule refuses elsewhere. The ledger records
+        <code>interrupted</code>; the boards stay; the human decides.
+        <b>I recommend preserve.</b> Say so and it becomes drain-and-close.
+      </td>
+    </tr>
+    <tr>
+      <td>D6</td>
+      <td>
+        <b class="hi">Human plan edits are direct; orchestrator plan edits stay confirmed</b>
+      </td>
+      <td>
+        A confirm on the human's own tick is approval flooding (07 §4.7) and trains the
+        click-through reflex that buries real decisions. The agent-originated path is unchanged from
+        every other MCP write.
+      </td>
+    </tr>
+    <tr>
+      <td>D7</td>
+      <td>
+        <b class="hi">Batched dispatch = a new host-side plural</b> modelled on
+        <code>relayPrompts</code>; the batch modal is reused verbatim
+      </td>
+      <td>
+        <code>mcpRelayBatch.ts</code> already proves the shape: validate every row up front, raise
+        ONE batch confirm, then run each row through the shared write gate independently with its
+        per-row decision fed in via <code>confirmOverride</code>. Host-side only —
+        <b class="hi">no broker wire change, no package publish, no parity lockstep.</b>
+      </td>
+    </tr>
+    <tr>
+      <td>D8</td>
+      <td><b class="hi">Run timestamps live in the ledger</b>, not on the board schema</td>
+      <td>
+        <code>09 §6</code> lists persisted timestamps as S2 with “a small schema bump”. Putting
+        <code>createdAt / lastActiveAt / lastSeenAt</code> in the ledger gets the same capability
+        with <b class="hi">zero</b> canvas-schema change, which the hard scene/session contract
+        prefers.
+      </td>
+    </tr>
+  </table>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">8</span>What S2 builds — and what it deliberately does not</h2>
+  <div class="row2">
+    <div class="panel pick">
+      <h4>In this lane</h4>
+      <ul class="pts">
+        <li>
+          <b>Run ledger</b> — <code>.canvas/memory/run-&lt;boardId&gt;.json</code>, atomic, capped,
+          versioned; restores a run across a reload.
+        </li>
+        <li>
+          <b>Failure case A</b> — worker dies mid-task: detect, salvage via the existing
+          <code>write_result</code> + <code>boardResultSynth</code> path, mark, re-queue, narrate.
+        </li>
+        <li>
+          <b>Failure case B</b> — orchestrator dies with live workers: clean shutdown (drain /
+          salvage / preserve).
+        </li>
+        <li>
+          <b>Stall detection + reassignment</b> — counted, thresholded, disclosed; card state +
+          triage row + a gated reassign path.
+        </li>
+        <li>
+          <b>Editable plan strip</b> — human and (gated) orchestrator, writing through to the
+          Planning board.
+        </li>
+        <li>
+          <b>Triage queue</b> — risk-ordered, tagged, actionable, over the existing attention
+          system.
+        </li>
+        <li>
+          <b>Batched confirms</b> — a plural dispatch through the shipped
+          <code>BatchConfirmModal</code>.
+        </li>
+        <li>
+          <b>Tests</b> — unit + a real-channel integration test + e2e; full matrix at the merge
+          gate.
+        </li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>Explicitly not</h4>
+      <ul class="pts">
+        <li>
+          <b>Worktree allocation, parallel-writer enforcement, overlap-detection UI</b> — S3. S2
+          writes the ledger field as <code>null</code> and renders no chip.
+        </li>
+        <li>
+          <b>Orchestrator re-attach to live workers</b> — Phase 5. S2's failure model is
+          clean-shutdown v1, stated as such on the surface.
+        </li>
+        <li>
+          <b
+            >Docked lead-terminal chat, <code>session-consented</code> autonomy, cost metering /
+            budget ceiling</b
+          >
+          — S4 / Q10.
+        </li>
+        <li>
+          <b>Auto-merge of worker branches</b> — deferred; branches are surfaced for human merge.
+        </li>
+        <li>
+          <b>A reply box in the triage queue.</b> Answering a needs-input question happens in the
+          real terminal — forking terminal input would fork terminal behaviour.
+        </li>
+        <li>
+          <b>Any broker wire change.</b> Everything here is host-side; no
+          <code>@expanse-ade/mcp</code> publish, no parity lockstep.
+        </li>
+        <li>
+          <b>Any canvas schema bump.</b> Zero new board fields, no
+          <code>PATCHABLE_KEYS</code> change.
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="call ask" style="margin-top: 26px">
+    <b>Signed off 2026-07-26.</b> Surface approved as drawn; the three marked calls settled as —
+    <b>D1</b> — ledger in <code>&lt;project&gt;/.canvas/memory/</code> (user’s call, overriding my
+    userData recommendation) · <b>D2</b> — always-live plan edits · <b>D5</b> — clean shutdown
+    preserves worker boards. The surface is approved as drawn and implementation has started from
+    Phase 1 (the run ledger).
+  </div>
+</div>

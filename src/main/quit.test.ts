@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
 import { describe, it, expect, vi } from 'vitest'
 import { performGuardedQuit, makeCrashHandler, performWindowCloseCleanup } from './quit'
 
@@ -148,5 +150,35 @@ describe('performWindowCloseCleanup (macOS PTY-orphan fix)', () => {
     const deps = { ...makeDeps('darwin'), disposePtys: vi.fn<() => void>(() => undefined) }
     expect(() => performWindowCloseCleanup(deps)).not.toThrow()
     expect(deps.disposePtys).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * Orchestration S2 · failure case B. The whole guarantee is an ORDER: `shutdown()` must bank every
+ * un-settled worker's result into its run ledger BEFORE the PTY drain kills the boards those
+ * results are read from. There is no runtime seam to assert that on — `shutdown()` lives in
+ * `index.ts`, which imports Electron at module scope and owns the app's process lifetime, so it
+ * cannot be imported into a unit test, and every tier below it (`swarmWatch.drain()`,
+ * `drainRuns()`, `performGuardedQuit`) is already green with the calls in EITHER order.
+ *
+ * So this reads the source. A text assertion is a blunt instrument and it will need updating if
+ * these calls are renamed — that is the point: a rename is a conscious edit, while a silent
+ * REORDER (the regression that would cost a run its salvaged results, with nothing failing) is
+ * exactly what nothing else catches. The alternative is extracting the quit sequence out of
+ * `index.ts`, which is a larger refactor of the most delicate chain in MAIN.
+ */
+describe('shutdown() ordering — the S2 drain runs while the boards still exist', () => {
+  const source = readFileSync(fileURLToPath(new URL('./index.ts', import.meta.url)), 'utf8')
+  const body = source.slice(source.indexOf('function shutdown(): Promise<void> {'))
+
+  it('calls swarmHandlers.drainRuns() BEFORE the PTY drain', () => {
+    const drainRuns = body.indexOf('swarmHandlers?.drainRuns()')
+    const ptyDrain = body.indexOf('quitPtyDrain()')
+    expect(drainRuns, 'shutdown() still calls swarmHandlers.drainRuns()').toBeGreaterThan(-1)
+    expect(ptyDrain, 'shutdown() still calls quitPtyDrain()').toBeGreaterThan(-1)
+    expect(
+      drainRuns,
+      'the swarm run drain must precede the PTY drain — a worker killed first has no result left to salvage'
+    ).toBeLessThan(ptyDrain)
   })
 })

@@ -3,6 +3,7 @@ import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
+import type { BoardPlanning } from './mcpBoardPlanning'
 import { getCurrentDir } from './projectStore'
 import { recordBoardProject } from './mcpBoardProjects'
 import { makeLeadAuthority } from './leadAuthority'
@@ -145,6 +146,21 @@ export interface RunningMcp {
    */
   dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   /**
+   * Orchestration S2 (design D7): the BATCH sibling of `dispatchPrompt` — N tasks reviewed in ONE
+   * per-row confirm modal, then each row through the same shared write gate INDEPENDENTLY (its own
+   * nonce, TOCTOU re-check and audit row). One approval is still one write; the batch only spares
+   * the human N sequential modals, which is what makes the Nth one get read instead of clicked.
+   * Host-side only — no broker wire change. Results are positionally 1:1 with the input.
+   */
+  dispatchPrompts(items: Array<{ boardId: string; text: string }>): Promise<
+    Array<{
+      boardId: string
+      status: 'dispatched' | 'denied' | 'rejected'
+      delivery?: 'ready' | 'unconfirmed'
+      detail?: string
+    }>
+  >
+  /**
    * Phase C / C2: dispatch a prompt AND await the worker's two-gate settle (PR-0), resolving with
    * its `BoardResult`. The Command board's authoritative done/failed signal — same gate as
    * `dispatchPrompt`, plus the await-idle. A long-pending call (resolves on settle).
@@ -182,6 +198,24 @@ export interface RunningMcp {
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
   tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
   boardCards(boardId: string): Promise<unknown>
+  /**
+   * S2 (swarm run ledger): one Planning board's elements + their REAL ids — the same projection
+   * served as `canvas://board/{id}/planning`. In-process seam alongside `boardCards`, so the
+   * swarm ledger can join a task to the checklist item it fulfils without minting plan-item ids
+   * of its own (the renderer owns those). Read-only; no gate.
+   */
+  boardPlanning(boardId: string): Promise<BoardPlanning>
+  /**
+   * S2 (editable plan strip): tick / relabel ONE checklist item on a Planning board through the
+   * SAME human-confirmed planning-edit gate the `update_planning_element` MCP tool uses — the
+   * swarm orchestrator's half of the plan strip (design D6: the human's own edits are direct, an
+   * agent-proposed one is confirmed and MAIN re-validates it). In-process seam only.
+   */
+  updatePlanningElement(
+    boardId: string,
+    elementId: string,
+    patch: { setItems?: Array<{ id: string; done?: boolean; label?: string }> }
+  ): Promise<void>
   /**
    * FIND-015: revoke every live `connected`-tier token (across all boards). Called on orchestration
    * consent REVOKE so a bearer left on disk in a CLI config is dead immediately — not only after
@@ -338,6 +372,10 @@ export async function startMcpServer(
       focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
       tidyCanvas: (input) => orchestrator.tidyCanvas(input),
       boardCards: (boardId) => orchestrator.boardCards(boardId),
+      boardPlanning: (boardId) => orchestrator.boardPlanning(boardId),
+      dispatchPrompts: (items) => orchestrator.dispatchPrompts(items),
+      updatePlanningElement: (boardId, elementId, patch) =>
+        orchestrator.updatePlanningElement(boardId, elementId, patch),
       // Consent revoke kills EVERY orchestration bearer this host minted for terminals — the
       // connected tokens AND the lead token/designation (a lead bearer on disk must die with the
       // consent it rode in on).

@@ -34,6 +34,12 @@ export interface CanvasE2E {
   getConfigPendingId: () => string | null
   /** Current boards (plain data — serializable). */
   getBoards: () => Board[]
+  /**
+   * Orchestration S2: bind a swarm run's plan strip to a Planning board — the SAME store action
+   * the real `planDrawn` run-event calls, so a spec can exercise the strip's edit path without
+   * having to drive a whole LLM turn to get a plan drawn first.
+   */
+  swarmSetPlanBoard: (runId: string, planBoardId: string) => void
   /** Set the multi-selection (group create path). */
   setSelection: (ids: string[]) => void
   /** Current selection (D4-B Tab-cycle probe asserts on it). */

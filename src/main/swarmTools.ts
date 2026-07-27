@@ -32,10 +32,30 @@ import {
 import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
 import { sanitizeDispatchText } from './dispatchSanitize'
+import type { SwarmLedgerSnapshot, SwarmTaskSpec } from '../shared/swarmLedgerTypes'
+import { MAX_DISPATCH_BATCH } from './mcpDispatchBatch'
+
+/**
+ * S2: a ledger write must never break the run it is recording. Every hook call is wrapped so a
+ * disk error / permission failure degrades that run to ephemeral-only instead of failing the
+ * dispatch the human already approved.
+ */
+async function record(fn: (() => Promise<void>) | undefined): Promise<void> {
+  if (!fn) return
+  try {
+    await fn()
+  } catch (err) {
+    console.warn('[swarmLedger] record failed (non-fatal — run continues ephemerally)', err)
+  }
+}
 
 const MAX_NAME = 80
 const MAX_FIELD = 4000
 const MAX_ITEMS = 30
+
+/** Model output → a 1-based plan-strip position, or undefined. Bounded to the plan's own cap. */
+const planItemOf = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, MAX_ITEMS) : undefined
 
 /** The canvas facet the swarm executor drives — RunningMcp is a structural superset. */
 export interface SwarmCanvasFacet {
@@ -61,6 +81,42 @@ export interface SwarmCanvasFacet {
     suggested?: 'kanban' | 'grid' | 'checklist' | 'columns'
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
+  /**
+   * S2: read a Planning board's elements + their REAL ids (the `canvas://board/{id}/planning`
+   * projection). The ledger syncs its `planItems` through this so a task can be joined to the
+   * checklist item it fulfils — MAIN never mints plan-item ids, the renderer does.
+   */
+  boardPlanning(boardId: string): Promise<{
+    elements: Array<{
+      id: string
+      kind: string
+      title?: string
+      items?: Array<{ id: string; label: string; done: boolean }>
+    }>
+  }>
+  /**
+   * S2: tick / relabel ONE plan-strip item, through the SHARED human-confirmed planning-edit gate
+   * (design D6 — the human's own strip edits are direct; an agent-proposed one is confirmed and
+   * MAIN re-validates it). Passive content: no PTY, no nonce, nothing executes.
+   */
+  updatePlanningElement(
+    boardId: string,
+    elementId: string,
+    patch: { setItems?: Array<{ id: string; done?: boolean; label?: string }> }
+  ): Promise<void>
+  /**
+   * S2 (design D7): dispatch a ROUND of tasks behind ONE per-row confirm modal. Each row still
+   * travels the shared write gate independently (own nonce · TOCTOU re-check · audit) — the batch
+   * spares the human N sequential modals, it never widens one approval into N writes.
+   */
+  dispatchPrompts(items: Array<{ boardId: string; text: string }>): Promise<
+    Array<{
+      boardId: string
+      status: 'dispatched' | 'denied' | 'rejected'
+      delivery?: 'ready' | 'unconfirmed'
+      detail?: string
+    }>
+  >
 }
 
 /** Run events the executor emits so the renderer's swarm board mirrors the run live. */
@@ -74,14 +130,62 @@ export type SwarmRunEvent =
       provenance: 'claimed' | 'synthesized'
       status: string
     }
+  /**
+   * S2: the durable projection. Rides the EXISTING run-event channel rather than a second sync
+   * path (the kickoff's rule), so the renderer has ONE subscription and MAIN has ONE push.
+   */
+  | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
+  /**
+   * S2: something happened to the run BETWEEN turns (a worker died, a worker stalled) and the
+   * orchestrator says so in its own voice. `text` is the sentence TAIL — the renderer prefixes the
+   * worker's title, because MAIN carries board ids and never titles (the `SwarmTriageRow` rule).
+   * Composed deterministically in MAIN: no LLM call, no budget spend, and it can only state facts
+   * the ledger actually holds.
+   */
+  | { kind: 'narrate'; boardId?: string; status?: string; text: string }
+
+/**
+ * S2: the DURABLE side-effects of a tool call. Supplied by the swarm session when a project (and
+ * therefore a ledger) exists; **optional throughout** — with no project, an unwritable
+ * `.canvas/memory/`, or a ledger written by a newer app version, every hook is simply absent and
+ * the run behaves exactly like S1 (ephemeral-only). A ledger failure must never fail a dispatch.
+ */
+export interface SwarmLedgerHooks {
+  /** The run drew (or redrew) its plan — record the board and re-sync the plan items from it. */
+  planDrawn(planBoardId: string): Promise<void>
+  /** A task was dispatched into a worker. `planItem` is the 1-based plan-strip position, if given. */
+  dispatched(input: {
+    workerId: string
+    role: string
+    spec: SwarmTaskSpec
+    activity?: string
+    planItem?: number
+  }): Promise<void>
+  /** A worker settled — attach its result with the provenance it actually carries. */
+  settled(input: {
+    workerId: string
+    status: string
+    summary: string
+    refs: string[]
+    provenance: 'claimed' | 'synthesized'
+  }): Promise<void>
+}
 
 /** Per-run mutable state the executor threads (owned by the swarm session in swarmChatIpc). */
 export interface SwarmRunCtx {
   paused: () => boolean
+  /** S2: durable recording. Absent ⇒ the run is ephemeral-only (S1 behaviour), never an error. */
+  ledger?: SwarmLedgerHooks
   /** Worker board ids dispatched with a WRITE-role and not yet settled (the serialization cap). */
   writeInFlight: Set<string>
   /** Worker board id → its dispatched role id (await_worker reads it for provenance labels). */
   workerRoles: Map<string, string>
+  /**
+   * S2: the run's Planning board, written by `draw_plan` and read by `tick_plan_item`. A mutable
+   * holder rather than a ledger read, so the plan strip still works for a run with NO ledger
+   * (no project) — exactly the S1 degradation everything else in S2 keeps.
+   */
+  planBoard: { current: string | null }
   emit: (ev: SwarmRunEvent) => void
   /** The shared fail-closed confirm; `workerConfig` routes to the full worker-config dialog
    *  (the swarm spawn gate), `choices` to the P5 chooser. */
@@ -170,7 +274,59 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
           activity: {
             type: 'string',
             description: 'Present-continuous card line, e.g. "Migrating settings schema…"'
+          },
+          planItem: {
+            type: 'integer',
+            minimum: 1,
+            description:
+              'The 1-based plan-strip position this task fulfils (as drawn by draw_plan). Links the task to its plan item so the strip shows who owns it.'
           }
+        }
+      }
+    },
+    {
+      name: 'dispatch_tasks',
+      description:
+        'Dispatch a ROUND of tasks at once — the human reviews every row in ONE confirm and approves them individually. Prefer this over repeated dispatch_task when you are handing out several tasks together.',
+      input_schema: {
+        type: 'object',
+        required: ['tasks'],
+        properties: {
+          tasks: {
+            type: 'array',
+            minItems: 1,
+            maxItems: MAX_DISPATCH_BATCH,
+            items: {
+              type: 'object',
+              required: ['workerId', 'objective', 'context', 'boundaries', 'outputFormat'],
+              properties: {
+                workerId: { type: 'string' },
+                objective: { type: 'string' },
+                context: { type: 'string' },
+                boundaries: { type: 'string' },
+                outputFormat: { type: 'string' },
+                activity: { type: 'string' },
+                planItem: { type: 'integer', minimum: 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      name: 'tick_plan_item',
+      description:
+        "Tick (or untick) ONE item on the run's plan strip — call it as work actually lands, so the plan the human sees stays true. The human confirms first.",
+      input_schema: {
+        type: 'object',
+        required: ['planItem'],
+        properties: {
+          planItem: {
+            type: 'integer',
+            minimum: 1,
+            description: 'The 1-based plan-strip position, as drawn by draw_plan'
+          },
+          done: { type: 'boolean', description: 'Defaults to true' }
         }
       }
     },
@@ -254,7 +410,9 @@ export async function executeSwarmTool(
           .filter((x): x is { title: string; status?: string } => x !== null)
         if (items.length === 0) return refuse('draw_plan needs at least one item')
         const r = await facet.visualizePlan({ items, suggested: 'checklist', title })
+        ctx.planBoard.current = r.id
         ctx.emit({ kind: 'planDrawn', planBoardId: r.id })
+        await record(ctx.ledger && (() => ctx.ledger!.planDrawn(r.id)))
         return {
           content: JSON.stringify({ planBoardId: r.id }),
           summary: `plan: ${items.length} items`
@@ -375,6 +533,14 @@ export async function executeSwarmTool(
           `OBJECTIVE: ${objective}\n\nCONTEXT: ${context}\n\nBOUNDARIES: ${boundaries}\n\n` +
           `OUTPUT FORMAT: ${outputFormat}`
         const activity = str(args.activity, MAX_NAME)
+        // S2: the 1-based plan-strip position this task fulfils. Model output → bounded to a
+        // positive integer here; the ledger maps it to the REAL checklist item id (which only the
+        // renderer mints), and an out-of-range position simply leaves the task unmapped.
+        const planItemRaw = args.planItem
+        const planItem =
+          typeof planItemRaw === 'number' && Number.isInteger(planItemRaw) && planItemRaw > 0
+            ? Math.min(planItemRaw, MAX_ITEMS)
+            : undefined
         try {
           // The orchestrator's OWN human gate lives inside dispatchPrompt — no double confirm.
           // singleLinePrompt is MANDATORY: the write gate REJECTS embedded CR/LF (one approval
@@ -384,6 +550,19 @@ export async function executeSwarmTool(
             singleLinePrompt(packDispatchPrompt(pack, spec, undefined))
           )
           if (activity) ctx.emit({ kind: 'activity', workerId, text: activity })
+          // Record AFTER the gate: only a dispatch the human actually approved becomes a
+          // durable assignment (a denied dispatch throws above and never reaches here).
+          await record(
+            ctx.ledger &&
+              (() =>
+                ctx.ledger!.dispatched({
+                  workerId,
+                  role: pack?.id ?? 'worker',
+                  spec: { objective, context, boundaries, outputFormat },
+                  ...(activity ? { activity } : {}),
+                  ...(planItem !== undefined ? { planItem } : {})
+                }))
+          )
           return {
             content: JSON.stringify({ delivery: r?.delivery ?? 'ready' }),
             summary: `dispatched → ${workerId}`
@@ -403,6 +582,135 @@ export async function executeSwarmTool(
           }
         }
       }
+      case 'dispatch_tasks': {
+        if (ctx.paused()) return refuse('run paused — the human must resume first')
+        const rows = Array.isArray(args.tasks) ? args.tasks.slice(0, MAX_DISPATCH_BATCH) : []
+        if (rows.length === 0) return refuse('dispatch_tasks needs at least one task')
+        const parsed: Array<{
+          workerId: string
+          spec: SwarmTaskSpec
+          pack?: RolePack
+          activity?: string
+          planItem?: number
+        }> = []
+        for (const raw of rows) {
+          const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+          const workerId = str(o.workerId, 128)
+          const objective = str(o.objective, MAX_FIELD)
+          const context = str(o.context, MAX_FIELD)
+          const boundaries = str(o.boundaries, MAX_FIELD)
+          const outputFormat = str(o.outputFormat, MAX_FIELD)
+          if (!workerId || !objective || !context || !boundaries || !outputFormat) {
+            // 🔒 All-or-nothing on VALIDATION: a half-valid round would put a modal in front of
+            // the human that does not match what the model asked for. Fix the input and retry.
+            return refuse(
+              'every task in dispatch_tasks needs workerId + all four fields (objective, context, boundaries, outputFormat)'
+            )
+          }
+          const pack = rolePackById(ctx.workerRoles.get(workerId))
+          parsed.push({
+            workerId,
+            spec: { objective, context, boundaries, outputFormat },
+            ...(pack ? { pack } : {}),
+            ...(str(o.activity, MAX_NAME) ? { activity: str(o.activity, MAX_NAME) } : {}),
+            ...(planItemOf(o.planItem) !== undefined ? { planItem: planItemOf(o.planItem) } : {})
+          })
+        }
+        // Write serialization, unchanged and DISCLOSED: workers share one working tree until S3,
+        // so a round carrying more write-role tasks than the cap is refused whole rather than
+        // silently trimmed — the model splits it and says why in chat (no silent caps, 06 §2).
+        const newWrites = new Set(
+          parsed
+            .filter((p) => p.pack && isWriteRolePack(p.pack) && !ctx.writeInFlight.has(p.workerId))
+            .map((p) => p.workerId)
+        )
+        if (ctx.writeInFlight.size + newWrites.size > WRITE_ROLE_CONCURRENCY_CAP) {
+          return refuse(
+            `write cap: this round needs ${ctx.writeInFlight.size + newWrites.size} concurrent write-role workers but only ${WRITE_ROLE_CONCURRENCY_CAP} may run while workers share one working tree — dispatch the write task alone (or await the running one) and disclose this to the human`
+          )
+        }
+        for (const id of newWrites) ctx.writeInFlight.add(id)
+        const outcomes = await facet.dispatchPrompts(
+          parsed.map((p) => ({
+            boardId: p.workerId,
+            text: singleLinePrompt(
+              packDispatchPrompt(
+                p.pack,
+                `OBJECTIVE: ${p.spec.objective}\n\nCONTEXT: ${p.spec.context}\n\n` +
+                  `BOUNDARIES: ${p.spec.boundaries}\n\nOUTPUT FORMAT: ${p.spec.outputFormat}`,
+                undefined
+              )
+            )
+          }))
+        )
+        let landed = 0
+        for (let i = 0; i < parsed.length; i++) {
+          const p = parsed[i]
+          const outcome = outcomes[i]
+          if (outcome?.status !== 'dispatched') {
+            // A denied/rejected row never held the tree — release its slot immediately.
+            ctx.writeInFlight.delete(p.workerId)
+            continue
+          }
+          landed += 1
+          if (p.activity) ctx.emit({ kind: 'activity', workerId: p.workerId, text: p.activity })
+          await record(
+            ctx.ledger &&
+              (() =>
+                ctx.ledger!.dispatched({
+                  workerId: p.workerId,
+                  role: p.pack?.id ?? 'worker',
+                  spec: p.spec,
+                  ...(p.activity ? { activity: p.activity } : {}),
+                  ...(p.planItem !== undefined ? { planItem: p.planItem } : {})
+                }))
+          )
+        }
+        const declined = outcomes.filter((o) => o?.status === 'denied').length
+        const failed = outcomes.filter((o) => o?.status === 'rejected')
+        return {
+          content: JSON.stringify(outcomes),
+          // Every non-landed row is named in the summary — the statusline renders `summary` only,
+          // so a reason that is not in this string is a reason the human never sees.
+          summary:
+            `dispatched ${landed}/${parsed.length}` +
+            (declined > 0 ? ` · ${declined} declined` : '') +
+            (failed.length > 0
+              ? ` · ${failed.length} failed (${singleLinePrompt(failed[0].detail ?? 'unknown').slice(0, 80)})`
+              : '')
+        }
+      }
+      case 'tick_plan_item': {
+        if (ctx.paused()) return refuse('run paused — the human must resume first')
+        const planBoardId = ctx.planBoard.current
+        if (!planBoardId) return refuse('no plan drawn yet — call draw_plan first')
+        const raw = args.planItem
+        if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+          return refuse('tick_plan_item needs a 1-based planItem position')
+        }
+        const done = args.done !== false
+        // Resolve the position against the LIVE board, not a remembered list: the human may have
+        // added, renamed or removed rows since the plan was drawn, and MAIN mints no item ids.
+        const planning = await facet.boardPlanning(planBoardId)
+        const list = planning.elements.find((e) => e.kind === 'checklist' && Array.isArray(e.items))
+        const item = list?.items?.[Math.min(raw, MAX_ITEMS) - 1]
+        if (!list || !item) return refuse(`plan item ${raw} does not exist`)
+        if (item.done === done) {
+          // Not an error — a no-op tick must not burn a human confirm on nothing.
+          return {
+            content: JSON.stringify({ changed: false }),
+            summary: `item ${raw} already ${done ? 'done' : 'open'}`
+          }
+        }
+        // The planning-edit gate raises the human confirm and re-validates the patch itself.
+        await facet.updatePlanningElement(planBoardId, list.id, {
+          setItems: [{ id: item.id, done }]
+        })
+        return {
+          content: JSON.stringify({ changed: true, done }),
+          summary: `${done ? 'ticked' : 'unticked'} plan item ${raw}`
+        }
+      }
       case 'await_worker': {
         const workerId = str(args.workerId, 128)
         if (!workerId) return refuse('await_worker needs a workerId')
@@ -410,6 +718,17 @@ export async function executeSwarmTool(
         ctx.writeInFlight.delete(workerId)
         const provenance: 'claimed' | 'synthesized' = result.synthesized ? 'synthesized' : 'claimed'
         ctx.emit({ kind: 'workerSettled', workerId, provenance, status: result.status ?? 'done' })
+        await record(
+          ctx.ledger &&
+            (() =>
+              ctx.ledger!.settled({
+                workerId,
+                status: result.status ?? 'unknown',
+                summary: result.summary ?? '',
+                refs: result.refs ?? [],
+                provenance
+              }))
+        )
         return {
           content: JSON.stringify({
             status: result.status ?? 'unknown',

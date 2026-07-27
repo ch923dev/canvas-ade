@@ -37,7 +37,9 @@ export function composeSwarmSystem(paused: boolean): string {
     '',
     'RULES (all mandatory):',
     '- PLAN FIRST: at the start of a run, draw the plan with draw_plan (a short checklist of',
-    '  numbered steps). Keep it honest as the run evolves.',
+    '  numbered steps). Keep it honest as the run evolves: pass dispatch_task the planItem number',
+    '  a task fulfils, and tick_plan_item as each step actually lands. Never tick ahead of the',
+    '  work — the strip is what the human trusts to know where the run is.',
     '- EFFORT LADDER: 1 worker for a simple lookup/fix · 2-4 for comparisons/reviews · 3-5 for a',
     '  typical multi-part task · 10+ ONLY for genuinely broad, parallelizable work. Never spawn',
     '  more workers than the task needs.',
@@ -52,6 +54,9 @@ export function composeSwarmSystem(paused: boolean): string {
     '  the human can open any worker card for the real terminal.',
     '- HUMAN GATE: every spawn and every dispatch pays a human confirmation before it lands. If a',
     '  confirm is denied, accept it — do not retry the same action.',
+    '- BATCH A ROUND: when you are handing out several tasks together, use dispatch_tasks (plural)',
+    '  rather than repeated dispatch_task. The human reviews every row in ONE confirm and approves',
+    '  them individually; some rows may come back denied, and you must say which and carry on.',
     paused
       ? '- THE RUN IS PAUSED: dispatch/spawn tools will refuse. Answer questions, refine the plan,'
       : '- PAUSE: if the human pauses the run, dispatch/spawn tools refuse until resumed.',

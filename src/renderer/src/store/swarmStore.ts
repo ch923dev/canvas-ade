@@ -13,6 +13,7 @@
  * boards belong to it, in spawn order.
  */
 import { create } from 'zustand'
+import type { SwarmLedgerSnapshot } from '../../../shared/swarmLedgerTypes'
 
 /** One chat-spine row: a human/orchestrator bubble, or a collapsed one-line status divider. */
 export type SwarmMessageRole = 'you' | 'orch' | 'status'
@@ -29,6 +30,12 @@ export interface SwarmMessage {
 export interface SwarmWorkerMeta {
   /** Role-pack id/label shown as the card's role badge (e.g. 'builder'). */
   role?: string
+  /**
+   * S2: the title the worker was spawned with. Remembered here so a narration about a worker whose
+   * BOARD has since been deleted ("builder-2 died…") still reads as a name rather than a raw id —
+   * the canvas can no longer resolve it, and MAIN never carries titles.
+   */
+  title?: string
   /** The current task's activeForm line ("Migrating settings schema…"). */
   activity?: string
   /** Wall-clock ms the worker joined the run — drives the card timer. */
@@ -45,12 +52,20 @@ export interface SwarmRun {
   workerIds: string[]
   /** Per-worker glance data, keyed by worker board id. */
   workerMeta: Record<string, SwarmWorkerMeta>
-  /** The run's Planning board (the read-only plan-strip projection); null = no plan drawn yet. */
+  /** The run's Planning board (the plan-strip projection); null = no plan drawn yet. */
   planBoardId: string | null
   /** Wall-clock ms of the first message — drives the header run timer. */
   startedAt: number | null
   /** Pause-all: dispatch tools refuse while paused; running workers finish their turn. */
   paused: boolean
+  /**
+   * S2: MAIN's durable projection of this run, or null when the run has no ledger (no project,
+   * an unwritable sidecar, or a ledger from a newer app). Null is the S1 path, not an error —
+   * every consumer treats it as "no extra knowledge" rather than "nothing is happening".
+   */
+  ledger: SwarmLedgerSnapshot | null
+  /** S2: this run came back from disk after a reload — drives the header's `restored` chip. */
+  restored: boolean
 }
 
 /** Per-run transcript cap — the chat is a working surface, not an archive (MAIN owns history). */
@@ -63,7 +78,9 @@ const emptyRun = (): SwarmRun => ({
   workerMeta: {},
   planBoardId: null,
   startedAt: null,
-  paused: false
+  paused: false,
+  ledger: null,
+  restored: false
 })
 
 /**
@@ -88,6 +105,12 @@ interface SwarmState {
   settleOrchMessage: (boardId: string, msgId: number, finalText?: string) => void
   /** Append a collapsed one-line status divider (worker events the orchestrator narrates). */
   addStatusLine: (boardId: string, text: string) => void
+  /**
+   * S2: append a COMPLETE (non-streaming) orchestrator bubble. Used for the between-turns
+   * narrations MAIN composes when a worker dies or stalls — the same one voice as a turn reply,
+   * just not streamed, because no turn is running.
+   */
+  addOrchMessage: (boardId: string, text: string) => void
   setTurnActive: (boardId: string, active: boolean) => void
   /** Record a worker board joining this run (idempotent; spawn order preserved). */
   addWorker: (boardId: string, workerBoardId: string, meta?: SwarmWorkerMeta) => void
@@ -97,6 +120,9 @@ interface SwarmState {
   removeWorker: (boardId: string, workerBoardId: string) => void
   setPlanBoard: (boardId: string, planBoardId: string | null) => void
   setPaused: (boardId: string, paused: boolean) => void
+  /** S2: adopt MAIN's durable projection. `restored` latches true — a run stays "restored" for
+   *  the rest of the session, since later pushes carry restored:false by design. */
+  setLedger: (boardId: string, snapshot: SwarmLedgerSnapshot) => void
   /** Board deleted → drop its run. */
   removeRun: (boardId: string) => void
   /** Project load/switch → all runs are dead (the reset-on-load discipline, commandStore's). */
@@ -124,6 +150,38 @@ const pushMessage = (run: SwarmRun, msg: SwarmMessage): SwarmRun => ({
   startedAt: run.startedAt ?? Date.now(),
   messages: [...run.messages.slice(-(MAX_MESSAGES - 1)), msg]
 })
+
+/**
+ * S2: union this session's worker membership with the ledger's, preserving THIS session's spawn
+ * order and appending any worker only the ledger knows about (the restore case, where no
+ * `workerSpawned` event ever fired). Returns the original array when nothing is new, so the
+ * store's reference identity — and every downstream memo — stays stable.
+ */
+const mergeWorkers = (current: string[], snapshot: SwarmLedgerSnapshot): string[] => {
+  const known = new Set(current)
+  const added = snapshot.workers.map((w) => w.boardId).filter((id) => !known.has(id))
+  return added.length === 0 ? current : [...current, ...added]
+}
+
+/** S2: fold the ledger's per-worker facts onto the ephemeral card metadata (ledger wins). */
+const mergeWorkerMeta = (
+  current: Record<string, SwarmWorkerMeta>,
+  snapshot: SwarmLedgerSnapshot
+): Record<string, SwarmWorkerMeta> => {
+  const next = { ...current }
+  for (const w of snapshot.workers) {
+    const prev = next[w.boardId] ?? {}
+    next[w.boardId] = {
+      ...prev,
+      // A restored worker has no spawn event, so the ledger supplies the timer's origin.
+      joinedAt: prev.joinedAt ?? snapshot.createdAt,
+      ...(w.role !== undefined ? { role: w.role } : {}),
+      ...(w.activity !== undefined ? { activity: w.activity } : {}),
+      ...(w.provenance !== undefined ? { provenance: w.provenance } : {})
+    }
+  }
+  return next
+}
 
 export const useSwarmStore = create<SwarmState>((set) => ({
   runs: new Map(),
@@ -164,6 +222,10 @@ export const useSwarmStore = create<SwarmState>((set) => ({
   addStatusLine: (boardId, text) =>
     set((s) => ({
       runs: patch(s.runs, boardId, (r) => pushMessage(r, { id: ++msgSeq, role: 'status', text }))
+    })),
+  addOrchMessage: (boardId, text) =>
+    set((s) => ({
+      runs: patch(s.runs, boardId, (r) => pushMessage(r, { id: ++msgSeq, role: 'orch', text }))
     })),
   setTurnActive: (boardId, active) =>
     set((s) => ({
@@ -212,6 +274,22 @@ export const useSwarmStore = create<SwarmState>((set) => ({
     })),
   setPlanBoard: (boardId, planBoardId) =>
     set((s) => ({ runs: patch(s.runs, boardId, (r) => ({ ...r, planBoardId })) })),
+  setLedger: (boardId, snapshot) =>
+    set((s) => ({
+      runs: patch(s.runs, boardId, (r) => ({
+        ...r,
+        ledger: snapshot,
+        restored: r.restored || snapshot.restored,
+        // The ledger knows the plan board across a reload, when no planDrawn event ever fired.
+        planBoardId: r.planBoardId ?? snapshot.planBoardId,
+        // A restored run's timer must count from when the RUN started, not when the app booted.
+        startedAt: r.startedAt ?? snapshot.createdAt,
+        // Restore membership: the workers the ledger recorded are the run's, even though this
+        // session never saw their spawn events.
+        workerIds: mergeWorkers(r.workerIds, snapshot),
+        workerMeta: mergeWorkerMeta(r.workerMeta, snapshot)
+      }))
+    })),
   setPaused: (boardId, paused) =>
     set((s) => ({
       runs: patch(s.runs, boardId, (r) => (r.paused === paused ? r : { ...r, paused }))

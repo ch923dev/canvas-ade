@@ -11,6 +11,7 @@
  */
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
+import { useSwarmStore } from '../store/swarmStore'
 import { DEFAULT_BOARD_SIZE } from '../lib/boardDefaults'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
@@ -118,6 +119,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getBoards() {
       return useCanvasStore.getState().boards
+    },
+    swarmSetPlanBoard(runId, planBoardId) {
+      useSwarmStore.getState().setPlanBoard(runId, planBoardId)
     },
     setSelection(ids) {
       useCanvasStore.getState().setSelection(ids)
@@ -635,7 +639,13 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       } catch {
         /* partial bridge in smoke renders — nothing to drain */
       }
-      // 4. Reset the seed-x cursor so the next test's seedBoard positions restart.
+      // 4. Reset the seed-x cursor so the next test's seedBoard positions restart. NOTE the camera
+      //    is deliberately NOT reset here: seeded boards land at the cursor, but where they end up
+      //    ON SCREEN is the camera's business, and every spec's click targets were written against
+      //    the camera the suite's ORDER hands it (tried: forcing `{0,0,1}` here parks a board
+      //    seeded at the origin under the left-docked inspector and broke three specs that click
+      //    one). What a spec owes the next one is a camera framed near x≈0 — fit the board you
+      //    seeded FIRST, not one seeded to the right of it (swarmLedger.e2e.ts).
       seedX = 0
       return { ok: true as const }
     },

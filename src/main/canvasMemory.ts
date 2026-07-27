@@ -7,7 +7,7 @@
  * panel (T-M4) reads through them. Generated memory is UNTRUSTED PASSIVE context — it is
  * written + read/displayed and NEVER triggers an action. The API key is NEVER here.
  */
-import { existsSync, mkdirSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 import { isSafeId } from './safeId'
@@ -16,6 +16,9 @@ const CANVAS_DIR = '.canvas'
 const MEMORY_DIR = 'memory'
 const AUDIT_DIR = 'audit'
 const GITIGNORE = '.gitignore'
+/** S2 run-ledger filename parts — the ONE place the `run-<id>.json` shape is spelled. */
+const RUN_PREFIX = 'run-'
+const RUN_SUFFIX = '.json'
 
 /**
  * Default-private (ADR 0009): track ONLY the canvas document. The binary asset blobs, the
@@ -59,6 +62,8 @@ export interface CanvasMemoryPaths {
   board(id: string): string
   /** S1 (recap redesign): the structured recap sidecar the rebuilt RecapView renders. */
   boardRecap(id: string): string
+  /** Orchestration S2: the durable swarm RUN ledger, one file per run (`runId === boardId`). */
+  run(id: string): string
 }
 
 export interface CanvasMemory {
@@ -71,6 +76,13 @@ export interface CanvasMemory {
   /** S1: JSON twin of writeBoard/readBoard for `board-<id>.recap.json` (same id guard). */
   writeBoardRecap(id: string, data: unknown): boolean
   readBoardRecap(id: string): unknown
+  /** S2: the swarm run ledger — same id guard + atomic writer as the recap sidecar above. */
+  writeRun(id: string, data: unknown): boolean
+  readRun(id: string): unknown
+  /** S2: delete one run ledger (its swarm board was deleted). Best-effort, never throws. */
+  removeRun(id: string): void
+  /** S2: every run-ledger id currently on disk — the retention sweep's input. */
+  listRunIds(): string[]
   readIndex(): string | undefined
   readProject(): string | undefined
   setCommitOptIn(commit: boolean): void
@@ -99,7 +111,8 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     index: join(memoryDir, 'MEMORY.md'),
     project: join(memoryDir, 'project.md'),
     board: (id) => join(memoryDir, `board-${id}.md`),
-    boardRecap: (id) => join(memoryDir, `board-${id}.recap.json`)
+    boardRecap: (id) => join(memoryDir, `board-${id}.recap.json`),
+    run: (id) => join(memoryDir, `${RUN_PREFIX}${id}${RUN_SUFFIX}`)
   }
 
   // BUG-017: the canonical .canvas/ tree = memory/ + audit/. Both ensureScaffold and
@@ -181,6 +194,53 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
         return JSON.parse(raw)
       } catch {
         return undefined // corrupt/hand-edited sidecar reads as absent, never throws
+      }
+    },
+    writeRun(id, data) {
+      if (!safeBoardId(id)) return false
+      const json = JSON.stringify(data)
+      if (readMd(paths.run(id)) === json) return true // M4 unchanged-content skip
+      try {
+        mkdirSync(memoryDir, { recursive: true })
+        // 🔒 fsync ON, unlike the regenerable recap/memory writes above: the ledger is the ONLY
+        // record that a run happened. A recap lost to a crash re-derives from the transcript; a
+        // lost ledger loses the run's assignments and salvaged results outright.
+        writeFileAtomic.sync(paths.run(id), json, 'utf8')
+        return true
+      } catch (err) {
+        console.warn('[canvasMemory] writeRun failed (non-fatal)', err)
+        return false
+      }
+    },
+    readRun(id) {
+      if (!safeBoardId(id)) return undefined
+      const raw = readMd(paths.run(id))
+      if (raw === undefined) return undefined
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return undefined // corrupt/hand-edited ledger reads as absent, never throws
+      }
+    },
+    removeRun(id) {
+      if (!safeBoardId(id)) return
+      try {
+        rmSync(paths.run(id), { force: true })
+      } catch (err) {
+        console.warn('[canvasMemory] removeRun failed (non-fatal)', err)
+      }
+    },
+    listRunIds() {
+      try {
+        return (
+          readdirSync(memoryDir)
+            .filter((f) => f.startsWith(RUN_PREFIX) && f.endsWith(RUN_SUFFIX))
+            .map((f) => f.slice(RUN_PREFIX.length, -RUN_SUFFIX.length))
+            // Re-guard: a hand-dropped `run-../x.json` must never reach `paths.run()`.
+            .filter((id) => safeBoardId(id))
+        )
+      } catch {
+        return [] // no memory dir yet (or unreadable) → no runs
       }
     },
     readIndex() {
