@@ -34,6 +34,15 @@ export interface BoardNet {
   size?: { bottom?: number; right?: number }
   // ── Data Flow tab (JD-3, ephemeral) ──
   inferShapes: boolean // the per-board "Infer data shapes" opt-in (ADR 0010; default off)
+  // E2E-ONLY. Set exclusively by the __canvasE2E seed hooks; never by app code, and
+  // absent from persistence. A replay REPLACES this board's records wholesale (below),
+  // so when a spec seeds a synthetic set into a board that also has a LIVE MAIN
+  // subscription, MAIN's real replay lands late and wipes the seed. That is the
+  // long-standing "ambient dataFlow flake" (near-deterministic on the slow Docker leg).
+  // Waiting it out cannot fix it: nothing distinguishes "the real replay already landed"
+  // from "it is still coming", which is why the specs resorted to 45s re-seed-on-empty
+  // polls. Freezing the board makes the seed authoritative and the test deterministic.
+  frozen?: boolean
   expanded: string[] // template keys whose inventory row is expanded (schema shown)
   schemas: Record<string, SchemaState> // per-template inferred-schema state (lazy, session-memoized)
   dfInspW?: number // Data Flow inspector column width (px), drag-resized; undefined ⇒ the CSS default
@@ -111,6 +120,10 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
   apply: (id, msg) =>
     set((s) => {
       const cur = s.byBoard[id] ?? EMPTY
+      // E2E seed guard: a frozen board ignores REPLAYS only. Deltas and 'cleared' still
+      // apply, so this cannot quietly disable the whole channel — and `frozen` is only
+      // ever set by the __canvasE2E seed hooks, so production behaviour is unchanged.
+      if (cur.frozen === true && msg.kind === 'replay') return s
       let next: BoardNet
       if (msg.kind === 'replay') {
         next = {

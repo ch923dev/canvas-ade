@@ -226,12 +226,37 @@ The push gate now decides in this order:
 
 | # | Condition | What runs |
 |---|---|---|
+| 0 | push target is `refs/heads/main` **and** the scope verdict is `NONE` | **e2e skipped** — see below |
 | 1 | `E2E_FULL_MATRIX=1`, **or** the push target is `refs/heads/main` (that IS a merge) | FULL matrix, both legs |
 | 2 | `package.json`'s only diff is the `"version"` line | that path is stripped from the change-set (it cannot change app behaviour) |
 | 3 | Every changed path is an `e2e/*.e2e.ts` spec | Windows leg, **exactly those spec files** by path |
 | 4 | `scripts/e2e-scope.mjs` verdict = `NONE` | **e2e skipped** — nothing that reaches the running app changed (docs · vitest `*.test.ts` · `__fixtures__` · `.github/` · release/bench/eval tooling). The pre-commit trio + the Actions `check` job own these. |
 | 5 | verdict = `FULL` | Windows leg, ALL specs |
 | 6 | verdict = `@tags` | Windows leg, `--grep` that subset (`@core` always included) |
+
+*Row 0 — why a direct-to-main push may skip (added 2026-07-28, v0.37.2).* Per CLAUDE.md, feature
+code never lands on `main` directly; it goes through a PR whose merge gate runs the full matrix. The
+only pushes that legitimately go straight to `main` are docs/contract commits — above all the
+per-merge `build-history.md` entry. Paying ~25 min of matrix for those is waste, and the
+`git push --no-verify` workaround it forced is *worse*, because that disables the gate wholesale
+rather than narrowly. Row 0 therefore routes the decision **through** `scripts/e2e-scope.mjs` — the
+same selector that gates every other push — and fails **open** to `FULL` on any error. It is
+evaluated on the **unstripped** change-set, so `package.json` still reads cross-cutting and a
+version-only push to `main` still scores `FULL` and still pays the matrix. That distinction matters:
+the #395 review finding was an early exit placed *ahead* of the guarantee, bypassing the selector
+entirely; row 0 consults it.
+
+*Windows-leg parallelism (added 2026-07-28, v0.37.2).* The Windows push leg runs `E2E_WORKERS=2` —
+two Electron apps side by side (`fullyParallel` stays false; whole files are the unit). Measured on
+the dev box over 342 specs: workers:1 = 10.1m, workers:2 = 5.3–6.8m. Cross-worker **state** leakage
+is a non-issue, since each worker gets its own Electron process. What contends is OS-level — window
+focus, ConPTY, GPU — and it is real: one of three `retries:0` runs failed four native specs
+(`boardKeyboard:58`, `terminal:62`, `terminalCrisp:155`/`:200`), another failed none. Probabilistic,
+not a fixed incompatible set. Under the gate's `retries:2` the suite is green. **The trade is
+explicit: ~3 min/run bought with more reliance on retries.** `E2E_WORKERS` defaults to **1**, so the
+Linux Docker leg and CI cannot silently inherit it — that container is CPU-capped and unmeasured at
+2, and the merge gate is exactly where extra retry-reliance is least welcome. Opt out with
+`E2E_WORKERS=1 git push`.
 
 *What MAIN-process diffs do now.* `src/main/**` used to be blanket-`FULL` because it is the cross-OS
 surface. The Linux leg is deferred to the merge gate either way, so blanket-`FULL` bought spec
