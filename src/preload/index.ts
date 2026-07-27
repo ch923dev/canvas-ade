@@ -301,6 +301,10 @@ export type { RecentProject, ProjectResult } from './projectTypes'
 export type { BackgroundProjectInfo } from './projectSessionsApi'
 import type { RecentProject, ProjectResult } from './projectTypes'
 
+/** Mirrors main `globalHotkey.ProjectCycleHold` (R16) — the modifier whose release commits the
+ *  running-projects overlay; null when the bound chord carries no modifier at all. */
+export type ProjectCycleHold = 'Control' | 'Meta' | 'Alt' | null
+
 // ── File-tree epic (S1) — root-confined fs surface (mirrors main `fileIpc.ts`) ──
 /** One directory entry from `file.listDir` (symlinks are skipped MAIN-side). */
 export interface FileEntry {
@@ -761,9 +765,15 @@ const api = {
      * Global project-switch hotkey (globalHotkey.ts): MAIN foregrounds the window then sends the
      * cycle DIRECTION (1 = next / -1 = prev). The renderer owns the ordered recents ring + the
      * performProjectSwitch pipeline. Returns an unsubscribe fn.
+     *
+     * R16: the second argument is the modifier the user is HOLDING (`'Control' | 'Meta' | 'Alt'`,
+     * or null for a modifier-free rebind). MAIN derives it from the chord that actually fired —
+     * the renderer cannot, because that chord's keydown is swallowed in MAIN. Releasing it commits
+     * the overlay. Additive: a handler that ignores the argument behaves exactly as before.
      */
-    onCycleProject: (handler: (dir: 1 | -1) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, dir: 1 | -1): void => handler(dir)
+    onCycleProject: (handler: (dir: 1 | -1, hold: ProjectCycleHold) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, dir: 1 | -1, hold: ProjectCycleHold): void =>
+        handler(dir, hold ?? null)
       ipcRenderer.on('project:cycleHotkey', listener)
       return () => ipcRenderer.removeListener('project:cycleHotkey', listener)
     }

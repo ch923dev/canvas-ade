@@ -72,14 +72,15 @@ describe('globalHotkey — window-scoped binding (fix #1)', () => {
     const { onInput, send } = makeController(DEFAULT)
     const pd = vi.fn()
     onInput({ preventDefault: pd }, keyDown({ key: ']', control: true, alt: true }))
-    expect(send).toHaveBeenCalledWith(PROJECT_CYCLE_CHANNEL, 1)
+    // R16: the payload carries the HOLD modifier too — releasing it commits the overlay.
+    expect(send).toHaveBeenCalledWith(PROJECT_CYCLE_CHANNEL, 1, 'Control')
     expect(pd).toHaveBeenCalled()
   })
 
   it('sends prev (-1) on the prev chord', () => {
     const { onInput, send } = makeController(DEFAULT)
     onInput(noop, keyDown({ key: '[', control: true, alt: true }))
-    expect(send).toHaveBeenCalledWith(PROJECT_CYCLE_CHANNEL, -1)
+    expect(send).toHaveBeenCalledWith(PROJECT_CYCLE_CHANNEL, -1, 'Control')
   })
 
   it('ignores a partial chord (a required modifier missing)', () => {
@@ -119,7 +120,8 @@ describe('globalHotkey — window-scoped binding (fix #1)', () => {
       const { onInput, send } = makeController(DEFAULT)
       // Cmd+Alt+] fires on mac…
       onInput(noop, keyDown({ key: ']', meta: true, alt: true }))
-      expect(send).toHaveBeenCalledWith(PROJECT_CYCLE_CHANNEL, 1)
+      // …and the hold resolves to Cmd with it, so mac commits on releasing ⌘ (R16).
+      expect(send).toHaveBeenCalledWith(PROJECT_CYCLE_CHANNEL, 1, 'Meta')
       // …while Ctrl+Alt+] (the Windows chord) must NOT.
       send.mockClear()
       onInput(noop, keyDown({ key: ']', control: true, alt: true }))
@@ -127,5 +129,51 @@ describe('globalHotkey — window-scoped binding (fix #1)', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: orig, configurable: true })
     }
+  })
+})
+
+/**
+ * R16 — the HOLD modifier MAIN reports alongside the direction. It has to be derived here rather
+ * than guessed in the renderer for two reasons: the accelerator is user-rebindable, and the
+ * chord's own keydown is `preventDefault`ed above, so the renderer never observes the modifier
+ * going down at all. Only the modifier's `keyup` reaches the page — which is exactly what
+ * commit-on-release listens for, and why this needs no new IPC channel.
+ */
+describe('globalHotkey — the commit-on-release hold key (R16)', () => {
+  beforeEach(() => {
+    appOn.mockReset()
+    appRemove.mockReset()
+  })
+
+  const holdFor = (accel: string, key: string, input: Partial<InputLike>): unknown => {
+    const { onInput, send } = makeController({ enabled: true, next: accel, prev: 'F24' })
+    onInput(noop, keyDown({ key, ...input }))
+    return send.mock.calls[0]?.[2]
+  }
+
+  it('Ctrl/Cmd wins when the chord has one — the locked Alt-Tab gesture', () => {
+    expect(holdFor('CommandOrControl+Alt+]', ']', { control: true, alt: true })).toBe('Control')
+  })
+
+  it('an explicit Control chord reports Control', () => {
+    expect(holdFor('Control+Shift+P', 'p', { control: true, shift: true })).toBe('Control')
+  })
+
+  it('Alt is the fallback, so a modifier-light rebind still gets the gesture', () => {
+    // `Alt+]` has no Ctrl/Cmd to release; releasing Alt is the only sensible commit, and dropping
+    // to null here would silently strip commit-on-release from anyone who rebinds this way.
+    expect(holdFor('Alt+]', ']', { alt: true })).toBe('Alt')
+  })
+
+  it('a modifier-FREE chord reports null — there is nothing to release', () => {
+    // The overlay then keeps its Enter/click/Esc behaviour rather than inventing a hold that the
+    // user is not holding.
+    expect(holdFor('F13', 'f13', {})).toBeNull()
+  })
+
+  it('the direction is still the first argument (the payload is additive)', () => {
+    const { onInput, send } = makeController(DEFAULT)
+    onInput(noop, keyDown({ key: ']', control: true, alt: true }))
+    expect(send.mock.calls[0]?.[1]).toBe(1)
   })
 })
