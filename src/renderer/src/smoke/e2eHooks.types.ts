@@ -344,6 +344,20 @@ export interface CanvasE2E {
    */
   lastSwitchMetrics: () => SwitchMetricsSnapshot | null
   /**
+   * R16: the running-projects overlay's full state, store half + module-scoped in-flight half
+   * (`opening` / `queuedSteps`), for specs that drive the switch hotkey. Diagnostic surface only —
+   * asserting on the DOM stays the real check; this exists so a failure names its cause.
+   */
+  runningSwitcher: () => {
+    open: boolean
+    names: string[]
+    index: number
+    holdKey: 'Control' | 'Meta' | 'Alt' | null
+    holdReleased: boolean
+    opening: boolean
+    queuedSteps: number
+  }
+  /**
    * Phase 4: the DEFAULT switch pipeline (no explicit keep) — the per-project policy decides,
    * and the ask-on-switch dialog appears when the outgoing project has live resources. The
    * promise settles only after any dialog is answered, so specs drive the real modal.

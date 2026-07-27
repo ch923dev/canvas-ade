@@ -40,6 +40,15 @@ type RendererGlobal = {
       keep: boolean
     ): Promise<{ outcome: string; status: string; dir: string | null; boardCount: number }>
     lastSwitchMetrics(): { outcome: string; at: number } | null
+    runningSwitcher(): {
+      open: boolean
+      names: string[]
+      index: number
+      holdKey: string | null
+      holdReleased: boolean
+      opening: boolean
+      queuedSteps: number
+    }
   }
   api: {
     project: {
@@ -82,16 +91,42 @@ function closeBackground(page: Page, dir: string) {
 /**
  * Fire the REAL main→renderer cycle channel, carrying the hold modifier exactly as
  * `globalHotkey.onInput` does for the default `CommandOrControl+Alt+]` chord on this platform.
+ *
+ * Targeted at the window Playwright is actually driving (`electronApp.browserWindow(page)`) rather
+ * than at `getAllWindows()[first-not-destroyed]`. This suite creates OTHER BrowserWindows — every
+ * Browser board is a hidden offscreen one, and closeModalKeep/ptyhostReattach close and re-create
+ * the main window — so "the first live window" is not reliably the app's UI. A send to the wrong
+ * webContents is silent and total: no error, no overlay, and a failure that reads as a flake.
  */
-function fireCycle(electronApp: ElectronApplication, dir: 1 | -1) {
-  return electronApp.evaluate(({ BrowserWindow }, d) => {
-    const w = BrowserWindow.getAllWindows().find((x) => !x.webContents.isDestroyed())
-    w?.webContents.send(
-      'project:cycleHotkey',
-      d,
-      process.platform === 'darwin' ? 'Meta' : 'Control'
-    )
+async function fireCycle(electronApp: ElectronApplication, page: Page, dir: 1 | -1): Promise<void> {
+  const win = await electronApp.browserWindow(page)
+  await win.evaluate((w, d) => {
+    ;(
+      w as unknown as { webContents: { send: (c: string, ...a: unknown[]) => void } }
+    ).webContents.send('project:cycleHotkey', d, process.platform === 'darwin' ? 'Meta' : 'Control')
   }, dir)
+}
+
+/** The overlay's own state (store + the module-scoped in-flight half) — see `runningSwitcher`. */
+function switcherState(page: Page) {
+  return page.evaluate(() =>
+    (globalThis as unknown as RendererGlobal).__canvasE2E.runningSwitcher()
+  )
+}
+
+/**
+ * Wait for the press to have actually raised the overlay, failing with the overlay's OWN state
+ * rather than a bare "element not found" — which of `open` / `cards` / `opening` went wrong is the
+ * entire diagnosis, and a DOM-only assertion throws it away.
+ */
+async function expectOverlayRaised(page: Page): Promise<void> {
+  await expect
+    .poll(async () => JSON.stringify(await switcherState(page)), {
+      timeout: 8_000,
+      message: 'the cycle press never raised the running-projects overlay'
+    })
+    .toContain('"open":true')
+  await expect(page.locator('[data-testid="running-switcher"]')).toBeVisible()
 }
 
 /** The last completed switch's record — `paintable` lands two frames after the pipeline resolves,
@@ -131,8 +166,8 @@ test.describe('@chrome commit-on-release: the hotkey overlay actually switches (
       const priorAt = await lastAt(page)
 
       // ── The gesture: chord down (overlay opens on the resident) … ──
-      await fireCycle(electronApp, 1)
-      await expect(overlay).toBeVisible({ timeout: 8_000 })
+      await fireCycle(electronApp, page, 1)
+      await expectOverlayRaised(page)
       await expect(page.locator('.rps-sel .rps-name')).toContainText('commit-a')
       // The footer must actually teach the gesture that is about to happen.
       await expect(page.locator('.rps-foot')).toContainText('release')
@@ -189,8 +224,8 @@ test.describe('@chrome commit-on-release: the hotkey overlay actually switches (
       await declineRecapConsent(page)
 
       const overlay = page.locator('[data-testid="running-switcher"]')
-      await fireCycle(electronApp, 1)
-      await expect(overlay).toBeVisible({ timeout: 8_000 })
+      await fireCycle(electronApp, page, 1)
+      await expectOverlayRaised(page)
 
       await page.keyboard.press('Escape')
       await expect(overlay).toHaveCount(0)

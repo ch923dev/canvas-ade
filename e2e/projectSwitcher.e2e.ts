@@ -74,11 +74,19 @@ function closeBackground(page: Page, dir: string) {
   )
 }
 
-/** Fire the REAL main→renderer cycle channel (what the window before-input-event does on the chord). */
-function fireCycle(electronApp: ElectronApplication, dir: 1 | -1) {
-  return electronApp.evaluate(({ BrowserWindow }, d) => {
-    const w = BrowserWindow.getAllWindows().find((x) => !x.webContents.isDestroyed())
-    w?.webContents.send('project:cycleHotkey', d)
+/**
+ * Fire the REAL main→renderer cycle channel (what the window before-input-event does on the chord),
+ * at the window Playwright is actually driving. This used to pick `getAllWindows()`'s first live
+ * window, which is not reliably the app UI — Browser boards are hidden offscreen BrowserWindows and
+ * closeModalKeep/ptyhostReattach re-create the main one — and a send to the wrong webContents is
+ * silent: no overlay, no error. That is a candidate cause of this file's known full-run flake.
+ */
+async function fireCycle(electronApp: ElectronApplication, page: Page, dir: 1 | -1): Promise<void> {
+  const win = await electronApp.browserWindow(page)
+  await win.evaluate((w, d) => {
+    ;(
+      w as unknown as { webContents: { send: (c: string, ...a: unknown[]) => void } }
+    ).webContents.send('project:cycleHotkey', d)
   }, dir)
 }
 
@@ -109,7 +117,7 @@ test.describe('@chrome running-projects switcher (hotkey overlay)', () => {
       const overlay = page.locator('[data-testid="running-switcher"]')
 
       // ── Two running projects ──
-      await fireCycle(electronApp, 1)
+      await fireCycle(electronApp, page, 1)
       await expect(overlay).toBeVisible({ timeout: 8_000 })
       await expect(page.locator('.rps-card')).toHaveCount(2)
       await expect(page.locator('.rps-count')).toHaveText('2 running')
@@ -129,7 +137,7 @@ test.describe('@chrome running-projects switcher (hotkey overlay)', () => {
 
       // ── One running project → the empty state, never a cold recent ──
       expect(await closeBackground(page, dirA)).toBe(true)
-      await fireCycle(electronApp, 1)
+      await fireCycle(electronApp, page, 1)
       await expect(overlay).toBeVisible({ timeout: 8_000 })
       await expect(page.locator('.rps-card')).toHaveCount(1)
       await expect(page.locator('.rps-empty')).toHaveCount(1)

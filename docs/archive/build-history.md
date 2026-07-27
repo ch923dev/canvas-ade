@@ -3865,3 +3865,67 @@ real channel and asserts the instrumented record moved — **the Phase 1 gate it
 **Verified:** typecheck · lint · format clean; full `pnpm test` 6186 passed with the same 5
 pre-existing failures as `main`; e2e green. Dev check title-stamped before push. **Version:**
 0.34.3 → **0.35.0** (minor — behaviour change).
+
+### PR #391 — R4 unify the open paths + R10 one resident list (audit Phase 1, cont.) — v0.36.0
+
+**R4 — one `openProject()`, and the door that was actually wrong.** Three production doors opened a
+project with no outgoing project to hand over — `WelcomeScreen.openDir`, `WelcomeScreen.onCreate`,
+and the boot auto-reopen in `App.tsx` — each hand-rolling the same four steps. Two agreed; **boot
+took no switch lock at all**, so a user clicking a recent while `project.current()` was still
+resolving ran two concurrent opens: exactly #BUG-009, where MAIN's `currentDir` and the renderer's
+project disagree and the next autosave cross-writes one project's canvas into the other's file.
+That divergence — not the duplication — is why R4 exists.
+
+`src/renderer/src/store/openProject.ts` is the sibling of `performProjectSwitch`, deliberately NOT
+a variant of it: a switch must protect an outgoing project (ask → flush → sidecar → thumb →
+handover), an open has nothing to protect. What they share is the part every door re-implemented:
+the cross-surface lock, `loading` armed *before* the IPC, and routing a REJECTED ipc into
+`applyOpenResult({ok:false})` (#BUG-030) instead of sticking on the loading line. Four outcomes —
+`opened` / `none` / `locked` / `failed` — and the verdict is read off the status `applyOpenResult`
+settled, never from `r.ok`, because an envelope-valid but deep-corrupt doc is `ok:true` and still
+fails to load.
+
+Boot moved out of `App.tsx` into `store/useProjectBoot.ts`. Not tidying: inside the App root it was
+untestable, and it is the door that was broken. **Known coverage limit, stated rather than papered
+over:** under `CANVAS_E2E` the hook takes the harness branch and never opens a project, so the e2e
+suite cannot cover boot at all — `useProjectBoot.test.ts` plus the manual dev check *are* its
+coverage.
+
+**Two deliberate calls.** (1) `e2eHooks.openProjectFromDisk` stays a bare harness door. The audit
+counts three doors; specs call this one with a project already open, which is a *switch*, so
+routing it would silently promote those calls into full pipelines and change what the suite
+exercises. (2) Boot used to swallow a `{ok:false}` from `project.current()` and show a bare picker;
+unified, it now surfaces the error on the picker like the other two doors. A last project that no
+longer loads is something the user needs told — silently forgetting it reads as the app losing
+their project.
+
+**R10 — one resident list, and the staleness nobody was handling.** "Which projects are resident,
+and which are keep-forever" is one fact that lived in two `useState` pairs (`ProjectDock`,
+`ProjectSwitcher`), each re-fetched on open and after every ✕ / ∞ — and **neither subscribed to
+`project:bgLifecycle`**. MAIN closes residents on its own schedule (idle TTL, MAX_BACKGROUND
+evicting the coldest), so an open dock or menu kept rendering a resident that no longer existed,
+with a ✕ acting on a dead registry entry. `store/useResidentProjects.ts` is one shared store with a
+ref-counted lifecycle subscription (two surfaces = one listener, one fetch) and an in-flight dedupe.
+`runningSwitcherStore` is deliberately NOT a consumer — its list is a frozen snapshot, and a live
+one would re-order the Alt-Tab cards under the user mid-cycle, the bug the snapshot was added to fix.
+The audit also names a `ProjectSessionsPane`; no such file exists (stale premise, recorded here).
+
+**Flake work, carried from #391's R16 half.** The commit spec came back `1 flaky` on the R16 push —
+failed attempt 1, passed on retry — so `resetRunningSwitcherInteraction()` was not the whole story.
+The trace showed setup complete in 0.33 s and the overlay simply never entering the DOM. Both
+switcher specs fired the cycle at `getAllWindows()`'s first live window, which is **not reliably the
+app UI**: every Browser board is a hidden offscreen `BrowserWindow`, and `closeModalKeep` /
+`ptyhostReattach` close and re-create the main one. A send to the wrong `webContents` is silent and
+total. Both now target `electronApp.browserWindow(page)`. A `runningSwitcher()` harness probe was
+added so a recurrence reports *which* link broke (`open` / `cards` / `opening`) instead of "element
+not found". Candidate mechanism + hardening + instrument — not a proven root cause.
+
+**Tests.** 9 primitive cases (all four outcomes, ordering, lock discipline, BUG-030, verdict-not-
+from-`r.ok`) + 3 boot cases + 6 resident-hook cases (bgLifecycle refresh, shared listener,
+unsubscribe on the LAST unmount, dedupe, absent-channel degradation). Mutation-checked: arming
+`loading` after the load, trusting `r.ok`, and dropping the effect's `[]` deps each kill tests.
+
+**Verified:** typecheck · lint (0 errors) · format clean; full `pnpm test` 6204 passed with the same
+5 pre-existing failures as `main` (`pathSafe` symlink ×2, `pty.recapenv` ×3). `canvasStore.ts` sits
+on its 727-line cap, so the welcome-restore is a direct `setState` in `openProject` rather than a
+new store action. **Version:** 0.35.0 → **0.36.0** (minor).

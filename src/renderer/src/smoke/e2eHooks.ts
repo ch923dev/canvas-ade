@@ -41,7 +41,8 @@ import { performProjectSwitch } from '../store/projectSwitch'
 import { useSwitchMetricsStore, resetSwitchMetrics } from '../store/switchMetrics'
 import {
   useRunningSwitcherStore,
-  resetRunningSwitcherInteraction
+  resetRunningSwitcherInteraction,
+  runningSwitcherInteractionState
 } from '../store/runningSwitcherStore'
 import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useAskOnSwitchStore } from '../store/askOnSwitchStore'
@@ -712,6 +713,21 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // (see `markPaintableAndEnd`), so a spec that reads this the instant the switch resolves can
       // legitimately see the PREVIOUS record or null — poll for a fresh `at` rather than assuming.
       return useSwitchMetricsStore.getState().last
+    },
+    runningSwitcher() {
+      // R16: the whole hotkey→overlay path in one read — the store half AND the module-scoped
+      // in-flight half. A spec that only asserts on the DOM can tell you the overlay is absent but
+      // not whether the press never arrived (open false, opening false), was swallowed by a
+      // stranded fetch (opening true), or opened onto an empty running set (cards []).
+      const s = useRunningSwitcherStore.getState()
+      return {
+        open: s.open,
+        names: s.cards.map((c) => c.name),
+        index: s.index,
+        holdKey: s.holdKey,
+        holdReleased: s.holdReleased,
+        ...runningSwitcherInteractionState()
+      }
     },
     async switchProjectFromDisk(dir, keep) {
       const outcome = await performProjectSwitch(() => window.api.project.open(dir), {
