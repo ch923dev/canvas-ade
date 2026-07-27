@@ -3894,10 +3894,16 @@ coverage.
 **Two deliberate calls.** (1) `e2eHooks.openProjectFromDisk` stays a bare harness door. The audit
 counts three doors; specs call this one with a project already open, which is a *switch*, so
 routing it would silently promote those calls into full pipelines and change what the suite
-exercises. (2) Boot used to swallow a `{ok:false}` from `project.current()` and show a bare picker;
-unified, it now surfaces the error on the picker like the other two doors. A last project that no
-longer loads is something the user needs told — silently forgetting it reads as the app losing
-their project.
+exercises. (2) Boot's failure handling changed — but not where the PR first claimed. **Corrected
+after review:** `project:current` never returns `{ok:false}` (`projectIpc.ts` ends
+`return r.ok ? r : null`), so a failed *read* of the last project still lands on a bare picker,
+exactly as before. The real change is the **rejection** path: the old `App.tsx` effect had no
+`.catch` anywhere on the `project.current()` chain, so a throw inside the handler (`gcAssets`,
+`scaffoldProjectMemory`, `memoryEngine` — all wrapped now, but the IPC can still reject) was an
+UNHANDLED rejection that left the app parked on the welcome screen with no loading state, no error
+and no trace. `openProject`'s try/catch routes that to `status:'error'` carrying the message. Worth
+recording because the first draft of this entry and the PR description both overstated it, and the
+reviewer caught the gap between the claim and the code.
 
 **R10 — one resident list, and the staleness nobody was handling.** "Which projects are resident,
 and which are keep-forever" is one fact that lived in two `useState` pairs (`ProjectDock`,
