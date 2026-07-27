@@ -3,9 +3,11 @@ import { describe, it, expect } from 'vitest'
 import { scopeForPaths } from './e2e-scope.mjs'
 
 /**
- * Locks the path -> e2e-scope mapping (dx-audit MT-1 / PR-3). A selection bug
- * here means silently-untested pushes, so the safety contract — fail OPEN to
- * FULL — is asserted explicitly alongside the happy-path scoping.
+ * Locks the path -> e2e-scope mapping (dx-audit MT-1 / PR-3; re-scoped 2026-07-28).
+ * A selection bug here means silently-untested pushes, so both halves of the safety
+ * contract are asserted explicitly:
+ *   * fail OPEN to FULL for anything cross-cutting or unrecognised,
+ *   * emit NONE only for paths that provably cannot reach the running app.
  */
 describe('scopeForPaths', () => {
   it('scopes a terminal board change to @core|@terminal', () => {
@@ -61,19 +63,74 @@ describe('scopeForPaths', () => {
     )
   })
 
+  /**
+   * 2026-07-28 ("push cheap / merge full"). `src/main/**` used to route blanket-FULL
+   * because it is the cross-OS surface — but the Linux leg is now deferred to the
+   * merge gate unconditionally, so blanket-FULL bought spec breadth, not OS coverage.
+   * The well-partitioned MAIN subsystems therefore scope by area like the renderer.
+   */
+  describe('MAIN-process subsystems scope by area', () => {
+    it.each([
+      ['src/main/pty.ts', '@core|@terminal'],
+      ['src/main/ptyHost/daemon.ts', '@core|@terminal'],
+      ['src/main/terminalResume.ts', '@core|@terminal'],
+      ['src/main/recapIpc.ts', '@core|@terminal'],
+      ['src/main/previewOsr.ts', '@core|@preview'],
+      ['src/main/previewOsrWidgets.ts', '@core|@preview'],
+      ['src/main/localServer.ts', '@core|@preview'],
+      ['src/main/voiceIpc.ts', '@core|@voice'],
+      ['src/main/openaiTranscribe.ts', '@core|@voice'],
+      ['src/main/mcpOrchestrator.ts', '@core|@mcp'],
+      ['src/main/swarmLedger.ts', '@core|@mcp'],
+      ['src/main/orchestrationLead.ts', '@core|@mcp'],
+      // preload is per-domain too — the same reasoning applies to its bridge files
+      ['src/preload/terminalApi.ts', '@core|@terminal'],
+      ['src/preload/recapApi.ts', '@core|@terminal'],
+      ['src/preload/voice.ts', '@core|@voice'],
+      ['src/preload/mcpApi.ts', '@core|@mcp'],
+      ['src/preload/swarm.ts', '@core|@mcp'],
+      // shared MAIN⇄renderer contract modules follow their domain
+      ['src/shared/mcpTypes.ts', '@core|@mcp'],
+      ['src/shared/swarmLedgerTypes.ts', '@core|@mcp']
+    ])('%s -> %s', (path, expected) => {
+      expect(scopeForPaths([path])).toBe(expected)
+    })
+
+    it('leaves the shared MAIN core on FULL', () => {
+      expect(scopeForPaths(['src/main/index.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/main/quit.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/main/windowSecurity.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/main/projectIpc.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/main/hooks/installer.ts'])).toBe('FULL')
+    })
+
+    it('leaves the shared preload bridge on FULL', () => {
+      expect(scopeForPaths(['src/preload/index.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/preload/index.d.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/preload/authApi.ts'])).toBe('FULL')
+      expect(scopeForPaths(['src/preload/projectTypes.ts'])).toBe('FULL')
+    })
+  })
+
+  it('ignores the bench suite — it runs under a different Playwright config', () => {
+    expect(scopeForPaths(['e2e/projectSwitch.bench.ts', 'e2e/benchSink.ts'])).toBe('NONE')
+    expect(
+      scopeForPaths(['e2e/terminalLoad.bench.ts', 'src/renderer/src/canvas/AppChrome.tsx'])
+    ).toBe('@core|@chrome')
+  })
+
   describe('fails OPEN to FULL', () => {
     it.each([
       'src/renderer/src/canvas/Canvas.tsx', // shared canvas shell
       'src/renderer/src/canvas/BoardFrame.tsx', // board frame (all types)
       'src/renderer/src/store/canvasStore.ts', // store core
       'src/renderer/src/lib/boardSchema.ts', // schema
-      'src/main/pty.ts', // main-process (cross-OS)
-      'src/main/preview.ts', // main-process preview (cross-OS)
+      'src/main/index.ts', // MAIN entrypoint (shared core)
       'src/preload/index.ts', // preload bridge
-      'e2e/terminal.e2e.ts', // an e2e spec
+      'e2e/terminal.e2e.ts', // an e2e spec (the hook targets spec FILES separately)
       'e2e/fixtures.ts', // the e2e fixtures
       'src/renderer/src/smoke/e2eHooks.ts', // smoke seam
-      'package.json',
+      'package.json', // deps/scripts (version-only diffs are stripped by the hook)
       'pnpm-lock.yaml',
       'playwright.config.ts',
       'scripts/e2e-scope.mjs', // the scope script itself
@@ -91,10 +148,39 @@ describe('scopeForPaths', () => {
       ).toBe('FULL')
     })
 
-    it('-> FULL for empty / nothing-runtime input', () => {
+    it('-> FULL for empty / unparseable input', () => {
       expect(scopeForPaths([])).toBe('FULL')
-      expect(scopeForPaths(['docs/readme.md', 'misty-pines.png'])).toBe('FULL')
       expect(scopeForPaths([''])).toBe('FULL')
+    })
+  })
+
+  /**
+   * NONE = "nothing the e2e harness could observe changed" -> the caller skips e2e.
+   * Only ever emitted for paths that cannot be bundled into, or read by, the running
+   * app. The pre-commit trio + the Actions `check` job already cover all of these.
+   */
+  describe('emits NONE for provably non-runtime paths', () => {
+    it.each([
+      ['docs only', ['docs/readme.md', 'CLAUDE.md']],
+      ['images', ['misty-pines.png', 'resources/icon.ico']],
+      ['vitest unit specs', ['src/main/pty.test.ts', 'src/renderer/src/lib/placement.test.ts']],
+      ['vitest integration specs', ['src/main/mcpConfirm.integration.test.ts']],
+      ['test fixtures', ['src/main/__fixtures__/voice-librispeech-16k.wav']],
+      ['CI workflow config', ['.github/workflows/pr.yml']],
+      ['release/build tooling', ['scripts/release.mjs', 'scripts/gen-icon-win.mjs']],
+      ['SCA + bench tooling', ['scripts/sca-audit.mjs', 'scripts/bench-baseline.mjs']],
+      ['stt eval harness', ['scripts/stt-eval/run.mjs']],
+      ['non-app trees', ['marketing/index.html', 'design-reference/project/DESIGN.md']],
+      ['lint/format/vitest config', ['eslint.config.mjs', '.prettierrc', 'vitest.config.ts']],
+      ['git metadata', ['.gitignore', '.gitattributes']]
+    ])('%s -> NONE', (_label, paths) => {
+      expect(scopeForPaths(paths)).toBe('NONE')
+    })
+
+    it('a unit-test edit beside a source edit still scopes the source', () => {
+      expect(
+        scopeForPaths(['src/main/pty.test.ts', 'src/renderer/src/canvas/boards/TerminalBoard.tsx'])
+      ).toBe('@core|@terminal')
     })
   })
 
@@ -122,8 +208,9 @@ describe('scopeForPaths', () => {
     expect(scopeForPaths(['src/renderer/src/voice/useVoiceCapture.ts'])).toBe('@core|@voice')
     expect(scopeForPaths(['src/renderer/src/voice/captureMath.ts'])).toBe('@core|@voice')
     expect(scopeForPaths(['src/renderer/src/store/voiceStore.ts'])).toBe('@core|@voice')
-    // The MAIN half (voiceIpc.ts) stays FULL via the src/main/ cross-cutting rule.
-    expect(scopeForPaths(['src/main/voiceIpc.ts'])).toBe('FULL')
+    // The voice ASSET generators feed runtime inputs, so they scope with voice too.
+    expect(scopeForPaths(['scripts/gen-tts-manifest.mjs'])).toBe('@core|@voice')
+    expect(scopeForPaths(['scripts/gen-voice-fillers.mjs'])).toBe('@core|@voice')
   })
 
   it('normalises backslash paths', () => {
