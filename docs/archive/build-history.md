@@ -3808,5 +3808,30 @@ the 700 cap, no override added); `index.ts` 707→710, documented, for three cho
 Two bugs the tests caught, not review: `swarm:destroyRun` used `sessions.get`, so deleting a board whose
 run was never touched this session orphaned its ledger; and a `.tsx` under `src/main` dragged DOM types
 into `tsconfig.node` and broke the e2e specs' typecheck (the real-channel bridge test moved to the
-renderer tree). **Verified:** units 5811 green (only the 5 documented box ambients), integration 390
+renderer tree).
+
+**Two cross-spec isolation leaks the full matrix exposed** (one app is reused across every spec file, so
+a spec's exit state is the next spec's start state). Both are fixed AT THE SOURCE — the shared `reset()`
+is deliberately left alone here: a global sweep of the modal layer + the camera was tried first and broke
+three OTHER specs, because every spec's click targets were written against the camera the suite's ORDER
+hands it (reverted; `reset()` keeps one comment saying why).
+**(1) The camera.** `swarmLedger` fitted a swarm board seeded to the RIGHT of a plan board, parking the
+camera out there — the next spec's board, correctly seeded at the origin, landed off-viewport, where
+React Flow never renders it and a terminal never mounts or spawns (it reads exactly like a PTY failure
+and is not one: this was `terminal.e2e.ts:11`). Seed the swarm board FIRST so the fit stays framed on
+x≈0, the shape `swarmBoard.e2e.ts` already proved benign. The twin: `terminalPolish`'s first-run-hint
+click had a latent dependency on the inherited camera — seeding SELECTS a board, a single selection
+reveals the left-docked Board Inspector, and at some cameras that popover sits exactly over the hint's
+button; it deselects now, since nothing in that test is about selection.
+**(2) A leaked current dir.** The new `writeSwarmRun` e2e op minted a throwaway project and
+`setCurrentDir`'d it for the rest of the worker's life (the next spec's PTY inherits that dir as its
+cwd); it fails CLOSED now, and the spec owns its temp project through the standard
+`createTempProject`/`teardownProject` pair — so the two restore specs also dismiss the fresh-project
+recap consent and close the digest panel that opening a project brings up.
+A THIRD leak this lane hit independently — a left-open Settings modal whose scrim ate the next spec's
+clicks (`mcpServers` · `projectSettings` · `swarmBoard`) — was fixed centrally on `main` mid-lane by
+**#389**'s `closeChromeOverlays()` in `reset()`, which this branch picked up on rebase; the spec-local
+closes written here were dropped as redundant.
+
+**Verified:** units 5811 green (only the 5 documented box ambients), integration 390
 green, e2e — **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).

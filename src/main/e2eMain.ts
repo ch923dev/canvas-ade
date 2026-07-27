@@ -182,9 +182,10 @@ export interface E2EMain {
    * Orchestration S2: persist a canned run ledger for `boardId` into the CURRENT project's
    * `.canvas/memory/run-<boardId>.json` through the CANONICAL writer, so an e2e can prove the
    * restore path against a run this session never created — the "reload restores the run" half of
-   * the S2 exit proof. Mints a throwaway project first if none is current (writeRecapMd's shape).
+   * the S2 exit proof. Returns false when no project is open — the caller owns the temp project
+   * (createTempProject / teardownProject), so nothing leaks a stale current dir into a later spec.
    */
-  writeSwarmRun(boardId: string, ledger: unknown): Promise<boolean>
+  writeSwarmRun(boardId: string, ledger: unknown): boolean
   /** Orchestration S2: read a run ledger back, to assert what a triage action actually changed. */
   readSwarmRun(boardId: string): unknown
   /**
@@ -445,14 +446,16 @@ async function writeRecapMdToCurrentProject(boardId: string, md: string): Promis
  * Orchestration S2: the same shape for a run ledger — write through `createCanvasMemory(dir)
  * .writeRun`, the exact writer the app uses, so the path guard and the atomic write are the ones
  * under test rather than a hand-rolled fixture drop.
+ *
+ * Fails CLOSED with no project open rather than conjuring one: an op that quietly
+ * `setCurrentDir`s a throwaway project leaves MAIN pointing at it for the rest of the worker's
+ * life (one app is reused across every spec file), and the next spec to spawn a PTY inherits that
+ * dir as its cwd. The caller opens a temp project and tears it down — the `createTempProject` /
+ * `teardownProject` pair every other project-scoped spec already uses.
  */
-async function writeSwarmRunToCurrentProject(boardId: string, ledger: unknown): Promise<boolean> {
-  let dir = getCurrentDir()
-  if (!dir) {
-    dir = mkdtempSync(join(tmpdir(), 'canvas-e2e-swarm-'))
-    await createProject(dir, 'swarm-e2e', {})
-    setCurrentDir(dir)
-  }
+function writeSwarmRunToCurrentProject(boardId: string, ledger: unknown): boolean {
+  const dir = getCurrentDir()
+  if (!dir) return false
   return createCanvasMemory(dir).writeRun(boardId, ledger)
 }
 
