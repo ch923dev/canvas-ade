@@ -134,13 +134,56 @@ if [ -z "$changed" ]; then
   exit 0
 fi
 
+remind() {
+  echo "[pre-push] REMINDER: run the manual checks in docs/testing/MANUAL-CHECKS.md for the areas you touched -- it catches what e2e/unit do not."
+}
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "[pre-push] ERROR: pnpm is not on PATH. Run 'corepack enable' first."
+  exit 1
+fi
+
+# E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
+# documented browser-trio env flake doesn't false-block a push.
+
+# ----- full matrix: opt-in, or a direct push to main -------------------------
+# The full cross-OS matrix is the MERGE gate, not the push gate. It runs here only
+# when explicitly forced, or when the push target IS main (a direct-to-main push is
+# effectively a merge).
+#
+# This block is deliberately FIRST — ahead of the version-only filter and every
+# skip path below. Otherwise a direct-to-main push whose diff reduces to nothing
+# but the `"version"` line (a lone version-bump commit, or a merge whose only
+# residual diff is the bump) would hit the "version bump only — skipping e2e"
+# early exit and never reach here, silently voiding the "a push to main always
+# pays the full matrix" guarantee. Row 1 of the decision table in
+# docs/testing/TESTING.md outranks every other row, and this ordering is what
+# makes that true rather than merely documented.
+if [ "${E2E_FULL_MATRIX:-}" = "1" ] || [ "$pushing_main" = "1" ]; then
+  remind
+  if [ "$pushing_main" = "1" ] && [ "${E2E_FULL_MATRIX:-}" != "1" ]; then
+    echo "[pre-push] pushing to main — FULL e2e matrix (Windows native + Linux Docker, every spec)."
+  else
+    echo "[pre-push] E2E_FULL_MATRIX=1 — FULL e2e matrix (Windows native + Linux Docker, every spec)."
+  fi
+  # The Linux leg runs in Docker — fail early with a clear message if it is not up.
+  if ! docker info >/dev/null 2>&1; then
+    echo "[pre-push] ERROR: Docker daemon not running — the Linux e2e leg needs it."
+    echo "           Start Docker Desktop, or bypass this push with: git push --no-verify"
+    exit 1
+  fi
+  E2E_PRECOMMIT=1 pnpm test:e2e:matrix
+  exit 0
+fi
+
 # ----- version-only package.json filter (2026-07-28) -------------------------
 # CLAUDE.md requires a `version` bump in package.json in EVERY PR. package.json is
 # genuinely cross-cutting (a deps/scripts edit changes what the app under test IS),
 # so leaving it in the change-set forced FULL on literally every push and made all
 # the scoping below dead code. A diff whose ONLY changed lines are the `"version"`
 # field cannot change app behaviour — strip it. Any other package.json edit stays
-# in the set and still routes to FULL.
+# in the set and still routes to FULL. Only reachable on a NON-full-matrix push
+# (see the block above), so it can never talk a push to main out of the matrix.
 if printf '%s\n' "$changed" | grep -qx 'package.json'; then
   pj_nonversion=0
   for r in $ranges; do
@@ -164,35 +207,7 @@ if [ -z "$changed" ]; then
 fi
 # ----- end version-only filter -----------------------------------------------
 
-echo "[pre-push] REMINDER: run the manual checks in docs/testing/MANUAL-CHECKS.md for the areas you touched -- it catches what e2e/unit do not."
-
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "[pre-push] ERROR: pnpm is not on PATH. Run 'corepack enable' first."
-  exit 1
-fi
-
-# E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
-# documented browser-trio env flake doesn't false-block a push.
-
-# ----- full matrix: opt-in, or a direct push to main -------------------------
-# The full cross-OS matrix is the MERGE gate, not the push gate. It runs here only
-# when explicitly forced, or when the push target IS main (a direct-to-main push is
-# effectively a merge).
-if [ "${E2E_FULL_MATRIX:-}" = "1" ] || [ "$pushing_main" = "1" ]; then
-  if [ "$pushing_main" = "1" ] && [ "${E2E_FULL_MATRIX:-}" != "1" ]; then
-    echo "[pre-push] pushing to main — FULL e2e matrix (Windows native + Linux Docker, every spec)."
-  else
-    echo "[pre-push] E2E_FULL_MATRIX=1 — FULL e2e matrix (Windows native + Linux Docker, every spec)."
-  fi
-  # The Linux leg runs in Docker — fail early with a clear message if it is not up.
-  if ! docker info >/dev/null 2>&1; then
-    echo "[pre-push] ERROR: Docker daemon not running — the Linux e2e leg needs it."
-    echo "           Start Docker Desktop, or bypass this push with: git push --no-verify"
-    exit 1
-  fi
-  E2E_PRECOMMIT=1 pnpm test:e2e:matrix
-  exit 0
-fi
+remind
 
 # ----- e2e-spec-only push: run exactly the touched specs ---------------------
 # Editing e2e specs used to route FULL (via the `e2e/` cross-cutting rule). When the
