@@ -3880,3 +3880,50 @@ clean there. Run a THIRD time on the `taskForBoard` fix: Windows 334 / 3 skipped
 the same run), Linux 334 / 5 skipped / **1 flaky, exit 0**, that flaky being `projectSwitcher:96`
 yet again. Across three matrices the failure set is drawn entirely from two ambient families and
 never once includes a swarm-ledger spec. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
+
+## 2026-07-27 — PR #NNN: unit-test the switch orchestrator + the background-session wiring (audit R9, v0.34.3)
+
+**Audit Phase 1, item R9** (findings PS-3 / SM-3) — the first of the phase's four items, and
+tests-only by design: it is the safety net *for* R4's refactor, so it lands before the code moves.
+`performProjectSwitch` was **300 LOC of orchestration with no test file at all** (the audit says
+253; it grew via #387's instrumentation and the `Run.epoch` fix — trust the tree), reached from six
+production entry points, with five distinct return codes and an ordering contract whose failure mode
+is silent data loss. `backgroundSessions.ts` likewise had none despite active churn.
+
+**`src/renderer/src/store/projectSwitch.test.ts` (31 cases).** Every collaborator is mocked and each
+appends to ONE shared `calls` log, which is what makes the ordering contract assertable at all — the
+failure being tested is "right calls, wrong order", invisible to any per-mock assertion. All five
+codes: `'switched'`, `'locked'`, `'save-failed'`, `'background-failed'`, `'cancelled'`. Each abort
+also asserts what it must NOT have done — a `save-failed` that already handed over resources, or a
+`background-failed` that proceeds to the unmount and kills the very terminals the user chose to keep,
+are the dangerous shapes. The switch lock is a faithful mini-implementation rather than a `vi.fn()`,
+so `'locked'` is a property of a real second acquire failing; stubbing it by hand would pass against
+a pipeline that never took the lock. Ordering asserted: `cancelAutosave → save → saveSession →
+markSaved`, the decision before any side effect, `thumb`/`arm` before the unmount, park before the
+unmount on keep, unmount before the scoped close on stop (never the dispose-all).
+
+`decideKeep` gets its own block driving the **default, non-explicit** pipeline — the #390 trap:
+`if (explicit !== undefined) return explicit` means a test passing an explicit keep is not testing
+the default path at all, and one case asserts precisely that the early return skips `recordAskTime`.
+Branches covered: explicit keep/stop, torn bridge, stale dir, zero live resources, remembered
+`'keep'`, and ask→keep/stop/cancel including the forever flag and the Stop-only policy forget.
+
+**Proven non-vacuous by mutation**, per the #390 discipline: (1) moving `cancelActiveAutosave()`
+after the flush — the silent-data-loss inversion — fails the ordering case; (2) making the failed
+keep-handover fall through instead of aborting fails the `background-failed` case. Both reverted.
+
+**`src/main/backgroundSessions.test.ts` (31 cases).** MAIN file, node environment — the audit's §6
+R9 phrasing implies a renderer store; it is not. The registry's own policy is already covered by
+`projectSessions.test.ts` (541 lines) and is deliberately not re-tested; what had no coverage is
+what this module adds on top, all of it invisible from there: the Low-RAM getters read fresh per
+call, `foregroundOsr` being a *composition* (foreground, then trim to budget — the H4 fix, silently
+lost if someone passes the bare function), the ring-tail flush wiring, the forever-keep parse
+tolerating a hand-edited file, the sweep's timer discipline (idempotent arm, `unref`, clean stop, no
+stacked ticks behind a slow process-table sample, a throwing tick not killing the next), and the
+lifecycle fan-out — one `project:bgLifecycle` push per warn/close/evict with the right copy, muted
+OS notification under `CANVAS_E2E`/`CANVAS_SMOKE`, destroyed-window guards.
+
+**Verified:** typecheck · lint · format clean; the two files 62/62; full `pnpm test` 6157 passed
+with **5 pre-existing failures** (`pathSafe` symlink layer ×2, `pty.recapenv` ×3) confirmed
+identical on the MAIN checkout at `bcd4d311` — this box's floor, not a regression. Dev check
+title-stamped. **Version:** 0.34.2 → **0.34.3** (patch — tests only, no product code).
