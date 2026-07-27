@@ -3875,4 +3875,8 @@ subsystem this branch does not touch; and `planningCrossBoardDrag:91` runs at su
 `terminalPolish`) — so it cannot be downstream of this lane, the shared seams being additive only.
 Linux (Docker, xvfb) 334 passed / 5 skipped / **1 flaky, exit 0** — `projectSwitcher:96`, the same
 hotkey-overlay class as the previous two legs, green on retry; all three Windows failures passed
-clean there. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
+clean there. Run a THIRD time on the `taskForBoard` fix: Windows 334 / 3 skipped / 2 failed
+(`projectSwitcher:96` and `voiceCloud:108` — both green isolated, and both green on the Linux leg of
+the same run), Linux 334 / 5 skipped / **1 flaky, exit 0**, that flaky being `projectSwitcher:96`
+yet again. Across three matrices the failure set is drawn entirely from two ambient families and
+never once includes a swarm-ledger spec. **Version:** 0.34.0 → **0.35.0** (minor — new subsystem).
