@@ -40,6 +40,10 @@ import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { performProjectSwitch } from '../store/projectSwitch'
 import { useSwitchMetricsStore, resetSwitchMetrics } from '../store/switchMetrics'
+import {
+  useRunningSwitcherStore,
+  resetRunningSwitcherInteraction
+} from '../store/runningSwitcherStore'
 import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useAskOnSwitchStore } from '../store/askOnSwitchStore'
 import { useToastStore } from '../store/toastStore'
@@ -512,6 +516,13 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // measurement left by an earlier spec would otherwise be read as this spec's own switch —
       // and a stale in-flight window would swallow the next switch's `start` mark.
       resetSwitchMetrics()
+      // The running-projects overlay is ephemeral session state too, and its in-flight half lives
+      // in module scope where a store wipe cannot reach it. A spec that left `opening` true — an
+      // openWith whose snapshot fetch never settled — silently disables the overlay for EVERY
+      // later spec in the run (openWith queues the press and returns), which reads as an unrelated
+      // flake in whichever switcher spec runs next. Same leak class as the pending ask promise.
+      useRunningSwitcherStore.getState().close()
+      resetRunningSwitcherInteraction()
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
       //    connector survives reset() and pollutes the next test. ALSO restore the

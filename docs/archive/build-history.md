@@ -3927,3 +3927,62 @@ OS notification under `CANVAS_E2E`/`CANVAS_SMOKE`, destroyed-window guards.
 with **5 pre-existing failures** (`pathSafe` symlink layer ×2, `pty.recapenv` ×3) confirmed
 identical on the MAIN checkout at `bcd4d311` — this box's floor, not a regression. Dev check
 title-stamped. **Version:** 0.34.2 → **0.34.3** (patch — tests only, no product code).
+
+## 2026-07-27 — PR #NNN: Alt-Tab commit-on-release + the racing press is queued (audit R16, v0.35.0)
+
+**Audit Phase 1, item R16** (finding PS-3) — the decision taken 2026-07-25, not re-litigated: the
+running-projects overlay now matches Windows Alt-Tab and VS Code's Ctrl+Tab, which are both
+commit-on-release over a frozen MRU list. Expanse already had the frozen half; it committed on
+Enter. Now **releasing the held Ctrl/Cmd commits the highlighted card**; Enter and click remain
+explicit commits and Esc still cancels.
+
+**MAIN derives the hold key, because only MAIN can.** The accelerator is user-rebindable, and the
+chord's own keydown is `preventDefault`ed in `globalHotkey.onInput` — so the renderer never observes
+the modifier going *down* at all. `holdKeyOf` maps the parsed accelerator to `'Control' | 'Meta' |
+'Alt' | null` (Ctrl/Cmd wins; Alt is the fallback so an `Alt+]` rebind keeps the gesture; null for a
+modifier-free chord, which keeps the old Enter-only behaviour rather than promising a release that
+does nothing) and `project:cycleHotkey` carries it as a second, additive argument. **No new IPC
+channel was needed**: `matchesAccel` is keyDown-only, so the modifier's `keyup` is never swallowed
+and arrives in the renderer as an ordinary DOM event.
+
+**The release is observed at chord time, not at open time** — `useProjectSwitchHotkey` arms
+`noteHoldKey` synchronously and owns a passive window `keyup` listener (capture, so a focused
+xterm cannot swallow it). This is not defensive coding: the overlay only mounts after an async
+snapshot fetch, and a *fast tap releases before that lands*. A listener living in the overlay would
+miss the single commonest Alt-Tab gesture there is and strand the picker open. Landing
+already-released therefore commits immediately — the overlay flashes, exactly like a quick Alt+Tab
+(user-confirmed design decision).
+
+**Second half — the racing press is queued, not dropped.** `runningSwitcherStore:63` returned
+without ever applying the racing press's `dir`; the comment said "respect it" and the code did the
+opposite, so a fast double-tap moved one step instead of two. Now the presses accumulate as NET
+steps (a ring: next-then-prev is a round trip back to the active card) and are applied the instant
+the snapshot lands. The drop was load-bearing before and worse under commit-on-release, where
+hold-and-tap-twice is a normal gesture.
+
+**Footer** (design artifact signed off before implementation, per the repo's UI rule): release is
+named FIRST and shares one *open* cell with Enter — `release ⌃Ctrl / ⏎ open · Tab advance ·
+Shift+Tab back · Esc cancel` — so the row stays four cells and the word "open" appears once. The
+label follows the bound accelerator (`Ctrl` / `⌘` / `Alt`).
+
+**A flake got a mechanism, not a shrug.** The new commit spec passed alone and failed in the full
+~340-spec run — the exact signature of the `projectSwitcher.e2e.ts:96` flake PR #389 filed as
+*unhidden, not caused*. The suspect found: `opening` and (now) `queuedSteps` are MODULE-scoped, so
+the harness `reset()`'s store wipe cannot reach them. One spec stranding `opening = true` — an
+`openWith` whose snapshot fetch never settles — silently disables the overlay for **every later
+spec in the run**, because `openWith` then takes the queue-and-return path. Same leak class as the
+pending ask promise reset() already has to settle (#390) and the chrome-overlay scrims (#389).
+`resetRunningSwitcherInteraction()` is now called from `reset()`.
+
+**Tests.** 20 store cases (5 queue, 7 hold, incl. release-before-open, stale re-arm, stray keyup,
+no leak into the next interaction); 12 new jsdom cases at the committing surface driving REAL DOM
+keyups through the production seams — asserting not just that release commits, but that release on
+the active card, a different key, a stray keyup with the overlay closed, and a release *after* Esc
+all commit nothing (a switch the user never asked for tears down every board); 5 MAIN cases for
+`holdKeyOf` + the payload; `e2e/projectSwitchCommit.e2e.ts` commits a hotkey switch through the
+real channel and asserts the instrumented record moved — **the Phase 1 gate item PS-3 named**
+(`projectSwitcher.e2e.ts:10` says outright it "never commits the switch").
+
+**Verified:** typecheck · lint · format clean; full `pnpm test` 6186 passed with the same 5
+pre-existing failures as `main`; e2e green. Dev check title-stamped before push. **Version:**
+0.34.3 → **0.35.0** (minor — behaviour change).

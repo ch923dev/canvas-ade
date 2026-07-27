@@ -16,8 +16,19 @@ import { app, type BrowserWindow, type IpcMain, type Input, type WebContents } f
 import { readHotkeyConfig, type HotkeyConfig } from './hotkeyConfig'
 import { registerHotkeyHandlers } from './hotkeyIpc'
 
-/** MAIN→renderer channel carrying the cycle direction (1 next / -1 prev). */
+/** MAIN→renderer channel carrying the cycle direction (1 next / -1 prev) + the HOLD key. */
 export const PROJECT_CYCLE_CHANNEL = 'project:cycleHotkey'
+
+/**
+ * The modifier the user is holding down while the switcher is up (R16, commit-on-release).
+ *
+ * MAIN derives it because MAIN is the only side that knows which chord actually fired: the
+ * accelerator is user-rebindable, and the chord's own keydown is `preventDefault`ed here so the
+ * renderer never sees it. `null` = the bound chord has no modifier at all (e.g. a bare `F13`
+ * rebind), in which case there is nothing to release and the overlay keeps its Enter/click/Esc
+ * behaviour.
+ */
+export type ProjectCycleHold = 'Control' | 'Meta' | 'Alt' | null
 
 export interface GlobalHotkeyDeps {
   getWin(): BrowserWindow | null
@@ -110,6 +121,20 @@ function parseAccelerator(accel: string): ParsedAccel | null {
   return p.key ? p : null
 }
 
+/**
+ * Which held modifier releasing commits the overlay (R16). Ctrl/Cmd wins when the chord has one —
+ * that is the locked decision and the Windows-Alt-Tab / VS-Code-Ctrl+Tab muscle memory — and Alt is
+ * the fallback so a modifier-light rebind like `Alt+]` still gets the gesture rather than losing it.
+ * `KeyboardEvent.key` spelling, because that is what the renderer compares a `keyup` against.
+ */
+export function holdKeyOf(p: ParsedAccel, isMac: boolean): ProjectCycleHold {
+  if (p.ctrlOrCmd) return isMac ? 'Meta' : 'Control'
+  if (p.meta) return 'Meta'
+  if (p.ctrl) return 'Control'
+  if (p.alt) return 'Alt'
+  return null
+}
+
 /** Exact chord match: the key + the precise modifier set (no extra modifiers held). */
 function matchesAccel(input: Input, p: ParsedAccel, isMac: boolean): boolean {
   if (input.type !== 'keyDown' || input.isAutoRepeat) return false
@@ -134,17 +159,21 @@ export function createGlobalHotkey(deps: GlobalHotkeyDeps): GlobalHotkeyControll
 
   const onInput = (event: { preventDefault(): void }, input: Input): void => {
     if (!cfg.enabled) return
-    const dir: 1 | -1 | 0 =
+    const matched =
       nextAccel && matchesAccel(input, nextAccel, isMac)
-        ? 1
+        ? { dir: 1 as const, accel: nextAccel }
         : prevAccel && matchesAccel(input, prevAccel, isMac)
-          ? -1
-          : 0
-    if (dir === 0) return
-    // Swallow the chord so the key never reaches a focused input/terminal as text.
+          ? { dir: -1 as const, accel: prevAccel }
+          : null
+    if (!matched) return
+    // Swallow the chord so the key never reaches a focused input/terminal as text. Note this is a
+    // keyDown-only match (matchesAccel), so the modifier's own `keyup` is NOT swallowed and still
+    // reaches the page — which is what R16's commit-on-release listens for. No new IPC needed.
     event.preventDefault()
     const wc = deps.getWin()?.webContents
-    if (wc && !wc.isDestroyed()) wc.send(PROJECT_CYCLE_CHANNEL, dir)
+    if (wc && !wc.isDestroyed()) {
+      wc.send(PROJECT_CYCLE_CHANNEL, matched.dir, holdKeyOf(matched.accel, isMac))
+    }
   }
 
   const attach = (wc: WebContents | undefined): void => {
