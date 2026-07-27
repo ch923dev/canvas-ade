@@ -332,8 +332,16 @@ describe('S3 · the ledger records the worker tree', () => {
       worktree: '/wt/a',
       branch: 'swarm/rrrr/builder-1',
       // The label is the branch leaf — how the human identified this worker on the card.
-      label: 'builder-1'
+      label: 'builder-1',
+      // 🔒 The destructive-path gate: this task was just dispatched, so its tree is being written
+      // to right now and nothing may `git clean -fd` it (PR #394 `[critical]`).
+      busy: true
     })
+    // It flips the moment the work settles — the gate is a live read, not a one-time stamp.
+    store.update('run1', (l) => {
+      l.tasks[0].state = 'done'
+    })
+    expect(s.worktreeFor('t1')?.busy).toBe(false)
     // 🔒 Nothing but a real, isolated task id resolves: the dispose IPC trusts only the id.
     expect(s.worktreeFor('nope')).toBeNull()
   })

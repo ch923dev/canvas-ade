@@ -370,3 +370,91 @@ describe('swarm:worktreeDispose — the locked keep-on-dirty prompt, over the re
     ).toBe(false)
   })
 })
+
+describe('🔒 S3 — the dispose gate refuses a worktree a worker is still writing to', () => {
+  /**
+   * Defence in depth for the PR #394 `[critical]`. The projection no longer EMITS a row for a
+   * live tree, but the row the human clicks may be seconds stale — a reused worker can take a new
+   * task between the push and the click. MAIN re-derives liveness from the WORKTREE (never from
+   * the row's own task, which is finished) and refuses before the chooser is even raised.
+   */
+  function seedReusedWorker(store: ReturnType<typeof createSwarmLedgerStore>): void {
+    store.ensureRun(RUN, 'run')
+    store.update(RUN, (l) => {
+      const at = (taskId: string, state: 'done' | 'in_progress'): void => {
+        l.tasks.push({
+          taskId,
+          content: 'Migrate',
+          activeForm: 'Migrating…',
+          state,
+          assignment: {
+            boardId: W1,
+            role: 'builder',
+            spec: { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+            dispatchedAt: 0,
+            lastActivityAt: 0,
+            stallCount: 0,
+            worktree: WT1,
+            branch: 'swarm/rrrr/builder-1'
+          },
+          ...(state === 'done'
+            ? {
+                result: {
+                  status: 'done',
+                  summary: 'ok',
+                  refs: ['src/a.ts'],
+                  provenance: 'claimed' as const,
+                  at: 0
+                }
+              }
+            : {})
+        })
+      }
+      at('t1', 'done') // older, finished — the row would anchor here
+      at('t2', 'in_progress') // newer, RUNNING, same worker and therefore the same tree
+    })
+  }
+
+  it('refuses the stale row without raising the chooser, and never runs a git write', async () => {
+    const confirm = vi.fn(async () => ({ approved: true, choice: 'discard' }))
+    const wt = worktreeStub({ [WT1]: 9 })
+    const h = harness({ worktrees: wt, confirm })
+    seedReusedWorker(h.store)
+
+    const out = await h.cap.invoke('swarm:worktreeDispose', { runId: RUN, taskId: 't1' })
+    expect(out).toMatchObject({ ok: false })
+    expect((out as { detail: string }).detail).toContain('working in that worktree right now')
+    // The whole point: no modal, no `git clean -fd`, nothing touched.
+    expect(confirm).not.toHaveBeenCalled()
+    expect(wt.dispose).not.toHaveBeenCalled()
+    expect(wt.removed).toEqual([])
+  })
+
+  it('and the board never offered that row in the first place', async () => {
+    const h = harness({ worktrees: worktreeStub({ [WT1]: 9 }) })
+    seedReusedWorker(h.store)
+    await h.cap.invoke('swarm:restore', { runId: RUN })
+    await flush()
+    h.deliver()
+    const run = runFor(useSwarmStore.getState().runs, RUN)
+    expect((run.ledger?.triage ?? []).some((r) => r.tag === 'dirty_worktree')).toBe(false)
+    // Nor is a half-written branch offered for merge.
+    expect(run.ledger?.mergeSequence).toEqual([])
+  })
+
+  it('once the live task settles, the same row becomes disposable again', async () => {
+    const wt = worktreeStub({ [WT1]: 9 })
+    const h = harness({
+      worktrees: wt,
+      confirm: vi.fn(async () => ({ approved: true, choice: 'stash' }))
+    })
+    seedReusedWorker(h.store)
+    h.store.update(RUN, (l) => {
+      const t = l.tasks.find((x) => x.taskId === 't2')!
+      t.state = 'done'
+    })
+    const out = await h.cap.invoke('swarm:worktreeDispose', { runId: RUN, taskId: 't1' })
+    expect(out).toMatchObject({ ok: true })
+    expect(wt.disposed).toEqual([[WT1, 'stash']])
+  })
+})

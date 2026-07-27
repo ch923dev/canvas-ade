@@ -20,7 +20,12 @@ import {
   taskForBoard,
   type SwarmLedgerStore
 } from './swarmLedger'
-import { buildSnapshot, isStalled, type WorktreeStatusMap } from './swarmLedgerProject'
+import {
+  buildSnapshot,
+  isStalled,
+  liveWorktrees,
+  type WorktreeStatusMap
+} from './swarmLedgerProject'
 import type { SwarmLedgerHooks } from './swarmTools'
 import {
   MAX_LEDGER_LINE,
@@ -70,8 +75,15 @@ export interface SwarmLedgerSession {
    * S3 — resolve a triage row's task id to the worktree the disposition would act on. Returns
    * `null` when the task is unknown or holds no worktree, so the dispose IPC can refuse without
    * trusting anything the renderer sent beyond the id.
+   *
+   * 🔒 `busy` is the destructive-path gate, re-derived here rather than inferred from the task:
+   * a reused worker keeps ONE worktree across several tasks, so a row anchored on an older
+   * FINISHED task can point at a tree a newer `in_progress` task is actively writing to. Callers
+   * that would run `git clean -fd` must refuse on `busy`.
    */
-  worktreeFor(taskId: string): { worktree: string; branch: string; label: string } | null
+  worktreeFor(
+    taskId: string
+  ): { worktree: string; branch: string; label: string; busy: boolean } | null
   /** Re-sync `planItems` from the live Planning board (labels + done + real ids). */
   syncPlan(reader: PlanningReader | null): Promise<void>
   /** Stamp "the human has seen the run up to now" — bounds the unreviewed-result rows. */
@@ -259,7 +271,10 @@ export function createSwarmLedgerSession(
         branch: a.branch,
         // The commit/stash message the modal shows and the git write uses — the branch leaf is
         // how the human identified this worker on the card.
-        label: a.branch.split('/').filter(Boolean).pop() ?? (pos >= 0 ? `task ${pos + 1}` : taskId)
+        label: a.branch.split('/').filter(Boolean).pop() ?? (pos >= 0 ? `task ${pos + 1}` : taskId),
+        // Keyed off the WORKTREE, not off `task.state`: this row may be anchored on a finished
+        // task whose worker has since taken another one in the same tree.
+        busy: liveWorktrees(ledger).includes(a.worktree)
       }
     },
 

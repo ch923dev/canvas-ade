@@ -603,6 +603,15 @@ export function registerSwarmHandlers(
       const session = sessionFor(runId)
       const held = session.ledger.worktreeFor(taskId)
       if (!held) return { ok: false, detail: 'that task holds no worktree' }
+      // 🔒 The destructive-path gate, re-derived MAIN-side. A row anchored on a FINISHED task can
+      // point at a worktree its worker has since taken a new task in — and `discard` there would
+      // `git clean -fd` work that is being written right now. Refuse, and say which worker owns it.
+      if (held.busy) {
+        return {
+          ok: false,
+          detail: `${held.label} is working in that worktree right now — nothing was touched. Await or reassign its task first.`
+        }
+      }
       const st = await worktrees.status(held.worktree)
       if (!st.exists) return { ok: false, detail: 'the worktree is no longer on disk' }
       if (!st.dirty) {

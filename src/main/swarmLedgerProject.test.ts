@@ -4,6 +4,7 @@ import {
   discloseFor,
   fmtDur,
   isStalled,
+  liveWorktrees,
   silentMs,
   sortTriage,
   triageRows,
@@ -649,5 +650,66 @@ describe('S3 · triage rows', () => {
     const tags = triageRows(l, 0, SWARM_STALL_THRESHOLD_MS, wtStatuses()).map((r) => r.tag)
     expect(tags.indexOf('overlap')).toBeLessThan(tags.indexOf('stalled'))
     expect(tags[tags.length - 1]).toBe('merge_ready')
+  })
+})
+
+describe('S3 · 🔒 a REUSED worker never exposes its live worktree to a destructive action', () => {
+  /**
+   * The PR #394 `[critical]`. A worker handed a second task keeps ONE worktree, so the ledger holds
+   * an older FINISHED task and a newer `in_progress` one pointing at the same tree. The row loop
+   * skipped the in-progress record but did not mark its worktree seen, so it fell through to the
+   * finished task and emitted a `dirty_worktree` row describing dirt the STILL-RUNNING worker was
+   * producing — whose only action, `resolve` → Discard, would `git clean -fd` live work.
+   */
+  const reused = (): SwarmRunLedger =>
+    ledger({
+      tasks: [
+        // Older, finished — the row used to anchor here.
+        task({
+          taskId: 't1',
+          state: 'done',
+          assignment: assign({
+            boardId: 'b1',
+            worktree: 'M:/proj/.canvas/worktrees/t1',
+            branch: 'swarm/rrrr/t1'
+          }),
+          result: result({ refs: ['src/a.ts'] })
+        }),
+        // Newer, RUNNING, same worker and therefore the same tree.
+        task({
+          taskId: 't2',
+          state: 'in_progress',
+          assignment: assign({
+            boardId: 'b1',
+            worktree: 'M:/proj/.canvas/worktrees/t1',
+            branch: 'swarm/rrrr/t1'
+          })
+        })
+      ]
+    })
+
+  it('raises NO dirty_worktree row for a tree a newer task is still writing to', () => {
+    const rows = triageRows(reused(), 0, SWARM_STALL_THRESHOLD_MS, wtStatuses(['t1']))
+    expect(rows.some((r) => r.tag === 'dirty_worktree')).toBe(false)
+  })
+
+  it('and keeps that branch out of the merge sequence — it is not finished', () => {
+    expect(buildSnapshot(reused(), { now: 0 }).mergeSequence).toEqual([])
+  })
+
+  it('liveWorktrees is the single definition of busy, keyed off the TREE not the task', () => {
+    expect(liveWorktrees(reused())).toEqual(['M:/proj/.canvas/worktrees/t1'])
+    // A run whose only task is finished has no live tree.
+    expect(liveWorktrees(ledger({ tasks: [isolated('t1')] }))).toEqual([])
+  })
+
+  it('still rows a genuinely idle dirty tree, so the fix did not silence the feature', () => {
+    const rows = triageRows(
+      ledger({ tasks: [isolated('t1'), isolated('t2')] }),
+      0,
+      SWARM_STALL_THRESHOLD_MS,
+      wtStatuses(['t1'])
+    )
+    expect(rows.filter((r) => r.tag === 'dirty_worktree')).toHaveLength(1)
   })
 })

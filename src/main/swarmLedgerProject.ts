@@ -199,6 +199,21 @@ function isSettledForMerge(task: SwarmTask): boolean {
 }
 
 /**
+ * 🔒 Worktrees a RUNNING task is currently writing to. Exported because it is the single
+ * definition of "busy" that both the triage projection and MAIN's dispose gate must agree on: a
+ * worker reused for a second task keeps ONE worktree, so liveness cannot be read off whichever
+ * task record happens to be in hand. Anything destructive keys off this, never off a task's own
+ * state.
+ */
+export function liveWorktrees(ledger: SwarmRunLedger): string[] {
+  const out = new Set<string>()
+  for (const t of ledger.tasks) {
+    if (t.state === 'in_progress' && t.assignment?.worktree) out.add(t.assignment.worktree)
+  }
+  return [...out]
+}
+
+/**
  * One entry per BRANCH (not per task): a worker that took several tasks holds ONE worktree, so its
  * branch must appear once, carrying the union of everything it touched. A branch with any task
  * still `in_progress` is excluded entirely — it is not finished, and offering it for merge would
@@ -427,10 +442,17 @@ function overlapRows(integration: ReturnType<typeof integrationFor>): SwarmTriag
  *
  * Only a worker that is FINISHED produces a row — a running builder's tree is dirty by definition
  * and surfacing that would be a nag, not triage.
+ *
+ * 🔒 "Finished" is a property of the WORKTREE, not of the task record being visited. A reused
+ * worker keeps one worktree across several tasks, so the ledger can hold an older finished task
+ * and a newer `in_progress` one pointing at the SAME tree. Skipping only the in-progress record
+ * would then emit a row anchored on the stale finished task, describing dirt that the still-running
+ * worker is producing right now — and its `resolve` → Discard would `git clean -fd` a tree the
+ * worker is actively editing. So the live set is computed FIRST and excluded wholesale.
  */
 function dirtyWorktreeRows(ledger: SwarmRunLedger, worktrees: WorktreeStatusMap): SwarmTriageRow[] {
   const rows: SwarmTriageRow[] = []
-  const seen = new Set<string>()
+  const seen = new Set(liveWorktrees(ledger))
   // Newest first, so a reused worker's row anchors on the task the human just saw finish.
   for (let i = ledger.tasks.length - 1; i >= 0; i--) {
     const task = ledger.tasks[i]
