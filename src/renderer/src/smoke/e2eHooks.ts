@@ -100,20 +100,6 @@ let seedX = 0
 function advanceSeedX(type: keyof typeof DEFAULT_BOARD_SIZE): void {
   seedX += Math.max(760, DEFAULT_BOARD_SIZE[type].w + 60)
 }
-/**
- * Make a harness-seeded network board authoritative: subsequent REPLAYS are ignored
- * (deltas and 'cleared' still apply). Call AFTER the seeding apply() — a frozen board
- * would drop the seed itself. Only the dataFlow seed uses this; the plain network seed
- * is deliberately left live, since its race is not the documented one and freezing it
- * would change what the browserNetwork specs exercise. See BoardNet.frozen.
- */
-function freezeNet(boardId: string): void {
-  useOsrNetworkStore.setState((s) => {
-    const cur = s.byBoard[boardId]
-    if (cur === undefined) return s
-    return { byBoard: { ...s.byBoard, [boardId]: { ...cur, frozen: true } } }
-  })
-}
 /** M2: the source board of an in-flight harness-driven connector drag (startConnect). */
 let connectFrom: string | null = null
 
@@ -840,11 +826,6 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       ]
       const net = useOsrNetworkStore.getState()
       net.apply(sourceId, { id: sourceId, kind: 'replay', records })
-      // Freeze AFTER seeding (a frozen board drops replays, including this one). The
-      // bound Browser board keeps a LIVE MAIN subscription whose real replay would
-      // otherwise land late and replace these rows wholesale — the ambient dataFlow
-      // flake. See BoardNet.frozen in store/osrNetworkStore.ts.
-      freezeNet(sourceId)
       net.setInferShapes(sourceId, true)
       const obj = (children: Record<string, ShapeNode>): ShapeNode => ({
         types: ['object'],
