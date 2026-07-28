@@ -4502,3 +4502,96 @@ CI 4/4. `claude-review` FULL, **0 critical / 0 warning / 0 inline**, one non-blo
 managers instantiate `usePaneRect` independently, so there are two `ResizeObserver`s against one `paneRef`
 rather than a shared cache — accepted: they fire only on real layout changes, never per frame). Manual dev
 check passed, title-stamped.
+
+## 2026-07-28 — PR #398: kill the `dataFlow` seed race with an out-of-band capture pin (`f20c2aa4`, v0.39.1)
+
+The two e2e defects PR #396 found, root-caused and deliberately left. **Item 1 is fixed and proven;
+Item 2 is root-caused further than the kickoff had it and shipped as a written-up open finding, not a
+fix** — stacking a second speculative change onto a freshly-verified one is exactly what #396's
+post-mortem said not to do.
+
+### The trap this PR was built to avoid
+
+#396's `BoardNet.frozen` fix passed the **entire Windows leg 339/339**, shipped **3 green unit tests**,
+and cleared a **FULL `claude-review` with zero findings** — and was still broken. The Linux Docker leg
+killed it **3/3**. That signal set is precisely the one that certified a broken fix, so this PR treated
+every green Windows run as *not yet disproven* and gated acceptance on Linux only.
+
+### Item 1 — the fix, and why the kickoff's root cause was wrong
+
+The kickoff blamed the empty `replay` that `osrNetSubscribe` sends (it arms capture and replays the
+ring buffer on the same line, so the buffer is empty). **Measurement refuted that.** Instrumenting the
+suppressor with a per-kind tally gave `{replay: 0, delta: 2, cleared: 2, clearBoard: 0}` — *identical
+across four separate Linux runs*. `replay` never arrives, `clearBoard` never fires in this spec, and
+the actual killer is **`cleared`** — the OSR nav-boundary emit from `applyNavBoundary` — which
+`frozen` let through **by design**.
+
+The fix does not depend on which hypothesis was right, because it blocks all four paths:
+
+- **`src/renderer/src/store/osrNetPin.ts` (new)** — a module-level `Set` of pinned board ids, living
+  **outside `byBoard`**. That is the one property `frozen` structurally could not have: #396 put the
+  flag *inside* `byBoard[id]`, the very object `clearBoard` deletes, so a single LOD unmount dropped
+  the guard and the next MAIN message wiped the seed permanently. **State that protects an entry
+  cannot live inside it.**
+- **Guard on the MAIN seam, not on `apply`** (`useSharedOsrNet.ts`) — so `replay`/`delta`/`cleared`
+  are dropped where they enter, and the harness seeders still work: a pinned board can be re-seeded at
+  will.
+- **Guard on `clearBoard`** (`osrNetworkStore.ts`) — the LOD swap is a hard mount/unmount for
+  non-terminal boards, so a zoom-out would otherwise delete a seeded capture mid-spec. Unpinned boards
+  still get the FIND-011 unmount cleanup, which a test pins explicitly.
+- **Production is unreachable, not merely inert**: `pinOsrNet` is imported only by `e2eHooks`, which
+  installs behind `isE2E()`, and `dropOsrNetMessage` returns on a `pinned.size === 0` fast path before
+  any map lookup. `reset()` releases every pin and deletes exactly those `byBoard` entries — a pinned
+  board skips the unmount cleanup by design, so nothing else would ever collect them.
+
+**Acceptance was the removal of the workaround, not a green run.** The three re-seed-on-empty guards in
+`dataFlow.e2e.ts` were load-bearing and stayed until a replacement was proven; they are now **gone**,
+with the Linux leg green **without** them across two full legs plus targeted `--repeat-each=3` runs.
+The 45 s/30 s poll budgets were deliberately **kept** — `expect.poll` returns the instant its predicate
+holds, so a budget is free when green, and shrinking one for "speed" is what produced #396's false
+lead. 6 unit tests guard the mechanism against silent regression, including *"survives `clearBoard` —
+the exact failure that killed the `BoardNet.frozen` fix"*.
+
+### Item 2 — measured, NOT fixed (`docs/reviews/2026-07-28-terminal-clip-adjacency.md`)
+
+`dataFlow` → `terminalClip` cross-spec adjacency produces genuine clipping (up to 12 px against a ~6 px
+threshold). Measured alone vs paired at `h=226`: **identical 178 px well, identical 18 px cell,
+`dpr` 1, zoom 1** — and yet the paired run has `FitAddon.proposeDimensions()` return **10 rows where 9
+fit**. The board also sits exactly 90 px higher (camera pan leaks between specs; `reset()` deliberately
+does not reset the camera), but a translation cannot change a layout measurement.
+
+Two separable facts fall out. (1) FitAddon over-proposes by one on sub-pixel metric drift — **trigger
+still unidentified**. (2) **The row-shedding loop in `useTerminalSpawn.ts` does not run at all** — a
+12 px overflow would go to −6 in a single iteration. Fact 2 is the defect, it is **production terminal
+code**, and it is plausibly a real user-facing clipping bug rather than a test artifact. The write-up
+carries the measurement table and an explicit *"ruled out — do not re-test these"* list (timing/settle,
+DPR, camera zoom, camera pan, Mermaid style injection, sticky font) so the next session does not
+re-walk the dead ends. Indexed in `docs/reviews/README.md` as an open finding.
+
+### Review + gate
+
+Two `[warning]`s, both real, both fixed. **The first was a genuine bug of mine**: seeding and pinning
+went through two separate `evalIn` round-trips, leaving a window where a MAIN batch could wipe the seed
+before the pin armed — and with the re-seed guards removed, nothing would have caught it. Collapsed to
+a single `page.evaluate` (one synchronous JS turn) at all three sites and re-verified on Linux 9/9. The
+second broke a Markdown table by inserting a row between the header and its GFM delimiter.
+
+Merge gate on the rebased tip `2ea9ac37`: Windows `E2E_PRECOMMIT=1 E2E_WORKERS=1` **341 passed /
+3 skipped / 0 failed / 0 flaky** (11.0m) + Linux Docker **339 passed / 5 skipped** (7.4m). CI 4/4,
+`claude-review` pass. Manual dev check passed, title-stamped. The first push was blocked by
+`terminal.e2e.ts:62` under `E2E_WORKERS=2` — verified 5/5 in isolation at `workers:1`, which is the
+documented contention set #396's own commit names, so it was re-pushed with the documented
+`E2E_WORKERS=1` opt-out rather than `--no-verify`.
+
+### Two invocation lessons, both cost real time
+
+- **`pnpm test:e2e -- dataFlow terminalClip` does not forward the spec filter** — pnpm swallows the
+  args and runs the whole suite. Use `pnpm exec playwright test <specs>` directly.
+- **CI not firing on a PR push means a CONFLICT, not a workflow fault.** `main` advanced twice during
+  this PR's life (0.37.x → 0.38.0 → 0.39.0), `package.json` collided, `mergeable_state` went `dirty`,
+  and GitHub stopped creating check runs. I investigated `pr.yml`/`claude-review.yml` triggers and path
+  filters and reported a GitHub-side fault — wrong, and the user had to correct it. The triage order is
+  now a contract line in `CLAUDE.md` (landed separately on `main` as `81d0f182`, together with
+  untracking `.claude/settings.json`): check `mergeable_state` **first**, then base staleness, and only
+  then workflows. A rebase across a version bump also means recomputing this PR's own bump off the new
+  tip (0.37.3 → 0.39.1 here).
