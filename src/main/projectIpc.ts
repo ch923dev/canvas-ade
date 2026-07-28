@@ -7,7 +7,7 @@ import path from 'node:path'
 import { performance as nodePerformance } from 'node:perf_hooks'
 import { dialog } from 'electron'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
-import { isForeignSender } from './ipcGuard'
+import { isForeignSender, withProjectDir } from './ipcGuard'
 import writeFileAtomic from 'write-file-atomic'
 import {
   readProject,
@@ -198,6 +198,10 @@ export function registerProjectHandlers(
   onProjectForeground: (dir: string) => void = () => {}
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
+  // R14 (SM-1): the shared frame + current-dir + expectedDir-pin enforcement for every
+  // project-scoped WRITE handler here. Read handlers keep the bare `guard` — they resolve the dir
+  // themselves and a stale read is harmless; it is the WRITES that cross-contaminate (BUG-009).
+  const dirDeps = { getWin, getDir: getCurrentDir }
 
   // BUG-006: the set of locations the USER has approved this session. A create/open target must
   // be equal-to-or-under one of these — `isUnsafeProjectDir` only proves the path is a clean
@@ -368,58 +372,58 @@ export function registerProjectHandlers(
     }
   )
 
+  // BUG-009 (R14): the doc carries no dir association, so a save raced against a project switch
+  // would silently write project B's canvas into project C's canvas.json (currentDir is set
+  // synchronously at each open's start). Callers that know their project dir (the autosaver) pin
+  // it; withProjectDir rejects a mismatch instead of cross-writing. An omitted pin still saves.
+  //
+  // C3: the NON-ERROR rejections (foreign sender, no project open, cross-project race) return a
+  // bare `{ ok: false }` with NO code — they are not write failures, so the renderer must not
+  // attribute them to disk/permissions. Only a genuine write throw carries an errno (below).
   ipcMain.handle(
     'project:save',
-    async (e, doc: unknown, expectedDir?: unknown): Promise<SaveResult> => {
-      // C3: the NON-ERROR rejections (foreign sender, no project open, cross-project race)
-      // return a bare `{ ok: false }` with NO code — they are not write failures, so the
-      // renderer must not attribute them to disk/permissions. Only a genuine write throw
-      // carries an errno (below).
-      if (guard(e)) return { ok: false }
-      const dir = getCurrentDir()
-      if (!dir) return { ok: false }
-      // BUG-009: the doc carries no dir association, so a save raced against a project
-      // switch would silently write project B's canvas into project C's canvas.json
-      // (currentDir is set synchronously at each open's start). Callers that know their
-      // project dir (the autosaver) pass it; a mismatch means the doc belongs to a project
-      // that is no longer current — reject instead of cross-writing. Optional so existing
-      // call sites without the arg keep working.
-      if (typeof expectedDir === 'string' && expectedDir !== dir) {
-        console.warn('[project:save] rejected: doc is for', expectedDir, 'but current dir is', dir)
-        return { ok: false }
+    withProjectDir<[doc: unknown, expectedDir?: unknown], SaveResult>(
+      dirDeps,
+      {
+        channel: 'project:save',
+        pickExpectedDir: (_doc, expectedDir) => expectedDir,
+        reject: () => ({ ok: false })
+      },
+      async (dir, _e, doc): Promise<SaveResult> => {
+        // SAVE-1: a write failure (disk full, permission denied, envelope-invalid doc)
+        // must report failure to the renderer, not reject opaquely. The renderer's
+        // autosaver surfaces a failure via its onError hook so a failing disk is visible
+        // instead of silently swallowed.
+        try {
+          await writeProject(dir, doc)
+          // M3: defer off the save's critical path. memoryEngine.observe does a per-board
+          // JSON.stringify fingerprint — a 3rd full-tree pass on top of the write above — and the
+          // renderer only needs the { ok: true } below, not this bookkeeping. setImmediate runs it
+          // right after the IPC response ships instead of before it, at negligible (~1 tick) staleness.
+          // Review fix: re-assert the BUG-009 invariant (the withProjectDir pin above) INSIDE the
+          // deferred tick — save-then-switch is the normal projectSwitch flow, and project:open
+          // resets/observes the NEW doc between this save's response and this callback; observing
+          // the OLD doc after that reset would corrupt the engine's fingerprints and prune the new
+          // project's watchers.
+          setImmediate(() => {
+            if (getCurrentDir() !== dir) return // stale: project switched before this tick fired
+            try {
+              memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
+              onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
+            } catch (err) {
+              console.warn('[memoryEngine] observe failed (non-fatal)', err)
+            }
+          })
+          return { ok: true }
+        } catch (err) {
+          console.error('project:save failed', err)
+          // C3: propagate the real errno so the renderer can tell disk-full (ENOSPC) apart from a
+          // lock/permission/read-only failure. An envelope-invalid throw is a plain Error with no
+          // `.code` → the renderer maps `undefined` to a neutral generic message (never "disk space").
+          return { ok: false, code: (err as NodeJS.ErrnoException)?.code }
+        }
       }
-      // SAVE-1: a write failure (disk full, permission denied, envelope-invalid doc)
-      // must report failure to the renderer, not reject opaquely. The renderer's
-      // autosaver surfaces a failure via its onError hook so a failing disk is visible
-      // instead of silently swallowed.
-      try {
-        await writeProject(dir, doc)
-        // M3: defer off the save's critical path. memoryEngine.observe does a per-board
-        // JSON.stringify fingerprint — a 3rd full-tree pass on top of the write above — and the
-        // renderer only needs the { ok: true } below, not this bookkeeping. setImmediate runs it
-        // right after the IPC response ships instead of before it, at negligible (~1 tick) staleness.
-        // Review fix: re-assert the BUG-009 invariant (line ~371) INSIDE the deferred tick —
-        // save-then-switch is the normal projectSwitch flow, and project:open resets/observes the
-        // NEW doc between this save's response and this callback; observing the OLD doc after
-        // that reset would corrupt the engine's fingerprints and prune the new project's watchers.
-        setImmediate(() => {
-          if (getCurrentDir() !== dir) return // stale: project switched before this tick fired
-          try {
-            memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
-            onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
-          } catch (err) {
-            console.warn('[memoryEngine] observe failed (non-fatal)', err)
-          }
-        })
-        return { ok: true }
-      } catch (err) {
-        console.error('project:save failed', err)
-        // C3: propagate the real errno so the renderer can tell disk-full (ENOSPC) apart from a
-        // lock/permission/read-only failure. An envelope-invalid throw is a plain Error with no
-        // `.code` → the renderer maps `undefined` to a neutral generic message (never "disk space").
-        return { ok: false, code: (err as NodeJS.ErrnoException)?.code }
-      }
-    }
+    )
   )
 
   // M1: write the camera/backdrop session sidecar (.canvas/session.json) — split from project:save
@@ -429,19 +433,23 @@ export function registerProjectHandlers(
   // so the renderer can log it.
   ipcMain.handle(
     'project:saveSession',
-    async (e, session: unknown, expectedDir?: unknown): Promise<boolean> => {
-      if (guard(e)) return false
-      const dir = getCurrentDir()
-      if (!dir) return false
-      if (typeof expectedDir === 'string' && expectedDir !== dir) return false
-      try {
-        await writeSession(dir, session)
-        return true
-      } catch (err) {
-        console.error('project:saveSession failed', err)
-        return false
+    withProjectDir<[session: unknown, expectedDir?: unknown], boolean>(
+      dirDeps,
+      {
+        channel: 'project:saveSession',
+        pickExpectedDir: (_session, expectedDir) => expectedDir,
+        reject: () => false
+      },
+      async (dir, _e, session): Promise<boolean> => {
+        try {
+          await writeSession(dir, session)
+          return true
+        } catch (err) {
+          console.error('project:saveSession failed', err)
+          return false
+        }
       }
-    }
+    )
   )
 
   ipcMain.handle('project:recents', async (e): Promise<RecentProject[]> => {

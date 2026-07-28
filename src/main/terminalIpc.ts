@@ -12,7 +12,7 @@
  */
 import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import writeFileAtomic from 'write-file-atomic'
-import { isForeignSender } from './ipcGuard'
+import { isForeignSender, withProjectDir } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
 import { takeExitResidue, peekRingWritten, setFlushWatermark, type ExitResidue } from './pty'
 import { resolveFlushWatermark } from './ptyOutput'
@@ -34,6 +34,8 @@ export type TerminalSaveResult =
 
 export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWindow | null): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
+  // R14 (SM-1): shared frame + current-dir + expectedDir-pin enforcement for the snapshot WRITES.
+  const dirDeps = { getWin, getDir: getCurrentDir }
 
   ipc.handle(
     'terminal:saveOutput',
@@ -78,41 +80,41 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
   // thread during ordinary teardown (project switch, window blur). The renderer passes `sync: true`
   // only for the main-driven `project:flush` before-quit round-trip, where the process may exit right
   // after this resolves and a synchronous write is the only way to guarantee the bytes land first.
+  // Background sessions (R2, BUG-009-style): the renderer pins the write to the project it
+  // BELIEVES it is flushing. Today the pre-switch flush is safe only by ordering accident (flush
+  // runs before currentDir flips); with resident background projects, any late flush landing after
+  // a switch would write board A's scrollback into project B's `.canvas/terminal/` under a
+  // colliding id. R14: the pin is enforced by withProjectDir; absent = legacy caller.
   ipc.handle(
     'terminal:writeSnapshot',
-    (
-      e,
-      boardId: string,
-      text: string,
-      sync?: boolean,
-      expectedDir?: string,
-      watermark?: number
-    ): boolean | Promise<boolean> => {
-      if (guard(e)) return false
-      const dir = getCurrentDir()
-      if (!dir) return false
-      // Background sessions (R2, BUG-009-style): the renderer pins the write to the project it
-      // BELIEVES it is flushing. Today the pre-switch flush is safe only by ordering accident
-      // (flush runs before currentDir flips); with resident background projects, any late flush
-      // landing after a switch would write board A's scrollback into project B's
-      // `.canvas/terminal/` under a colliding id. Reject on mismatch; absent = legacy caller.
-      if (expectedDir !== undefined && expectedDir !== dir) return false
-      const safeText = typeof text === 'string' ? text : ''
-      const id = String(boardId)
-      // T2·D2 splice boundary: the renderer reports the EXACT byte count it rendered into `text`
-      // on the ring's `written` axis; MAIN clamps it to the live ring (falling back to the
-      // handler-entry ring count for a legacy caller) and commits it only when the write LANDS. The
-      // background park then splices the tail from this exact boundary — no gap/overlap from the old
-      // approximate count, and output arriving between this flush and the park is still replayed.
-      const written = resolveFlushWatermark(watermark, peekRingWritten(id))
-      const commit = (ok: boolean): boolean => {
-        if (ok && written !== null) setFlushWatermark(id, written)
-        return ok
+    withProjectDir<
+      [boardId: string, text: string, sync?: boolean, expectedDir?: string, watermark?: number],
+      boolean
+    >(
+      dirDeps,
+      {
+        channel: 'terminal:writeSnapshot',
+        pickExpectedDir: (_boardId, _text, _sync, expectedDir) => expectedDir,
+        reject: () => false
+      },
+      (dir, _e, boardId, text, sync, _expectedDir, watermark): boolean | Promise<boolean> => {
+        const safeText = typeof text === 'string' ? text : ''
+        const id = String(boardId)
+        // T2·D2 splice boundary: the renderer reports the EXACT byte count it rendered into `text`
+        // on the ring's `written` axis; MAIN clamps it to the live ring (falling back to the
+        // handler-entry ring count for a legacy caller) and commits it only when the write LANDS. The
+        // background park then splices the tail from this exact boundary — no gap/overlap from the old
+        // approximate count, and output arriving between this flush and the park is still replayed.
+        const written = resolveFlushWatermark(watermark, peekRingWritten(id))
+        const commit = (ok: boolean): boolean => {
+          if (ok && written !== null) setFlushWatermark(id, written)
+          return ok
+        }
+        return sync
+          ? commit(writeTerminalSnapshot(dir, id, safeText))
+          : writeTerminalSnapshotAsync(dir, id, safeText).then(commit)
       }
-      return sync
-        ? commit(writeTerminalSnapshot(dir, id, safeText))
-        : writeTerminalSnapshotAsync(dir, id, safeText).then(commit)
-    }
+    )
   )
 
   ipc.handle('terminal:readSnapshot', (e, boardId: string): string | null => {
@@ -132,14 +134,22 @@ export function registerTerminalHandlers(ipc: IpcMain, getWin: () => BrowserWind
     return takeExitResidue(String(boardId)) ?? null
   })
 
-  ipc.handle('terminal:deleteSnapshot', (e, boardId: string, expectedDir?: string): boolean => {
-    if (guard(e)) return false
-    const dir = getCurrentDir()
-    if (!dir) return false
-    // R2 dir-pin, mirroring writeSnapshot: a delete raced across a switch must not remove a
-    // colliding board's sidecar in the newly-active project.
-    if (expectedDir !== undefined && expectedDir !== dir) return false
-    deleteTerminalSnapshot(dir, String(boardId))
-    return true
-  })
+  // R2 dir-pin, mirroring writeSnapshot: a delete raced across a switch must not remove a
+  // colliding board's sidecar in the newly-active project. (R14: SM-1's list of hand-rolled pins
+  // named three handlers; this was the fourth.)
+  ipc.handle(
+    'terminal:deleteSnapshot',
+    withProjectDir<[boardId: string, expectedDir?: string], boolean>(
+      dirDeps,
+      {
+        channel: 'terminal:deleteSnapshot',
+        pickExpectedDir: (_boardId, expectedDir) => expectedDir,
+        reject: () => false
+      },
+      (dir, _e, boardId): boolean => {
+        deleteTerminalSnapshot(dir, String(boardId))
+        return true
+      }
+    )
+  )
 }
