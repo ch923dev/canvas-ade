@@ -17,35 +17,31 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
     await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(df)}, 940, 600)`)
+    // Seed AND pin in ONE evalIn — see store/osrNetPin.ts. The bound Browser board carries a live
+    // MAIN subscription whose `replay` (empty ring buffer at subscribe) / `cleared` (OSR nav
+    // boundary) / `delta` would otherwise destroy these rows, and the LOD unmount would delete them
+    // outright — the seed race that made this spec carry re-seed-on-empty guards. Pinned ⇒ the seed
+    // is the whole world, so the polls below are plain waits on layout.
+    // ATOMICITY MATTERS: each `evalIn` is its own page.evaluate round-trip, and the page's event
+    // loop runs between two of them — long enough for a real MAIN batch to land through the
+    // unguarded handler and wipe the seed before the pin is armed. One evaluate = one synchronous
+    // JS turn, so nothing can interleave. The guards that used to cover this gap are gone.
     await evalIn(
       page,
-      `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
+      `(() => { window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)}); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
     )
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
 
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     // the graph backbone renders through the SHARED spec renderer (Phase 5): at least one
-    // endpoint (service) node + one inferred entity (data) node. SEED-RACE GUARD: the bound
-    // Browser board's real MAIN subscription delivers a late 'replay' batch that REPLACES the
-    // seeded records (the ambient dataFlow flake — near-deterministic on the slow Docker leg).
-    // The real replay happens once (deltas only upsert after), so re-seeding after the wipe wins
-    // permanently: re-apply ONLY when the board shows an empty/filtered state, never while ELK is
-    // still laying out (a blind re-seed each poll would cancel/restart the layout forever).
+    // endpoint (service) node + one inferred entity (data) node. The budget stays generous: an
+    // `expect.poll` returns the instant the predicate holds, so it costs wall-clock only on a
+    // genuine failure — there is no run-time to win by shrinking it.
     await expect
-      .poll(
-        async () => {
-          const n = await node.locator('.pl-spec-node[data-kind="service"]').count()
-          if (n > 0) return n
-          if ((await node.locator('.df-empty').count()) > 0) {
-            await evalIn(
-              page,
-              `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
-            )
-          }
-          return 0
-        },
-        { timeout: 45000, intervals: [3000] }
-      )
+      .poll(() => node.locator('.pl-spec-node[data-kind="service"]').count(), {
+        timeout: 45000,
+        intervals: [3000]
+      })
       .toBeGreaterThan(0)
     // a TRUE entity (neutral data node), not just a shape — the old `.df-gn-entity` pin's strength;
     // the export step below refuses shape-only models, so this also gates the schema-infer settle
@@ -85,14 +81,9 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     expect(hiddenShown, 'the API-only default surfaces the Hidden meta in the Inspector').toBe(true)
 
     // "→ Planning" materializes an editable Mermaid erDiagram element on a new Planning board.
-    // Re-assert the seed first: a late MAIN replay wipe between the render asserts and this click
-    // degrades the model to shapes-only and the export refuses ("No entities to sketch yet") —
-    // the same seed race the render poll guards. If the click still lands on a wiped model, the
-    // poll re-seeds and clicks again (extra boards are fine — the count assert is `greaterThan`).
-    await evalIn(
-      page,
-      `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
-    )
+    // No re-seed needed: the capture is pinned, so the model cannot degrade to shapes-only between
+    // the render asserts and this click (that degradation is what made the export refuse with
+    // "No entities to sketch yet").
     const before = await evalIn<number>(
       page,
       `window.__canvasE2E.getBoards().filter(b => b.type === 'planning').length`
@@ -100,19 +91,11 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await page.locator('[data-test="inspector-dataflow-planning"]').click()
     await expect
       .poll(
-        async () => {
-          const count = await evalIn<number>(
+        () =>
+          evalIn<number>(
             page,
             `window.__canvasE2E.getBoards().filter(b => b.type === 'planning').length`
-          )
-          if (count > before) return count
-          await evalIn(
-            page,
-            `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
-          )
-          await page.locator('[data-test="inspector-dataflow-planning"]').click()
-          return count
-        },
+          ),
         { timeout: 30000, intervals: [3000] }
       )
       .toBeGreaterThan(before)
@@ -137,25 +120,23 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       page,
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
-    // a flat capture: 6 unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js)
-    await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6)`)
+    // a flat capture: 6 unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js).
+    // Seeded and pinned in ONE evaluate (see test 1 — two round-trips leave a gap a real MAIN batch
+    // can win). `seedOsrNet` itself stays unpinned for the @preview browserNetwork specs, which
+    // exercise the LIVE channel on purpose; pinning is the caller's declaration, not the seeder's.
+    await evalIn(
+      page,
+      `(() => { window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
+    )
     // apiOnly OFF so the `.js` asset rows show; first-party ON so only example.test (the seeds) is graphed.
     await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
-    // seed-race guard (see test 1): re-apply the seed only from an empty/filtered state
     await expect
-      .poll(
-        async () => {
-          const n = await node.locator('.pl-spec-node[data-kind="service"]').count()
-          if (n > 0) return n
-          if ((await node.locator('.df-empty').count()) > 0) {
-            await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6)`)
-          }
-          return 0
-        },
-        { timeout: 45000, intervals: [3000] }
-      )
+      .poll(() => node.locator('.pl-spec-node[data-kind="service"]').count(), {
+        timeout: 45000,
+        intervals: [3000]
+      })
       .toBeGreaterThan(0)
     // rel AND lineage both map to dependency-kind edges — a flat API draws none of either
     expect(await node.locator('g.pl-spec-edge[data-kind="dependency"]').count()).toBe(0)
@@ -169,28 +150,18 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       page,
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
+    // seed + pin in ONE evaluate (see test 1 — atomicity against a late MAIN batch)
     await evalIn(
       page,
-      `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
+      `(() => { window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)}); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
     )
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
-    // seed-race guard (see test 1): re-apply the seed only from an empty/filtered state
     await expect
-      .poll(
-        async () => {
-          const n = await node.locator('.pl-spec-node[data-kind="service"]').count()
-          if (n > 0) return n
-          if ((await node.locator('.df-empty').count()) > 0) {
-            await evalIn(
-              page,
-              `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
-            )
-          }
-          return 0
-        },
-        { timeout: 45000, intervals: [3000] }
-      )
+      .poll(() => node.locator('.pl-spec-node[data-kind="service"]').count(), {
+        timeout: 45000,
+        intervals: [3000]
+      })
       .toBeGreaterThan(0)
     // P5: the "hidden N" roll-up lives in the Inspector's Filters section — select to reveal.
     // Default API-only filter hides the non-API `document` record → the Hidden meta is shown.

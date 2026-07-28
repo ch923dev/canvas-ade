@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useOsrNetworkStore } from '../../../store/osrNetworkStore'
+import { dropOsrNetMessage } from '../../../store/osrNetPin'
 
 /**
  * Shared, REFCOUNTED MAIN Network subscription for a board id (JD-4). The FIRST active subscriber opens
@@ -14,9 +15,13 @@ const refcounts = new Map<string, number>()
 export function useSharedOsrNet(boardId: string | undefined, active: boolean): void {
   useEffect(() => {
     if (!boardId || !active) return
-    const off = window.api.onPreviewOsrNet(boardId, (m) =>
+    const off = window.api.onPreviewOsrNet(boardId, (m) => {
+      // E2E-only: a harness-PINNED board owns its records outright — replay/cleared/delta alike are
+      // dropped here, at the MAIN seam, so the seed cannot be replaced, emptied or extended by real
+      // traffic. No-op in production (the pin set is empty). See store/osrNetPin.ts.
+      if (dropOsrNetMessage(boardId, m.kind)) return
       useOsrNetworkStore.getState().apply(boardId, m)
-    )
+    })
     const n = (refcounts.get(boardId) ?? 0) + 1
     refcounts.set(boardId, n)
     if (n === 1) void window.api.subscribeOsrNet(boardId) // 0→1: open the MAIN stream

@@ -17,6 +17,7 @@ import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
 import { useOsrNetworkStore } from '../store/osrNetworkStore'
+import { pinOsrNet, osrNetPinStats, clearOsrNetPins } from '../store/osrNetPin'
 import { useOsrLivenessStore } from '../store/osrLivenessStore'
 import { useDataFlowStore } from '../store/dataFlowStore'
 import { mergeShapes, type ShapeSample, type ShapeNode, type FormatHint } from '../lib/schemaInfer'
@@ -524,6 +525,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // flake in whichever switcher spec runs next. Same leak class as the pending ask promise.
       useRunningSwitcherStore.getState().close()
       resetRunningSwitcherInteraction()
+      // Release the harness-owned network pins BEFORE the board wipe below, and delete exactly the
+      // entries they protected: a pinned board deliberately SKIPS the FIND-011 unmount cleanup, so
+      // the unmount the next line triggers would leave its records behind forever. Unpinned boards
+      // keep collecting themselves on unmount exactly as before. See store/osrNetPin.ts.
+      const unpinned = clearOsrNetPins()
+      if (unpinned.length > 0) {
+        useOsrNetworkStore.setState((s) => {
+          const byBoard = { ...s.byBoard }
+          for (const id of unpinned) delete byBoard[id]
+          return { byBoard }
+        })
+      }
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
       //    connector survives reset() and pollutes the next test. ALSO restore the
@@ -872,6 +885,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       const s = useDataFlowStore.getState()
       s.setApiOnly(dataflowId, apiOnly)
       s.setFirstParty(dataflowId, firstParty)
+    },
+    pinOsrNet(id) {
+      pinOsrNet(id)
+    },
+    osrNetPinStats(id) {
+      return osrNetPinStats(id)
     },
     diagramThemeVars() {
       return buildDiagramThemeVars()

@@ -8,6 +8,7 @@
 import { create } from 'zustand'
 import type { NetRecord, WsRecord, OsrNetMessage } from '../../../preload'
 import type { InferredSchema } from '../lib/schemaInfer'
+import { dropOsrNetMessage } from './osrNetPin'
 
 export type NetDock = 'bottom' | 'right'
 /** The inspector view: the per-request **Network** table, or the aggregate **Data Flow** inventory
@@ -193,11 +194,16 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
   setDfInspW: (id, px) =>
     set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), dfInspW: px } } })),
 
-  clearBoard: (id) =>
+  clearBoard: (id) => {
+    // E2E-only: a harness-PINNED board's records survive unmount. The LOD swap is a hard
+    // mount/unmount for non-terminal boards, so a zoom-out would otherwise delete a seeded capture
+    // mid-spec. No-op in production (the pin set is empty). See store/osrNetPin.ts.
+    if (dropOsrNetMessage(id, 'clearBoard')) return
     set((s) => {
       if (!(id in s.byBoard)) return s
       const byBoard = { ...s.byBoard }
       delete byBoard[id]
       return { byBoard }
     })
+  }
 }))
