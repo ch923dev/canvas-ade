@@ -254,7 +254,7 @@ re-entering it. Phase 1 is now four unaffected items at 5 d with nothing pending
 is the first automated run to execute `decideKeep`'s non-explicit branch), and its gate subsumes R16's.
 Gate: switch-to-first-paint under 100 ms measured by R1; commit-on-release working with a queued racing press; all 5 `performProjectSwitch` return codes unit-tested; one e2e that **commits** a hotkey switch (this now covers R16 as well); the three resident lists collapsed to one hook. Fits one coherent feature slice under the repo's plan-viz-first + worktree conventions.
 
-**Phase 2 — Renderer perf (3 d): R5, R6. ✅ BUILT 2026-07-28 (`perf/switch-phase2`, v0.38.0).**
+**Phase 2 — Renderer perf (3 d): R5, R6. ✅ BUILT 2026-07-28 (`perf/switch-phase2`, v0.39.0).**
 Gate as written: React Profiler shows the root children no longer re-render on a board drag; the
 bench's N=8 static number improves or holds at 45 fps / 24 ms p50.
 

@@ -10,7 +10,7 @@ Produced by `pnpm bench:baseline`. Phase 0 gate artifact for the
 > re-measurement of `arm` that §1 said was owed. **R3 is refuted; R11's premise is revived.**
 > Read [§6](#6-resource-bearing-re-measurement--r3-refuted-r11-revived).
 
-> **⚠️ STALE AGAINST HEAD since 2026-07-28 (v0.38.0).** Audit **Phase 2 (R5 · R6) shipped without a
+> **⚠️ STALE AGAINST HEAD since 2026-07-28 (v0.39.0).** Audit **Phase 2 (R5 · R6) shipped without a
 > paired re-capture**, so every `paint` figure below was taken on pre-R5 code. R5 removed the
 > root-level `boards` subscription that re-rendered 14 subtrees per drag frame, and `paint` is React
 > mount plus first frame — the segment most likely to have moved. **Do not read the 0/8/24 sweep as

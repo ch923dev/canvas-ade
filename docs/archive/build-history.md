@@ -4379,7 +4379,7 @@ identified. A clean-box re-run reached **110 passed / 0 failed** before being st
 3.3m. **Merged on that evidence by explicit human decision**, with the uninterrupted Windows leg
 knowingly outstanding — recorded here rather than smoothed over, since the whole point of the
 push-cheap/merge-full rule is that this gate is the only cross-OS insurance a PR ever pays.
-## 2026-07-28 — PR #397: Phase 2 renderer perf — root memo boundary + observer-based liveness (audit R5 · R6, v0.38.0)
+## 2026-07-28 — PR #397: Phase 2 renderer perf — root memo boundary + observer-based liveness (audit R5 · R6, v0.39.0)
 
 Phase 2 of the [2026-07-25 project-switch & perf audit](../reviews/2026-07-25-project-switch-perf-audit/AUDIT.md).
 Two items, both pure perf refactors with **zero visual change** — so *design artifact before code*
