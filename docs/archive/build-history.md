@@ -4225,7 +4225,7 @@ Merge gate: Windows `workers:1` 339 pass / 3 skip / 0 flaky (9.2 m) + Linux Dock
 shortname TEMP + symlink privileges — and reproduce on `main`). `claude-review` 2 rounds, 0 critical /
 0 warning / 0 inline. Manual dev check passed.
 
-## 2026-07-28 — PR #TBD: orchestration S3 — workspace isolation, overlap detection, merge sequencing (v0.38.0)
+## 2026-07-28 — PR #394 (`6be84fd3`): orchestration S3 — workspace isolation, overlap detection, merge sequencing (v0.38.0)
 
 **Lane brief:** `M:/expanse/docs/orchestration/s3-kickoff.md` · rides base **Phase 3** (`04-roadmap.md`)
 · surface spec `07-swarm-board.md` §6 (S3) + §4.3 · mechanism `03-mechanism.md` item 6. Base
@@ -4358,6 +4358,24 @@ the documented hotkey-overlay family). Three earlier heads were matrixed too —
 ambient-family failures on Windows, every one green when rerun isolated at `--retries=0`, and every
 Linux leg exit 0. **No swarm spec failed on any leg of any head.** Those matrix runs were taken on the
 pre-rebase commits of this identical tree; the rebases carried no product-code conflict (only
-`package.json` and this file), and the merge gate re-runs the full matrix on the final head anyway.
+`package.json` and this file).
 Dev check re-run title-stamped on each rebased head: boots clean, no renderer errors. CI check ·
-analyze · CodeQL · claude-review all PASS.
+analyze · CodeQL · claude-review all PASS — the review's final round was a **FULL** re-pass (the
+rebase made its last head a non-ancestor), 0 critical / 0 warning, both prior findings re-verified
+present and correct in the rebased code.
+
+**Merge gate on the final head `713e8f75` — recorded honestly, because it was NOT a clean both-leg
+run.** Linux Docker was **fully green: 339 passed / 5 skipped / 0 failed / 0 flaky, exit 0** (8.0m) —
+the strongest leg this lane produced, and the coverage the merge gate exists to buy since pushes never
+run Linux. Windows did **not** complete an uninterrupted pass. Its first attempt (338 passed / 3
+skipped / **3 failed**) ran against a box at ~96% CPU with ~22 competing Electron processes from
+another checkout, and `test:e2e:matrix`'s `&&` short-circuit meant that failure is also why Linux had
+to be run separately. Both identified failures were adjudicated by the documented method — rerun
+isolated at `--retries=0`, workers 1 — and **both passed**: `mcp.e2e.ts:1103` (`assign_prompt … worker
++ non-terminal denied`, the only failure inside this lane's zone, since it exercises `swarmTools.ts`)
+green in 5.7s, and `jarvis.e2e.ts:347` (@voice history bleed — a cross-test leakage signature, not a
+logic defect) green in 5.5s. A third failure was a worker crash (`code=4294967295`) that was never
+identified. A clean-box re-run reached **110 passed / 0 failed** before being stopped externally at
+3.3m. **Merged on that evidence by explicit human decision**, with the uninterrupted Windows leg
+knowingly outstanding — recorded here rather than smoothed over, since the whole point of the
+push-cheap/merge-full rule is that this gate is the only cross-OS insurance a PR ever pays.
