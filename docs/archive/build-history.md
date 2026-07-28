@@ -4483,12 +4483,21 @@ documented probabilistic flakes become hard failures — and `terminal.e2e.ts:62
 destroyed` — the app died in setup — and passed on re-run. Under the correct invocation the Windows leg is
 green with one retried flake.
 
-Merge gate: Windows `workers:1 retries:2` **338 passed / 1 flaky (`recapHealth`, retried green) / 3
-skipped** (10.7m) + Linux Docker **337 passed / 5 skipped** (8.1m, exit 0). The Linux leg needed one
-re-run — its first attempt died at test 169/342 with `error waiting for container: unexpected EOF`, a
-container-level death, not a test result. Unit **6380 passed / 5 failed**, exactly this box's documented
-ambient floor (`pathSafe` ×2, `pty.recapenv` ×3, both `src/main/`, untouched by a renderer-only diff); the
-two new specs are 6/6 stable in isolation. Push gate (Windows scoped leg) 335 passed / 4 flaky / 3 skipped.
+**Rebased mid-gate.** PR #394 (orchestration S3) landed on `main` while this branch was running its
+merge gate, taking **v0.38.0** — so Phase 2 renumbered to **v0.39.0** and rebased onto `daed5929`. S3 is
+32 files of swarm subsystem with **zero overlap** against this renderer diff, and the rebase was
+conflict-free, but the green matrix from before it described a tree that was no longer the merge
+candidate. **The whole gate was re-run on the rebased tip rather than carried over** — that is the
+number quoted below.
+
+Merge gate (rebased tip `2dee48f9`): Windows `workers:1 retries:2` **340 passed / 1 flaky
+(`terminal.e2e.ts:62`, retried green) / 3 skipped** (11.5m) + Linux Docker **339 passed / 5 skipped**
+(7.8m), matrix exit 0. Unit **6489 passed / 5 failed**, exactly this box's documented ambient floor
+(`pathSafe` ×2, `pty.recapenv` ×3, both `src/main/`, untouched by a renderer-only diff); the two new specs
+are 6/6 stable in isolation. The pre-rebase gate run had also been green (Windows 338 passed / 1 flaky
+`recapHealth` / 3 skipped; Linux 337 passed / 5 skipped) after one Linux re-run — its first attempt died at
+test 169/342 with `error waiting for container: unexpected EOF`, a container-level death, not a test
+result. Push gate (Windows scoped leg) 335 passed / 4 flaky / 3 skipped.
 CI 4/4. `claude-review` FULL, **0 critical / 0 warning / 0 inline**, one non-blocking nit (both liveness
 managers instantiate `usePaneRect` independently, so there are two `ResizeObserver`s against one `paneRef`
 rather than a shared cache — accepted: they fire only on real layout changes, never per frame). Manual dev
