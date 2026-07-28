@@ -4149,3 +4149,78 @@ to fake-timer unit tests, fix the `dataFlow` seed race the 45 s polls are paperi
 ~50.9 s of `waitForTimeout` to `expect.poll`. Raising `workers` was **rejected without a spike**:
 `workers:1` has two causes, and `reset()` only addresses state leakage — native GPU / `capturePage` /
 ConPTY contention is unsolved.
+
+### PR #396 — parallel Windows push leg + terminalClip trim + push-to-main row 0 (`dd78cf0d`, v0.37.2, 2026-07-28)
+
+Follow-up to #395. That PR made the push gate *select* less work; this one makes the work itself
+faster. **Windows push leg 639 s → ~344 s (−46 %)**; combined with #395 a full-scope push went
+~30 min → ~6 min.
+
+**Parallel Windows push leg.** `playwright.config.ts` `workers` is now
+`Number(process.env.E2E_WORKERS ?? 1)`. The default stays **1** — the Linux Docker leg is CPU-capped
+and unmeasured at 2, and CI likewise, so neither may silently inherit it. Only `.githooks/pre-push`'s
+Windows leg opts in (`E2E_WORKERS=2`); `test:e2e:matrix` is deliberately *not* patched, so the merge
+gate keeps the conservative setting.
+
+Cross-worker **state leakage is a non-issue** — each worker gets its OWN Electron process, so stores
+are already isolated. What contends is OS-level: window focus, ConPTY, GPU. Measured on this box over
+342 specs: `workers:1` 639 s (339 pass, 0 flaky); `workers:2` retries:0 run A 433 s (**4 failed**),
+run B 325 s (339 pass, 0 flaky); `workers:2` retries:2 (the gate config) 394 s (337 pass, 2 flaky →
+green). The failures are **probabilistic, not a fixed set** — 4 in one retries:0 run, 0 in the next —
+so no static carve-out list is possible. The trade is documented rather than buried: ~3.4 min/run
+bought with more reliance on `retries:2`. Corroborated by this PR's own gates — the `workers:2` push
+leg produced 2 flaky-retried `@terminal` specs while the `workers:1` matrix run of the same commit
+produced zero.
+
+**`terminalClip` sweeps coarsened**, 236 → 118 iterations: steps widened 7→**13** and 11→**23**. Both
+stay **odd** by necessity — an even step walks a fixed parity of remainders against `cellHeight` and
+silently drops the fractional-remainder coverage the sweep exists for. (The recon proposed 14/22,
+which would have gutted it.)
+
+**Push-to-main row 0.** A docs-only push to `main` previously ran the full matrix — which is why
+#395's own build-history push needed `--no-verify`. Row 0 routes the change-set through
+`scripts/e2e-scope.mjs` and skips only on a `NONE` verdict. This is **not** a repeat of #395's
+early-exit finding: it goes *through* the selector, fails **open** to FULL on any error, and is taken
+on the **unstripped** change-set, so a version-only main push still scores FULL. The automated
+reviewer verified this by hand, confirming the version-only filter block is physically unreachable
+when `pushing_main=1`.
+
+**Shipped, then reverted: the `dataFlow` seed-race fix.** `46eebcb8` added `BoardNet.frozen` — a
+harness-seeded network board would ignore replays (deltas and `cleared` still applied), making the
+seed authoritative against MAIN's late replay, i.e. the long-standing ambient `dataFlow` flake. It
+came with 3 unit tests, passed the **Windows leg 339/339 with zero flakes**, and cleared a FULL
+`claude-review` with 0 findings. **The Linux Docker leg failed it 3/3** — and not slowly: `0` service
+nodes after 45 s, so the graph never rendered at all.
+
+Root cause: **`clearBoard()` deletes the entire `byBoard` entry, including `frozen`**
+(`osrNetworkStore.ts:209`). `useOsrNetwork` clears on unmount (FIND-011), so any remount drops the
+freeze and the next real replay wipes the seed permanently; Windows timing hid it. An intermediate
+hypothesis — "Docker is merely slow, restore the 45 s/30 s poll budgets while keeping `frozen`" — was
+tested and **also failed**, which is what ruled out latency and isolated `clearBoard`. `a7ee85bc`
+reverts the store field, the `freezeNet` hook, the unit tests, and the spec's guard removal. The
+re-seed-on-empty guards return: they survive `clearBoard` precisely because they **re-run the seeder**
+rather than relying on retained state. A correct fix needs the freeze held OUTSIDE `byBoard` (or
+`clearBoard` preserving it) and **must be verified on the Linux leg** — a green Windows run plus green
+unit tests plus a clean review is not evidence for this class of bug.
+
+Two lessons worth keeping. **Poll budgets are free when green** — `expect.poll` returns the instant
+the predicate holds, so a long timeout only costs wall-clock on genuine failure; there was never a
+speed argument for shrinking them, and shrinking them is what produced the intermediate false lead.
+And **the merge gate earned its keep**: this is exactly the defect class the Windows-only push gate
+structurally cannot catch, which is a pointed endorsement of #395's merge-full half and a caution
+about the push-cheap half that this very PR widens.
+
+**Found, not fixed (pre-existing).** `dataFlow.e2e.ts` immediately before `terminalClip.e2e.ts` breaks
+the height sweep with genuine clipping (up to 12 px against a ~6 px threshold). Reproduced on
+unmodified `main` by reverting all changed files, so it predates this branch; the full suite hides it
+via alphabetical ordering. Needs a `reset()`-surface fix — a separate bug, not a trim.
+
+**Deferred** (stated, not dropped): the `jarvis` negative-window → fake-timer extraction and the
+`waitForTimeout` → `expect.poll` hotspots, ~20 s against a ~344 s run. The `jarvis` one is not purely
+a timer test — it also exercises scoped Esc, an editable buffer, and real keyboard — so it cannot be
+demoted wholesale.
+
+Merge gate: Windows `workers:1` 339 pass / 3 skip / 0 flaky (9.2 m) + Linux Docker 337 pass / 5 skip
+(6.3 m), matrix exit 0. Unit 6375 pass (the 2 `pathSafe` failures are machine-environmental — 8.3
+shortname TEMP + symlink privileges — and reproduce on `main`). `claude-review` 2 rounds, 0 critical /
+0 warning / 0 inline. Manual dev check passed.
