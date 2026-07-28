@@ -85,6 +85,15 @@ export interface ConfirmBatchRequest {
   title: string
   /** The rows to review (bounded by the caller). */
   items: ConfirmBatchItem[]
+  /**
+   * 🔒 What the human is authorizing, in their words. Absent ⇒ the modal's `relay_prompts` default.
+   * Required for any caller that is NOT dispatching into a terminal: the default says the approved
+   * rows will RUN, which for P4's findings batch (every row becomes a passive kanban card) is
+   * simply false — and a gate that misdescribes its own act gets consent for the wrong thing.
+   */
+  blurb?: string
+  /** P4: the caps / merges / omissions this batch must state. Rendered verbatim in the modal. */
+  disclose?: string
 }
 
 /**

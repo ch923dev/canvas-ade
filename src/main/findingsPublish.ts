@@ -42,6 +42,8 @@ export interface FindingsPublishDeps {
   confirmBatch(req: {
     title: string
     items: Array<{ label: string; body: string }>
+    blurb?: string
+    disclose?: string
   }): Promise<{ decisions: Array<{ approved: boolean }> }>
   /** `sendMcpCommand` bound to the live window. */
   send(command: McpCommand): Promise<McpCommandAck>
@@ -126,6 +128,14 @@ export async function publishFindings(
   const titleOf = (id: string): string => deps.lookupBoard(id)?.title ?? id
   const decision = await deps.confirmBatch({
     title: `Publish ${batch.findings.length} finding${batch.findings.length === 1 ? '' : 's'} to “${target.title}”`,
+    // 🔒 NOT the modal's default copy. That says the approved rows will RUN, each written into its
+    // own terminal — true for a relay and false here: every row becomes a passive card and nothing
+    // executes. The gate has to describe the act it is actually gating.
+    blurb:
+      'Review each finding. Only the rows you approve become cards — they land in one write on the kanban board, as passive content that never runs anything.',
+    // Merges, silent workers and any cap. Absence the human is not told about reads as "that was
+    // everything", which is exactly how a batched write quietly loses findings.
+    disclose: batch.disclose,
     items: batch.findings.map((f) => ({
       label: findingLabel(f, titleOf),
       body: f.note

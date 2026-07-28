@@ -13,13 +13,31 @@
  * as its own vetoable row; nothing lands until that is answered, and the outcome string it returns
  * (published · declined · merged · capped) is surfaced verbatim rather than reduced to a checkmark.
  */
-import { useState, type CSSProperties, type ReactElement } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactElement } from 'react'
 import { useCanvasStore } from '../../../store/canvasStore'
 import { useCommandStore } from '../../../store/commandStore'
 
 export function PublishFindingsBar(): ReactElement | null {
-  const kanbans = useCanvasStore((s) =>
-    s.boards.filter((b) => b.type === 'kanban').map((b) => ({ id: b.id, title: b.title }))
+  // 🔒 Subscribe to a PRIMITIVE fingerprint, then derive the list from a getState() read keyed by
+  // it (the GROUP-07 pattern CommandBoard's `poolKey` already uses). Selecting
+  // `boards.filter().map()` directly returns a FRESH ARRAY on every store notification, which
+  // zustand's Object.is equality reads as "changed" every time — an unbounded render loop that
+  // crashed this whole board with React #185. The fingerprint changes only when a kanban board is
+  // added, removed, or retitled, so a board DRAG no longer re-renders this bar at all.
+  const kanbanKey = useCanvasStore((s) =>
+    s.boards
+      .filter((b) => b.type === 'kanban')
+      .map((b) => `${b.id}:${b.title}`)
+      .join('|')
+  )
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- kanbanKey IS the cache key for this read
+  const kanbans = useMemo(
+    () =>
+      useCanvasStore
+        .getState()
+        .boards.filter((b) => b.type === 'kanban')
+        .map((b) => ({ id: b.id, title: b.title })),
+    [kanbanKey]
   )
   // Only offer this once some worker has actually reported — an empty run has nothing to publish,
   // and an always-on button that always answers "nothing to publish" trains people to ignore it.

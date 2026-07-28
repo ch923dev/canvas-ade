@@ -17,7 +17,12 @@ const KANBAN = 'kanban-1'
 interface Harness {
   deps: FindingsPublishDeps
   sent: Array<{ id: string; ops: KanbanOp[] }>
-  confirmed: Array<{ title: string; items: Array<{ label: string; body: string }> }>
+  confirmed: Array<{
+    title: string
+    items: Array<{ label: string; body: string }>
+    blurb?: string
+    disclose?: string
+  }>
 }
 
 function harness(over?: {
@@ -215,6 +220,34 @@ describe('publishFindings', () => {
     const h = harness()
     const r = await publishFindings(h.deps, KANBAN)
     expect(r.summary).toContain("severities are the workers' own claims, not verified")
+  })
+
+  it('🔒 OVERRIDES the modal blurb — these rows become cards, they do NOT run', async () => {
+    // The shipped default says the approved rows will RUN, each written into its own terminal —
+    // true for relay_prompts, a plain falsehood here. A gate that misdescribes its own act gets
+    // consent for the wrong thing, so the blurb is asserted, not assumed. (Caught by eyeballing
+    // the real modal: the default copy shipped straight through until this was added.)
+    const h = harness()
+    await publishFindings(h.deps, KANBAN)
+    expect(h.confirmed[0].blurb).toContain('become cards')
+    expect(h.confirmed[0].blurb).toContain('never runs anything')
+    expect(h.confirmed[0].blurb).not.toContain('will run')
+  })
+
+  it('🔒 puts the batch DISCLOSURE in the modal, not only in the return value', async () => {
+    // A cap or a merge the human is not told about at decision time reads as "that was
+    // everything" — which is how a batched write quietly loses findings.
+    const h = harness({
+      reports: [
+        { boardId: 'w1', refs: ['src/a.ts:1 high — same'] },
+        { boardId: 'w2', refs: ['src/a.ts:1 high — same'] },
+        { boardId: 'w2', status: 'done' }
+      ]
+    })
+    await publishFindings(h.deps, KANBAN)
+    expect(h.confirmed[0].disclose).toContain('merged by (path, line, note)')
+    expect(h.confirmed[0].disclose).toContain('reported nothing')
+    expect(h.confirmed[0].disclose).toContain("workers' own claims")
   })
 
   it('never asks the agent for card content — reports come from collectReports only', async () => {

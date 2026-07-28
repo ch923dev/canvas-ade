@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { evalIn, mainCall, seed, selectForInspector } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -215,6 +215,86 @@ test.describe('@mcp P4 external-worker feed', () => {
       // write — which is exactly why status can ride this channel at N-worker frequency.
       await expect(page.locator('[data-testid="batch-confirm-approve"]')).toHaveCount(0)
       await expect(page.locator('[data-test="confirm-modal"]')).toHaveCount(0)
+    } finally {
+      await clearTasks(page)
+    }
+  })
+
+  test('🔒 the recap face RENDERS with fed workers (React #185 regression guard)', async ({
+    page,
+    electronApp
+  }) => {
+    // The `PublishFindingsBar` originally selected `boards.filter().map()` straight out of zustand,
+    // which returns a fresh array on every notification — an unbounded render loop that took the
+    // WHOLE Command board to "This board failed to render". Every unit + e2e case passed, because
+    // none of them flipped to the recap face. The manual dev check caught it; this keeps it caught.
+    const board = await seed(page, 'command')
+    const worker = await seed(page, 'terminal', { title: 'reviewer-5' })
+    try {
+      await mainCall(electronApp, 'mcpRecordResult', worker, {
+        present: true,
+        status: 'done',
+        summary: 'a finding worth keeping'
+      })
+      await awaitFed(page, 'done')
+      await selectForInspector(page, board)
+      await page.locator('[data-test="inspector-command-recap"]').click({ timeout: 5000 })
+      await page.waitForTimeout(400)
+
+      const node = page.locator(`[data-id="${board}"]`)
+      await expect(node.getByText('This board failed to render')).toHaveCount(0)
+      await expect(node.getByText('TIMELINE').first()).toBeVisible()
+      await expect(node.getByText('a finding worth keeping').first()).toBeVisible()
+      // Absence, stated: no kanban board on this canvas, so the bar says so rather than vanishing.
+      await expect(node.getByText(/no kanban board on this canvas/).first()).toBeVisible()
+    } finally {
+      await clearTasks(page)
+    }
+  })
+
+  test('🔒 Publish findings opens ONE batch modal that describes what it actually does', async ({
+    page,
+    electronApp
+  }) => {
+    const board = await seed(page, 'command')
+    const w1 = await seed(page, 'terminal', { title: 'reviewer-6' })
+    const w2 = await seed(page, 'terminal', { title: 'reviewer-7' })
+    await seed(page, 'kanban', { title: 'Review findings' })
+    try {
+      // The same claim from two workers — corroboration, so the batch must MERGE and say so.
+      for (const w of [w1, w2]) {
+        await mainCall(electronApp, 'mcpRecordResult', w, {
+          present: true,
+          status: 'done',
+          summary: 'ignored',
+          refs: ['src/main/pty.ts:774 high — pid reuse']
+        })
+      }
+      await expect.poll(async () => (await fedTasks(page)).length, { timeout: 10_000 }).toBe(2)
+
+      await selectForInspector(page, board)
+      await page.locator('[data-test="inspector-command-recap"]').click({ timeout: 5000 })
+      // The publish control lives ON the board (the inspector's recap toggle does not), so the
+      // camera has to actually be looking at it before a real click can land.
+      await evalIn(page, `window.__canvasE2E.setSelection([])`)
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(board)})`)
+      await page.getByRole('button', { name: /Publish findings/ }).click({ timeout: 8000 })
+
+      const modal = page.locator('[data-testid="batch-confirm-modal"]')
+      await expect(modal).toBeVisible({ timeout: 10_000 })
+      // ONE modal, and the merge collapsed two reports into ONE row.
+      await expect(page.locator('[data-testid^="batch-confirm-row-"]')).toHaveCount(1)
+      // 🔒 It must NOT wear the relay_prompts default, which claims the approved rows will RUN and
+      // be written into a terminal. Nothing here runs; every row becomes a passive card.
+      await expect(modal.getByText(/never runs anything/)).toBeVisible()
+      await expect(modal.getByText(/each is written into its own terminal/)).toHaveCount(0)
+      // …and the disclosure reaches the human at DECISION time, not just the return value.
+      await expect(page.locator('[data-testid="batch-confirm-disclose"]')).toContainText(
+        'merged by (path, line, note)'
+      )
+      // Leave nothing armed for the next spec (the S2 leaked-state lesson).
+      await page.locator('[data-testid="batch-confirm-deny"]').click()
+      await expect(modal).toHaveCount(0)
     } finally {
       await clearTasks(page)
     }
