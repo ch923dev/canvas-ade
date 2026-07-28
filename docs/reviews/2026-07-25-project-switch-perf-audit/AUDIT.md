@@ -254,8 +254,35 @@ re-entering it. Phase 1 is now four unaffected items at 5 d with nothing pending
 is the first automated run to execute `decideKeep`'s non-explicit branch), and its gate subsumes R16's.
 Gate: switch-to-first-paint under 100 ms measured by R1; commit-on-release working with a queued racing press; all 5 `performProjectSwitch` return codes unit-tested; one e2e that **commits** a hotkey switch (this now covers R16 as well); the three resident lists collapsed to one hook. Fits one coherent feature slice under the repo's plan-viz-first + worktree conventions.
 
-**Phase 2 — Renderer perf (3 d): R5, R6.**
-Gate: React Profiler shows the root children no longer re-render on a board drag; the bench's N=8 static number improves or holds at 45 fps / 24 ms p50.
+**Phase 2 — Renderer perf (3 d): R5, R6. ✅ BUILT 2026-07-28 (`perf/switch-phase2`, v0.39.0).**
+Gate as written: React Profiler shows the root children no longer re-render on a board drag; the
+bench's N=8 static number improves or holds at 45 fps / 24 ms p50.
+
+**Gate half 1 — met, and automated instead of hand-recorded.** A Profiler recording proves it once,
+for the person holding the mouse; `src/renderer/src/App.memo.test.tsx` proves it on every run. 30
+drag-shaped `boards` mutations re-render **zero** root children, and — the assertion that actually
+matters — **zero re-renders of `App` itself**, read off the one child mounted outside the memo
+boundary. Both mutants die: restoring `useMcpPublish()` at the root fails it 2 vs 1, dropping the
+`memo` wrappers fails the propagation test. R5's `useShallow` sub-item was **retired as having no
+applicable site**, not skipped — `App`'s remaining picks are primitive strings, and the publisher's
+subscription must stay coarse because `buildBoardSnapshot` forwards world-space `x/y/w/h`, so a
+narrower pick would publish stale geometry.
+
+**Gate half 2 — NOT taken. Shipped on mechanism evidence instead; read this before comparing
+anything to the baseline.** Two paired capture attempts were blocked by the harness's own guard:
+`bench:baseline` measured **55.2% CPU at rest** against its 25% ceiling and refused to write, which
+is the guard from [`../2026-07-25-bench/BASELINE.md`](../2026-07-25-bench/BASELINE.md) working as
+designed — the same file records ±40% on identical source across three runs, so a number taken at
+that load could not have distinguished a real 4.2× `paint` win from ambient noise in either
+direction.
+
+What ships in its place is a **count, not a timing**: renders-on-drag 14 → 0, and
+`getBoundingClientRect` calls per 60 reconciles 61 → 1 (`usePaneRect.test.tsx`, mutation-verified).
+Counts are load-independent — a busy box cannot make a removed subscription re-appear. So the
+mechanism is proven and the **conversion to milliseconds on this hardware is not**. Anyone re-running
+the 0/8/24 sweep should expect `paint` to move at 8 and 24 boards and should record the CPU-at-rest
+figure beside it; if it does not move, that is a finding about the mechanism's *size*, not evidence
+the mechanism is absent.
 
 **Phase 3 — Main-process & IO (4.5 d): R7, R8, R11, R14.**
 Gate: boot-to-first-paint measured before/after (R8 should be visible here); a synthetic runaway-output PTY test shows pause/resume engaging at the watermarks; sync-fs count per `project:open` drops from 14+2N; full e2e matrix green — R8 touches the fixture server 26 `@preview` specs depend on, so the Linux leg is mandatory.
@@ -325,7 +352,12 @@ behind it.
 3. ✅ **DONE 2026-07-27 — ask-time exclusion verified against the real dialog.** `e2e/switchAskExclusion.e2e.ts` drives `switchProjectAsk` (the default pipeline, so `decideKeep` does not early-return on an explicit keep), holds the real modal open 1.5 s, and asserts `ask` covers the hold while `arm` and `total` exclude it. The branch had never executed outside a unit test — every other automated switch passes an explicit keep, which returns before `recordAskTime`. Proven non-vacuous by disabling `minusAsk` and watching the spec fail.
 4. Confirm the R8 gate condition covers every dev workflow that expects the fixture pages (`/static`, `/download`, `/json`) — `pnpm dev` must keep serving them.
 5. ✅ **DONE 2026-07-27 — settled as "yes, in a second bench".** `e2e/projectSwitchResources.bench.ts` sweeps terminals / previews / assets / combined; the committed 0/8/24 planning sweep is deliberately left byte-identical so the baseline stays comparable.
-6. 🔁 **NEW — re-open R11 at a smaller scope.** The same run found `mainOpen` is asset-sensitive after all (9.8–13.0 ms → **65.4 ms** at 44 assets), which is the measurement §3 of the baseline said R11 was pending. The seeded assets are unreferenced, so that figure is `gcAssets`' worst path; the next question is what the *referenced*-asset path costs, not a straight resurrection of the original 1 d estimate.
+6. 🔁 **OWED — the Phase 2 before/after `paint` capture.** Phase 2 shipped 2026-07-28 without it: two
+   attempts hit the baseline harness's 25%-CPU guard at **55.2%**, and the guard is right (see §7).
+   The renderer-side gate was met by automated render-count assertions instead. **The 0/8/24 sweep in
+   `BASELINE.md` therefore predates R5/R6** — re-take it on a quiet box and record the delta. This is
+   an open measurement, not an open defect: nothing in Phase 3 or 4 is gated on it.
+7. 🔁 **NEW — re-open R11 at a smaller scope.** The same run found `mainOpen` is asset-sensitive after all (9.8–13.0 ms → **65.4 ms** at 44 assets), which is the measurement §3 of the baseline said R11 was pending. The seeded assets are unreferenced, so that figure is `gcAssets`' worst path; the next question is what the *referenced*-asset path costs, not a straight resurrection of the original 1 d estimate.
 
 ---
 

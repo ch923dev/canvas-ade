@@ -4379,3 +4379,126 @@ identified. A clean-box re-run reached **110 passed / 0 failed** before being st
 3.3m. **Merged on that evidence by explicit human decision**, with the uninterrupted Windows leg
 knowingly outstanding — recorded here rather than smoothed over, since the whole point of the
 push-cheap/merge-full rule is that this gate is the only cross-OS insurance a PR ever pays.
+## 2026-07-28 — PR #397: Phase 2 renderer perf — root memo boundary + observer-based liveness (audit R5 · R6, v0.39.0)
+
+Phase 2 of the [2026-07-25 project-switch & perf audit](../reviews/2026-07-25-project-switch-perf-audit/AUDIT.md).
+Two items, both pure perf refactors with **zero visual change** — so *design artifact before code*
+explicitly did not apply, recorded rather than silently skipped.
+
+**R5 (P-1) — the root re-render fan-out.** `paint` (React mount + first painted frame) is the steepest
+per-board cost in the switch: **11.1 → 46.5 ms across 0 → 8 → 24 boards, 4.2×** — the only Phase 2 item
+with a measured number behind it. The driver was one hook. `useMcpPublish` sat at the `App` root picking
+six store slices, and a board drag mutates `boards` ~60×/s, so `App` re-rendered at drag frequency and
+took **14 memo-free children** with it, including `JarvisPanel`, which owns a rAF canvas painter.
+
+Recon narrowed this before any code was written: **every other App-level hook was audited and subscribes
+nothing reactive** (`useAccountSync` picks `s.apply`, a stable action ref), so one extraction removes the
+whole 60 Hz path. It moved into `store/McpPublisher.tsx`, a render-nothing leaf mounted as `App`'s first
+child — a `.tsx` rather than an addition to `useMcpPublish.ts`, to avoid the
+`react-refresh/only-export-components` warning.
+
+**The subscription is deliberately left COARSE, and R5's `useShallow` sub-item is retired as HAVING NO
+APPLICABLE SITE** rather than dropped. `buildBoardSnapshot` forwards world-space `x/y/w/h`, so a drag
+genuinely changes the published payload — a narrower pick would publish stale geometry. Reading that
+function *before* "optimizing" the subscription is what prevented the bug. R5 is entirely about **where**
+the re-render lands, not about removing it.
+
+The 15 `memo()` wrappers are **defence in depth, not the fix**: they stop the *next* coarse subscription
+added to `App` from silently re-creating P-1. Applied at the use site (imports shadowed `…Impl`), matching
+the existing `memo(AppChromeImpl)` precedent — 14 component files untouched, JSX unchanged. `SignInView`'s
+inline `onClose` was hoisted to a stable module-scope `noop`; left inline it hands a fresh prop every
+render and defeats its own boundary.
+
+**R6 (P-2) — two forced layouts per drag frame.** Both liveness managers opened their reconcile with
+`paneRef.current.getBoundingClientRect()` — a synchronous layout flush — and both re-run on every
+`boards`-ref change. Their existing diff-skips guard only the store write / the IPC; the layout read ran
+unconditionally, which is the half P-2 is about. New `canvas/boards/usePaneRect.ts` caches the box. The
+pane's box cannot change because a board inside it moved, so the per-frame measurement was always
+re-answering a question whose answer had not changed.
+
+It returns a **stable getter**, not the rect: consumers hold `reconcile` in a `useCallback` whose identity
+gates a store subscription, so a value changing on resize would tear that subscription down and re-arm it
+for nothing.
+
+**A defect in the fix, caught while writing it.** `ResizeObserver` does **not** fire for a transform — a
+transform never changes the layout box but does change what `getBoundingClientRect` reports. `.st-app-rise`
+animates `scale(1.03) translateY(10px)` → identity for 240 ms on an **ancestor** of the pane, and `Canvas`
+mounts inside that window on **every project switch**, so a mount-time measurement could latch a
+~3%-scaled, 10 px-shifted box that nothing would ever correct. Closed with a capture-phase `animationend`
+listener (capture is required — the animation is on an ancestor), with a test for exactly that case. The
+consequent behaviour is the one we want: during the rise the cache serves the *settled* box, so liveness no
+longer flips for a 240 ms cosmetic transform.
+
+**Declined, with the reason recorded: no rAF coalescing.** The audit asked to "extend the diff-skip to the
+read side" — the read *is* the forced layout, and it is now cached. Browsers already coalesce `pointermove`
+to 1/frame, so the residual is ~48 cheap rect computations; rAF would buy that while changing settle timing
+under two liveness e2e specs that already flake ambiently here. Bad trade.
+
+### The gate: half met and automated, half not taken
+
+Audit §7's Phase 2 gate: *"React Profiler shows the root children no longer re-render on a board drag; the
+bench's N=8 static number improves or holds at 45 fps / 24 ms p50."*
+
+**Half 1 is met, and automated instead of hand-recorded** — a Profiler recording proves it once for the
+person holding the mouse; `App.memo.test.tsx` proves it every run.
+
+That took a rewrite. **The first version of the test passed on the broken code**: reintroducing
+`useCanvasStore((s) => s.boards)` in `App` killed nothing, because the memo wrappers masked the regression
+completely. The instrument that sees past them is `McpPublisher` — the one child rendered *without* a memo
+wrapper and (being mocked) holding no subscription of its own, so its render count **is** `App`'s. Rebuilt
+around it, the mutant fails 2 vs 1. A gate test that passes on the broken code is worth nothing, which is
+the discipline #390 established.
+
+**Half 2 was NOT taken, and shipping without it was an explicit user decision.** Two paired-capture attempts
+hit `bench:baseline`'s own guard: **55.2% CPU at rest against its 25% ceiling**, so it refused to write. The
+guard is correct — `BASELINE.md` documents **±40% across three runs of identical source** — so a number at
+that load could not have separated a real win from noise in either direction. (An earlier attempt died on
+`'streaming' is not recognized`: `bench-baseline.mjs` spawns with `shell: true`, so cmd.exe ate the `|` in
+the grep. Fixed by using single-token regexes with `.` standing in for spaces.)
+
+What ships instead is **counts, not timings** — load-independent, and in that narrow sense the stronger
+evidence, since a busy box cannot make a removed subscription reappear:
+
+| | before | after | mutant |
+|---|---|---|---|
+| root children re-rendered per drag frame | 14 | **0** | restoring the root subscription fails 2 vs 1 |
+| `getBoundingClientRect` per 60 reconciles | 61 | **1** | bypassing the cache fails 61 vs 1 |
+
+11 tests across two new files, every one mutation-verified.
+
+**What is NOT proven: the conversion to milliseconds on this hardware.** Recorded in two places rather than
+left implicit — a **STALE-AGAINST-HEAD banner on `BASELINE.md`** (its 0/8/24 sweep predates R5, and `paint`
+is precisely the segment R5 targets, so reading it as current would be wrong) and **AUDIT §9 item 6** as an
+owed re-capture. An open measurement, not an open defect: nothing in Phase 3 or 4 gates on it.
+
+### A gate-invocation lesson worth keeping
+
+The first merge-gate run failed with 2 hard `@terminal` failures, and the cause was **how the matrix was
+invoked, not the change**. `pnpm test:e2e:matrix` bare runs at `retries:0`; the repo's actual gate runs
+`E2E_PRECOMMIT=1 pnpm test:e2e:matrix` (`.githooks/pre-push:213`), i.e. `retries:2`. At `retries:0` the
+documented probabilistic flakes become hard failures — and `terminal.e2e.ts:62` is named in
+`playwright.config.ts:20` as exactly one of those. It was **confirmed pre-existing by checking out
+`312b1402` (main), rebuilding with `CANVAS_E2E=1`, and reproducing the same failure there.** The other,
+`projectBackground.e2e.ts:115`, failed at 509 ms inside `seedLiveTerminal` with `Execution context was
+destroyed` — the app died in setup — and passed on re-run. Under the correct invocation the Windows leg is
+green with one retried flake.
+
+**Rebased mid-gate.** PR #394 (orchestration S3) landed on `main` while this branch was running its
+merge gate, taking **v0.38.0** — so Phase 2 renumbered to **v0.39.0** and rebased onto `daed5929`. S3 is
+32 files of swarm subsystem with **zero overlap** against this renderer diff, and the rebase was
+conflict-free, but the green matrix from before it described a tree that was no longer the merge
+candidate. **The whole gate was re-run on the rebased tip rather than carried over** — that is the
+number quoted below.
+
+Merge gate (rebased tip `2dee48f9`): Windows `workers:1 retries:2` **340 passed / 1 flaky
+(`terminal.e2e.ts:62`, retried green) / 3 skipped** (11.5m) + Linux Docker **339 passed / 5 skipped**
+(7.8m), matrix exit 0. Unit **6489 passed / 5 failed**, exactly this box's documented ambient floor
+(`pathSafe` ×2, `pty.recapenv` ×3, both `src/main/`, untouched by a renderer-only diff); the two new specs
+are 6/6 stable in isolation. The pre-rebase gate run had also been green (Windows 338 passed / 1 flaky
+`recapHealth` / 3 skipped; Linux 337 passed / 5 skipped) after one Linux re-run — its first attempt died at
+test 169/342 with `error waiting for container: unexpected EOF`, a container-level death, not a test
+result. Push gate (Windows scoped leg) 335 passed / 4 flaky / 3 skipped.
+CI 4/4. `claude-review` FULL, **0 critical / 0 warning / 0 inline**, one non-blocking nit (both liveness
+managers instantiate `usePaneRect` independently, so there are two `ResizeObserver`s against one `paneRef`
+rather than a shared cache — accepted: they fire only on real layout changes, never per frame). Manual dev
+check passed, title-stamped.
