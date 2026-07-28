@@ -146,6 +146,20 @@ fi
 # E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
 # documented browser-trio env flake doesn't false-block a push.
 
+# ----- Windows-leg parallelism (2026-07-28) ----------------------------------
+# The WINDOWS push leg runs two Electron apps side by side. Measured on this box over
+# 342 specs: workers:1 = 10.1m, workers:2 = 6.8/5.4/6.5m across three runs (~39%).
+# Each worker is its OWN Electron process, so store state is already isolated —
+# what contends is OS-level (window focus, ConPTY, GPU). That is real: one of three
+# retries:0 runs failed 4 native specs, another failed none. Under this hook's
+# retries:2 the suite is green with those absorbed as flaky-retried, so the trade is
+# ~3.4 min/run for MORE reliance on retries. Set E2E_WORKERS=1 to opt back out.
+#
+# Deliberately NOT applied to `pnpm test:e2e:matrix` below: that command's Linux half
+# would inherit the env var, the Docker container is CPU-capped and UNMEASURED at 2,
+# and the merge gate is precisely where extra retry-reliance is least welcome.
+WIN_WORKERS="${E2E_WORKERS:-2}"
+
 # ----- full matrix: opt-in, or a direct push to main -------------------------
 # The full cross-OS matrix is the MERGE gate, not the push gate. It runs here only
 # when explicitly forced, or when the push target IS main (a direct-to-main push is
@@ -159,6 +173,30 @@ fi
 # pays the full matrix" guarantee. Row 1 of the decision table in
 # docs/testing/TESTING.md outranks every other row, and this ordering is what
 # makes that true rather than merely documented.
+# Carve-out (2026-07-28, follow-up): a direct-to-main push whose ENTIRE change-set
+# is provably non-runtime — docs, vitest specs, .github/, release tooling — cannot
+# break e2e, and per CLAUDE.md those are the ONLY pushes that legitimately go
+# straight to main (feature code lands via a PR + the merge-gate matrix). Paying a
+# ~25 min matrix for a build-history commit is pure waste, and the `--no-verify`
+# workaround it forced is worse: it disables the gate wholesale rather than
+# narrowly.
+#
+# This is NOT a re-run of the #395 review finding. That bug was an early exit placed
+# AHEAD of the guarantee, bypassing the selector entirely. This routes the decision
+# THROUGH the same selector that gates every other push, and fails OPEN to FULL on
+# any error. Critically it runs on the UNSTRIPPED change-set — package.json is
+# cross-cutting, so a version-only push to main still scores FULL here and still
+# pays the matrix. The exact case the reviewer found stays fixed by construction.
+if [ "$pushing_main" = "1" ] && [ "${E2E_FULL_MATRIX:-}" != "1" ]; then
+  MAIN_SCOPE="$(printf '%s\n' "$changed" | node scripts/e2e-scope.mjs 2>/dev/null)" || MAIN_SCOPE="FULL"
+  [ -z "$MAIN_SCOPE" ] && MAIN_SCOPE="FULL"
+  if [ "$MAIN_SCOPE" = "NONE" ]; then
+    echo "[pre-push] pushing to main, but nothing that reaches the running app changed"
+    echo "           (docs / unit tests / CI / release tooling) — skipping e2e."
+    exit 0
+  fi
+fi
+
 if [ "${E2E_FULL_MATRIX:-}" = "1" ] || [ "$pushing_main" = "1" ]; then
   remind
   if [ "$pushing_main" = "1" ] && [ "${E2E_FULL_MATRIX:-}" != "1" ]; then
@@ -222,7 +260,7 @@ if [ -z "$non_spec" ] && [ -n "$touched_specs" ]; then
   echo "[pre-push] e2e-spec-only push — Windows leg, $spec_count touched spec file(s) (full matrix at the merge gate)."
   # Deliberate word-split: each spec path is a positional FILE filter for Playwright.
   # shellcheck disable=SC2046,SC2086
-  E2E_PRECOMMIT=1 pnpm test:e2e $(printf '%s ' $touched_specs)
+  E2E_PRECOMMIT=1 E2E_WORKERS=$WIN_WORKERS pnpm test:e2e $(printf '%s ' $touched_specs)
   exit 0
 fi
 
@@ -242,7 +280,7 @@ case "$SCOPE" in
     ;;
   FULL)
     echo "[pre-push] cross-cutting or unrecognised path — Windows e2e leg, ALL specs (Linux at the merge gate). Force both legs with E2E_FULL_MATRIX=1."
-    E2E_PRECOMMIT=1 pnpm test:e2e
+    E2E_PRECOMMIT=1 E2E_WORKERS=$WIN_WORKERS pnpm test:e2e
     ;;
   *)
     echo "[pre-push] Windows e2e leg, specs matching '$SCOPE' (Linux + full suite at the merge gate; force all with E2E_FULL_MATRIX=1)."
@@ -250,6 +288,6 @@ case "$SCOPE" in
     # script, so `pnpm test:e2e -- --grep X` runs `playwright test -- --grep X` — and
     # Playwright treats everything after `--` as positional FILE-path filters, not a title
     # grep → "No tests found." `pnpm test:e2e --grep "$SCOPE"` forwards cleanly.
-    E2E_PRECOMMIT=1 pnpm test:e2e --grep "$SCOPE"
+    E2E_PRECOMMIT=1 E2E_WORKERS=$WIN_WORKERS pnpm test:e2e --grep "$SCOPE"
     ;;
 esac

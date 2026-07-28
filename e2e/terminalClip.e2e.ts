@@ -34,8 +34,11 @@ test.describe('@terminal terminal clip-free fit', () => {
       `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, Array.from({length: 60}, (_, i) => 'ROW' + i).join('\\r\\n'))`
     )
     const offenders: Array<{ h: number } & Geo> = []
-    // Odd step hits fractional remainders that a coarse step would skip.
-    for (let h = 200; h <= 620; h += 7) {
+    // Odd step hits fractional remainders that a coarse step would skip. Widened 7→13
+    // (61→33 heights) to halve the real IPC round trips; it MUST stay ODD — an even
+    // step walks a fixed parity of remainders against cellHeight and silently drops
+    // the coverage this sweep exists for.
+    for (let h = 200; h <= 620; h += 13) {
       await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
       // Settle the async fit (ResizeObserver + xterm render run off-frame) instead of a fixed
       // sleep. pollEval RETURNS on timeout (never throws), so a genuine clip falls through to the
@@ -65,7 +68,8 @@ test.describe('@terminal terminal clip-free fit', () => {
     for (const font of [8, 11, 14, 18, 22]) {
       await evalIn(page, `window.__canvasE2E.setBoardFont(${JSON.stringify(id)}, ${font})`)
       await pollEval(page, `(${geoOf(id)})?.overflow <= ${TOLERANCE}`, 2000) // settle reactive apply + refit
-      for (let h = 220; h <= 600; h += 11) {
+      // Widened 11→23 (35→17 heights per font); ODD for the same reason as the sweep above.
+      for (let h = 220; h <= 600; h += 23) {
         await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
         await pollEval(page, `(${geoOf(id)})?.overflow <= ${TOLERANCE}`, 2000) // settle, then read below
         const geo = await evalIn<Geo | null>(page, geoOf(id))

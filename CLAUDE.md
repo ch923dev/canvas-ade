@@ -328,8 +328,15 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 > Well-partitioned `src/main/**` subsystems (pty/preview/voice/mcp) now scope by area too — the
 > cross-OS insurance they used to force is paid at the merge gate instead. Full rules +
 > decision table: `docs/testing/TESTING.md` › *Push cheap / merge full*. **`pre-commit` is now the cheap trio only** (`typecheck ·
-> lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. Flake policy:
-> `retries:2` under `E2E_PRECOMMIT`, `workers:1`. Bypass with `git commit --no-verify` (cheap gate) /
+> lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. A direct push to `main` whose verdict is
+> `NONE` (a docs/contract commit — e.g. the per-merge build-history entry) skips e2e: the decision
+> goes THROUGH the selector, fails open to `FULL`, and is taken on the unstripped change-set, so a
+> version-only push to `main` still pays the matrix. Flake policy:
+> `retries:2` under `E2E_PRECOMMIT`. The Windows push leg runs **`E2E_WORKERS=2`** (two Electron
+> apps; 10.1m → 5.3-6.8m measured). `E2E_WORKERS` defaults to **1** so the Linux Docker leg + CI
+> never inherit it. The trade is explicit — the parallel leg leans MORE on retries (OS-level focus/
+> ConPTY/GPU contention, not state leakage: each worker is its own process). Opt out per-push with
+> `E2E_WORKERS=1`. Bypass with `git commit --no-verify` (cheap gate) /
 > `git push --no-verify` (e2e). **CI gate = the Actions `check` job only**
 > (typecheck · lint · format:check · unit + integration); the `smoke` job was removed from `pr.yml`
 > + `staging.yml`. This **supersedes** the 2026-06-03 freeze. Both legs proven green: Windows on the
