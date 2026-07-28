@@ -143,13 +143,19 @@ function rehydrateMissingSummaries(dir: string, doc: unknown, engine: MemoryEngi
     const boards = (doc as { boards?: unknown })?.boards
     if (!Array.isArray(boards)) return
     const mem = createCanvasMemory(dir)
+    // Audit R11 / DL-2: ONE readdir, then a set lookup per board. This used to call
+    // `mem.readBoard(id) === undefined` per board — an existsSync PLUS a full readFileSync of a
+    // file whose CONTENT is thrown away, i.e. 2 sync fs calls per board on the IPC thread, which
+    // is the entire per-board term of the measured `14 + 2×boardCount` open cost.
+    //
+    // One behavior difference, deliberate: a summary that exists but cannot be READ (locked file,
+    // transient EBUSY) used to read as missing and re-arm an LLM summarize. It now counts as
+    // present. The file is there; a transient read error is not a reason to regenerate it.
+    const cached = new Set(mem.listBoardIds())
     const missing: string[] = []
     for (const board of boards) {
       const id = (board as { id?: unknown })?.id
-      // readBoard guards safeBoardId + returns undefined when the file is absent.
-      if (typeof id === 'string' && id.length > 0 && mem.readBoard(id) === undefined) {
-        missing.push(id)
-      }
+      if (typeof id === 'string' && id.length > 0 && !cached.has(id)) missing.push(id)
     }
     if (missing.length > 0) engine.rehydrate(missing)
   } catch (err) {
