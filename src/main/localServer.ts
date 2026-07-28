@@ -84,6 +84,57 @@ const STATIC_PAGE = `<!doctype html>
 <script>document.title = 'static idle preview OK'; console.log('STATIC_PAGE_OK');</script>
 </body></html>`
 
+/**
+ * Audit R8 (P-4): TRUE only where something actually READS this server's URL.
+ *
+ * Everything above is a hardcoded test fixture. The bound URL reaches exactly two consumers —
+ * `installE2EMain` (gated `__ENABLE_E2E_MAIN__ ∧ CANVAS_E2E`) and `runSelfTest` (gated
+ * `CANVAS_SMOKE`) — so in a distributed build the port is read by nothing, while every user paid
+ * an AV/firewall-inspected loopback bind on the critical boot path.
+ *
+ * `is.dev` is included deliberately, not defensively: `pnpm dev` must keep serving `/static`,
+ * `/static2`, `/download` and `/json` for hand-driven Browser-board checks (AUDIT §9 item 4).
+ *
+ * Pure + env-injected so the gate is unit-testable — the decision itself is the whole change, and
+ * getting it wrong silently costs the 26 `@preview` specs their fixture host.
+ */
+export function shouldStartLocalServer(opts: {
+  isDev: boolean
+  env: Record<string, string | undefined>
+}): boolean {
+  return opts.isDev || !!opts.env.CANVAS_E2E || !!opts.env.CANVAS_SMOKE
+}
+
+/** What a gated boot did about the fixture server, for the boot-timing record. */
+export type LocalServerStatus = 'started' | 'failed' | 'skipped'
+
+/**
+ * The whole R8 boot decision in one call: gate, start, degrade, report. Lives here rather than
+ * inline in `whenReady` because index.ts is at its file-size pin and because the BUG-026/027
+ * degrade-don't-crash contract belongs beside the server it protects.
+ *
+ * A bind failure (EACCES from an AV/firewall loopback denial, EMFILE/ENFILE under fd exhaustion,
+ * ENETDOWN) is logged and reported as `failed` — never rethrown, or Node's uncaughtException sink
+ * would take the app to app.exit(1) at startup with no message.
+ */
+export async function startLocalServerIfNeeded(opts: {
+  isDev: boolean
+  env: Record<string, string | undefined>
+}): Promise<{ server: LocalServer | null; url: string; status: LocalServerStatus }> {
+  if (!shouldStartLocalServer(opts)) return { server: null, url: '', status: 'skipped' }
+  try {
+    const server = await startLocalServer()
+    return { server, url: server.url, status: 'started' }
+  } catch (err) {
+    console.error(
+      'Could not bind local preview server on 127.0.0.1 — continuing without it. ' +
+        'Boards open with an explicit URL still work.',
+      err
+    )
+    return { server: null, url: '', status: 'failed' }
+  }
+}
+
 /** Tiny loopback HTTP server so the WebContentsView smoke works in dev AND in
  *  the packaged build (no Vite dev server to depend on). */
 export function startLocalServer(): Promise<LocalServer> {
