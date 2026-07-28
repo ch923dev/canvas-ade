@@ -3,12 +3,14 @@ import {
   MODEL_TIER_CLAUDE_ALIAS,
   ROLE_PACKS,
   WRITE_ROLE_CONCURRENCY_CAP,
+  WRITE_ROLE_CONCURRENCY_CAP_SHARED,
   isWriteRolePack,
   launchLooksReadOnly,
   packDispatchPrompt,
   packOptionValues,
   rolePackById,
   validateRolePack,
+  writeRoleConcurrencyCap,
   type RolePack
 } from './rolePacks'
 import { AGENT_PRESETS, presetById } from '../canvas/boards/terminal/agentPresets'
@@ -45,8 +47,13 @@ describe('ROLE_PACKS catalog', () => {
     expect(MODEL_TIER_CLAUDE_ALIAS.cheap).toBe('haiku')
   })
 
-  it('the write cap is 1 until worktree isolation lands (Phase 3)', () => {
-    expect(WRITE_ROLE_CONCURRENCY_CAP).toBe(1)
+  it('S3: the write cap is a FUNCTION of what actually provisioned, not a bare constant', () => {
+    // 2 for writers that each hold their own worktree (07 §4.3), still 1 the moment one does not
+    // — a cap raised past the isolation that justifies it is worse than no change at all.
+    expect(WRITE_ROLE_CONCURRENCY_CAP).toBe(2)
+    expect(WRITE_ROLE_CONCURRENCY_CAP_SHARED).toBe(1)
+    expect(writeRoleConcurrencyCap(true)).toBe(2)
+    expect(writeRoleConcurrencyCap(false)).toBe(1)
   })
 
   it('rolePackById resolves catalog ids and returns undefined for Custom/unknown', () => {

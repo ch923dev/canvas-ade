@@ -1,0 +1,2516 @@
+<meta charset="utf-8" />
+<title>S3 — Design gate: workspace isolation (the parallel-writers slice)</title>
+<style>
+  /* ============================================================================
+     TOKENS — verbatim from src/renderer/src/styles/tokens.css (the app contract).
+     Nothing invented. Same rule as the S1 artifact: prove the surface lands inside
+     the existing visual system instead of importing a second palette.
+     ============================================================================ */
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+
+    --void: #0a0a0b;
+    --grid-dot: #202022;
+    --surface: #141416;
+    --surface-raised: #1a1a1d;
+    --surface-overlay: #1e1e22;
+    --inset: #0e0e10;
+
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.16);
+
+    --text: #ededee;
+    --text-2: #9b9ba1;
+    --text-3: #7b7b81;
+    --text-faint: #46464b;
+
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+    --accent-wash: rgba(79, 140, 255, 0.14);
+    --ok: #3ecf8e;
+    --warn: #e8b339;
+    --warn-wash: rgba(232, 179, 57, 0.12);
+    --err: #f2545b;
+    --ok-wash: rgba(62, 207, 142, 0.14);
+    --err-wash: rgba(242, 84, 91, 0.14);
+    --scrim: rgba(0, 0, 0, 0.5);
+
+    --fs-micro: 10px;
+    --lh-micro: 14px;
+    --fw-micro: 500;
+    --tr-micro: 0.06em;
+    --fs-meta: 11px;
+    --lh-meta: 16px;
+    --fw-meta: 450;
+    --fs-label: 12px;
+    --lh-label: 16px;
+    --fw-label: 500;
+    --fs-body: 13px;
+    --lh-body: 20px;
+    --fs-term: 12.5px;
+    --lh-term: 19px;
+    --fs-h: 15px;
+    --lh-h: 22px;
+    --fw-h: 600;
+    --tr-h: -0.01em;
+
+    --r-board: 8px;
+    --r-inner: 6px;
+    --r-ctl: 5px;
+    --r-pill: 999px;
+    --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+  }
+
+  html {
+    background: var(--void);
+  }
+  body {
+    background: var(--void);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 13px;
+    line-height: 20px;
+    margin: 0;
+    padding: 0 0 72px;
+  }
+  ::selection {
+    background: var(--accent-wash);
+  }
+
+  .wrap {
+    max-width: 1340px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .doc-head {
+    padding: 40px 0 8px;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 14px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .doc-head h1 {
+    font-size: 21px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 6px 0 8px;
+  }
+  .doc-head .meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    margin: 0;
+  }
+
+  h2.sec {
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 48px 0 4px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2.sec .num {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 450;
+    color: var(--text-faint);
+  }
+  h3.sub {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 26px 0 8px;
+    color: var(--text);
+  }
+  p.lede {
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 20px;
+    margin: 6px 0 18px;
+    max-width: 88ch;
+  }
+  p.note {
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 18px;
+    margin: 10px 0 0;
+    max-width: 92ch;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  b.hi {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  table.tbl {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0 4px;
+    font-size: 12px;
+  }
+  table.tbl th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--border);
+    padding: 0 12px 6px 0;
+  }
+  table.tbl td {
+    vertical-align: top;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 12px 8px 0;
+    line-height: 18px;
+  }
+  table.tbl td:first-child {
+    color: var(--text);
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  table.tbl td .yes {
+    color: var(--ok);
+  }
+  table.tbl td .no {
+    color: var(--text-faint);
+  }
+
+  .cap {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 8px;
+  }
+  .stage {
+    background:
+      radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--void);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-board);
+    padding: 22px;
+    margin: 12px 0 4px;
+    overflow-x: auto;
+  }
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .row3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 14px 15px;
+  }
+  .panel h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .panel p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--text-2);
+  }
+  .panel.pick {
+    border-color: var(--accent);
+    background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--surface);
+  }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    color: var(--text-3);
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .tag.rec {
+    color: var(--accent);
+    border-color: rgba(79, 140, 255, 0.4);
+  }
+  .tag.new {
+    color: var(--ok);
+    border-color: rgba(62, 207, 142, 0.35);
+  }
+  .tag.s3 {
+    color: var(--text-faint);
+  }
+
+  ul.pts {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 19px;
+  }
+  ul.pts li {
+    margin-bottom: 5px;
+  }
+  ul.pts li b {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* ==========================================================================
+     BOARD CHROME — the shipped .sw-* classes copied VERBATIM from
+     src/renderer/src/styles/boards/swarm.css, plus the S2 additions marked
+     `S2 NEW`. What renders below is what ships.
+     ========================================================================== */
+  .board {
+    width: 1180px;
+    height: 660px;
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-board);
+    overflow: hidden;
+    margin: 0 auto;
+  }
+  .board-bar {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .board-bar .glyph {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--accent);
+    background: var(--accent-wash);
+  }
+  .board-body {
+    position: absolute;
+    inset: 30px 0 0;
+  }
+
+  .sw-root {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    font-family: var(--ui);
+    font-size: var(--fs-body);
+    color: var(--text);
+  }
+  .sw-head {
+    flex: none;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 6px 12px 0;
+  }
+  .sw-head-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sw-timer {
+    font-family: var(--mono);
+    font-size: var(--fs-meta);
+    color: var(--text-3);
+  }
+  .sw-spacer {
+    flex: 1;
+  }
+  .sw-btn {
+    font-family: var(--ui);
+    font-size: var(--fs-label);
+    font-weight: var(--fw-label);
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    background: var(--inset);
+    color: var(--text-2);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sw-btn:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+  .sw-btn.sm {
+    height: 21px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+  /* S2 NEW — the primary action inside a triage row (Reassign / Approve). */
+  .sw-btn.go {
+    border-color: rgba(79, 140, 255, 0.4);
+    color: var(--accent);
+    background: var(--accent-wash);
+  }
+
+  /* S2 NEW — header chip: this run was rehydrated from the durable ledger. */
+  .sw-restored {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ok);
+    border: 1px solid rgba(62, 207, 142, 0.35);
+    background: var(--ok-wash);
+    border-radius: var(--r-ctl);
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+
+  /* ── region 2 · plan strip ── */
+  .sw-plan {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 0 8px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .sw-plan-lbl {
+    flex: none;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .sw-plan-empty,
+  .sw-plan-ro {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .sw-task {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 2px 9px;
+    color: var(--text-2);
+    background: var(--surface);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .sw-task:hover {
+    border-color: var(--border-strong);
+  }
+  .sw-task.done {
+    color: var(--text-3);
+  }
+  .sw-task-n {
+    color: var(--text-faint);
+  }
+  /* S2 NEW — the chip's LEFT hit target is a real checkbox; the label stays the jump. */
+  .sw-task {
+    padding-left: 3px;
+  }
+  .sw-task-box {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    border-radius: 3px;
+    border: 1px solid var(--border-strong);
+    background: var(--inset);
+    color: var(--void);
+    font-size: 9px;
+    line-height: 11px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .sw-task-box:hover {
+    border-color: var(--accent);
+  }
+  .sw-task.done .sw-task-box {
+    background: var(--ok);
+    border-color: var(--ok);
+  }
+  /* S2 NEW — a chip currently owned by a live worker carries its state dot. */
+  .sw-task-own {
+    width: 5px;
+    height: 5px;
+    border-radius: var(--r-pill);
+    flex: none;
+    background: var(--accent);
+  }
+  .sw-task-own.stalled {
+    background: var(--warn);
+  }
+  /* S2 NEW — inline rename: the chip becomes an input in place, same metrics. */
+  .sw-task.editing {
+    border-color: var(--accent);
+    background: var(--inset);
+  }
+  .sw-task-input {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text);
+    width: 190px;
+    padding: 0;
+  }
+  /* S2 NEW — the trailing add affordance. */
+  .sw-task-add {
+    border-style: dashed;
+    color: var(--text-faint);
+    padding-left: 9px;
+  }
+  .sw-task-add:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  /* S2 NEW — per-chip edit handle; appears on hover (always shown in the mock). */
+  .sw-task-pen {
+    color: var(--text-faint);
+    font-size: 10px;
+  }
+  .sw-task:hover .sw-task-pen {
+    color: var(--text-2);
+  }
+
+  /* ── body grid ── */
+  .sw-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(220px, 30%) 1fr;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+  }
+  .sw-chat {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+  }
+  .sw-chat-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: var(--fs-label);
+  }
+  .sw-orch-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-pill);
+    background: var(--accent);
+    flex: none;
+  }
+  .sw-brain-chip {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+  .sw-msgs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    scrollbar-width: thin;
+  }
+  .sw-msg {
+    max-width: 90%;
+  }
+  .sw-msg .sw-who {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 2px 3px;
+  }
+  .sw-msg p {
+    margin: 0;
+    padding: 7px 10px;
+    border-radius: var(--r-inner);
+    font-size: 12.5px;
+    line-height: 18px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .sw-msg.you {
+    align-self: flex-end;
+  }
+  .sw-msg.you p {
+    background: var(--accent-wash);
+    border: 1px solid rgba(79, 140, 255, 0.22);
+    color: var(--text);
+  }
+  .sw-msg.orch p {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-2);
+  }
+  .sw-statusline {
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    padding: 0 2px;
+  }
+  .sw-statusline::before,
+  .sw-statusline::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .sw-composer {
+    flex: none;
+    border-top: 1px solid var(--border-subtle);
+    padding: 9px 11px 8px;
+  }
+  .sw-composer-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 6px 8px;
+    background: var(--inset);
+  }
+  .sw-composer-box .ph {
+    flex: 1;
+    color: var(--text-faint);
+    font-size: 12.5px;
+  }
+  .sw-hint {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-faint);
+    margin: 5px 2px 0;
+  }
+
+  /* ── region 3 · worker canvas ── */
+  .sw-canvas {
+    padding: 10px 12px;
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-width: thin;
+    background:
+      radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--void);
+  }
+  .sw-canvas-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .sw-canvas-lbl {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .sw-canvas-counts {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+  .sw-canvas-counts b {
+    color: var(--warn);
+    font-weight: 500;
+  }
+  .sw-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+  }
+  .sw-card {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-height: 58px;
+    box-sizing: border-box;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    font-family: var(--ui);
+  }
+  .sw-card:hover {
+    border-color: var(--border-strong);
+  }
+  .sw-card.attn {
+    border-color: var(--warn);
+    background: var(--warn-wash);
+    box-shadow: 0 0 0 1px var(--warn);
+  }
+  .sw-card.done {
+    opacity: 0.85;
+  }
+  .sw-card.ghost {
+    border-style: dashed;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    background: transparent;
+  }
+  /* S2 NEW — LOST: the worker died mid-task; its result was salvaged. Uses --err, but
+     deliberately NOT the --warn ring (that language belongs to needs-input alone). */
+  .sw-card.lost {
+    border-color: rgba(242, 84, 91, 0.5);
+    background: linear-gradient(var(--err-wash), var(--err-wash)), var(--surface-raised);
+  }
+  /* S2 NEW — STALLED: no border change at all. The signal is the frozen dot + the amber
+     TIMER + the disclosed activity line. A stalled worker is not asking for anything. */
+  .sw-card-top {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+  .sw-card-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .sw-role {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    flex: none;
+  }
+  .sw-card-t {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    flex: none;
+  }
+  /* S2 NEW — the timer IS the stall signal. */
+  .sw-card-t.stale {
+    color: var(--warn);
+    font-weight: 500;
+  }
+  .sw-st {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: var(--r-pill);
+    position: relative;
+  }
+  .sw-st.working {
+    background: var(--accent);
+  }
+  .sw-st.needs-input {
+    background: var(--warn);
+  }
+  .sw-st.needs-input::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 1px solid var(--warn);
+    border-radius: var(--r-pill);
+  }
+  .sw-st.idle {
+    background: transparent;
+    border: 1px dashed var(--text-faint);
+  }
+  .sw-st.done {
+    background: var(--ok);
+  }
+  .sw-st.error {
+    background: var(--err);
+  }
+  /* S2 NEW — stalled: the working blue, FROZEN (no pulse) and hollowed. Reads as
+     "nominally running, but nothing has moved" — which is exactly the truth. */
+  .sw-st.stalled {
+    background: transparent;
+    border: 2px solid var(--accent);
+    opacity: 0.55;
+  }
+  /* S2 NEW — lost: hollow --err (the worker is gone, not erroring). */
+  .sw-st.lost {
+    background: transparent;
+    border: 2px solid var(--err);
+  }
+  .sw-activity {
+    font-size: 12px;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sw-card.attn .sw-activity {
+    color: var(--warn);
+    font-weight: 500;
+  }
+  /* S2 NEW — the disclosure line: threshold + provenance, never silent. */
+  .sw-disclose {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sw-card.lost .sw-disclose {
+    color: rgba(242, 84, 91, 0.85);
+  }
+
+  /* ── region 4 · TRIAGE QUEUE (was: needs-you strip) ── */
+  .sw-needs {
+    grid-column: 2;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: 196px; /* S2: 132 → 196, the queue is a real work surface */
+  }
+  .sw-needs-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px 5px;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .sw-needs-head b {
+    color: var(--warn);
+  }
+  .sw-needs-list {
+    overflow-y: auto;
+    padding: 0 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    scrollbar-width: thin;
+  }
+  .sw-needs-quiet {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    padding: 2px;
+  }
+  .sw-tri {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 6px 10px;
+    font-size: 12px;
+    background: var(--surface-raised);
+  }
+  .sw-tri.hot {
+    border-color: var(--warn);
+    background: var(--warn-wash);
+  }
+  /* S2 NEW — a lost/failed row leans --err; a stalled row stays neutral (not an alarm). */
+  .sw-tri.bad {
+    border-color: rgba(242, 84, 91, 0.45);
+    background: linear-gradient(var(--err-wash), var(--err-wash)), var(--surface-raised);
+  }
+  .sw-tri-ico {
+    font-family: var(--mono);
+    font-size: 11px;
+    flex: none;
+    width: 12px;
+    text-align: center;
+    color: var(--text-faint);
+  }
+  .sw-tri.hot .sw-tri-ico {
+    color: var(--warn);
+  }
+  .sw-tri.bad .sw-tri-ico {
+    color: var(--err);
+  }
+  /* S2 NEW — the blocked TAG chip. A closed vocabulary you can write a rule against,
+     never prose (09 §3). */
+  .sw-tri-tag {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    color: var(--text-3);
+  }
+  .sw-tri.hot .sw-tri-tag {
+    color: var(--warn);
+    border-color: rgba(232, 179, 57, 0.4);
+  }
+  .sw-tri.bad .sw-tri-tag {
+    color: var(--err);
+    border-color: rgba(242, 84, 91, 0.4);
+  }
+  .sw-tri-txt {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sw-tri-txt b {
+    color: var(--text);
+    font-weight: 500;
+  }
+  /* S2 NEW — the row's actions live at the right, fixed width, never wrapping. */
+  .sw-tri-acts {
+    flex: none;
+    display: flex;
+    gap: 5px;
+  }
+
+  /* the callout blocks */
+  .call {
+    border-left: 2px solid var(--accent);
+    background: var(--accent-wash);
+    padding: 10px 14px;
+    border-radius: 0 var(--r-inner) var(--r-inner) 0;
+    margin: 16px 0;
+    font-size: 12px;
+    line-height: 19px;
+    color: var(--text-2);
+    max-width: 92ch;
+  }
+  .call b {
+    color: var(--text);
+  }
+  .call.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-wash);
+  }
+  .call.ask {
+    border-left-color: var(--ok);
+    background: var(--ok-wash);
+  }
+
+  /* the modal replica */
+  .modal-stage {
+    position: relative;
+    background: var(--scrim);
+    border-radius: var(--r-inner);
+    padding: 26px;
+    display: grid;
+    place-items: center;
+  }
+  .modal {
+    width: 520px;
+    max-width: 100%;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-pop);
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  .modal h2 {
+    margin: 0;
+    font-size: var(--fs-h);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .modal .sub {
+    margin: 8px 0 16px;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: var(--text-2);
+  }
+  .mrow {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 10px 11px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border-subtle);
+    background: var(--surface);
+    margin-bottom: 8px;
+  }
+  .mrow.on {
+    border-color: var(--accent);
+    background: var(--accent-wash);
+  }
+  .mbox {
+    margin-top: 1px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    background: var(--inset);
+    color: var(--void);
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+  }
+  .mrow.on .mbox {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  .mlabel {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-meta);
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    margin-bottom: 3px;
+  }
+  .mbody {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-term);
+    line-height: var(--lh-term);
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .mfoot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .btn-ghost {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border-subtle);
+    background: var(--inset);
+    color: var(--text-2);
+  }
+  .btn-primary {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--void);
+  }
+
+  pre.ascii {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 17px;
+    color: var(--text-2);
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 12px 0 4px;
+  }
+  pre.ascii b {
+    color: var(--accent);
+    font-weight: 400;
+  }
+  pre.ascii i {
+    color: var(--text-faint);
+    font-style: normal;
+  }
+
+  /* ==========================================================================
+     S3 ADDITIONS — everything below is NEW surface proposed by this gate.
+     Same rule as S1/S2: only tokens from tokens.css, no second palette.
+     ========================================================================== */
+
+  /* S3 NEW — the worktree/branch line on a write worker's card. Mono, faint, one
+     line, ellipsized; the leaf (`builder-1`) is what the human reads, the full
+     `swarm/<run8>/<leaf>` rides the title attribute. Only ISOLATED workers get it,
+     so read-only cards keep their three lines exactly as they ship today. */
+  .sw-wt {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+  .sw-wt .g {
+    color: var(--accent);
+    flex: none;
+  }
+  .sw-wt .b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sw-wt .dim {
+    color: var(--text-faint);
+  }
+  /* variant A — inline chip on the top row, beside the role badge. */
+  .sw-wtchip {
+    flex: 0 1 auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--accent);
+    border: 1px solid rgba(79, 140, 255, 0.35);
+    background: var(--accent-wash);
+    border-radius: 3px;
+    padding: 0 5px;
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* A card that DECLARED worktree isolation and did not get it. There is no such
+     card in S3 — the spawn refuses — but the style exists to prove the refusal is
+     the only path: nothing silently renders "isolated" that is not. */
+  .sw-wt.none {
+    color: var(--err);
+  }
+
+  /* shipped in swarm.css, absent from the S1/S2 artifact copy — without it the head's
+     scope note inherits the uppercase transform of `.sw-needs-head`. */
+  .sw-needs-scope {
+    margin-left: auto;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-faint);
+    font-size: 10px;
+  }
+
+  /* S3 NEW — triage lane for an integration hazard. Not `hot` (amber is reserved
+     for "a human is the blocker"), not neutral (ignoring it clobbers work). It
+     reuses the shipped `bad` err lane verbatim — a new colour would be a second
+     vocabulary for the same meaning. */
+  .sw-tri.seq {
+    border-color: rgba(79, 140, 255, 0.35);
+    background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--surface-raised);
+  }
+  .sw-tri.seq .sw-tri-ico,
+  .sw-tri.seq .sw-tri-tag {
+    color: var(--accent);
+  }
+  .sw-tri.seq .sw-tri-tag {
+    border-color: rgba(79, 140, 255, 0.4);
+  }
+
+  /* S3 NEW — the merge sequence, rendered UNDER its triage row when expanded. */
+  .sw-seq {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border: 1px solid var(--border-subtle);
+    border-top: none;
+    border-radius: 0 0 var(--r-ctl) var(--r-ctl);
+    background: var(--inset);
+    padding: 7px 10px 8px;
+    margin-top: -5px;
+  }
+  .sw-seq-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-2);
+    min-width: 0;
+  }
+  .sw-seq-n {
+    color: var(--text-faint);
+    flex: none;
+    width: 14px;
+  }
+  .sw-seq-br {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sw-seq-meta {
+    color: var(--text-faint);
+    flex: none;
+  }
+  .sw-seq-warn {
+    color: var(--err);
+    flex: none;
+  }
+  .sw-seq-foot {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-faint);
+    padding-top: 3px;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 2px;
+  }
+  .sw-copy {
+    margin-left: auto;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    background: var(--surface);
+    cursor: pointer;
+  }
+
+  /* doc-only helpers */
+  .variant {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .variant .vlbl {
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 14px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    min-height: 28px;
+  }
+  .variant .vlbl b {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .cardbox {
+    width: 224px;
+  }
+  .strip {
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .before,
+  .after {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 17px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 9px 11px;
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .before {
+    color: var(--text-3);
+    background: var(--inset);
+    text-decoration-color: var(--err);
+  }
+  .after {
+    color: var(--text);
+    background: linear-gradient(var(--ok-wash), var(--ok-wash)), var(--inset);
+    border-color: rgba(62, 207, 142, 0.3);
+  }
+  .lbl-b,
+  .lbl-a {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 14px 0 0;
+  }
+  .lbl-b {
+    color: var(--err);
+  }
+  .lbl-a {
+    color: var(--ok);
+  }
+</style>
+
+<div class="wrap">
+  <header class="doc-head">
+    <div class="kicker">
+      Orchestration · S3 · design gate — SIGNED OFF 2026-07-28 (variant C · no node_modules link ·
+      D1/D2/D4/D5/D6/D8/D9 as written)
+    </div>
+    <h1>
+      Workspace isolation — a disjoint tree per writer, and the one collision that survives it
+    </h1>
+    <p class="meta">
+      lane <code>feat/swarm-s3</code> · base <code>8dca6370</code> (v0.35.0, S2 = #392) · target
+      <code>0.36.0</code> · rides base Phase 3 (<code>04-roadmap.md</code>) · specs
+      <code>03-mechanism.md</code> item 6 · <code>07-swarm-board.md</code> §6 S3 / §4.3 ·
+      <code>CLAUDE.md</code> › Git / worktrees (locked rules, verbatim)
+    </p>
+  </header>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">1</span>What S3 actually changes</h2>
+  <p class="lede">
+    Today the platform has nothing: no worktrees, no locks, a shared cwd by default, no path claims
+    — A6, all four negatives CONFIRMED. The app is honest about it rather than unsafe:
+    <code>WRITE_ROLE_CONCURRENCY_CAP = 1</code> admits exactly one write-role worker at a time and
+    discloses why. S3 is the lane that earns the right to delete that sentence. It gives every
+    write-capable worker <b class="hi">its own git worktree on its own branch</b>, records it in the
+    ledger S2 built, and then deals with the collision isolation cannot remove —
+    <b class="hi">integration</b> — by detecting it mechanically and surfacing it for a human merge.
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 158px">Surface</th>
+      <th style="width: 300px">S2 (shipped)</th>
+      <th>S3 (this gate)</th>
+    </tr>
+    <tr>
+      <td>3 · worker cards</td>
+      <td>
+        Dot + name + role badge + timer; an activity line; a mono disclosure line composed
+        MAIN-side. Seven states.
+      </td>
+      <td>
+        <b class="hi">A worktree/branch line</b> on write-isolated workers only — the branch leaf
+        the human will merge. Read-only cards are untouched (§2).
+      </td>
+    </tr>
+    <tr>
+      <td>4 · triage queue</td>
+      <td>
+        Risk-ordered rows from two sources, six closed tags (<code>needs_input</code> ·
+        <code>lost</code> · <code>failing_check</code> · <code>stalled</code> ·
+        <code>dependency</code> · <code>unreviewed</code>), inline actions.
+      </td>
+      <td>
+        <b class="hi">Three new tags</b> — <code>overlap</code> (two finished workers touched the
+        same file), <code>dirty_worktree</code> (a tree kept on disk), <code>merge_ready</code> (the
+        merge sequence, one row per run, expandable). §4.
+      </td>
+    </tr>
+    <tr>
+      <td>— · spawn confirm</td>
+      <td>
+        The full worker-config dialog: role, model, editable launch line. Body names the role and
+        the command.
+      </td>
+      <td>
+        <b class="hi">Body also names the worktree path and the branch</b> it is about to create —
+        and the fact that no <code>node_modules</code> is linked into it. §6.
+      </td>
+    </tr>
+    <tr>
+      <td>— · write cap</td>
+      <td>
+        Hard 1. Both refusal strings promise “workers share one working tree until worktree
+        isolation lands”.
+      </td>
+      <td>
+        <b class="hi">2 for isolated writers, still 1 the moment any writer is not isolated</b> —
+        and both strings rewritten, because the old ones become a lie the instant this ships. §7.
+      </td>
+    </tr>
+    <tr>
+      <td>— · invisible</td>
+      <td>—</td>
+      <td>
+        The allocator (<code>simple-git</code>, MAIN-only), teardown with the locked dirty policy,
+        and the overlap set-intersection. Invisible until something goes wrong — which is exactly
+        when it has to be legible. §5, §6, §8.
+      </td>
+    </tr>
+  </table>
+
+  <div class="call">
+    <b>The exit proof this design has to serve (07 §6):</b> three builders on disjoint areas each
+    work in their own worktree/branch with no file races; worktree chips render on the worker cards;
+    overlapping touched-file sets raise an overlap warning in triage; the branches are surfaced for
+    the human to merge, <b>in sequence, not clobbered</b>. Every pixel below is in service of that
+    sentence.
+  </div>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">2</span>The chip — three candidates, one call</h2>
+  <p class="lede">
+    A worker card is <code>minmax(180px, 1fr)</code> in a grid, so at a realistic canvas width it is
+    ~200–230px. The branch name is <b class="hi">load-bearing</b> — it is the string the human types
+    into <code>git merge</code> — so it cannot be decoration, and it cannot be the thing that gets
+    ellipsized away. Three placements, drawn at real scale against a real card.
+  </p>
+
+  <div class="stage">
+    <div style="display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap">
+      <div class="variant cardbox">
+        <div class="vlbl">Variant A — inline chip, top row</div>
+        <div class="sw-cards" style="grid-template-columns: 1fr">
+          <button class="sw-card">
+            <span class="sw-card-top">
+              <span class="sw-st working"></span>
+              <span class="sw-card-name">builder-1</span>
+              <span class="sw-role">BUILDER</span>
+              <span class="sw-wtchip">⑂ builder-1</span>
+              <span class="sw-card-t">6m</span>
+            </span>
+            <span class="sw-activity">Migrating settings readers…</span>
+            <span class="sw-disclose">task 3 · dispatched 6m ago</span>
+          </button>
+        </div>
+        <p class="note">
+          Four competing items on one 224px row. The name — how the human identifies the worker —
+          loses, and the branch is truncated to its first eight characters anyway. Rejected on the
+          same evidence as the S2 role-badge fix (a long role squeezed the name to
+          <code>w-bui…</code>).
+        </p>
+      </div>
+
+      <div class="variant cardbox">
+        <div class="vlbl">Variant B — prefix on the disclosure line</div>
+        <div class="sw-cards" style="grid-template-columns: 1fr">
+          <button class="sw-card">
+            <span class="sw-card-top">
+              <span class="sw-st working"></span>
+              <span class="sw-card-name">builder-1</span>
+              <span class="sw-role">BUILDER</span>
+              <span class="sw-card-t">6m</span>
+            </span>
+            <span class="sw-activity">Migrating settings readers…</span>
+            <span class="sw-disclose">⑂ builder-1 · task 3 · dispatched 6m…</span>
+          </button>
+        </div>
+        <p class="note">
+          Costs no vertical space, but the disclosure line is the one place S2 put the
+          <i>reason</i> — the stall threshold, the exit code, the salvage provenance. Sharing it
+          means a stalled isolated worker shows either its branch or why it is stalled, never both.
+          A disclosure that gets ellipsized discloses nothing.
+        </p>
+      </div>
+
+      <div class="variant cardbox">
+        <div class="vlbl"><b>Variant C</b> — its own line (recommended)</div>
+        <div class="sw-cards" style="grid-template-columns: 1fr">
+          <button class="sw-card">
+            <span class="sw-card-top">
+              <span class="sw-st working"></span>
+              <span class="sw-card-name">builder-1</span>
+              <span class="sw-role">BUILDER</span>
+              <span class="sw-card-t">6m</span>
+            </span>
+            <span class="sw-activity">Migrating settings readers…</span>
+            <span class="sw-wt"
+              ><span class="g">⑂</span><span class="b">builder-1</span
+              ><span class="dim">· 4 files</span></span
+            >
+            <span class="sw-disclose">task 3 · dispatched 6m ago</span>
+          </button>
+        </div>
+        <p class="note">
+          One line, one job. Appears <b>only</b> on a worker that actually holds a worktree, so a
+          read-only reviewer card is byte-identical to what ships today and the grid does not grow
+          uniformly. Card min-height 58 → 72px. Full <code>swarm/&lt;run8&gt;/builder-1</code> rides
+          the <code>title</code> attribute; the copyable form lives in the merge-sequence row (§4),
+          where copying is the actual task.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <p class="cap">the same three states a write worker can be in, in variant C</p>
+  <div class="stage">
+    <div class="sw-cards" style="grid-template-columns: repeat(3, 224px)">
+      <button class="sw-card">
+        <span class="sw-card-top">
+          <span class="sw-st working"></span>
+          <span class="sw-card-name">builder-1</span>
+          <span class="sw-role">BUILDER</span>
+          <span class="sw-card-t">6m</span>
+        </span>
+        <span class="sw-activity">Migrating settings readers…</span>
+        <span class="sw-wt"
+          ><span class="g">⑂</span><span class="b">builder-1</span
+          ><span class="dim">· 4 files</span></span
+        >
+        <span class="sw-disclose">task 3 · dispatched 6m ago</span>
+      </button>
+      <button class="sw-card done">
+        <span class="sw-card-top">
+          <span class="sw-st done"></span>
+          <span class="sw-card-name">builder-2</span>
+          <span class="sw-role">BUILDER</span>
+          <span class="sw-card-t">14m</span>
+        </span>
+        <span class="sw-activity">Done — agent-claimed, unverified</span>
+        <span class="sw-wt"
+          ><span class="g">⑂</span><span class="b">builder-2</span
+          ><span class="dim">· 3 files · ready</span></span
+        >
+        <span class="sw-disclose">task 4 · 3 files</span>
+      </button>
+      <button class="sw-card lost">
+        <span class="sw-card-top">
+          <span class="sw-st lost"></span>
+          <span class="sw-card-name">builder-4</span>
+          <span class="sw-role">BUILDER</span>
+          <span class="sw-card-t">—</span>
+        </span>
+        <span class="sw-activity">Lost mid-task — salvaged</span>
+        <span class="sw-wt"
+          ><span class="g">⑂</span><span class="b">builder-4</span
+          ><span class="dim">· kept, 7 uncommitted</span></span
+        >
+        <span class="sw-disclose">failed · derived · 7 files</span>
+      </button>
+    </div>
+  </div>
+  <p class="note">
+    The trailing dim segment is the only part that changes with state, and it says the one thing a
+    human needs from a branch at that moment: how much is in it (<code>4 files</code>), that it is
+    mergeable (<code>ready</code>), or that its tree was preserved rather than destroyed (<code
+      >kept, 7 uncommitted</code
+    >). Composed MAIN-side beside <code>discloseFor</code>, so there stays exactly one source for
+    these strings — the S1 eyeball lesson.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">3</span>The board, mid-integration, at realistic scale</h2>
+  <p class="lede">
+    Five workers: three isolated builders (one working, one done, one dead with a dirty tree) and
+    two read-only roles that need no worktree at all. Two builders touched the same file. This is
+    the moment S3 exists for — everything is finished enough to merge, and merging in the wrong
+    order silently destroys work.
+  </p>
+
+  <div class="stage">
+    <div class="board">
+      <div class="board-bar">
+        <span class="glyph"></span> migrate settings to v2 schema
+        <span style="margin-left: auto; color: var(--text-faint)">swarm</span>
+      </div>
+      <div class="board-body">
+        <div class="sw-root">
+          <div class="sw-head">
+            <div class="sw-head-row">
+              <span class="sw-timer">run 52m 18s</span>
+              <span class="sw-spacer"></span>
+              <button class="sw-btn">Pause all</button>
+            </div>
+            <div class="sw-plan">
+              <span class="sw-plan-lbl">Plan</span>
+              <span class="sw-task done"
+                ><span class="sw-task-box">✓</span><span class="sw-task-n">1</span> recon current
+                schema</span
+              >
+              <span class="sw-task done"
+                ><span class="sw-task-box">✓</span><span class="sw-task-n">2</span> write v2
+                types</span
+              >
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">3</span> migrate
+                readers<span class="sw-task-own"></span
+              ></span>
+              <span class="sw-task done"
+                ><span class="sw-task-box">✓</span><span class="sw-task-n">4</span> migrate
+                writers</span
+              >
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">5</span> legacy import
+                path</span
+              >
+              <span class="sw-task"
+                ><span class="sw-task-box"></span><span class="sw-task-n">6</span> tests</span
+              >
+              <span class="sw-task sw-task-add">＋ add</span>
+            </div>
+          </div>
+
+          <div class="sw-body">
+            <aside class="sw-chat">
+              <div class="sw-chat-head">
+                <span class="sw-orch-dot"></span><b>Orchestrator</b>
+                <span class="sw-brain-chip">app-resident</span>
+              </div>
+              <div class="sw-msgs">
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>
+                    Spawned builder-1 and builder-2 in their own worktrees —
+                    <code>swarm/a1b2c3d4/builder-1</code> and <code>…/builder-2</code>. Two write
+                    workers is the ceiling while each has its own tree; task 5 waits.
+                  </p>
+                </div>
+                <div class="sw-statusline">builder-4 · exited (code 1)</div>
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>
+                    builder-4 died on task 4. I salvaged a result from its transcript (derived, 7
+                    files), so treat it as unverified. Its worktree has uncommitted changes — I kept
+                    it on disk and discarded nothing.
+                  </p>
+                </div>
+                <div class="sw-msg you">
+                  <div class="sw-who">you</div>
+                  <p>anything overlapping before I merge?</p>
+                </div>
+                <div class="sw-msg orch">
+                  <div class="sw-who">orch</div>
+                  <p>
+                    Yes — builder-2 and builder-4 both touched
+                    <code>src/main/settingsLoad.ts</code>. Merge builder-2 first, rebase builder-4
+                    onto it, re-run its checks. I will not merge either one for you.
+                  </p>
+                </div>
+              </div>
+              <div class="sw-composer">
+                <div class="sw-composer-box">
+                  <span class="ph">Steer the run…</span>
+                  <button class="sw-btn sm">Send</button>
+                </div>
+                <div class="sw-hint">one voice — workers never post here</div>
+              </div>
+            </aside>
+
+            <main class="sw-canvas">
+              <div class="sw-canvas-head">
+                <span class="sw-canvas-lbl">Workers · 5</span>
+                <span class="sw-canvas-counts">1 lost · 2 working · 2 done</span>
+              </div>
+              <div class="sw-cards">
+                <button class="sw-card lost">
+                  <span class="sw-card-top">
+                    <span class="sw-st lost"></span>
+                    <span class="sw-card-name">builder-4</span>
+                    <span class="sw-role">BUILDER</span>
+                    <span class="sw-card-t">—</span>
+                  </span>
+                  <span class="sw-activity">Lost mid-task — salvaged</span>
+                  <span class="sw-wt"
+                    ><span class="g">⑂</span><span class="b">builder-4</span
+                    ><span class="dim">· kept, 7 uncommitted</span></span
+                  >
+                  <span class="sw-disclose">failed · derived · 7 files</span>
+                </button>
+                <button class="sw-card">
+                  <span class="sw-card-top">
+                    <span class="sw-st working"></span>
+                    <span class="sw-card-name">builder-1</span>
+                    <span class="sw-role">BUILDER</span>
+                    <span class="sw-card-t">6m</span>
+                  </span>
+                  <span class="sw-activity">Migrating settings readers…</span>
+                  <span class="sw-wt"
+                    ><span class="g">⑂</span><span class="b">builder-1</span
+                    ><span class="dim">· 4 files</span></span
+                  >
+                  <span class="sw-disclose">task 3 · dispatched 6m ago</span>
+                </button>
+                <button class="sw-card">
+                  <span class="sw-card-top">
+                    <span class="sw-st working"></span>
+                    <span class="sw-card-name">reviewer</span>
+                    <span class="sw-role">CODE-REVIEWER</span>
+                    <span class="sw-card-t">3m</span>
+                  </span>
+                  <span class="sw-activity">Reviewing branch builder-2…</span>
+                  <span class="sw-disclose">read-only · project tree</span>
+                </button>
+                <button class="sw-card done">
+                  <span class="sw-card-top">
+                    <span class="sw-st done"></span>
+                    <span class="sw-card-name">builder-2</span>
+                    <span class="sw-role">BUILDER</span>
+                    <span class="sw-card-t">14m</span>
+                  </span>
+                  <span class="sw-activity">Done — agent-claimed, unverified</span>
+                  <span class="sw-wt"
+                    ><span class="g">⑂</span><span class="b">builder-2</span
+                    ><span class="dim">· 3 files · ready</span></span
+                  >
+                  <span class="sw-disclose">task 4 · 3 files</span>
+                </button>
+                <button class="sw-card done">
+                  <span class="sw-card-top">
+                    <span class="sw-st done"></span>
+                    <span class="sw-card-name">recon-1</span>
+                    <span class="sw-role">EXPLORER</span>
+                    <span class="sw-card-t">21m</span>
+                  </span>
+                  <span class="sw-activity">Done — derived from transcript</span>
+                  <span class="sw-disclose">task 1 · 9 files</span>
+                </button>
+                <div class="sw-card ghost">ask the orchestrator to spawn workers</div>
+              </div>
+            </main>
+
+            <div class="sw-needs">
+              <div class="sw-needs-head">
+                Triage · 4 <span class="sw-needs-scope">2 integration</span>
+              </div>
+              <div class="sw-needs-list">
+                <div class="sw-tri bad">
+                  <span class="sw-tri-ico">×</span>
+                  <span class="sw-tri-tag">lost</span>
+                  <span class="sw-tri-txt"
+                    ><b>builder-4</b> died on task 4 — result salvaged (derived, 7 files)</span
+                  >
+                  <span class="sw-tri-acts">
+                    <button class="sw-btn sm">Accept</button>
+                    <button class="sw-btn sm go">Reassign</button>
+                  </span>
+                </div>
+                <div class="sw-tri bad">
+                  <span class="sw-tri-ico">⇄</span>
+                  <span class="sw-tri-tag">overlap</span>
+                  <span class="sw-tri-txt"
+                    ><b>builder-4</b> and builder-2 both touched
+                    <code>src/main/settingsLoad.ts</code> (+1 more)</span
+                  >
+                  <span class="sw-tri-acts">
+                    <button class="sw-btn sm">Dismiss</button>
+                    <button class="sw-btn sm go">Open ▸</button>
+                  </span>
+                </div>
+                <div class="sw-tri">
+                  <span class="sw-tri-ico">◍</span>
+                  <span class="sw-tri-tag">dirty worktree</span>
+                  <span class="sw-tri-txt"
+                    ><b>builder-4</b> left 7 uncommitted files — kept on disk, nothing
+                    discarded</span
+                  >
+                  <span class="sw-tri-acts">
+                    <button class="sw-btn sm go">Resolve…</button>
+                  </span>
+                </div>
+                <div class="sw-tri seq">
+                  <span class="sw-tri-ico">⑂</span>
+                  <span class="sw-tri-tag">merge ready</span>
+                  <span class="sw-tri-txt"
+                    ><b>2 branches</b> ready to merge · 1 overlap — sequence below</span
+                  >
+                  <span class="sw-tri-acts">
+                    <button class="sw-btn sm go">Hide ▴</button>
+                  </span>
+                </div>
+                <div class="sw-seq">
+                  <div class="sw-seq-row">
+                    <span class="sw-seq-n">1.</span>
+                    <span class="sw-seq-br">swarm/a1b2c3d4/builder-2</span>
+                    <span class="sw-seq-meta">task 4 · 3 files</span>
+                    <button class="sw-copy">copy</button>
+                  </div>
+                  <div class="sw-seq-row">
+                    <span class="sw-seq-n">2.</span>
+                    <span class="sw-seq-br">swarm/a1b2c3d4/builder-4</span>
+                    <span class="sw-seq-meta">task 4 · 7 files</span>
+                    <span class="sw-seq-warn">⇄ overlaps #1</span>
+                    <button class="sw-copy">copy</button>
+                  </div>
+                  <div class="sw-seq-foot">
+                    merge in this order · after each, re-run <b>git_diff:nonempty</b> before the
+                    next · Expanse does not merge for you
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    Note what is <i>not</i> there: no Merge button. Auto-merge is deferred three documents deep
+    (<code>03</code> item 6, <code>04</code> Phase 3, <code>07</code> §6) and this surface must not
+    imply otherwise. The row's primary action is <code>Hide ▴</code> — the sequence itself is the
+    deliverable. The reviewer card has no worktree line at all, which is the visible proof that
+    isolation cost is paid only by writers.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">4</span>Triage — three new tags in a closed vocabulary</h2>
+  <p class="lede">
+    <code>SWARM_BLOCKED_TAGS</code> is a closed vocabulary whose
+    <b class="hi">array order is the risk order</b> the queue sorts by. S3 inserts three members.
+    Insertion is safe on the ledger: the tag is persisted as a string, never as an index, and an
+    older reader simply drops an unknown tag (the task survives untagged).
+    <b class="hi">No format bump, no <code>minReaderVersion</code> move</b> — the same rule that
+    governs <code>worktree</code>/<code>branch</code>.
+  </p>
+
+  <p class="cap">
+    the two integration rows at full queue width — the sequence expanded (in the board above it sits
+    below the 196px scroll fold, which is what a real queue does)
+  </p>
+  <div class="stage">
+    <div class="sw-needs" style="max-height: none; border-top: none; border-radius: var(--r-inner)">
+      <div class="sw-needs-head">Triage · 4 <span class="sw-needs-scope">2 integration</span></div>
+      <div class="sw-needs-list">
+        <div class="sw-tri bad">
+          <span class="sw-tri-ico">⇄</span>
+          <span class="sw-tri-tag">overlap</span>
+          <span class="sw-tri-txt"
+            ><b>builder-4</b> and builder-2 both touched <code>src/main/settingsLoad.ts</code> (+1
+            more) — merge one, rebase the other, re-run its checks</span
+          >
+          <span class="sw-tri-acts">
+            <button class="sw-btn sm">Dismiss</button>
+            <button class="sw-btn sm go">Open ▸</button>
+          </span>
+        </div>
+        <div class="sw-tri">
+          <span class="sw-tri-ico">◍</span>
+          <span class="sw-tri-tag">dirty worktree</span>
+          <span class="sw-tri-txt"
+            ><b>builder-4</b> left 7 uncommitted files in <code>.canvas/worktrees/builder-4</code> —
+            kept on disk, nothing discarded</span
+          >
+          <span class="sw-tri-acts"><button class="sw-btn sm go">Resolve…</button></span>
+        </div>
+        <div class="sw-tri seq">
+          <span class="sw-tri-ico">⑂</span>
+          <span class="sw-tri-tag">merge ready</span>
+          <span class="sw-tri-txt"
+            ><b>2 branches</b> ready to merge · 1 overlap — sequence below</span
+          >
+          <span class="sw-tri-acts"><button class="sw-btn sm go">Hide ▴</button></span>
+        </div>
+        <div class="sw-seq">
+          <div class="sw-seq-row">
+            <span class="sw-seq-n">1.</span>
+            <span class="sw-seq-br">swarm/a1b2c3d4/builder-2</span>
+            <span class="sw-seq-meta">task 4 · 3 files</span>
+            <button class="sw-copy">copy</button>
+          </div>
+          <div class="sw-seq-row">
+            <span class="sw-seq-n">2.</span>
+            <span class="sw-seq-br">swarm/a1b2c3d4/builder-4</span>
+            <span class="sw-seq-meta">task 4 · 7 files</span>
+            <span class="sw-seq-warn">⇄ overlaps #1</span>
+            <button class="sw-copy">copy</button>
+          </div>
+          <div class="sw-seq-foot">
+            merge in this order · after each, re-run <b>git_diff:nonempty</b> before the next ·
+            Expanse does not merge for you
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 34px">#</th>
+      <th style="width: 130px">Tag</th>
+      <th style="width: 74px">Lane</th>
+      <th>Why here in the risk order</th>
+    </tr>
+    <tr>
+      <td>0</td>
+      <td><code>needs_input</code></td>
+      <td><span class="tag">hot</span></td>
+      <td>A human is the blocker right now. Unchanged.</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td><code>lost</code></td>
+      <td><span class="tag">bad</span></td>
+      <td>A worker died. Unchanged.</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code>failing_check</code></td>
+      <td><span class="tag">bad</span></td>
+      <td>Reported done, acceptance disagreed. Unchanged.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><code>overlap</code> <span class="tag new">new</span></td>
+      <td><span class="tag">bad</span></td>
+      <td>
+        Two finished workers wrote the same file. Ranked above <code>stalled</code> because a stall
+        costs time and an unnoticed overlap costs <b class="hi">work</b> — merging blind silently
+        reverts one of them. Uses the shipped <code>bad</code> (err) lane, not amber: it is a real
+        loss risk, but nobody is asking the human a question, and amber is reserved for that.
+      </td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><code>stalled</code></td>
+      <td>neutral</td>
+      <td>Nominally running, nothing has moved. Unchanged.</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><code>dependency</code></td>
+      <td>neutral</td>
+      <td>Waiting on another task's result. Unchanged.</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><code>dirty_worktree</code> <span class="tag new">new</span></td>
+      <td>neutral</td>
+      <td>
+        A tree was preserved instead of removed. <b class="hi">Nothing is at risk</b> — that is the
+        entire point of the locked keep-on-dirty rule — so it sits low; but it must be
+        <i>listed</i>, because a preserved tree the human never learns about is disk that leaks and
+        work that is silently abandoned.
+      </td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><code>unreviewed</code></td>
+      <td>neutral</td>
+      <td>A result nobody has looked at. Unchanged.</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><code>merge_ready</code> <span class="tag new">new</span></td>
+      <td><span class="tag rec">seq</span></td>
+      <td>
+        The positive end-state, so it sorts last — and it is <b class="hi">one row per run</b>, not
+        one per branch, which is what keeps the queue a work list instead of a nag list. It takes
+        the accent lane (a new modifier, <code>.sw-tri.seq</code>) because it is neither a hazard
+        nor a question: it is the run telling you it is ready for you.
+      </td>
+    </tr>
+  </table>
+
+  <h3 class="sub">What each new row's actions actually do</h3>
+  <table class="tbl">
+    <tr>
+      <th style="width: 130px">Row</th>
+      <th style="width: 150px">Actions</th>
+      <th>Semantics — re-derived MAIN-side by <code>offers()</code> before anything lands</th>
+    </tr>
+    <tr>
+      <td><code>overlap</code></td>
+      <td><code>Open ▸</code> · <code>Dismiss</code></td>
+      <td>
+        <code>Open</code> jumps to the later worker's board (renderer-side, never a ledger write).
+        <code>Dismiss</code> means “I have seen this and dealt with it” — it makes no claim about
+        the result, exactly like S2's existing <code>dismiss</code>. The row never merges, rebases,
+        or edits a file.
+      </td>
+    </tr>
+    <tr>
+      <td><code>dirty_worktree</code></td>
+      <td><code>Resolve…</code></td>
+      <td>
+        Opens the disposition modal (§5). The default choice is <b class="hi">Keep</b>, and Keep is
+        also what happens on cancel, on error, and on app quit. Nothing in this lane can destroy a
+        tree without an explicit, named human choice.
+      </td>
+    </tr>
+    <tr>
+      <td><code>merge_ready</code></td>
+      <td><code>Show ▾ / Hide ▴</code></td>
+      <td>
+        Pure renderer state. The sequence it expands is computed MAIN-side and pushed with the
+        snapshot, so the order the human copies is the order the ledger actually holds.
+      </td>
+    </tr>
+  </table>
+
+  <div class="call warn">
+    <b>A deliberate non-feature.</b> No triage action ever runs <code>git merge</code>,
+    <code>git rebase</code>, or <code>git cherry-pick</code>. The only git <i>writes</i> S3 performs
+    are: <code>worktree add</code> (allocate), <code>worktree remove</code> (clean teardown), and —
+    only behind the named human choice in §5 — <code>commit</code> / <code>stash</code> /
+    <code>checkout&nbsp;--&nbsp;.</code>&nbsp;+&nbsp;<code>clean&nbsp;-fd</code> scoped to that one
+    worktree. Merging is the human's, in their own terminal, in the order this surface gives them.
+  </div>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">5</span>Teardown — the locked dirty policy, made visible</h2>
+  <p class="lede">
+    <code>CLAUDE.md</code> › Git / worktrees is binding here verbatim, and it was written before any
+    of this existed:
+    <b class="hi">on delete with a dirty worktree, keep on disk and prompt</b> (commit / stash /
+    discard / keep); never a silent <code>--force</code>; always <code>git worktree remove</code>,
+    never <code>rm -rf</code>. The design question is not <i>whether</i> to prompt — it is
+    <i>when</i>, because the obvious moment (app quit) is the one moment a modal must never appear:
+    S2's <code>drain()</code> is synchronous by construction, inside the quit chain, where an
+    awaited promise is a race against <code>app.exit</code>.
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 190px">Moment</th>
+      <th style="width: 120px">Tree clean</th>
+      <th>Tree dirty</th>
+    </tr>
+    <tr>
+      <td>Worker board closed / deleted</td>
+      <td><code>git worktree remove</code> (no force). <b class="hi">Branch always kept.</b></td>
+      <td>
+        Keep on disk, silently and immediately — then raise a <code>dirty_worktree</code> triage
+        row. The prompt is the row plus its modal, not a blocking dialog at close time.
+      </td>
+    </tr>
+    <tr>
+      <td>Task reassigned (triage)</td>
+      <td colspan="2">
+        <b class="hi">Nothing is touched.</b> The old worker keeps its worktree and branch; the new
+        worker gets its own. The preserved one appears in the merge sequence with its own row. See
+        D5 below — this is stated, not left emergent.
+      </td>
+    </tr>
+    <tr>
+      <td>Worker died (<code>lost</code>)</td>
+      <td colspan="2">
+        <b class="hi">Nothing is touched.</b> Its tree is exactly where its partial work is, and the
+        salvaged result's <code>refs[]</code> point into it. Removing it would delete the evidence
+        S2's whole salvage path exists to preserve.
+      </td>
+    </tr>
+    <tr>
+      <td>Run ends / app quits</td>
+      <td colspan="2">
+        <b class="hi">Nothing is touched.</b> Matches S2's D5 (the drain preserves worker boards
+        rather than closing them out from under the human). Preserved trees are re-surfaced as
+        <code>dirty_worktree</code> rows on the next open — the ledger kept the branch names, so a
+        preserved worktree is findable after a restart.
+      </td>
+    </tr>
+    <tr>
+      <td>Swarm board deleted</td>
+      <td colspan="2">
+        The ledger is destroyed (S2 behaviour, unchanged) — but <b class="hi">only after</b> its
+        worktrees have been disposed of clean or explicitly kept. A destroyed ledger with live
+        worktrees on disk would orphan them with no record of what they were.
+      </td>
+    </tr>
+  </table>
+
+  <p class="cap">
+    the disposition modal — reached from the <code>dirty_worktree</code> row's Resolve…
+  </p>
+  <div class="modal-stage">
+    <div class="modal">
+      <h2>builder-4 left uncommitted changes</h2>
+      <p class="sub">
+        Its worktree is still on disk and nothing has been discarded. Choose what happens to it —
+        <b>Keep</b> is what already happened, and what happens if you close this.
+      </p>
+      <div class="mrow on">
+        <span class="mbox">●</span>
+        <span>
+          <span class="mlabel">keep · default</span>
+          <span class="mbody"
+            >Leave the worktree at .canvas/worktrees/builder-4 on branch swarm/a1b2c3d4/builder-4.
+            Nothing runs. It stays in triage until you deal with it.</span
+          >
+        </span>
+      </div>
+      <div class="mrow">
+        <span class="mbox"></span>
+        <span>
+          <span class="mlabel">commit · git add -A &amp;&amp; git commit</span>
+          <span class="mbody"
+            >Commit all 7 files onto the worker's own branch, then remove the worktree. The branch
+            joins the merge sequence. Message: "swarm(builder-4): preserve uncommitted work".</span
+          >
+        </span>
+      </div>
+      <div class="mrow">
+        <span class="mbox"></span>
+        <span>
+          <span class="mlabel">stash · git stash push -u</span>
+          <span class="mbody"
+            >Stash all 7 files (including untracked), then remove the worktree. The stash is on the
+            shared repo stash list and is named so you can find it.</span
+          >
+        </span>
+      </div>
+      <div class="mrow">
+        <span class="mbox"></span>
+        <span>
+          <span class="mlabel">discard · destructive, second confirm</span>
+          <span class="mbody"
+            >Throw away all 7 uncommitted files, then remove the worktree. Commits already on the
+            branch survive. This cannot be undone and asks again before it runs.</span
+          >
+        </span>
+      </div>
+      <div class="mfoot">
+        <button class="btn-ghost">Cancel (keeps it)</button>
+        <button class="btn-primary">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    The file count is read live (<code>git status --porcelain</code> in that worktree) at the moment
+    the modal opens, not remembered from close time — a number that is stale by an hour is a
+    disclosure that lies. Every option names the exact git command it runs, because a modal that
+    performs git writes on the user's repository has to be legible as such.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">6</span>Mechanics — allocate <i>before</i> spawn</h2>
+  <p class="lede">
+    This is the single most important sequencing constraint in the lane, and it is a trap:
+    <code>safeCwd</code> in <code>src/main/pty.ts</code> silently redirects a missing directory to
+    <code>$HOME</code> (A6-3). Allocate late and your builder writes into the user's home directory
+    with a green status and nothing anywhere saying so.
+  </p>
+
+  <pre class="ascii">
+ <b>spawn_worker(role: "builder")</b>
+        │
+        ├─ pack.isolation === 'worktree' ?  ──no──▶  spawn as today (cwd = args.cwd)
+        │yes
+        ▼
+ <b>1. resolve repo</b>   git rev-parse --show-toplevel  from the PROJECT dir
+        │                 <i>not a repo → REFUSE the spawn. Expanse never runs `git init` for you.</i>
+        ▼
+ <b>2. derive names</b>   branch  swarm/&lt;runId8&gt;/&lt;worker-slug&gt;
+        │                 path    &lt;project&gt;/.canvas/worktrees/&lt;worker-slug&gt;
+        │                 <i>collision → -2, -3, … ; the FINAL pair is what gets recorded</i>
+        ▼
+ <b>3. git worktree add -b &lt;branch&gt; &lt;path&gt; &lt;base&gt;</b>      ← the only allocate-time git write
+        │                 <i>fails → REFUSE the spawn, naming git's own error</i>
+        ▼
+ <b>4. verify</b>         statSync(path).isDirectory()
+        │                 <i>false → REFUSE. This is the safeCwd guard: never hand over a path we</i>
+        │                 <i>have not proven exists, because the redirect to $HOME is silent.</i>
+        ▼
+ <b>5. confirm</b>        the worker-config dialog body names the path + branch + no-node_modules
+        │                 <i>human denies → `git worktree remove` the tree we just made, then stop</i>
+        ▼
+ <b>6. facet.spawnBoard({ cwd: path })</b>  ──▶  <b>ledger.assignment = { worktree, branch }</b>
+</pre>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 120px">Name</th>
+      <th style="width: 300px">Shape</th>
+      <th>Why</th>
+    </tr>
+    <tr>
+      <td>branch</td>
+      <td><code>swarm/a1b2c3d4/builder-1</code></td>
+      <td>
+        Namespaced by run so two runs in one project never collide, and greppable/deletable as a
+        family (<code>git branch --list 'swarm/*'</code>). Slug is the worker's own name, so the
+        branch in the merge sequence reads as the card the human saw.
+      </td>
+    </tr>
+    <tr>
+      <td>path</td>
+      <td><code>&lt;project&gt;/.canvas/worktrees/builder-1</code></td>
+      <td>
+        Inside the Canvas data dir per ADR 0009 (already hidden from the File Tree, already inside
+        the isolation boundary), never a sibling of the user's project folder. Requires one small
+        change: <code>canvasMemory</code>'s commit-opt-in ignore body must gain
+        <code>worktrees/</code>, or an opted-in project sees the checkouts as untracked noise.
+      </td>
+    </tr>
+    <tr>
+      <td>base</td>
+      <td>the repo's current <code>HEAD</code></td>
+      <td>
+        Every worker starts from the same commit the human was looking at when the run began. Not
+        <code>main</code> — that would silently rebase the whole swarm onto a branch the user is not
+        on.
+      </td>
+    </tr>
+    <tr>
+      <td>scope</td>
+      <td>one worktree per <b class="hi">worker</b>, not per task</td>
+      <td>
+        The design says worktree-<i>per-worker</i> and the spawn seam agrees: at
+        <code>spawn_worker</code> there is no task yet (the task is minted at
+        <code>dispatch_task</code>). A worker that takes a second task keeps its tree, which is also
+        what makes the ledger's per-assignment <code>{worktree, branch}</code> a plain copy needing
+        no new field.
+      </td>
+    </tr>
+  </table>
+
+  <div class="call warn">
+    <b>Locked rules honoured verbatim.</b> <code>git init</code> is opt-in and S3 never calls it: a
+    non-repo project <i>refuses</i> the write-role spawn with a reason, it does not helpfully
+    initialise the user's folder — and it especially never does so nested inside a parent repo.
+    <code>simple-git</code> runs only in MAIN, behind the existing frame-guarded IPC, reusing
+    <code>repoScopedEnv()</code> (the <code>GIT_*</code> sweep that stops a hook-inherited
+    <code>GIT_DIR</code> pinning us at the wrong repository) and <code>gitDiff</code>'s byte/time
+    bounds. Teardown drops nothing recursively: <code>git worktree remove</code>, never
+    <code>rm -rf</code>, mirroring what <code>remove-worktree.ps1</code> exists to prevent.
+  </div>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec">
+    <span class="num">7</span>The write cap — and the strings that must change with it
+  </h2>
+  <p class="lede">
+    07 §4.3 sets the policy:
+    <b class="hi">≤2 concurrent write-role workers, readers effectively unbounded</b>. Today's cap
+    of 1 is not that policy — it is an honest admission that isolation does not exist yet, and it
+    says so in both refusal strings. Raising the number without rewriting the strings would ship a
+    cap that lies about its own reason, which is worse than not raising it. So the cap becomes a
+    <b class="hi">function of what actually provisioned</b>.
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 300px">In-flight write workers</th>
+      <th style="width: 70px">Cap</th>
+      <th>Because</th>
+    </tr>
+    <tr>
+      <td>All hold their own worktree</td>
+      <td><b class="hi">2</b></td>
+      <td>
+        Disjoint trees — the disclosed policy ceiling. The remaining collision is integration.
+      </td>
+    </tr>
+    <tr>
+      <td>Any one of them does not</td>
+      <td><b class="hi">1</b></td>
+      <td>
+        That worker shares the project working tree with every other writer — the pre-S3 situation
+        exactly, so the pre-S3 cap applies. (An un-isolated write role stays <i>legal</i>: cwd is
+        advisory, and forbidding it is an open question this lane does not get to close.)
+      </td>
+    </tr>
+  </table>
+
+  <p class="lbl-b">before — <code>swarmTools.ts</code> · <code>dispatch_task</code></p>
+  <p class="before">
+    write cap: 1 write-role task already running and workers share one working tree until worktree
+    isolation lands — await it first (disclose this to the human)
+  </p>
+  <p class="lbl-a">after — two cases, because there are now two reasons</p>
+  <p class="after">
+    write cap: 2 write-role tasks already running, each in its own worktree — that is the
+    parallel-writer ceiling (07 §4.3). Await one first (disclose this to the human)
+  </p>
+  <p class="after">
+    write cap: builder-3 has no worktree of its own, so it shares the project working tree with the
+    other writer — only 1 un-isolated write-role task may run at a time. Await it, or respawn this
+    worker with a worktree-isolated role (disclose this to the human)
+  </p>
+
+  <p class="lbl-b">before — <code>swarmTools.ts</code> · <code>dispatch_tasks</code> (batch)</p>
+  <p class="before">
+    write cap: this round needs 3 concurrent write-role workers but only 1 may run while workers
+    share one working tree — dispatch the write task alone (or await the running one) and disclose
+    this to the human
+  </p>
+  <p class="lbl-a">after</p>
+  <p class="after">
+    write cap: this round needs 3 concurrent write-role workers but only 2 may run in parallel, one
+    per worktree (an un-isolated writer drops that ceiling to 1) — split the round and disclose this
+    to the human
+  </p>
+
+  <p class="note">
+    The refusal is still returned to the model as a tool error naming the cap, so the orchestrator
+    discloses it in chat in its own voice. No silent caps (06 §2), unchanged.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec">
+    <span class="num">8</span>Overlap detection — and why it deliberately over-warns
+  </h2>
+  <p class="lede">
+    A pure function over the typed reports: intersect the <code>refs[]</code> touched-file sets
+    across <i>finished</i> workers, after they settle and before anything merges. No I/O, no clock,
+    unit-tested directly. The entire difficulty is normalisation — two builders describe the same
+    file from inside two different worktrees, and a naive string compare finds nothing.
+  </p>
+
+  <pre class="ascii">
+ builder-2 refs[]:  <i>M:\proj\.canvas\worktrees\builder-2\src\main\settingsLoad.ts:42</i>
+ builder-4 refs[]:  <i>./src/main/SettingsLoad.ts</i>
+
+   1. strip a trailing <b>:line</b>            → …\src\main\settingsLoad.ts
+   2. make <b>relative to its own worktree</b>  → src\main\settingsLoad.ts        <i>← the load-bearing step</i>
+   3. normalise separators to <b>/</b>          → src/main/settingsLoad.ts
+   4. drop a leading <b>./</b>                  → src/main/settingsLoad.ts
+   5. lowercase <b>for the comparison only</b>  → src/main/settingsload.ts        <i>← display keeps the original</i>
+
+                            ▶ intersection = { src/main/settingsLoad.ts }  ⇒ OVERLAP
+</pre>
+
+  <div class="call">
+    <b>Step 5 over-detects on purpose.</b> Case-folding every comparison finds a false overlap
+    between <code>Foo.ts</code> and <code>foo.ts</code> on a case-sensitive filesystem where they
+    are genuinely two files. Branching on <code>process.platform</code> instead would make the
+    function platform-dependent and therefore untestable as a pure function. The asymmetry decides
+    it:
+    <b
+      >an over-warning costs a human one glance; an under-warning silently reverts somebody's
+      work.</b
+    >
+    The same asymmetry is why a worker whose refs are empty or unparseable is treated as “unknown”,
+    listed in the sequence, and never quietly assumed disjoint.
+  </div>
+
+  <h3 class="sub">Sequence order</h3>
+  <p class="note">
+    Dependency order, derived from data the ledger already has: plan-item position first (the plan
+    strip <i>is</i> the dependency order the human authored), then dispatch time for tasks that map
+    to no plan item. Overlapping branches are therefore already adjacent-ordered, earlier first, and
+    the row states the rule the human then follows — merge, re-run the role pack's
+    <code>acceptance.checks</code>, rebase the next, repeat.
+  </p>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">9</span>Decisions — your call before any code</h2>
+  <p class="lede">
+    Nine. Seven were recommendations; two (<b class="hi">D3</b> and <b class="hi">D7</b>) were
+    genuine forks. <b class="hi">All nine were signed off as recommended on 2026-07-28</b> — the
+    surface above is what ships.
+  </p>
+
+  <table class="tbl">
+    <tr>
+      <th style="width: 42px">#</th>
+      <th style="width: 210px">Question</th>
+      <th>Proposal</th>
+    </tr>
+    <tr>
+      <td>D1</td>
+      <td>Where do worktrees live?</td>
+      <td>
+        <code>&lt;project&gt;/.canvas/worktrees/&lt;slug&gt;</code> <span class="tag rec">rec</span>
+        — inside the ADR 0009 isolation boundary, already hidden from the File Tree. Adds
+        <code>worktrees/</code> to <code>canvasMemory</code>'s commit-opt-in ignore body (+ one
+        legacy remap entry) so an opted-in project does not see the checkouts as untracked noise.
+      </td>
+    </tr>
+    <tr>
+      <td>D2</td>
+      <td>Branch naming?</td>
+      <td>
+        <code>swarm/&lt;runId8&gt;/&lt;worker-slug&gt;</code> <span class="tag rec">rec</span> —
+        run-namespaced, collision-suffixed, deletable as a family. Branches are
+        <b class="hi">never</b> deleted by Expanse, at any point, including on discard.
+      </td>
+    </tr>
+    <tr>
+      <td>D3</td>
+      <td><b class="hi">Chip placement (§2)</b></td>
+      <td>
+        <b class="hi">Variant C</b> — its own mono line, only on isolated workers, card 58→72px.
+        <span class="tag rec">rec</span> A and B are drawn above at real scale if you prefer either.
+        <b>This is a look-and-feel call and it is yours.</b>
+      </td>
+    </tr>
+    <tr>
+      <td>D4</td>
+      <td>When does the dirty prompt fire?</td>
+      <td>
+        Never blocking. Keep-on-disk happens immediately and silently; the prompt is a
+        <code>dirty_worktree</code> triage row whose <code>Resolve…</code> opens the four-choice
+        modal (§5). <span class="tag rec">rec</span> Keeps the locked rule's four choices while
+        never putting a modal inside the synchronous quit drain.
+      </td>
+    </tr>
+    <tr>
+      <td>D5</td>
+      <td>Reassign — reuse the branch or cut a new one?</td>
+      <td>
+        <b class="hi">Neither is reused and nothing is destroyed.</b> The old worker keeps its
+        worktree and branch (its partial work is what the salvage refers to); the reassigned task
+        goes to a different worker, which gets its own. The orphan appears in the merge sequence and
+        as a <code>dirty_worktree</code> row if it is dirty. <span class="tag rec">rec</span>
+        Stated here so it is not emergent.
+      </td>
+    </tr>
+    <tr>
+      <td>D6</td>
+      <td>Write cap shape?</td>
+      <td>
+        A function, not a constant: 2 when every in-flight writer is isolated, 1 otherwise. Both
+        refusal strings rewritten verbatim as in §7. <span class="tag rec">rec</span>
+      </td>
+    </tr>
+    <tr>
+      <td>D7</td>
+      <td>
+        <b class="hi"><code>node_modules</code> in a fresh worktree</b>
+      </td>
+      <td>
+        A fresh worktree has none, so a builder's own brief (“run the build and the relevant tests”)
+        cannot be satisfied without an install. <b>Proposal: do not link it in S3</b>
+        <span class="tag rec">rec</span> — disclose it in the spawn confirm and let the worker
+        install if its task needs a build; a junction/symlink is OS-specific, breaks when a branch
+        changes dependencies, and the dev script that does it carries a whole safety comment about
+        recursive-delete hazards. Named follow-up rather than smuggled in here.
+        <b>Say the word and I will scope the link into this lane instead.</b>
+      </td>
+    </tr>
+    <tr>
+      <td>D8</td>
+      <td>Overlap normalisation?</td>
+      <td>
+        Worktree-relative, separator-normalised, line-stripped, case-folded for comparison only —
+        over-warning by design (§8). <span class="tag rec">rec</span>
+      </td>
+    </tr>
+    <tr>
+      <td>D9</td>
+      <td>Ledger schema?</td>
+      <td>
+        Populate the existing <code>worktree</code>/<code>branch</code> fields S2 wrote
+        <code>null</code>. <b class="hi">No format bump, no <code>minReaderVersion</code> move</b>,
+        no canvas-schema change, no new sync path — the projection rides the existing
+        <code>swarm:runEvent</code> push. <span class="tag rec">rec</span> If this lane ever needs a
+        version bump, something has been put somewhere it does not belong.
+      </td>
+    </tr>
+  </table>
+
+  <!-- ==================================================================== -->
+  <h2 class="sec"><span class="num">10</span>What S3 builds — and what it deliberately does not</h2>
+  <div class="row2">
+    <div class="panel pick">
+      <h4>In</h4>
+      <ul class="pts">
+        <li>
+          <b>Allocator</b> — <code>swarmWorktree.ts</code>, MAIN-only <code>simple-git</code>:
+          allocate before spawn, status, remove-when-clean, dispose.
+        </li>
+        <li>
+          <b>Spawn seam</b> — <code>spawn_worker</code> provisions for
+          <code>isolation: 'worktree'</code>, overrides cwd, discloses path + branch, refuses rather
+          than falling through <code>safeCwd</code>.
+        </li>
+        <li>
+          <b>Ledger</b> — populate <code>{worktree, branch}</code>; project them into the card line
+          and the merge sequence.
+        </li>
+        <li><b>Overlap</b> — the pure set-intersection, unit-tested directly.</li>
+        <li>
+          <b>Triage</b> — three new tags, the expandable merge sequence, the disposition modal.
+        </li>
+        <li><b>Cap</b> — 1 → 2 for isolated writers, both strings rewritten.</li>
+        <li>
+          <b>Failure paths</b> — defined worktree disposition for <code>lost</code>,
+          <code>reassign</code>, quit-drain, and board delete.
+        </li>
+        <li>
+          <b>Tests</b> — units (allocator · overlap · projection) + a real-channel IPC integration
+          test + an e2e spec that owns and tears down its own temp git repo.
+        </li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>Out</h4>
+      <ul class="pts">
+        <li>
+          <b>Auto-merge</b> of worker branches — deferred in three separate documents. Surface for
+          human merge.
+        </li>
+        <li><b>Orchestrator re-attach</b> — Phase 5 / S4. S2's clean-shutdown v1 stands.</li>
+        <li>
+          <b>Docked lead-terminal chat, <code>session-consented</code>, cost metering</b> — S4 /
+          Q10.
+        </li>
+        <li>
+          <b>Making <code>isolation:'none'</code> on a write role an error</b> — an open question in
+          <code>03</code> item 6, not this lane's to close. S3 surfaces the risk (the cap drops to
+          1) and permits it.
+        </li>
+        <li>
+          <b>Feature Workspaces</b> — the app's own epic (a worktree backing a feature
+          <i>zone</i> of boards). Same primitives, different product surface.
+        </li>
+        <li>
+          <b>Any broker wire change.</b> Nothing here crosses the MCP wire;
+          <code>@expanse-ade/mcp</code> is untouched.
+        </li>
+        <li>
+          <b><code>node_modules</code> linking</b> — pending D7.
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="call ask">
+    <b>Signed off 2026-07-28.</b> Variant <b>C</b> for the chip; <code>node_modules</code>
+    <b>not</b> linked in S3 (disclosed in the spawn confirm, named as a follow-up); D1, D2, D4, D5,
+    D6, D8 and D9 approved exactly as recommended. Implementation proceeds against this artifact —
+    any deviation found during the build is recorded here rather than shipped silently.
+  </div>
+</div>

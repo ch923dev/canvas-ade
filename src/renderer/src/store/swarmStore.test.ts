@@ -109,7 +109,8 @@ describe('swarmStore — per-board run isolation', () => {
         { boardId: 'w1', activity: 'Migrating…', state: 'stalled' },
         { boardId: 'w2', role: 'reviewer', provenance: 'synthesized' }
       ],
-      triage: []
+      triage: [],
+      mergeSequence: []
     })
     const run = runFor(useSwarmStore.getState().runs, 'a')
     // A worker only the LEDGER knows about joins the run; this session's order is preserved.
@@ -133,7 +134,8 @@ describe('swarmStore — per-board run isolation', () => {
       counts: { workers: 0, results: 0 },
       planOwners: {},
       workers: [],
-      triage: []
+      triage: [],
+      mergeSequence: []
     })
     s.setLedger('a', snap(true))
     s.setLedger('a', snap(false))
@@ -152,7 +154,8 @@ describe('swarmStore — per-board run isolation', () => {
       counts: { workers: 0, results: 0 },
       planOwners: {},
       workers: [],
-      triage: []
+      triage: [],
+      mergeSequence: []
     })
     expect(runFor(useSwarmStore.getState().runs, 'a').planBoardId).toBe('live-plan')
   })

@@ -12,7 +12,9 @@ import {
 // ADR 0009 ignore templates: default-private tracks ONLY canvas.json; committed also versions
 // assets/ + memory/ and ignores only the volatile files.
 const IGNORE_PRIVATE = '*\n!canvas.json\n'
-const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\ncanvas.json.bak\nsession.json\n'
+// S3 added `worktrees/`: swarm worker worktrees live under `.canvas/worktrees/`, and without the
+// entry an opted-in project sees every worker's checkout as untracked noise in its own git status.
+const IGNORE_COMMITTED = 'audit/\ntmp/\nterminal/\nworktrees/\ncanvas.json.bak\nsession.json\n'
 
 describe('canvasMemory', () => {
   let dir: string

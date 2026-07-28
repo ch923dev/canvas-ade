@@ -46,6 +46,16 @@ const ctxStub = (over: Partial<SwarmRunCtx> = {}): SwarmRunCtx & { events: Swarm
     writeInFlight: new Set<string>(),
     workerRoles: new Map<string, string>(),
     planBoard: { current: null },
+    // S3: a stub allocator that always succeeds, so the pre-existing spawn tests keep exercising
+    // what they were written for. `workerWorktrees` still starts EMPTY, so the write-cap tests
+    // (which set roles directly and never spawn) exercise the un-isolated ceiling of 1.
+    workerWorktrees: new Map<string, { worktree: string; branch: string }>(),
+    allocateWorktree: vi.fn(async (name: string) => ({
+      ok: true as const,
+      worktree: `/wt/${name}`,
+      branch: `swarm/run1234/${name}`
+    })),
+    releaseWorktree: vi.fn(async () => {}),
     emit: (ev) => events.push(ev),
     confirm: vi.fn(async () => ({ approved: true })),
     events,
@@ -199,7 +209,9 @@ describe('executeSwarmTool', () => {
     )
     expect(out.isError).toBe(true)
     expect(out.content).toContain('write cap')
-    expect(out.content).toContain('working tree')
+    // S3: with neither worker isolated the ceiling collapses to 1, and the string NAMES the
+    // worker that cost the parallelism rather than blaming a generic shared tree.
+    expect(out.content).toContain('no worktree of its own')
     expect(facet.dispatchPrompts).not.toHaveBeenCalled()
     expect(ctx.writeInFlight.size).toBe(0) // nothing reserved by a refused round
   })
@@ -311,15 +323,29 @@ describe('executeSwarmTool', () => {
       facet,
       ctx
     )
-    expect(JSON.parse(out.content)).toEqual({ workerId: 'spawned-1' })
+    // S3: a builder declares `isolation: 'worktree'`, so the allocation rides the result and the
+    // board's cwd IS the worktree — not the project root, and never a model-supplied path.
+    expect(JSON.parse(out.content)).toEqual({
+      workerId: 'spawned-1',
+      worktree: '/wt/builder-1',
+      branch: 'swarm/run1234/builder-1'
+    })
     expect(facet.spawnBoard).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'terminal',
         title: 'builder-1',
+        cwd: '/wt/builder-1',
         prompt: expect.stringContaining('claude')
       })
     )
     expect(ctx.workerRoles.get('spawned-1')).toBe('builder')
+    expect(ctx.workerWorktrees.get('spawned-1')).toEqual({
+      worktree: '/wt/builder-1',
+      branch: 'swarm/run1234/builder-1'
+    })
+    // The branch has to ride the summary — the statusline renders `summary` only, so without it
+    // the human never learns from the board that a branch was created on their disk.
+    expect(out.summary).toContain('swarm/run1234/builder-1')
     expect(ctx.events[0]).toMatchObject({ kind: 'workerSpawned', workerId: 'spawned-1' })
   })
 
@@ -598,5 +624,271 @@ describe('executeSwarmTool', () => {
     const spawn = defs.find((d) => d.name === 'spawn_worker')!
     const roleProp = (spawn.input_schema.properties as Record<string, { enum?: string[] }>).role
     expect(roleProp.enum).toEqual(ROLE_PACKS.map((p) => p.id))
+  })
+})
+
+// ── S3 · worktree isolation at the spawn seam + the write ceiling ──
+
+describe('S3 · spawn_worker allocates BEFORE the board spawns', () => {
+  it('🔒 REFUSES a write role when no allocator is wired — never a silent shared-tree fallback', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub({ allocateWorktree: undefined })
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder' },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBe(true)
+    expect(out.content).toContain('share the project working tree')
+    expect(facet.spawnBoard).not.toHaveBeenCalled()
+    expect(ctx.confirm).not.toHaveBeenCalled() // refused before the human is even asked
+  })
+
+  it('🔒 REFUSES when allocation fails, carrying git\u2019s own reason to the human', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub({
+      allocateWorktree: vi.fn(async () => ({
+        ok: false as const,
+        reason: 'the project folder is not a git repository'
+      }))
+    })
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder' },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBe(true)
+    expect(out.content).toContain('not a git repository')
+    expect(facet.spawnBoard).not.toHaveBeenCalled()
+  })
+
+  it('a READ-ONLY role needs no worktree and never asks the allocator', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'reviewer-1', role: 'code-reviewer' },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBeUndefined()
+    expect(ctx.allocateWorktree).not.toHaveBeenCalled()
+    expect(ctx.workerWorktrees.size).toBe(0)
+  })
+
+  it('discloses the worktree, the branch AND the missing node_modules in the confirm body', async () => {
+    const ctx = ctxStub()
+    await executeSwarmTool('spawn_worker', { name: 'builder-1', role: 'builder' }, facetStub(), ctx)
+    const body = (ctx.confirm as unknown as { mock: { calls: Array<[{ body: string }]> } }).mock
+      .calls[0][0].body
+    expect(body).toContain('/wt/builder-1')
+    expect(body).toContain('swarm/run1234/builder-1')
+    // A cost not named in the modal is a cost the human did not agree to.
+    expect(body).toContain('no node_modules')
+  })
+
+  it('🔒 rolls the allocation back when the human DENIES — no orphan branch or checkout', async () => {
+    const ctx = ctxStub({ confirm: vi.fn(async () => ({ approved: false })) })
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder' },
+      facetStub(),
+      ctx
+    )
+    expect(out.denied).toBe(true)
+    expect(ctx.releaseWorktree).toHaveBeenCalledWith('/wt/builder-1')
+    expect(ctx.workerWorktrees.size).toBe(0)
+  })
+
+  it('🔒 rolls the allocation back when spawnBoard throws', async () => {
+    const facet = facetStub({
+      spawnBoard: vi.fn(async () => {
+        throw new Error('cap reached')
+      })
+    })
+    const ctx = ctxStub()
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder' },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBe(true)
+    expect(ctx.releaseWorktree).toHaveBeenCalledWith('/wt/builder-1')
+  })
+
+  it('🔒 the worktree WINS over a model-supplied cwd — a declared isolation cannot be un-isolated', async () => {
+    const facet = facetStub()
+    await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder', cwd: 'M:/somewhere/else' },
+      facet,
+      ctxStub()
+    )
+    expect(facet.spawnBoard).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/wt/builder-1' }))
+  })
+
+  it('🔒 a dialog commit that switches INTO a write role with no tree is refused', async () => {
+    // "The reply proposes, MAIN disposes" applied to isolation: allocated for a reader, committed
+    // as a builder ⇒ refuse rather than spawn a writer into the shared tree via a dropdown.
+    const facet = facetStub()
+    const ctx = ctxStub({
+      confirm: vi.fn(async () => ({ approved: true, rolePackId: 'builder' }))
+    })
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'reviewer-1', role: 'code-reviewer' },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBe(true)
+    expect(out.content).toContain('needs its own worktree')
+    expect(facet.spawnBoard).not.toHaveBeenCalled()
+  })
+
+  it('a dialog commit that switches OUT of a write role releases the tree we made', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub({
+      confirm: vi.fn(async () => ({ approved: true, rolePackId: 'code-reviewer' }))
+    })
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'builder-1', role: 'builder' },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBeUndefined()
+    expect(ctx.releaseWorktree).toHaveBeenCalledWith('/wt/builder-1')
+    expect(facet.spawnBoard).toHaveBeenCalledWith(
+      expect.not.objectContaining({ cwd: '/wt/builder-1' })
+    )
+    expect(ctx.workerWorktrees.size).toBe(0)
+  })
+})
+
+describe('S3 · the write ceiling is a FUNCTION of what actually provisioned', () => {
+  const four = { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
+  const isolate = (ctx: SwarmRunCtx, id: string): void => {
+    ctx.workerRoles.set(id, 'builder')
+    ctx.workerWorktrees.set(id, { worktree: `/wt/${id}`, branch: `swarm/r/${id}` })
+  }
+
+  it('TWO isolated writers run in parallel — the S3 change the disclosure strings promise', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    isolate(ctx, 'w1')
+    isolate(ctx, 'w2')
+    expect(
+      (await executeSwarmTool('dispatch_task', { workerId: 'w1', ...four }, facet, ctx)).isError
+    ).toBeUndefined()
+    expect(
+      (await executeSwarmTool('dispatch_task', { workerId: 'w2', ...four }, facet, ctx)).isError
+    ).toBeUndefined()
+    expect(ctx.writeInFlight.size).toBe(2)
+  })
+
+  it('a THIRD isolated writer is refused, and the string names the parallel-writer ceiling', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    for (const id of ['w1', 'w2', 'w3']) isolate(ctx, id)
+    await executeSwarmTool('dispatch_task', { workerId: 'w1', ...four }, facet, ctx)
+    await executeSwarmTool('dispatch_task', { workerId: 'w2', ...four }, facet, ctx)
+    const third = await executeSwarmTool('dispatch_task', { workerId: 'w3', ...four }, facet, ctx)
+    expect(third.isError).toBe(true)
+    expect(third.content).toContain('each in its own worktree')
+    expect(third.content).toContain('07 §4.3')
+    // The old promise ("workers share one working tree until worktree isolation lands") would be
+    // a lie the moment S3 shipped — it must be gone from every refusal.
+    expect(third.content).not.toContain('until worktree isolation lands')
+  })
+
+  it('🔒 ONE un-isolated writer drops the ceiling back to 1 and the refusal NAMES it', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    isolate(ctx, 'w1')
+    ctx.workerRoles.set('w2', 'builder') // no worktree → shares the project tree
+    await executeSwarmTool('dispatch_task', { workerId: 'w1', ...four }, facet, ctx)
+    const second = await executeSwarmTool('dispatch_task', { workerId: 'w2', ...four }, facet, ctx)
+    expect(second.isError).toBe(true)
+    expect(second.content).toContain('w2 has no worktree of its own')
+    expect(second.content).toContain('disclose')
+  })
+
+  it('a batch of two ISOLATED writers lands; the refusal for three names the per-worktree ceiling', async () => {
+    const task = (id: string): Record<string, unknown> => ({ workerId: id, ...four })
+    const okFacet = facetStub()
+    const okCtx = ctxStub()
+    isolate(okCtx, 'w1')
+    isolate(okCtx, 'w2')
+    const ok = await executeSwarmTool(
+      'dispatch_tasks',
+      { tasks: [task('w1'), task('w2')] },
+      okFacet,
+      okCtx
+    )
+    expect(ok.isError).toBeUndefined()
+    expect(ok.summary).toContain('dispatched 2/2')
+
+    const badCtx = ctxStub()
+    for (const id of ['w1', 'w2', 'w3']) isolate(badCtx, id)
+    const bad = await executeSwarmTool(
+      'dispatch_tasks',
+      { tasks: [task('w1'), task('w2'), task('w3')] },
+      facetStub(),
+      badCtx
+    )
+    expect(bad.isError).toBe(true)
+    expect(bad.content).toContain('one per worktree')
+    expect(badCtx.writeInFlight.size).toBe(0) // nothing reserved by a refused round
+  })
+
+  it('readers are unaffected by the ceiling — isolation cost is paid by writers alone', async () => {
+    const facet = facetStub()
+    const ctx = ctxStub()
+    for (const id of ['r1', 'r2', 'r3']) ctx.workerRoles.set(id, 'code-reviewer')
+    const task = (id: string): Record<string, unknown> => ({ workerId: id, ...four })
+    const out = await executeSwarmTool(
+      'dispatch_tasks',
+      { tasks: [task('r1'), task('r2'), task('r3')] },
+      facet,
+      ctx
+    )
+    expect(out.isError).toBeUndefined()
+    expect(ctx.writeInFlight.size).toBe(0)
+  })
+})
+
+describe('S3 · the ledger records where the work went', () => {
+  it('a dispatch to an isolated worker carries worktree + branch onto the assignment', async () => {
+    const ctx = ctxStub()
+    ctx.workerRoles.set('w1', 'builder')
+    ctx.workerWorktrees.set('w1', { worktree: '/wt/w1', branch: 'swarm/r/w1' })
+    const ledger = { planDrawn: vi.fn(), dispatched: vi.fn(), settled: vi.fn() }
+    await executeSwarmTool(
+      'dispatch_task',
+      { workerId: 'w1', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+      facetStub(),
+      { ...ctx, ledger }
+    )
+    expect(ledger.dispatched).toHaveBeenCalledWith(
+      expect.objectContaining({ worktree: '/wt/w1', branch: 'swarm/r/w1' })
+    )
+  })
+
+  it('a dispatch to a read-only worker records NEITHER field — null stays null', async () => {
+    const ctx = ctxStub()
+    ctx.workerRoles.set('r1', 'code-reviewer')
+    const ledger = { planDrawn: vi.fn(), dispatched: vi.fn(), settled: vi.fn() }
+    await executeSwarmTool(
+      'dispatch_task',
+      { workerId: 'r1', objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' },
+      facetStub(),
+      { ...ctx, ledger }
+    )
+    const arg = ledger.dispatched.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.worktree).toBeUndefined()
+    expect(arg.branch).toBeUndefined()
   })
 })

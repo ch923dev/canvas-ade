@@ -484,6 +484,16 @@ describe('S1 workerConfig round trip (executeSwarmTool ⇄ requestConfirm over t
       paused: () => false,
       writeInFlight: new Set<string>(),
       workerRoles: new Map<string, string>(),
+      // S3: a builder declares `isolation: 'worktree'`, so the spawn now allocates one BEFORE the
+      // confirm and refuses outright without an allocator. Stubbed here so this suite keeps
+      // testing what it is about — the confirm envelope and its reply — not the git seam.
+      workerWorktrees: new Map<string, { worktree: string; branch: string }>(),
+      allocateWorktree: async (name: string) => ({
+        ok: true as const,
+        worktree: `/wt/${name}`,
+        branch: `swarm/rrrr/${name}`
+      }),
+      releaseWorktree: async (): Promise<void> => {},
       emit: () => {},
       // The REAL confirm gate — no hand-authored reply stub on either side.
       confirm: (req: Parameters<typeof requestConfirm>[2]) => requestConfirm(bus, () => win, req)
@@ -542,6 +552,16 @@ describe('S1 workerConfig round trip (executeSwarmTool ⇄ requestConfirm over t
       paused: () => false,
       writeInFlight: new Set<string>(),
       workerRoles: new Map<string, string>(),
+      // S3: a builder declares `isolation: 'worktree'`, so the spawn now allocates one BEFORE the
+      // confirm and refuses outright without an allocator. Stubbed here so this suite keeps
+      // testing what it is about — the confirm envelope and its reply — not the git seam.
+      workerWorktrees: new Map<string, { worktree: string; branch: string }>(),
+      allocateWorktree: async (name: string) => ({
+        ok: true as const,
+        worktree: `/wt/${name}`,
+        branch: `swarm/rrrr/${name}`
+      }),
+      releaseWorktree: async (): Promise<void> => {},
       emit: () => {},
       confirm: (req: Parameters<typeof requestConfirm>[2]) => requestConfirm(bus, () => win, req)
     }

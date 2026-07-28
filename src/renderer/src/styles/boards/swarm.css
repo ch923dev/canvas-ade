@@ -727,3 +727,111 @@
     animation: none;
   }
 }
+
+/* ── S3 · worktree isolation (worker card line + integration rows) ──
+   Design contract: docs/orchestration/s3-design-artifact.html (signed off 2026-07-28). */
+
+/* The worker card's worktree line — variant C: its own mono line, present ONLY on a worker that
+   actually holds a worktree, so a read-only role's card is unchanged from S2 and the grid does
+   not grow uniformly. */
+.sw-wt {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.sw-wt .g {
+  color: var(--accent);
+  flex: none;
+}
+.sw-wt .b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sw-wt .dim {
+  color: var(--text-faint);
+  flex: none;
+}
+/* A PRESERVED tree, not a broken one: the locked keep-on-dirty rule kept it and discarded
+   nothing, so this is a marker, not an alarm — hence --warn on the tail alone and no ring. */
+.sw-wt.dirty .dim {
+  color: var(--warn);
+}
+.sw-card.lost .sw-wt .g {
+  color: var(--err);
+}
+
+/* Wraps a triage row with the sequence it can expand to, so the two read as one block. */
+.sw-tri-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The merge-ready lane — neither hazard (--err) nor question (--warn): the run telling you it is
+   ready for you. */
+.sw-tri.seq {
+  border-color: rgba(79, 140, 255, 0.35);
+  background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--surface-raised);
+}
+.sw-tri.seq .sw-tri-ico,
+.sw-tri.seq .sw-tri-tag {
+  color: var(--accent);
+}
+.sw-tri.seq .sw-tri-tag {
+  border-color: rgba(79, 140, 255, 0.4);
+}
+
+/* The merge sequence itself — the deliverable. Attached under its row (no top border, negative
+   margin) so it reads as that row's body rather than a fifth queue entry. */
+.sw-seq {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-top: none;
+  border-radius: 0 0 var(--r-ctl) var(--r-ctl);
+  background: var(--inset);
+  padding: 7px 10px 8px;
+  margin-top: -1px;
+}
+.sw-seq-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  min-width: 0;
+}
+.sw-seq-n {
+  color: var(--text-faint);
+  flex: none;
+  width: 14px;
+}
+/* The branch is the string the human types into `git merge`, so it wins the leftover space. */
+.sw-seq-br {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sw-seq-meta {
+  color: var(--text-faint);
+  flex: none;
+}
+.sw-seq-warn {
+  color: var(--err);
+  flex: none;
+}
+.sw-seq-foot {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  padding-top: 3px;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 2px;
+}

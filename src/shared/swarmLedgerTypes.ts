@@ -59,14 +59,26 @@ export type SwarmTaskState = (typeof SWARM_TASK_STATES)[number]
 /**
  * The CLOSED triage vocabulary. Tags, never prose — "you cannot write a triage rule against a
  * paragraph" (09 §3). Array order IS the risk order the triage queue sorts by (design §5).
+ *
+ * 🔒 S3 inserted three members (`overlap` · `dirty_worktree` · `merge_ready`) at their risk
+ * positions. Insertion is SAFE and needs no format bump: the tag is persisted as a string, never
+ * as an index, and an older reader's `optOneOf` simply drops an unknown tag (the task survives,
+ * untagged). Rationale for each position is in `s3-design-artifact.html` §4:
+ *   - `overlap` above `stalled` — a stall costs time, an unnoticed overlap costs WORK.
+ *   - `dirty_worktree` low — nothing is at risk (that IS the keep-on-dirty rule), but a preserved
+ *     tree nobody is told about is disk that leaks and work silently abandoned.
+ *   - `merge_ready` last — the positive end-state, and one row per RUN rather than per branch.
  */
 export const SWARM_BLOCKED_TAGS = [
   'needs_input',
   'lost',
   'failing_check',
+  'overlap',
   'stalled',
   'dependency',
-  'unreviewed'
+  'dirty_worktree',
+  'unreviewed',
+  'merge_ready'
 ] as const
 export type SwarmBlockedTag = (typeof SWARM_BLOCKED_TAGS)[number]
 
@@ -78,9 +90,31 @@ export type SwarmBlockedTag = (typeof SWARM_BLOCKED_TAGS)[number]
 export const SWARM_PROVENANCES = ['claimed', 'synthesized'] as const
 export type SwarmProvenance = (typeof SWARM_PROVENANCES)[number]
 
-/** The actions a triage row may offer. The renderer renders them; MAIN re-validates every one. */
-export const SWARM_TRIAGE_ACTIONS = ['open', 'reassign', 'accept', 'wait', 'dismiss'] as const
+/**
+ * The actions a triage row may offer. The renderer renders them; MAIN re-validates every one.
+ *
+ * 🔒 Two are RENDERER-routed and never reach `applyAction`: `open` (a jump on the canvas, no
+ * ledger write) and S3's `resolve` (a worktree disposition, which needs async git and therefore
+ * rides its own `swarm:worktreeDispose` IPC, re-validated there). Everything else is a ledger
+ * mutation `applyAction` performs after re-deriving that the row was actually allowed to offer it.
+ */
+export const SWARM_TRIAGE_ACTIONS = [
+  'open',
+  'reassign',
+  'accept',
+  'wait',
+  'dismiss',
+  'resolve'
+] as const
 export type SwarmTriageAction = (typeof SWARM_TRIAGE_ACTIONS)[number]
+
+/**
+ * S3 — how a dirty worktree is disposed of. `keep` is the DEFAULT, what already happened, and the
+ * fallback for a cancel, an error, or app quit; nothing in this lane destroys a tree without an
+ * explicit named choice. The locked rule (`CLAUDE.md` › Git / worktrees) spells exactly this set.
+ */
+export const SWARM_WORKTREE_DISPOSITIONS = ['keep', 'commit', 'stash', 'discard'] as const
+export type SwarmWorktreeDisposition = (typeof SWARM_WORKTREE_DISPOSITIONS)[number]
 
 /** One plan-strip item, mirrored from the run's Planning-board checklist (join key = `id`). */
 export interface SwarmPlanItem {
@@ -112,9 +146,15 @@ export interface SwarmAssignment {
   /** Counted stall transitions (Magentic-One's stall counter), NOT a vibe. */
   stallCount: number
   /**
-   * 🔒 S3 populates these. S2 writes `null` deliberately so the field EXISTS in the schema today
-   * and Phase 3 needs no format bump — the kickoff calls this out explicitly. Nothing in S2 reads
-   * them and no chip renders from them.
+   * 🔒 S3 populates these (S2 wrote `null` deliberately so the fields existed in the schema
+   * already — hence no format bump and no `minReaderVersion` move here).
+   *
+   * `worktree` is the ABSOLUTE path of the worker's own git worktree; `branch` the branch it was
+   * created on. Both stay `null` for a read-only role (`isolation: 'none'`), which is the visible
+   * proof that isolation cost is paid only by writers — and for a write worker they are the run's
+   * only durable record of where its work went, which is what makes a preserved worktree findable
+   * after a restart. The pair is per WORKER, not per task: at `spawn_worker` no task exists yet,
+   * so a worker that takes a second task carries the same pair onto the new assignment.
    */
   worktree: string | null
   branch: string | null
@@ -218,6 +258,43 @@ export interface SwarmWorkerLedgerState {
   provenance?: SwarmProvenance
   /** The card's mono disclosure line, already formatted (threshold / exit reason / counts). */
   disclose?: string
+  /**
+   * S3 — the card's worktree line (design variant C: its own mono line, ABSENT on a worker with
+   * no worktree, so a read-only card is byte-identical to what S2 shipped). Composed MAIN-side
+   * beside `disclose` for the same reason: one source for these strings.
+   */
+  worktree?: SwarmWorktreeChip
+}
+
+/** S3 — the worker card's worktree line, pre-composed. */
+export interface SwarmWorktreeChip {
+  /** Full branch, for the card's `title` (the leaf is all that fits at ~200px). */
+  branch: string
+  /** The branch's last segment — `swarm/a1b2c3d4/builder-1` → `builder-1`. */
+  leaf: string
+  /** The state-dependent tail: `4 files` · `3 files · ready` · `kept, 7 uncommitted`. */
+  note: string
+  /** The tree has uncommitted changes right now — drives the `dirty_worktree` row and the tail. */
+  dirty?: true
+}
+
+/**
+ * S3 — one step of the merge sequence the human follows. Ordered by dependency (plan-item
+ * position first, then dispatch time), so overlapping branches are already adjacent, earlier
+ * first. NOTHING here merges: the sequence is the deliverable, auto-merge is deferred.
+ */
+export interface SwarmMergeStep {
+  taskId: string
+  boardId: string
+  branch: string
+  /** `task 3` when the task maps to a plan item, else its own imperative. */
+  label: string
+  /** Touched-file count from the worker's own `refs[]`. */
+  files: number
+  /** 1-based positions in THIS sequence that this step overlaps with (usually one earlier step). */
+  overlapsWith: number[]
+  /** The tree still has uncommitted changes — it is listed, but it is not merge-ready. */
+  dirty?: true
 }
 
 /**
@@ -229,7 +306,17 @@ export interface SwarmTriageRow {
   id: string
   tag: SwarmBlockedTag
   boardId: string
-  /** The sentence tail rendered after the bold worker title. */
+  /**
+   * S3 — a SECOND worker this row is about (only `overlap` uses it). MAIN still carries ids and
+   * never titles, so the renderer resolves both and composes "**A** and B both touched …"; adding
+   * the second title to `text` MAIN-side would have made MAIN a title authority.
+   */
+  boardId2?: string
+  /**
+   * The sentence tail rendered after the bold worker title — EXCEPT on a run-level row
+   * (`merge_ready`), which is about the run rather than any one worker and is rendered with no
+   * title prefix at all.
+   */
   text: string
   actions: SwarmTriageAction[]
 }
@@ -252,4 +339,22 @@ export interface SwarmLedgerSnapshot {
   workers: SwarmWorkerLedgerState[]
   /** Already risk-ordered by `SWARM_BLOCKED_TAGS` order; the renderer does not re-sort. */
   triage: SwarmTriageRow[]
+  /**
+   * S3 — the branches to merge, in the order to merge them. Empty when no isolated worker has
+   * finished. Computed MAIN-side and pushed with the snapshot so the order the human copies is
+   * the order the ledger actually holds; the `merge_ready` triage row expands to show it.
+   */
+  mergeSequence: SwarmMergeStep[]
+}
+
+/**
+ * S3 — live git facts about one worktree, read from disk by MAIN and passed INTO the pure
+ * projection (which owns no I/O and no clock). Absent for a path MAIN could not stat, which is
+ * treated as "unknown", never as "clean" — the same fail-loud asymmetry as overlap detection.
+ */
+export interface SwarmWorktreeStatus {
+  exists: boolean
+  dirty: boolean
+  /** Number of changed (incl. untracked) entries — the number the disposition modal discloses. */
+  changed: number
 }

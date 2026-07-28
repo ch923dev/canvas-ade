@@ -18,8 +18,11 @@
  *    `--append-system-prompt` launch flag — the spawn launchCommand is clamped to one 400-char
  *    line in MAIN (`mcpLifecycle.SPAWN_LAUNCH_MAX`), which a real brief would blow, and the REPL
  *    path pays the same single human confirm as every dispatch.
- *  - `isolation` is declared but NOT provisioned (worktrees are Phase 3). Until then concurrent
- *    WRITE-role workers are capped at {@link WRITE_ROLE_CONCURRENCY_CAP}, disclosed in the dialog.
+ *  - `isolation` was declared but NOT provisioned in Phase 0. **S3 provisions it**: a pack that
+ *    declares `isolation: 'worktree'` now gets a real git worktree on its own branch before its
+ *    board spawns (`src/main/swarmWorktree.ts`), so the write-concurrency ceiling rose from 1 to
+ *    {@link WRITE_ROLE_CONCURRENCY_CAP} — but only for writers that ACTUALLY hold one; see
+ *    {@link writeRoleConcurrencyCap}.
  */
 
 /** Semantic model tier (cheap reader / mid builder / expensive judge) + optional explicit pin. */
@@ -71,11 +74,33 @@ export interface RolePack {
 }
 
 /**
- * Until worktree isolation lands (Phase 3), two write-posture workers share one working tree —
- * parallel writes are incorrect by construction, so the dispatch pump admits at most ONE
- * write-role worker at a time. Disclosed in the worker-config dialog, never silent.
+ * Concurrent write-posture workers, each in ITS OWN git worktree — the disclosed parallel-writer
+ * ceiling from `07-swarm-board.md` §4.3 ("≤2 concurrent write-role workers; readers effectively
+ * unbounded", Cursor's shipped rule). Disjoint trees make the writes correct by construction; what
+ * survives is the INTEGRATION collision, which S3 detects (`swarmOverlap.ts`) and sequences for a
+ * human rather than merging.
  */
-export const WRITE_ROLE_CONCURRENCY_CAP = 1
+export const WRITE_ROLE_CONCURRENCY_CAP = 2
+
+/**
+ * The ceiling when even ONE in-flight writer has no worktree of its own — it shares the project
+ * working tree with every other writer, which is the pre-S3 situation exactly, so the pre-S3 cap
+ * applies. An un-isolated write role stays LEGAL (cwd is advisory, and forbidding it is an open
+ * question `03-mechanism.md` item 6 leaves open); it just cannot run in parallel with anything.
+ */
+export const WRITE_ROLE_CONCURRENCY_CAP_SHARED = 1
+
+/**
+ * The cap that applies right now. A FUNCTION, not a constant, because raising the number without
+ * checking what actually provisioned would ship a cap whose disclosure string is a lie — the exact
+ * failure the S3 kickoff calls out ("a cap raised without the strings updated is worse than no
+ * change"). Both refusal strings in `swarmTools.ts` name whichever case fired.
+ *
+ * @param allIsolated every in-flight (and about-to-be-dispatched) write worker holds a worktree.
+ */
+export function writeRoleConcurrencyCap(allIsolated: boolean): number {
+  return allIsolated ? WRITE_ROLE_CONCURRENCY_CAP : WRITE_ROLE_CONCURRENCY_CAP_SHARED
+}
 
 /** Claude `--model` alias per semantic tier (cheap reader / mid builder / expensive judge). */
 export const MODEL_TIER_CLAUDE_ALIAS: Record<RolePackModel['tier'], string> = {

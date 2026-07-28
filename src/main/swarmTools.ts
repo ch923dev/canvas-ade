@@ -12,21 +12,27 @@
  *   - dispatch_task (gated) → packDispatchPrompt(role brief + FOUR-FIELD spec) → dispatchPrompt
  *   - await_worker (read)   → awaitSettled → {status, summary, provenance}
  *
- * WRITE SERIALIZATION (07 §4 honored at Phase-0 reality): until worktree isolation (S3), all
- * write-posture workers share one working tree, so the executor admits at most
- * WRITE_ROLE_CONCURRENCY_CAP (=1) un-settled write-role dispatches per run — refusals are
- * returned to the model as tool errors naming the cap, so the disclosure rule can be honored
- * in chat (no silent caps, 06 §2). Pause: while the run is paused every mutating tool refuses.
+ * WORKTREE ISOLATION (S3): a role pack declaring `isolation: 'worktree'` gets a real git worktree
+ * on its own branch allocated BEFORE its board spawns, and that path becomes the board's cwd.
+ * Allocation failure REFUSES the spawn — it never falls back to the shared project tree, because
+ * `safeCwd` would silently redirect a missing dir to `$HOME` (A6-3) and a writer in a tree it
+ * does not own is not degraded, it is incorrect.
+ *
+ * WRITE SERIALIZATION (07 §4.3): the executor admits `writeRoleConcurrencyCap()` un-settled
+ * write-role dispatches per run — 2 when every in-flight writer holds its own worktree, still 1
+ * the moment one does not. Refusals are returned to the model as tool errors naming WHICH case
+ * fired, so the disclosure rule can be honored in chat (no silent caps, 06 §2). Pause: while the
+ * run is paused every mutating tool refuses.
  */
 import type { AppModel } from './appModel'
 import {
   MODEL_TIER_CLAUDE_ALIAS,
   ROLE_PACKS,
-  WRITE_ROLE_CONCURRENCY_CAP,
   isWriteRolePack,
   packDispatchPrompt,
   rolePackById,
   singleLinePrompt,
+  writeRoleConcurrencyCap,
   type RolePack
 } from '../shared/rolePacks'
 import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
@@ -52,6 +58,28 @@ async function record(fn: (() => Promise<void>) | undefined): Promise<void> {
 const MAX_NAME = 80
 const MAX_FIELD = 4000
 const MAX_ITEMS = 30
+
+/** S3 — the ledger fields for a worker's tree, or nothing at all when it has none. */
+function worktreeOf(
+  ctx: SwarmRunCtx,
+  workerId: string
+): { worktree: string; branch: string } | Record<string, never> {
+  const wt = ctx.workerWorktrees.get(workerId)
+  return wt ? { worktree: wt.worktree, branch: wt.branch } : {}
+}
+
+/**
+ * S3 — the first write worker in `ids` that holds NO worktree of its own, or `null` when every
+ * one of them is isolated. That worker shares the project working tree with every other writer,
+ * which is what drops the concurrency ceiling back to the pre-S3 value of 1 — and its id is what
+ * the refusal string names, so the human learns WHICH worker cost them the parallelism.
+ */
+function unisolatedWriter(ctx: SwarmRunCtx, ids: string[]): string | null {
+  for (const id of ids) {
+    if (!ctx.workerWorktrees.has(id)) return id
+  }
+  return null
+}
 
 /** Model output → a 1-based plan-strip position, or undefined. Bounded to the plan's own cap. */
 const planItemOf = (v: unknown): number | undefined =>
@@ -160,6 +188,9 @@ export interface SwarmLedgerHooks {
     spec: SwarmTaskSpec
     activity?: string
     planItem?: number
+    /** S3: the worker's own worktree + branch, allocated at spawn. Absent ⇒ read-only role. */
+    worktree?: string | null
+    branch?: string | null
   }): Promise<void>
   /** A worker settled — attach its result with the provenance it actually carries. */
   settled(input: {
@@ -181,6 +212,23 @@ export interface SwarmRunCtx {
   /** Worker board id → its dispatched role id (await_worker reads it for provenance labels). */
   workerRoles: Map<string, string>
   /**
+   * S3: worker board id → the git worktree allocated for it at spawn. A write worker MISSING from
+   * this map has no tree of its own and therefore shares the project working tree, which is what
+   * drops the concurrency ceiling back to 1 (see {@link writeRoleConcurrencyCap}). Rebuilt from
+   * the ledger on restore, so a reloaded run still knows which of its workers are isolated.
+   */
+  workerWorktrees: Map<string, { worktree: string; branch: string }>
+  /**
+   * S3: allocate a worktree for a worker BEFORE its board spawns. Absent ⇒ no allocator wired
+   * (no project / test harness), and a pack that declares `isolation: 'worktree'` is refused
+   * rather than silently spawned into the shared tree.
+   */
+  allocateWorktree?: (
+    workerName: string
+  ) => Promise<{ ok: true; worktree: string; branch: string } | { ok: false; reason: string }>
+  /** S3: undo an allocation the human then denied — `git worktree remove`, clean only. */
+  releaseWorktree?: (worktree: string) => Promise<void>
+  /**
    * S2: the run's Planning board, written by `draw_plan` and read by `tick_plan_item`. A mutable
    * holder rather than a ledger read, so the plan strip still works for a run with NO ledger
    * (no project) — exactly the S1 degradation everything else in S2 keeps.
@@ -192,6 +240,9 @@ export interface SwarmRunCtx {
   confirm: (req: {
     title: string
     body: string
+    /** S3: the destructive-disposition second confirm reads as Discard / Keep it, not Approve. */
+    confirmLabel?: string
+    denyLabel?: string
     choices?: ConfirmChoices
     workerConfig?: ConfirmWorkerConfig
   }) => Promise<{
@@ -431,15 +482,43 @@ export async function executeSwarmTool(
         const model = SWARM_MODEL_OVERRIDES.find((m) => m === modelArg)
         if (modelArg && !model)
           return refuse(`unknown model — pick one of: ${SWARM_MODEL_OVERRIDES.join(', ')}`)
+        // 🔒 S3 — ALLOCATE BEFORE SPAWN. `safeCwd` silently redirects a missing directory to
+        // `$HOME` (A6-3), so a worktree created late (or not verified) means the builder writes
+        // into the user's home folder with a green status and nothing anywhere saying so. The
+        // allocator stats the directory itself; anything short of success REFUSES the spawn
+        // rather than falling back to the shared project tree — that fallback is the exact bug
+        // S3 exists to kill, and a write worker in a tree it does not own is not "degraded", it
+        // is incorrect.
+        let allocated: { worktree: string; branch: string } | undefined
+        if (pack.isolation === 'worktree') {
+          if (!ctx.allocateWorktree) {
+            return refuse(
+              `worktree isolation is unavailable in this session, and ${pack.id} writes files — without its own worktree it would share the project working tree with every other writer. Open a project backed by a git repository, or spawn a read-only role (disclose this to the human)`
+            )
+          }
+          const alloc = await ctx.allocateWorktree(workerName)
+          if (!alloc.ok) {
+            return refuse(
+              `could not give ${workerName} its own worktree — ${alloc.reason}. ${pack.id} writes files, so spawning it without one would share the project working tree with every other writer; refusing (disclose this to the human)`
+            )
+          }
+          allocated = { worktree: alloc.worktree, branch: alloc.branch }
+        }
         // The Jarvis-pattern pre-gate: spawn_board is cap-checked but un-gated for MCP agents;
         // the swarm brain pays an explicit human confirm so every mutating tool is gated. The
         // request carries `workerConfig`, so the renderer shows the FULL worker-config dialog
         // (the command board's spawn surface — role row, agent presets, builder, editable
         // launch line) and the human COMMITS the worker's real config, not just approve/deny.
         const defaultLaunch = composeRoleLaunch(pack, model)
+        // S3 disclosure: the human approving a builder is also approving a new branch + a fresh
+        // checkout on their disk, and a fresh worktree has NO node_modules (design D7 — not
+        // linked in S3). A cost not named in the modal is a cost the human did not agree to.
+        const isolationNote = allocated
+          ? ` It will run in its own git worktree at ${allocated.worktree} on a new branch ${allocated.branch} — a fresh checkout with no node_modules, so a build or test step must install first.`
+          : ''
         const decision = await ctx.confirm({
           title: 'Spawn a swarm worker?',
-          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${defaultLaunch}`,
+          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${defaultLaunch}${isolationNote}`,
           workerConfig: {
             workerName,
             roleId: pack.id,
@@ -447,13 +526,18 @@ export async function executeSwarmTool(
             defaultLaunch
           }
         })
-        if (!decision.approved)
+        if (!decision.approved) {
+          // Roll the allocation back: a denied spawn must not leave a branch and a checkout on
+          // the human's disk for a worker that never existed. Clean-only removal, so if anything
+          // already wrote in there it is kept (and surfaces as a dirty-worktree row).
+          if (allocated) await ctx.releaseWorktree?.(allocated.worktree).catch(() => {})
           return {
             content: 'denied by the human',
             isError: true,
             denied: true,
             summary: 'spawn denied'
           }
+        }
         // 🔒 Re-validate the dialog commit (the reply proposes, MAIN disposes): the launch line
         // must be ONE bounded non-empty line — anything else refuses (never silently "fixed"),
         // and an absent launchCommand (an approve-only surface) approves exactly defaultLaunch.
@@ -487,14 +571,39 @@ export async function executeSwarmTool(
           }
           openRouter = { enabled: true, ...(slug ? { model: slug } : {}) }
         }
-        const spawned = await facet.spawnBoard({
-          type: 'terminal',
-          title: workerName,
-          prompt: launch,
-          ...(str(args.cwd, 1024) ? { cwd: str(args.cwd, 1024) } : {}),
-          ...(openRouter ? { openRouter } : {})
-        })
+        // 🔒 S3 — the isolation field gets the same "reply proposes, MAIN disposes" treatment as
+        // the launch line: the dialog may COMMIT a different role than the one we allocated for.
+        // Switched INTO a write role with no tree ⇒ refuse (never spawn a writer into the shared
+        // tree by way of a dropdown). Switched OUT of one ⇒ release the tree we just made.
+        if (finalPack.isolation === 'worktree' && !allocated) {
+          return refuse(
+            `worker config commit invalid — the committed role ${finalPack.id} needs its own worktree, but one was allocated for ${pack.id} instead. Re-spawn with the write role selected up front`
+          )
+        }
+        if (finalPack.isolation !== 'worktree' && allocated) {
+          await ctx.releaseWorktree?.(allocated.worktree).catch(() => {})
+          allocated = undefined
+        }
+        // The worktree WINS over any cwd the model proposed: a pack that declares isolation is
+        // isolated, and honouring a model-supplied cwd here would silently un-isolate it.
+        const spawnCwd = allocated?.worktree ?? str(args.cwd, 1024)
+        let spawned: { id: string }
+        try {
+          spawned = await facet.spawnBoard({
+            type: 'terminal',
+            title: workerName,
+            prompt: launch,
+            ...(spawnCwd ? { cwd: spawnCwd } : {}),
+            ...(openRouter ? { openRouter } : {})
+          })
+        } catch (err) {
+          // No board exists, so nothing will ever use this tree — take it back rather than
+          // leaking a checkout for a worker that failed to spawn.
+          if (allocated) await ctx.releaseWorktree?.(allocated.worktree).catch(() => {})
+          throw err
+        }
         ctx.workerRoles.set(spawned.id, finalPack.id)
+        if (allocated) ctx.workerWorktrees.set(spawned.id, allocated)
         ctx.emit({
           kind: 'workerSpawned',
           workerId: spawned.id,
@@ -502,8 +611,13 @@ export async function executeSwarmTool(
           title: workerName
         })
         return {
-          content: JSON.stringify({ workerId: spawned.id }),
-          summary: `spawned ${workerName} (${finalPack.id})`
+          content: JSON.stringify({
+            workerId: spawned.id,
+            ...(allocated ? { worktree: allocated.worktree, branch: allocated.branch } : {})
+          }),
+          // The statusline renders `summary` only — the branch has to ride it or the human never
+          // learns a branch was created on their disk from the board alone.
+          summary: `spawned ${workerName} (${finalPack.id})${allocated ? ` on ${allocated.branch}` : ''}`
         }
       }
       case 'dispatch_task': {
@@ -519,12 +633,19 @@ export async function executeSwarmTool(
           )
         }
         const pack = rolePackById(ctx.workerRoles.get(workerId))
-        // Write serialization (Phase-0 shared working tree): cap un-settled write-role
-        // dispatches; the refusal names the cap so the model can disclose it in chat.
+        // 🔒 S3 write serialization. The ceiling is a FUNCTION of what actually provisioned: 2
+        // writers when each holds its own worktree (the 07 §4.3 policy), but still 1 the moment
+        // any in-flight writer shares the project tree. Both refusals name WHICH case fired —
+        // raising the number without rewriting these strings would ship a cap that lies about
+        // its own reason, which the kickoff calls worse than not raising it at all.
         if (pack && isWriteRolePack(pack) && !ctx.writeInFlight.has(workerId)) {
-          if (ctx.writeInFlight.size >= WRITE_ROLE_CONCURRENCY_CAP) {
+          const shared = unisolatedWriter(ctx, [...ctx.writeInFlight, workerId])
+          const cap = writeRoleConcurrencyCap(shared === null)
+          if (ctx.writeInFlight.size >= cap) {
             return refuse(
-              `write cap: ${ctx.writeInFlight.size} write-role task already running and workers share one working tree until worktree isolation lands — await it first (disclose this to the human)`
+              shared === null
+                ? `write cap: ${ctx.writeInFlight.size} write-role tasks already running, each in its own worktree — that is the parallel-writer ceiling (07 §4.3). Await one first (disclose this to the human)`
+                : `write cap: ${shared} has no worktree of its own, so it shares the project working tree with the other writer — only ${cap} un-isolated write-role task may run at a time. Await it, or respawn this worker with a worktree-isolated role (disclose this to the human)`
             )
           }
           ctx.writeInFlight.add(workerId)
@@ -560,7 +681,9 @@ export async function executeSwarmTool(
                   role: pack?.id ?? 'worker',
                   spec: { objective, context, boundaries, outputFormat },
                   ...(activity ? { activity } : {}),
-                  ...(planItem !== undefined ? { planItem } : {})
+                  ...(planItem !== undefined ? { planItem } : {}),
+                  // S3: the worker's tree, so the assignment records where the work went.
+                  ...worktreeOf(ctx, workerId)
                 }))
           )
           return {
@@ -616,17 +739,21 @@ export async function executeSwarmTool(
             ...(planItemOf(o.planItem) !== undefined ? { planItem: planItemOf(o.planItem) } : {})
           })
         }
-        // Write serialization, unchanged and DISCLOSED: workers share one working tree until S3,
-        // so a round carrying more write-role tasks than the cap is refused whole rather than
-        // silently trimmed — the model splits it and says why in chat (no silent caps, 06 §2).
+        // 🔒 S3 write serialization, DISCLOSED: a round carrying more write-role tasks than the
+        // ceiling is refused whole rather than silently trimmed — the model splits it and says
+        // why in chat (no silent caps, 06 §2). The ceiling is the same function as above, so a
+        // round containing one un-isolated writer collapses to 1 and the string says so.
         const newWrites = new Set(
           parsed
             .filter((p) => p.pack && isWriteRolePack(p.pack) && !ctx.writeInFlight.has(p.workerId))
             .map((p) => p.workerId)
         )
-        if (ctx.writeInFlight.size + newWrites.size > WRITE_ROLE_CONCURRENCY_CAP) {
+        const wanted = ctx.writeInFlight.size + newWrites.size
+        const sharedWriter = unisolatedWriter(ctx, [...ctx.writeInFlight, ...newWrites])
+        const batchCap = writeRoleConcurrencyCap(sharedWriter === null)
+        if (wanted > batchCap) {
           return refuse(
-            `write cap: this round needs ${ctx.writeInFlight.size + newWrites.size} concurrent write-role workers but only ${WRITE_ROLE_CONCURRENCY_CAP} may run while workers share one working tree — dispatch the write task alone (or await the running one) and disclose this to the human`
+            `write cap: this round needs ${wanted} concurrent write-role workers but only ${batchCap} may run in parallel, one per worktree${sharedWriter !== null ? ` (${sharedWriter} has no worktree of its own, which drops that ceiling to ${batchCap})` : ''} — split the round and disclose this to the human`
           )
         }
         for (const id of newWrites) ctx.writeInFlight.add(id)
@@ -662,7 +789,8 @@ export async function executeSwarmTool(
                   role: p.pack?.id ?? 'worker',
                   spec: p.spec,
                   ...(p.activity ? { activity: p.activity } : {}),
-                  ...(p.planItem !== undefined ? { planItem: p.planItem } : {})
+                  ...(p.planItem !== undefined ? { planItem: p.planItem } : {}),
+                  ...worktreeOf(ctx, p.workerId)
                 }))
           )
         }

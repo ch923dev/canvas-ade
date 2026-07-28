@@ -20,7 +20,12 @@ import {
   taskForBoard,
   type SwarmLedgerStore
 } from './swarmLedger'
-import { buildSnapshot, isStalled } from './swarmLedgerProject'
+import {
+  buildSnapshot,
+  isStalled,
+  liveWorktrees,
+  type WorktreeStatusMap
+} from './swarmLedgerProject'
 import type { SwarmLedgerHooks } from './swarmTools'
 import {
   MAX_LEDGER_LINE,
@@ -59,7 +64,26 @@ export interface SwarmLedgerSession {
   /** The hooks handed to the tool executor (`SwarmRunCtx.ledger`). */
   hooks(reader: () => PlanningReader | null): SwarmLedgerHooks
   /** The renderer-facing projection, or `null` when this run has no ledger. */
-  snapshot(opts?: { restored?: boolean }): SwarmLedgerSnapshot | null
+  snapshot(opts?: { restored?: boolean; worktrees?: WorktreeStatusMap }): SwarmLedgerSnapshot | null
+  /**
+   * S3 — every distinct worktree path this run has ever allocated, so the caller (which owns the
+   * I/O) knows what to `git status` before projecting. Includes trees whose task is long finished:
+   * a preserved worktree stops being visible the moment we stop asking about it.
+   */
+  worktreePaths(): string[]
+  /**
+   * S3 — resolve a triage row's task id to the worktree the disposition would act on. Returns
+   * `null` when the task is unknown or holds no worktree, so the dispose IPC can refuse without
+   * trusting anything the renderer sent beyond the id.
+   *
+   * 🔒 `busy` is the destructive-path gate, re-derived here rather than inferred from the task:
+   * a reused worker keeps ONE worktree across several tasks, so a row anchored on an older
+   * FINISHED task can point at a tree a newer `in_progress` task is actively writing to. Callers
+   * that would run `git clean -fd` must refuse on `busy`.
+   */
+  worktreeFor(
+    taskId: string
+  ): { worktree: string; branch: string; label: string; busy: boolean } | null
   /** Re-sync `planItems` from the live Planning board (labels + done + real ids). */
   syncPlan(reader: PlanningReader | null): Promise<void>
   /** Stamp "the human has seen the run up to now" — bounds the unreviewed-result rows. */
@@ -148,7 +172,7 @@ export function createSwarmLedgerSession(
           await syncPlan(reader())
         },
 
-        async dispatched({ workerId, role, spec, activity, planItem }) {
+        async dispatched({ workerId, role, spec, activity, planItem, worktree, branch }) {
           // Refresh the plan first so a `planItem` position resolves against the CURRENT strip
           // (the human may have added or removed rows since the plan was drawn).
           if (planItem !== undefined) await syncPlan(reader())
@@ -172,9 +196,12 @@ export function createSwarmLedgerSession(
                 dispatchedAt: at,
                 lastActivityAt: at,
                 stallCount: 0,
-                // 🔒 S3 fills these; S2 writes null so the schema exists today.
-                worktree: null,
-                branch: null
+                // 🔒 S3: the worker's own worktree, allocated BEFORE its board spawned. `null` for
+                // a read-only role, which needs none. Recorded per assignment (not per worker)
+                // because the assignment is the run's only durable record of who did the work —
+                // so a worker's second task carries the same pair forward.
+                worktree: worktree ?? null,
+                branch: branch ?? null
               }
             })
             if (planItemId) {
@@ -215,7 +242,40 @@ export function createSwarmLedgerSession(
     snapshot(opts) {
       const ledger = store.readRun(boardId)
       if (!ledger) return null
-      return buildSnapshot(ledger, { now: now(), restored: opts?.restored === true })
+      return buildSnapshot(ledger, {
+        now: now(),
+        restored: opts?.restored === true,
+        ...(opts?.worktrees ? { worktrees: opts.worktrees } : {})
+      })
+    },
+
+    worktreePaths() {
+      const ledger = store.readRun(boardId)
+      if (!ledger) return []
+      const seen = new Set<string>()
+      for (const t of ledger.tasks) {
+        const w = t.assignment?.worktree
+        if (w) seen.add(w)
+      }
+      return [...seen]
+    },
+
+    worktreeFor(taskId) {
+      const ledger = store.readRun(boardId)
+      const task = ledger ? taskById(ledger, taskId) : undefined
+      const a = task?.assignment
+      if (!ledger || !task || !a?.worktree || !a.branch) return null
+      const pos = ledger.planItems.findIndex((p) => p.id === task.planItemId)
+      return {
+        worktree: a.worktree,
+        branch: a.branch,
+        // The commit/stash message the modal shows and the git write uses — the branch leaf is
+        // how the human identified this worker on the card.
+        label: a.branch.split('/').filter(Boolean).pop() ?? (pos >= 0 ? `task ${pos + 1}` : taskId),
+        // Keyed off the WORKTREE, not off `task.state`: this row may be anchored on a finished
+        // task whose worker has since taken another one in the same tree.
+        busy: liveWorktrees(ledger).includes(a.worktree)
+      }
     },
 
     syncPlan,
@@ -326,6 +386,9 @@ export function createSwarmLedgerSession(
  * nothing": the row's vocabulary IS the authority, and a task that produces no row offers none.
  *
  * `open` is not listed anywhere here on purpose — it is a renderer-side jump, never a ledger write.
+ * S3's `resolve` is absent for the same class of reason: a worktree disposition needs async git,
+ * so it rides `swarm:worktreeDispose` (which re-validates the task → worktree join itself). Its
+ * absence here is what makes `applyAction('resolve')` a no-op rather than a silent half-action.
  */
 function offers(task: SwarmTask, now: number): SwarmTriageAction[] {
   if (task.blockedTag === 'lost') return task.result ? ['accept', 'reassign'] : ['reassign']

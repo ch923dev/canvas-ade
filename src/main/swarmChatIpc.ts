@@ -44,7 +44,13 @@ import {
   type SwarmRunEvent
 } from './swarmTools'
 import { createSwarmLedgerStore, type SwarmLedgerStore } from './swarmLedger'
-import { SWARM_TRIAGE_ACTIONS } from '../shared/swarmLedgerTypes'
+import {
+  SWARM_TRIAGE_ACTIONS,
+  SWARM_WORKTREE_DISPOSITIONS,
+  type SwarmWorktreeDisposition,
+  type SwarmWorktreeStatus
+} from '../shared/swarmLedgerTypes'
+import { createSwarmWorktreeStore, type SwarmWorktreeStore } from './swarmWorktree'
 import { createSwarmLedgerSession, type SwarmLedgerSession } from './swarmLedgerSession'
 import {
   createSwarmWatch,
@@ -85,6 +91,12 @@ interface SwarmSession {
   workerRoles: Map<string, string>
   /** S2: the run's Planning board (draw_plan writes it, tick_plan_item reads it). */
   planBoard: { current: string | null }
+  /**
+   * S3: worker board id → the worktree allocated for it at spawn. Rebuilt from the ledger on
+   * restore, so a reloaded run still knows which of its workers are isolated (and therefore what
+   * its write-concurrency ceiling is) rather than silently collapsing to the un-isolated cap.
+   */
+  workerWorktrees: Map<string, { worktree: string; branch: string }>
   /** S2: this run's durable ledger view. Present even with no project — its methods no-op then. */
   ledger: SwarmLedgerSession
 }
@@ -105,6 +117,12 @@ export interface SwarmIpcDeps {
   getProjectDir?: () => string | null
   /** S2: ledger-store seam (tests inject an in-memory one). Default: the real project sidecar. */
   ledgerStore?: SwarmLedgerStore
+  /**
+   * S3: the git worktree allocator (seam — tests inject a stub). Default: the real `simple-git`
+   * store rooted at the active project. `simple-git` never leaves MAIN, and every destructive
+   * path in it is guarded by `owns()` against the CURRENT project's worktree dir.
+   */
+  worktrees?: SwarmWorktreeStore
   /**
    * S2 failure model: the board-status stream + the sync salvage read + PTY silence, injected so
    * `swarmWatch` stays unit-testable and this module keeps its "no MAIN singletons" shape. ABSENT
@@ -143,8 +161,9 @@ export function registerSwarmHandlers(
     : undefined
   const streamDeps = deps.stream ?? defaultJarvisDeps()
   const getFacet = deps.getFacet ?? (async (): Promise<SwarmCanvasFacet | null> => null)
-  const confirm =
-    deps.confirm ?? (async (): Promise<{ approved: boolean }> => ({ approved: false }))
+  // Typed as the full contract (not the narrowed `{approved}` the fallback returns) so callers
+  // can read `choice` — the S3 disposition rides the shared P5 chooser.
+  const confirm: SwarmRunCtx['confirm'] = deps.confirm ?? (async () => ({ approved: false }))
   const budget = deps.budget ?? createBudgetStore(getUserData(), () => new Date())
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
@@ -163,6 +182,7 @@ export function registerSwarmHandlers(
         writeInFlight: new Set(),
         workerRoles: new Map(),
         planBoard: { current: null },
+        workerWorktrees: new Map(),
         ledger: createSwarmLedgerSession(runId, { store: ledgerStore })
       }
       sessions.set(runId, s)
@@ -182,14 +202,89 @@ export function registerSwarmHandlers(
     }
   }
 
+  const worktrees =
+    deps.worktrees ??
+    createSwarmWorktreeStore({ getProjectDir: deps.getProjectDir ?? ((): string | null => null) })
+
+  /**
+   * S3 — live git facts per worktree PATH, app-wide (paths are absolute and unique across runs).
+   *
+   * A CACHE rather than a read inside the projection, because `pushLedger` is synchronous and is
+   * called from the tool round, the watcher, and the IPC handlers alike; making it async would
+   * push a promise into all three. The cache is refreshed off to the side and, when a value
+   * actually changed, re-pushes — so the board self-heals within one tick instead of rendering a
+   * stale "kept, 7 uncommitted" forever.
+   */
+  const worktreeStatus = new Map<string, SwarmWorktreeStatus>()
+
   /**
    * Push this run's durable projection to the renderer. Called after every tool round (so a
    * dispatch/settle is visible immediately) and after a rehydrate. A run with no ledger pushes
    * nothing — the renderer keeps rendering S1's ephemeral mirror, which is the honest degradation.
    */
   const pushLedger = (runId: string, opts?: { restored?: boolean }): void => {
-    const snapshot = sessionFor(runId).ledger.snapshot(opts)
+    const session = sessionFor(runId)
+    const known: Record<string, SwarmWorktreeStatus> = {}
+    for (const path of session.ledger.worktreePaths()) {
+      const st = worktreeStatus.get(path)
+      // A path we have not statted yet is left OUT, not defaulted: "unknown" must never render
+      // as "clean", because clean is what authorises a removal and hides a dirty-tree row.
+      if (st) known[path] = st
+    }
+    const snapshot = session.ledger.snapshot({ ...opts, worktrees: known })
     if (snapshot) push('swarm:runEvent', { runId, ev: { kind: 'ledger', snapshot } })
+  }
+
+  /** Re-stat this run's worktrees; re-push only when something actually moved. Never throws. */
+  const refreshWorktrees = async (runId: string): Promise<void> => {
+    const paths = sessionFor(runId).ledger.worktreePaths()
+    if (paths.length === 0) return
+    let changed = false
+    for (const path of paths) {
+      try {
+        const next = await worktrees.status(path)
+        const prev = worktreeStatus.get(path)
+        if (
+          !prev ||
+          prev.exists !== next.exists ||
+          prev.dirty !== next.dirty ||
+          prev.changed !== next.changed
+        ) {
+          worktreeStatus.set(path, next)
+          changed = true
+        }
+      } catch {
+        /* a status read must never break the run it is describing */
+      }
+    }
+    if (changed) pushLedger(runId)
+  }
+
+  /** Fire-and-forget refresh — callers are sync paths that must not await git. */
+  const kickRefresh = (runId: string): void => {
+    void refreshWorktrees(runId).catch(() => {})
+  }
+
+  /**
+   * 🔒 S3 teardown, the locked policy. A worker board that left the canvas gets its worktree
+   * removed ONLY when the tree is clean; a dirty tree is kept on disk exactly where it is and
+   * surfaces as a `dirty_worktree` triage row. `removeIfClean` re-checks both conditions itself
+   * and refuses any path outside the CURRENT project's worktree dir — which is also what makes a
+   * project switch (where every board goes `gone` at once) a no-op instead of a mass teardown.
+   * The BRANCH always survives, so a removed worktree still appears in the merge sequence.
+   */
+  const releaseWorktreeFor = async (boardId: string): Promise<void> => {
+    for (const [runId, session] of sessions) {
+      const held = session.workerWorktrees.get(boardId)
+      if (!held) continue
+      session.workerWorktrees.delete(boardId)
+      try {
+        await worktrees.removeIfClean(held.worktree)
+      } catch {
+        /* keep-on-failure is the safe direction: the tree stays, the row surfaces it */
+      }
+      await refreshWorktrees(runId).catch(() => {})
+    }
   }
 
   /**
@@ -202,7 +297,10 @@ export function registerSwarmHandlers(
         store: ledgerStore,
         ...deps.watch,
         narrate: (runId, n) => push('swarm:runEvent', { runId, ev: { kind: 'narrate', ...n } }),
-        changed: (runId) => pushLedger(runId)
+        changed: (runId) => pushLedger(runId),
+        releaseWorktree: (boardId) => {
+          void releaseWorktreeFor(boardId).catch(() => {})
+        }
       })
     : null
   watch?.start()
@@ -362,6 +460,13 @@ export function registerSwarmHandlers(
       writeInFlight: session.writeInFlight,
       workerRoles: session.workerRoles,
       planBoard: session.planBoard,
+      workerWorktrees: session.workerWorktrees,
+      // S3: allocate BEFORE the board spawns (the `safeCwd` constraint). The executor refuses the
+      // spawn on anything but success — there is no shared-tree fallback.
+      allocateWorktree: (workerName: string) => worktrees.allocate(runId, workerName),
+      releaseWorktree: async (worktree: string): Promise<void> => {
+        await worktrees.removeIfClean(worktree)
+      },
       emit: (ev: SwarmRunEvent) =>
         push('swarm:runEvent', { runId, ev } satisfies SwarmRunEventPush),
       confirm,
@@ -414,6 +519,9 @@ export function registerSwarmHandlers(
       // The ledger may have moved (a dispatch became an assignment, a settle became a result) —
       // reproject after EVERY tool, so the board is never a round behind the durable truth.
       pushLedger(runId)
+      // S3: a spawn just created a worktree, and a settle just changed what is in one. Stat them
+      // off to the side; the re-push lands as soon as git answers.
+      kickRefresh(runId)
     }
     return results
   }
@@ -453,11 +561,129 @@ export function registerSwarmHandlers(
     const runId = runIdOf(payload)
     if (!runId) return { restored: false }
     // Read WITHOUT creating: mounting a board must never mint a ledger for a run that never ran.
-    const snapshot = sessionFor(runId).ledger.snapshot({ restored: true })
+    const session = sessionFor(runId)
+    const snapshot = session.ledger.snapshot({ restored: true })
     if (!snapshot) return { restored: false }
+    // 🔒 S3: rebuild the worker→worktree map from the durable assignments. Without this a
+    // reloaded run believes none of its workers are isolated, and the write-concurrency ceiling
+    // silently collapses to 1 — a cap that is wrong in the SAFE direction is still a cap whose
+    // disclosure string lies about why.
+    for (const w of snapshot.workers) {
+      if (!w.worktree || !w.taskId) continue
+      // The projection carries the branch; the path comes from the same assignment.
+      const held = session.ledger.worktreeFor(w.taskId)
+      if (held)
+        session.workerWorktrees.set(w.boardId, { worktree: held.worktree, branch: held.branch })
+    }
     push('swarm:runEvent', { runId, ev: { kind: 'ledger', snapshot } })
+    // The trees moved while we were not running (or were deleted by hand) — stat and re-push.
+    kickRefresh(runId)
     return { restored: true }
   })
+
+  /**
+   * 🔒 S3 worktree disposition — the locked keep-on-dirty rule's prompt, reached from the
+   * `dirty_worktree` triage row. The renderer proposes a task id and nothing else; MAIN re-derives
+   * the worktree from the ledger, reads the CURRENT file count off disk (a count stale by an hour
+   * is a disclosure that lies), raises the shared P5 chooser, re-validates the returned choice
+   * against the closed vocabulary, and only then runs a scoped git write.
+   *
+   * `keep` is the default, the cancel path, and the fallback for every degenerate case — nothing
+   * here destroys a tree without an explicitly named human choice, and `discard` pays a second
+   * confirm on top.
+   */
+  ipcMain.handle(
+    'swarm:worktreeDispose',
+    async (e, payload: unknown): Promise<{ ok: boolean; detail: string }> => {
+      if (guard(e)) return { ok: false, detail: 'forbidden' }
+      const p = payload as { runId?: unknown; taskId?: unknown } | null
+      const runId = runIdOf(payload)
+      const taskId = typeof p?.taskId === 'string' ? p.taskId : ''
+      if (!runId || !taskId) return { ok: false, detail: 'invalid request' }
+      const session = sessionFor(runId)
+      const held = session.ledger.worktreeFor(taskId)
+      if (!held) return { ok: false, detail: 'that task holds no worktree' }
+      // 🔒 The destructive-path gate, re-derived MAIN-side. A row anchored on a FINISHED task can
+      // point at a worktree its worker has since taken a new task in — and `discard` there would
+      // `git clean -fd` work that is being written right now. Refuse, and say which worker owns it.
+      if (held.busy) {
+        return {
+          ok: false,
+          detail: `${held.label} is working in that worktree right now — nothing was touched. Await or reassign its task first.`
+        }
+      }
+      const st = await worktrees.status(held.worktree)
+      if (!st.exists) return { ok: false, detail: 'the worktree is no longer on disk' }
+      if (!st.dirty) {
+        const r = await worktrees.removeIfClean(held.worktree)
+        await refreshWorktrees(runId).catch(() => {})
+        return r.removed
+          ? { ok: true, detail: 'the worktree was already clean — removed, branch kept' }
+          : { ok: false, detail: r.reason ?? 'could not remove the worktree' }
+      }
+      const n = st.changed
+      const files = `${n} file${n === 1 ? '' : 's'}`
+      const decision = await confirm({
+        title: `${held.label} left uncommitted changes`,
+        body:
+          `Its worktree is still on disk at ${held.worktree} (branch ${held.branch}) and nothing has been discarded. ` +
+          `Choose what happens to ${files} — Keep is what already happened, and what happens if you cancel. ` +
+          `Commit puts them on the worker's own branch; Stash pushes them (including untracked) to the repo stash; ` +
+          `Discard throws them away permanently — commits already on the branch survive either way, and the branch is never deleted.`,
+        choices: {
+          label: 'Disposition',
+          default: 'keep',
+          options: [
+            { id: 'keep', label: `Keep on disk (${files} untouched)` },
+            { id: 'commit', label: `Commit ${files} onto ${held.branch}, then remove` },
+            { id: 'stash', label: `Stash ${files}, then remove` },
+            { id: 'discard', label: `Discard ${files} permanently, then remove` }
+          ]
+        }
+      })
+      if (!decision.approved) return { ok: true, detail: 'kept on disk — nothing ran' }
+      // 🔒 Closed vocabulary: anything off-set falls back to `keep`, never to a destructive branch.
+      const choice: SwarmWorktreeDisposition =
+        SWARM_WORKTREE_DISPOSITIONS.find((c) => c === decision.choice) ?? 'keep'
+      if (choice === 'discard') {
+        // The second confirm the design promises. Destructive and unrecoverable, so it is asked
+        // plainly and separately rather than folded into the chooser's Apply.
+        const sure = await confirm({
+          title: 'Discard uncommitted work?',
+          body: `This permanently throws away ${files} in ${held.worktree}. It cannot be undone. Commits already on ${held.branch} survive, and the branch is kept.`,
+          confirmLabel: 'Discard',
+          denyLabel: 'Keep it'
+        })
+        if (!sure.approved) return { ok: true, detail: 'kept on disk — discard cancelled' }
+      }
+      // 🔒 Re-check liveness INSIDE the write (the BUG-021 TOCTOU discipline). The gate above ran
+      // before the modal; a human can sit on that modal for minutes, and the orchestrator is free
+      // to hand this worker a new task in the meantime — at which point `discard` would destroy
+      // work that started after the question was asked. Cheap to re-derive, and the only honest
+      // answer is to keep the tree and say why.
+      //
+      // `keep` is exempt: it is an unconditional no-op (`swarmWorktree.dispose` returns before it
+      // touches anything), so refusing it would report "nothing was touched" as a FAILURE for the
+      // one choice whose whole contract is that nothing happens. Gate the write, not the no-op.
+      if (choice !== 'keep' && session.ledger.worktreeFor(taskId)?.busy === true) {
+        return {
+          ok: false,
+          detail: `${held.label} started working in that worktree while the prompt was open — nothing was touched.`
+        }
+      }
+      const outcome = await worktrees.dispose(held.worktree, choice, held.label)
+      await refreshWorktrees(runId).catch(() => {})
+      if (outcome.ok && choice !== 'keep') {
+        // Run-level narration: no `boardId`, because the worker board may be long gone and the
+        // renderer would otherwise bold a title it cannot resolve.
+        push('swarm:runEvent', {
+          runId,
+          ev: { kind: 'narrate', text: `worktree ${held.label} — ${outcome.detail}.` }
+        })
+      }
+      return outcome
+    }
+  )
 
   /** S2: the human has read the run up to now — bounds which results count as unreviewed. */
   ipcMain.handle('swarm:markSeen', (e, payload: unknown): { ok: boolean } => {

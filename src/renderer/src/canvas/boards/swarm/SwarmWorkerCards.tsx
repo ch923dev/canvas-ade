@@ -15,6 +15,11 @@
  *     erroring) plus the salvage provenance on the disclosure line.
  * The mono disclosure line is composed MAIN-side (`swarmLedgerProject.discloseFor`) so there is
  * exactly one source for the threshold/exit-reason strings — the S1 eyeball bug's lesson.
+ *
+ * S3 adds a FOURTH line — the worktree/branch — to write workers only (design variant C, signed
+ * off 2026-07-28). It is composed MAIN-side for the same reason, and its trailing note is the one
+ * fact a human needs from a branch at that moment: how much is in it, that it is mergeable, or
+ * that its tree was PRESERVED rather than destroyed.
  */
 import { type ReactElement } from 'react'
 import type { AttentionKind } from '../../../store/attentionStore'
@@ -150,6 +155,23 @@ export function SwarmWorkerCards({
               </span>
             </span>
             <span className="sw-activity">{activityLine(state, meta)}</span>
+            {/* S3 (design variant C): its own mono line, and ONLY when this worker actually holds
+                a worktree — a read-only role's card is byte-identical to what S2 shipped, which is
+                the visible proof that isolation cost is paid by writers alone. The leaf is what
+                fits at ~200px; the full branch (what the human types into `git merge`) rides the
+                title, and the copyable form lives in the merge-sequence row. */}
+            {led?.worktree && (
+              <span
+                className={`sw-wt${led.worktree.dirty ? ' dirty' : ''}`}
+                title={led.worktree.branch}
+              >
+                <span className="g" aria-hidden="true">
+                  ⑂
+                </span>
+                <span className="b">{led.worktree.leaf}</span>
+                <span className="dim">· {led.worktree.note}</span>
+              </span>
+            )}
             {led?.disclose && <span className="sw-disclose">{led.disclose}</span>}
           </button>
         ))}

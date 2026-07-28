@@ -33,7 +33,7 @@ import {
   packOptionValues,
   ROLE_PACKS,
   rolePackById,
-  WRITE_ROLE_CONCURRENCY_CAP,
+  WRITE_ROLE_CONCURRENCY_CAP_SHARED,
   type RolePack
 } from '../../../lib/rolePacks'
 import type { WorkerConfig } from '../../../store/commandStore'
@@ -217,8 +217,10 @@ export function WorkerConfigDialog({
         )}
         {roleWritePosture && (
           <div style={roleWarn} data-testid="worker-role-write-warning">
-            Write role — no workspace isolation yet: concurrent write workers are capped at{' '}
-            {WRITE_ROLE_CONCURRENCY_CAP} (queued write tasks wait; read roles still dispatch).
+            Write role — Command-board workers share the project working tree (worktree isolation is
+            the Swarm board&apos;s spawn path), so concurrent write workers are capped at{' '}
+            {WRITE_ROLE_CONCURRENCY_CAP_SHARED} (queued write tasks wait; read roles still
+            dispatch).
           </div>
         )}
       </div>

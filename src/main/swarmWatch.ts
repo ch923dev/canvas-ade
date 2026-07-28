@@ -92,6 +92,13 @@ export interface SwarmWatchDeps {
    * a board with no live session — which is NOT silence proof, so the tick leaves it alone.
    */
   activityStaleMs?(boardId: string): number | undefined
+  /**
+   * S3 — a worker board is GONE; hand its worktree to the teardown policy. Fire-and-forget and
+   * best-effort: the callee removes the tree ONLY if it is clean and inside the current project's
+   * worktree dir, so a dirty tree is kept (and surfaces as a triage row) and a project switch —
+   * where every board goes `gone` at once — is a no-op rather than a mass teardown.
+   */
+  releaseWorktree?(boardId: string): void
   /** Push one narration into a run's chat spine. */
   narrate(runId: string, n: SwarmNarration): void
   /** The run's durable projection moved — re-push it to the renderer. */
@@ -276,6 +283,15 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
   const onStatus = (change: SwarmWatchStatusChange): void => {
     if (!change?.id) return
     const dead = DEATH_STATUSES.has(change.status)
+    // S3 teardown runs for ANY dead board, not only one holding a live task: a worker that
+    // finished cleanly and was then deleted still owns a checkout on the human's disk.
+    if (dead) {
+      try {
+        deps.releaseWorktree?.(change.id)
+      } catch {
+        /* teardown is best-effort — keeping a tree is always the safe outcome */
+      }
+    }
     for (const ledger of liveRuns()) {
       const task = liveTaskForBoard(ledger, change.id)
       if (!task) continue
