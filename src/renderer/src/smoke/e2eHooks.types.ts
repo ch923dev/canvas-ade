@@ -398,6 +398,18 @@ export interface CanvasE2E {
   /** JD-4 — set the Data-Flow board's noise filters (both default ON) so a spec can exercise the
    *  unfiltered firehose or assert the filtered view deterministically. */
   setDfFilters: (dataflowId: string, apiOnly: boolean, firstParty: boolean) => void
+  /** Make a seeded Browser board's capture HARNESS-OWNED: MAIN can no longer replace (`replay`),
+   *  empty (`cleared`) or extend (`delta`) it, and the LOD unmount cleanup can no longer delete it.
+   *  Call AFTER seeding; re-seeding a pinned board still works (the guard sits on the MAIN seam, not
+   *  on `apply`). Released by `reset()`. This is what makes the Data-Flow specs deterministic on a
+   *  slow leg — see `store/osrNetPin.ts` and `docs/e2e-reliability-kickoff.md`. */
+  pinOsrNet: (id: string) => void
+  /** Per-kind tally of what a pinned board dropped (`{replay, delta, cleared, clearBoard}`), or null
+   *  if the board was never pinned. Diagnostics for the seed race: it names WHICH writer would have
+   *  destroyed the seed on this platform, which no green/red verdict on its own reveals. */
+  osrNetPinStats: (
+    id: string
+  ) => { replay: number; delta: number; cleared: number; clearBoard: number } | null
   /** S4 — the LIVE Mermaid theme vars the app feeds the render worker (`buildDiagramThemeVars`).
    *  The ER a11y contrast spec renders an erDiagram with EXACTLY these and asserts the row
    *  backgrounds are dark — proving the builder's var names still match what Mermaid reads. */
