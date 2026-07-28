@@ -73,7 +73,20 @@ function isHeadlessHarness(): boolean {
  * resolved cwd for a board, and `deliver` already renders an empty locator in that case. A
  * cwd-carrying `LifecycleSignal` is assignable to this.
  */
-export type DeliverableSignal = { boardId: string; event: LifecycleEvent; cwd?: string }
+export type DeliverableSignal = {
+  boardId: string
+  event: LifecycleEvent
+  cwd?: string
+  /**
+   * Orchestration P4 — the on-canvas attention mark, when it should be FINER than `event`. The gate
+   * and the OS layer keep speaking the three-member `LifecycleEvent` vocabulary (so P4 adds no
+   * notifications-config key and no default to migrate); only the ring is more specific. A blocked
+   * worker rides `event:'needs-input'` with `attention:'blocked'`. Absent ⇒ mark equals event.
+   */
+  attention?: 'done' | 'needs-input' | 'blocked' | 'error'
+  /** P4 — the composed reason the toast appends (`silent 11m`, `failing check`). Optional. */
+  detail?: string
+}
 
 export interface LifecycleNotificationsHandle {
   /** Stop the Claude-path file watcher (also auto-runs on `before-quit`). */
@@ -112,7 +125,7 @@ export interface LifecycleDeliverDeps {
 export function createLifecycleDeliver(
   deps: LifecycleDeliverDeps
 ): (sig: DeliverableSignal) => void {
-  return ({ boardId, event, cwd }: DeliverableSignal): void => {
+  return ({ boardId, event, cwd, attention, detail }: DeliverableSignal): void => {
     // Gate first: board opt-out → master → per-event → onlyWhenUnfocused (the ONE decision point).
     const board = deps.getBoard(boardId)
     const focusWin = deps.getWin()
@@ -154,7 +167,15 @@ export function createLifecycleDeliver(
     const win = deps.getWin()
     if (!win || win.isDestroyed()) return
     const wc = win.webContents
-    if (!wc.isDestroyed()) wc.send('notify:lifecycle', { boardId, event })
+    if (!wc.isDestroyed()) {
+      wc.send('notify:lifecycle', {
+        boardId,
+        event,
+        // P4: ride out only when present, so every pre-P4 signal produces a byte-identical payload.
+        ...(attention !== undefined ? { attention } : {}),
+        ...(detail !== undefined ? { detail } : {})
+      })
+    }
   }
 }
 

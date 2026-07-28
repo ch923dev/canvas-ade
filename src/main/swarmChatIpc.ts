@@ -44,6 +44,8 @@ import {
   type SwarmRunEvent
 } from './swarmTools'
 import { createSwarmLedgerStore, type SwarmLedgerStore } from './swarmLedger'
+import { observeWorkerAttention } from './commandFeed'
+import { attentionForBlockedTag } from './workerAttention'
 import {
   SWARM_TRIAGE_ACTIONS,
   SWARM_WORKTREE_DISPOSITIONS,
@@ -300,6 +302,16 @@ export function registerSwarmHandlers(
         changed: (runId) => pushLedger(runId),
         releaseWorktree: (boardId) => {
           void releaseWorktreeFor(boardId).catch(() => {})
+        },
+        // P4: the watcher's blocked verdict reaches the CANVAS — the board's attention ring and its
+        // Command-board card — not just the triage queue inside the swarm board. `attentionForBlockedTag`
+        // owns the tag→mark map (closed vocabulary, unknown ⇒ `blocked`, the surface-it direction).
+        observeBlocked: (boardId, tag, detail, role) => {
+          observeWorkerAttention(boardId, attentionForBlockedTag(tag), {
+            detail,
+            blockedTag: tag,
+            ...(role ? { role } : {})
+          })
         }
       })
     : null

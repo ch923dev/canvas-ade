@@ -29,6 +29,7 @@ import { fmtDur, isStalled, silentMs } from './swarmLedgerProject'
 import {
   MAX_LEDGER_LINE,
   SWARM_STALL_THRESHOLD_MS,
+  type SwarmBlockedTag,
   type SwarmProvenance,
   type SwarmRunLedger,
   type SwarmTask
@@ -99,6 +100,14 @@ export interface SwarmWatchDeps {
    * where every board goes `gone` at once — is a no-op rather than a mass teardown.
    */
   releaseWorktree?(boardId: string): void
+  /**
+   * Orchestration P4 — a worker's blocked classification changed; raise its on-canvas attention
+   * mark and mirror it onto the Command-board feed. Injected (not imported) so the watcher stays
+   * unit-testable without the electron runtime, and OPTIONAL so every existing test constructs
+   * unchanged. This is deliberately the SAME classification the triage queue reads: P4 wires up
+   * what P2 already decided rather than inventing a second notion of "blocked".
+   */
+  observeBlocked?(boardId: string, tag: SwarmBlockedTag, detail: string, role?: string): void
   /** Push one narration into a run's chat spine. */
   narrate(runId: string, n: SwarmNarration): void
   /** The run's durable projection moved — re-push it to the renderer. */
@@ -202,6 +211,10 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
   const recordDeath = (ledger: SwarmRunLedger, task: SwarmTask, boardId: string): void => {
     const salvage = safeRead(boardId)
     let narrated: SwarmNarration | null = null
+    // P4: captured inside the write, emitted after it — a side effect inside `store.update` would
+    // fire even on a transaction the guard below abandons.
+    let deathRole: string | undefined
+    let deathDetail = 'exited before reporting'
     deps.store.update(ledger.runId, (l) => {
       const t = l.tasks.find((x) => x.taskId === task.taskId)
       if (!t || t.state !== 'in_progress') return
@@ -235,6 +248,10 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
       if (t.assignment) t.assignment.lastActivityAt = at
       const label = taskLabel(l, t)
       const files = t.result ? t.result.refs.length : 0
+      deathRole = t.assignment?.role
+      deathDetail = provenance
+        ? `exited — result salvaged from the transcript (${provenanceWord(provenance)})`
+        : 'exited with nothing to salvage'
       narrated = {
         boardId,
         status: 'exited',
@@ -247,6 +264,9 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
     const n: SwarmNarration = narrated
     deps.narrate(ledger.runId, n)
     note(ledger.runId, `worker ${boardId} ${n.text}`)
+    // P4: the ring the human sees. A dead worker's task is `blocked`+`lost` in the ledger, so this
+    // is that same verdict reaching the canvas instead of stopping at the triage queue.
+    deps.observeBlocked?.(boardId, 'lost', deathDetail, deathRole)
     deps.changed(ledger.runId)
   }
 
@@ -320,6 +340,9 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
     const at = now()
     for (const ledger of liveRuns()) {
       const narrations: SwarmNarration[] = []
+      // P4: one entry per stall EPISODE (the same guard the narration uses), never per tick — a
+      // ring that re-fires every 60s would train the human to ignore it.
+      const stalls: Array<{ boardId: string; detail: string; role?: string }> = []
       let anyStalled = false
       deps.store.update(ledger.runId, (l) => {
         for (const task of l.tasks) {
@@ -352,12 +375,20 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
             boardId: a.boardId,
             text: `has been silent ${fmtDur(silent)} on ${taskLabel(l, task)} — past the ${fmtDur(thresholdMs)} stall threshold. It is still running, so I have not touched it. Reassign the task, or give it longer.`
           })
+          stalls.push({
+            boardId: a.boardId,
+            // The elapsed silence AND the threshold it crossed — a bare "stalled" would make the
+            // human guess what the watcher's bar even is.
+            detail: `silent ${fmtDur(silent)} — past the ${fmtDur(thresholdMs)} stall threshold`,
+            ...(a.role ? { role: a.role } : {})
+          })
         }
       })
       for (const n of narrations) {
         deps.narrate(ledger.runId, n)
         note(ledger.runId, `worker ${n.boardId} ${n.text}`)
       }
+      for (const s of stalls) deps.observeBlocked?.(s.boardId, 'stalled', s.detail, s.role)
       // Re-push while a stall PERSISTS, not only when it starts: the card's disclosure carries the
       // elapsed silence ("stalled 18m"), and a frozen number is a disclosure that quietly lies.
       if (narrations.length > 0 || anyStalled) deps.changed(ledger.runId)

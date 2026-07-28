@@ -15,6 +15,7 @@ import {
   type TaskStatus
 } from '../../../store/commandStore'
 import { parseDiffStat, hasDiff } from '../../../lib/diffStat'
+import { PublishFindingsBar } from './PublishFindingsBar'
 
 const STATUS_DOT: Record<TaskStatus, string> = {
   queued: 'var(--text-faint)',
@@ -106,6 +107,10 @@ export function CommandRecapView({
           </div>
         )}
       </section>
+
+      {/* P4 — the end-of-run durable step. The recap is where you read what the run concluded, so
+          it is where you keep it: ONE confirmed batch onto a kanban board, never N add_cards. */}
+      <PublishFindingsBar />
     </div>
   )
 }

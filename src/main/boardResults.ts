@@ -1,4 +1,5 @@
 import type { BoardResult } from '@expanse-ade/mcp'
+import { observeWorkerResult } from './commandFeed'
 
 /**
  * MAIN-owned, in-memory store of each board's STRUCTURED last result (T1.5) — a
@@ -34,6 +35,27 @@ export function isResultSynthesized(id: string): boolean {
 }
 
 /**
+ * P4 — every recorded result, with its provenance. The findings aggregation reads this so MAIN
+ * composes the batch from results it ALREADY HOLDS: an orchestrator asking to publish names only a
+ * destination board and can never author a card whose content no worker actually reported.
+ *
+ * Only PRESENT results are returned — an empty shell is not a report, and counting one would
+ * inflate the "N workers reported nothing" disclosure with boards that never reported at all.
+ */
+export function listBoardResults(): Array<{
+  boardId: string
+  result: BoardResult
+  synthesized: boolean
+}> {
+  const out: Array<{ boardId: string; result: BoardResult; synthesized: boolean }> = []
+  for (const [boardId, result] of results) {
+    if (result.present === false) continue
+    out.push({ boardId, result, synthesized: synthesized.has(boardId) })
+  }
+  return out
+}
+
+/**
  * Record a board's last result (M4 `write_result` entry point; e2e drives it too).
  * PR-4: `opts.synthesized` tags a result derived from the recap transcript; a record WITHOUT
  * it (the explicit `write_result` path, line `recordResult` delegate in index.ts) clears the
@@ -47,6 +69,12 @@ export function recordBoardResult(
   results.set(id, result)
   if (opts?.synthesized) synthesized.add(id)
   else synthesized.delete(id)
+  // 🔒 P4 — THE observability seam, deliberately placed HERE and not on the `write_result` tool.
+  // This function is the single choke point every result writer passes through: the MCP tool
+  // (`mcpBoot.recordResult`), the transcript synthesizer (`boardResultSynth`), and the e2e driver.
+  // Hooking the tool instead would have missed the synthesized path — which is exactly the case a
+  // human most needs to see, because it means a worker DIED without reporting.
+  observeWorkerResult(id, result, opts)
 }
 
 /**

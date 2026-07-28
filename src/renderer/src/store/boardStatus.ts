@@ -46,7 +46,16 @@ export function boardStatusBucket(type: string, signals: BoardStatusSignals): Bo
   // derivation (DESIGN.md gives it a badge, not a bucket change). This is what activates the
   // reserved `awaiting-review` bucket (T1.3) and feeds the MAIN status differ → `canvas://attention`.
   if (signals.attention === 'needs-input') return 'awaiting-review'
+  // Orchestration P4: the producer the `blocked` bucket has been waiting for since T1.1. It was
+  // declared here, styled in BUCKET_PILL, and served over canvas://attention — with nothing on the
+  // host able to emit it. A worker that cannot proceed (lost / stalled / failing check / dependency
+  // / overlap / dirty worktree) now marks its board `blocked`, and this is where that becomes the
+  // bucket the agent reads and the pill the human sees.
+  if (signals.attention === 'blocked') return 'blocked'
   if (signals.attention === 'error') return 'failed'
+  // 🔒 Any OTHER attention value (a forward kind from a newer writer) deliberately falls THROUGH to
+  // the liveness derivation below rather than overriding it. A bucket this process cannot support
+  // would be a fabricated state; falling through reports only what the runtime actually knows.
   switch (type) {
     case 'terminal':
       return signals.terminalRunning ? 'running' : 'idle'

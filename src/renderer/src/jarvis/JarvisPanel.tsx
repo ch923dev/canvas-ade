@@ -83,6 +83,9 @@ function timeLabel(at: number): string {
 const EVENT_MSG: Record<AttentionKind, string> = {
   done: 'Agent finished',
   'needs-input': 'Agent needs your input',
+  // Orchestration P4 — "blocked" says the worker cannot continue, which is a different ask from
+  // "needs your input" (answer me now). Kept distinct here so the chip does not flatten them.
+  blocked: 'Agent is blocked',
   error: 'Agent hit an error'
 }
 
@@ -90,6 +93,7 @@ const EVENT_MSG: Record<AttentionKind, string> = {
 const ANNOUNCE_MSG: Record<AttentionKind, string> = {
   done: 'finished',
   'needs-input': 'needs your input',
+  blocked: 'is blocked',
   error: 'hit an error'
 }
 

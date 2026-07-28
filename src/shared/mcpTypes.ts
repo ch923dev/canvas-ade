@@ -28,6 +28,9 @@
 // both files are import-free leaves with no DOM/Node/Electron coupling (diagramSpec.ts is
 // designed for exactly this cross-bundle reuse), and a type import is erased at build.
 import type { DiagramSpec } from '@expanse-ade/diagram/spec'
+// TYPE-ONLY import of the P4 observability-feed payload. `commandFeedTypes.ts` is a shared,
+// dependency-free leaf; a type import is erased at build so this file stays declaration-only.
+import type { CommandFeedPush } from './commandFeedTypes'
 import type { SpecOp } from '../renderer/src/lib/specOps'
 
 /** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
@@ -357,6 +360,15 @@ export interface PlanItem {
  *   `board.url` on `addBoard` (H3) is BROWSER-ONLY: the initial page the new board loads instead of
  *   the default. MAIN validated http(s) + clamped; the applier re-validates shape + type (the
  *   launchCommand/cwd discipline) and lands it via PATCHABLE_KEYS.browser.
+ * - `commandFeed` (orchestration P4) carries ONE EXTERNAL worker's live status + structured
+ *   `write_result` into the EPHEMERAL `commandStore`, so a worker the app did not dispatch still
+ *   renders on the Command board (the A7 CONFIRMED gap). It is the ONLY variant that writes no
+ *   canvas doc state at all — `commandStore` is runtime-only and never serialized — which is
+ *   precisely why it costs zero human confirms and can carry N-worker status safely. MAIN composes
+ *   + clamps the payload (`commandFeedTypes.sanitizeFeedResult`); the applier re-validates the
+ *   closed state vocabulary and resolves the board TITLE itself (MAIN never becomes a title
+ *   authority). Durable aggregation of the same data is a separate, batched, once-per-run
+ *   `patchKanban` — never this channel.
  */
 export type McpCommand =
   | { type: 'ping' }
@@ -421,14 +433,18 @@ export type McpCommand =
     }
   | { type: 'tidyBoards'; mode?: 'smart' | 'by-type' | 'grid' }
   | { type: 'focusCamera'; boardId?: string; groupId?: string }
+  | { type: 'commandFeed'; feed: CommandFeedPush }
 
 /**
  * The renderer's reply to a McpCommand. `type` echoes the handled command. The optional `moved` (P2)
  * rides on a successful `tidyBoards` ack — the count of boards whose position changed (0 ⇒ already
- * tidy) — so the host can surface it to the agent; absent on every other command.
+ * tidy) — so the host can surface it to the agent; absent on every other command. The optional
+ * `rendered` (P4) rides on a successful `commandFeed` ack: `false` means the push landed in the
+ * store but there is no Command board on the canvas to show it, which the host DISCLOSES rather
+ * than swallowing (an unshown feed reads to the human as "nothing happened").
  */
 export type McpCommandAck =
-  | { ok: true; type: string; moved?: number }
+  | { ok: true; type: string; moved?: number; rendered?: boolean }
   | { ok: false; error: string }
 
 // ── Audit entry types (formerly hand-mirrored in auditLog.ts + AuditLogViewer.tsx) ──

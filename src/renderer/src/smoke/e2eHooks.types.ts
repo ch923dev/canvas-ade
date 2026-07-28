@@ -21,6 +21,13 @@ import type { SwitchMetrics } from '../store/switchMetrics'
 export type SwitchMetricsSnapshot = SwitchMetrics
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
+/**
+ * The on-canvas attention vocabulary the e2e probes speak. MIRRORS the renderer's `AttentionKind`
+ * (this file is the harness contract, not a store import). Orchestration P4 added `blocked` — a
+ * worker that cannot proceed, distinct from `needs-input`, which is one asking you something.
+ */
+export type E2EAttentionKind = 'done' | 'needs-input' | 'blocked' | 'error'
+
 export interface RuntimeProbe {
   status: string
 }
@@ -58,6 +65,14 @@ export interface CanvasE2E {
    * would leak a worker into MAIN's spawn-cap `tracked`. e2e only.
    */
   setCommandTasks: (tasks: CommandTask[]) => void
+  /**
+   * Orchestration P4: read the Command board's task queue (the FED external-worker cards included),
+   * so a spec can assert that a worker never dispatched from this board still rendered here. Read-
+   * only and plain data — the write side stays `setCommandTasks`.
+   */
+  getCommandTasks: () => CommandTask[]
+  /** P4: how many fed worker cards the feed cap evicted — the Done column's disclosure count. */
+  getCommandFedDropped: () => number
   /** Named groups (plain data — serializable). */
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
@@ -487,14 +502,15 @@ export interface CanvasE2E {
    * lifecycle event's toast surfaced through the REAL MAIN deliver → `notify:lifecycle` IPC path.
    */
   notifyToasts: () => Array<{ message: string; kind: 'error' | 'ok' | 'info'; sticky: boolean }>
-  /** desktop-notifications P5 — a board's unseen-attention kind from attentionStore, or null. */
-  attentionKind: (id: string) => 'done' | 'needs-input' | 'error' | null
+  /** desktop-notifications P5 — a board's unseen-attention kind from attentionStore, or null.
+   *  `blocked` joined the vocabulary in orchestration P4 (a worker that cannot proceed). */
+  attentionKind: (id: string) => E2EAttentionKind | null
   /** desktop-notifications P5 — the on-canvas attention ring's `data-kind` rendered in the board
    *  node DOM (proves the BoardAttention overlay mounted on-canvas), or null. */
-  attentionRingKind: (id: string) => 'done' | 'needs-input' | 'error' | null
+  attentionRingKind: (id: string) => E2EAttentionKind | null
   /** J5 BADGE-1 — test-only attention mark injector (production writers = agent lifecycle
    *  events); drives the Jarvis edge-tab badge / event-chip specs deterministically. */
-  setAttention: (id: string, kind: 'done' | 'needs-input' | 'error') => void
+  setAttention: (id: string, kind: E2EAttentionKind) => void
 }
 
 declare global {

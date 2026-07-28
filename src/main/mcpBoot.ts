@@ -39,6 +39,8 @@ import { sendMcpCommand } from './mcpCommand'
 import { appendAuditEntry } from './auditIpc'
 import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
 import { registerOrchestrationLeadHandlers } from './orchestrationLead'
+import { findingsPublishDeps, registerFindingsHandlers } from './findingsIpc'
+import { publishFindings } from './findingsPublish'
 import { getCurrentDir } from './projectStore'
 
 export interface McpBootDeps {
@@ -107,6 +109,12 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured result →
     // canvas://board/{id}/result. Bound to the caller's token board by the tool.
     recordResult: (id, result) => recordBoardResult(id, result),
+    // 🔒 P4 `publish_findings`: the AGENT trigger for the end-of-run durable batch. Same deps, same
+    // composer, same ONE confirm modal as the human's “Publish findings →” — the tool names a
+    // destination board and nothing more; every card's content is re-derived here from the results
+    // MAIN already holds, so an orchestrator cannot write a finding no worker reported.
+    publishFindings: (boardId, opts) =>
+      publishFindings(findingsPublishDeps(ipcMain, getWin), boardId, opts),
     // #321 cross-project routing: the visualize gate resolves a caller's OWN project (token-derived
     // board → mint-time dir) and queues a confirmed board for a non-active one. Armed eagerly in
     // index.ts; spread in here so the (lazy) startMcpServer registry carries it.
@@ -151,5 +159,10 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     ensureMcp: ensure,
     getMcp: () => current
   })
+  // Findings publishing (orchestration P4) — the HUMAN trigger for the end-of-run durable batch.
+  // Registered eagerly beside the lead handlers, and deliberately NOT behind `ensureMcp`: the
+  // results it publishes are already in MAIN's hands, so a human can land them whether or not the
+  // loopback server was ever started.
+  registerFindingsHandlers(ipcMain, getWin)
   return ensure
 }

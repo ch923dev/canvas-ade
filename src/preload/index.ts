@@ -968,7 +968,17 @@ const api = {
       const listener = (_e: IpcRendererEvent, boardId: string | null): void => handler(boardId)
       ipcRenderer.on('orchestration:leadChanged', listener)
       return () => ipcRenderer.removeListener('orchestration:leadChanged', listener)
-    }
+    },
+    /**
+     * P4 — publish the run's merged worker findings onto a KANBAN board as ONE human-confirmed
+     * batch. The renderer sends a board id and NOTHING ELSE: every card's content is derived in
+     * MAIN from the `write_result` data it already holds, so the untrusted side cannot author a
+     * finding. Resolves the outcome + the batch disclosure, which the caller must surface verbatim.
+     */
+    publishFindings: (
+      boardId: string
+    ): Promise<{ ok: boolean; published: number; summary: string }> =>
+      ipcRenderer.invoke('findings:publish', { boardId })
   },
 
   // Swarm boards (orchestration S1) — extracted to ./swarm for the max-lines ratchet.
