@@ -7,6 +7,7 @@ import type { BrowserBoard } from '../../lib/boardSchema'
 import { stageScreenRect } from '../../lib/previewStageRect'
 import { isOsrVisible, rankOsrAlive, type OsrAliveCandidate } from '../../lib/osrLiveness'
 import { LOD_ZOOM } from '../../lib/canvasView'
+import { usePaneRect } from './usePaneRect'
 
 /** Max concurrent EXISTING offscreen windows (2B — the RAM cap). Matches the native path's
  *  `MAX_LIVE`: a hidden offscreen renderer costs about as much RAM as a native preview view. */
@@ -46,18 +47,22 @@ export function useOffscreenLiveness(
   fullViewId: string | null
 ): void {
   const { getViewport } = useReactFlow()
+  // R6: the pane box, measured on resize rather than re-read per reconcile — this hook runs on
+  // every `boards`-ref change, so the old getBoundingClientRect() here was a forced layout per
+  // drag frame (audit P-2).
+  const getPaneRect = usePaneRect(paneRef)
   // Last paint-state pushed per board, for diff-skip (only a CHANGED board fires IPC).
   const sentRef = useRef<Map<string, boolean>>(new Map())
   // The PORTAL full-viewed board, read inside the (stable) reconcile so it isn't a dep.
   const fullViewIdRef = useRef<string | null>(fullViewId)
 
   const reconcile = useCallback((): void => {
-    const pane = paneRef.current?.getBoundingClientRect()
-    if (!pane || pane.width === 0 || pane.height === 0) return
+    const pane = getPaneRect()
+    if (!pane) return
     const vp = getViewport()
-    const paneOffset = { x: pane.left, y: pane.top }
-    const paneBox = { x: pane.left, y: pane.top, width: pane.width, height: pane.height }
-    const center = { x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 }
+    const paneOffset = { x: pane.x, y: pane.y }
+    const paneBox = pane
+    const center = { x: pane.x + pane.width / 2, y: pane.y + pane.height / 2 }
     const boards = useCanvasStore
       .getState()
       .boards.filter((b): b is BrowserBoard => b.type === 'browser')
@@ -113,7 +118,7 @@ export function useOffscreenLiveness(
     // Forget boards that no longer exist (a deleted board's window is disposed already), so a
     // future board reusing the id isn't diff-skipped against a stale entry.
     for (const id of [...sent.keys()]) if (!seen.has(id)) sent.delete(id)
-  }, [getViewport, paneRef])
+  }, [getViewport, getPaneRect])
 
   // Camera settle (pan OR zoom end).
   useOnViewportChange({ onEnd: reconcile })

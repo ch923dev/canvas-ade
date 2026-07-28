@@ -7,6 +7,7 @@ import type { TerminalBoard } from '../../lib/boardSchema'
 import { worldRectToScreen } from '../../lib/cameraBounds'
 import { isOsrVisible } from '../../lib/osrLiveness'
 import { LOD_ZOOM } from '../../lib/canvasView'
+import { usePaneRect } from './usePaneRect'
 
 /**
  * Debounce a camera settle: a continuous pan/zoom keeps resetting the timer, so the reconcile
@@ -45,17 +46,21 @@ export function useTerminalLiveness(
 ): void {
   const { getViewport } = useReactFlow()
   const storeApi = useStoreApi()
+  // R6: the pane box, measured on resize rather than re-read per reconcile — this hook runs on
+  // every `boards`-ref change, so the old getBoundingClientRect() here was a forced layout per
+  // drag frame (audit P-2).
+  const getPaneRect = usePaneRect(paneRef)
   // Last published map, for diff-skip (only a CHANGED map is written to the store).
   const sentRef = useRef<Record<string, boolean>>({})
   // The PORTAL full-viewed board, read inside the (stable) reconcile so it isn't a dep.
   const fullViewIdRef = useRef<string | null>(fullViewId)
 
   const reconcile = useCallback((): void => {
-    const pane = paneRef.current?.getBoundingClientRect()
-    if (!pane || pane.width === 0 || pane.height === 0) return
+    const pane = getPaneRect()
+    if (!pane) return
     const vp = getViewport()
-    const paneOffset = { x: pane.left, y: pane.top }
-    const paneBox = { x: pane.left, y: pane.top, width: pane.width, height: pane.height }
+    const paneOffset = { x: pane.x, y: pane.y }
+    const paneBox = pane
     const fvId = fullViewIdRef.current
     const boards = useCanvasStore
       .getState()
@@ -88,7 +93,7 @@ export function useTerminalLiveness(
       sentRef.current = next
       useTerminalLivenessStore.getState().setLive(next)
     }
-  }, [getViewport, paneRef])
+  }, [getViewport, getPaneRect])
 
   // Camera settle — additive RF-store `transform` subscription, debounced (see TERMINAL_SETTLE_MS).
   // ADDITIVE on purpose: any number of subscribers can ride the RF store transform (Canvas already

@@ -1,33 +1,67 @@
-import { useEffect } from 'react'
-import Canvas from './canvas/Canvas'
-import WelcomeScreen from './canvas/WelcomeScreen'
-import AuditLogViewer from './canvas/AuditLogViewer'
-import ConfirmModal from './canvas/ConfirmModal'
-import BatchConfirmModal from './canvas/BatchConfirmModal'
-import AskOnSwitchModal from './canvas/AskOnSwitchModal'
-import CloseSessionsModal from './canvas/CloseSessionsModal'
-import ProjectDock from './canvas/ProjectDock'
-import SwitchTransitionOverlay from './canvas/SwitchTransitionOverlay'
-import { RunningProjectSwitcher } from './canvas/RunningProjectSwitcher'
+import { memo, useEffect } from 'react'
+import CanvasImpl from './canvas/Canvas'
+import WelcomeScreenImpl from './canvas/WelcomeScreen'
+import AuditLogViewerImpl from './canvas/AuditLogViewer'
+import ConfirmModalImpl from './canvas/ConfirmModal'
+import BatchConfirmModalImpl from './canvas/BatchConfirmModal'
+import AskOnSwitchModalImpl from './canvas/AskOnSwitchModal'
+import CloseSessionsModalImpl from './canvas/CloseSessionsModal'
+import ProjectDockImpl from './canvas/ProjectDock'
+import SwitchTransitionOverlayImpl from './canvas/SwitchTransitionOverlay'
+import { RunningProjectSwitcher as RunningProjectSwitcherImpl } from './canvas/RunningProjectSwitcher'
 import { useSwitchTransitionStore } from './store/switchTransitionStore'
-import { ToastIsland } from './canvas/Toast'
-import { UpdateSurfaces } from './canvas/UpdateSurfaces'
+import { ToastIsland as ToastIslandImpl } from './canvas/Toast'
+import { UpdateSurfaces as UpdateSurfacesImpl } from './canvas/UpdateSurfaces'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
-import { useMcpPublish } from './store/useMcpPublish'
+import { McpPublisher } from './store/McpPublisher'
 import { useMcpCommands } from './store/useMcpCommands'
 import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
 import { useProjectBoot } from './store/useProjectBoot'
 import { useAccountStore, useAccountSync } from './store/accountStore'
 import { useUpdateStatusSync } from './store/useUpdateStatusSync'
-import { SignInView } from './canvas/SignInView'
+import { SignInView as SignInViewImpl } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
 import { useProjectSwitchHotkey } from './store/useProjectSwitchHotkey'
 import { useNotifications } from './store/useNotifications'
 import { useSwarmEvents } from './store/useSwarmEvents'
 import { useVoiceCapture } from './voice/useVoiceCapture'
 import { useTtsPlayback } from './voice/useTtsPlayback'
-import { VoicePill } from './voice/VoicePill'
-import { JarvisPanel } from './jarvis/JarvisPanel'
+import { VoicePill as VoicePillImpl } from './voice/VoicePill'
+import { JarvisPanel as JarvisPanelImpl } from './jarvis/JarvisPanel'
+
+/**
+ * R5 (audit P-1) — THE MEMO BOUNDARY AT THE ROOT.
+ *
+ * Every root child is zero-prop and self-subscribing, so `memo` here means "a re-render of `App`
+ * alone can never propagate into 14 subtrees". Wrapping at the use site rather than in each
+ * component's own file keeps the boundary readable as ONE thing (and leaves each component's public
+ * export shape untouched); shadowing the imported `…Impl` name keeps the JSX below unchanged. Same
+ * shape as the existing `memo(AppChromeImpl)` one level down.
+ *
+ * This is defence in depth, not the fix: the 60 Hz driver was `useMcpPublish` sitting at this level,
+ * and it now lives in the `McpPublisher` leaf. What `memo` buys is that the NEXT coarse store
+ * subscription someone adds to `App` cannot silently re-create P-1 — `App`'s remaining picks
+ * (`status`, `accountStatus`, `switchPhase`) are all low-frequency strings.
+ */
+const Canvas = memo(CanvasImpl)
+const WelcomeScreen = memo(WelcomeScreenImpl)
+const AuditLogViewer = memo(AuditLogViewerImpl)
+const ConfirmModal = memo(ConfirmModalImpl)
+const BatchConfirmModal = memo(BatchConfirmModalImpl)
+const AskOnSwitchModal = memo(AskOnSwitchModalImpl)
+const CloseSessionsModal = memo(CloseSessionsModalImpl)
+const ProjectDock = memo(ProjectDockImpl)
+const SwitchTransitionOverlay = memo(SwitchTransitionOverlayImpl)
+const RunningProjectSwitcher = memo(RunningProjectSwitcherImpl)
+const ToastIsland = memo(ToastIslandImpl)
+const UpdateSurfaces = memo(UpdateSurfacesImpl)
+const VoicePill = memo(VoicePillImpl)
+const JarvisPanel = memo(JarvisPanelImpl)
+const SignInView = memo(SignInViewImpl)
+
+/** Stable identity for the forced sign-in gate's no-op close — an inline arrow would hand
+ *  `SignInView` a fresh prop every render and defeat its memo boundary. */
+const noop = (): void => {}
 
 /**
  * App root. On boot, ask MAIN for the most-recent project (auto-reopen); fall back to
@@ -43,7 +77,8 @@ function App(): React.ReactElement {
   // raises the running-projects switcher overlay. Mounted here so it survives a switch (the
   // ProjectSwitcher pill unmounts mid-'loading').
   useProjectSwitchHotkey()
-  useMcpPublish()
+  // R5: useMcpPublish is NOT called here — it subscribes `boards`, so a drag would re-render this
+  // whole root ~60×/s. It lives in the render-nothing <McpPublisher /> leaf mounted below.
   useMcpCommands()
   // Phase 5 auto-update: pipe MAIN's update status into the store that feeds the persistent
   // Settings badge (gear / About tile / account pill) + the tier surfaces.
@@ -110,6 +145,10 @@ function App(): React.ReactElement {
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
+      {/* R5: the MCP board-snapshot publisher, as a render-nothing leaf. Its six-slice
+          subscription re-renders at drag frequency — confining that to a null-returning
+          leaf is what stops it re-rendering every sibling below (audit P-1). */}
+      <McpPublisher />
       {/* Phase 4c: a permanent viewport-sized wrapper so Canvas keeps its tree position
           across the transition (adding/removing a wrapper would REMOUNT it — killing the
           PTY/preview keep-alive the epic exists for). WelcomeScreen is suppressed while
@@ -160,7 +199,7 @@ function App(): React.ReactElement {
           It shows only on a CONFIRMED 'signed-out' (never the brief boot 'checking'), as a locked
           overlay (Esc/scrim disabled, no Cancel) over the app. */}
       {__REQUIRE_ACCOUNT__ && accountStatus === 'signed-out' && (
-        <SignInView forced onClose={() => {}} />
+        <SignInView forced onClose={noop} />
       )}
     </div>
   )
