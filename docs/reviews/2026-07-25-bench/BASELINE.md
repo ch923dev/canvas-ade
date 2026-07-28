@@ -10,6 +10,20 @@ Produced by `pnpm bench:baseline`. Phase 0 gate artifact for the
 > re-measurement of `arm` that §1 said was owed. **R3 is refuted; R11's premise is revived.**
 > Read [§6](#6-resource-bearing-re-measurement--r3-refuted-r11-revived).
 
+> **⚠️ STALE AGAINST HEAD since 2026-07-28 (v0.38.0).** Audit **Phase 2 (R5 · R6) shipped without a
+> paired re-capture**, so every `paint` figure below was taken on pre-R5 code. R5 removed the
+> root-level `boards` subscription that re-rendered 14 subtrees per drag frame, and `paint` is React
+> mount plus first frame — the segment most likely to have moved. **Do not read the 0/8/24 sweep as
+> current.**
+>
+> Why no re-capture: two attempts measured **55.2% CPU at rest**, and `bench:baseline` refuses to
+> write a baseline above 25%. That guard exists because of the ±40% spread documented immediately
+> below — at that load the run could not have separated a real win from noise, in either direction.
+> Phase 2 shipped on load-independent **counts** instead (renders-on-drag 14 → 0;
+> `getBoundingClientRect` per 60 reconciles 61 → 1, both mutation-verified). The mechanism is proven;
+> its size in milliseconds on this hardware is not. Re-taking the sweep on a quiet box is logged as
+> owed in [the audit §9](../2026-07-25-project-switch-perf-audit/AUDIT.md#remaining) item 6.
+
 ## Conditions — read these before comparing anything
 
 ```
