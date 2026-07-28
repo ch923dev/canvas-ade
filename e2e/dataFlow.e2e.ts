@@ -17,16 +17,19 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
     await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(df)}, 940, 600)`)
+    // Seed AND pin in ONE evalIn — see store/osrNetPin.ts. The bound Browser board carries a live
+    // MAIN subscription whose `replay` (empty ring buffer at subscribe) / `cleared` (OSR nav
+    // boundary) / `delta` would otherwise destroy these rows, and the LOD unmount would delete them
+    // outright — the seed race that made this spec carry re-seed-on-empty guards. Pinned ⇒ the seed
+    // is the whole world, so the polls below are plain waits on layout.
+    // ATOMICITY MATTERS: each `evalIn` is its own page.evaluate round-trip, and the page's event
+    // loop runs between two of them — long enough for a real MAIN batch to land through the
+    // unguarded handler and wipe the seed before the pin is armed. One evaluate = one synchronous
+    // JS turn, so nothing can interleave. The guards that used to cover this gap are gone.
     await evalIn(
       page,
-      `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
+      `(() => { window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)}); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
     )
-    // PIN the seeded capture (see store/osrNetPin.ts). The bound Browser board carries a live MAIN
-    // subscription whose `replay` (empty ring buffer at subscribe) / `cleared` (OSR nav boundary) /
-    // `delta` would otherwise destroy these rows, and the LOD unmount would delete them outright —
-    // the seed race that made this spec carry re-seed-on-empty guards. Pinned ⇒ the seed is the
-    // whole world, so the polls below are plain waits on layout.
-    await evalIn(page, `window.__canvasE2E.pinOsrNet(${JSON.stringify(src)})`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
 
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
@@ -117,11 +120,14 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       page,
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
-    // a flat capture: 6 unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js)
-    await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6)`)
-    // pin it (see test 1) — `seedOsrNet` itself stays unpinned for the @preview browserNetwork specs,
-    // which exercise the LIVE channel on purpose; pinning is the caller's declaration, not the seeder's.
-    await evalIn(page, `window.__canvasE2E.pinOsrNet(${JSON.stringify(src)})`)
+    // a flat capture: 6 unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js).
+    // Seeded and pinned in ONE evaluate (see test 1 — two round-trips leave a gap a real MAIN batch
+    // can win). `seedOsrNet` itself stays unpinned for the @preview browserNetwork specs, which
+    // exercise the LIVE channel on purpose; pinning is the caller's declaration, not the seeder's.
+    await evalIn(
+      page,
+      `(() => { window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
+    )
     // apiOnly OFF so the `.js` asset rows show; first-party ON so only example.test (the seeds) is graphed.
     await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
@@ -144,11 +150,11 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       page,
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
+    // seed + pin in ONE evaluate (see test 1 — atomicity against a late MAIN batch)
     await evalIn(
       page,
-      `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
+      `(() => { window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)}); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
     )
-    await evalIn(page, `window.__canvasE2E.pinOsrNet(${JSON.stringify(src)})`) // see test 1
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect

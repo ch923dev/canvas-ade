@@ -1,7 +1,7 @@
 # Terminal clip-free fit — the `dataFlow` → `terminalClip` adjacency defect (2026-07-28)
 
 **Status: OPEN — root-caused, reproducible, NOT fixed.** Found by PR #396, re-investigated and
-narrowed in PR #397 (`fix/e2e-reliability`), which shipped the sibling `dataFlow` seed-race fix and
+narrowed in PR #398 (`fix/e2e-reliability`), which shipped the sibling `dataFlow` seed-race fix and
 deliberately left this one rather than stack an unverified production change on a verified one.
 
 **This is very likely a real user-facing bug, not only a test-isolation gap.** The e2e failure is the
