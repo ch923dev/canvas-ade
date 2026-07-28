@@ -280,6 +280,15 @@ the feature with `pnpm dev` and actually look at the change in the live app.
   and a **hard pre-push block** on a stale push to `main` (feature pushes warn). On any of those:
   `git fetch origin && git rebase origin/main` before continuing. Full protocol: `ACTIVE-WORK.md` ›
   *Post-merge signaling*.
+- **CI not firing on a PR push ⇒ suspect a CONFLICT first, not the workflows.** When a push lands but
+  GitHub creates **no check runs** for the new head SHA, check mergeability BEFORE looking at workflow
+  triggers or path filters: `gh api repos/<owner>/<repo>/pulls/<n> --jq '{mergeable,mergeable_state}'`.
+  `mergeable_state: "dirty"` means the PR conflicts with `main` and GitHub will not run checks on it —
+  rebase (`git fetch origin && git rebase origin/main`), resolve, force-push-with-lease. This is the
+  common case; a genuine Actions fault is rare. Note the hook's stale-base warnings fire at
+  SessionStart/pre-push, so a base that goes stale **while a long PR is open** raises nothing new —
+  re-check after any merge to `main` lands. A rebase across a version bump also means **recomputing
+  this PR's own bump off the new tip** (and updating the PR title/body to match).
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
   node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
   re-running the full gate + e2e after EACH merge — **the FULL e2e matrix (`pnpm test:e2e:matrix`,
