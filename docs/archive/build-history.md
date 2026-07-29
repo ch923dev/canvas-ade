@@ -4595,3 +4595,35 @@ documented contention set #396's own commit names, so it was re-pushed with the 
   untracking `.claude/settings.json`): check `mergeable_state` **first**, then base staleness, and only
   then workflows. A rebase across a version bump also means recomputing this PR's own bump off the new
   tip (0.37.3 → 0.39.1 here).
+
+## 2026-07-30 — PR #399: e2e trace temp containment — relocate, bound, reclaim (`433d0ca6`, v0.41.0)
+
+The e2e suite's Playwright trace machinery was filling C:. Measured before fixing
+(`docs/reviews/2026-07-29-e2e-storage/MEASUREMENTS.md` + raw sampler CSVs): **1,383
+`playwright*` dirs / 103.5 GB** of six-week never-swept accumulation (oldest 2026-04-22),
+and the core surprise — **a fully green run orphaned its ~0.7 GB trace buffer EVERY run**
+(Playwright's own temp cleanup races the worker process's exit and loses; abnormal exits
+were only the amplifier, via failure-relaunches minting extra buffer dirs). Tracing
+screenshots were ~89% of the buffer (620–674 MB → 69.5 MB full-suite, 9×). The audited
+"50–100 GB/hr" was stacked runs, not one run's rate (~60 MB/min at workers:1).
+
+Three independent fixes: **relocate** — `_electron.launch({ tracesDir })` →
+`test-results/.pw-trace/w<N>` (per-checkout so reclaim is sibling-session-safe, off the
+system drive, repo-relative so the Docker leg gets it for free); **bound** —
+`tracing.start({ screenshots: false })`, with a forced-failure trace proven debuggable in
+show-report (DOM frame-snapshots + action tree + sources; the separate `failure.png`
+attachment unchanged — only filmstrip thumbnails go); **reclaim** — `e2e/globalTeardown.ts`
+deletes `.pw-trace` + this run's tmpdir scratch (clean exit AND Ctrl-C), and
+`e2e/globalSetup.ts` sweeps tmpdir scratch idle >6h for hard-killed runs, every deletion
+disclosed, `E2E_KEEP_TMP=1` opt-out, `playwright-transform-cache` never swept. Policy is a
+pure module with 12 unit tests (`scripts/e2eTempSweep.ts`).
+
+Verified: full matrix green BOTH legs on the exact merge head `721088a1` (Win 341P 9.3m ·
+Linux Docker 339P 6.3m, zero failures; the reclaim line observed firing inside the
+container's `/tmp` — parity observed, not assumed). `%TEMP%` during a full workers:2 run:
+peak 4.5 MB, residue zero (was ~0.7 GB/run). Hard-kill → backdate → next-run sweep
+recovery demo recorded. Review round: 2 warnings, both real — the teardown's parse-failure
+fallback failed OPEN (empty pre-run set ⇒ would claim a concurrent sibling checkout's live
+scratch; now fails closed with a disclosed skip) + the per-slice kickoff doc deleted per
+doc lifecycle. Incremental re-review 0 new. The backlog sweep itself freed C: 18.7 →
+132.5 GB with the inventory preserved as evidence.
