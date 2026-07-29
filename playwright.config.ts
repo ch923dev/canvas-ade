@@ -7,6 +7,13 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
+  // Temp-litter lifecycle (fix/e2e-storage, measured 2026-07-29): setup sweeps dead
+  // runs' os.tmpdir() scratch (>6h idle, disclosed, E2E_KEEP_TMP=1 skips); teardown
+  // reclaims THIS run's relocated trace buffer (test-results/.pw-trace, see
+  // e2e/fixtures.ts tracesDir) + tmpdir scratch — Playwright's own cleanup races the
+  // worker exit and loses, orphaning ~0.7 GB per green run before this existed.
+  globalSetup: './e2e/globalSetup.ts',
+  globalTeardown: './e2e/globalTeardown.ts',
   fullyParallel: false,
   // Files still run whole (fullyParallel:false) — E2E_WORKERS only decides how many
   // Electron apps run side by side. Default 1: the Linux Docker leg is CPU-capped and
