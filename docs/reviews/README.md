@@ -6,6 +6,14 @@ collapsed into a dated summary here once every finding is fixed). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
+**MEASUREMENT PACKAGE: the 2026-07-29 e2e storage containment lane** (`fix/e2e-storage`) —
+the e2e trace buffer's temp lifecycle, measured before fixing: 1,383 dirs / 103.5 GB of
+six-week accumulation on C:, a green run orphaning ~0.7 GB EVERY run (Playwright's temp
+cleanup loses the race with the worker's exit — not just abnormal exits), tracing
+screenshots = ~89% of the buffer (9× cut measured), and the fixed pipeline verified to
+zero `%TEMP%` residue at workers:2 with failure evidence intact. Numbers + raw CSVs + the
+trace-viewer proof: [`2026-07-29-e2e-storage/MEASUREMENTS.md`](2026-07-29-e2e-storage/MEASUREMENTS.md).
+
 **OPEN: the 2026-07-28 terminal clip-free-fit adjacency defect** — a single, fully root-caused,
 reproducible finding, likely a **real user-facing clipping bug** rather than only a test-isolation
 gap: `FitAddon` over-proposes one row on a sub-pixel cell-metric drift, and the post-fit shed loop in

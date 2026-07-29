@@ -360,6 +360,27 @@ leaking across specs, masked by `retries:2`.) Re-run the single test in isolatio
 (`pnpm exec playwright test <name>`) — passes alone + fails in-suite = an isolation/ordering bug, not
 the app.
 
+#### Trace temp lifecycle (fix/e2e-storage, measured 2026-07-29)
+
+The trace chunk's **backing buffer** used to live for the whole worker context in
+`os.tmpdir()` scratch — and Playwright's own cleanup races the worker's exit and loses, so
+**even a fully green run orphaned its buffer every run** (~0.7 GB with tracing screenshots
+on; six weeks of that was 1,383 dirs / 103.5 GB on the system drive). Containment, three
+independent pieces (full numbers: `docs/reviews/2026-07-29-e2e-storage/MEASUREMENTS.md`):
+
+- **Relocated buffer** — `e2e/fixtures.ts` passes `tracesDir: test-results/.pw-trace/w<N>`
+  to `_electron.launch`, so the payload is per-checkout (sibling-safe reclaim), off the
+  system drive, and inside the dir Playwright wipes at the next run anyway.
+- **Bounded payload** — tracing runs `screenshots:false`: **69.5 MB vs ~620 MB** full-run
+  buffer (9×, measured). A failure stays diagnosable in show-report — DOM frame-snapshots,
+  actions, sources, plus the separate `failure.png`; only the filmstrip thumbnails go.
+- **Guaranteed reclaim** — `e2e/globalTeardown.ts` deletes `.pw-trace` + tmpdir scratch
+  this run created (runs on clean exit AND Ctrl-C); `e2e/globalSetup.ts` sweeps tmpdir
+  scratch idle >6h (dead runs killed too hard for teardown), printing every deletion.
+  `playwright-transform-cache` (a small shared cache) is never swept. `E2E_KEEP_TMP=1`
+  skips all sweeping for temp forensics. Policy logic is pure + unit-tested:
+  `scripts/e2eTempSweep.ts`.
+
 ### Agentic repro → verify loop (`_repro.e2e.ts.template`)
 
 To reproduce a freshly-reported bug before a committed spec exists, copy

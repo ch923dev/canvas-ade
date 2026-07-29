@@ -5,6 +5,7 @@ import {
   type ElectronApplication,
   type Page
 } from '@playwright/test'
+import { join } from 'node:path'
 
 type TestFixtures = { page: Page }
 type WorkerFixtures = { electronApp: ElectronApplication }
@@ -24,7 +25,18 @@ let tracingStarted = false
  * Evidence capture (E1): every test runs inside a Playwright trace chunk. On FAILURE the
  * chunk + a renderer screenshot are written to the test's output dir and attached to the
  * HTML report (`pnpm exec playwright show-report`); on success the chunk is discarded so
- * green runs stay cheap. Set `E2E_VIDEO=1` to also record a `.webm` per spec into
+ * green runs stay cheap in REPORT size. The chunk's BACKING BUFFER is another story: it
+ * lives for the whole context (tracing.start → close), and Playwright's own temp cleanup
+ * races the worker's exit and loses — measured 2026-07-29, a green full run orphaned its
+ * buffer EVERY time (~0.7 GB/run with tracing screenshots on; 1,383 dirs / 103.5 GB of
+ * six-week accumulation on C:). Containment (fix/e2e-storage): the buffer is relocated
+ * into this checkout's `test-results/.pw-trace` via `tracesDir` (reclaimed by
+ * e2e/globalTeardown.ts + wiped with test-results on the next run; keeps the payload off
+ * the system drive and makes reclaim sibling-checkout-safe), tracing runs
+ * `screenshots:false` (69.5 MB vs ~620 MB full-run buffer, measured — the DOM
+ * frame-snapshots + sources + the failure.png below keep a failure fully diagnosable in
+ * show-report; only the filmstrip thumbnails go), and dead runs' tmpdir litter is swept
+ * by e2e/globalSetup.ts. Set `E2E_VIDEO=1` to also record a `.webm` per spec into
  * `test-results/videos` (best-effort — video under xvfb on the Linux leg is unreliable,
  * Playwright #8936, so trace is the canonical artifact). The renderer screenshot now captures the
  * full DOM, including each Browser board's OSR `<canvas>`; a MAIN-side PNG of one board's offscreen
@@ -46,6 +58,16 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
       const app = await _electron.launch({
         args: launchArgs,
+        // Trace buffer → THIS checkout's test-results (not os.tmpdir()): bounded,
+        // off the system drive, per-worker (workers:2 = two apps), reclaimed by
+        // globalTeardown, and Playwright wipes test-results on the next run anyway.
+        tracesDir: join(
+          __dirname,
+          '..',
+          'test-results',
+          '.pw-trace',
+          `w${process.env.TEST_PARALLEL_INDEX ?? '0'}`
+        ),
         // CANVAS_FAKE_MEDIA: MAIN translates this into Chromium's fake capture-device
         // switch (voiceIpc.applyFakeMediaSwitches — env-gated in MAIN, not a launch arg:
         // playwright#16621). Only getUserMedia consumers see it (the @voice spec); it
@@ -72,7 +94,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // gracefully (run the tests, just without traces) rather than red-screen the suite.
       tracingStarted = false
       try {
-        await app.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+        await app.context().tracing.start({ screenshots: false, snapshots: true, sources: true })
         tracingStarted = true
       } catch {
         /* tracing unavailable on this context — continue without it */
