@@ -31,13 +31,29 @@ export default async function globalTeardown(): Promise<void> {
   //    sibling checkout's run that STARTED mid-run loses kilobyte-scale download
   //    scratch — its failure evidence is unaffected (its traces are in its own
   //    checkout's .pw-trace).
+  //    FAIL CLOSED on a missing/unreadable snapshot: without a trustworthy pre-run
+  //    set the diff degenerates to "every playwright* dir", which would claim a
+  //    concurrent sibling checkout's LIVE scratch. Skip instead — the >6h retention
+  //    sweep reclaims this run's crumbs on the next invocation.
   const root = os.tmpdir()
-  let preRun: ReadonlySet<string>
-  try {
-    preRun = new Set(JSON.parse(process.env.E2E_TEMP_PRERUN ?? '[]'))
-  } catch {
-    preRun = new Set()
+  const rawSnapshot = process.env.E2E_TEMP_PRERUN
+  if (rawSnapshot === undefined) {
+    console.log('[e2e-temp] run cleanup skipped: no pre-run snapshot (fail closed)')
+    return
   }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawSnapshot)
+  } catch {
+    parsed = undefined
+  }
+  if (!Array.isArray(parsed)) {
+    console.log('[e2e-temp] run cleanup skipped: pre-run snapshot unreadable (fail closed)')
+    return
+  }
+  const preRun: ReadonlySet<string> = new Set(
+    parsed.filter((n): n is string => typeof n === 'string')
+  )
   const created = classifyOwnRun(scanTempDirs(root), preRun).delete
   if (created.length) {
     const removed = removeTempDirs(root, created)
