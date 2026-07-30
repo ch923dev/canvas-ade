@@ -13,6 +13,13 @@
   --attn-c: var(--warn);
   --attn-wash: var(--warn-wash);
 }
+/* Orchestration P4 — a worker that CANNOT PROCEED. Shares needs-input's warn colour (same family,
+   same "you are needed here" meaning) but takes NO pulse rule below: the pulse is reserved for a
+   worker actively waiting on a keystroke. Steady = stuck, look when you can. */
+.ca-attn[data-kind='blocked'] {
+  --attn-c: var(--warn);
+  --attn-wash: var(--warn-wash);
+}
 .ca-attn[data-kind='error'] {
   --attn-c: var(--err);
   --attn-wash: var(--err-wash);

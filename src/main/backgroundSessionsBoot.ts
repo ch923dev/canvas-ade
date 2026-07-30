@@ -10,8 +10,10 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { configureCloseGuard, registerPtyHostConfigIpc } from './closeGuard'
+import { createCommandFeed, setCommandFeed } from './commandFeed'
 import { flushRendererAutosave } from './flushChannel'
 import { wireLifecycleNotifications } from './lifecycleNotifications'
+import { sendMcpCommand } from './mcpCommand'
 import { persistBackgroundRingTails } from './pty'
 import { appendTerminalSnapshot } from './terminalSnapshot'
 import { wireTrayResidency } from './trayResidency'
@@ -32,6 +34,16 @@ export function wireBackgroundSessionsUx(deps: BackgroundSessionsBootDeps): void
   // deliver handle is the ONE delivery site the tray's background-exit toasts ride.
   const recapMapPath = join(deps.userData, 'recap', 'session-map.jsonl')
   const lifecycle = wireLifecycleNotifications(deps.getWin, recapMapPath, deps.userData)
+  // Orchestration P4: install the external-worker observability feed HERE because this is the one
+  // place that already holds both halves it needs — the window (for the canvas write pipe) and the
+  // lifecycle `deliver` handle (for the ring/toast/OS layer). Every `write_result` recorded from
+  // now on renders on the Command board and raises its attention mark.
+  setCommandFeed(
+    createCommandFeed({
+      send: (command) => sendMcpCommand(ipcMain, deps.getWin, command),
+      deliver: lifecycle.deliver
+    })
+  )
   configureCloseGuard({ userData: deps.userData })
   registerPtyHostConfigIpc(ipcMain, deps.getWin, deps.userData)
   wireTrayResidency({

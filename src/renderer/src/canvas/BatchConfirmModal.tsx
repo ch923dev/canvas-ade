@@ -21,6 +21,17 @@ interface BatchItem {
 interface BatchRequest {
   title: string
   items: BatchItem[]
+  /**
+   * What the human is authorizing, in their words. Absent ⇒ the `relay_prompts` default below.
+   *
+   * 🔒 This is not decoration. The default copy says the approved rows WILL RUN, each written into
+   * its own terminal — true for a relay, and a plain falsehood for P4's findings batch, where every
+   * row becomes a passive kanban card and nothing executes. A confirm gate that misdescribes the
+   * act it is gating is worse than no gate: the human consents to the wrong thing.
+   */
+  blurb?: string
+  /** Caps, merges and omissions the caller must state (P4). Rendered verbatim under the blurb. */
+  disclose?: string
 }
 type BatchReply = (decision: { decisions: Array<{ approved: boolean }> }) => void
 interface Pending extends BatchRequest {
@@ -93,15 +104,31 @@ export default function BatchConfirmModal(): React.ReactElement | null {
       </h2>
       <p
         style={{
-          margin: '8px 0 16px',
+          margin: current.disclose ? '8px 0 8px' : '8px 0 16px',
           fontSize: 'var(--fs-body)',
           lineHeight: 'var(--lh-body)',
           color: 'var(--text-2)'
         }}
       >
-        Review each command. Only the rows you approve will run — each is written into its own
-        terminal as a single, confirmed line.
+        {current.blurb ??
+          'Review each command. Only the rows you approve will run — each is written into its own terminal as a single, confirmed line.'}
       </p>
+      {current.disclose && (
+        // The caller's caps / merges / omissions, verbatim. A cap the human is not told about reads
+        // as "that was everything", which is exactly how a batched write quietly loses findings.
+        <p
+          data-testid="batch-confirm-disclose"
+          style={{
+            margin: '0 0 14px',
+            fontFamily: 'var(--mono)',
+            fontSize: 'var(--fs-micro)',
+            lineHeight: 'var(--lh-micro)',
+            color: 'var(--text-faint)'
+          }}
+        >
+          {current.disclose}
+        </p>
+      )}
 
       <div
         style={{

@@ -129,8 +129,15 @@ const NATIVE_AREAS = {
     'src/preload/mcpapi',
     'src/preload/mcpserversapi',
     'src/preload/swarm',
+    // Orchestration P4 (observability): the external-worker feed, the blocked→attention
+    // classifier, and the end-of-run findings batch. All MAIN-side and confined to the
+    // orchestration domain, so they scope with the rest of it rather than failing open.
+    'src/main/commandfeed',
+    'src/main/findings',
+    'src/main/workerattention',
     // shared MAIN⇄renderer type/contract modules for the same domains
     'src/shared/mcptypes',
+    'src/shared/commandfeedtypes',
     'src/shared/swarmledgertypes',
     'src/shared/rolepacks'
   ]
@@ -239,7 +246,9 @@ const AREAS = {
   // 'modal' keyword in `chrome` could otherwise be relied on to catch these; the two areas
   // union together so a change confined to e.g. OrchestrationConsentModal.tsx still pulls in
   // the @mcp-tagged consent-flow specs instead of silently landing in @chrome alone.
-  mcp: ['orchestration', 'swarm'],
+  // 'boards/command' + 'commandstore' are P4: the Command board is the orchestration face the
+  // external-worker feed renders on, so a change to it belongs with @mcp rather than @chrome.
+  mcp: ['orchestration', 'swarm', 'boards/command', 'commandstore', 'commanddispatch'],
   // Voice dictation (V1+): the renderer capture pipeline + its ephemeral store (and, from
   // V3, the pill/flyout UI — 'voice' catches VoicePill/VoiceFlyout paths too). The generated
   // TTS manifest / filler assets are runtime inputs, so their generators map here too.

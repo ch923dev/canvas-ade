@@ -12,7 +12,14 @@ import { create } from 'zustand'
  * override → the MCP mirror + `canvas://attention`), TerminalBoard (pill dot re-tint),
  * JarvisPanel (edge-tab badge + panel-foot event chips).
  */
-export type AttentionKind = 'done' | 'needs-input' | 'error'
+/**
+ * P4 adds `blocked` — a worker that CANNOT PROCEED (lost / stalled / failing check / dependency /
+ * overlap / preserved dirty worktree), as distinct from `needs-input`, which is a worker ASKING YOU
+ * something right now. They read differently on the canvas (steady vs pulsing ring) because they
+ * demand different urgency, and the split is what finally gives `BoardStatusBucket.'blocked'` a
+ * producer: it has been declared and styled since T1.1 with no code path ever emitting it.
+ */
+export type AttentionKind = 'done' | 'needs-input' | 'blocked' | 'error'
 
 interface AttentionState {
   byId: Record<string, AttentionKind>

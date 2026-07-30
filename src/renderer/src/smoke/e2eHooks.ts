@@ -64,7 +64,7 @@ import { useAccountStore } from '../store/accountStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
 // The harness type surface (CanvasE2E) lives in a sibling module so this implementation stays under
 // the file-size ratchet; the two move in lock-step (installE2EHooks assigns `const api: CanvasE2E`).
-import type { CanvasE2E } from './e2eHooks.types'
+import type { CanvasE2E, E2EAttentionKind } from './e2eHooks.types'
 import { flushAllTerminalSnapshots } from '../store/terminalSnapshotRegistry'
 import { closeChromeOverlays } from './chromeOverlayGate'
 
@@ -160,6 +160,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setCommandTasks(tasks) {
       useCommandStore.setState({ tasks })
+    },
+    getCommandTasks() {
+      return useCommandStore.getState().tasks
+    },
+    getCommandFedDropped() {
+      return useCommandStore.getState().fedDropped
     },
     getGroups() {
       return useCanvasStore.getState().groups
@@ -918,7 +924,7 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // The on-canvas BoardAttention overlay's data-kind, read off the live node DOM — proves the
       // ring/badge actually rendered on the board (not just that the store was set).
       const el = document.querySelector(`.react-flow__node[data-id="${id}"] .ca-attn`)
-      return (el?.getAttribute('data-kind') ?? null) as 'done' | 'needs-input' | 'error' | null
+      return (el?.getAttribute('data-kind') ?? null) as E2EAttentionKind | null
     }
   }
   window.__canvasE2E = api

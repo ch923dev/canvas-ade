@@ -31,6 +31,11 @@ type ConfirmDecisionMsg = { approved: boolean; choice?: string }
 export interface ConfirmBatchRequest {
   title: string
   items: Array<{ label: string; body: string }>
+  /** 🔒 What the human is authorizing. Absent ⇒ the modal's `relay_prompts` default (the rows RUN),
+   *  which any non-dispatch caller MUST override — P4's findings batch runs nothing. */
+  blurb?: string
+  /** P4: the caps / merges / omissions this batch states. Rendered verbatim under the blurb. */
+  disclose?: string
 }
 
 /** The batch modal's reply — per-row decisions, positionally 1:1 with `request.items`. */

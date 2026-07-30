@@ -26,6 +26,7 @@ import {
   type CommandTask,
   type TaskStatus
 } from '../../store/commandStore'
+import { MAX_FED_TASKS } from '../../../../shared/commandFeedTypes'
 import { deriveWorkerPool } from '../../store/workerPool'
 import { useOrchestrationConfigStore } from '../../store/orchestrationConfigStore'
 import { BoardFrame } from '../BoardFrame'
@@ -94,6 +95,8 @@ export function CommandBoard({
   const setCollapsed = useCommandStore((s) => s.setCollapsed)
   const tasks = useCommandStore((s) => s.tasks)
   const configuringTaskId = useCommandStore((s) => s.configuringTaskId)
+  /** P4 — how many FED worker cards the cap evicted; drives the Done column's foot disclosure. */
+  const fedDropped = useCommandStore((s) => s.fedDropped)
   const lastWorkerConfig = useCommandStore((s) => s.lastWorkerConfig)
   // W1-A (H6): the empty-state guard. Dispatch silently no-ops until this project grants
   // orchestration consent, so an empty board with `enabled === false` is misleading without it.
@@ -324,6 +327,16 @@ export function CommandBoard({
                                   ))
                                 )}
                               </div>
+                              {/* P4 — the feed cap, disclosed. A silently-capped feed is worse
+                                  than no feed: the human reads absence as "nothing happened", so
+                                  the count of evicted workers sits under the column that holds
+                                  the settled ones. */}
+                              {col.key === 'done' && fedDropped > 0 && (
+                                <div style={colFootStyle}>
+                                  +{fedDropped} more worker{fedDropped === 1 ? '' : 's'} not shown ·
+                                  feed cap {MAX_FED_TASKS}
+                                </div>
+                              )}
                             </div>
                           )
                         })}
@@ -561,6 +574,17 @@ const colBodyStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 6
+}
+/** P4 — the column-foot disclosure line (the feed cap). Quiet mono, below the card list. */
+const colFootStyle: CSSProperties = {
+  flex: 'none',
+  marginTop: 4,
+  paddingTop: 4,
+  borderTop: '1px solid var(--border-subtle)',
+  fontFamily: 'var(--mono)',
+  fontSize: 9,
+  lineHeight: 1.4,
+  color: 'var(--text-faint)'
 }
 const emptyHintStyle: CSSProperties = {
   display: 'flex',

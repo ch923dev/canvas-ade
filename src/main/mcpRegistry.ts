@@ -489,6 +489,21 @@ export interface BoardRegistry {
    */
   recordResult(id: string, result: BoardResult): void
   /**
+   * Orchestration P4 — publish the run's merged findings onto a KANBAN board as ONE human-confirmed
+   * batch. The caller (an orchestrator at the end of a run) supplies only the destination board and
+   * an optional lane: MAIN re-derives every card from the `write_result` data it already holds, so
+   * an agent can never author a card no worker actually reported ("the reply proposes, MAIN
+   * disposes"). This is the ONLY sanctioned way to land N findings — `add_card` is one card and one
+   * confirm each, which at fan-out scale is the confirm storm the whole design forbids.
+   *
+   * Optional so existing registry stubs and older `@expanse-ade/mcp` pins keep compiling; the tool
+   * simply does not register when it is unwired.
+   */
+  publishFindings?(
+    boardId: string,
+    opts?: { lane?: string }
+  ): Promise<{ ok: boolean; published: number; summary: string }>
+  /**
    * PR-2: read-only working-tree diff for a board. MAIN injects gitDiff.ts's `boardGitDiff`,
    * which resolves the board's resolved spawn cwd (pty.ts `getTerminalCwd`) and runs `simple-git`
    * (MAIN-only, read-only). The orchestrator owns board-resolution + terminal-check + the output

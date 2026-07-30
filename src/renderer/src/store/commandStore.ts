@@ -15,6 +15,11 @@
  * toggle. Result/recap state lands in D. Everything here is ephemeral — never serialized.
  */
 import { create } from 'zustand'
+import {
+  MAX_FED_TASKS,
+  type CommandFeedPush,
+  type CommandFeedState
+} from '../../../shared/commandFeedTypes'
 
 /** The task lifecycle state machine (kanban columns). Cards advance left→right as workers progress. */
 export type TaskStatus = 'queued' | 'routing' | 'executing' | 'reporting' | 'done' | 'failed'
@@ -121,6 +126,26 @@ export interface CommandTask {
   diff?: string
   /** Phase D — wall-clock ms when the task reached done/failed (the recap TIMELINE timestamp). */
   finishedAt?: number
+  /**
+   * P4 — this task was FED from an external orchestrator's worker (`commandFeed`), not dispatched
+   * from this board. Drives the `ext` chip and suppresses every local control: we did not spawn it,
+   * so ⚙ Configure / ↻ Retry would be lies (there is no `launchCommand` to re-run and no local
+   * pump slot to re-enter). Absent ⇒ a normal locally-dispatched task, byte-identical to before.
+   */
+  external?: true
+  /**
+   * P4 — why a fed worker cannot proceed (a `SwarmBlockedTag`, or its own raw blocked status).
+   * Orthogonal to `status`: a blocked worker stays in `executing` and grows a warn chip, rather
+   * than moving to a column that does not exist. Cleared by the next non-blocked push.
+   */
+  blockedTag?: string
+  /**
+   * P4 — the card's one MAIN-composed disclosure line (off-vocabulary status, blocked reason,
+   * idle interval). Rendered verbatim: a reason not in the surface does not exist.
+   */
+  disclose?: string
+  /** P4 — the role pack the fed worker was spawned under, when the ledger knows it. Meta chip only. */
+  role?: string
 }
 
 /**
@@ -158,9 +183,52 @@ export function recapBuckets(tasks: ReadonlyArray<CommandTask>): {
   return { now, timeline }
 }
 
+/** Statuses a task can no longer leave on its own — the settle set both the lookup and eviction read. */
+const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set(['done', 'failed'])
+
+/**
+ * P4 — the task a FED worker board is currently working, else the last one it finished.
+ *
+ * 🔒 SCAN NEWEST-FIRST. A worker board is reused: an orchestrator hands the next task to whichever
+ * worker went idle, so one board id matches several tasks, and a finished task KEEPS its group (it
+ * is the run's only record of who did the work). A first-match scan would pin every later report
+ * onto that board's FIRST-EVER task forever — task 2's result would overwrite task 1's while task 2
+ * never left `executing`. This is the exact shape of the live `[critical]` S2 shipped a fix for and
+ * S3 hit again; `swarmLedger.taskForBoard` is the same function on the ledger side.
+ *
+ * Prefer an OPEN task so a worker re-reporting on a task it already settled (a legitimate partial →
+ * final sequence) still lands on the row it belongs to rather than opening a phantom second card.
+ */
+export function externalTaskFor(
+  tasks: ReadonlyArray<CommandTask>,
+  boardId: string
+): CommandTask | undefined {
+  let newestSettled: CommandTask | undefined
+  for (let i = tasks.length - 1; i >= 0; i--) {
+    const t = tasks[i]
+    if (t.group?.terminalId !== boardId) continue
+    if (!TERMINAL_STATUSES.has(t.status)) return t
+    newestSettled ??= t
+  }
+  return newestSettled
+}
+
+/**
+ * P4 — map the closed feed vocabulary onto the kanban's `TaskStatus`.
+ *
+ * `blocked` has no column of its own ON PURPOSE: the column axis is LIFECYCLE, and a blocked worker
+ * is still executing — it just cannot proceed. Landing it as `executing` + a chip keeps the column
+ * counts honest; a sixth column would strand a finished-but-blocked worker outside Done.
+ */
+export function feedStateToStatus(state: CommandFeedState): TaskStatus {
+  return state === 'blocked' ? 'executing' : state
+}
+
 /** Monotonic per-session task id. Internal to commandStore (tasks are ephemeral, never serialized). */
 let taskSeq = 0
 const newTaskId = (): string => `task-${++taskSeq}`
+/** Monotonic per-session group id for a FED worker (it has no local `spawnGroup` to mint one). */
+let fedSeq = 0
 
 /** Which body the titlebar seg control shows. */
 export type CommandView = 'kanban' | 'groups'
@@ -181,6 +249,12 @@ interface CommandState {
   configuringTaskId: string | null
   /** The worker config chosen on the LAST dispatch — pre-fills the next config dialog. Session-scoped. */
   lastWorkerConfig: WorkerConfig | null
+  /**
+   * P4 — how many FED worker cards the cap has evicted this session. Rendered as the Done column's
+   * foot line (`+N more workers not shown · feed cap 50`). A silently-capped feed is worse than no
+   * feed: the human reads absence as "nothing happened", so the count is always on the surface.
+   */
+  fedDropped: number
   setView: (view: CommandView) => void
   /** Set collapsed; pass the pre-collapse height when collapsing so expand can restore it. */
   setCollapsed: (collapsed: boolean, expandedHeight?: number) => void
@@ -226,6 +300,13 @@ interface CommandState {
    */
   setTaskStatus: (id: string, status: TaskStatus) => void
   /**
+   * P4 — apply ONE external-worker feed push (`commandFeed`), upserting the fed task keyed by its
+   * worker board id. `title` is resolved by the CALLER against the live canvas (the renderer is the
+   * title authority; MAIN carries ids only). Absent push fields mean "unchanged" — a status-only
+   * push can never wipe a previously reported result.
+   */
+  applyFeed: (push: CommandFeedPush, title: string) => void
+  /**
    * Re-queue a failed task (the Done-column failed card's retry affordance) — clears its old group
    * so the dispatch pump re-spawns a fresh one. KEEPS the stored `launchCommand`/`prompt` so the
    * retry reuses the config (no re-config dialog). No-op if not failed.
@@ -241,7 +322,13 @@ interface CommandState {
  */
 export function commandStoreDefaults(): Pick<
   CommandState,
-  'tasks' | 'view' | 'collapsed' | 'expandedHeight' | 'configuringTaskId' | 'lastWorkerConfig'
+  | 'tasks'
+  | 'view'
+  | 'collapsed'
+  | 'expandedHeight'
+  | 'configuringTaskId'
+  | 'lastWorkerConfig'
+  | 'fedDropped'
 > {
   return {
     tasks: [],
@@ -249,8 +336,33 @@ export function commandStoreDefaults(): Pick<
     collapsed: false,
     expandedHeight: null,
     configuringTaskId: null,
-    lastWorkerConfig: null
+    lastWorkerConfig: null,
+    fedDropped: 0
   }
+}
+
+/**
+ * P4 — evict fed tasks down to {@link MAX_FED_TASKS}, OLDEST-SETTLED FIRST, returning the survivors
+ * plus how many were dropped. Locally-dispatched tasks are never touched (the human owns those) and
+ * a fed task that is still in flight is never evicted — dropping a live worker would erase the very
+ * thing the board exists to show. Pure + unit-testable; the caller adds the count to `fedDropped`.
+ */
+export function evictFedTasks(tasks: ReadonlyArray<CommandTask>): {
+  tasks: CommandTask[]
+  dropped: number
+} {
+  const fedCount = tasks.reduce((n, t) => n + (t.external ? 1 : 0), 0)
+  if (fedCount <= MAX_FED_TASKS) return { tasks: [...tasks], dropped: 0 }
+  let over = fedCount - MAX_FED_TASKS
+  const doomed = new Set<string>()
+  for (const t of tasks) {
+    if (over === 0) break
+    if (!t.external || !TERMINAL_STATUSES.has(t.status)) continue
+    doomed.add(t.id)
+    over -= 1
+  }
+  if (doomed.size === 0) return { tasks: [...tasks], dropped: 0 }
+  return { tasks: tasks.filter((t) => !doomed.has(t.id)), dropped: doomed.size }
 }
 
 export const useCommandStore = create<CommandState>((set) => ({
@@ -294,6 +406,44 @@ export const useCommandStore = create<CommandState>((set) => ({
     })),
   setTaskStatus: (id, status) =>
     set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? { ...t, status } : t)) })),
+  applyFeed: (push, title) =>
+    set((s) => {
+      const existing = externalTaskFor(s.tasks, push.boardId)
+      // A push that would only re-open a LOCALLY dispatched task is refused: the local pump owns
+      // that task's lifecycle (it is awaiting a settle), and a fed status would race it. The fed
+      // half of the board is strictly additive to what the human dispatched here.
+      if (existing && !existing.external) return s
+      const status = push.state ? feedStateToStatus(push.state) : undefined
+      const settled = status !== undefined && TERMINAL_STATUSES.has(status)
+      // `blocked` is the ONLY state that carries a tag; any other state clears it, so a stale
+      // reason can never outlive the block it described.
+      const blockedTag = push.state === 'blocked' ? push.blockedTag : undefined
+      const patch = {
+        ...(status !== undefined ? { status } : {}),
+        // Absent means UNCHANGED, never cleared — a status-only push must not wipe a report.
+        ...(push.result !== undefined ? { result: push.result } : {}),
+        ...(push.role !== undefined ? { role: push.role } : {}),
+        // `disclose` and `blockedTag` are state-scoped: they describe THIS push, so an absent value
+        // clears the previous one rather than leaving a stale line on the card.
+        disclose: push.disclose,
+        blockedTag,
+        ...(settled ? { finishedAt: Date.now() } : {})
+      }
+      if (existing) {
+        return { tasks: s.tasks.map((t) => (t.id === existing.id ? { ...t, ...patch } : t)) }
+      }
+      const task: CommandTask = {
+        id: newTaskId(),
+        title,
+        // A first push with no state is a bare result — the worker is reporting, not queued.
+        status: status ?? 'reporting',
+        external: true,
+        group: { groupId: `fed-${++fedSeq}`, terminalId: push.boardId },
+        ...patch
+      }
+      const { tasks, dropped } = evictFedTasks([...s.tasks, task])
+      return { tasks, ...(dropped > 0 ? { fedDropped: s.fedDropped + dropped } : {}) }
+    }),
   retryTask: (id) =>
     set((s) => ({
       // failed → queued; clear the group AND the prior run's result/diff/finishedAt so the
@@ -311,5 +461,7 @@ export const useCommandStore = create<CommandState>((set) => ({
           : t
       )
     })),
-  clearTasks: () => set({ tasks: [], configuringTaskId: null })
+  // The fed-drop count describes the tasks that were here; clearing them clears its subject too,
+  // otherwise an empty board would still claim workers were hidden.
+  clearTasks: () => set({ tasks: [], configuringTaskId: null, fedDropped: 0 })
 }))

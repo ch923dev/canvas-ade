@@ -15,6 +15,7 @@ import {
   type TaskStatus
 } from '../../../store/commandStore'
 import { parseDiffStat, hasDiff } from '../../../lib/diffStat'
+import { PublishFindingsBar } from './PublishFindingsBar'
 
 const STATUS_DOT: Record<TaskStatus, string> = {
   queued: 'var(--text-faint)',
@@ -25,9 +26,17 @@ const STATUS_DOT: Record<TaskStatus, string> = {
   failed: 'var(--err)'
 }
 
-/** The live sub-state line for an in-flight NOW row (honest, terse). */
-function liveLabel(status: TaskStatus): string {
-  switch (status) {
+/**
+ * The live sub-state line for an in-flight NOW row (honest, terse).
+ *
+ * P4: a FED worker gets its own copy. Every phrase below narrates the LOCAL dispatch choreography
+ * ("spawning worker group…", "computing diff…"), none of which this app is doing for a worker some
+ * external orchestrator is driving — claiming it would be a plain fabrication. A fed row speaks
+ * through MAIN's `disclose` line, and falls back to naming the state it is actually in.
+ */
+function liveLabel(task: CommandTask): string {
+  if (task.external) return task.disclose ?? (task.blockedTag ? `blocked · ${task.blockedTag}` : '')
+  switch (task.status) {
     case 'routing':
       return 'spawning worker group…'
     case 'executing':
@@ -73,8 +82,8 @@ export function CommandRecapView({
             <div key={t.id} style={nowRowStyle}>
               <span style={{ ...dotStyle, background: STATUS_DOT[t.status] }} />
               <span style={nowNameStyle}>{t.zoneName ?? t.title}</span>
-              <span style={nowStatusStyle}>{t.status}</span>
-              <span style={nowLiveStyle}>{liveLabel(t.status)}</span>
+              <span style={nowStatusStyle}>{t.external ? 'external' : t.status}</span>
+              <span style={nowLiveStyle}>{liveLabel(t)}</span>
             </div>
           ))
         )}
@@ -106,6 +115,10 @@ export function CommandRecapView({
           </div>
         )}
       </section>
+
+      {/* P4 — the end-of-run durable step. The recap is where you read what the run concluded, so
+          it is where you keep it: ONE confirmed batch onto a kanban board, never N add_cards. */}
+      <PublishFindingsBar />
     </div>
   )
 }

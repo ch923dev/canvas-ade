@@ -20,6 +20,8 @@ import { applyKanbanOps } from './kanbanMcpApply'
 import { applyPlanningEditOp } from './planningUpdateMcpApply'
 import { buildVisualizedContent, isVisualization } from './visualizeMcpApply'
 import { requestCameraFocus } from './cameraRequestStore'
+import { useCommandStore } from './commandStore'
+import { isCommandFeedState } from '../../../shared/commandFeedTypes'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /**
@@ -478,6 +480,52 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
         requestCameraFocus({ kind: 'all' })
       }
       return { ok: true, type: 'focusCamera' }
+    }
+    case 'commandFeed': {
+      // 🔒 P4: carry ONE external worker's live status/result into the EPHEMERAL commandStore so a
+      // worker this app never dispatched still renders on the Command board (the A7 gap). Writes NO
+      // canvas doc state — commandStore is runtime-only and never serialized — so there is no
+      // beginChange/undo involvement and, critically, no human confirm. That is what lets this
+      // channel carry N-worker status without the confirm storm durable content would cause.
+      const feed = command.feed
+      if (!feed || typeof feed.boardId !== 'string' || feed.boardId.length === 0) {
+        return { ok: false, error: 'commandFeed: invalid boardId' }
+      }
+      // Re-validate the CLOSED state vocabulary even though MAIN composed it — the value crosses
+      // IPC as JSON, and an off-vocabulary state must not become a phantom kanban column.
+      if (feed.state !== undefined && !isCommandFeedState(feed.state)) {
+        return { ok: false, error: `commandFeed: invalid state ${JSON.stringify(feed.state)}` }
+      }
+      const store = useCanvasStore.getState()
+      const board = store.boards.find((b) => b.id === feed.boardId)
+      if (!board) {
+        // The worker board left the canvas between MAIN composing the push and the applier running.
+        // Ack false so the host learns the target is gone rather than a card appearing for a board
+        // the human can no longer open.
+        return { ok: false, error: `commandFeed: board not found: ${feed.boardId}` }
+      }
+      // The renderer resolves the TITLE — MAIN carries ids and never becomes a second title
+      // authority (the rule S2 set with SwarmTriageRow and S3 kept with boardId2).
+      const before = useCommandStore.getState().tasks.filter((t) => t.external).length
+      useCommandStore.getState().applyFeed(feed, board.title)
+      // A canvas with no Command board still ACCEPTS the push: commandStore is a global store, so
+      // it fills regardless and the board is already populated the moment the human adds one. The
+      // `rendered` flag is how the host knows to disclose that absence instead of staying silent.
+      const rendered = store.boards.some((b) => b.type === 'command')
+      // Tell the human ONCE — on the first worker to report with nowhere to show it. The condition
+      // is derived (0 → 1 fed tasks), not a flag, so a project switch resets it for free along with
+      // the store. Silence here is the exact failure this lane exists to fix: with no board and no
+      // toast, "external workers are running" is indistinguishable from "nothing happened".
+      if (!rendered && before === 0 && useCommandStore.getState().tasks.some((t) => t.external)) {
+        showToast({
+          id: 'command-feed:no-board',
+          message:
+            'External workers are reporting. Add a Command board to watch them — their status is already being collected.',
+          kind: 'info',
+          sticky: true
+        })
+      }
+      return { ok: true, type: 'commandFeed', rendered }
     }
     case 'visualizePlan': {
       // 🔒 P5: CREATE a new board from a sanitized plan in the shape the human PICKED in the confirm

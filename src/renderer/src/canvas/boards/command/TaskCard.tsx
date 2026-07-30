@@ -32,8 +32,16 @@ const TAG_COLOR: Record<'term' | 'plan' | 'brow', string> = {
 
 const stop = (e: { stopPropagation: () => void }): void => e.stopPropagation()
 
-/** Honest in-flight sub-state copy for the card (none for ready-queued / done / failed). */
+/**
+ * Honest in-flight sub-state copy for the card (none for ready-queued / done / failed).
+ *
+ * P4: a FED worker's sub-state is not ours to narrate — every local phrase here describes the
+ * LOCAL dispatch choreography ("starting worker…", "collecting result…"), none of which is
+ * happening for a worker some external orchestrator is driving. Its card speaks through the
+ * MAIN-composed `disclose` line instead, so the board never invents a stage it cannot observe.
+ */
 function sublabelFor(task: CommandTask, configuring: boolean): string | undefined {
+  if (task.external) return undefined
   switch (task.status) {
     case 'queued':
       if (configuring) return 'configuring…'
@@ -77,12 +85,22 @@ export function TaskCard({
   // when a task failed with no recorded result (e.g. its worker board was closed mid-flight).
   const settled = task.status === 'done' || task.status === 'failed'
   const failed = task.status === 'failed'
+  // P4 — a FED worker (external orchestrator's). We did not spawn it, so ⚙ Configure and ↻ Retry
+  // are impossible (there is no stored launchCommand to re-run and no local pump slot to re-enter)
+  // and ■ Interrupt is not ours to offer — interrupting someone else's worker mid-run is a decision
+  // that belongs on ITS board, not on a read-only mirror of it.
+  const fed = task.external === true
+  const blocked = fed && typeof task.blockedTag === 'string' && task.blockedTag.length > 0
   const showDiff = hasDiff(task.diff)
   const stat = showDiff ? parseDiffStat(task.diff) : null
   const refs = task.result?.refs ?? []
   const summary =
-    task.result?.summary ?? (failed ? 'Worker ended without reporting a result.' : undefined)
-  const hasResultZone = settled && (summary !== undefined || refs.length > 0 || showDiff)
+    task.result?.summary ??
+    (failed && !task.external ? 'Worker ended without reporting a result.' : undefined)
+  // P4: a FED worker shows its result zone as soon as it HAS one, not only once settled. An
+  // off-vocabulary status parks the card in `reporting` on purpose (the safe, non-terminal
+  // fallback) — hiding the very report that could not be classified would be the worst of both.
+  const hasResultZone = (settled || fed) && (summary !== undefined || refs.length > 0 || showDiff)
   // A queued task whose config was cancelled / not yet set (has an engineered prompt but no launch
   // command, and its dialog is not currently open) — offer to re-open the config dialog.
   const needsConfig = task.status === 'queued' && !!prompt && !task.launchCommand && !configuring
@@ -107,18 +125,32 @@ export function TaskCard({
           }}
         >
           <span style={cardTitleStyle}>{task.title}</span>
-          {(tags.length > 0 || sub) && (
+          {(tags.length > 0 || sub || fed) && (
             <span style={metaRowStyle}>
+              {/* P4 — the origin chip. It is FIRST because "I did not dispatch this" changes how
+                  every other thing on the card should be read: no controls, no diff, and a summary
+                  that is the worker's own claim rather than a settle this board observed. */}
+              {fed && <span style={extTagStyle}>ext</span>}
+              {blocked && <span style={blockedTagStyle}>blocked</span>}
               {tags.map((t) => (
                 <span key={t} style={{ ...tagStyle, color: TAG_COLOR[t] }}>
                   {t}
                 </span>
               ))}
+              {fed && task.role && <span style={cardSubStyle}>{task.role}</span>}
+              {/* Settled fed results are the worker's own CLAIM — never a verification this board
+                  performed. S2's rule: the UI may not launder one into the other. */}
+              {fed && settled && <span style={cardSubStyle}>claimed · not verified</span>}
               {sub && <span style={cardSubStyle}>{sub}</span>}
             </span>
           )}
+          {/* P4 — MAIN's composed disclosure (off-vocabulary status, block reason, salvage note).
+              Rendered verbatim and always: a reason that is not in the surface does not exist. */}
+          {task.disclose && (
+            <span style={blocked ? discloseWarnStyle : cardSubStyle}>{task.disclose}</span>
+          )}
         </button>
-        {needsConfig && (
+        {!fed && needsConfig && (
           <button
             className="nodrag"
             title="Configure worker"
@@ -133,7 +165,7 @@ export function TaskCard({
             ⚙
           </button>
         )}
-        {task.status === 'executing' && (
+        {!fed && task.status === 'executing' && (
           <button
             className="nodrag"
             title="Interrupt (Ctrl-C)"
@@ -148,7 +180,7 @@ export function TaskCard({
             ■
           </button>
         )}
-        {task.status === 'failed' && (
+        {!fed && task.status === 'failed' && (
           <button
             className="nodrag"
             title="Retry"
@@ -312,6 +344,26 @@ const cardSubStyle: CSSProperties = {
   fontFamily: 'var(--mono)',
   fontSize: 9.5
 }
+// ── P4 — the fed-worker chips + disclosure line ────────────────────────────────────────────────
+/** The origin chip. Accent-tinted (the one functional accent) — it is a FACT about the card, not
+ *  a status, so it borrows the accent rather than any of the status colours. */
+const extTagStyle: CSSProperties = {
+  ...tagStyle,
+  color: 'var(--accent)',
+  background: 'var(--accent-wash)',
+  border: '1px solid rgba(79,140,255,.35)'
+}
+/** The blocked chip. Warn-tinted to match the board's `blocked` attention ring — the same worker
+ *  state told twice, on the board and on the card, in the same colour. */
+const blockedTagStyle: CSSProperties = {
+  ...tagStyle,
+  color: 'var(--warn)',
+  background: 'var(--warn-wash)',
+  border: '1px solid rgba(232,179,57,.35)'
+}
+/** The disclosure line when it carries a BLOCK reason — warn, because it is the reason the card
+ *  is asking for attention. Every other disclosure stays quiet (`cardSubStyle`). */
+const discloseWarnStyle: CSSProperties = { ...cardSubStyle, color: 'var(--warn)' }
 const promptPanelStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',

@@ -1,0 +1,1846 @@
+<meta charset="utf-8" />
+<title>
+  P4 — Design gate: observability feed + durable aggregation (the make-it-visible slice)
+</title>
+<style>
+  /* ============================================================================
+     TOKENS — verbatim from src/renderer/src/styles/tokens.css (the app contract).
+     Nothing invented. Same rule as the S1/S2/S3 artifacts: prove the surface lands
+     inside the existing visual system instead of importing a second palette.
+     ============================================================================ */
+  :root {
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+
+    --void: #0a0a0b;
+    --grid-dot: #202022;
+    --surface: #141416;
+    --surface-raised: #1a1a1d;
+    --surface-overlay: #1e1e22;
+    --inset: #0e0e10;
+
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.16);
+
+    --text: #ededee;
+    --text-2: #9b9ba1;
+    --text-3: #7b7b81;
+    --text-faint: #46464b;
+
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+    --accent-wash: rgba(79, 140, 255, 0.14);
+    --ok: #3ecf8e;
+    --warn: #e8b339;
+    --warn-wash: rgba(232, 179, 57, 0.12);
+    --err: #f2545b;
+    --ok-wash: rgba(62, 207, 142, 0.14);
+    --err-wash: rgba(242, 84, 91, 0.14);
+    --scrim: rgba(0, 0, 0, 0.5);
+
+    --fs-micro: 10px;
+    --lh-micro: 14px;
+    --fw-micro: 500;
+    --tr-micro: 0.06em;
+    --fs-meta: 11px;
+    --lh-meta: 16px;
+    --fw-meta: 450;
+    --fs-label: 12px;
+    --lh-label: 16px;
+    --fw-label: 500;
+    --fs-body: 13px;
+    --lh-body: 20px;
+    --fs-term: 12.5px;
+    --lh-term: 19px;
+    --fs-h: 15px;
+    --lh-h: 22px;
+    --fw-h: 600;
+    --tr-h: -0.01em;
+
+    --r-board: 8px;
+    --r-inner: 6px;
+    --r-ctl: 5px;
+    --r-pill: 999px;
+    --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+  }
+
+  html {
+    background: var(--void);
+  }
+  body {
+    background: var(--void);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 13px;
+    line-height: 20px;
+    margin: 0;
+    padding: 0 0 72px;
+  }
+  ::selection {
+    background: var(--accent-wash);
+  }
+
+  .wrap {
+    max-width: 1340px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .doc-head {
+    padding: 40px 0 8px;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 14px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .doc-head h1 {
+    font-size: 21px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 6px 0 8px;
+  }
+  .doc-head .meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    margin: 0;
+  }
+
+  h2.sec {
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 48px 0 4px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2.sec .num {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 450;
+    color: var(--text-faint);
+  }
+  h3.sub {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 26px 0 8px;
+    color: var(--text);
+  }
+  p.lede {
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 20px;
+    margin: 6px 0 18px;
+    max-width: 88ch;
+  }
+  p.note {
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 18px;
+    margin: 10px 0 0;
+    max-width: 92ch;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  b.hi {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  table.tbl {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0 4px;
+    font-size: 12px;
+  }
+  table.tbl th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--border);
+    padding: 0 12px 6px 0;
+  }
+  table.tbl td {
+    vertical-align: top;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 12px 8px 0;
+    line-height: 18px;
+  }
+  table.tbl td:first-child {
+    color: var(--text);
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  table.tbl td .yes {
+    color: var(--ok);
+  }
+  table.tbl td .no {
+    color: var(--text-faint);
+  }
+  table.tbl td .warnc {
+    color: var(--warn);
+  }
+  table.tbl td .errc {
+    color: var(--err);
+  }
+
+  .cap {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 8px;
+  }
+  .stage {
+    background:
+      radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--void);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-board);
+    padding: 22px;
+    margin: 12px 0 4px;
+    overflow-x: auto;
+  }
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .row3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 14px 15px;
+  }
+  .panel h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .panel p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--text-2);
+  }
+  .panel.pick {
+    border-color: var(--accent);
+    background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--surface);
+  }
+  .panel.gated {
+    border-color: rgba(232, 179, 57, 0.4);
+  }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0 5px;
+    color: var(--text-3);
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .tag.rec {
+    color: var(--accent);
+    border-color: rgba(79, 140, 255, 0.4);
+  }
+  .tag.new {
+    color: var(--ok);
+    border-color: rgba(62, 207, 142, 0.35);
+  }
+  .tag.gate {
+    color: var(--warn);
+    border-color: rgba(232, 179, 57, 0.4);
+  }
+  .tag.old {
+    color: var(--text-faint);
+  }
+
+  ul.pts {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 19px;
+  }
+  ul.pts li {
+    margin-bottom: 5px;
+  }
+  ul.pts li b {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .flow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 21px;
+    color: var(--text-2);
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 14px 16px;
+    margin: 12px 0 0;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .flow b {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .flow .add {
+    color: var(--ok);
+  }
+  .flow .dead {
+    color: var(--err);
+  }
+  .flow .dim {
+    color: var(--text-faint);
+  }
+
+  /* ==========================================================================
+     BOARD CHROME — the Command board renders from INLINE styles in
+     CommandBoard.tsx / TaskCard.tsx (it has no .css file). Every value below is
+     transcribed from those style objects, so what renders here is what ships.
+     ========================================================================== */
+  .board {
+    width: 1180px;
+    height: 520px;
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-board);
+    overflow: hidden;
+    margin: 0 auto;
+  }
+  .board-bar {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .board-bar .glyph {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--accent);
+    background: var(--accent-wash);
+  }
+  .board-bar .seg {
+    margin-left: auto;
+    display: flex;
+    gap: 2px;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    padding: 1px;
+  }
+  .board-bar .seg span {
+    padding: 1px 9px;
+    border-radius: 3px;
+    font-size: 10.5px;
+    color: var(--text-3);
+  }
+  .board-bar .seg span.on {
+    background: var(--surface-overlay);
+    color: var(--text);
+  }
+  .board-body {
+    position: absolute;
+    inset: 30px 0 0;
+    padding: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+  }
+
+  /* worker-pool strip */
+  .pool {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .pool-lbl {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-micro);
+    letter-spacing: var(--tr-micro);
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .pool-slot {
+    width: 26px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-subtle);
+  }
+  .pool-slot.busy {
+    background: var(--ok);
+    border-color: var(--ok);
+  }
+  .pool-slot.ext {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .pool-count {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-left: 2px;
+  }
+
+  /* columns */
+  .cols {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
+  }
+  .col {
+    flex: 1;
+    min-width: 0;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    padding: 8px 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .col.hot {
+    border-color: rgba(79, 140, 255, 0.25);
+  }
+  .col-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 1px 1px;
+  }
+  .col-name {
+    color: var(--text-3);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    flex: 1;
+  }
+  .col-count {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+  .col-foot {
+    margin-top: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-faint);
+    padding-top: 4px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  /* task card — transcribed from TaskCard.tsx cardStyle & friends */
+  .tc {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    flex: none;
+  }
+  .tc-row {
+    display: flex;
+    gap: 7px;
+    align-items: flex-start;
+  }
+  .tc-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex: none;
+    margin-top: 4px;
+  }
+  .tc-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+  }
+  .tc-title {
+    color: var(--text-2);
+    font-size: 11px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .tc-meta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .tc-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--surface-overlay);
+  }
+  .tc-sub {
+    color: var(--text-faint);
+    font-family: var(--mono);
+    font-size: 9.5px;
+  }
+  .tc-sub.warn {
+    color: var(--warn);
+  }
+  .tc-btn {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  /* P4 NEW — the external-origin chip on a fed card. */
+  .tc-tag.ext {
+    color: var(--accent);
+    background: var(--accent-wash);
+    border: 1px solid rgba(79, 140, 255, 0.35);
+    padding: 0 4px;
+  }
+  /* P4 NEW — the blocked chip on a fed card that cannot proceed. */
+  .tc-tag.blk {
+    color: var(--warn);
+    background: var(--warn-wash);
+    border: 1px solid rgba(232, 179, 57, 0.35);
+    padding: 0 4px;
+  }
+  /* result zone — TaskCard.tsx resultStyle & friends */
+  .tc-res {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 7px;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+  }
+  .tc-sum {
+    color: var(--text-2);
+    font-size: 10.5px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .tc-refs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+  .tc-ref {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    padding: 0 5px;
+    border-radius: 3px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-subtle);
+    white-space: nowrap;
+  }
+  .tc-stat {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    display: inline-flex;
+    gap: 5px;
+    margin-left: auto;
+  }
+  .tc-pill {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-pill);
+    padding: 1px 8px;
+  }
+  .tc-pill.go {
+    color: var(--accent-hover);
+    border-color: rgba(79, 140, 255, 0.4);
+  }
+
+  /* ── attention overlay mock — board-attention.css semantics ── */
+  .attn-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  .attn-cell {
+    position: relative;
+  }
+  .mini {
+    position: relative;
+    height: 108px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    overflow: hidden;
+  }
+  .mini-bar {
+    height: 22px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-3);
+  }
+  .mini-body {
+    padding: 8px;
+    font-family: var(--term-mono);
+    font-size: 9px;
+    line-height: 14px;
+    color: var(--text-faint);
+  }
+  .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-board);
+    pointer-events: none;
+  }
+  .ring[data-kind='needs-input'] {
+    box-shadow: 0 0 0 2px var(--warn);
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  .ring[data-kind='blocked'] {
+    box-shadow: 0 0 0 2px var(--warn);
+    opacity: 0.72;
+  }
+  .ring[data-kind='error'] {
+    box-shadow: 0 0 0 2px var(--err);
+  }
+  .ring[data-kind='done'] {
+    box-shadow: 0 0 0 2px var(--ok);
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.42;
+    }
+  }
+  .badge {
+    position: absolute;
+    top: -9px;
+    right: 8px;
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  .badge[data-kind='needs-input'],
+  .badge[data-kind='blocked'] {
+    color: var(--warn);
+    border-color: rgba(232, 179, 57, 0.5);
+  }
+  .badge[data-kind='error'] {
+    color: var(--err);
+    border-color: rgba(242, 84, 91, 0.5);
+  }
+  .badge[data-kind='done'] {
+    color: var(--ok);
+    border-color: rgba(62, 207, 142, 0.5);
+  }
+  .attn-cap {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    margin-top: 10px;
+    line-height: 16px;
+  }
+  .attn-cap b {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* ── modal mock — Modal.tsx + BatchConfirmModal.tsx transcribed ── */
+  .scrim {
+    background: var(--scrim);
+    border-radius: var(--r-board);
+    padding: 34px 0;
+    display: flex;
+    justify-content: center;
+  }
+  .modal {
+    width: 620px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    box-shadow: var(--shadow-pop);
+    padding: 18px 20px 16px;
+  }
+  .modal h3 {
+    margin: 0;
+    font-size: var(--fs-h);
+    line-height: var(--lh-h);
+    font-weight: var(--fw-h);
+    letter-spacing: var(--tr-h);
+  }
+  .modal p.blurb {
+    margin: 8px 0 16px;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: var(--text-2);
+  }
+  .modal .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .brow {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 10px;
+    align-items: start;
+    text-align: left;
+    width: 100%;
+    padding: 10px 11px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--accent);
+    background: var(--accent-wash);
+    color: var(--text);
+    box-sizing: border-box;
+  }
+  .brow.off {
+    border-color: var(--border-subtle);
+    background: var(--surface);
+  }
+  .bbox {
+    margin-top: 1px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--void);
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    flex: none;
+  }
+  .brow.off .bbox {
+    border-color: var(--border-strong);
+    background: var(--inset);
+    color: transparent;
+  }
+  .blabel {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-meta);
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    margin-bottom: 3px;
+  }
+  .bbody {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-term);
+    line-height: var(--lh-term);
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .sev {
+    font-weight: 600;
+  }
+  .sev.hi {
+    color: var(--err);
+  }
+  .sev.med {
+    color: var(--warn);
+  }
+  .sev.low {
+    color: var(--text-3);
+  }
+  .modal .acts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .btn-ghost {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    color: var(--text-2);
+    font-size: var(--fs-label);
+    font-weight: var(--fw-label);
+  }
+  .btn-primary {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: var(--r-ctl);
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--void);
+    font-size: var(--fs-label);
+    font-weight: 600;
+  }
+  .modal .discl {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    margin: 0 0 12px;
+    line-height: 15px;
+  }
+
+  /* toast mock */
+  .toast {
+    width: 380px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-inner);
+    box-shadow: var(--shadow-pop);
+    padding: 10px 12px;
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    margin: 0 auto;
+  }
+  .toast .tdot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--accent);
+    margin-top: 5px;
+    flex: none;
+  }
+  .toast .ttext {
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--text-2);
+  }
+  .toast .ttext b {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .qbox {
+    border: 1px solid var(--accent);
+    background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--surface);
+    border-radius: var(--r-inner);
+    padding: 16px 18px;
+    margin: 14px 0 0;
+  }
+  .qbox h4 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .qbox p {
+    margin: 0 0 4px;
+    font-size: 12px;
+    line-height: 19px;
+    color: var(--text-2);
+  }
+  .qbox ol {
+    margin: 8px 0 0;
+    padding-left: 20px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 20px;
+  }
+  .qbox ol li {
+    margin-bottom: 8px;
+  }
+  .qbox ol li b {
+    color: var(--text);
+    font-weight: 600;
+  }
+</style>
+
+<div class="wrap">
+  <div class="doc-head">
+    <div class="kicker">Orchestration · base Phase 4 · lane P4</div>
+    <h1>Observability feed + durable aggregation — the make-it-visible slice</h1>
+    <p class="meta">
+      2026-07-28 · branch <code>feat/orch-observability</code> · base
+      <code>daed5929</code> (v0.38.0, P3/S3 merged)<br />
+      NOT the S4 lane (docked lead terminal · autonomy tiers · cost ceiling) — that rides base
+      Phases 1/5 and is out of scope here.
+    </p>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec"><span class="num">01</span> The gap, as one path</h2>
+  <p class="lede">
+    Phases 0–3 shipped the machinery. A worker CAN report — <code>write_result</code> is the
+    sanctioned, no-confirm, own-board-bound self-report channel. What is missing is everything after
+    the recording. The path stops in a <b class="hi">Map</b>.
+  </p>
+
+  <div class="flow">
+    worker terminal └─ <b>write_result</b> {status, summary, refs[]}
+    <span class="dim">(MCP, worker tier, NO human confirm)</span> └─ mcpBoot.ts:109 recordResult →
+    <b>recordBoardResult(id, result)</b> └─ boardResults.ts:13
+    <b>const results = new Map&lt;string, BoardResult&gt;()</b> ├─ read by
+    canvas://board/{id}/result <span class="dim">← only if an agent asks</span> ├─ read by
+    awaitSettled <span class="dim">← only if someone is blocked on it</span> └─ read by
+    boardResultSynth <span class="dim">← only on salvage</span>
+
+    <span class="dead">✗ no push to the renderer</span>
+    <span class="dead">✗ no board renders it</span>
+    <span class="dead">✗ no toast, no ring, no OS notification</span>
+  </div>
+
+  <p class="note">
+    The one exception (the DISPUTED→corrected A7 claim): a worker dispatched <em>through</em> the
+    Command board surfaces in its recap TIMELINE, because that dispatch parks
+    <code>awaitSettled</code> on it and snapshots the result onto its own task. A worker an
+    <b class="hi">external</b> orchestrator spawned has no such task — nothing is waiting, so
+    nothing is shown. That is the whole of P4's problem.
+  </p>
+
+  <h3 class="sub">Second dead end: two attention buckets with no producer</h3>
+  <div class="flow">
+    <b>boardStatus.ts:48</b> attention 'needs-input' → bucket 'awaiting-review'
+    <span class="dim">(producer: Claude hook 'Notification' only)</span>
+    <b>boardStatus.ts:49</b> attention 'error' → bucket 'failed' <b>boardStatus.ts:87</b> bucket
+    'blocked' → pill { --warn, "blocked" }
+    <span class="dead">← declared, styled, and NEVER PRODUCED</span>
+
+    AttentionKind = 'done' | 'needs-input' | 'error'
+    <span class="dead">← no member maps to 'blocked'</span> SWARM_BLOCKED_TAGS = needs_input · lost
+    · failing_check · overlap · stalled · dependency · dirty_worktree · unreviewed · merge_ready
+    <span class="dim">← S2/S3 already classify all nine…</span>
+    <span class="dead">…and none of them reaches the canvas ring</span>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec">
+    <span class="num">02</span> What P4 builds — and the confirm budget that shapes it
+  </h2>
+  <p class="lede">
+    The load-bearing constraint:
+    <b class="hi">high-frequency N-worker status must never be a durable content write.</b> Every
+    <code>add_card</code> / <code>add_planning_element</code> is human-confirmed, so streaming
+    status as durable content fires N confirm prompts at exactly the scale the feature exists for.
+    Every row below is chosen so the confirm column reads <b class="hi">0</b> except once.
+  </p>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Signal</th>
+        <th>Frequency</th>
+        <th>Channel</th>
+        <th>Durable?</th>
+        <th>Human confirms</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>worker status change</td>
+        <td>high — N workers × many transitions</td>
+        <td><code>commandFeed</code> McpCommand → <code>commandStore</code> (ephemeral)</td>
+        <td><span class="no">no</span></td>
+        <td><span class="yes">0</span></td>
+      </tr>
+      <tr>
+        <td>worker <code>write_result</code></td>
+        <td>1–3 per worker</td>
+        <td>same <code>commandFeed</code> — result zone on the card</td>
+        <td><span class="no">no</span></td>
+        <td><span class="yes">0</span></td>
+      </tr>
+      <tr>
+        <td>worker blocked / needs you</td>
+        <td>medium</td>
+        <td>attention ring + badge + OS notify + <code>canvas://attention</code></td>
+        <td><span class="no">no</span></td>
+        <td><span class="yes">0</span></td>
+      </tr>
+      <tr>
+        <td>merged findings</td>
+        <td><b class="hi">once, at end of run</b></td>
+        <td>batch modal → ONE <code>patchKanban</code> carrying N <code>add</code> ops</td>
+        <td><span class="yes">yes</span></td>
+        <td><span class="warnc">1 (for all N)</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note">
+    Nothing else is added. If a design makes the human click N times for N workers, it is the wrong
+    design — this table is the test every decision below has to pass.
+  </p>
+
+  <div class="flow">
+    <span class="add">P4 adds three edges, no new sync path:</span>
+
+    worker <b>write_result</b> ──▶ recordBoardResult (unchanged) │ ├─<span class="add">▶ ①</span>
+    observeBoardResult(id) ──▶ sendMcpCommand{ <b>commandFeed</b> } ──▶ useMcpCommands ──▶
+    <b>commandStore</b> ──▶ Command board │
+    <span class="dim">the ONE canvas write pipe — S1/S2/S3's rule, fourth lane running</span>
+    └─<span class="add">▶ ②</span> classifyAttention(result, ledgerTag) ──▶ lifecycle deliver ──▶
+    ring · badge · OS notify · canvas://attention end of run ────────────────<span class="add"
+      >▶ ③</span
+    >
+    composeFindings(boardResults + ledger) ──▶ BatchConfirmModal (N rows, 1 gesture) ──▶
+    <b>patchKanban</b>[N adds]
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec">
+    <span class="num">03</span> D1 — how an external worker renders on the Command board
+  </h2>
+  <p class="lede">
+    The Command board already <em>is</em> the lifecycle kanban with per-task result zones. The
+    question is only where a worker nobody dispatched from here lands.
+  </p>
+
+  <div class="row3">
+    <div class="panel pick">
+      <h4>A · Same five columns, <code>ext</code> chip <span class="tag rec">recommended</span></h4>
+      <p>
+        A fed worker becomes a normal task in Queued→Done, marked with a blue <code>ext</code> chip
+        and carrying no local controls (no ⚙, no ↻ — we did not spawn it, we cannot retry it).
+      </p>
+      <ul class="pts">
+        <li>
+          <b>Why:</b> the columns already encode exactly this lifecycle. One surface, one scan.
+        </li>
+        <li>
+          <b>Why:</b> zero change to <code>tasksInColumn</code> / <code>recapBuckets</code> — a fed
+          task flows into the recap NOW/TIMELINE for free.
+        </li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>B · Separate "External" lane below</h4>
+      <p>
+        A second row of cards under the kanban. Cleanly separated, but it doubles the board's height
+        budget and splits "what is running right now" across two places the eye has to join.
+      </p>
+    </div>
+    <div class="panel">
+      <h4>C · A sixth column</h4>
+      <p>
+        Rejected: the column axis is <em>lifecycle</em>, not <em>origin</em>. A sixth column would
+        put a finished external worker in a non-Done column and make the counts lie.
+      </p>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top: 26px">
+    Pixels · Command board with three fed external workers (option A)
+  </p>
+  <div class="stage">
+    <div class="board">
+      <div class="board-bar">
+        <span class="glyph"></span><span>Command</span>
+        <span style="color: var(--text-faint)">· orchestrator</span>
+        <span class="seg"><span class="on">Kanban</span><span>Groups</span></span>
+      </div>
+      <div class="board-body">
+        <div class="pool">
+          <span class="pool-lbl">Workers</span>
+          <span class="pool-slot busy"></span>
+          <span class="pool-slot ext"></span>
+          <span class="pool-slot ext"></span>
+          <span class="pool-slot"></span>
+          <span class="pool-count">3 / 4 · 2 external</span>
+        </div>
+        <div class="cols">
+          <div class="col">
+            <div class="col-head">
+              <span class="col-name">Queued</span><span class="col-count">0</span>
+            </div>
+          </div>
+          <div class="col">
+            <div class="col-head">
+              <span class="col-name">Routing</span><span class="col-count">0</span>
+            </div>
+          </div>
+          <div class="col hot">
+            <div class="col-head">
+              <span class="col-name">Executing</span><span class="col-count">2</span>
+            </div>
+
+            <!-- fed external worker, running -->
+            <div class="tc">
+              <div class="tc-row">
+                <span class="tc-dot" style="background: var(--ok)"></span>
+                <div class="tc-body">
+                  <div class="tc-title">reviewer-2 · audit src/main/preview*</div>
+                  <div class="tc-meta">
+                    <span class="tc-tag ext">ext</span>
+                    <span class="tc-tag" style="color: var(--ok)">term</span>
+                    <span class="tc-sub">code-reviewer</span>
+                  </div>
+                  <div class="tc-sub">running · 4m 12s since last report</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- fed external worker, BLOCKED -->
+            <div class="tc" style="border-color: rgba(232, 179, 57, 0.35)">
+              <div class="tc-row">
+                <span class="tc-dot" style="background: var(--warn)"></span>
+                <div class="tc-body">
+                  <div class="tc-title">builder-1 · migrate settings schema</div>
+                  <div class="tc-meta">
+                    <span class="tc-tag ext">ext</span>
+                    <span class="tc-tag blk">blocked</span>
+                    <span class="tc-sub">builder</span>
+                  </div>
+                  <div class="tc-sub warn">
+                    needs_input — worker asked a question, waiting on you
+                  </div>
+                </div>
+                <span class="tc-btn" style="color: var(--accent)">↗</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="col-head">
+              <span class="col-name">Reporting</span><span class="col-count">1</span>
+            </div>
+            <!-- off-vocabulary status: safe fallback keeps it UNSETTLED and visible -->
+            <div class="tc">
+              <div class="tc-row">
+                <span class="tc-dot" style="background: var(--warn)"></span>
+                <div class="tc-body">
+                  <div class="tc-title">reviewer-3 · audit src/renderer/store</div>
+                  <div class="tc-meta">
+                    <span class="tc-tag ext">ext</span>
+                    <span class="tc-sub">code-reviewer</span>
+                  </div>
+                  <div class="tc-sub warn">
+                    unrecognized status "partial-ok" — treated as unsettled
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="col-head">
+              <span class="col-name">Done</span><span class="col-count">4</span>
+            </div>
+            <!-- fed external worker, settled with a result zone -->
+            <div class="tc">
+              <div class="tc-row">
+                <span class="tc-dot" style="background: var(--ok)"></span>
+                <div class="tc-body">
+                  <div class="tc-title">reviewer-1 · audit src/main/pty*</div>
+                  <div class="tc-meta">
+                    <span class="tc-tag ext">ext</span>
+                    <span class="tc-sub">claimed · not verified</span>
+                  </div>
+                </div>
+              </div>
+              <div class="tc-res">
+                <div class="tc-sum">3 findings — one real (pid reuse in killTree), two low.</div>
+                <div class="tc-refs">
+                  <span class="tc-ref">src/main/pty.ts:774</span>
+                  <span class="tc-ref">src/main/pty.ts:839</span>
+                  <span class="tc-stat"
+                    ><span style="color: var(--ok)">+0</span
+                    ><span style="color: var(--err)">−0</span></span
+                  >
+                </div>
+                <div class="tc-refs"><span class="tc-pill go">↗ zone</span></div>
+              </div>
+            </div>
+            <div class="col-foot">+3 more workers not shown · feed cap 50</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    Four things in that mock are load-bearing, not decoration: the <code>ext</code> chip (you always
+    know what you did not dispatch); <code>claimed · not verified</code> on the settled card (S2's
+    rule — the UI never launders a worker's claim into a verification); the
+    <code>unrecognized status "partial-ok" — treated as unsettled</code> line (the off-vocabulary
+    fallback, stated in the visible string); and
+    <code>+3 more workers not shown · feed cap 50</code> (a silently-capped feed reads as "nothing
+    happened", which is worse than no feed).
+  </p>
+
+  <h3 class="sub">The lookup discipline (the S2 <em>and</em> S3 <code>[critical]</code>)</h3>
+  <p class="note">
+    A worker board is reused: the orchestrator hands the next task to whoever went idle, so one
+    board id matches several tasks. <code>externalTaskFor(tasks, boardId)</code> scans
+    <b class="hi">newest-first</b> and prefers a non-terminal task — mirroring
+    <code>swarmLedger.taskForBoard</code> exactly. A first-match scan would pin every later report
+    onto the board's first-ever task; that is the identical bug S2 shipped a fix for and S3 hit
+    again.
+  </p>
+
+  <h3 class="sub">When there is no Command board on the canvas</h3>
+  <div class="stage" style="padding: 26px 22px">
+    <div class="toast">
+      <span class="tdot"></span>
+      <span class="ttext">
+        <b>4 external workers are reporting.</b> Add a Command board to watch them — their status is
+        already being collected.
+      </span>
+    </div>
+  </div>
+  <p class="note">
+    The Command board is user-created and singleton. <code>commandStore</code> is a global store, so
+    the feed fills it regardless — when the human adds the board it is already populated, nothing is
+    lost. One toast, once per session, so the absence is never silent.
+  </p>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec"><span class="num">04</span> D2 — waking the two dead attention buckets</h2>
+  <p class="lede">
+    The ring, badge, OS notification and <code>canvas://attention</code> machinery all exist and all
+    work. What is missing is a producer. P4 adds one, plus one new attention kind so the
+    declared-but-unproduced <code>blocked</code> bucket finally has a source.
+  </p>
+
+  <div class="row2">
+    <div class="panel pick">
+      <h4>
+        A · Add <code>blocked</code> as a fourth AttentionKind
+        <span class="tag rec">recommended</span>
+      </h4>
+      <p>
+        <code>needs-input</code> keeps the pulsing warn ring (<em
+          >act now — it is asking you something</em
+        >). <code>blocked</code> gets a steady warn ring (<em>stuck — look when you can</em>).
+        Different urgency, same colour family, no new palette.
+      </p>
+      <ul class="pts">
+        <li>
+          <b>Unlocks</b> <code>boardStatusBucket → 'blocked'</code>, which agents read over
+          <code>canvas://attention</code>. Half the P4 ask is exactly this bucket.
+        </li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>B · Reuse <code>needs-input</code> for everything</h4>
+      <p>
+        Cheaper — no vocabulary change, no CSS. But the <code>blocked</code> bucket stays dead
+        forever, a stalled worker and a worker asking you a question look identical, and the
+        roadmap's "route <code>blocked</code>/<code>awaiting-review</code> through attention" is
+        only half done.
+      </p>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top: 26px">Pixels · the four attention kinds on a worker board</p>
+  <div class="stage">
+    <div class="attn-grid">
+      <div class="attn-cell">
+        <div class="mini">
+          <div class="mini-bar">builder-1</div>
+          <div class="mini-body">› applying migration…<br />› 14 files changed</div>
+          <div class="ring" data-kind="needs-input"></div>
+          <span class="badge" data-kind="needs-input">● needs you</span>
+        </div>
+        <p class="attn-cap">
+          <b>needs-input</b> → bucket <code>awaiting-review</code><br />pulsing warn ring ·
+          <em>existing</em>
+        </p>
+      </div>
+      <div class="attn-cell">
+        <div class="mini">
+          <div class="mini-bar">builder-2</div>
+          <div class="mini-body">› waiting on task 3…<br />› silent 11m</div>
+          <div class="ring" data-kind="blocked"></div>
+          <span class="badge" data-kind="blocked">⏸ blocked</span>
+        </div>
+        <p class="attn-cap">
+          <b>blocked</b> → bucket <code>blocked</code><br />steady warn ring ·
+          <span style="color: var(--ok)">P4 NEW</span>
+        </p>
+      </div>
+      <div class="attn-cell">
+        <div class="mini">
+          <div class="mini-bar">reviewer-4</div>
+          <div class="mini-body">› process exited (1)</div>
+          <div class="ring" data-kind="error"></div>
+          <span class="badge" data-kind="error">! error</span>
+        </div>
+        <p class="attn-cap">
+          <b>error</b> → bucket <code>failed</code><br />steady err ring · <em>existing</em>
+        </p>
+      </div>
+      <div class="attn-cell">
+        <div class="mini">
+          <div class="mini-bar">reviewer-1</div>
+          <div class="mini-body">› write_result ok<br />› 3 findings</div>
+          <div class="ring" data-kind="done"></div>
+          <span class="badge" data-kind="done">✓ done</span>
+        </div>
+        <p class="attn-cap">
+          <b>done</b> → normal derivation<br />steady ok ring · <em>existing</em>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sub">The detection, and where it comes from</h3>
+  <p class="note">
+    Two producers, both host-side, both reusing classification that already exists. P2's
+    <code>swarmWatch</code> already decides <code>blocked</code> / <code>lost</code> /
+    <code>stalled</code>
+    — P4 wires that decision to the ring rather than inventing a second notion of blocked.
+  </p>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Trigger</th>
+        <th>Attention kind</th>
+        <th>Bucket</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>write_result</td>
+        <td><code>status</code> ∈ blocked / needs-input / waiting</td>
+        <td>needs-input</td>
+        <td>awaiting-review</td>
+      </tr>
+      <tr>
+        <td>write_result</td>
+        <td><code>status</code> ∈ done / ok / success</td>
+        <td>done</td>
+        <td><span class="no">(normal derivation)</span></td>
+      </tr>
+      <tr>
+        <td>write_result</td>
+        <td><code>status</code> ∈ failed / error</td>
+        <td>error</td>
+        <td>failed</td>
+      </tr>
+      <tr>
+        <td>ledger tag</td>
+        <td><code>needs_input</code> · <code>unreviewed</code> · <code>merge_ready</code></td>
+        <td>needs-input</td>
+        <td>awaiting-review</td>
+      </tr>
+      <tr>
+        <td>ledger tag</td>
+        <td>
+          <code>lost</code> · <code>stalled</code> · <code>failing_check</code> ·
+          <code>dependency</code> · <code>overlap</code> · <code>dirty_worktree</code>
+        </td>
+        <td>blocked</td>
+        <td>blocked</td>
+      </tr>
+      <tr>
+        <td><b>fallback</b></td>
+        <td>anything off-vocabulary</td>
+        <td><span class="warnc">blocked</span></td>
+        <td><span class="warnc">blocked</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note">
+    <b class="hi">Why <code>blocked</code> is the safe fallback:</b> the failure mode to avoid is
+    silence. Falling back to <code>done</code> would launder an unknown state into success; falling
+    back to <code>error</code> would claim a failure that was never reported.
+    <code>blocked</code> claims only "this worker is not making progress and I could not classify
+    why" — which is true, visible, and reversible by the next report.
+  </p>
+
+  <p class="note">
+    <b class="hi">No notifications-config schema change.</b> The OS/toast layer stays gated by the
+    existing <code>onInput</code> / <code>onError</code> / <code>onDone</code> switches — a blocked
+    worker rides the existing <code>needs-input</code> lifecycle event through
+    <code>gateNotification</code>, and only the on-canvas kind carries the finer distinction (an
+    additive optional field on the <code>notify:lifecycle</code> payload). No new settings row, no
+    config migration, no default to pick.
+  </p>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec">
+    <span class="num">05</span> D3 — the batched findings write
+    <span class="tag gate">your call</span>
+  </h2>
+  <p class="lede">
+    This is where the no-confirm-storm promise is kept or broken in front of the user. Today
+    <code>add_card</code> is <b class="hi">one card, one confirm</b> — 12 findings from 4 workers is
+    12 modals. The good news: the batch gate is already built and shipped.
+    <code>BatchConfirmModal</code> (one modal, N rows, per-row checkbox, Deny-all, Esc denies all)
+    has been carrying <code>relay_prompts</code> since T4, and the renderer's
+    <code>patchKanban</code> applier already takes <code>ops: KanbanOp[]</code> — N adds in one
+    command. Neither needs new code.
+  </p>
+
+  <p class="cap">Pixels · the end-of-run findings batch — ONE modal, N rows, one gesture</p>
+  <div class="stage">
+    <div class="scrim">
+      <div class="modal">
+        <h3>Publish 12 findings to “Review findings”</h3>
+        <p class="blurb">
+          Review each finding. Only the rows you approve become cards — they land in one write on
+          the kanban board, as passive content that never runs anything.
+        </p>
+        <p class="discl">
+          12 findings from 4 workers · 3 duplicates merged by (path, line, note) · 2 workers
+          reported nothing and are not represented · severities are the workers' own claims, not
+          verified.
+        </p>
+        <div class="rows">
+          <div class="brow">
+            <span class="bbox">✓</span>
+            <span>
+              <span class="blabel"
+                >reviewer-1 · src/main/pty.ts:774 · <span class="sev hi">high</span> → lane
+                “review”</span
+              >
+              <span class="bbody"
+                >killTree reuses a pid captured before respawn; a recycled pid can be signalled
+                instead of the worker's own tree.</span
+              >
+            </span>
+          </div>
+          <div class="brow">
+            <span class="bbox">✓</span>
+            <span>
+              <span class="blabel"
+                >reviewer-2 · src/main/previewOsr.ts:311 · <span class="sev med">medium</span> →
+                lane “review”</span
+              >
+              <span class="bbody"
+                >Offscreen resize settles on a stale zoom when a project switch lands
+                mid-debounce.</span
+              >
+            </span>
+          </div>
+          <div class="brow off">
+            <span class="bbox">✓</span>
+            <span>
+              <span class="blabel"
+                >reviewer-3 · src/renderer/src/store/canvasStore.ts:88 ·
+                <span class="sev low">low</span> → lane “backlog”</span
+              >
+              <span class="bbody">Comment describes the pre-v9 background key. Cosmetic.</span>
+            </span>
+          </div>
+          <div class="brow">
+            <span class="bbox">✓</span>
+            <span>
+              <span class="blabel"
+                >reviewer-1 + reviewer-4 · src/main/swarmWatch.ts:204 ·
+                <span class="sev med">medium</span> → lane “review”</span
+              >
+              <span class="bbody"
+                >Two workers reported this independently (merged). Stall counter increments per
+                tick, not per episode, when the run has &gt;1 live task.</span
+              >
+            </span>
+          </div>
+        </div>
+        <p class="discl" style="margin-bottom: 12px">…8 more rows · scroll</p>
+        <div class="acts">
+          <button class="btn-ghost">Deny all</button>
+          <button class="btn-primary">Approve 11</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    The <code>discl</code> lines are the contract, not garnish: what was merged and by what key, who
+    reported nothing (absence, stated), and that severity is a <em>claim</em>. The row a human
+    unchecks simply does not become a card — deny is free and per-row.
+  </p>
+
+  <h3 class="sub">Three ways to trigger it — and the one that needs your decision</h3>
+  <div class="row3">
+    <div class="panel pick">
+      <h4>A · Human-triggered <span class="tag rec">ship regardless</span></h4>
+      <p>
+        A <b class="hi">Publish findings →</b> action on the Command board. MAIN composes the batch
+        from the results it <em>already holds</em>, shows the modal, writes one
+        <code>patchKanban</code>.
+      </p>
+      <ul class="pts">
+        <li><b>Zero</b> wire change, zero package publish, zero new tool.</li>
+        <li>Reuses <code>BatchConfirmModal</code> + the existing kanban applier verbatim.</li>
+      </ul>
+    </div>
+    <div class="panel gated">
+      <h4>B · Also agent-triggered <span class="tag gate">needs your OK</span></h4>
+      <p>
+        A new <code>publish_findings</code> MCP tool so the <em>orchestrator</em> can initiate at
+        end of run. The agent names only the destination board + lane —
+        <b class="hi">MAIN re-derives the findings from its own results Map</b>, so the agent cannot
+        fabricate a card ("the reply proposes, MAIN disposes").
+      </p>
+      <ul class="pts">
+        <li>
+          <b>Cost:</b> publish <code>@expanse-ade/mcp</code> → exact-pin bump → parity lockstep, one
+          PR per repo. Same composer + same modal as A — it is a thin tool on top.
+        </li>
+        <li>This is the only thing in P4 that touches the broker wire.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>C · Reuse <code>visualize_plan</code> <span class="tag old">rejected</span></h4>
+      <p>
+        One call, one confirm, N items — already exists. But <code>PlanItem</code> has no
+        <code>ref</code> / <code>fileRefs</code> / <code>description</code>, so every finding loses
+        its <code>file:line</code>; and it creates a <em>new</em> board per publish instead of
+        accumulating on one findings board.
+      </p>
+    </div>
+  </div>
+
+  <p class="note">
+    <b class="hi"
+      >Recommendation: ship A now, and B in the same PR if you approve the package publish.</b
+    >
+    A is a strict subset of B — same MAIN-side composer, same modal, same single write — so if the
+    publish is gated, P4 still fully closes the gap for the human and B becomes a small follow-up.
+    The roadmap's proof sentence ("the orchestrator re-surfaces… findings land as durable kanban
+    cards") is only literally met with B.
+  </p>
+
+  <h3 class="sub">Findings → cards, field by field</h3>
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Card field</th>
+        <th>Source</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>title</td>
+        <td>finding note (clamped)</td>
+        <td>the sentence, not a severity prefix</td>
+      </tr>
+      <tr>
+        <td>assignee</td>
+        <td>worker board title</td>
+        <td>renderer resolves it — MAIN never becomes a title authority (S2 rule)</td>
+      </tr>
+      <tr>
+        <td>ref</td>
+        <td><code>path:line</code></td>
+        <td>the single most useful field, and why option C fails</td>
+      </tr>
+      <tr>
+        <td>fileRefs[]</td>
+        <td>parsed from <code>refs[]</code></td>
+        <td><code>{path, line?}</code> — clickable on the card modal</td>
+      </tr>
+      <tr>
+        <td>tags[]</td>
+        <td>severity + role</td>
+        <td>e.g. <code>high</code>, <code>code-reviewer</code></td>
+      </tr>
+      <tr>
+        <td>description</td>
+        <td>worker <code>summary</code></td>
+        <td>long-form body, with a <code>claimed · not verified</code> preamble</td>
+      </tr>
+      <tr>
+        <td>columnId</td>
+        <td>severity → lane</td>
+        <td>
+          high/medium → <code>review</code>, low → <code>backlog</code>; unknown →
+          <code>backlog</code>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec"><span class="num">06</span> Closed vocabularies + the safe fallback for each</h2>
+  <p class="lede">
+    <code>SWARM_BLOCKED_TAGS</code>, <code>SWARM_TRIAGE_ACTIONS</code> and
+    <code>SWARM_WORKTREE_DISPOSITIONS</code> set the precedent: a closed vocabulary gets an
+    exhaustive test <em>including</em> an off-vocabulary case, and the fallback must be the safe
+    value. P4 adds three.
+  </p>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Vocabulary</th>
+        <th>Members</th>
+        <th>Off-vocabulary fallback</th>
+        <th>Why that is safe</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>write_result status<br />→ TaskStatus</td>
+        <td>
+          done/ok/success → <code>done</code>; failed/error → <code>failed</code>;
+          blocked/needs-input/waiting → stays <code>executing</code> + blocked chip
+        </td>
+        <td><code>reporting</code></td>
+        <td>
+          Non-terminal, so the card stays in the recap's NOW zone and the human keeps watching.
+          Never claims done, never claims failed.
+        </td>
+      </tr>
+      <tr>
+        <td>SwarmBlockedTag<br />→ AttentionKind</td>
+        <td>see §4 table (9 tags, 2 destinations)</td>
+        <td><code>blocked</code></td>
+        <td>Surfaces rather than hides. The only outcome worse than a wrong ring is no ring.</td>
+      </tr>
+      <tr>
+        <td>AttentionKind<br />→ BoardStatusBucket</td>
+        <td>
+          needs-input → awaiting-review · blocked → blocked · error → failed · done → (normal)
+        </td>
+        <td>no override</td>
+        <td>
+          An unrecognized kind falls through to liveness derivation — it never fabricates a state
+          the runtime cannot support.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec">
+    <span class="num">07</span> Disclosure register — every cap, and where it says so
+  </h2>
+  <p class="lede">
+    "A reason not in the surface does not exist." Every cap, coalesce, drop and refusal P4
+    introduces, with the exact visible string that carries it.
+  </p>
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Cap / behaviour</th>
+        <th>Where it is stated</th>
+        <th>String</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>feed cap (50 external tasks)</td>
+        <td>Done-column foot</td>
+        <td><code>+3 more workers not shown · feed cap 50</code></td>
+      </tr>
+      <tr>
+        <td>no Command board present</td>
+        <td>toast, once per session</td>
+        <td><code>4 external workers are reporting. Add a Command board to watch them…</code></td>
+      </tr>
+      <tr>
+        <td>off-vocabulary status</td>
+        <td>card sub-line</td>
+        <td><code>unrecognized status "partial-ok" — treated as unsettled</code></td>
+      </tr>
+      <tr>
+        <td>result is the worker's own claim</td>
+        <td>card meta + card description</td>
+        <td><code>claimed · not verified</code></td>
+      </tr>
+      <tr>
+        <td>findings dedupe</td>
+        <td>batch modal header</td>
+        <td><code>3 duplicates merged by (path, line, note)</code></td>
+      </tr>
+      <tr>
+        <td>workers that reported nothing</td>
+        <td>batch modal header</td>
+        <td><code>2 workers reported nothing and are not represented</code></td>
+      </tr>
+      <tr>
+        <td>findings row cap</td>
+        <td>batch modal footer</td>
+        <td><code>…8 more rows · scroll</code> / <code>capped at 60 findings — N dropped</code></td>
+      </tr>
+      <tr>
+        <td>status coalescing</td>
+        <td><span class="no">nothing — nothing is lost</span></td>
+        <td>
+          Latest-wins on a <em>state</em> is lossless; only a dropped <em>event</em> needs
+          disclosure.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec"><span class="num">08</span> What P4 does NOT build</h2>
+  <ul class="pts" style="font-size: 12.5px">
+    <li>
+      <b>Autonomy tiers</b> — <code>confirmPolicy</code>, <code>session-consented</code>, per-role
+      env deny/allow-list. All base Phase 5. Observability lands <em>before</em> autonomy
+      relaxations; that is the entire sequencing argument.
+    </li>
+    <li><b>Orchestrator re-attach</b> — base Phase 5. P2's clean-shutdown v1 stands.</li>
+    <li>
+      <b>The S4 lane</b> — docked lead-terminal chat, cost metering / budget ceiling. Different "4".
+    </li>
+    <li>
+      <b>Making the Command board persistent or non-singleton</b> — it is ephemeral + singleton by
+      design. P4 adds a feed, not a re-architecture. If <code>commandStore</code> starts getting
+      serialized, something went wrong.
+    </li>
+    <li>
+      <b>Auto-merge of worker branches</b> — P3 surfaces branches for human merge and that stands.
+    </li>
+    <li>
+      <b>A second canvas sync path</b> — the feed rides MAIN <code>sendCommand</code> →
+      <code>useMcpCommands</code> → <code>canvasStore</code>, the one pipe, now for the fourth lane
+      running.
+    </li>
+  </ul>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec"><span class="num">09</span> Test plan</h2>
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Layer</th>
+        <th>What</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>unit</td>
+        <td>
+          the three vocabulary maps incl. off-vocabulary cases ·
+          <code>externalTaskFor</code> newest-first + prefer-open (the S2/S3
+          <code>[critical]</code> shape) · feed cap + its disclosure string · findings dedupe by
+          (path, line, normalized note) · severity→lane mapping ·
+          <code>boardStatusBucket</code> with the new <code>blocked</code> kind
+        </td>
+      </tr>
+      <tr>
+        <td>real-channel<br />integration</td>
+        <td>
+          a <code>swarmP4Bridge.integration.test.tsx</code> on the
+          <code>swarmS3Bridge</code> pattern: MAIN's real handlers behind
+          <code>ipcTestHarness</code>, real <code>commandFeed</code> pushes fed into the renderer's
+          real <code>useMcpCommands</code>. Not two stubs facing each other — that pattern caught
+          real bugs in both S2 and S3.
+        </td>
+      </tr>
+      <tr>
+        <td>e2e</td>
+        <td>
+          record a result for a board that was never dispatched from the Command board → assert the
+          card renders with the <code>ext</code> chip · assert a blocked report raises the ring ·
+          assert the batch modal shows N rows and lands N cards on <b class="hi">one</b> approve.
+          Every board/result the spec creates, the spec tears down (the S2 leaked-camera lesson).
+        </td>
+      </tr>
+      <tr>
+        <td>gate</td>
+        <td>
+          typecheck · lint · format:check · test · dev check (title-stamped) BEFORE push · full
+          matrix (both legs, every spec) once at the pre-merge gate.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <h2 class="sec"><span class="num">10</span> What I need from you</h2>
+  <div class="qbox">
+    <h4>Three decisions, then I implement.</h4>
+    <ol>
+      <li>
+        <b>D1 — external workers in the same five columns with an <code>ext</code> chip?</b>
+        (§3, option A recommended.) The alternative is a separate External lane.
+      </li>
+      <li>
+        <b
+          >D2 — add <code>blocked</code> as a fourth attention kind (steady warn ring,
+          <code>⏸ blocked</code> badge)?</b
+        >
+        (§4, option A recommended.) Saying no means the <code>blocked</code> bucket stays dead and a
+        stalled worker looks identical to one asking you a question.
+      </li>
+      <li>
+        <b
+          >D3 — do I publish <code>@expanse-ade/mcp</code> for the agent-triggered
+          <code>publish_findings</code> tool?</b
+        >
+        (§5.) Human-triggered publishing ships either way; this is purely "can the orchestrator
+        initiate it". Package publish is your hard gate, so I will not touch the broker wire without
+        an explicit yes.
+      </li>
+    </ol>
+    <p style="margin-top: 12px">
+      Anything you want changed in the pixels above — the chip, the ring treatment, the modal's
+      disclosure lines — say so now; those are cheap here and expensive after the code lands.
+    </p>
+  </div>
+</div>

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useAttentionStore } from './attentionStore'
+import { useAttentionStore, type AttentionKind } from './attentionStore'
 import { useCanvasStore } from './canvasStore'
 import { showToast } from './toastStore'
 
@@ -16,12 +16,33 @@ import { showToast } from './toastStore'
  * absent); the effect returns the disposers.
  */
 const TOAST: Record<
-  'done' | 'needs-input' | 'error',
+  AttentionKind,
   { verb: string; kind: 'ok' | 'info' | 'error'; sticky: boolean }
 > = {
   done: { verb: 'finished', kind: 'ok', sticky: false },
   'needs-input': { verb: 'needs your input', kind: 'info', sticky: false },
+  // P4 — sticky like `error`: a blocked worker is not going to un-block itself, so a toast that
+  // auto-dismisses would let the whole reason for surfacing it scroll past unread.
+  blocked: { verb: 'is blocked', kind: 'info', sticky: true },
   error: { verb: 'hit an error', kind: 'error', sticky: true }
+}
+
+/**
+ * P4 — which mark a lifecycle push lands. The optional `attention` override lets MAIN distinguish
+ * `blocked` from `needs-input` on the canvas WITHOUT widening the notifications-config vocabulary
+ * the OS/toast gate speaks. Any off-vocabulary override is ignored in favour of the event itself —
+ * the safe direction, since the event is always a value this renderer can render.
+ */
+const ATTENTION_KINDS: ReadonlySet<string> = new Set([
+  'done',
+  'needs-input',
+  'blocked',
+  'error'
+] satisfies AttentionKind[])
+function markFor(event: AttentionKind, override: string | undefined): AttentionKind {
+  return override !== undefined && ATTENTION_KINDS.has(override)
+    ? (override as AttentionKind)
+    : event
 }
 
 /** Busy-aware eviction (project:bgLifecycle): copy per sweep-push kind. The warning is the one
@@ -43,13 +64,18 @@ export function useNotifications(): void {
       useCanvasStore.getState().selectBoard(boardId)
     }
 
-    const offLifecycle = api.onLifecycle(({ boardId, event }) => {
-      useAttentionStore.getState().setAttention(boardId, event)
+    const offLifecycle = api.onLifecycle(({ boardId, event, attention, detail }) => {
+      const mark = markFor(event, attention)
+      useAttentionStore.getState().setAttention(boardId, mark)
       const board = useCanvasStore.getState().boards.find((b) => b.id === boardId)
       const name = board?.title?.trim() || 'Agent'
-      const spec = TOAST[event]
+      const spec = TOAST[mark]
+      // P4: `detail` carries MAIN's composed reason (`silent 11m`, `failing check`). Appended, not
+      // substituted — the reason has to reach the surface or it does not exist, and the toast is
+      // the only place it appears for a board the human is not looking at.
+      const reason = typeof detail === 'string' && detail.trim().length > 0 ? ` — ${detail}` : ''
       showToast({
-        message: `${name} ${spec.verb}`,
+        message: `${name} ${spec.verb}${reason}`,
         kind: spec.kind,
         sticky: spec.sticky,
         action: { label: 'Focus', run: () => focus(boardId) }

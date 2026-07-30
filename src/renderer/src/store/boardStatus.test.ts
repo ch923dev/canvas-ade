@@ -66,6 +66,25 @@ describe('boardStatusBucket', () => {
     )
     expect(boardStatusBucket('terminal', { attention: 'done' })).toBe('idle')
   })
+
+  it('🔒 P4: `blocked` attention finally PRODUCES the blocked bucket', () => {
+    // The bucket has been declared here and styled in BUCKET_PILL since T1.1 with no code path
+    // able to emit it. A worker that cannot proceed is that missing producer.
+    expect(boardStatusBucket('terminal', { terminalRunning: true, attention: 'blocked' })).toBe(
+      'blocked'
+    )
+    expect(boardStatusBucket('terminal', { attention: 'blocked' })).toBe('blocked')
+    expect(bucketToPill('blocked')).toEqual({ dot: 'var(--warn)', label: 'blocked' })
+  })
+
+  it('🔒 an unknown attention kind falls THROUGH to liveness — never a fabricated state', () => {
+    // A forward kind from a newer writer must not become a bucket this process cannot support.
+    const forward = { attention: 'teleported' } as unknown as Parameters<
+      typeof boardStatusBucket
+    >[1]
+    expect(boardStatusBucket('terminal', { ...forward, terminalRunning: true })).toBe('running')
+    expect(boardStatusBucket('terminal', forward)).toBe('idle')
+  })
 })
 
 describe('buildBoardSnapshot', () => {

@@ -10,12 +10,30 @@ import { ipcRenderer, type IpcRendererEvent } from 'electron'
  *  shared import; keep in lockstep, same as PtyState / RecapStatus). */
 export type LifecycleEvent = 'done' | 'needs-input' | 'error'
 
+/**
+ * Orchestration P4 — an OPTIONAL on-canvas attention override riding the same push.
+ *
+ * The gate (`gateNotification`) and the OS/toast layer keep speaking the three-member
+ * `LifecycleEvent` vocabulary, so P4 adds NO notifications-config key, no settings row, and no
+ * default to migrate: a blocked worker rides the existing `needs-input` event through the same
+ * `onInput` switch. Only the RING is finer-grained — `attention:'blocked'` renders the steady warn
+ * treatment instead of the pulsing one. Absent ⇒ the mark equals the event, exactly as before.
+ */
+export type LifecycleAttention = 'done' | 'needs-input' | 'blocked' | 'error'
+
+/** The `notify:lifecycle` payload. MIRRORS src/main/lifecycleNotifications.ts. */
+export interface LifecyclePayload {
+  boardId: string
+  event: LifecycleEvent
+  attention?: LifecycleAttention
+  /** P4 — the reason line the toast appends (`builder-1 is blocked — silent 11m`). Optional. */
+  detail?: string
+}
+
 export const notifyApi = {
   /** main → renderer: a board's agent fired a lifecycle event → show the in-app toast. */
-  onLifecycle: (
-    cb: (payload: { boardId: string; event: LifecycleEvent }) => void
-  ): (() => void) => {
-    const h = (_e: IpcRendererEvent, p: { boardId: string; event: LifecycleEvent }): void => cb(p)
+  onLifecycle: (cb: (payload: LifecyclePayload) => void): (() => void) => {
+    const h = (_e: IpcRendererEvent, p: LifecyclePayload): void => cb(p)
     ipcRenderer.on('notify:lifecycle', h)
     return () => ipcRenderer.removeListener('notify:lifecycle', h)
   },
