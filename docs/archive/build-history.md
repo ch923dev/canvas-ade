@@ -4852,3 +4852,39 @@ runs inside an Expanse terminal board — `CANVAS_RECAP_BOARD` is set by constru
 retries-on matrix run was stopped mid-flight at the user's call; the Windows leg had
 twice reached 345-346/350 with only churn-class failures, the Linux leg did not run this
 PR. Kickoff doc removed (was untracked scaffolding).
+
+## 2026-07-30 — PR #405: clip-proof the `fitWhole` row-shed — deferred clip-verify watch window (`0843c8c5`, v0.43.2)
+
+**The defect** (docs/reviews/2026-07-28-terminal-clip-adjacency.md, collapsed to FIXED in
+this PR). `fitWhole`'s post-fit row-shed measured the rendered grid in the same tick as
+`term.resize`. xterm's DOM renderer usually reflows synchronously — but under load it
+applies the row-count change 1–2 frames later: the same-tick rect still shows the PRE-fit
+grid, reads clean (even negative overflow), the shed skips, and FitAddon's known one-row
+over-proposal materializes as a clipped bottom row after the fit returned. First caught as
+the dataFlow→terminalClip e2e adjacency pair; a real user resizing a board into an unlucky
+remainder on a busy canvas hits the identical sequence. Instrumentation REFUTED the review
+doc's metric-drift hypothesis — the internal cell metric is a constant 18.0 in both
+configs; the tell was the stale rect's implied cellH 16.2 vs the fresh 18.0.
+
+**The fix** (`terminalClipVerify.ts`, pure/injected per the terminalResizeBackstop
+precedent; `shedTargetRows` extracted to `terminalSpawnMath.ts`). After every fit a
+coalesced verify chain re-measures grid-vs-well once per frame for 6 rAF ticks plus one
+350ms wall-clock late tail tick (cold-instance metric work can land timer-late past the
+whole rAF window). Load-bearing semantics, unit-pinned with a fake rAF (10 chain specs +
+6 shed-math specs): NO early-exit on a clean read (a stale rect READS clean — only the
+budget ends the chain); rows-only sheds (lossless — never triggers xterm reflow, never
+needs the S2 backstop); skip-but-keep-ticking guards for backstop-in-flight and
+counterScale metricsInFlux; term-identity + portal-hop safe (elements re-resolved per
+tick). One slot per terminal — a newer fit cancels the pending chain. S2 backstop +
+re-entrancy semantics untouched; sweep steps stay ODD, poll budgets never shrunk.
+
+**Gates.** Baseline pair repro fails on the clean tree; post-fix pair sweep green ~19 warm
+runs + 4+4 cold fresh-build pairs at `--retries=0`; terminal keep-set 16/16 ×3; crisp 6/6
+×3. CI 4/4 on all three heads; review 3 rounds, 0 inline findings. Linux leg 348/353
+green. The first full-matrix Windows attempt was voided mid-run by a sibling session's
+shared-node_modules wipe (Electron binary vanished under the run — 211 passed / 0 failed
+before the wipe, 138 "executablePath not found" after; an environment casualty, not a
+verdict). The merge-day push gate then failed open to the FULL Windows suite on the merged
+tree: 345 passed / 5 flaky-passed (documented ambient classes) / 0 failed at head
+`61087180`. Version recomputed 0.43.1→0.43.2 off the advanced tip (#404/#406 landed while
+the PR was open). Kickoff doc removed (untracked scaffolding).
