@@ -195,6 +195,38 @@ combined case.
 switch-path cost measured to scale with something real, and R11 should be re-opened as
 "quantify the referenced-asset path", not resurrected at its original 1 d estimate.**
 
+### …and then R11 dies anyway — the referenced path priced, 2026-07-29 (Phase 3, v0.43.0)
+
+The paragraph above says the 65.4 ms is an **upper bound**, and asks for the referenced-asset path
+before R11 is re-costed. Phase 3 took that measurement — directly against `gcAssets` rather than
+through a switch, because a sub-millisecond candidate cannot be seen under ~300 ms of switch on a
+box with the ±40% spread documented at the top of this file. 44 assets × 80 KB, 9 runs,
+`src/main/gcAssetsCost.test.ts` (opt-in: `CANVAS_ASSET_BENCH=1`):
+
+| path | median | range |
+|---|---|---|
+| **referenced** — a real project's doc claims its blobs | **0.37 ms** | 0.29–1.76 |
+| **unreferenced, first sweep** — §6's configuration | **61.83 ms** | 51.98–71.16 |
+| **unreferenced, second sweep of the same directory** | **0.22 ms** | — |
+
+Two things follow, and together they retire DL-1.
+
+**The referenced path is ~167× cheaper.** 61.83 ms reproduces §6's `mainOpen` delta almost exactly,
+which confirms the sweep *is* that delta — but a project whose doc references its own assets pays
+0.37 ms. Deferring `readBak` + `gcAssets` to idle would buy a third of a millisecond, in exchange
+for moving BUG-016's primary∪backup union and the T5 recovery read off their current ordering.
+
+**And the worst path is one-time, not per-open.** The sweep quarantines orphans into `.trash`,
+which it then skips — so the second open of the same project is back to 0.22 ms. §6 saw 65 ms on
+*every* switch only because the bench re-seeds the assets before each one; that is deliberate (it
+holds the worst case) and documented there, but it is not a shape any real project has. A user pays
+it once, after orphaning blobs.
+
+What Phase 3 shipped from R11 instead is DL-2, which the audit's own gate asked for: sync fs per
+`project:open` is now **flat in board count** rather than `14 + 2N`
+(`CanvasMemory.listBoardIds()` — one `readdirSync` replacing an `existsSync` + `readFileSync` per
+board).
+
 ### Why the census is reported
 
 Seeding N Browser boards does not give N live previews, and a bench that assumed otherwise would

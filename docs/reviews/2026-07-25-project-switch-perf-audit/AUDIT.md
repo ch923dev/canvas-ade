@@ -222,14 +222,14 @@ Effort is dev-days for one engineer including tests and the mandatory dev check.
 | **R4** | **Unify the open paths.** Make WelcomeScreen and boot call a shared `openProject()` primitive with explicit "no outgoing project" semantics; lock-guard boot. | PS-2 | **2 d** | Removes 3 divergent doors |
 | **R5** | ⭐ **PROMOTED (Phase 0 found supporting evidence the audit missed).** Memo boundary at `App`: move `useMcpPublish`'s subscription into a render-nothing leaf; `useShallow` for object picks; `memo()` the 12 root children. Verify with a React Profiler recording before/after. **`paint` — React mount plus first frame — is the steepest per-board cost in the switch (11 → 35 → 47 ms across 0 → 8 → 24 boards), the only Phase 2 item with a measured number behind it.** | P-1 | **1.5 d** | Now the best-evidenced perf item |
 | **R6** | **Observer-based liveness.** Replace per-frame `getBoundingClientRect()` in both liveness managers with `ResizeObserver` + cached viewport; extend the diff-skip to the read side. | P-2 | **1.5 d** | 2 forced layouts/frame |
-| **R7** | **PTY flow control on hop 1.** Port VS Code's watermark protocol into `ptyHost`: ack from main, `pause()` at 100k unacked chars, `resume()` at 5k, 5k ack size; coalesce same-tick daemon writes before `encodeLine`. | P-3 | **3 d** | Guards against runaway agent output |
-| **R8** | **DECIDED 2026-07-25 — gate `startLocalServer` off in production entirely.** Not "lazy": its URL has zero production consumers (see P-4). Start it only under `CANVAS_E2E` / `CANVAS_SMOKE` / dev, eagerly in those modes so the 26 `@preview` specs and the smoke self-test are unchanged. Keep the BUG-026/027 error handling. Separately audit the 17 handler registrations for anything deferrable past `ready-to-show`. Measure boot before/after with R1's marks. | P-4 | **0.5 d** | Removes a loopback bind from every user's boot |
+| **R7** | ✅ **BUILT 2026-07-29 (Phase 3, v0.43.0).** VS Code's watermark protocol in `ptyHost/flowControl.ts`: `pause()` at 100k unacked, `resume()` at 5k, MAIN acks every 5k chars; same-tick coalescing before `encodeLine`. Capability negotiated by an ADDITIVE `hello.flowControl` field — a `PROTOCOL_VERSION` bump would orphan the sessions surviving an app update, which is what the daemon exists to prevent. A detached session (zero subscribers) never accounts and never pauses. | P-3 | **3 d** | Guards against runaway agent output |
+| **R8** | ✅ **BUILT 2026-07-29 (Phase 3, v0.43.0).** Gated on `is.dev || CANVAS_E2E || CANVAS_SMOKE` (pure `shouldStartLocalServer`), eager in those modes, so the 26 `@preview` specs and the smoke self-test are unchanged and `pnpm dev` still serves every fixture route (§9 item 4). BUG-026/027 handling kept verbatim, relocated beside the server as `startLocalServerIfNeeded`. Boot instrumentation added (`bootTiming.ts`) — the boot path had none, since R1's marks are switch-only. Registration audit: after the gate, `whenReady → createWindow()` contains **zero awaits**; the rest is synchronous `ipcMain.handle` wiring, and deferring that past `ready-to-show` risks a renderer invoking an unregistered channel for no measured win. **Measured (paired A/B ×8, packaged): bind segment 14 → 1 ms median, AFTER faster 8/8 pairs; boot-to-first-paint noise-dominated (±150 ms) — §9 item 8.** | P-4 | **0.5 d** | Removes a loopback bind from every user's boot |
 | **R9** | **Unit-test `projectSwitch.ts`** — all 5 return codes, `decideKeep` branches, the cancel-autosave→flush→sidecar ordering. Add a `backgroundSessions.ts` test file. Add an e2e that **commits** a hotkey switch. | PS-3, SM-3 | **2 d** | 253 LOC of untested orchestration |
 | **R10** | **Invalidate resident lists on `project:bgLifecycle`.** One shared `useResidentProjects()` hook subscribing to the push channel; delete the three local copies and the three `foreverDirs` copies. | PS-4, SM-2 | **1.5 d** | Stale-UI class |
-| **R11** | ⚠️ **DE-PRIORITIZED (Phase 0 measured it).** Move GC and summary rehydration off the open path: defer `readBak` + `gcAssets` to idle; batch `rehydrateMissingSummaries` into one `readdir` instead of N `existsSync`. **MAIN's whole `project:open` handler — which contains both costs — is flat at ~12 ms from 0 to 24 boards.** Caveat: the sweep varies *boards*, and `gcAssets` scales with *assets*, which the synthetic bench projects have none of (Appendix A found a real 44-file / 3.58 MB assets dir). Do not delete — re-measure asset-bearing before dismissing. | DL-1, DL-2 | **1 d** | Not hot at measured sizes |
+| **R11** | ⚖️ **SPLIT 2026-07-29 (Phase 3, v0.43.0): DL-2 built, DL-1 DROPPED on its own measurement.** DL-2 shipped — `CanvasMemory.listBoardIds()` replaces the per-board `existsSync` + `readFileSync`, so sync-fs per `project:open` is now **flat in board count** instead of `14 + 2N`. DL-1 (defer `readBak` + `gcAssets` to idle) is dropped: `gcAssets` on a REFERENCED asset set costs **0.37 ms** at 44 assets vs **61.83 ms** unreferenced, and the unreferenced sweep is **one-time** (second sweep 0.22 ms — orphans land in `.trash`, which it skips). Deferring buys a third of a millisecond and moves BUG-016's union + T5 recovery ordering. See §9 item 7. | DL-1, DL-2 | **1 d → 0.5 d** | fs cost now flat in N; GC not hot |
 | **R12** | **Lazy-load the diagram bridge; drop `addon-webgl`.** Register the seam on first Planning/Data-flow board mount instead of `main.tsx`. Remove the unused xterm WebGL addon. Add a gzip budget assertion to `pr.yml`. | P-5 | **1.5 d** | Entry chunk + CI guard |
 | **R13** | **Kill the always-on timers.** Gate `useBrowserAutoConnect` on `browserBoards.length > 0`; hoist `useRunTimer`'s output into a leaf so it doesn't re-render `TerminalBoard`; make `ptyLifecycleMonitor` event-driven off `onData` quiescence. Delete `ensuredDirs` entries on board removal. | P-7, P-8 | **1.5 d** | Idle CPU |
-| **R14** | **Enforce the dir invariant once.** A `withProjectDir(handler)` wrapper in `ipcGuard.ts` that pins `expectedDir` for every project-scoped write, replacing the three hand-rolled checks. | SM-1 | **1 d** | Prevents the next BUG-009 |
+| **R14** | ✅ **BUILT 2026-07-29 (Phase 3, v0.43.0).** `withProjectDir(handler)` in `ipcGuard.ts` — frame guard + current dir + `expectedDir` pin, once. SM-1 lists three hand-rolled checks; there are **four** — `terminal:deleteSnapshot` carries the same pin and is missing from that list. All four replaced, each keeping its own rejection shape (the renderer distinguishes a non-error rejection from a write errno, C3). A non-string pin now fails closed instead of being silently ignored. | SM-1 | **1 d** | Prevents the next BUG-009 |
 | **R16** | **DECIDED 2026-07-25 — switch the Alt-Tab overlay to commit-on-release.** Match Windows Alt-Tab / VS Code Ctrl+Tab: overlay stays open while the modifier is held, releasing `Ctrl`/`Cmd` commits the highlighted card. Enter and click stay as explicit commits; Esc still cancels. Also **queue** a press that races the async card fetch instead of dropping it (`runningSwitcherStore.ts:63`). | PS-3 | **1 d** | Matches OS muscle memory |
 | **R15** | **Hygiene sweep.** Prune 35 orphaned worktrees; move/delete the 4 stray root `.md`s; reconcile the MCP pin across CLAUDE.md/package.json/lockfile; fix the stale schema-mirror comments; delete the dead `hotkey:failures` UI and 4 stale comment blocks; decide on release tags. | H-1…H-5, PS-5 | **1 d** | Removes measurement traps |
 
@@ -350,14 +350,60 @@ behind it.
 1. Approve or re-order the phase list. Phase 0 is done; nothing else has started.
 2. ✅ **DONE 2026-07-27 — `arm` re-measured with live resources; R3 is refuted and should be dropped.** 86.6 ms median fully loaded, no budget ever firing. Numbers, method and the two harness findings: [`../2026-07-25-bench/BASELINE.md` §6](../2026-07-25-bench/BASELINE.md#6-resource-bearing-re-measurement--r3-refuted-r11-revived) · artifact `RESOURCES.json` · bench `e2e/projectSwitchResources.bench.ts`.
 3. ✅ **DONE 2026-07-27 — ask-time exclusion verified against the real dialog.** `e2e/switchAskExclusion.e2e.ts` drives `switchProjectAsk` (the default pipeline, so `decideKeep` does not early-return on an explicit keep), holds the real modal open 1.5 s, and asserts `ask` covers the hold while `arm` and `total` exclude it. The branch had never executed outside a unit test — every other automated switch passes an explicit keep, which returns before `recordAskTime`. Proven non-vacuous by disabling `minusAsk` and watching the spec fail.
-4. Confirm the R8 gate condition covers every dev workflow that expects the fixture pages (`/static`, `/download`, `/json`) — `pnpm dev` must keep serving them.
+4. ✅ **DONE 2026-07-29 — the R8 gate covers every dev workflow.** The gate is
+   `is.dev || CANVAS_E2E || CANVAS_SMOKE` (`shouldStartLocalServer`, `localServer.ts`), and
+   `is.dev === !app.isPackaged`, so **every unpackaged run keeps the server** — `pnpm dev`,
+   `pnpm start`, the Playwright harness and the smoke self-test all serve `/`, `/static`,
+   `/static2`, `/download` and `/json[?big|find]` exactly as before. Only a packaged build skips
+   it, which is the configuration in which `defaultPreviewUrl` has no reader at all (its two
+   consumers, `installE2EMain` and `runSelfTest`, are both env-gated off there). The
+   `CANVAS_E2E`/`CANVAS_SMOKE` clauses are therefore redundant for local runs and deliberately
+   kept: they state the intent, and they hold for a PACKAGED e2e/smoke run. Consequence worth
+   knowing: **no automated suite exercises the skipped path** — that is what the
+   `shouldStartLocalServer` unit cases are for.
 5. ✅ **DONE 2026-07-27 — settled as "yes, in a second bench".** `e2e/projectSwitchResources.bench.ts` sweeps terminals / previews / assets / combined; the committed 0/8/24 planning sweep is deliberately left byte-identical so the baseline stays comparable.
 6. 🔁 **OWED — the Phase 2 before/after `paint` capture.** Phase 2 shipped 2026-07-28 without it: two
    attempts hit the baseline harness's 25%-CPU guard at **55.2%**, and the guard is right (see §7).
    The renderer-side gate was met by automated render-count assertions instead. **The 0/8/24 sweep in
    `BASELINE.md` therefore predates R5/R6** — re-take it on a quiet box and record the delta. This is
    an open measurement, not an open defect: nothing in Phase 3 or 4 is gated on it.
-7. 🔁 **NEW — re-open R11 at a smaller scope.** The same run found `mainOpen` is asset-sensitive after all (9.8–13.0 ms → **65.4 ms** at 44 assets), which is the measurement §3 of the baseline said R11 was pending. The seeded assets are unreferenced, so that figure is `gcAssets`' worst path; the next question is what the *referenced*-asset path costs, not a straight resurrection of the original 1 d estimate.
+7. ✅ **DONE 2026-07-29 — R11 re-priced, and DL-1 is dropped.** The question was what the
+   *referenced*-asset path costs. Measured directly against `gcAssets` (44 assets × 80 KB, 9 runs,
+   `src/main/gcAssetsCost.test.ts`, opt-in behind `CANVAS_ASSET_BENCH=1`):
+
+   | path | median |
+   |---|---|
+   | referenced (a real project's doc claims its blobs) | **0.37 ms** |
+   | unreferenced, first sweep (BASELINE.md §6's path) | **61.83 ms** |
+   | unreferenced, **second** sweep of the same dir | **0.22 ms** |
+
+   Two findings kill DL-1. The referenced path is ~167× cheaper, so deferring `readBak` + `gcAssets`
+   to idle buys **a third of a millisecond** in exchange for moving BUG-016's primary∪backup union
+   and the T5 recovery read off their current ordering. And the worst path is **one-time, not
+   per-open**: the sweep quarantines orphans into `.trash`, which it then skips, so the next open is
+   back to 0.22 ms. The bench saw 65 ms on every switch only because it re-seeds the assets before
+   each one — deliberately, to hold the worst case, and documented there as such. A real user pays
+   it once after orphaning blobs.
+   **DL-2 shipped anyway** (it is the Phase 3 gate's fs-count half): `CanvasMemory.listBoardIds()`
+   replaces the per-board `existsSync` + `readFileSync`, and the sync-fs count per `project:open` is
+   now **flat in board count** rather than `14 + 2N`.
+
+8. ✅ **ANSWERED 2026-07-30 — Phase 3's boot before/after (paired A/B, packaged, unflavored).**
+   Both arms are the same tree; the only diff is `shouldStartLocalServer` forced open in the BEFORE
+   build. Launched interleaved (before/after ×8 pairs, isolated `--user-data-dir` profiles, one
+   discarded warm-up per arm — the first launch of a freshly written 231 MB exe pays a one-time AV
+   scan no later launch pays). Arm identity is proven by the records themselves: all 8 BEFORE report
+   `localServer: "started"`, all 8 AFTER `"skipped"`.
+   - **The bind segment (`whenReady→localServer`): 14.0 ms → 1.0 ms median, AFTER faster in 8/8
+     pairs** (paired deltas +11…+15 ms, median +12.5). That is R8's claim confirmed: the loopback
+     bind + fixture construction cost every packaged boot ~13 ms on this box, now ~1 ms.
+   - **Boot-to-first-paint (`readyToShow`, anchored on process creation): NOT resolvable.** Medians
+     685.6 → 678.7 ms, but the paired deltas scatter −155…+110 ms — run-to-run noise an order of
+     magnitude above the 13 ms effect, and AFTER was nominally *slower* in 6/8 pairs. The §7 gate
+     half "boot-to-first-paint measured before/after" is met — it WAS measured, both arms — but
+     R8 is visible only in the isolated segment; claiming a first-paint improvement from these
+     numbers would be cherry-picking. Raw JSONL preserved in the session scratchpad; the marks
+     ship (`bootTiming.ts`, `CANVAS_BOOT_TIMING=1`), so anyone can re-run both arms.
 
 ---
 
