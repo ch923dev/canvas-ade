@@ -62,6 +62,7 @@ import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
 import { performGuardedQuit, makeCrashHandler, performWindowCloseCleanup } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
+import { applyDevCheckContainment, provisionDevSandbox } from './devProjectSandbox'
 import type { RunningMcp } from './mcp'
 import { createMcpBoot } from './mcpBoot'
 import { registerSpawnCapHandlers } from './orchestrationConfig'
@@ -188,6 +189,9 @@ bootTiming.mark('moduleLoad')
 // (keyed on userData) and every userData read. Packaged builds and the voice spike (which owns
 // its own redirect, below) are left untouched. CANVAS_USERDATA overrides; CANVAS_FRESH=1 mints
 // a throwaway profile, deleted on quit (best-effort — Windows may still hold a handle).
+// Dev-check schema containment (devProjectSandbox.ts — rationale there): arm the schema-floor guard
+// + resolve the sandbox project. MUST precede the profile redirect (it reads pre-redirect userData).
+const devSandbox = applyDevCheckContainment(app, process.env, process.cwd())
 const devProfile = applyDevProfileIsolation(app, process.env, process.cwd())
 if (devProfile.fresh && devProfile.dir) {
   const freshDir = devProfile.dir
@@ -424,6 +428,9 @@ app.whenReady().then(async () => {
   // step lands recordSession.js at out/main/hooks/ and electron-builder asarUnpacks it so the
   // external `node <path>` Claude hook has a real on-disk file at runtime (see Step 6).
   const userData = app.getPath('userData')
+  // Create the sandbox project (if absent) + front it in this profile's recents. Idempotent,
+  // best-effort, no-op when packaged/e2e/smoke; awaited so recents are current for the renderer.
+  await provisionDevSandbox(devSandbox, userData, Date.now())
   // Low-RAM (AUDIT §5): bind the override file dir; the mode itself is decided lazily on first read
   // (os.totalmem, or the userData override). Must precede registerPlatformIpc so platform:lowRam
   // resolves the bound config.
