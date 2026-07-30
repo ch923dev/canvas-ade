@@ -443,6 +443,13 @@
   background: var(--warn-wash);
   box-shadow: 0 0 0 1px var(--warn);
 }
+/* P4 BLOCKED — the board ring's language at card scale: needs-input's warn family, STEADY and
+   one step quieter (no 1px shadow ring, no dot halo — both stay reserved for "a human is the
+   blocker RIGHT NOW"). Steady warn = stuck, look when you can. */
+.sw-card.blocked {
+  border-color: var(--warn);
+  background: var(--warn-wash);
+}
 .sw-card.done {
   opacity: 0.85;
 }
@@ -532,6 +539,11 @@
   border: 1px solid var(--warn);
   border-radius: var(--r-pill);
   animation: sw-ring 1.4s ease-out infinite;
+}
+/* P4 blocked — solid --warn, STEADY: no pulse (working's language) and no ::after halo
+   (needs-input's). The same colour/no-motion split BoardAttention draws one level up. */
+.sw-st.blocked {
+  background: var(--warn);
 }
 .sw-st.idle {
   background: transparent;

@@ -4815,3 +4815,40 @@ second matrix and the merge — disjoint diff (`appModel.ts` + the pin), GitHub 
 clean; noted that the MAIN checkout's shared `node_modules` still carries mcp 0.22.1
 (pnpm demands a from-scratch purge that can't run under three live sibling worktree
 sessions — deferred to an idle window).
+
+## 2026-07-30 — PR #404: swarm worker card renders the `blocked` attention state (`9a6c479d`, v0.43.1)
+
+The PR #400 reviewer's latent-bug observation, fixed in a dedicated lane (worktree
+`swarm-blocked-state`, kickoff-driven). P4 added the 4th `AttentionKind` — `blocked` —
+and board chrome renders it (steady warn ring + `⏸ blocked`, decision D2), but
+`SwarmWorkerCards.stateOf()` had no branch: a blocked worker with neither `lost` nor
+`stalled` ledger cover read "Working…/Idle" under a ring that said blocked. Latent today
+(every producer co-writes lost/stalled), armed the moment `workerAttention.ts`'s fuller
+tag set (`failing_check`/`overlap`/`dependency`/`dirty_worktree`) flows without ledger
+cover.
+
+**The fix.** `CardState` gains `blocked`; `stateOf` resolves it AFTER the ledger's
+lost/stalled (the specific diagnoses blocked attention is *derived from* — they must not
+be masked by the generic bucket) and BEFORE working/idle (a blocked worker's PTY may
+still be live). `ORDER` = needs-input → lost → stalled → **blocked** → working → idle →
+error → done. Card chrome = the board language at card scale (signed-off wireframe A):
+warn border + wash, solid steady warn dot — NO shadow ring, NO pulse (both stay
+needs-input's "a human is the blocker RIGHT NOW"). Activity line `Blocked — waiting`
+(never stale `meta.activity`). Head-counts line rewritten filter/join + carries
+`N blocked` (a member the summary omits is the silence-bug class this lane exists for).
+7 new unit specs pin precedence, the full ORDER, and off-vocabulary fallthrough.
+
+**Gates.** Push gate 102/102 (workers:1). CI 4/4; review 0 critical / 0 warning / 0
+inline. Full-matrix attempts hit environment, not the diff: (1) MAIN's shared
+`node_modules` still carried mcp 0.22.1 vs the #403 0.23.0 pin (the deferred purge from
+the #402 entry) — resolved this session with user authorization: killed the locking
+Electron dev instance mid-purge-recovery, from-scratch reinstall, `appModelDrift` green
+after; (2) retry-less full-suite runs churned 4-5 ambient desktop-contention failures
+(different set each run, all in the config's own documented probabilistic class;
+terminalCrisp pair also reproduced a stale-`out/` artifact — green after rebuild, and
+green on main). Unit floor on this box: pathSafe ×2 + recapenv ×3 (the session itself
+runs inside an Expanse terminal board — `CANVAS_RECAP_BOARD` is set by construction).
+**Merged on explicit user instruction before a clean full-matrix pass completed** — the
+retries-on matrix run was stopped mid-flight at the user's call; the Windows leg had
+twice reached 345-346/350 with only churn-class failures, the Linux leg did not run this
+PR. Kickoff doc removed (was untracked scaffolding).
