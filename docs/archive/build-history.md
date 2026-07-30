@@ -4677,3 +4677,61 @@ gate went green but the transfer itself died ("remote end hung up") → `--no-ve
 re-push after the already-green gate. Rebased over #399 mid-flight: version recomputed
 0.40.0 → **0.42.0** off the new tip (the branch commit message still says 0.40.0; the
 squash subject from the PR title is authoritative).
+
+## 2026-07-29 — PR #401: parameterize the `__canvasE2E` bridge — kill the eval code sink (`e1938746`, v0.42.1)
+
+The proper fix for the **9 open CodeQL `js/bad-code-sanitization` alerts** #398 left behind, taken at
+the root instead of dismissed: `evalIn` runs its argument through `eval`, so every value spliced into
+that expression string is a code-execution sink — and `JSON.stringify` is a JSON escaper, not a
+JS-code escaper. 8 alerts sat on `dataFlow.e2e.ts` (the atomic seed+pin IIFEs #398 itself added, one
+per stringify) and 1 pre-existing at `terminalScrollback.e2e.ts:163`. Also deletes
+`docs/e2e-reliability-kickoff.md` (doc lifecycle: per-slice kickoffs die with the PR that merges
+their feature).
+
+**The mechanism:** `callE2E(page, ...calls)` in `e2e/helpers.ts` — a `{m, a}` call batch passed to
+`page.evaluate` as a real argument, crossing by structured clone with no code string to escape. A
+batch is ONE evaluate = one synchronous JS turn, which is exactly the atomicity the IIFE was buying
+(#398 review [warning] #1: seed+pin must not let the page's event loop run in between); the
+multi-call form replaces string-splicing outright. Plus `pollCall` for the poll-a-batch case.
+`page.evaluate(fn)` reaching the main world (`window.__canvasE2E`) was confirmed **empirically** by
+the first green run, not by reasoning about indirect eval — sound-sounding reasoning is what
+certified #396's broken fix.
+
+**Both flagged files migrated whole, not just the flagged lines** — `terminalScrollback` carried an
+identical *unflagged* sink at :218 that CodeQL's flow analysis simply hadn't traced. Its
+counter-scale probes now read the object as a VALUE and compare in Node (`pollScale`/`pollBuf`), so
+baselines like `colsBefore` never reach the page at all; `WRITE_LINES` moved from a page-evaluated
+generator expression to a plain Node string. `JSON.stringify` count in both files: **0**. `evalIn`
+survives for probes whose text is fixed at author time (no interpolation, or a module-level literal
+constant), with the rule documented at the definition so the next IIFE cannot reintroduce the sink.
+The remaining 76 spec files still interpolate — a mechanical follow-up sweep, deliberately not this
+fix. One self-caught bug during migration: folding `fitView` into the seed+pin batch would have
+measured the board before React flushed the seed — split back out with a comment saying why.
+
+**Verified where it counts:** 0 open `bad-code-sanitization` alerts on the PR branch vs 9 still open
+on `main` — checked on the code-scanning alert list, not the check verdict. One cross-platform scare
+was falsified properly: the `terminalScrollback` NON-1-zoom test flaked on BOTH Windows and Linux
+after the migration, so `e2e/` was reverted to base, rebuilt, and the identical targeted set re-run —
+the unmodified base fails the same test at its own line `:244`. Pre-existing flake, proven by running
+the base rather than asserting it.
+
+**A turbulent merge window, recorded honestly.** `main` advanced FOUR times during this PR's life
+(0.39.1 → 0.41.0 → 0.42.0 → the #400 docs entry), forcing two version-line rebases (bump recomputed
+0.39.2 → 0.41.1 → 0.42.1). The pre-push gate was started twice and externally killed both times
+mid-run with zero real failures at the kill point (273/344 green; then deep in retries — exit
+0x40010004, external termination), so the push went `--no-verify` on explicit user instruction,
+disclosed in the PR body. A full matrix WAS run and green on the pre-#400 base: Windows
+`E2E_PRECOMMIT=1 E2E_WORKERS=1` **341 passed / 3 skipped / 0 failed / 0 flaky** (9.2m) + Linux Docker
+**339 passed / 5 skipped** (6.4m). The re-run on the final tip was started, then **skipped on
+explicit user instruction** (the delta since the green matrix: #400's app code — zero file overlap
+with this e2e-only diff — plus one docs commit); targeted `dataFlow + terminalScrollback` ran green
+on every rebased tree. CI 4/4 on the merged head; `claude-review` FULL then incremental, **zero
+critical/warning, zero inline** across both rounds. Manual dev check passed, title-stamped.
+Contention discipline held throughout: two other sessions' e2e runs were live on this box at various
+points (`orch-observability`, `mainio-phase3`), so the Windows leg queued behind a quiet-box watcher
+rather than manufacturing `terminal:62`-class flakes, and orphan kills after the external task deaths
+targeted only this session's PIDs (the user's `@playwright/mcp` servers stayed up).
+
+**Operational lesson:** `gh pr edit --title` can fail SILENTLY — it dies on a GraphQL
+Projects-classic deprecation error while printing only the warning, leaving the title unchanged.
+Retitle via REST instead: `gh api -X PATCH repos/<o>/<r>/pulls/<n> -f title=…`.
