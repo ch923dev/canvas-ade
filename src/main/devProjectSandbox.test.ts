@@ -99,6 +99,19 @@ describe('applyDevCheckContainment', () => {
     expect(await floorRaiseBlocked()).toBe(false)
   })
 
+  // The sandbox exemption is NOT a guard exemption — see the rationale at the setSchemaFloorGuard
+  // call. Pinned because the asymmetry reads like an oversight: these harnesses skip the sandbox
+  // two lines below, and a future migration spec that trips the guard should reach for
+  // CANVAS_ALLOW_SCHEMA_RAISE rather than "fix" the arming condition.
+  it.each(['CANVAS_E2E', 'CANVAS_SMOKE', 'CANVAS_VOICE_SPIKE'])(
+    'keeps the guard ARMED under %s even though the sandbox is skipped',
+    async (key) => {
+      const env = { [key]: '1' }
+      expect(applyDevCheckContainment(fakeApp(false), env, CWD).dir).toBeNull()
+      expect(await floorRaiseBlocked()).toBe(true)
+    }
+  )
+
   it('returns the same decision resolveDevSandbox would', () => {
     expect(applyDevCheckContainment(fakeApp(false), {}, CWD)).toEqual(resolveWith({}))
   })

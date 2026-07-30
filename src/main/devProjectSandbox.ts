@@ -93,6 +93,15 @@ export function applyDevCheckContainment(
   // An UNPACKAGED build may read and migrate a project the released app wrote, but must never
   // PERSIST the raised floor. Packaged builds are the ones whose schema is actually released, so
   // they keep raising it. CANVAS_ALLOW_SCHEMA_RAISE=1 overrides for a deliberate migration test.
+  //
+  // DELIBERATELY asymmetric with resolveDevSandbox's env skips below: those three harnesses are
+  // exempt from the SANDBOX (provisioning a project + rewriting recents would fight specs that
+  // drive their own opens), but NOT from the guard. A fail-closed invariant earns its keep by
+  // having no situational exemptions, and it costs the harnesses nothing — they run in `-e2e` /
+  // `-smoke` suffixed profiles (profileIsolation.ts) against fresh temp fixture dirs, and a fresh
+  // dir has no prior doc, so the guard is a no-op by construction. It only bites a fixture that
+  // deliberately seeds a STALE schema to exercise migration — which is precisely the case
+  // CANVAS_ALLOW_SCHEMA_RAISE=1 exists for; set it in that spec's env.
   setSchemaFloorGuard(!app.isPackaged && !env.CANVAS_ALLOW_SCHEMA_RAISE)
   return resolveDevSandbox({
     isPackaged: app.isPackaged,
