@@ -188,8 +188,8 @@ registry exclusively. Never flip the sandbox to make a test pass.
 the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pre-push` hook**
 (`.githooks/pre-push`). It moved commit→push on 2026-06-06 so local commits stay fast — `git commit`
 has no push-intent signal, so gating "work that reaches origin" belongs on push (the hook is
-origin-only and skips docs-only pushes). **Since 2026-07-28 the hook is the CHEAP gate — the full
-matrix is the MERGE gate** (see *Push cheap / merge full* below). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
+origin-only and skips docs-only pushes). **Since 2026-07-31 the BLOCKING gate is the `@core` smoke
+only — the full matrix runs ASYNC after every merge** (see *Smoke blocks / matrix async* below). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
 Actions CI gate is now the `check` job only (typecheck · lint · format · unit + integration).
 Process-tree-kill is covered by `killTreeCommand` (unit, both platforms — Windows `taskkill /T /F`,
 POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned child prints its pid; the probe asserts
@@ -211,82 +211,98 @@ Both hooks are enabled per-clone by the `package.json` `prepare` script (`git co
   ref range). Sets `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env
   flake can't false-block a push). Bypass a WIP push with `git push --no-verify`.
 
-##### Push cheap / merge full (re-scoped 2026-07-28)
+##### Smoke blocks / matrix async (re-scoped 2026-07-31; supersedes "push cheap / merge full")
 
-**PUSH = Windows leg only, only the specs the diff can plausibly break. MERGE = the FULL matrix,
-both legs, every spec.** The Linux Docker leg NEVER runs on a plain push.
+**BLOCKING = the `@core` smoke only (~55 tests / 13 files, Windows leg, minutes). The FULL matrix
+(both legs, every spec) still runs on EVERY merge — but DETACHED, off the blocking path.** The
+Linux Docker leg never blocks anything.
 
-*Why it changed.* The 2026-06-13 rule escalated to the full matrix whenever the diff touched a
-"cross-platform-sensitive" path — and that list included **`package.json`, which CLAUDE.md requires
-every PR to touch** (the mandatory version bump). Every real push therefore matched `LINUX_SENSITIVE`
-and paid the full matrix (~30 min measured), and the per-spec scoping below was unreachable dead
-code. Cross-OS insurance belongs at the merge gate, where it is paid exactly once per PR.
+*Why it changed.* The 2026-07-28 re-scoping fixed the per-push cost, but the merge gate still
+blocked 30–60 min per PR: the Windows full leg (~10 min), the Docker leg (in-container
+`electron-vite build` + a CPU-capped Xvfb run), and the flake ritual's full-leg reruns on top. The
+insurance is real — the matrix has caught OSR-race / pid-reuse / font-drift classes that units,
+jsdom, review, and the OTHER OS's leg all missed — but the *waiting* was the entire cost. So the
+suite keeps running on every merge; nobody stares at it anymore. The alternative on the table was
+deleting e2e wholesale, which pays the same exposure window without ever finding out.
 
-The push gate now decides in this order:
+**The blocking push gate** decides in this order:
 
 | # | Condition | What runs |
 |---|---|---|
-| 0 | push target is `refs/heads/main` **and** the scope verdict is `NONE` | **e2e skipped** — see below |
-| 1 | `E2E_FULL_MATRIX=1`, **or** the push target is `refs/heads/main` (that IS a merge) | FULL matrix, both legs |
-| 2 | `package.json`'s only diff is the `"version"` line | that path is stripped from the change-set (it cannot change app behaviour) |
-| 3 | Every changed path is an `e2e/*.e2e.ts` spec | Windows leg, **exactly those spec files** by path |
-| 4 | `scripts/e2e-scope.mjs` verdict = `NONE` | **e2e skipped** — nothing that reaches the running app changed (docs · vitest `*.test.ts` · `__fixtures__` · `.github/` · release/bench/eval tooling). The pre-commit trio + the Actions `check` job own these. |
-| 5 | verdict = `FULL` | Windows leg, ALL specs |
-| 6 | verdict = `@tags` | Windows leg, `--grep` that subset (`@core` always included) |
+| 0 | push target is `refs/heads/main` **and** the scope verdict is `NONE` | **e2e skipped** — docs/contract pushes, the only ones CLAUDE.md allows straight to `main`. Decided THROUGH `scripts/e2e-scope.mjs` on the **unstripped** change-set, failing open — the #395-finding construction (the guarantee goes through the selector, never around it). |
+| 1 | push target is `refs/heads/main`, verdict ≠ `NONE` | **`@core` smoke blocks**, then the FULL matrix is **launched detached** on the pushed sha (a direct-to-main push IS a merge, so it owes the merge insurance — paid async) |
+| 2 | `E2E_FULL_MATRIX=1` | FULL matrix, both legs, **blocking** (the on-demand hatch) |
+| 3 | `package.json`'s only diff is the `"version"` line | that path is stripped from the change-set (it cannot change app behaviour) |
+| 4 | Every changed path is an `e2e/*.e2e.ts` spec | Windows leg, **exactly those spec files** by path (they are the thing under test; smoke would not exercise them) |
+| 5 | `scripts/e2e-scope.mjs` verdict = `NONE` | **e2e skipped** — nothing that reaches the running app changed (docs · vitest `*.test.ts` · `__fixtures__` · `.github/` · release/bench/eval tooling). The pre-commit trio + the Actions `check` job own these. |
+| 6 | anything else | **`@core` smoke** (`pnpm test:e2e:smoke`, `E2E_WORKERS=2`, retries:2) |
 
-*Row 0 — why a direct-to-main push may skip (added 2026-07-28, v0.37.2).* Per CLAUDE.md, feature
-code never lands on `main` directly; it goes through a PR whose merge gate runs the full matrix. The
-only pushes that legitimately go straight to `main` are docs/contract commits — above all the
-per-merge `build-history.md` entry. Paying ~25 min of matrix for those is waste, and the
-`git push --no-verify` workaround it forced is *worse*, because that disables the gate wholesale
-rather than narrowly. Row 0 therefore routes the decision **through** `scripts/e2e-scope.mjs` — the
-same selector that gates every other push — and fails **open** to `FULL` on any error. It is
-evaluated on the **unstripped** change-set, so `package.json` still reads cross-cutting and a
-version-only push to `main` still scores `FULL` and still pays the matrix. That distinction matters:
-the #395 review finding was an early exit placed *ahead* of the guarantee, bypassing the selector
-entirely; row 0 consults it.
+The per-area `@tags` are no longer a hook output — the selector's only load-bearing verdict is now
+`NONE` vs not-`NONE` — but the tag partition (next section) stays maintained: it is how you scope a
+manual run while iterating (`pnpm test:e2e --grep @terminal`) and how the demotion audit reasons
+about the suite.
 
-*Windows-leg parallelism (added 2026-07-28, v0.37.2).* The Windows push leg runs `E2E_WORKERS=2` —
-two Electron apps side by side (`fullyParallel` stays false; whole files are the unit). Measured on
-the dev box over 342 specs: workers:1 = 10.1m, workers:2 = 5.3–6.8m. Cross-worker **state** leakage
-is a non-issue, since each worker gets its own Electron process. What contends is OS-level — window
-focus, ConPTY, GPU — and it is real: one of three `retries:0` runs failed four native specs
-(`boardKeyboard:58`, `terminal:62`, `terminalCrisp:155`/`:200`), another failed none. Probabilistic,
-not a fixed incompatible set. Under the gate's `retries:2` the suite is green. **The trade is
-explicit: ~3 min/run bought with more reliance on retries.** `E2E_WORKERS` defaults to **1**, so the
-Linux Docker leg and CI cannot silently inherit it — that container is CPU-capped and unmeasured at
-2, and the merge gate is exactly where extra retry-reliance is least welcome. Opt out with
-`E2E_WORKERS=1 git push`.
+**The async matrix runner** (`scripts/e2e-async-runner.mjs`) is launched automatically by
+`.claude/tools/signal-merge.ps1` after every merge to `origin/main` (skip with `-NoE2E` for a
+docs-only merge), by the pre-push hook on a direct-to-main push, or by hand with `make e2e-async`.
+Contract:
 
-*What MAIN-process diffs do now.* `src/main/**` used to be blanket-`FULL` because it is the cross-OS
-surface. The Linux leg is deferred to the merge gate either way, so blanket-`FULL` bought spec
-breadth, not OS coverage. The well-partitioned MAIN subsystems therefore scope by area like the
-renderer — `pty*`/`terminal*`/`recap*` → `@terminal`, `previewOsr*`/`localServer` → `@preview`,
-`voice*`/`openai*` → `@voice`, `mcp*`/`swarm*`/`orchestration*` → `@mcp`. The **shared MAIN core**
-(`index.ts`, window/security, lifecycle, project/auth/llm/jarvis/git plumbing, `hooks/`,
-`cliProvisioners/`) and all of `src/preload/**` stay `FULL`.
+- **Detached + kill-proof:** a hidden `node` process (NOT pwsh — e2e specs `taskkill` pwsh shells
+  mid-run, which has killed pwsh-based instrumentation before). Survives the terminal and the
+  session that launched it.
+- **Snapshot isolation:** checks the target sha out into the dedicated worktree
+  `.worktrees/e2e-async-runner` (created on first use; `node_modules` junctioned from MAIN) — a
+  foreground build in MAIN or a feature worktree can never clobber this run's `out/`. Known
+  accepted hazard: a `pnpm install` in MAIN mid-run voids the run through the junction (shows RED —
+  rerun). Foreground e2e overlapping the runner's Windows leg is the same ambient
+  focus/ConPTY/GPU contention class as `E2E_WORKERS=2` — absorbed by retries, not a state leak.
+- **Sequential legs, explicit exits:** the Windows leg (`E2E_PRECOMMIT=1`, `E2E_WORKERS=1` — merge
+  semantics) then the Linux Docker leg; concurrent legs are a documented false-red. Exit codes are
+  read from the child process object directly, never through a pipe (a `| tail` masked a red leg
+  once).
+- **One at a time:** a lock file (`.worktrees/e2e-async-runner.lock`, stale-PID takeover)
+  serializes runs — a second launch logs `SKIPPED` to `history.log` and exits; the next merge's
+  launch covers it.
+- **Reporting:** a per-run log + `history.log` + `last-result.json` under
+  `.claude/coordination/e2e-async/`, plus an OS toast. Verdicts: **GREEN** (both legs exit 0) ·
+  **RED** (any leg failed) · **INCOMPLETE** (Linux leg skipped, e.g. Docker daemon down — treat as
+  RED for the ritual: the missing leg is exactly the one that catches what Windows hides).
 
-*What still routes FULL, measured.* Replaying the last 40 commits through the new selector, the
-remaining `FULL` drivers rank: `pnpm-lock.yaml`, `src/renderer/src/smoke/e2eHooks{,.types}.ts`,
-`src/preload/index.ts`, `src/main/index.ts`, `src/main/e2eMain.ts`. Those are honestly cross-cutting
-— `e2eHooks.ts` in particular is the harness's own contract with the renderer, and most feature PRs
-that add e2e coverage extend it. **So a whole feature PR usually still runs every spec — but on the
-Windows leg only, which is the bulk of the saving.** The per-area narrowing pays off on the small
-iterative pushes in between (one board file, one MAIN subsystem, a doc + a unit test).
+**The merge ritual** (CLAUDE.md › parallel sessions) is now: `make check` (cheap gate + smoke)
+before `gh pr merge` → merge → `signal-merge.ps1` (launches the matrix) → **before your NEXT merge,
+read `last-result.json`** — `GREEN` proceed; `RED`/`INCOMPLETE` means fix-forward or revert FIRST.
+The exposure window for a cross-OS-only regression is one async run (hours max, on a pre-release
+single-maintainer `main`), not "never found" — that window is the entire price of un-blocking the
+merge, and it is paid knowingly. For a change you already believe is cross-OS-risky, pay the
+insurance up front instead: `make check-full` (blocking full matrix) before the merge. Nothing
+enforces any of this from a hook — merges land on GitHub, not through a local push — so it stays a
+hard human ritual.
 
-**The merge gate is unchanged and still MANDATORY:** run `make check` (cheap gate + `pnpm
-test:e2e:matrix`, both legs, every spec) before `gh pr merge`. Nothing enforces this from a hook —
-merges land on GitHub, not through a local push — so it stays a hard human ritual (CLAUDE.md ›
-parallel sessions).
+##### Flake policy — no full-leg reruns (2026-07-31)
+
+`retries:2` (under `E2E_PRECOMMIT`/CI) is the in-run absorber for the documented environmental
+classes: browser-trio capturePage, clipboard contention, window-focus/ConPTY/GPU contention. When a
+run still ends RED on one of those:
+
+1. **Isolate it:** run the failing spec alone (`pnpm test:e2e e2e/<spec>.e2e.ts`), 3×,
+   `--retries=0` if you want it loud.
+2. **Known class + isolated green ⇒ DONE.** Record the class in the run's notes and move on. Do
+   **NOT** rerun the full leg "to be sure" — the full rerun re-proves nothing the isolation didn't,
+   and it was the single biggest waste in the old ritual (10–30 min per flake).
+3. Reruns beyond the isolation use `pnpm test:e2e --last-failed` (failed tests only), never the
+   whole leg.
+4. A **new** failure class, or a failure in the area the diff touched, is NOT a flake until proven:
+   read the failure text (cross-spec leakage masquerades as timing — see the isolation notes), then
+   investigate or file it.
 
 Run the legs directly:
 
 | Command | Leg | How |
 |---|---|---|
 | `pnpm test:e2e` | **Windows** | native (real ConPTY + WebContentsView on this OS); add `-- --grep @area` to scope |
-| `pnpm test:e2e:smoke` | **Windows** | `--grep @core` only (**55 tests / 13 files** as of 2026-07-28 — the fast subset; re-measure with `pnpm exec playwright test --list --grep @core` rather than trusting this number) |
+| `pnpm test:e2e:smoke` | **Windows** | `--grep @core` only (**55 tests / 13 files** as of 2026-07-28 — the blocking gate; re-measure with `pnpm exec playwright test --list --grep @core` rather than trusting this number). Keep it deliberate: adding `@core` to a spec taxes EVERY push. |
 | `pnpm test:e2e:linux` | **Linux** | Docker (`Dockerfile.e2e`: `node:22-bookworm` + Xvfb + `xauth` + Electron libs; `pnpm install` rebuilds node-pty for the Electron ABI; `CI=1` → `--no-sandbox`) |
-| `pnpm test:e2e:matrix` | **both** | the Windows leg then the Linux leg; both must pass (the per-PR merge gate) |
+| `pnpm test:e2e:matrix` | **both** | the Windows leg then the Linux leg; both must pass (the async runner's job; blocking via `make check-full` / `E2E_FULL_MATRIX=1`) |
 
 #### E2E tags + path-scoped selection (MT-1)
 

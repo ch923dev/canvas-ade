@@ -27,8 +27,8 @@ endif
 .PHONY: help dev dev-pr build start \
         typecheck lint format format-check \
         test test-unit test-integration test-watch \
-        e2e e2e-smoke e2e-linux e2e-matrix \
-        gate check rebuild \
+        e2e e2e-smoke e2e-linux e2e-matrix e2e-async \
+        gate check check-full rebuild \
         pull-main pack-dir build-win build-mac build-linux release-win \
         worktree worktree-rm worktrees signal-merge
 
@@ -47,7 +47,8 @@ help:
 	@echo     make lint                eslint .
 	@echo     make format-check        prettier --check .
 	@echo     make gate                cheap gate: typecheck + lint + format-check + unit/integration
-	@echo     make check               FULL pre-merge gate: gate + e2e matrix (both legs)
+	@echo     make check               pre-merge gate: gate + @core e2e smoke (matrix runs async post-merge)
+	@echo     make check-full          BLOCKING full gate: gate + e2e matrix (both legs)
 	@echo   --- Packaging ---
 	@echo     make pack-dir            build + electron-builder --dir -^> release\win-unpacked
 	@echo     make build-win           build + electron-builder --win -^> release\*.exe (unsigned)
@@ -62,7 +63,8 @@ help:
 	@echo     make e2e                 Playwright e2e, Windows leg (builds first)
 	@echo     make e2e-smoke           e2e @core smoke subset
 	@echo     make e2e-linux           e2e Linux leg (Docker)
-	@echo     make e2e-matrix          e2e FULL matrix (Windows + Linux)
+	@echo     make e2e-matrix          e2e FULL matrix (Windows + Linux), blocking
+	@echo     make e2e-async           launch the FULL matrix detached (log + toast + last-result.json)
 	@echo   --- Worktrees ---
 	@echo     make worktree NAME=foo ZONE=src/main/foo.ts     create a coordinated worktree
 	@echo     make worktree-rm NAME=foo                       tear one down safely
@@ -105,10 +107,17 @@ format-check:
 # suites. Mirrors what CI's `check` job runs; does NOT run e2e (see `make check`).
 gate: typecheck lint format-check test
 
-# Full pre-merge gate. Run this before merging a feature branch to main:
-# the cheap gate plus the FULL e2e matrix (Windows + Linux), as required by
-# CLAUDE.md > Parallel sessions.
-check: gate e2e-matrix
+# Pre-merge gate ("smoke blocks / matrix async", 2026-07-31). Run before
+# `gh pr merge`: the cheap gate plus the @core e2e smoke. The FULL matrix runs
+# DETACHED after the merge (signal-merge.ps1 launches it; result lands in
+# .claude/coordination/e2e-async/last-result.json + an OS toast) — check that
+# file is GREEN before your NEXT merge. CLAUDE.md > Parallel sessions.
+check: gate e2e-smoke
+
+# The old blocking full gate: cheap gate + the FULL e2e matrix, both legs, in the
+# foreground. Reach for it when you want the insurance BEFORE the merge (risky
+# cross-OS change) instead of async after it.
+check-full: gate e2e-matrix
 
 ## ---- Tests -----------------------------------------------------------------
 
@@ -135,9 +144,15 @@ e2e-smoke:
 e2e-linux:
 	pnpm test:e2e:linux
 
-# FULL matrix = both legs. Mandatory once per PR at the pre-merge gate.
+# FULL matrix = both legs, blocking in this terminal.
 e2e-matrix:
 	pnpm test:e2e:matrix
+
+# FULL matrix, DETACHED — returns immediately; the runner snapshots origin/main
+# into .worktrees/e2e-async-runner, runs both legs sequentially, then writes
+# .claude/coordination/e2e-async/last-result.json + fires an OS toast.
+e2e-async:
+	powershell -NoProfile -Command "Start-Process node -ArgumentList 'scripts/e2e-async-runner.mjs' -WindowStyle Hidden"
 
 ## ---- Packaging ---------------------------------------------------------------
 

@@ -13,12 +13,19 @@
   This REPLACES the old manual "bump the Integration tip SHA" step. Still update the
   human narrative paragraph + your row by hand for the rich context.
 
+  It ALSO launches the detached async e2e matrix runner on the merged sha
+  (scripts/e2e-async-runner.mjs — "smoke blocks / matrix async", 2026-07-31):
+  the full Windows + Linux matrix runs in the background, result lands in
+  .claude/coordination/e2e-async/last-result.json plus an OS toast. Skip the
+  launch (e.g. docs-only merge) with -NoE2E.
+
 .PARAMETER Sha       Full or short SHA now on origin/main. Defaults to current origin/main.
 .PARAMETER Pr        PR number (digits, with or without '#').
 .PARAMETER Subject   One-line subject. Defaults to the tip commit's subject.
 .PARAMETER Lockfile  Set if the merged PR changed pnpm-lock.yaml (adds the
                      `pnpm install && pnpm rebuild` reminder to the rebase banner).
 .PARAMETER Date      yyyy-MM-dd. Defaults to today.
+.PARAMETER NoE2E     Skip launching the async e2e matrix runner (docs-only merges).
 
 .EXAMPLE
   pwsh .claude/tools/signal-merge.ps1 -Pr 140 -Subject "terminal fill gutter"
@@ -30,7 +37,8 @@ param(
   [string]$Pr,
   [string]$Subject,
   [switch]$Lockfile,
-  [string]$Date
+  [string]$Date,
+  [switch]$NoE2E
 )
 $ErrorActionPreference = 'Stop'
 
@@ -54,3 +62,16 @@ if ($Lockfile) { $nodeArgs += @('--lockfile', '1') }
 # Run from MAIN so the hook's `updatedBy` reads the integration session, not a worktree.
 Push-Location $Main
 try { node @nodeArgs } finally { Pop-Location }
+
+# Launch the async full-matrix e2e run on the merged sha (detached; node not pwsh —
+# the e2e specs taskkill pwsh shells mid-run). Fire-and-forget: a launch failure
+# warns but never fails the merge signal. Runner self-serializes via its lock.
+if (-not $NoE2E) {
+  $runner = Join-Path $Main 'scripts\e2e-async-runner.mjs'
+  try {
+    Start-Process node -ArgumentList @($runner, '--sha', $Sha) -WindowStyle Hidden -WorkingDirectory $Main
+    Write-Host "[signal-merge] async e2e matrix launched for $($Sha.Substring(0, [Math]::Min(7, $Sha.Length))) — result: .claude/coordination/e2e-async/last-result.json (+ OS toast)."
+  } catch {
+    Write-Warning "[signal-merge] could not launch the async e2e runner: $_  — run 'make e2e-async' yourself."
+  }
+}
