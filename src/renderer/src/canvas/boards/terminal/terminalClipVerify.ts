@@ -74,6 +74,11 @@ export interface ClipVerifyDeps {
   /** True while an S2 backstop snapshot is mid-parse: geometry is in flux and the backstop's
    *  resumePump replays a full fitWhole (which reschedules) — skip the frame, keep ticking. */
   backstopInFlight: () => boolean
+  /** True while a counterScale transition (full-view enter/exit, zoom restep, OS rescale) is
+   *  open: the render font is mid-change, so a measured "overflow" is a transient artifact, not a
+   *  clip — a shed here would shift real content. Skip the frame, keep ticking; the transition's
+   *  own refit (which consumes the flag) re-runs fitWhole and reschedules this chain. */
+  metricsInFlux: () => boolean
   /** Sample the CURRENT rendered geometry; null when an element is missing (portal hop mid-frame,
    *  teardown). Re-resolved per tick by the caller — never a captured node. */
   measure: () => ClipVerifyMeasure | null
@@ -106,6 +111,7 @@ export interface ClipVerifyWire {
   term: () => { rows: number; cols: number; resize: (cols: number, rows: number) => void } | null
   host: () => HTMLElement | null
   backstopInFlight: () => boolean
+  metricsInFlux: () => boolean
 }
 
 /** Wire `startClipVerify` to the real rAF + live terminal — the one-liner `fitWhole` calls after
@@ -115,6 +121,7 @@ export function verifyAfterFit(slot: ClipVerifySlot, w: ClipVerifyWire): void {
   startClipVerify(slot, CLIP_VERIFY_FRAMES, {
     stillCurrent: () => w.term() !== null,
     backstopInFlight: w.backstopInFlight,
+    metricsInFlux: w.metricsInFlux,
     measure: () => {
       const t = w.term()
       return t ? measureClipGeometry(w.host(), t.rows, t.cols) : null
@@ -134,7 +141,7 @@ export function verifyAfterFit(slot: ClipVerifySlot, w: ClipVerifyWire): void {
  */
 export function startClipVerify(slot: ClipVerifySlot, frames: number, d: ClipVerifyDeps): void {
   const verifyOnce = (): void => {
-    if (!d.stillCurrent() || d.backstopInFlight()) return
+    if (!d.stillCurrent() || d.backstopInFlight() || d.metricsInFlux()) return
     const m = d.measure()
     if (!m) return
     const rows = shedTargetRows(m.rows, m.overflow, m.cellH)

@@ -620,7 +620,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     verifyAfterFit(clipVerifyRef.current, {
       term: () => (termRef.current === term ? term : null),
       host: () => screenRef.current,
-      backstopInFlight: () => resizeBackstopRef.current
+      backstopInFlight: () => resizeBackstopRef.current,
+      metricsInFlux: () => csTransitionRef.current
     })
     // Any real fit establishes the grid (S3): with the full-view freeze gone, a session born in
     // full view must ALSO establish, so its exit refit rides the lossless backstop instead of a

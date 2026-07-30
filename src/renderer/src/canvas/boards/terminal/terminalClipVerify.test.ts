@@ -61,6 +61,7 @@ function makeDeps(
     resizes,
     stillCurrent: () => true,
     backstopInFlight: () => false,
+    metricsInFlux: () => false,
     measure: () => ({ rows: 10, cols: 80, overflow: -16, cellH: 18 }),
     resize: (cols, rows) => resizes.push({ cols, rows }),
     raf: raf.raf,
@@ -164,6 +165,25 @@ describe('startClipVerify — deferred clip-verify watch window (terminal-clip f
     inFlight = false
     raf.flush() // resumed — measures and sheds
     expect(samples).toBe(1)
+    expect(d.resizes).toEqual([{ cols: 80, rows: 9 }])
+  })
+
+  it('skips the frame while counterScale metrics are in flux (a shed on a transient would SHIFT content)', () => {
+    const raf = fakeRaf()
+    let inFlux = true
+    let samples = 0
+    const d = makeDeps(raf, {
+      metricsInFlux: () => inFlux,
+      measure: () => {
+        samples++
+        return { rows: 10, cols: 80, overflow: 2, cellH: 18 }
+      }
+    })
+    startClipVerify({ handle: 0, late: 0 }, 3, d)
+    raf.flush() // transition open — no measurement, no shed
+    expect(samples).toBe(0)
+    inFlux = false
+    raf.flush() // transition consumed — real overflow sheds
     expect(d.resizes).toEqual([{ cols: 80, rows: 9 }])
   })
 

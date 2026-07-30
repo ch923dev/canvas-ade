@@ -333,11 +333,12 @@ export default tseslint.config(
     // fresh (re)spawn, and the snapshotter's `coalescerRef.current?.dropped() ?? 0` argument (reviewer
     // fix: subtract hold-cap drops from the boundary). The extraction already pulled the file back from
     // +13 to +3. Ratchet DOWN on the next split of this Tier-3 hook. See docs/contributing/file-size-doctrine.md.
-    // 703→705 (terminal-clip fix): the chain/measure/arithmetic all live in terminalClipVerify.ts +
-    // terminalSpawnMath.ts (unit-tested with a fake rAF); the +2 net is the hook-bound residue — the
+    // 703→706 (terminal-clip fix): the chain/measure/arithmetic all live in terminalClipVerify.ts +
+    // terminalSpawnMath.ts (unit-tested with a fake rAF); the +3 net is the hook-bound residue — the
     // slot ref, its unmount cancel, and the verifyAfterFit wire, whose getters must close over the
-    // spawn closure's term identity + termRef/screenRef/resizeBackstopRef and cannot leave the hook.
-    rules: { 'max-lines': ['error', { max: 705, skipBlankLines: true, skipComments: true }] }
+    // spawn closure's term identity + termRef/screenRef/resizeBackstopRef/csTransitionRef and
+    // cannot leave the hook.
+    rules: { 'max-lines': ['error', { max: 706, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
