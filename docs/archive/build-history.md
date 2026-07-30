@@ -4627,3 +4627,53 @@ fallback failed OPEN (empty pre-run set ⇒ would claim a concurrent sibling che
 scratch; now fails closed with a disclosed skip) + the per-slice kickoff doc deleted per
 doc lifecycle. Incremental re-review 0 new. The backlog sweep itself freed C: 18.7 →
 132.5 GB with the inventory preserved as evidence.
+
+## 2026-07-30 — PR #400 (`b4adf73d`): orchestration P4 — observability feed + durable findings aggregation (v0.42.0)
+
+Base Phase 4 (Observability) — NOT the S4 lane (docked lead terminal / autonomy tiers,
+which rides base Phases 1/5). Closed the A7 CONFIRMED gap: an external worker's
+`write_result` dead-ended in a MAIN in-memory Map — no board rendered it, no toast fired,
+no ring raised. Companion package: `@expanse-ade/mcp` **0.23.0** (`publish_findings`,
+package PR #14, published to npm via the tag→OIDC flow the same day; the app pin bump is
+a follow-up PR).
+
+The governing constraint shaped everything: **N-worker status must never be a durable
+content write** — every `add_card`/`add_planning_element` is human-confirmed, so streaming
+status durably fires N confirm prompts at exactly the scale the feature exists for. Hence
+the split: live status rides an ephemeral feed (new `commandFeed` `McpCommand` variant →
+`commandStore`, runtime-only, never serialized, zero confirms; MAIN-side 120 ms per-board
+trailing coalesce; closed state vocabulary with the safe off-vocabulary fallback
+`reporting` + attached disclosure), while durable findings land as ONE batched write
+(compose → ONE per-row-vetoable `BatchConfirmModal` → ONE `patchKanban` carrying N
+add-ops; deny free and granular, approving nothing a successful no-op). The feed seam sits
+at `recordBoardResult` itself — the one choke point the transcript SYNTHESIZER also passes
+— and a synthesized `done` renders as `blocked`, never the ✓ ring. Attention gained the
+4th kind `blocked` (steady ring, vs needs-input's pulse), produced from `write_result`
+status + ledger blockedTags, routed through the existing `needs-input` lifecycle event so
+no notifications-config schema change was needed. S2/S3 disciplines carried: newest-first
+board→task lookup, re-check the destination INSIDE the write (BUG-021 TOCTOU), gate the
+write not the no-op.
+
+Design gate first (`docs/orchestration/p4-design-artifact.html`, all three decisions
+approved as recommended): D1 external workers keep the SAME five lifecycle columns with an
+`ext` chip (column axis = lifecycle, not origin); D2 `blocked` = 4th AttentionKind with a
+steady ring; D3 findings publish ships both triggers (recap-face button + MCP tool). The
+title-stamped dev check earned its keep with two real defects unit+e2e never caught:
+`PublishFindingsBar` selected a freshly-built array from zustand → React #185 → the whole
+Command-board recap face failed to render (fixed with the GROUP-07 primitive-fingerprint +
+`useMemo` pattern, e2e regression guard added), and `BatchConfirmModal` hardcoded the
+relay copy — "approved rows will RUN" — over a batch that runs nothing (blurb/disclose now
+travel with the request; the gate describes the act it gates).
+
+Verified: 170 unit/integration cases across the P4 files + `commandFeed.e2e.ts` 9/9
+(including "N reports raise ZERO confirm modals"); package repo 322 contract + 41 live.
+Review: 0 critical / 0 warning / 0 inline (two non-blocking observations in untouched
+files; the real one — `SwarmWorkerCards.stateOf()` has no `blocked` branch, latent — is a
+noted follow-up). Full matrix green BOTH legs on the exact merge head `528607c7` (Win 350P
+workers:1 · Linux Docker 348P 6.5m). Lane operational notes: the first push attempt failed
+on the KNOWN workers:2 contention specs (`terminal.e2e.ts:62` + two `@ptyhost` specs dying
+0xC0000142) — re-run green at `E2E_WORKERS=1` per the documented policy; the second push's
+gate went green but the transfer itself died ("remote end hung up") → `--no-verify`
+re-push after the already-green gate. Rebased over #399 mid-flight: version recomputed
+0.40.0 → **0.42.0** off the new tip (the branch commit message still says 0.40.0; the
+squash subject from the PR title is authoritative).
