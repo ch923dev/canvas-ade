@@ -114,15 +114,27 @@ describe('migrateLegacyProfile', () => {
 
     const copied = migrateLegacyProfile(legacy, profile)
 
-    expect(copied).toContain('recent-projects.json')
     expect(copied).toContain('hotkey-config.json')
     expect(copied).toContain('Local State')
     expect(copied).toContain('recap/')
     expect(readFileSync(join(profile, 'Local State'), 'utf8')).toContain('encrypted_key')
-    expect(readFileSync(join(profile, 'recent-projects.json'), 'utf8')).toBe('{"v":1}')
     expect(readFileSync(join(profile, 'recap', 'session-map.jsonl'), 'utf8')).toBe(
       '{"boardId":"b1"}\n'
     )
+  })
+
+  // Dev-check schema containment: migrating the MRU put the user's REAL project at the top of the
+  // WelcomeScreen in every fresh worktree's dev build — and opening it there rewrites its
+  // canvas.json at the dev build's (higher) schema floor, locking the released app out. A new
+  // profile now starts with no recents; devProjectSandbox provisions an empty sandbox as the first
+  // entry instead.
+  it('does NOT migrate recent-projects.json (the released project must not be one click away)', () => {
+    writeFileSync(join(legacy, 'recent-projects.json'), '{"v":1}', 'utf8')
+
+    const copied = migrateLegacyProfile(legacy, profile)
+
+    expect(copied).not.toContain('recent-projects.json')
+    expect(existsSync(join(profile, 'recent-projects.json'))).toBe(false)
   })
 
   it('skips absent sources and never invents files', () => {
@@ -169,13 +181,13 @@ describe('applyDevProfileIsolation', () => {
   }
 
   it('redirects BOTH userData and sessionData to the per-checkout profile and migrates', () => {
-    writeFileSync(join(legacy, 'recent-projects.json'), '{"v":1}', 'utf8')
+    writeFileSync(join(legacy, 'hotkey-config.json'), '{"enabled":true}', 'utf8')
     const app = fakeApp(false)
     const out = applyDevProfileIsolation(app, {}, CWD)
     expect(out.dir).toBe(join(legacy, 'profiles', devProfileSlug(CWD)))
     expect(app.paths.userData).toBe(out.dir)
     expect(app.paths.sessionData).toBe(out.dir)
-    expect(readFileSync(join(out.dir!, 'recent-projects.json'), 'utf8')).toBe('{"v":1}')
+    expect(readFileSync(join(out.dir!, 'hotkey-config.json'), 'utf8')).toBe('{"enabled":true}')
   })
 
   it('does nothing for a packaged app', () => {

@@ -150,6 +150,12 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 #   checkouts + the packaged app + the e2e harness all run side by side, no close-all ritual.
 #   CANVAS_FRESH=1 pnpm dev → throwaway profile (pure-eyeball check, deleted on quit);
 #   CANVAS_USERDATA=<dir> → explicit profile override. (src/main/profileIsolation.ts)
+# dev-check SANDBOX project: every unpackaged instance also gets a per-checkout EMPTY project at
+#   %APPDATA%/canvas-ade/devcheck-projects/<checkout>-<hash>/, fronted in that profile's recents, so
+#   a dev check never writes its (higher) schema into a real project. A dev build is BLOCKED from
+#   raising any project's minReaderVersion (ESCHEMAFLOOR). CANVAS_DEV_PROJECT=<dir> relocates the
+#   sandbox; CANVAS_ALLOW_SCHEMA_RAISE=1 lifts the guard. See Conventions › Manual dev check.
+#   (src/main/devProjectSandbox.ts · src/main/projectStore.ts)
 ```
 
 ## Conventions
@@ -247,6 +253,24 @@ the feature with `pnpm dev` and actually look at the change in the live app.
   overwriting the dev stamp.)
 - Before signing off the check, **confirm the window title (taskbar / alt-tab) reads this PR's
   stamp** — that is your ground truth that you are testing *this* PR's code and not a stale instance.
+- **Dev checks run in a SANDBOX project, never a real one.** A dev build's `SCHEMA_VERSION` /
+  `MIN_READER_VERSION` routinely run ahead of the released app's, and `boardSchema.toObject` stamps
+  THIS build's numbers on every autosave — so dev-checking a real project rewrites its
+  `canvas.json` at a compat floor the released app is forbidden to read ("saved by a newer version
+  of the app; update the app to open it"), and the second autosave rotates the poisoned doc into
+  `.bak` too, leaving no recovery copy. Two layers now prevent that:
+  - Every unpackaged instance provisions a per-checkout **empty sandbox project** at
+    `%APPDATA%/canvas-ade/devcheck-projects/<checkout>-<hash>/` and fronts it in that profile's
+    recents, so the obvious click on the dev WelcomeScreen is the safe one. New dev profiles no
+    longer inherit `recent-projects.json`, so your real projects are not listed there at all (they
+    are still reachable via *Open folder…*). (`src/main/devProjectSandbox.ts`)
+  - **Fail-closed backstop:** an unpackaged build may open and migrate a released project but may
+    never PERSIST a raised `minReaderVersion` — `writeProject` throws `ESCHEMAFLOOR` *before* the
+    first byte, so both `canvas.json` and `.bak` stay byte-identical and the save-failure toast
+    says so. Packaged builds (whose schema IS released) raise the floor as before.
+    (`src/main/projectStore.ts` › `assertNoSchemaFloorRaise`)
+  - Hatches: `CANVAS_DEV_PROJECT=<dir>` points the sandbox elsewhere;
+    `CANVAS_ALLOW_SCHEMA_RAISE=1` disables the guard for a deliberate migration test on real data.
 
 ### Responding to the Claude PR reviewer
 - When you check the automated reviewer's inline comments on a PR, you **MUST reply inline on

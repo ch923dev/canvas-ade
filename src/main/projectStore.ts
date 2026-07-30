@@ -104,6 +104,21 @@ export function setCurrentDir(dir: string | null): void {
   currentDir = dir
 }
 
+/**
+ * Dev-check schema containment: when ON, `writeProject` refuses any write that would RAISE an
+ * existing document's `minReaderVersion` compat floor (see `assertNoSchemaFloorRaise`).
+ *
+ * Off by default and toggled once at boot (`index.ts`) for UNPACKAGED builds only, so packaged
+ * builds — the ones whose schema is actually released — keep raising the floor normally, and every
+ * existing unit test is untouched. A module-level toggle (not an `app.isPackaged` read) keeps this
+ * file electron-free: it is unit-tested under the vitest node env, and importing `electron` here
+ * would break that. Mirrors the `getCurrentDir`/`setCurrentDir` precedent above.
+ */
+let schemaFloorGuard = false
+export function setSchemaFloorGuard(enabled: boolean): void {
+  schemaFloorGuard = enabled
+}
+
 /** Folder basename = the project's display name. */
 export function projectName(dir: string): string {
   const parts = dir.replace(/[/\\]+$/, '').split(/[/\\]/)
@@ -203,6 +218,55 @@ export function rotateBakAtomic(primary: string, bakPath: string): void {
   writeFileAtomic.sync(bakPath, readFileSync(primary))
 }
 
+/**
+ * The compat floor a document demands of its reader (ADR 0007). `minReaderVersion` when present,
+ * else `schemaVersion` — the same fallback `assertReadableVersion` uses on the read side
+ * (`boardSchema.ts`), so both ends agree on what "this doc needs reader ≥ N" means. Callers gate on
+ * `isEnvelope` first, which already proves `schemaVersion` is a number.
+ */
+/** Errno-shaped marker for the floor-guard refusal (renderer: `lib/saveError.ts`). */
+export const SCHEMA_FLOOR_ERRNO = 'ESCHEMAFLOOR'
+
+function readerFloorOf(doc: unknown): number {
+  const d = doc as { schemaVersion: number; minReaderVersion?: unknown }
+  return typeof d.minReaderVersion === 'number' ? d.minReaderVersion : d.schemaVersion
+}
+
+/**
+ * Dev-check schema containment — the fail-closed backstop.
+ *
+ * A dev build's `SCHEMA_VERSION`/`MIN_READER_VERSION` routinely run AHEAD of the released app's
+ * (unreleased board types and element kinds bump the floor). `boardSchema.toObject` stamps THIS
+ * build's numbers unconditionally, so a dev instance that opens a released project and touches any
+ * board rewrites the doc at a floor the released app is contractually forbidden to read
+ * (`assertReadableVersion` → "update the app to open it"). Worse, `.bak` is the prior primary, so
+ * the SECOND autosave rotates the poisoned doc into the recovery slot too and both files are lost
+ * to the released app — there is no third fallback.
+ *
+ * So: an unpackaged build may READ and migrate such a project, but may never PERSIST the raised
+ * floor. Throwing here — before `writeFileAtomic` — leaves the good primary AND the good `.bak`
+ * byte-identical. The normal dev-check target is the sandbox project (`devProjectSandbox.ts`),
+ * which has no prior doc on its first write and is therefore free to sit at any version.
+ *
+ * A missing/unparseable prior (fresh project, brand-new sandbox) has no floor to raise → allowed.
+ * `CANVAS_ALLOW_SCHEMA_RAISE=1` disables the guard for the deliberate "exercise the real migration
+ * against real data" case. The thrown error carries `code` so `project:save` propagates it to the
+ * renderer's `saveErrorMessage`, which maps it to actionable copy instead of "please try again".
+ */
+export function assertNoSchemaFloorRaise(priorDoc: unknown, nextDoc: unknown): void {
+  if (!schemaFloorGuard || priorDoc === undefined) return
+  const priorFloor = readerFloorOf(priorDoc)
+  const nextFloor = readerFloorOf(nextDoc)
+  if (nextFloor <= priorFloor) return
+  const err = new Error(
+    `writeProject: refusing to raise this project's minReaderVersion ${priorFloor} → ${nextFloor}. ` +
+      `A dev (unpackaged) build must not upgrade a project the released app still has to open — ` +
+      `use the dev-check sandbox project, or set CANVAS_ALLOW_SCHEMA_RAISE=1 to override.`
+  ) as NodeJS.ErrnoException
+  err.code = SCHEMA_FLOOR_ERRNO
+  throw err
+}
+
 /** Atomic-write the new doc, THEN rotate the prior primary → .bak. */
 export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // PERSIST-1: envelope-guard the INCOMING doc before any disk touch. MAIN trusts the
@@ -227,16 +291,27 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // prior is worth rotating (backing up a corrupt/foreign primary would poison the recovery path,
   // exactly the `tryParse` gate's intent — `isEnvelope(JSON.parse(...))` reproduces it).
   let prior: Buffer | undefined
+  // Dev-check containment: the PARSED prior, kept alongside the bytes. The parse below already
+  // happens for the rotation gate, so the floor check costs no extra read and no extra parse —
+  // the old code parsed purely as a gate and discarded the result.
+  let priorDoc: unknown
   try {
     const bytes = readFileSync(primary)
     // L1 (declined): re-serializing the parse compact (`JSON.stringify(parsed)`) would shrink the
     // .bak ~1.3-2x, but that stringify is synchronous main-thread CPU on EVERY autosave, while the
     // byte savings ride the already-async H1 rotation below — the opposite of the H1/H2 goal of
     // shrinking the save-time main-thread stall. Keep the prior bytes verbatim.
-    if (isEnvelope(JSON.parse(bytes.toString('utf8')))) prior = bytes
+    const parsed: unknown = JSON.parse(bytes.toString('utf8'))
+    if (isEnvelope(parsed)) {
+      prior = bytes
+      priorDoc = parsed
+    }
   } catch {
     /* missing / locked / unparseable prior — skip the rotation, keep the last-good .bak */
   }
+  // Fail-closed BEFORE the first byte is written, so a refusal leaves the good primary AND the
+  // good .bak untouched (the whole point — a poisoned pair has no recovery path).
+  assertNoSchemaFloorRaise(priorDoc, doc)
   await writeFileAtomic(primary, JSON.stringify(doc, null, 2), 'utf8')
   if (prior !== undefined) {
     try {

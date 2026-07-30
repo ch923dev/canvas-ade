@@ -13,6 +13,16 @@
  */
 export function saveErrorMessage(code: string | undefined, subject = 'Save failed'): string {
   switch (code) {
+    // Dev-check schema containment (projectStore.assertNoSchemaFloorRaise). Not an errno — MAIN
+    // stamps it on the refusal so this case can say what actually happened and what to do. Without
+    // it the refusal fell through to the neutral generic ("please try again"), which is exactly
+    // wrong: retrying can never succeed, and the user needs to know their project is INTACT.
+    case 'ESCHEMAFLOOR':
+      return (
+        `${subject} — this project was saved by a released Expanse, and a dev build must not ` +
+        `upgrade its schema (the released app could no longer open it). The project on disk is ` +
+        `unchanged. Use the dev-check sandbox project instead.`
+      )
     case 'ENOSPC':
       return `${subject} — the disk is full.`
     case 'EPERM':

@@ -89,6 +89,13 @@ export function resolveDevProfile(input: ResolveProfileInput): ProfileDecision {
  * Deliberately NOT migrated: Chromium profile dirs (locks — the whole point), `lockfile`,
  * `mcp-audit.jsonl` (append-only forensic trail, stays with the legacy root), `project-thumbs/`
  * (regenerates on the next project snapshot).
+ *
+ * `recent-projects.json` is deliberately NOT migrated either (dev-check schema containment). It
+ * used to be, which meant the user's REAL project sat at the top of the WelcomeScreen in every
+ * fresh worktree's dev build — and opening it there rewrites its `canvas.json` at the dev build's
+ * (usually higher) schema floor, locking the released app out of it. A new profile now starts with
+ * no recents, and `devProjectSandbox.ts` provisions an empty sandbox project as the first entry
+ * instead. The user's own projects are still reachable via "Open folder…".
  */
 export const MIGRATED_FILES = [
   // Chromium's `Local State` carries the DPAPI-wrapped os_crypt key that Electron safeStorage
@@ -96,7 +103,6 @@ export const MIGRATED_FILES = [
   // in the new profile (a fresh key gets minted) and the user is silently signed out. Same-user
   // DPAPI so the copy decrypts fine; macOS/Linux keep the key in the OS keychain (copy harmless).
   'Local State',
-  'recent-projects.json',
   'recap-consent.json',
   'hotkey-config.json',
   'llm-config.json',

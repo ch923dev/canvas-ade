@@ -24,7 +24,9 @@ import {
   collectAssetIds,
   gcAssets,
   SCHEMA_VERSION as MAIN_SCHEMA_VERSION,
-  MIN_READER_VERSION as MAIN_MIN_READER_VERSION
+  MIN_READER_VERSION as MAIN_MIN_READER_VERSION,
+  setSchemaFloorGuard,
+  SCHEMA_FLOOR_ERRNO
 } from './projectStore'
 // BUG-014: cross-import the AUTHORITATIVE renderer constants from the dependency-free version module
 // (boardSchemaVersion, which boardSchema re-exports) so this main-side test doesn't drag boardSchema's
@@ -624,5 +626,79 @@ describe('writeSession / readSession (M1 session sidecar)', () => {
     const r = readProject(dir)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.session).toEqual({ viewport: { x: 9, y: 9, zoom: 3 } })
+  })
+})
+
+/**
+ * Dev-check schema containment. A dev build's schema runs ahead of the released app's, and
+ * `toObject` stamps THIS build's version on every autosave — so an unpackaged build that opens a
+ * released project would rewrite it at a floor the released app cannot read, and the second save
+ * would rotate that doc into `.bak` too (no recovery copy left). The guard refuses the write
+ * BEFORE any byte is touched.
+ */
+describe('schema-floor guard (dev-check containment)', () => {
+  // The guard is module state; every test must leave it off so the rest of the suite (and the
+  // packaged-build default) is unaffected.
+  afterEach(() => setSchemaFloorGuard(false))
+
+  /** A doc as the released app wrote it: floor 21, one board. */
+  const released = { schemaVersion: 22, minReaderVersion: 21, boards: [{ id: 'a' }] }
+  /** The same project after a newer dev build migrated it — a BREAKING floor raise. */
+  const raised = { schemaVersion: 23, minReaderVersion: 23, boards: [{ id: 'a' }] }
+
+  it('blocks a write that raises minReaderVersion, leaving primary AND .bak intact', async () => {
+    // Two writes so a real `.bak` exists — the state a dev check reaches within ~2 seconds.
+    await writeProject(dir, released)
+    await writeProject(dir, { ...released, boards: [{ id: 'a' }, { id: 'b' }] })
+    const primaryBefore = readFileSync(cv(dir, 'canvas.json'), 'utf8')
+    const bakBefore = readFileSync(cv(dir, 'canvas.json.bak'), 'utf8')
+
+    setSchemaFloorGuard(true)
+    await expect(writeProject(dir, raised)).rejects.toThrow(/minReaderVersion 21 → 23/)
+
+    // The whole point: neither file moved, so the released app still opens the project.
+    expect(readFileSync(cv(dir, 'canvas.json'), 'utf8')).toBe(primaryBefore)
+    expect(readFileSync(cv(dir, 'canvas.json.bak'), 'utf8')).toBe(bakBefore)
+  })
+
+  it('carries the ESCHEMAFLOOR code so project:save can map it to actionable copy', async () => {
+    await writeProject(dir, released)
+    setSchemaFloorGuard(true)
+    // projectIpc reads `(err as NodeJS.ErrnoException)?.code` — no IPC change needed.
+    await expect(writeProject(dir, raised)).rejects.toMatchObject({ code: SCHEMA_FLOOR_ERRNO })
+  })
+
+  it('allows an EQUAL floor — the normal same-version dev check must still save', async () => {
+    await writeProject(dir, released)
+    setSchemaFloorGuard(true)
+    await writeProject(dir, { ...released, boards: [{ id: 'z' }] })
+    const after = JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8'))
+    expect(after.boards).toEqual([{ id: 'z' }])
+  })
+
+  it('allows a LOWER floor (never blocks a doc an older reader could already open)', async () => {
+    await writeProject(dir, raised)
+    setSchemaFloorGuard(true)
+    await writeProject(dir, released)
+    expect(JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8')).minReaderVersion).toBe(21)
+  })
+
+  it('allows the FIRST write of a new project — no prior doc means no floor to raise', async () => {
+    // Exactly the dev-check sandbox's first boot: it may sit at any version.
+    setSchemaFloorGuard(true)
+    await writeProject(dir, raised)
+    expect(JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8')).minReaderVersion).toBe(23)
+  })
+
+  it('falls back to schemaVersion when the prior doc predates minReaderVersion (ADR 0007)', async () => {
+    await writeProject(dir, { schemaVersion: 9, boards: [] }) // pre-floor doc, no minReaderVersion
+    setSchemaFloorGuard(true)
+    await expect(writeProject(dir, raised)).rejects.toMatchObject({ code: SCHEMA_FLOOR_ERRNO })
+  })
+
+  it('is OFF by default — a packaged build raises the floor exactly as before', async () => {
+    await writeProject(dir, released)
+    await writeProject(dir, raised) // no setSchemaFloorGuard call
+    expect(JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8')).minReaderVersion).toBe(23)
   })
 })

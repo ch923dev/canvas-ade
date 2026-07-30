@@ -321,7 +321,13 @@ export default tseslint.config(
     // binding handed to jarvisBoot — `resultSynth` is index-scoped state, so the closure that
     // forces a settle before a dead worker's salvage read can only be tied here. Ratchet DOWNWARD
     // when index.ts is next split.
-    rules: { 'max-lines': ['error', { max: 711, skipBlankLines: true, skipComments: true }] }
+    // 711→714 (dev-check schema containment): THREE choke-point lines. The feature lives in
+    // devProjectSandbox.ts, but (a) `applyDevCheckContainment(...)` must run at MODULE SCOPE and
+    // BEFORE `applyDevProfileIsolation` — it reads the PRE-redirect userData to site the sandbox,
+    // and it arms the schema-floor guard, which must be live before any save path can run; (b)
+    // `provisionDevSandbox(...)` must run in whenReady, where the POST-redirect userData (holding
+    // recent-projects.json) exists; (c) their one import line. Ratchet DOWNWARD on the next split.
+    rules: { 'max-lines': ['error', { max: 714, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
