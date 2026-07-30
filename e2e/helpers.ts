@@ -1,13 +1,67 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import { expect } from '@playwright/test'
 
-/** Evaluate an expression in the renderer main world (the homegrown `ctx.evalIn`). */
+/**
+ * Evaluate an expression STRING in the renderer main world (the homegrown `ctx.evalIn`).
+ *
+ * ⚠️ **Do not splice runtime VALUES into `expr`.** The string is run through `eval`, so it is a
+ * code-execution sink, and `JSON.stringify` is a JSON escaper — *not* a JS-code escaper (CodeQL
+ * `js/bad-code-sanitization`). Anything computed at run time — a seeded board id, a measured
+ * baseline, a size — goes through {@link callE2E} instead, which passes real arguments through
+ * Playwright's structured clone: there is no code string, so there is nothing to escape and nothing
+ * to get wrong.
+ *
+ * What legitimately stays here: self-contained probes whose text is fixed at author time — no
+ * interpolation (`` evalIn(page, `window.__canvasE2E.getZoom()`) ``), or interpolation of a
+ * module-level literal constant from the same source file (`` `…fontSize', '${PINNED}'` ``), which
+ * is not a data flow at all.
+ */
 export function evalIn<T>(page: Page, expr: string): Promise<T> {
   // The expr is a self-contained JS expression string (often an IIFE), matching the
   // homegrown probes verbatim. Wrap so `return` value crosses the bridge.
   return page.evaluate((source) => {
     return (0, eval)(source)
   }, expr) as Promise<T>
+}
+
+/** One `window.__canvasE2E` method call: the method name plus its arguments. */
+export interface E2ECall {
+  m: string
+  a?: unknown[]
+}
+
+/**
+ * Call one or more `window.__canvasE2E` methods with REAL arguments — the eval-free counterpart to
+ * {@link evalIn}, and the way to pass any value into the renderer.
+ *
+ * **A batch is ONE `page.evaluate`, i.e. one synchronous JS turn**, so nothing can interleave
+ * between the calls. That property is load-bearing, not incidental: `dataFlow.e2e.ts` must seed and
+ * then pin a board without the page's event loop running in between, or a real MAIN batch lands
+ * through the still-unguarded handler and wipes the seed (PR #398). The multi-call form replaces the
+ * `(() => { …; … })()` IIFE that used to buy that atomicity by string-splicing.
+ *
+ * Returns the LAST call's value, so a single-call batch reads like a plain function call.
+ */
+export function callE2E<T>(page: Page, ...calls: E2ECall[]): Promise<T> {
+  return page.evaluate((batch) => {
+    const api = (
+      globalThis as unknown as { __canvasE2E: Record<string, (...a: unknown[]) => unknown> }
+    ).__canvasE2E
+    let last: unknown
+    for (const c of batch) last = api[c.m](...(c.a ?? []))
+    return last
+  }, calls) as Promise<T>
+}
+
+/** {@link pollEval} for a {@link callE2E} batch — poll until the last call returns truthy, or the
+ *  timeout elapses. Returns false instead of throwing, like `pollEval`. */
+export async function pollCall(page: Page, calls: E2ECall[], timeoutMs: number): Promise<boolean> {
+  try {
+    await expect.poll(() => callE2E<unknown>(page, ...calls), { timeout: timeoutMs }).toBeTruthy()
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Call a MAIN registry method via electronApp.evaluate (the homegrown `ctx.dbg.*`). */
@@ -22,7 +76,9 @@ export function mainCall<T>(
   ) as Promise<T>
 }
 
-/** Poll a renderer expression until it returns truthy or the timeout elapses. */
+/** Poll a renderer expression until it returns truthy or the timeout elapses. Same interpolation
+ *  caveat as {@link evalIn} — for a data-bearing probe use {@link pollCall}, or read the value with
+ *  {@link callE2E} and poll the comparison here in Node. */
 export async function pollEval(page: Page, expr: string, timeoutMs: number): Promise<boolean> {
   try {
     await expect.poll(() => evalIn<unknown>(page, expr), { timeout: timeoutMs }).toBeTruthy()
@@ -34,16 +90,13 @@ export async function pollEval(page: Page, expr: string, timeoutMs: number): Pro
 
 /** Seed a board through the real store; returns its id. */
 export function seed(page: Page, type: string, patch?: Record<string, unknown>): Promise<string> {
-  const patchArg = patch ? `, ${JSON.stringify(patch)}` : ''
-  return evalIn<string>(page, `window.__canvasE2E.seedBoard(${JSON.stringify(type)}${patchArg})`)
+  return callE2E<string>(page, { m: 'seedBoard', a: patch ? [type, patch] : [type] })
 }
 
 /** P5: select a board + normalize zoom so the Board Inspector (the one control home since the
- *  title-bar clusters were removed) reveals for it. The id flows through JSON.stringify into the
- *  eval string (internal seeded id, same discipline as seed/evalIn call-sites). */
+ *  title-bar clusters were removed) reveals for it. */
 export async function selectForInspector(page: Page, id: string): Promise<void> {
-  await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
-  await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+  await callE2E(page, { m: 'select', a: [id] }, { m: 'setZoom', a: [1] })
 }
 
 /** P5: expand a (possibly collapsed) Inspector section by its header label. Sections like
@@ -60,7 +113,7 @@ export async function openInspectorSection(page: Page, label: string): Promise<v
 /** P5: clear the selection so the left-docked Inspector hides again — a fitView'd board can span
  *  the whole window, and a still-revealed Inspector would occlude board-content clicks. */
 export async function deselectInspector(page: Page): Promise<void> {
-  await evalIn(page, `window.__canvasE2E.select(null)`)
+  await callE2E(page, { m: 'select', a: [null] })
 }
 
 /**

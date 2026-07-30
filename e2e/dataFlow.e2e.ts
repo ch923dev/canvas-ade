@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed, selectForInspector } from './helpers'
+import { callE2E, evalIn, pollEval, seed, selectForInspector } from './helpers'
 
 /**
  * @preview Data-Flow board (JD-4) — drives the REAL board with a canned login→home capture seeded
@@ -12,25 +12,24 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     page
   }) => {
     const src = await seed(page, 'browser', {})
-    const df = await evalIn<string>(
-      page,
-      `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
-    )
-    await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(df)}, 940, 600)`)
-    // Seed AND pin in ONE evalIn — see store/osrNetPin.ts. The bound Browser board carries a live
-    // MAIN subscription whose `replay` (empty ring buffer at subscribe) / `cleared` (OSR nav
+    const df = await callE2E<string>(page, {
+      m: 'seedBoard',
+      a: ['dataflow', { sourceBoardId: src }]
+    })
+    await callE2E(page, { m: 'setBoardSize', a: [df, 940, 600] })
+    // Seed AND pin in ONE call batch — see store/osrNetPin.ts. The bound Browser board carries a
+    // live MAIN subscription whose `replay` (empty ring buffer at subscribe) / `cleared` (OSR nav
     // boundary) / `delta` would otherwise destroy these rows, and the LOD unmount would delete them
     // outright — the seed race that made this spec carry re-seed-on-empty guards. Pinned ⇒ the seed
     // is the whole world, so the polls below are plain waits on layout.
-    // ATOMICITY MATTERS: each `evalIn` is its own page.evaluate round-trip, and the page's event
-    // loop runs between two of them — long enough for a real MAIN batch to land through the
-    // unguarded handler and wipe the seed before the pin is armed. One evaluate = one synchronous
-    // JS turn, so nothing can interleave. The guards that used to cover this gap are gone.
-    await evalIn(
-      page,
-      `(() => { window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)}); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
-    )
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
+    // ATOMICITY MATTERS: two separate calls would be two `page.evaluate` round-trips, and the page's
+    // event loop runs between them — long enough for a real MAIN batch to land through the still-
+    // unguarded handler and wipe the seed before the pin is armed. One batch = one evaluate = one
+    // synchronous JS turn, so nothing can interleave. The guards that covered this gap are gone.
+    // `fitView` deliberately stays a SEPARATE round-trip: it measures the board, so it must run
+    // after React has flushed the seed, not in the same synchronous turn as it.
+    await callE2E(page, { m: 'seedDataFlowDemo', a: [src, df] }, { m: 'pinOsrNet', a: [src] })
+    await callE2E(page, { m: 'fitView', a: [df] })
 
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     // the graph backbone renders through the SHARED spec renderer (Phase 5): at least one
@@ -116,21 +115,18 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     // the "flat" assertion (a timing-dependent flake). Keeping the first-party filter ON (with the
     // origin = example.test) excludes that cross-origin noise, so only the 6 seeded rows are graphed.
     const src = await seed(page, 'browser', { url: 'https://example.test/' })
-    const df = await evalIn<string>(
-      page,
-      `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
-    )
+    const df = await callE2E<string>(page, {
+      m: 'seedBoard',
+      a: ['dataflow', { sourceBoardId: src }]
+    })
     // a flat capture: 6 unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js).
     // Seeded and pinned in ONE evaluate (see test 1 — two round-trips leave a gap a real MAIN batch
     // can win). `seedOsrNet` itself stays unpinned for the @preview browserNetwork specs, which
     // exercise the LIVE channel on purpose; pinning is the caller's declaration, not the seeder's.
-    await evalIn(
-      page,
-      `(() => { window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
-    )
+    await callE2E(page, { m: 'seedOsrNet', a: [src, 6] }, { m: 'pinOsrNet', a: [src] })
     // apiOnly OFF so the `.js` asset rows show; first-party ON so only example.test (the seeds) is graphed.
-    await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
+    await callE2E(page, { m: 'setDfFilters', a: [df, false, true] })
+    await callE2E(page, { m: 'fitView', a: [df] })
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect
       .poll(() => node.locator('.pl-spec-node[data-kind="service"]').count(), {
@@ -146,16 +142,13 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     page
   }) => {
     const src = await seed(page, 'browser', {})
-    const df = await evalIn<string>(
-      page,
-      `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
-    )
+    const df = await callE2E<string>(page, {
+      m: 'seedBoard',
+      a: ['dataflow', { sourceBoardId: src }]
+    })
     // seed + pin in ONE evaluate (see test 1 — atomicity against a late MAIN batch)
-    await evalIn(
-      page,
-      `(() => { window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)}); window.__canvasE2E.pinOsrNet(${JSON.stringify(src)}) })()`
-    )
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
+    await callE2E(page, { m: 'seedDataFlowDemo', a: [src, df] }, { m: 'pinOsrNet', a: [src] })
+    await callE2E(page, { m: 'fitView', a: [df] })
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect
       .poll(() => node.locator('.pl-spec-node[data-kind="service"]').count(), {
@@ -173,7 +166,7 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     )
     expect(hiddenShown, 'API-only default surfaces the Hidden meta').toBe(true)
     // turn API-only off (first-party still on, all records are localhost) → nothing hidden → meta gone
-    await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
+    await callE2E(page, { m: 'setDfFilters', a: [df, false, true] })
     const hiddenGone = await pollEval(
       page,
       `!((document.querySelector('[data-test="board-inspector"]')?.textContent || '').includes('Hidden'))`,
