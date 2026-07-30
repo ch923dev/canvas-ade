@@ -189,7 +189,7 @@ the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pr
 (`.githooks/pre-push`). It moved commit→push on 2026-06-06 so local commits stay fast — `git commit`
 has no push-intent signal, so gating "work that reaches origin" belongs on push (the hook is
 origin-only and skips docs-only pushes). **Since 2026-07-31 the BLOCKING gate is the `@core` smoke
-only — the full matrix runs ASYNC after every merge** (see *Smoke blocks / matrix async* below). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
+only — the full matrix is on-demand (`make e2e-async` / `make check-full`)** (see *Smoke blocks / matrix async* below). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
 Actions CI gate is now the `check` job only (typecheck · lint · format · unit + integration).
 Process-tree-kill is covered by `killTreeCommand` (unit, both platforms — Windows `taskkill /T /F`,
 POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned child prints its pid; the probe asserts
@@ -214,7 +214,7 @@ Both hooks are enabled per-clone by the `package.json` `prepare` script (`git co
 ##### Smoke blocks / matrix async (re-scoped 2026-07-31; supersedes "push cheap / merge full")
 
 **BLOCKING = the `@core` smoke only (~55 tests / 13 files, Windows leg, minutes). The FULL matrix
-(both legs, every spec) still runs on EVERY merge — but DETACHED, off the blocking path.** The
+(both legs, every spec) is on-demand: run it DETACHED whenever you want the insurance — it never blocks.** The
 Linux Docker leg never blocks anything.
 
 *Why it changed.* The 2026-07-28 re-scoping fixed the per-push cost, but the merge gate still
@@ -222,7 +222,7 @@ blocked 30–60 min per PR: the Windows full leg (~10 min), the Docker leg (in-c
 `electron-vite build` + a CPU-capped Xvfb run), and the flake ritual's full-leg reruns on top. The
 insurance is real — the matrix has caught OSR-race / pid-reuse / font-drift classes that units,
 jsdom, review, and the OTHER OS's leg all missed — but the *waiting* was the entire cost. So the
-suite keeps running on every merge; nobody stares at it anymore. The alternative on the table was
+full suite stays one command away, detached, and nobody ever stares at it. The alternative on the table was
 deleting e2e wholesale, which pays the same exposure window without ever finding out.
 
 **The blocking push gate** decides in this order:
@@ -230,7 +230,7 @@ deleting e2e wholesale, which pays the same exposure window without ever finding
 | # | Condition | What runs |
 |---|---|---|
 | 0 | push target is `refs/heads/main` **and** the scope verdict is `NONE` | **e2e skipped** — docs/contract pushes, the only ones CLAUDE.md allows straight to `main`. Decided THROUGH `scripts/e2e-scope.mjs` on the **unstripped** change-set, failing open — the #395-finding construction (the guarantee goes through the selector, never around it). |
-| 1 | push target is `refs/heads/main`, verdict ≠ `NONE` | **`@core` smoke blocks**, then the FULL matrix is **launched detached** on the pushed sha (a direct-to-main push IS a merge, so it owes the merge insurance — paid async) |
+| 1 | push target is `refs/heads/main`, verdict ≠ `NONE` | **`@core` smoke blocks**; the hook prints a reminder that the FULL matrix is available on demand (`make e2e-async` / `make check-full`) but launches nothing |
 | 2 | `E2E_FULL_MATRIX=1` | FULL matrix, both legs, **blocking** (the on-demand hatch) |
 | 3 | `package.json`'s only diff is the `"version"` line | that path is stripped from the change-set (it cannot change app behaviour) |
 | 4 | Every changed path is an `e2e/*.e2e.ts` spec | Windows leg, **exactly those spec files** by path (they are the thing under test; smoke would not exercise them) |
@@ -242,10 +242,13 @@ The per-area `@tags` are no longer a hook output — the selector's only load-be
 manual run while iterating (`pnpm test:e2e --grep @terminal`) and how the demotion audit reasons
 about the suite.
 
-**The async matrix runner** (`scripts/e2e-async-runner.mjs`) is launched automatically by
-`.claude/tools/signal-merge.ps1` after every merge to `origin/main` (skip with `-NoE2E` for a
-docs-only merge), by the pre-push hook on a direct-to-main push, or by hand with `make e2e-async`.
-Contract:
+**The async matrix runner** (`scripts/e2e-async-runner.mjs`) is **MANUAL-ONLY** (user decision
+2026-07-31 — nothing launches it automatically; the box is never loaded unless asked). Run it with
+`make e2e-async` (detached — returns immediately), `signal-merge.ps1 -E2E` (launch alongside the
+merge signal), `make check-full` (blocking foreground), or `E2E_FULL_MATRIX=1 git push`.
+Recommended moments to pay the insurance: after a merge touching MAIN/preload/native surfaces
+(pty · OSR · process-kill · e2eHooks), before publishing a release build, and whenever
+`last-result.json` is older than the work you are about to ship on top of it. Contract:
 
 - **Detached + kill-proof:** a hidden `node` process (NOT pwsh — e2e specs `taskkill` pwsh shells
   mid-run, which has killed pwsh-based instrumentation before). Survives the terminal and the
@@ -269,14 +272,13 @@ Contract:
   RED for the ritual: the missing leg is exactly the one that catches what Windows hides).
 
 **The merge ritual** (CLAUDE.md › parallel sessions) is now: `make check` (cheap gate + smoke)
-before `gh pr merge` → merge → `signal-merge.ps1` (launches the matrix) → **before your NEXT merge,
-read `last-result.json`** — `GREEN` proceed; `RED`/`INCOMPLETE` means fix-forward or revert FIRST.
-The exposure window for a cross-OS-only regression is one async run (hours max, on a pre-release
-single-maintainer `main`), not "never found" — that window is the entire price of un-blocking the
-merge, and it is paid knowingly. For a change you already believe is cross-OS-risky, pay the
-insurance up front instead: `make check-full` (blocking full matrix) before the merge. Nothing
-enforces any of this from a hook — merges land on GitHub, not through a local push — so it stays a
-hard human ritual.
+before `gh pr merge` → merge → `signal-merge.ps1` (signal only; add `-E2E` to also launch the
+matrix). The matrix being manual-only means the exposure window for a cross-OS-only regression is
+**open-ended until someone runs it** — accepted knowingly (pre-release, single maintainer). When a
+run exists, its verdict is binding: `RED`/`INCOMPLETE` in `last-result.json` = fix-forward or
+revert before shipping on top of it. For a change you already believe is cross-OS-risky, pay the
+insurance up front: `make check-full` (blocking) before the merge. Nothing enforces any of this
+from a hook — merges land on GitHub, not through a local push — so it stays a hard human ritual.
 
 ##### Flake policy — no full-leg reruns (2026-07-31)
 

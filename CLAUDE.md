@@ -315,14 +315,15 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
   node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially.
   **The merge ritual (2026-07-31, "smoke blocks / matrix async"): `make check` (cheap gate + `@core`
-  smoke) before `gh pr merge`; after the merge, `signal-merge.ps1` auto-launches the FULL e2e matrix
-  (both legs, every spec) DETACHED; before your NEXT merge, read
-  `.claude/coordination/e2e-async/last-result.json` — GREEN proceed, RED/INCOMPLETE = fix-forward or
-  revert FIRST.** Cross-OS + full-suite insurance is still paid once per merge — asynchronously; the
-  exposure window is one async run, accepted knowingly. For a change you already believe is
-  cross-OS-risky, run `make check-full` (blocking matrix) before merging instead. No hook can
-  enforce the ritual (merges land on GitHub, not through a local push), so it is a hard human
-  ritual. Full contract: `docs/testing/TESTING.md` › *Smoke blocks / matrix async*.
+  smoke) before `gh pr merge`; then `signal-merge.ps1` (signal only). The FULL matrix is
+  MANUAL-ONLY — run `make e2e-async` (detached) / `signal-merge.ps1 -E2E` / `make check-full`
+  (blocking) when you want the cross-OS insurance; recommended after merges touching MAIN/preload/
+  native surfaces and before any release build. A recorded verdict is binding: RED/INCOMPLETE in
+  `.claude/coordination/e2e-async/last-result.json` = fix-forward or revert before shipping on top
+  of it.** The exposure window for a cross-OS-only regression is open-ended until someone runs the
+  matrix — accepted knowingly (user decision). No hook can enforce the ritual (merges land on
+  GitHub, not through a local push), so it is a hard human ritual. Full contract:
+  `docs/testing/TESTING.md` › *Smoke blocks / matrix async*.
   (Native Agent Teams = broken on Windows; this is the Windows-safe substitute.)
 - **Feature work lives on a worktree, not `main`. `main` is the stable version.** Anything scoped to a
   single feature / fix / refactor — its **docs (specs, plans, roadmaps, research) AND its
@@ -352,19 +353,20 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 > only e2e that ever BLOCKS is the **`@core` smoke** (~55 tests / 13 files, Windows leg,
 > `E2E_WORKERS=2`, retries:2): it gates every push whose diff reaches the running app, and the
 > pre-merge `make check` (cheap gate + smoke). The **FULL matrix (`pnpm test:e2e:matrix`, both legs,
-> every spec) still runs on EVERY merge — DETACHED**: `.claude/tools/signal-merge.ps1` launches
-> `scripts/e2e-async-runner.mjs` (hidden node process; snapshot worktree
-> `.worktrees/e2e-async-runner`; sequential legs; lock-serialized), which writes
-> `.claude/coordination/e2e-async/last-result.json` + fires an OS toast (GREEN / RED / INCOMPLETE).
-> **Before your next merge, read that verdict — RED/INCOMPLETE = fix-forward or revert first.**
+> every spec) is MANUAL-ONLY — nothing launches it automatically (user decision)**: run
+> `make e2e-async` / `signal-merge.ps1 -E2E` to launch `scripts/e2e-async-runner.mjs` DETACHED
+> (hidden node process; snapshot worktree `.worktrees/e2e-async-runner`; sequential legs;
+> lock-serialized), which writes `.claude/coordination/e2e-async/last-result.json` + fires an OS
+> toast (GREEN / RED / INCOMPLETE). **A recorded RED/INCOMPLETE verdict = fix-forward or revert
+> before shipping on top of it.** Recommended after native-surface merges + before release builds.
 > *Why:* the 2026-07-28 rule still blocked ~30-60 min per merge (full Windows leg + the Docker leg +
 > full-leg flake reruns); the matrix's insurance is real (it has caught OSR-race / pid-reuse /
-> font-drift classes every lower tier missed) but the WAITING was the entire cost — so the suite
-> keeps running per merge, off the blocking path. The hook still: strips a version-only
+> font-drift classes every lower tier missed) but the WAITING was the entire cost — so the smoke is
+> the only thing anyone waits on and the matrix is on-demand. The hook still: strips a version-only
 > `package.json` diff, skips e2e when nothing that reaches the running app changed (verdict `NONE`
 > via `scripts/e2e-scope.mjs`, decided on the unstripped set for main pushes — the #395
 > construction), and runs exactly the touched spec files on an e2e-spec-only push. A direct-to-main
-> push = smoke blocks + the matrix launches async on the pushed sha. Hatches: `E2E_FULL_MATRIX=1`
+> push = smoke blocks (matrix reminder printed, nothing launched). Hatches: `E2E_FULL_MATRIX=1`
 > (blocking matrix on a push) · `make check-full` (blocking matrix pre-merge, for a change you
 > already believe is cross-OS-risky) · `git push --no-verify` (skip; WIP only). **Flake policy: NO
 > full-leg reruns** — known env class (browser-trio / clipboard / focus/ConPTY/GPU) + isolated 3×

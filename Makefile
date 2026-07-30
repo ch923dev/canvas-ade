@@ -108,10 +108,11 @@ format-check:
 gate: typecheck lint format-check test
 
 # Pre-merge gate ("smoke blocks / matrix async", 2026-07-31). Run before
-# `gh pr merge`: the cheap gate plus the @core e2e smoke. The FULL matrix runs
-# DETACHED after the merge (signal-merge.ps1 launches it; result lands in
-# .claude/coordination/e2e-async/last-result.json + an OS toast) — check that
-# file is GREEN before your NEXT merge. CLAUDE.md > Parallel sessions.
+# `gh pr merge`: the cheap gate plus the @core e2e smoke. The FULL matrix is
+# MANUAL-ONLY — `make e2e-async` (detached) or `make check-full` (blocking) when
+# you want the cross-OS insurance; a recorded RED in
+# .claude/coordination/e2e-async/last-result.json is binding. CLAUDE.md >
+# Parallel sessions.
 check: gate e2e-smoke
 
 # The old blocking full gate: cheap gate + the FULL e2e matrix, both legs, in the

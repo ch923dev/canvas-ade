@@ -2,10 +2,11 @@
 // e2e async runner — the FULL matrix (Windows leg then Linux Docker leg), OFF the
 // blocking path ("smoke blocks / matrix async", 2026-07-31; docs/testing/TESTING.md).
 //
-// Launched DETACHED by .claude/tools/signal-merge.ps1 after every merge to
-// origin/main, by .githooks/pre-push on a direct-to-main push, or by hand via
-// `make e2e-async`. Node (not pwsh) on purpose: the e2e suite's own specs taskkill
-// pwsh shells mid-run, which killed earlier pwsh-based instrumentation.
+// MANUAL-ONLY (user decision 2026-07-31): nothing launches this automatically.
+// Run it DETACHED via `make e2e-async` or `signal-merge.ps1 -E2E`, or directly
+// (`node scripts/e2e-async-runner.mjs`). Node (not pwsh) on purpose: the e2e
+// suite's own specs taskkill pwsh shells mid-run, which killed earlier
+// pwsh-based instrumentation.
 //
 // What it does, in order:
 //   1. single-instance lock (.worktrees/e2e-async-runner.lock; stale-PID takeover)
@@ -64,17 +65,32 @@ for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--sha') sha = argv[++i] ?? ''
   else if (argv[i] === '--skip-linux') skipLinux = true
 }
-if (!sha) {
-  spawnSync('git', ['-C', mainRoot, 'fetch', '--quiet', 'origin', 'main']) // best-effort
-  sha = git(['-C', mainRoot, 'rev-parse', 'origin/main'])
-}
-sha = git(['-C', mainRoot, 'rev-parse', sha]) // normalize to the full sha
-const sha7 = sha.slice(0, 7)
 
-// ---- single-instance lock ---------------------------------------------------
+// ---- single-instance lock (atomic) ------------------------------------------
+// Acquisition is a single O_EXCL create (`flag: 'wx'`) — no check-then-act window
+// (PR #411 review [warning] + CodeQL js/file-system-race: the old existsSync →
+// liveness → writeFileSync sequence let two near-simultaneous launches both pass
+// the check and share the worktree). On EEXIST: liveness-check the recorded pid;
+// a stale (dead-pid) lock is removed and acquisition retried ONCE — losing that
+// re-acquire race means another live runner owns it, which is the SKIPPED case.
+// The lock is taken BEFORE sha resolution so the loser exits without doing any
+// git work; the sha is stamped into the lock right after it resolves.
 const lockPath = join(mainRoot, '.worktrees', 'e2e-async-runner.lock')
 mkdirSync(dirname(lockPath), { recursive: true })
-if (existsSync(lockPath)) {
+function tryAcquireLock() {
+  try {
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, sha: '', startedAt: new Date().toISOString() }),
+      { flag: 'wx' }
+    )
+    return true
+  } catch (e) {
+    if (e?.code === 'EEXIST') return false
+    throw e
+  }
+}
+if (!tryAcquireLock()) {
   let holder = null
   try {
     holder = JSON.parse(readFileSync(lockPath, 'utf8'))
@@ -90,20 +106,22 @@ if (existsSync(lockPath)) {
       alive = false
     }
   }
-  if (alive) {
-    // One matrix at a time — the NEXT merge's signal-merge launch (or the nightly)
-    // covers the sha this invocation was asked about. Recorded so it isn't silent.
-    const line = `${new Date().toISOString()} SKIPPED sha=${sha7} — runner pid ${holder.pid} already on sha=${(holder.sha ?? '').slice(0, 7)}\n`
+  if (!alive) {
+    try {
+      rmSync(lockPath, { force: true }) // stale lock (dead pid) — take over
+    } catch {
+      /* raced with another taker-over — the retry below decides */
+    }
+  }
+  if (alive || !tryAcquireLock()) {
+    // One matrix at a time — rerun by hand (`make e2e-async`) once the active
+    // run finishes. Recorded so it isn't silent.
+    const line = `${new Date().toISOString()} SKIPPED — runner already active (pid ${holder?.pid ?? '?'}${holder?.sha ? ` on sha=${holder.sha.slice(0, 7)}` : ''})\n`
     appendFileSync(join(resultDir(), 'history.log'), line)
     console.error(line.trim())
     process.exit(2)
   }
-  rmSync(lockPath, { force: true }) // stale lock (dead pid) — take over
 }
-writeFileSync(
-  lockPath,
-  JSON.stringify({ pid: process.pid, sha, startedAt: new Date().toISOString() })
-)
 let lockHeld = true
 const releaseLock = () => {
   if (lockHeld) {
@@ -118,6 +136,20 @@ const releaseLock = () => {
 process.on('exit', releaseLock)
 process.on('SIGINT', () => process.exit(130))
 process.on('SIGTERM', () => process.exit(143))
+
+// ---- resolve the target sha (lock already held) -----------------------------
+if (!sha) {
+  spawnSync('git', ['-C', mainRoot, 'fetch', '--quiet', 'origin', 'main']) // best-effort
+  sha = git(['-C', mainRoot, 'rev-parse', 'origin/main'])
+}
+sha = git(['-C', mainRoot, 'rev-parse', sha]) // normalize to the full sha
+const sha7 = sha.slice(0, 7)
+// We own the lock — stamp the resolved sha into it for the SKIPPED message of
+// any later launch.
+writeFileSync(
+  lockPath,
+  JSON.stringify({ pid: process.pid, sha, startedAt: new Date().toISOString() })
+)
 
 // ---- result dir / log -------------------------------------------------------
 function resultDirOf(root) {

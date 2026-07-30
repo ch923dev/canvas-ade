@@ -10,17 +10,17 @@
 #   BLOCKING = @core smoke only (~55 tests / 13 files, Windows leg). Nothing else
 #              ever blocks a push. A push whose change-set is ONLY e2e spec files
 #              runs exactly those specs instead (they are the thing under test).
-#   FULL MATRIX = ASYNC. The full Windows + Linux matrix runs DETACHED via
-#              scripts/e2e-async-runner.mjs — launched automatically by
-#              .claude/tools/signal-merge.ps1 after every merge to origin/main
-#              (and by this hook on a direct-to-main push). Result lands in
-#              .claude/coordination/e2e-async/last-result.json + an OS toast.
-#              RED there = fix-forward or revert BEFORE the next merge
+#   FULL MATRIX = MANUAL-ONLY (user decision 2026-07-31). Nothing launches it
+#              automatically. Run it detached with `make e2e-async`
+#              (scripts/e2e-async-runner.mjs — result lands in
+#              .claude/coordination/e2e-async/last-result.json + an OS toast),
+#              or blocking with `make check-full` / E2E_FULL_MATRIX=1. RED in
+#              last-result.json = fix-forward or revert before shipping
 #              (docs/testing/TESTING.md › Smoke blocks / matrix async).
 #
 # Why: the 2026-07-28 rule still blocked ~10 min (Windows full leg) per push and
 # 30-60 min (full matrix) per merge. The insurance is real but the WAITING is the
-# cost — so the matrix keeps running on every merge, just off the blocking path.
+# cost — the smoke is the only thing anyone waits on; the matrix is on-demand.
 #
 # Escape hatches:
 #   E2E_FULL_MATRIX=1 git push   → force the full matrix on this push, BLOCKING
@@ -82,13 +82,9 @@ fi
 changed=""
 ranges=""
 pushing_main=0
-main_sha=""
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$z40" ] && continue                 # branch delete — nothing to test
-  if [ "$remote_ref" = "refs/heads/main" ]; then
-    pushing_main=1
-    main_sha="$local_sha"
-  fi
+  [ "$remote_ref" = "refs/heads/main" ] && pushing_main=1
   if [ "$remote_sha" = "$z40" ]; then
     # New branch on remote: diff from the common ancestor with origin/main so we
     # classify ALL commits on the feature branch — not against the working tree
@@ -149,26 +145,6 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-# Launch the detached full-matrix runner (scripts/e2e-async-runner.mjs) for a sha.
-# Detached via powershell Start-Process so it survives this hook, the terminal, AND
-# the e2e suite's own shell sweeps (the runner is node, not pwsh — e2e specs taskkill
-# pwsh shells mid-run, which killed earlier pwsh-based instrumentation). Fire and
-# forget: a launch failure only prints — it never blocks the push.
-launch_async_matrix() {
-  am_sha="$1"
-  am_repo="$(pwd -W 2>/dev/null || pwd)"
-  if command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -Command \
-      "Start-Process node -ArgumentList '$am_repo/scripts/e2e-async-runner.mjs','--sha','$am_sha' -WindowStyle Hidden -WorkingDirectory '$am_repo'" \
-      >/dev/null 2>&1 \
-      && echo "[pre-push] async FULL matrix launched for ${am_sha} — result: .claude/coordination/e2e-async/last-result.json (+ OS toast)." \
-      || echo "[pre-push] WARNING: could not launch the async matrix runner — run 'make e2e-async' yourself."
-  else
-    nohup node "$am_repo/scripts/e2e-async-runner.mjs" --sha "$am_sha" >/dev/null 2>&1 &
-    echo "[pre-push] async FULL matrix launched (nohup) for ${am_sha}."
-  fi
-}
-
 # E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
 # documented browser-trio env flake doesn't false-block a push.
 
@@ -178,19 +154,19 @@ launch_async_matrix() {
 # by retries:2). E2E_WORKERS=1 opts out. The async runner pins its own workers.
 WIN_WORKERS="${E2E_WORKERS:-2}"
 
-# ----- direct push to main: smoke blocks + the matrix goes async -------------
-# A direct-to-main push IS a merge, so it owes the merge insurance — but since
-# 2026-07-31 that insurance is paid ASYNC: @core smoke blocks here, and the full
-# matrix is launched detached on the pushed sha.
+# ----- direct push to main: smoke blocks; the matrix is on-demand ------------
+# A direct-to-main push IS a merge. The blocking share of the insurance is the
+# @core smoke; the FULL matrix is MANUAL-ONLY (user decision 2026-07-31) — this
+# hook only reminds, it launches nothing.
 #
 # This block is deliberately FIRST — ahead of the version-only filter and every
 # skip path below — and it takes its decision on the UNSTRIPPED change-set, so a
 # version-only push to main still scores FULL here (package.json is cross-cutting)
-# and still pays smoke + schedules the matrix. The only main-push that skips is a
-# verdict of NONE (docs / build-history / CI / release tooling — the only pushes
-# CLAUDE.md allows straight to main), routed THROUGH scripts/e2e-scope.mjs and
-# failing OPEN to FULL on any selector error. Same construction that fixed the
-# #395 review finding: the guarantee goes through the selector, never around it.
+# and still pays smoke. The only main-push that skips is a verdict of NONE
+# (docs / build-history / CI / release tooling — the only pushes CLAUDE.md allows
+# straight to main), routed THROUGH scripts/e2e-scope.mjs and failing OPEN to
+# FULL on any selector error. Same construction that fixed the #395 review
+# finding: the guarantee goes through the selector, never around it.
 if [ "$pushing_main" = "1" ] && [ "${E2E_FULL_MATRIX:-}" != "1" ]; then
   MAIN_SCOPE="$(printf '%s\n' "$changed" | node scripts/e2e-scope.mjs 2>/dev/null)" || MAIN_SCOPE="FULL"
   [ -z "$MAIN_SCOPE" ] && MAIN_SCOPE="FULL"
@@ -200,9 +176,8 @@ if [ "$pushing_main" = "1" ] && [ "${E2E_FULL_MATRIX:-}" != "1" ]; then
     exit 0
   fi
   remind
-  echo "[pre-push] pushing to main — @core smoke blocks; FULL matrix (both legs) runs async."
+  echo "[pre-push] pushing to main — @core smoke blocks. FULL matrix is manual: 'make e2e-async' (detached) or 'make check-full' (blocking) when you want the cross-OS insurance."
   E2E_PRECOMMIT=1 E2E_WORKERS=$WIN_WORKERS pnpm test:e2e:smoke
-  launch_async_matrix "$main_sha"
   exit 0
 fi
 
@@ -261,7 +236,7 @@ non_spec="$(printf '%s\n' "$changed" | grep -vE '^e2e/[^/]+\.e2e\.ts$' || true)"
 touched_specs="$(printf '%s\n' "$changed" | grep -E '^e2e/[^/]+\.e2e\.ts$' || true)"
 if [ -z "$non_spec" ] && [ -n "$touched_specs" ]; then
   spec_count="$(printf '%s\n' "$touched_specs" | wc -l | tr -d ' ')"
-  echo "[pre-push] e2e-spec-only push — Windows leg, $spec_count touched spec file(s) (full matrix async at the merge)."
+  echo "[pre-push] e2e-spec-only push — Windows leg, $spec_count touched spec file(s) (full matrix on demand: make e2e-async)."
   # Deliberate word-split: each spec path is a positional FILE filter for Playwright.
   # shellcheck disable=SC2046,SC2086
   E2E_PRECOMMIT=1 E2E_WORKERS=$WIN_WORKERS pnpm test:e2e $(printf '%s ' $touched_specs)
@@ -286,7 +261,7 @@ case "$SCOPE" in
     echo "[pre-push] no runtime surface touched (docs / unit tests / CI / build tooling) — skipping e2e."
     ;;
   *)
-    echo "[pre-push] @core smoke gate (~55 tests; scope verdict '$SCOPE' — full suite runs in the async matrix at merge; force blocking with E2E_FULL_MATRIX=1)."
+    echo "[pre-push] @core smoke gate (~55 tests; scope verdict '$SCOPE' — full suite on demand: make e2e-async / make check-full; force blocking now with E2E_FULL_MATRIX=1)."
     E2E_PRECOMMIT=1 E2E_WORKERS=$WIN_WORKERS pnpm test:e2e:smoke
     ;;
 esac
