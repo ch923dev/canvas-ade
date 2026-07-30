@@ -4888,3 +4888,68 @@ verdict). The merge-day push gate then failed open to the FULL Windows suite on 
 tree: 345 passed / 5 flaky-passed (documented ambient classes) / 0 failed at head
 `61087180`. Version recomputed 0.43.1→0.43.2 off the advanced tip (#404/#406 landed while
 the PR was open). Kickoff doc removed (untracked scaffolding).
+
+## 2026-07-30 — PR #408: contain dev-check schema writes to a sandbox project (`994cdc70`, v0.43.3)
+
+**The defect.** A dev build's `SCHEMA_VERSION`/`MIN_READER_VERSION` routinely run ahead of
+the released app's, and `boardSchema.toObject` stamps THIS build's numbers on every
+autosave — unconditionally. `profileIsolation` gives each checkout its own **userData**,
+but a project DOCUMENT lives in the project folder, so nothing isolated it: a dev check
+and the released app opened the same `<project>/.canvas/canvas.json`. One dev check
+therefore rewrote a real project at a compat floor the released app is forbidden to read
+("saved by a newer version of the app; update the app to open it"). Worse than it reads:
+`writeProject` rotates the PRIOR primary into `.bak` **after** the new primary lands, so
+save #1 leaves a recoverable backup and save #2 destroys it — and `readProject`'s third
+fallback (legacy root `<project>/canvas.json`) does not exist for a migrated project, so
+both files poisoned = unopenable, no in-app recovery. The hazard was actively SEEDED:
+`MIGRATED_FILES` copied `recent-projects.json` into every new per-checkout profile, so the
+user's real project sat at the top of the dev WelcomeScreen in every worktree. A second,
+fully automatic vector: `.mcp.json` is re-stamped by whichever instance opened the project
+last, so agent plan-viz MCP writes could route to the dev build with no manual step.
+**Reproduced live, unprompted, mid-session** — a schema-23 dev build from a sibling session
+rewrote `M:\expanse` at 23/23 against an installed app pinned at schema 22 (verified by
+grepping `app.asar`: the packaged build literally cannot write 23). Recovered losslessly by
+stamping the two version keys back down (content was byte-identical to the clean `.bak`
+apart from the stamps + viewport), NOT by restoring `.bak`.
+
+**The fix.** Two independent layers. (1) **Sandbox** (`devProjectSandbox.ts`, pure-resolve
++ apply split per the `profileIsolation` precedent): every unpackaged instance provisions
+an EMPTY per-checkout project at `<baseUserData>/devcheck-projects/<slug>/` and fronts it
+in that profile's recents, so the obvious click on the dev WelcomeScreen is the safe one;
+`recent-projects.json` is no longer migrated, so real projects are not listed in a dev
+build at all (still reachable via *Open folder…*). Idempotent — `createProject` reuses an
+existing doc, so a re-boot never clobbers sandbox work. Skipped when packaged and under
+`CANVAS_E2E`/`CANVAS_SMOKE`/`CANVAS_VOICE_SPIKE` (those drive their own opens); deliberately
+NOT skipped under `CANVAS_FRESH`, whose recents-less profile most needs a safe target. Side
+benefit: the dev instance stamps the SANDBOX's `.mcp.json`, retiring the "dev build hijacks
+`.mcp.json`" gotcha. (2) **Fail-closed guard** (`projectStore.assertNoSchemaFloorRaise`):
+`writeProject` is the single choke point for every `canvas.json` write (autosave, MCP,
+switch flush, quit flush — verified the only non-test caller is `projectIpc.ts`), and an
+unpackaged build may OPEN and migrate a released project but may never PERSIST a raised
+`minReaderVersion` — it throws `ESCHEMAFLOOR` **before** `writeFileAtomic`, so primary and
+`.bak` stay byte-identical. Zero extra I/O: the prior doc was already read and parsed for
+the `.bak` rotation gate and discarded. Armed via a module-level `setSchemaFloorGuard`
+(the `getCurrentDir`/`setCurrentDir` precedent) so `projectStore` stays electron-free for
+the vitest node suite; **defaults off**, so packaged builds and every existing test are
+untouched. `saveError` maps `ESCHEMAFLOOR` to copy stating the project on disk is unchanged
+and pointing at the sandbox. Hatches: `CANVAS_DEV_PROJECT=<dir>`,
+`CANVAS_ALLOW_SCHEMA_RAISE=1`.
+
+**Gates.** Cheap gate green (lint 0 errors); unit 6739 passed with only the box's known
+`pathSafe` ×2 environmental floor (`recapenv` avoided by unsetting `CANVAS_RECAP_BOARD`
+first). Full matrix green: Linux 348 passed, Windows 350 passed / 0 failed. The FIRST
+Windows attempt showed 1 failure (`orchestration.e2e.ts` — `Execution context was
+destroyed`) caused by running both legs **concurrently**; it passed 2/2 in isolation and
+350/350 on a clean serial re-run — run the legs serially, the Docker VM starves the Windows
+Electron run. That red also nearly slipped through because `pnpm test:e2e | tail` reports
+**tail's** exit code, not Playwright's. CI 4/4 on every head. Review: one `[warning]` on the
+guard-vs-sandbox env asymmetry, **declined** with rationale (the harnesses run in `-e2e`/
+`-smoke` profiles against fresh temp dirs, so the guard is a no-op by construction there;
+exempting them would weaken a fail-closed invariant) — the reviewer accepted the
+disposition and the deliberate behavior is now documented at the arming site and pinned by
+`it.each` over all three env vars. `eslint max-lines` for `index.ts` 711→714 (three
+choke-point wiring lines; ratchet downward on the next split). Version recomputed
+0.43.1→0.43.2→0.43.3 across two rebases — **both times the rebase silently swallowed the
+bump**, main having independently shipped the same patch version, leaving the branch with
+no bump at all behind a green gate. Out of scope: no repair path for an already-poisoned
+doc (a real downgrade must DROP newer-only content, which needs consent).
