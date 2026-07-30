@@ -31,7 +31,8 @@ import {
   shouldReleaseFitHold,
   snapshotWatermark,
   nextReceived,
-  buildSnapshot
+  buildSnapshot,
+  shedTargetRows
 } from './terminalSpawnMath'
 
 describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
@@ -166,6 +167,32 @@ describe('shouldReleaseFitHold — fit-release trigger + respawn re-arm (T2·D3,
   it('re-arming (gridFitted → false) on respawn lets the NEXT finite fit release cleanly', () => {
     const armed = false // what restart() sets before its fitWhole
     expect(shouldReleaseFitHold(armed, { cols: 132, rows: 43 })).toBe(true)
+  })
+})
+
+describe('shedTargetRows — row-shed arithmetic (terminal-clip fix, pure)', () => {
+  it('absorbs the canonical one-row over-proposal (10×18 grid into a 178px well → +2px spill)', () => {
+    expect(shedTargetRows(10, 2, 18)).toBe(9)
+  })
+  it('absorbs the measured worst-case 12px spill in one shed (12 − 18 = −6, back inside)', () => {
+    expect(shedTargetRows(24, 12, 18)).toBe(23)
+  })
+  it('sheds multiple rows when the spill spans several cells', () => {
+    expect(shedTargetRows(10, 40, 18)).toBe(7) // 40 → 22 → 4 → −14: three sheds
+  })
+  it('keeps the row count inside the 1px sub-pixel tolerance (mirrors the e2e probe)', () => {
+    expect(shedTargetRows(10, 1, 18)).toBe(10)
+    expect(shedTargetRows(10, 0, 18)).toBe(10)
+    expect(shedTargetRows(10, -16, 18)).toBe(10) // grid already inside the well
+  })
+  it('never sheds below one row, whatever the spill', () => {
+    expect(shedTargetRows(2, 1000, 18)).toBe(1)
+    expect(shedTargetRows(1, 50, 18)).toBe(1)
+  })
+  it('returns rows unchanged on a non-positive cell height (unlaid-out well → zero rects)', () => {
+    expect(shedTargetRows(10, 5, 0)).toBe(10)
+    expect(shedTargetRows(10, 5, -3)).toBe(10)
+    expect(shedTargetRows(10, 5, NaN)).toBe(10)
   })
 })
 

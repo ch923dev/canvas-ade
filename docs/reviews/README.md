@@ -14,14 +14,17 @@ screenshots = ~89% of the buffer (9× cut measured), and the fixed pipeline veri
 zero `%TEMP%` residue at workers:2 with failure evidence intact. Numbers + raw CSVs + the
 trace-viewer proof: [`2026-07-29-e2e-storage/MEASUREMENTS.md`](2026-07-29-e2e-storage/MEASUREMENTS.md).
 
-**OPEN: the 2026-07-28 terminal clip-free-fit adjacency defect** — a single, fully root-caused,
-reproducible finding, likely a **real user-facing clipping bug** rather than only a test-isolation
-gap: `FitAddon` over-proposes one row on a sub-pixel cell-metric drift, and the post-fit shed loop in
-`useTerminalSpawn` that exists to absorb exactly that **does not correct it** (a 12 px overflow would
-go to −6 in one iteration). Measured, with the alone-vs-paired geometry diff and the ruled-out list,
-in [`2026-07-28-terminal-clip-adjacency.md`](2026-07-28-terminal-clip-adjacency.md). The remaining
-unknown is what shifts the metric; the fix is production terminal code and needs the full terminal
-keep-set re-verified.
+**FIXED: the 2026-07-28 terminal clip-free-fit adjacency defect** (2026-07-30, the terminal-clip
+lane) — the real user-facing bottom-row clipping bug behind the `dataFlow` → `terminalClip` e2e
+failure. Per-fit instrumentation **refuted the metric-drift hypothesis** (xterm's internal cell
+metric read 18.0 px in both configs) and pinned the actual mechanism: under load, xterm's DOM
+renderer applies a row-count change **1–2 frames after** `term.resize`, so `fitWhole`'s post-fit
+shed measured a stale pre-layout rect, read a clean overflow, and skipped — the real spill
+materialized after it returned. Fix: a coalesced rows-only clip-verify watch window
+(`terminalClipVerify.ts`) that re-measures for six frames after every fit and never early-exits on
+a clean read (a stale rect reads clean). Summary + corrected root cause:
+[`2026-07-28-terminal-clip-adjacency.md`](2026-07-28-terminal-clip-adjacency.md); the full
+investigation is that file's git history.
 
 **OPEN BACKLOG: the 2026-07-25 project-switch & perf audit.** Its **Phase 0 (Measure) is built** —
 the switch is instrumented and a bench baseline is committed with its machine state — and Phases 1–4
