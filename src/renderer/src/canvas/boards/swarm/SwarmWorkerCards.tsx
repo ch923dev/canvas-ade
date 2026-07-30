@@ -1,7 +1,7 @@
 /**
  * Swarm worker canvas (region 3) — the run's worker terminal boards as Layer-A glance cards
  * (09 §4): state icon · role badge · activity line · timer, attention-ordered so the lone
- * amber card is always the one that needs you (needs-input → working → spawning/idle → done).
+ * pulsing amber card is always the one that needs you (full order at `ORDER` below).
  * Q11 lens model: each card is chrome over an ORDINARY terminal board on the canvas — the
  * card never forks terminal behavior; clicking jumps to (expands) the real board.
  *
@@ -21,14 +21,22 @@
  * fact a human needs from a branch at that moment: how much is in it, that it is mergeable, or
  * that its tree was PRESERVED rather than destroyed.
  */
-import { type ReactElement } from 'react'
+import { Fragment, type ReactElement } from 'react'
 import type { AttentionKind } from '../../../store/attentionStore'
 import type { SwarmRun } from '../../../store/swarmStore'
 import type { SwarmWorkerLedgerState } from '../../../../../shared/swarmLedgerTypes'
 
-type CardState = 'needs-input' | 'working' | 'done' | 'error' | 'idle' | 'stalled' | 'lost'
+export type CardState =
+  | 'needs-input'
+  | 'blocked'
+  | 'working'
+  | 'done'
+  | 'error'
+  | 'idle'
+  | 'stalled'
+  | 'lost'
 
-function stateOf(
+export function stateOf(
   id: string,
   attention: Record<string, AttentionKind>,
   running: Record<string, boolean>,
@@ -41,19 +49,33 @@ function stateOf(
   if (ledger?.state === 'lost') return 'lost'
   if (a === 'error') return 'error'
   if (ledger?.state === 'stalled') return 'stalled'
+  // 🔒 `blocked` AFTER the ledger's lost/stalled: `workerAttention` derives blocked FROM those very
+  // tags (and from everything off-vocabulary), so when the ledger can tell the specific story —
+  // salvage provenance, stall threshold — the generic "cannot proceed" must not mask it. But it
+  // outranks working/idle: a blocked worker's PTY may well still be live, and rendering it
+  // "Working…" while the board ring above says blocked is the card/ring disagreement this fixes.
+  if (a === 'blocked') return 'blocked'
   if (a === 'done') return 'done'
   return running[id] ? 'working' : 'idle'
 }
 
-/** Attention ordering (09 §4): needs-input → lost → stalled → working → idle → error → done. */
-const ORDER: Record<CardState, number> = {
+/**
+ * Attention ordering (09 §4, P4-extended):
+ * needs-input → lost → stalled → blocked → working → idle → error → done.
+ * `blocked` sits after the ledger states and before `working` for the same reason `stateOf`
+ * resolves it there: lost/stalled are the SPECIFIC diagnoses (blocked attention is derived from
+ * their tags), so their cards must not sort below the generic bucket — but a worker that cannot
+ * proceed still deserves the eye before one that is merely progressing.
+ */
+export const ORDER: Record<CardState, number> = {
   'needs-input': 0,
   lost: 1,
   stalled: 2,
-  working: 3,
-  idle: 4,
-  error: 5,
-  done: 6
+  blocked: 3,
+  working: 4,
+  idle: 5,
+  error: 6,
+  done: 7
 }
 
 function fmtMins(ms: number): string {
@@ -62,10 +84,14 @@ function fmtMins(ms: number): string {
 }
 
 /** The activity line — what the worker is doing, or what happened to it. */
-function activityLine(state: CardState, meta: SwarmRun['workerMeta'][string]): string {
+export function activityLine(state: CardState, meta: SwarmRun['workerMeta'][string]): string {
   switch (state) {
     case 'needs-input':
       return 'Waiting on input'
+    case 'blocked':
+      // Not `meta.activity` — a blocked worker's last activity line is stale by definition, and
+      // showing it would be the same disagreement one level down.
+      return 'Blocked — waiting'
     case 'lost':
       return 'Lost mid-task — salvaged'
     case 'error':
@@ -117,17 +143,24 @@ export function SwarmWorkerCards({
       <div className="sw-canvas-head">
         <span className="sw-canvas-lbl">Workers · {cards.length}</span>
         <span className="sw-canvas-counts">
-          {counts['needs-input'] ? <b>{counts['needs-input']} needs input</b> : null}
-          {counts['needs-input'] && (counts.stalled || counts.lost || counts.working || counts.done)
-            ? ' · '
-            : ''}
-          {counts.stalled ? `${counts.stalled} stalled` : ''}
-          {counts.stalled && (counts.lost || counts.working || counts.done) ? ' · ' : ''}
-          {counts.lost ? `${counts.lost} lost` : ''}
-          {counts.lost && (counts.working || counts.done) ? ' · ' : ''}
-          {counts.working ? `${counts.working} working` : ''}
-          {counts.working && counts.done ? ' · ' : ''}
-          {counts.done ? `${counts.done} done` : ''}
+          {/* P4 rewrote the pairwise-separator chain as a filter/join: adding `blocked` to the
+              old form meant threading it through every `&&` arm, and a member the summary omits
+              is the silence bug this lane exists to fix. */}
+          {(
+            [
+              counts['needs-input'] ? <b>{counts['needs-input']} needs input</b> : null,
+              counts.blocked ? `${counts.blocked} blocked` : null,
+              counts.stalled ? `${counts.stalled} stalled` : null,
+              counts.lost ? `${counts.lost} lost` : null,
+              counts.working ? `${counts.working} working` : null,
+              counts.done ? `${counts.done} done` : null
+            ].filter(Boolean) as Array<ReactElement | string>
+          ).map((part, i) => (
+            <Fragment key={i}>
+              {i > 0 ? ' · ' : ''}
+              {part}
+            </Fragment>
+          ))}
         </span>
       </div>
       <div className="sw-cards">
@@ -135,7 +168,7 @@ export function SwarmWorkerCards({
           <button
             key={id}
             type="button"
-            className={`sw-card${state === 'needs-input' ? ' attn' : ''}${state === 'done' ? ' done' : ''}${state === 'lost' ? ' lost' : ''}`}
+            className={`sw-card${state === 'needs-input' ? ' attn' : ''}${state === 'blocked' ? ' blocked' : ''}${state === 'done' ? ' done' : ''}${state === 'lost' ? ' lost' : ''}`}
             onClick={() => onOpen(id)}
             data-test={`swarm-card-${id}`}
             data-state={state}
