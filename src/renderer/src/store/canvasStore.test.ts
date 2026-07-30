@@ -17,6 +17,7 @@ import {
   createBoard,
   fromObject,
   type TerminalBoard,
+  type SwarmBoard,
   type PlanningBoard,
   type PlanningElement
 } from '../lib/boardSchema'
@@ -2037,6 +2038,27 @@ describe('terminal dockedIn patch (swarm docked-terminals)', () => {
     expect(
       (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).dockedIn
     ).toBeUndefined()
+  })
+})
+
+describe('swarm dockLayout patch (docked-terminals dividers)', () => {
+  it('updateBoard persists dockLayout on a swarm board (PATCHABLE_KEYS.swarm)', () => {
+    const sw = createBoard('swarm', { id: 'sw-1', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [sw],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore
+      .getState()
+      .updateBoard('sw-1', { dockLayout: { rail: 260 } } as Partial<SwarmBoard>)
+    expect(
+      (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).dockLayout
+    ).toEqual({ rail: 260 })
   })
 })
 

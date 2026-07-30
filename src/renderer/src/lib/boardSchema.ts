@@ -43,6 +43,7 @@ import {
 } from './boardDefaults'
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import { assertTerminalContent } from './terminalBoardSchema'
+import { assertSwarmContent, dropDanglingBoardRefs } from './swarmBoardSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
 import {
   assertDiagramSpec,
@@ -428,6 +429,13 @@ export interface DataFlowBoard extends BoardCommon {
  */
 export interface SwarmBoard extends BoardCommon {
   type: 'swarm'
+  /**
+   * Docked-terminals: persisted region sizes (px) from the divider drags — chat spine width,
+   * worker-rail width, triage-strip height. All optional (absent ⇒ the CSS defaults), each
+   * clamped at render. Optional + default-at-read ⇒ NO SCHEMA_VERSION bump (previewSourceId
+   * precedent). Layout, not run state — the scene/session split keeps run state ephemeral.
+   */
+  dockLayout?: { chat?: number; rail?: number; triage?: number }
 }
 
 export type Board =
@@ -1078,8 +1086,9 @@ export function assertBoard(b: unknown): void {
       assertKanbanContent(b, fail, isRecord, isPositiveNum)
       return
     case 'swarm':
-      // v23: the Swarm board persists no per-type fields — the run state is ephemeral swarmStore
-      // state. The common-field checks above (id/title/x/y/w/h/z) are the whole contract.
+      // v23: run state is ephemeral swarmStore state; the ONE persisted per-type field is the
+      // docked-terminals region layout — checks live in swarmBoardSchema.ts (leaf extraction).
+      assertSwarmContent(b, fail, isRecord, isPositiveNum)
       return
     default:
       fail(`board has an unknown type ${String(b.type)}`)
@@ -1254,31 +1263,9 @@ export function fromObject(doc: unknown): CanvasDoc {
       b.scrollback = clampScrollback(b.scrollback)
     }
   }
-  // Drop a preview link whose source board is no longer present (Slice C′) — a
-  // dangling link must not render a half-edge; clear it rather than fail the load.
-  // Also drop a link whose source board exists but is not a terminal (BUG-022):
-  // a non-terminal source can never appear in terminalRuntimeStore, so its edge
-  // would be permanently stale and misleading.
-  const terminalIdSet = new Set(owned.boards.filter((b) => b.type === 'terminal').map((b) => b.id))
-  for (const b of owned.boards) {
-    if (b.type === 'browser' && b.previewSourceId && !terminalIdSet.has(b.previewSourceId)) {
-      delete b.previewSourceId
-    }
-  }
-  // v14: drop a Data-Flow board's sourceBoardId if its bound source is gone OR is not a Browser
-  // board — a dataflow board only ever visualizes a Browser board's capture, so a non-browser /
-  // dangling binding is a stale half-link (mirrors the previewSourceId reconcile above). Clear it
-  // rather than fail the load; the board reopens unbound and the user re-binds.
-  const browserIdSet = new Set(owned.boards.filter((b) => b.type === 'browser').map((b) => b.id))
-  // Swarm docked-terminals: same discipline for a dockedIn whose host is gone or not a swarm
-  // board — a stranded reference would hide the terminal with nothing left to render it.
-  const swarmIdSet = new Set(owned.boards.filter((b) => b.type === 'swarm').map((b) => b.id))
-  for (const b of owned.boards) {
-    if (b.type === 'dataflow' && b.sourceBoardId && !browserIdSet.has(b.sourceBoardId)) {
-      delete b.sourceBoardId
-    }
-    if (b.type === 'terminal' && b.dockedIn && !swarmIdSet.has(b.dockedIn)) delete b.dockedIn
-  }
+  // Dangling cross-board references (preview link · dataflow source · dock host) — clear,
+  // never fail; rationale per field in swarmBoardSchema.dropDanglingBoardRefs (leaf extraction).
+  dropDanglingBoardRefs(owned.boards)
   // v17: drop a Kanban card whose columnId matches no column on its OWN board — a stale ref (a
   // hand-edited canvas.json, or a column removed out from under a card). assertBoard already proved
   // columns/cards are well-formed arrays; this only prunes danglers so the rest of the board loads

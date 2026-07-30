@@ -167,13 +167,16 @@ export function SwarmTriage({
   attention,
   titleOf,
   onOpen,
-  onAction
+  onAction,
+  height
 }: {
   run: SwarmRun
   attention: Record<string, AttentionKind>
   titleOf: (id: string) => string
   onOpen: (boardId: string) => void
   onAction: (row: SwarmTriageRow, action: SwarmTriageAction) => void
+  /** Docked-terminals: divider-driven strip height (px); absent ⇒ the CSS max-height default. */
+  height?: number
 }): ReactElement {
   // Expanded by default: a sequence nobody opens is a sequence nobody follows, and the row only
   // exists at all once there is something to merge.
@@ -183,7 +186,11 @@ export function SwarmTriage({
   const sequence = run.ledger?.mergeSequence ?? []
 
   return (
-    <div className="sw-needs" data-test="swarm-needs-you">
+    <div
+      className="sw-needs"
+      data-test="swarm-needs-you"
+      style={height !== undefined ? { height, maxHeight: height } : undefined}
+    >
       <div className="sw-needs-head">
         Triage{rows.length > 0 ? ` · ${rows.length}` : ''}
         {nowCount > 0 && <b>({nowCount} needs you now)</b>}

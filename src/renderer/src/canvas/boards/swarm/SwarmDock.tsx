@@ -21,8 +21,11 @@
  *    The patch is untracked on purpose: a tracked flip would make Ctrl+Z remount the
  *    terminal across surfaces and the interleaved unmount would KILL a live PTY.
  */
-import { useCallback, useEffect, useRef, type ReactElement } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useStore } from '@xyflow/react'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
+import { BoardActionsContext } from '../../boardActions'
+import { parkTerminalForUndo } from '../terminal/terminalTeardown'
 import { useCanvasStore, patchBoardUntracked } from '../../../store/canvasStore'
 import { useDockStore } from '../../../store/dockStore'
 import type { AttentionKind } from '../../../store/attentionStore'
@@ -34,10 +37,41 @@ import { isOpenableScheme } from '../terminal/terminalLinks'
 import { agentIdentity, isRunning } from '../terminalState'
 import { presetById } from '../terminal/agentPresets'
 import { useInterruptFeedback } from '../terminal/useInterruptFeedback'
+import { useTerminalReraster } from '../terminal/useTerminalReraster'
+import { resolveInitialFont } from '../terminal/terminalFont'
 import { TerminalIdleAffordance } from '../terminal/TerminalIdleAffordance'
 import { TerminalFindBar } from '../terminal/TerminalFindBar'
 import { screen } from '../terminal/terminalBoardStyles'
 import { stateOf, activityLine, type CardState } from './SwarmWorkerCards'
+
+interface DockedPaneProps {
+  board: TerminalBoardData
+  active: boolean
+  state: CardState
+  activity: string
+  /** The worker's role-pack id (run meta) — rendered as the `role · posture` head pill. */
+  roleId?: string
+  onPopOut: (boardId: string) => void
+  onRemove: (boardId: string) => void
+}
+
+/**
+ * Handoff serializer (the re-dock corpse fix). A re-dock flips `dockedIn` while the board's
+ * CANVAS node is still in React Flow for one more commit (nodes derive from the store through
+ * an effect → rf.setNodes — asynchronous). Mounting the pane inside that window double-surfaces
+ * the session: the adopt's `pty:port` broadcast reaches BOTH surfaces, and the dying canvas
+ * surface's unmount then closes the shared port and `killTerminal`s the freshly re-adopted LIVE
+ * session (measured: MAIN sessions 2→1, pane left holding a dead frozen xterm at the old width).
+ * Hold the pane until the canvas node is GONE, so the old surface's teardown — whose kill
+ * no-ops on the still-parked session — strictly precedes the pane's adopt. Pop-out already has
+ * this ordering naturally (the pane unmounts in the same commit the flag flips); first-spawn and
+ * restore-from-disk boards never had a canvas node, so the gate passes immediately.
+ */
+function DockedPaneGate(props: DockedPaneProps): ReactElement | null {
+  const stillOnCanvas = useStore((s) => s.nodeLookup.has(props.board.id))
+  if (stillOnCanvas) return null
+  return <DockedPane {...props} />
+}
 
 /** One docked worker's pane: minimal head chrome + the real xterm/PTY host. */
 function DockedPane({
@@ -46,16 +80,9 @@ function DockedPane({
   state,
   activity,
   roleId,
-  onPopOut
-}: {
-  board: TerminalBoardData
-  active: boolean
-  state: CardState
-  activity: string
-  /** The worker's role-pack id (run meta) — rendered as the `role · posture` head pill. */
-  roleId?: string
-  onPopOut: (boardId: string) => void
-}): ReactElement {
+  onPopOut,
+  onRemove
+}: DockedPaneProps): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   // Font nudges are a canvas-terminal affordance (Inspector/menu); the dock keeps the sticky
   // default, so the keymap's Ctrl±/0 bridges are inert here.
@@ -74,6 +101,8 @@ function DockedPane({
     termRef,
     portRef,
     startLaunchRef,
+    fitWhole,
+    counterScale,
     findOpen,
     findApi
   } = useTerminalSpawn({
@@ -86,6 +115,35 @@ function DockedPane({
     configPending: false,
     onLinkActivate
   })
+  // Terminal parity (eyeball fix 2026-07-31): the SAME settled font seam + transition refit
+  // TerminalBoard runs — without it the pane's render font never re-syncs and a resize/zoom
+  // transition paints the garbled half-reflowed grid the canvas terminal already heals.
+  const [bornFont] = useState<number>(() => resolveInitialFont(board.fontSize))
+  const liveFontRef = useRef<number>(resolveInitialFont(board.fontSize))
+  const screenStyle = useTerminalReraster({
+    pinnedFontSize: board.fontSize,
+    bornFont,
+    counterScale,
+    termRef,
+    fitWhole,
+    liveFontRef,
+    identityStyle: screen
+  })
+  // Refit when devicePixelRatio changes (monitor move) — the host doesn't resize, so the RO
+  // never fires, but the cell height changed (the TerminalBoard dpr effect, verbatim).
+  useEffect(() => {
+    let mql: MediaQueryList | null = null
+    const onChange = (): void => {
+      fitWhole()
+      attach()
+    }
+    const attach = (): void => {
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      mql.addEventListener('change', onChange, { once: true })
+    }
+    attach()
+    return () => mql?.removeEventListener('change', onChange)
+  }, [fitWhole])
   const { interruptSent, interrupt } = useInterruptFeedback(portRef)
   const running = isRunning(ptyState)
   const presetLabel =
@@ -131,6 +189,15 @@ function DockedPane({
         >
           Pop out ↗
         </button>
+        <button
+          type="button"
+          className="sw-btn sm"
+          onClick={() => onRemove(board.id)}
+          title="Remove worker board (undo restores it)"
+          data-test={`swarm-dock-close-${board.id}`}
+        >
+          ✕
+        </button>
       </header>
       {/* nodrag/nowheel: clicks focus xterm, wheel scrolls scrollback — never a canvas
           drag/zoom (the TerminalBoard screenWrap discipline). */}
@@ -141,7 +208,7 @@ function DockedPane({
           termRef.current?.focus()
         }}
       >
-        <div ref={screenRef} style={screen} />
+        <div ref={screenRef} style={screenStyle} />
         {findOpen && <TerminalFindBar api={findApi} />}
         <TerminalIdleAffordance
           state={ptyState}
@@ -193,6 +260,23 @@ export function SwarmDock({
       .then(() => patchBoardUntracked(boardId, { dockedIn: undefined }))
   }, [])
 
+  // Remove (eyeball feedback 2026-07-31: a docked worker had NO delete path — no canvas node to
+  // select). Route through the shared BoardActions.remove — the exact ⋯-menu/Delete-key flow
+  // (parks the live session for undo, sweeps groups/connectors, one tracked step). The fallback
+  // (context absent — bare test renders) replicates its park + remove core.
+  const boardActions = useContext(BoardActionsContext)
+  const onRemove = useCallback(
+    (boardId: string): void => {
+      if (boardActions) {
+        boardActions.remove(boardId)
+        return
+      }
+      parkTerminalForUndo(boardId)
+      useCanvasStore.getState().removeBoard(boardId)
+    },
+    [boardActions]
+  )
+
   return (
     <section className="sw-vp" data-test={`swarm-dock-${swarmId}`}>
       {docked.length === 0 ? (
@@ -201,7 +285,7 @@ export function SwarmDock({
         docked.map((b) => {
           const st = stateOf(b.id, attention, running, byBoard.get(b.id))
           return (
-            <DockedPane
+            <DockedPaneGate
               key={b.id}
               board={b}
               active={activeValid ? b.id === active : b.id === docked[0].id}
@@ -209,6 +293,7 @@ export function SwarmDock({
               activity={activityLine(st, run.workerMeta[b.id] ?? {})}
               roleId={run.workerMeta[b.id]?.role}
               onPopOut={onPopOut}
+              onRemove={onRemove}
             />
           )
         })

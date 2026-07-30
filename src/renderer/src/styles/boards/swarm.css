@@ -259,18 +259,61 @@
   color: var(--text-2);
 }
 
-/* ── body grid: chat spine | worker canvas / needs-you ── */
+/* ── body grid: chat | divider | (worker dock / divider / needs-you) ──
+   Docked-terminals: the template values are INLINE from SwarmBoard (divider-driven px);
+   these rules carry placement + the resting look only. */
 .sw-body {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(220px, 30%) 1fr;
-  grid-template-rows: 1fr auto;
+  grid-template-columns: 300px 6px 1fr;
+  grid-template-rows: 1fr 6px auto;
   min-height: 0;
+}
+
+/* Region divider: an invisible 6px grab strip riding the regions' existing 1px borders;
+   the accent line materialises on hover/drag only (calm at rest — DESIGN.md). */
+.sw-divider {
+  position: relative;
+  z-index: 2;
+}
+.sw-divider.x {
+  cursor: col-resize;
+}
+.sw-divider.y {
+  cursor: row-resize;
+}
+.sw-divider.x::after,
+.sw-divider.y::after {
+  content: '';
+  position: absolute;
+  background: transparent;
+}
+.sw-divider.x::after {
+  left: 2.5px;
+  width: 1px;
+  top: 0;
+  bottom: 0;
+}
+.sw-divider.y::after {
+  top: 2.5px;
+  height: 1px;
+  left: 0;
+  right: 0;
+}
+.sw-divider:hover::after,
+.sw-divider:active::after {
+  background: var(--accent);
+}
+/* Rail ↔ viewport divider is a flex child inside .sw-canvas (not grid-placed). */
+.sw-canvas > .sw-divider.x {
+  flex: none;
+  width: 6px;
+  margin-left: -6px;
 }
 
 /* ── region 1 · chat spine ── */
 .sw-chat {
-  grid-row: 1 / 3;
+  grid-row: 1 / 4;
   border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
@@ -749,13 +792,15 @@
 
 /* ── region 4 · needs-you strip ── */
 .sw-needs {
-  grid-column: 2;
+  grid-column: 3;
+  grid-row: 3;
   border-top: 1px solid var(--border-subtle);
   background: var(--surface);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* S2: the queue is a real work surface now, not a jump list. */
+  /* S2: the queue is a real work surface now, not a jump list. Docked-terminals: SwarmBoard
+     overrides height/max-height inline from the divider-driven layout. */
   max-height: 196px;
 }
 .sw-needs-head {

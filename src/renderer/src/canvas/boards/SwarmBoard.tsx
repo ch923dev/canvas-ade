@@ -33,6 +33,8 @@ import { SwarmWorkerCards } from './swarm/SwarmWorkerCards'
 import { SwarmDock } from './swarm/SwarmDock'
 import { SwarmPlanStrip } from './swarm/SwarmPlanStrip'
 import { SwarmTriage } from './swarm/SwarmTriage'
+import { DockDivider } from './swarm/DockDivider'
+import { useDockLayout } from './swarm/useDockLayout'
 import type { SwarmTriageAction, SwarmTriageRow } from '../../../../shared/swarmLedgerTypes'
 
 /** Reference-stable empty owner map — a fresh `{}` per render would re-render the strip forever. */
@@ -148,6 +150,9 @@ export function SwarmBoard({
   )
   const dockedIds = useMemo(() => dockedBoards.map((b) => b.id), [dockedBoards])
   const activeDockId = useDockStore((s) => s.active[board.id])
+  // Region layout (eyeball feedback): divider-driven chat/rail widths + triage height,
+  // persisted on the board (`dockLayout`); the viewport takes the rest.
+  const { sizes, handlersFor } = useDockLayout(board)
   const openWorker = useCallback(
     (id: string): void => {
       const b = useCanvasStore.getState().boards.find((x) => x.id === id)
@@ -283,7 +288,13 @@ export function SwarmBoard({
           />
         </div>
 
-        <div className="sw-body">
+        <div
+          className="sw-body"
+          style={{
+            gridTemplateColumns: `${sizes.chat}px 6px 1fr`,
+            gridTemplateRows: '1fr 6px auto'
+          }}
+        >
           {/* ── region 1 · chat spine ── */}
           <aside className="sw-chat" data-test="swarm-chat">
             <div className="sw-chat-head">
@@ -347,8 +358,20 @@ export function SwarmBoard({
             </div>
           </aside>
 
-          {/* ── region 3 · worker dock: rail (tabs) + embedded terminal viewport ── */}
-          <main className="sw-canvas" data-test="swarm-workers">
+          {/* chat ↔ body divider (grid col 2, spans every row). */}
+          <DockDivider
+            axis="x"
+            {...handlersFor('chat')}
+            testId="swarm-div-chat"
+            style={{ gridColumn: 2, gridRow: '1 / 4' }}
+          />
+
+          {/* ── region 3 · worker dock: rail (tabs) + divider + embedded terminal viewport ── */}
+          <main
+            className="sw-canvas"
+            data-test="swarm-workers"
+            style={{ gridColumn: 3, gridRow: 1 }}
+          >
             <SwarmWorkerCards
               run={run}
               attention={attention}
@@ -358,7 +381,9 @@ export function SwarmBoard({
               onOpen={openWorker}
               dockedIds={dockedIds}
               activeDockId={activeDockId ?? null}
+              width={sizes.rail}
             />
+            <DockDivider axis="x" {...handlersFor('rail')} testId="swarm-div-rail" />
             <SwarmDock
               swarmId={board.id}
               docked={dockedBoards}
@@ -368,6 +393,14 @@ export function SwarmBoard({
             />
           </main>
 
+          {/* viewport ↔ triage divider (drag DOWN shrinks the strip → dir −1). */}
+          <DockDivider
+            axis="y"
+            {...handlersFor('triage', -1)}
+            testId="swarm-div-triage"
+            style={{ gridColumn: 3, gridRow: 2 }}
+          />
+
           {/* ── region 4 · triage queue ── */}
           <SwarmTriage
             run={run}
@@ -375,6 +408,7 @@ export function SwarmBoard({
             titleOf={titleOf}
             onOpen={openWorker}
             onAction={onTriageAction}
+            height={sizes.triage}
           />
         </div>
       </div>

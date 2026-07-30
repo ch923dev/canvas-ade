@@ -1503,6 +1503,39 @@ describe('migrate', () => {
     expect(wrong.dockedIn).toBeUndefined() // host is a browser, not a swarm board
   })
 
+  // Docked-terminals: the swarm board's divider-driven region layout round-trips (additive
+  // optional — no schema bump) and rejects malformed values (→ .bak fallback).
+  it('round-trips swarm dockLayout and rejects a non-positive region size', () => {
+    const boards: Board[] = [
+      {
+        id: 'sw-1',
+        type: 'swarm',
+        x: 0,
+        y: 0,
+        w: 900,
+        h: 620,
+        title: 'Swarm',
+        dockLayout: { chat: 320, rail: 180, triage: 140 }
+      }
+    ]
+    const out = fromObject(JSON.parse(JSON.stringify(toObject(boards, null))))
+    expect(out.boards).toEqual(boards)
+    expect(() =>
+      fromObject(
+        wrap({
+          id: 'sw-1',
+          type: 'swarm',
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 620,
+          title: 'Swarm',
+          dockLayout: { chat: -5 }
+        })
+      )
+    ).toThrow()
+  })
+
   // A non-string dockedIn is rejected by deep validation (→ .bak fallback).
   it('rejects a terminal board with a non-string dockedIn', () => {
     expect(() =>

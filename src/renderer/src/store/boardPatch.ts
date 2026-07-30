@@ -59,9 +59,10 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   // per-card `attachments` is a CARD field (like description/tags/fileRefs) — it rides inside the
   // whole-card `cards` patch, so it needs NO separate board-level key here.
   kanban: [...COMMON_KEYS, 'columns', 'cards', 'columnAxis', 'axisLabel'],
-  // v23 swarm board (orchestration S1): no per-type persisted fields — run state is ephemeral
-  // swarmStore state (scene/session split), never routed through a board patch.
-  swarm: [...COMMON_KEYS]
+  // v23 swarm board (orchestration S1): run state is ephemeral swarmStore state (scene/session
+  // split), never routed through a board patch. Docked-terminals adds the ONE persisted layout
+  // field (divider drags patch it — the PATCHABLE_KEYS-for-additive-field gotcha).
+  swarm: [...COMMON_KEYS, 'dockLayout']
 }
 
 /**

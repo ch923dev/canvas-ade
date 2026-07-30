@@ -113,7 +113,8 @@ export function SwarmWorkerCards({
   titleOf,
   onOpen,
   dockedIds,
-  activeDockId
+  activeDockId,
+  width
 }: {
   run: SwarmRun
   attention: Record<string, AttentionKind>
@@ -131,6 +132,8 @@ export function SwarmWorkerCards({
   dockedIds?: readonly string[]
   /** The active dock tab (highlighted); a popped-out worker card gets the ↗ canvas marker. */
   activeDockId?: string | null
+  /** Docked-terminals: divider-driven rail width (px); absent ⇒ the CSS default. */
+  width?: number
 }): ReactElement {
   const byBoard = new Map((run.ledger?.workers ?? []).map((w) => [w.boardId, w]))
   const docked = new Set(dockedIds ?? [])
@@ -154,7 +157,7 @@ export function SwarmWorkerCards({
   )
 
   return (
-    <div className="sw-rail">
+    <div className="sw-rail" style={width !== undefined ? { width } : undefined}>
       <div className="sw-canvas-head">
         <span className="sw-canvas-lbl">Workers · {cards.length}</span>
         <span className="sw-canvas-counts">
