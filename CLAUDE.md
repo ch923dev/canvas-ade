@@ -234,13 +234,12 @@ Every PR MUST get a **manual dev check in a running app** before it is opened/me
 typecheck/lint/unit run is NOT "verified working" (the black-screen-regression class of bug). Launch
 the feature with `pnpm dev` and actually look at the change in the live app.
 - **Order: dev check BEFORE `git push`, not after.** `git push` fires the e2e pre-push gate
-  (Windows leg, scoped spec set — see Status › *push cheap / merge full*) — a minutes-scale cost,
-  and the pre-merge `make check` that follows is the expensive one.
-  Do the dev check first on the pre-commit-clean tree so a wrong assumption gets caught while it's
-  still cheap to fix, THEN push once. Pushing before the dev check (or before it's clean) means: e2e
-  runs, dev check then finds the real bug anyway, you fix it, and e2e must re-run from scratch on the
-  fix — the matrix bought you nothing the first time. Sequence per PR: implement → pre-commit gate →
-  **dev check (title-stamped) clean** → push (e2e gate) → open/merge.
+  (`@core` smoke — see Status › *smoke blocks / matrix async*) — a minutes-scale cost. Do the dev
+  check first on the pre-commit-clean tree so a wrong assumption gets caught while it's still cheap
+  to fix, THEN push once. Pushing before the dev check (or before it's clean) means: e2e runs, dev
+  check then finds the real bug anyway, you fix it, and e2e re-runs on the fix — the gate bought you
+  nothing the first time. Sequence per PR: implement → pre-commit gate →
+  **dev check (title-stamped) clean** → push (smoke gate) → open/merge.
 - **The dev build MUST carry a distinguishing window title** so you can tell *which* PR/build you are
   inspecting when several dev instances (or several feature checkouts) are open at once. Dev builds
   already auto-stamp the title with the checkout's worktree folder name (`<folder> — Canvas ADE
@@ -314,12 +313,17 @@ the feature with `pnpm dev` and actually look at the change in the live app.
   re-check after any merge to `main` lands. A rebase across a version bump also means **recomputing
   this PR's own bump off the new tip** (and updating the PR title/body to match).
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
-  node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
-  re-running the full gate + e2e after EACH merge — **the FULL e2e matrix (`pnpm test:e2e:matrix`,
-  both legs, every spec) is mandatory here; run `make check` before `gh pr merge`**. Since the
-  2026-07-28 re-scoping every push pays the Windows leg on a scoped spec set only, so the pre-merge
-  gate is the ONLY place cross-OS + full-suite insurance is paid — exactly once per PR. No hook can
-  enforce it (merges land on GitHub, not through a local push), so it is a hard human ritual.
+  node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially.
+  **The merge ritual (2026-07-31, "smoke blocks / matrix async"): `make check` (cheap gate + `@core`
+  smoke) before `gh pr merge`; then `signal-merge.ps1` (signal only). The FULL matrix is
+  MANUAL-ONLY — run `make e2e-async` (detached) / `signal-merge.ps1 -E2E` / `make check-full`
+  (blocking) when you want the cross-OS insurance; recommended after merges touching MAIN/preload/
+  native surfaces and before any release build. A recorded verdict is binding: RED/INCOMPLETE in
+  `.claude/coordination/e2e-async/last-result.json` = fix-forward or revert before shipping on top
+  of it.** The exposure window for a cross-OS-only regression is open-ended until someone runs the
+  matrix — accepted knowingly (user decision). No hook can enforce the ritual (merges land on
+  GitHub, not through a local push), so it is a hard human ritual. Full contract:
+  `docs/testing/TESTING.md` › *Smoke blocks / matrix async*.
   (Native Agent Teams = broken on Windows; this is the Windows-safe substitute.)
 - **Feature work lives on a worktree, not `main`. `main` is the stable version.** Anything scoped to a
   single feature / fix / refactor — its **docs (specs, plans, roadmaps, research) AND its
@@ -345,38 +349,33 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 > origin-only, skips docs-only pushes), NOT pre-commit: `git commit` carries no push-intent signal,
 > so gating "work that reaches origin" is a push concern — local commits stay fast.
 >
-> **PUSH CHEAP / MERGE FULL (re-scoped 2026-07-28).** A plain push runs the **Windows leg only**, and
-> only the specs the diff can plausibly break; **the Linux Docker leg never runs on a push**. The
-> **FULL matrix (`pnpm test:e2e:matrix`, both legs, every spec) is MANDATORY once per PR at the
-> pre-merge gate** — `make check` before `gh pr merge` (see Parallel sessions). Force both legs on a
-> push with `E2E_FULL_MATRIX=1`; a push straight to `refs/heads/main` forces them too.
-> *Why:* the previous rule escalated to the full matrix for any "cross-platform-sensitive" path — and
-> that list contained **`package.json`, which the version-bump convention below requires EVERY PR to
-> touch**. So every real push paid the full matrix (~30 min measured) and all the scoping was dead
-> code. The hook now strips a version-only `package.json` diff, skips e2e outright when nothing that
-> reaches the running app changed (docs · vitest specs · `.github/` · release tooling → verdict
-> `NONE`), runs just the touched spec files on an e2e-spec-only push, and otherwise narrows by board
-> area via `scripts/e2e-scope.mjs` (`@core/@terminal/@preview/@planning/@chrome/@mcp/@voice`;
-> `@core` always included), **failing open to the full suite** for any cross-cutting/unknown path.
-> Well-partitioned `src/main/**` subsystems (pty/preview/voice/mcp) now scope by area too — the
-> cross-OS insurance they used to force is paid at the merge gate instead. Full rules +
-> decision table: `docs/testing/TESTING.md` › *Push cheap / merge full*. **`pre-commit` is now the cheap trio only** (`typecheck ·
-> lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. A direct push to `main` whose verdict is
-> `NONE` (a docs/contract commit — e.g. the per-merge build-history entry) skips e2e: the decision
-> goes THROUGH the selector, fails open to `FULL`, and is taken on the unstripped change-set, so a
-> version-only push to `main` still pays the matrix. Flake policy:
-> `retries:2` under `E2E_PRECOMMIT`. The Windows push leg runs **`E2E_WORKERS=2`** (two Electron
-> apps; 10.1m → 5.3-6.8m measured). `E2E_WORKERS` defaults to **1** so the Linux Docker leg + CI
-> never inherit it. The trade is explicit — the parallel leg leans MORE on retries (OS-level focus/
-> ConPTY/GPU contention, not state leakage: each worker is its own process). Opt out per-push with
-> `E2E_WORKERS=1`. Bypass with `git commit --no-verify` (cheap gate) /
-> `git push --no-verify` (e2e). **CI gate = the Actions `check` job only**
-> (typecheck · lint · format:check · unit + integration); the `smoke` job was removed from `pr.yml`
-> + `staging.yml`. This **supersedes** the 2026-06-03 freeze. Both legs proven green: Windows on the
-> dev machine (21/21), the Linux leg ×2 via Docker (`Dockerfile.e2e`). The matrix already caught +
-> verified-fixed a Windows-only `RangeError`/pid-reuse bug. One e2e-only surface still uncovered:
-> **auto-update** (deferred to Phase 5 — needs packaging/electron-updater). See
-> `docs/testing/TESTING.md`.
+> **SMOKE BLOCKS / MATRIX ASYNC (re-scoped 2026-07-31; supersedes "push cheap / merge full").** The
+> only e2e that ever BLOCKS is the **`@core` smoke** (~55 tests / 13 files, Windows leg,
+> `E2E_WORKERS=2`, retries:2): it gates every push whose diff reaches the running app, and the
+> pre-merge `make check` (cheap gate + smoke). The **FULL matrix (`pnpm test:e2e:matrix`, both legs,
+> every spec) is MANUAL-ONLY — nothing launches it automatically (user decision)**: run
+> `make e2e-async` / `signal-merge.ps1 -E2E` to launch `scripts/e2e-async-runner.mjs` DETACHED
+> (hidden node process; snapshot worktree `.worktrees/e2e-async-runner`; sequential legs;
+> lock-serialized), which writes `.claude/coordination/e2e-async/last-result.json` + fires an OS
+> toast (GREEN / RED / INCOMPLETE). **A recorded RED/INCOMPLETE verdict = fix-forward or revert
+> before shipping on top of it.** Recommended after native-surface merges + before release builds.
+> *Why:* the 2026-07-28 rule still blocked ~30-60 min per merge (full Windows leg + the Docker leg +
+> full-leg flake reruns); the matrix's insurance is real (it has caught OSR-race / pid-reuse /
+> font-drift classes every lower tier missed) but the WAITING was the entire cost — so the smoke is
+> the only thing anyone waits on and the matrix is on-demand. The hook still: strips a version-only
+> `package.json` diff, skips e2e when nothing that reaches the running app changed (verdict `NONE`
+> via `scripts/e2e-scope.mjs`, decided on the unstripped set for main pushes — the #395
+> construction), and runs exactly the touched spec files on an e2e-spec-only push. A direct-to-main
+> push = smoke blocks (matrix reminder printed, nothing launched). Hatches: `E2E_FULL_MATRIX=1`
+> (blocking matrix on a push) · `make check-full` (blocking matrix pre-merge, for a change you
+> already believe is cross-OS-risky) · `git push --no-verify` (skip; WIP only). **Flake policy: NO
+> full-leg reruns** — known env class (browser-trio / clipboard / focus/ConPTY/GPU) + isolated 3×
+> green = done; `--last-failed` for anything more; a NEW class or a failure in the diff's area is a
+> finding, not a flake. **`pre-commit` stays the cheap trio** (`typecheck · lint · format:check`);
+> both hooks enabled by the `prepare` script via `core.hooksPath`. **CI gate = the Actions `check`
+> job only** (typecheck · lint · format:check · unit + integration). One e2e-only surface still
+> uncovered: **auto-update** (deferred — needs packaging/electron-updater). Full rules + decision
+> table: `docs/testing/TESTING.md` › *Smoke blocks / matrix async*.
 
 Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
 is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt
