@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { callE2E, evalIn, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -56,7 +56,7 @@ test.describe('@chrome D4-C wayfinding minimap (real OS input)', () => {
     // Two planning boards far apart; camera parked on A so B starts off-screen.
     const a = await seed(page, 'planning')
     const b = await seed(page, 'planning', { x: 4000, y: 2400 })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(a)})`)
+    await callE2E(page, { m: 'fitView', a: [a] })
     await page.waitForTimeout(300)
 
     await page.keyboard.press('m')
@@ -114,7 +114,7 @@ test.describe('@chrome D4-C wayfinding minimap (real OS input)', () => {
     await page.keyboard.press('m')
     await expect(minimap(page)).toBeVisible()
 
-    await evalIn(page, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'openFullViewAnimated', a: [id] })
     await expect(page.locator('.fullview-scrim')).toBeVisible()
     await page.waitForTimeout(250)
 

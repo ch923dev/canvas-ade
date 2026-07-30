@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { apiCall, callE2E, seed } from './helpers'
 import { createServer, type Server } from 'node:http'
 import type { ElectronApplication, Page } from '@playwright/test'
 
@@ -87,29 +87,23 @@ test.describe('@preview browser hover alignment (OSR pointer → offscreen page)
   }) => {
     const id = await seed(page, 'browser', { url, viewport: 'desktop' }) // desktop preset = 1280×800
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     await waitForStatus(page, id, 'connected', 12_000)
     await page.waitForTimeout(500) // let the first frame paint + any zoom-settle land
 
     // Force supersample = 2 via the REAL resize IPC — deterministic, independent of camera/DPR. This
     // is exactly what `applyOsrSize` does: setContentSize(1280·2 × 800·2) + setZoomFactor(2). After it
     // the page still lays out at 1280×800 CSS px, so a logical coord is still in [0,1280]×[0,800].
-    // (String `evalIn` like the other `window.api.*` probes — typed `page.evaluate` would need the DOM
-    // `window` global the e2e tsconfig omits.)
-    await evalIn(
-      page,
-      `window.api.resizeOsr(${JSON.stringify(id)}, { logicalW: 1280, logicalH: 800, supersample: 2 })`
-    )
+    // (`apiCall` passes the id + size as real structured-clone args — no code string, and no DOM
+    // `window` global needed in the e2e tsconfig.)
+    await apiCall(page, 'resizeOsr', id, { logicalW: 1280, logicalH: 800, supersample: 2 })
     await page.waitForTimeout(250) // let setContentSize + setZoomFactor + relayout settle
 
     // Send a known LOGICAL coordinate straight through the real input IPC (bypassing the renderer's
     // canvas-rect mapping so the test pins the MAIN-side scaling contract, not the rect math).
     const LX = 400
     const LY = 300
-    await evalIn(
-      page,
-      `window.api.sendOsrInput(${JSON.stringify(id)}, { type: 'mouseMove', x: ${LX}, y: ${LY}, modifiers: [] })`
-    )
+    await apiCall(page, 'sendOsrInput', id, { type: 'mouseMove', x: LX, y: LY, modifiers: [] })
 
     // The offscreen page recorded where IT thinks the cursor is (CSS px). With the fix this equals the
     // logical coord we sent; the pre-fix bug recorded (200,150) — half, the misaligned hover.

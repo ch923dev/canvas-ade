@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { callE2E, evalIn, seed } from './helpers'
 import { createServer, type Server } from 'node:http'
 import type { ElectronApplication, Page } from '@playwright/test'
 
@@ -81,7 +81,7 @@ test.describe('@preview browser typing (OSR keyboard → offscreen page)', () =>
   }) => {
     const id = await seed(page, 'browser', { url, viewport: 'desktop' })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     await waitForStatus(page, id, 'connected', 12_000)
     await page.waitForTimeout(500) // let the first frame paint
 
@@ -122,10 +122,10 @@ test.describe('@preview browser typing (OSR keyboard → offscreen page)', () =>
     // painted under headless full view, so a real click there is environment-fragile.)
     const id = await seed(page, 'browser', { url, viewport: 'desktop' })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     await waitForStatus(page, id, 'connected', 12_000)
 
-    await evalIn(page, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'openFullViewAnimated', a: [id] })
     await expect(page.locator('.fullview-scrim .fullview-frame')).toBeVisible()
     await expect(page.locator('.fullview-host .bb-live')).toHaveCount(1)
     await expect(page.locator('.fullview-host .bb-ime-proxy')).toHaveCount(1)

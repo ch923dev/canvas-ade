@@ -1,12 +1,49 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollCall, seed } from './helpers'
 
-const status = (id: string, s: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(s)}; })()`
+/** The board's preview runtime, read as a VALUE (the id crosses as a real arg, never spliced). */
+const runtimeOf = (page: Page, id: string): Promise<{ status: string } | null> =>
+  callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] })
+
+/** Poll until the runtime reaches `s` — the comparison runs HERE in Node, so neither the seeded id
+ *  nor the wanted status ever enters page code. Same boolean contract as `pollEval`. */
+async function pollStatus(page: Page, id: string, s: string, timeoutMs: number): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await runtimeOf(page, id))?.status === s, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // OS-3 Phase 5: OSR full-view PORTAL-relocates the live <canvas> subtree into the modal host (it is
-// not remounted), so the canvas keeps its 2D context + last frame. A document-wide selector finds
-// it wherever it currently lives.
-const osrNonBlank = (id: string) => `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
+// not remounted), so the canvas keeps its 2D context + last frame. The probe finds it wherever it
+// currently lives.
+const pollNonBlank = (page: Page, id: string, timeoutMs: number): Promise<boolean> =>
+  pollCall(page, [{ m: 'osrCanvasNonBlank', a: [id] }], timeoutMs)
+
+/** Poll until a terminal's buffer contains `needle` — the buffer is read as a VALUE and matched in
+ *  Node (the id never enters page code). */
+async function pollTermIncludes(
+  page: Page,
+  id: string,
+  needle: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const readTerm = (): Promise<string | null> =>
+    callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+  try {
+    await expect
+      .poll(async () => ((await readTerm()) ?? '').includes(needle), { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 test.describe('@preview full view (OSR portal relocation — real instance)', () => {
   test('full-viewing the browser keeps it painting across the portal relocation (no restart)', async ({
@@ -16,23 +53,19 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
-    expect(await pollEval(page, status(browserId, 'connected'), 10_000)).toBe(true)
-    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'painting before full view').toBe(
-      true
-    )
+    await callE2E(page, { m: 'fitView', a: [browserId] })
+    expect(await pollStatus(page, browserId, 'connected', 10_000)).toBe(true)
+    expect(await pollNonBlank(page, browserId, 8000), 'painting before full view').toBe(true)
     // Enter full view: the live subtree is portaled into the modal, not remounted — so the OSR
     // window is never torn down and the canvas keeps painting. Assert it stays non-blank through
     // the open AND the close (the OSR analogue of the native "same webContents survives" assert).
-    await evalIn(page, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(browserId)})`)
+    await callE2E(page, { m: 'openFullViewAnimated', a: [browserId] })
     await page.waitForTimeout(700)
-    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'still painting in full view').toBe(
-      true
-    )
+    expect(await pollNonBlank(page, browserId, 8000), 'still painting in full view').toBe(true)
     await evalIn(page, 'window.__canvasE2E.closeFullViewAnimated()')
     await page.waitForTimeout(700)
     expect(
-      await pollEval(page, osrNonBlank(browserId), 8000),
+      await pollNonBlank(page, browserId, 8000),
       'still painting after closing full view'
     ).toBe(true)
   })
@@ -53,31 +86,26 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
-    expect(await pollEval(page, status(browserId, 'connected'), 10_000)).toBe(true)
-    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'painting while visible').toBe(true)
+    await callE2E(page, { m: 'fitView', a: [browserId] })
+    expect(await pollStatus(page, browserId, 'connected', 10_000)).toBe(true)
+    expect(await pollNonBlank(page, browserId, 8000), 'painting while visible').toBe(true)
     expect(await paint(), 'paints while on-screen').toBe(true)
 
     // Move it far off-screen → the M2 CPU gate pauses the offscreen window (setOsrPaint(false) →
     // MAIN stopPainting), reliably via the boards-ref reconcile trigger.
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { x: 100000, y: 100000 })`
-    )
+    await callE2E(page, { m: 'patchBoard', a: [browserId, { x: 100000, y: 100000 }] })
     await expect
       .poll(paint, { timeout: 6000, message: 'off-screen board is paint-gated paused' })
       .toBe(false)
 
     // Maximize it: shown full-screen in the modal regardless of its canvas-node position, so liveness
     // must force it back to painting. Pre-fix this stayed false → the blank modal.
-    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
+    await callE2E(page, { m: 'setFullView', a: [browserId] })
     await expect
       .poll(paint, { timeout: 6000, message: 'full view resumes the paint-gated board' })
       .toBe(true)
     await page.waitForTimeout(500)
-    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'modal shows a live frame').toBe(
-      true
-    )
+    expect(await pollNonBlank(page, browserId, 8000), 'modal shows a live frame').toBe(true)
 
     // Exit: off-screen again → liveness re-pauses it (the gate is RELEASED on exit, not stuck on).
     await evalIn(page, 'window.__canvasE2E.setFullView(null)')
@@ -92,28 +120,25 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     const planId = await seed(page, 'planning') // any board works; we full-view the browser below
     void planId
     const browserId = await seed(page, 'browser', { url: 'http://127.0.0.1:59999/' })
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`
-    )
-    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
+    await callE2E(page, { m: 'patchBoard', a: [browserId, { viewport: 'mobile' }] })
+    await callE2E(page, { m: 'setFullView', a: [browserId] })
     await page.waitForTimeout(450)
-    const emu = await evalIn<{
-      found: boolean
-      frameRatio: number
-      stageRatio: number
-      widthFrac: number
-    }>(
-      page,
-      `(() => {
-         const frame = document.querySelector('[data-bb-frame=' + JSON.stringify(${JSON.stringify(browserId)}) + ']');
-         const stage = frame && frame.closest('.bb-stage');
-         if (!frame || !stage) return { found: false, frameRatio: 0, stageRatio: 0, widthFrac: 0 };
-         const f = frame.getBoundingClientRect();
-         const s = stage.getBoundingClientRect();
-         return { found: true, frameRatio: f.width / f.height, stageRatio: s.width / s.height, widthFrac: f.width / s.width };
-       })()`
-    )
+    // The board id crosses into the page as a page.evaluate DATA arg; the selector is assembled
+    // page-side from that data (selector strings are data, not code — the #401 idiom).
+    const emu = await page.evaluate((id) => {
+      const d = (globalThis as any).document
+      const frame = d.querySelector(`[data-bb-frame="${id}"]`)
+      const stage = frame && frame.closest('.bb-stage')
+      if (!frame || !stage) return { found: false, frameRatio: 0, stageRatio: 0, widthFrac: 0 }
+      const f = frame.getBoundingClientRect()
+      const s = stage.getBoundingClientRect()
+      return {
+        found: true,
+        frameRatio: f.width / f.height,
+        stageRatio: s.width / s.height,
+        widthFrac: f.width / s.width
+      }
+    }, browserId)
     await evalIn(page, 'window.__canvasE2E.setFullView(null)')
     await page.waitForTimeout(300)
     const mobileRatio = 390 / 844
@@ -127,12 +152,8 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     page
   }) => {
     const termId = await seed(page, 'terminal', { launchCommand: 'echo fullview-close' })
-    await pollEval(
-      page,
-      `(() => { const t = window.__canvasE2E.readTerminal(${JSON.stringify(termId)}); return typeof t === 'string' && t.includes('fullview-close'); })()`,
-      8000
-    )
-    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
+    await pollTermIncludes(page, termId, 'fullview-close', 8000)
+    await callE2E(page, { m: 'setFullView', a: [termId] })
     await page.waitForTimeout(400)
     const fvClose = await evalIn<{ frame: boolean; bandGone: boolean; typed: boolean }>(
       page,
@@ -160,7 +181,7 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     page
   }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo stretch' })
-    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'setFullView', a: [id] })
     await page.waitForTimeout(450) // > FULLVIEW_MS (320) + the overshoot settle
     const m = await evalIn<{ pos: string; wFrac: number; hFrac: number }>(
       page,

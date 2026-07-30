@@ -24,7 +24,7 @@
 // NOT a gate spec (separate playwright.bench.config.ts, '*.bench.ts'); run on demand:
 //   pnpm build && pnpm exec playwright test --config playwright.bench.config.ts
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { callE2E, evalIn, seed } from './helpers'
 import { recordBench } from './benchSink'
 
 /** Round to 3dp — `fitZoom` is a layout-derived float and full precision only adds diff noise to
@@ -143,13 +143,13 @@ async function seedStreamingGrid(
     const id = await seed(page, 'terminal', { launchCommand: STREAM_CMD })
     const x = (i % cols) * CELL_W
     const y = Math.floor(i / cols) * CELL_H
-    await evalIn(page, `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { x: ${x}, y: ${y} })`)
+    await callE2E(page, { m: 'patchBoard', a: [id, { x, y }] })
     ids.push(id)
   }
   // Wait for every terminal to mount.
   for (const id of ids) {
     await expect
-      .poll(() => evalIn(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`), {
+      .poll(() => callE2E(page, { m: 'terminalMounted', a: [id] }), {
         timeout: 12_000
       })
       .toBe(true)
@@ -186,14 +186,13 @@ async function seedStreamingGrid(
  *
  *  The measured phases below are untouched, so numbers stay comparable to earlier reports. */
 async function assertStreaming(page: Parameters<typeof evalIn>[0], ids: string[]): Promise<void> {
+  // The id crosses as a STRUCTURED ARG (no eval'd code string); the fingerprint itself is still
+  // computed in-page so each poll ships a short string rather than the whole 80 KB buffer.
   const fingerprintOf = (id: string): Promise<string> =>
-    evalIn<string>(
-      page,
-      `(() => {
-         const s = window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? ''
-         return s.length + ':' + s.slice(-256)
-       })()`
-    )
+    page.evaluate((a) => {
+      const s = (globalThis as any).__canvasE2E.readTerminal(a) ?? ''
+      return s.length + ':' + s.slice(-256)
+    }, id)
   const before = await Promise.all(ids.map(fingerprintOf))
   for (const [i, id] of ids.entries()) {
     await expect
@@ -256,9 +255,12 @@ test.describe('@bench terminal DOM renderer under streaming load', () => {
 // "K visible, all live" baseline regardless of how many gated streamers run off-screen — NOT the
 // N-all-visible number above. (Run on demand; Windows PowerShell STREAM_CMD; not part of the gate.)
 
-const liveExpr = (id: string): string => `window.__canvasE2E.terminalLive(${JSON.stringify(id)})`
-const heldExpr = (id: string): string =>
-  `window.__canvasE2E.terminalHeldBytes(${JSON.stringify(id)})`
+// Typed VALUE readers — the id crosses as a real argument (structured clone), never spliced into
+// an eval'd code string; comparisons against them run in Node.
+const liveOf = (page: Parameters<typeof evalIn>[0], id: string): Promise<boolean> =>
+  callE2E<boolean>(page, { m: 'terminalLive', a: [id] })
+const heldOf = (page: Parameters<typeof evalIn>[0], id: string): Promise<number> =>
+  callE2E<number>(page, { m: 'terminalHeldBytes', a: [id] })
 
 /** Seed N streamers but place only the first `visible` in a tight on-screen row (the rest far
  *  off-screen), then frame the visible cluster. Asserts the gate took effect: the visible ones are
@@ -275,21 +277,15 @@ async function seedPartiallyVisibleGrid(
   const hiddenIds = ids.slice(visible)
   // Visible: a tight row near the origin so framing the first board keeps the rest in view at ~1×.
   for (let i = 0; i < visibleIds.length; i++) {
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(visibleIds[i])}, { x: ${i * CELL_W}, y: 0 })`
-    )
+    await callE2E(page, { m: 'patchBoard', a: [visibleIds[i], { x: i * CELL_W, y: 0 }] })
   }
   // Hidden: far past any viewport (above LOD ⇒ gated by OFF-SCREEN, not by zoom), spread apart.
   for (let i = 0; i < hiddenIds.length; i++) {
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(hiddenIds[i])}, { x: ${100000 + i * CELL_W}, y: 0 })`
-    )
+    await callE2E(page, { m: 'patchBoard', a: [hiddenIds[i], { x: 100000 + i * CELL_W, y: 0 }] })
   }
   for (const id of ids) {
     await expect
-      .poll(() => evalIn(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`), {
+      .poll(() => callE2E(page, { m: 'terminalMounted', a: [id] }), {
         timeout: 12_000
       })
       .toBe(true)
@@ -298,16 +294,14 @@ async function seedPartiallyVisibleGrid(
   // in view, the far boards do not). Then let the debounced liveness reconcile settle. Generous
   // gating timeouts: this is a retries:0 measurement tool and the box is under heavy cold-start
   // load (N concurrent PowerShell streamers), so the reconcile can lag a cold first run.
-  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(visibleIds[0])})`)
+  await callE2E(page, { m: 'fitView', a: [visibleIds[0]] })
   await page.waitForTimeout(500)
   for (const id of visibleIds) {
-    await expect
-      .poll(() => evalIn(page, `${liveExpr(id)} === true`), { timeout: 10_000 })
-      .toBe(true)
+    await expect.poll(async () => (await liveOf(page, id)) === true, { timeout: 10_000 }).toBe(true)
   }
   for (const id of hiddenIds) {
     await expect
-      .poll(() => evalIn(page, `${liveExpr(id)} === false`), { timeout: 10_000 })
+      .poll(async () => (await liveOf(page, id)) === false, { timeout: 10_000 })
       .toBe(true)
   }
   const fitZoom = await evalIn<number>(page, `window.__canvasE2E.getZoom()`)
@@ -328,11 +322,9 @@ test.describe('@bench terminal liveness gating (off-screen streamers cost ~0)', 
       // ... while the gated ones HOLD their PTY output (session alive, nothing rendered): held
       // bytes are accumulating for every off-screen streamer.
       for (const id of hiddenIds) {
-        await expect.poll(() => evalIn(page, `${heldExpr(id)} > 0`), { timeout: 8_000 }).toBe(true)
+        await expect.poll(async () => (await heldOf(page, id)) > 0, { timeout: 8_000 }).toBe(true)
       }
-      const heldTotals = await Promise.all(
-        hiddenIds.map((id) => evalIn<number>(page, heldExpr(id)))
-      )
+      const heldTotals = await Promise.all(hiddenIds.map((id) => heldOf(page, id)))
       const phases: PhaseStats[] = []
       for (const mode of ['static', 'pan', 'zoom'] as const) {
         phases.push(await measurePhase(page, mode, PHASE_MS))

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn } from './helpers'
+import { callE2E } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -26,7 +26,7 @@ function setStatus(
     encryptionAvailable: boolean
   }
 ): Promise<void> {
-  return evalIn(page, `window.__canvasE2E.setAuthStatus(${JSON.stringify(status)})`)
+  return callE2E<void>(page, { m: 'setAuthStatus', a: [status] })
 }
 
 test.describe('@chrome accounts (Phase 1)', () => {

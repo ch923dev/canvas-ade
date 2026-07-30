@@ -12,11 +12,14 @@
 // at construction independent of PTY state, so we only wait for the mount.
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, openInspectorSection, pollEval, seed } from './helpers'
+import { callE2E, evalIn, openInspectorSection, pollCall, seed } from './helpers'
 
-const liveScrollback = (id: string) =>
-  `window.__canvasE2E.terminalScrollback(${JSON.stringify(id)})`
-const readBuf = (id: string) => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
+// Typed VALUE readers — the id crosses as a real argument (structured clone), never spliced into
+// an eval'd code string (CodeQL js/bad-code-sanitization).
+const liveScrollback = (page: Page, id: string): Promise<number | undefined> =>
+  callE2E<number | undefined>(page, { m: 'terminalScrollback', a: [id] })
+const readBuf = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
 // Read the persisted board pin via a STRUCTURED ARG to page.evaluate — never interpolate the id
 // into an eval'd code string (CodeQL js/bad-code-sanitization; the newTerminal.e2e.ts convention).
 const boardScrollback = (page: Page, id: string): Promise<number | undefined> =>
@@ -25,6 +28,39 @@ const boardScrollback = (page: Page, id: string): Promise<number | undefined> =>
     id
   )
 
+/** Poll the live xterm scrollback option until it equals `want` — the comparison runs HERE in
+ *  Node, so the expected value never reaches the page. Same boolean contract as `pollEval`. */
+async function pollScrollback(
+  page: Page,
+  id: string,
+  want: number,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await liveScrollback(page, id)) === want, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Poll a predicate over the terminal buffer text. Same boolean contract as `pollEval`. */
+async function pollBuf(
+  page: Page,
+  id: string,
+  pred: (b: string | null) => boolean,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect.poll(async () => pred(await readBuf(page, id)), { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Clear the per-machine sticky default so a test that asserts the BASELINE isn't tainted by an
 // earlier test (the Electron instance — hence localStorage — is shared across specs).
 const clearSticky = (page: Page) =>
@@ -32,12 +68,12 @@ const clearSticky = (page: Page) =>
 
 async function seedMounted(page: Page): Promise<string> {
   const id = await seed(page, 'terminal', { launchCommand: 'exit' })
-  await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+  await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
   // Drain the PTY before any direct buffer write (the terminalScrollback discipline): wait for
   // the bridge's "[process exited]" line so no late ConPTY banner — held in the write coalescer
   // until the first fit under batch load — can flush AFTER a spec's resetTerminalWrite and clear
   // the sentinel with its screen-repaint sequences (the batch-order flake).
-  await pollEval(page, `(${readBuf(id)} || '').includes('process exited')`, 8000)
+  await pollBuf(page, id, (b) => (b || '').includes('process exited'), 8000)
   return id
 }
 
@@ -49,29 +85,18 @@ test.describe('@terminal configurable scrollback', () => {
     const id = await seedMounted(page)
 
     // Fresh terminal with no sticky/pin → the SLICE-012 default.
-    expect(await pollEval(page, `${liveScrollback(id)} === 2000`, 6000), 'default 2000').toBe(true)
+    expect(await pollScrollback(page, id, 2000, 6000), 'default 2000').toBe(true)
 
     // A known buffer so we can prove the session SURVIVES a scrollback change.
-    await evalIn(
-      page,
-      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, 'SENTINEL-LINE')`
-    )
-    expect(await pollEval(page, `(${readBuf(id)} || '').includes('SENTINEL-LINE')`, 6000)).toBe(
-      true
-    )
+    await callE2E(page, { m: 'resetTerminalWrite', a: [id, 'SENTINEL-LINE'] })
+    expect(await pollBuf(page, id, (b) => (b || '').includes('SENTINEL-LINE'), 6000)).toBe(true)
 
     // Patch scrollback (not a spawn dep) → the live effect raises term.options.scrollback in place.
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { scrollback: 10000 })`
-    )
-    expect(
-      await pollEval(page, `${liveScrollback(id)} === 10000`, 6000),
-      'live-applied without respawn'
-    ).toBe(true)
+    await callE2E(page, { m: 'patchBoard', a: [id, { scrollback: 10000 }] })
+    expect(await pollScrollback(page, id, 10000, 6000), 'live-applied without respawn').toBe(true)
     // The buffer is intact → no respawn (a respawn would have cleared it).
     expect(
-      await pollEval(page, `(${readBuf(id)} || '').includes('SENTINEL-LINE')`, 4000),
+      await pollBuf(page, id, (b) => (b || '').includes('SENTINEL-LINE'), 4000),
       'session preserved'
     ).toBe(true)
   })
@@ -81,8 +106,8 @@ test.describe('@terminal configurable scrollback', () => {
   }) => {
     await clearSticky(page)
     const id = await seedMounted(page)
-    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'setSelection', a: [[id]] })
+    await callE2E(page, { m: 'fitView', a: [id] })
 
     // P5: the ⚙ cluster is gone — the dialog opens via Inspector › Configuration › Edit….
     await openInspectorSection(page, 'Configuration')
@@ -107,7 +132,7 @@ test.describe('@terminal configurable scrollback', () => {
     await expect
       .poll(() => boardScrollback(page, id), { timeout: 6000, message: 'pin persisted' })
       .toBe(50000)
-    expect(await pollEval(page, `${liveScrollback(id)} === 50000`, 6000), 'applied live').toBe(true)
+    expect(await pollScrollback(page, id, 50000, 6000), 'applied live').toBe(true)
   })
 
   test('a new terminal inherits the sticky last-used default', async ({ page }) => {
@@ -116,9 +141,7 @@ test.describe('@terminal configurable scrollback', () => {
     const id = await seedMounted(page)
 
     // Construction read the sticky → 10000, with NO per-board pin (it just follows the default).
-    expect(await pollEval(page, `${liveScrollback(id)} === 10000`, 6000), 'inherited sticky').toBe(
-      true
-    )
+    expect(await pollScrollback(page, id, 10000, 6000), 'inherited sticky').toBe(true)
     await expect
       .poll(() => boardScrollback(page, id), { timeout: 4000, message: 'no pin' })
       .toBeUndefined()

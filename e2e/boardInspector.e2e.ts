@@ -1,5 +1,9 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed, selectForInspector } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval, seed, selectForInspector } from './helpers'
+
+// The Element-section Appearance opacity slider. A module-level compile-time constant (no id), so
+// interpolating it into an evalIn/pollEval probe is the documented literal-constant exception.
+const opacitySel = `[data-test="board-inspector"] [aria-label="Element opacity"]`
 
 /**
  * Board Inspector — end-to-end. Proves the per-type composition wiring through the REAL stack:
@@ -19,9 +23,9 @@ test.describe('@chrome @terminal Board Inspector — Terminal per-type content',
   }) => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'inspector-', 'inspector')
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'terminal')
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
       await evalIn(page, `window.__canvasE2E.setZoom(1)`) // eligibility requires zoom >= 0.4
 
       // The selected terminal portals its inspector content into the shell slot.
@@ -78,9 +82,9 @@ test.describe('@chrome @preview Board Inspector — Browser per-type content', (
       'inspector-b'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'browser')
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
       await evalIn(page, `window.__canvasE2E.setZoom(1)`) // eligibility requires zoom >= 0.4
 
       // The selected browser portals BrowserInspector content into the shell slot (Screenshot lives in
@@ -141,9 +145,9 @@ test.describe('@chrome Board Inspector — Command per-type content', () => {
       'inspector-c'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'command')
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
       await evalIn(page, `window.__canvasE2E.setZoom(1)`) // eligibility requires zoom >= 0.4
 
       // The selected command board portals CommandInspector content into the shell slot (the recap
@@ -204,11 +208,11 @@ test.describe('@chrome @preview Board Inspector — Data-Flow per-type content',
       'inspector-d'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // A browser board on the canvas gives the unbound data-flow inspector something to bind to.
       const browserId = await seed(page, 'browser', { title: 'app-under-test' })
       const id = await seed(page, 'dataflow')
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
       await evalIn(page, `window.__canvasE2E.setZoom(1)`) // eligibility requires zoom >= 0.4
 
       // An unbound data-flow board portals only its Source section (the bind actions) — a stable probe
@@ -256,9 +260,9 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       'inspector-p'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'planning')
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
       await evalIn(page, `window.__canvasE2E.setZoom(1)`) // eligibility requires zoom >= 0.4
 
       // The tool palette MOVED off the board into the Inspector (P3); the Select tool cell is a stable
@@ -332,7 +336,7 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       'inspector-pe'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'planning')
       // Seed one free-text element (M size) mid-board via the store, ids flow as DATA (not
       // interpolated into eval'd code — the #82/#114 CodeQL pattern, mirroring noteTint.e2e.ts).
@@ -343,10 +347,10 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
           elements: [{ id: 'tp-1', kind: 'text', x: 220, y: 140, text: 'hello', fontSize: 'M' }]
         })
       }, id)
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
       // fitView frames the board large + centred, clear of the left-docked inspector lane, so a REAL
       // click can reach board content without the popover occluding it (zoom stays ≥ 0.4 → revealed).
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'fitView', a: [id] })
 
       // No element selected yet → the inspector shows Tools/Canvas but NO Element section (empty state).
       await pollEval(
@@ -445,7 +449,7 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       'inspector-p4b'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'planning')
       // Two text elements: ap-1 is first in the array (painted at the BACK), ap-2 last (FRONT). Text
       // is used (not a note) because its grip selects with a real click without the note grip's
@@ -461,8 +465,8 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
           ]
         })
       }, id)
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
+      await callE2E(page, { m: 'fitView', a: [id] })
       await pollEval(
         page,
         `!!document.querySelector('[data-test="board-inspector"] [data-test="plan-tool-select"]')`,
@@ -571,10 +575,10 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
       'inspector-p4bc'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'planning', { w: 560, h: 420 })
-      await evalIn(page, `window.__canvasE2E.select(${JSON.stringify(id)})`)
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'select', a: [id] })
+      await callE2E(page, { m: 'fitView', a: [id] })
       await evalIn(page, `window.__canvasE2E.setZoom(1)`)
       // Wait for the well to mount. The board id flows as a DATA arg to page.evaluate/waitForFunction
       // (interpolated into the CSS selector INSIDE the browser callback), never into a host-side eval'd
@@ -594,8 +598,7 @@ test.describe('@chrome @planning Board Inspector — Planning per-type content',
         .catch(() => {})
 
       // Baseline: nothing selected → no Element section (Appearance opacity slider absent). The
-      // selector is a compile-time constant (no id) so evalIn is safe here.
-      const opacitySel = `[data-test="board-inspector"] [aria-label="Element opacity"]`
+      // selector (`opacitySel`, module scope) is a compile-time constant (no id) so evalIn is safe here.
       expect(
         await evalIn<boolean>(page, `!!document.querySelector('${opacitySel}')`),
         'no Element section before any element exists'
@@ -655,7 +658,7 @@ test.describe('@chrome Board Inspector — full-view overlay (P5-D7)', () => {
       'inspector-fv'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const id = await seed(page, 'planning')
       await selectForInspector(page, id)
 
@@ -669,7 +672,7 @@ test.describe('@chrome Board Inspector — full-view overlay (P5-D7)', () => {
       // Enter full view → the scrim (z 200) mounts; the wrap must jump to the menu layer (250) so
       // the inspector — the ONE control home since P5 removed the title-bar clusters — stays
       // reachable over the modal.
-      await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'setFullView', a: [id] })
       const raised = await pollEval(
         page,
         `!!document.querySelector('.fullview-scrim') && getComputedStyle(document.querySelector('.ca-inspector-wrap')).zIndex === '250'`,

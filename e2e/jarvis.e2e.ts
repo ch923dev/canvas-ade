@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 import type { Page } from '@playwright/test'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollCall, seed } from './helpers'
 
 /**
  * Jarvis — converse round-trip through the PANEL surface (KICKOFF-PANEL.md; mock rev 1
@@ -133,7 +133,7 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
       .toBe(true)
     // Esc with focus INSIDE a terminal board belongs to the terminal (vim/TUI), not the panel.
     const id = await seed(page, 'terminal', {})
-    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 10_000)
+    await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 10_000)
     await page.locator('.xterm').first().click()
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
@@ -144,7 +144,7 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
     // again. The board selection must SURVIVE that press: the panel-close Esc runs in
     // the capture chain and stops before the bubble clearSelection (one Esc, one layer —
     // the rubber-band-selection-vanishes finding from the PR #343 review).
-    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
+    await callE2E(page, { m: 'setSelection', a: [[id]] })
     await evalIn(page, 'document.activeElement && document.activeElement.blur()')
     await page.keyboard.press('Escape')
     await expect.poll(async () => (await jarvisState(page)).panelOpen).toBe(false)
@@ -277,10 +277,10 @@ test.describe('@voice jarvis converse (stub voice → mock brain → panel trans
   test('edge-tab badge + event chips render live boards only (E2E-1/BADGE-1)', async ({ page }) => {
     // A real board gets a mark; a DEAD id gets one too — only the live board may render.
     const id = await seed(page, 'planning', {})
-    await evalIn(
+    await callE2E(
       page,
-      `window.__canvasE2E.setAttention(${JSON.stringify(id)}, 'needs-input');
-       window.__canvasE2E.setAttention('ghost-board-id', 'error')`
+      { m: 'setAttention', a: [id, 'needs-input'] },
+      { m: 'setAttention', a: ['ghost-board-id', 'error'] }
     )
     // Collapsed home: the badge counts ONE (the ghost is filtered), not two.
     await expect(page.locator('[data-test="jarvis-badge"]')).toHaveText('1')

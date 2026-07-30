@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall } from './helpers'
+import { apiCall, callE2E, evalIn, mainCall } from './helpers'
 
 /**
  * @chrome Project settings — the per-project settings tab (Sessions · Appearance · Agents).
@@ -39,10 +39,7 @@ test('@chrome project settings: empty state with no project; keep-in-background 
 
   // 2) Open a real temp project.
   const tmp = await mainCall<string>(electronApp, 'createTempProject', 'projset-', 'projset')
-  const opened = await evalIn<{ status: string }>(
-    page,
-    `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-  )
+  const opened = await callE2E<{ status: string }>(page, { m: 'openProjectFromDisk', a: [tmp] })
   expect(opened.status, 'temp project opens clean').toBe('open')
   // A fresh project fires the one-time (per-project) recap-consent prompt — a modal that stacks over
   // Settings and would intercept the toggle click. Dismiss it before opening Settings.
@@ -90,6 +87,6 @@ test('@chrome project settings: empty state with no project; keep-in-background 
   // Cleanup: forget exactly the dir(s) this spec added so nothing leaks into userData / later specs.
   const after = await evalIn<string[]>(page, `window.api.project.keepForeverDirs()`)
   for (const d of after.filter((x) => !before.includes(x))) {
-    await evalIn(page, `window.api.project.forgetKeepPolicy(${JSON.stringify(d)})`)
+    await apiCall(page, 'project.forgetKeepPolicy', d)
   }
 })

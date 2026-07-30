@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { apiCall, mainCall, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -35,10 +35,7 @@ interface SettingsLocalShape {
 
 /** Drive the real consent IPC and assert it persisted. */
 async function setConsent(page: Page, decision: 'enabled' | 'declined'): Promise<void> {
-  const r = await evalIn<{ ok: boolean }>(
-    page,
-    `window.api.orchestration.setConsent(${JSON.stringify(decision)})`
-  )
+  const r = await apiCall<{ ok: boolean }>(page, 'orchestration.setConsent', decision)
   expect(r.ok, `setConsent(${decision}) persisted`).toBe(true)
 }
 

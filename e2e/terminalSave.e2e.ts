@@ -7,14 +7,23 @@
 // survived. (The serialize / filename / toast logic is unit-tested in
 // terminalSaveOutput.test.ts.) Uses an `exit`-launched (dead) PTY so the live shell can't
 // race the buffer.
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { apiCall, callE2E, mainCall, pollCall, seed } from './helpers'
 
-const readBuf = (id: string): string => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
-const save = (text: string, name: string): string =>
-  `window.api.terminal.saveOutput(${JSON.stringify({ text, suggestedName: name })})`
+// Typed VALUE reader — the id crosses as a real argument (structured clone), never spliced into
+// an eval'd code string (CodeQL js/bad-code-sanitization).
+const readBuf = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+const save = (page: Page, text: string | null, name: string): Promise<SaveResult> =>
+  apiCall<SaveResult>(page, 'terminal.saveOutput', { text, suggestedName: name })
 // 120 lines with stable L### markers — comfortably more than one viewport (real scrollback).
-const WRITE_LINES = `Array.from({length: 120}, (_, i) => 'L' + String(i).padStart(3,'0') + '=' + 'x'.repeat(40)).join('\\r\\n')`
+// Built HERE and passed to `resetTerminalWrite` as an argument (it used to be a generator
+// expression evaluated in the page — the same code-string sink the ids were).
+const WRITE_LINES = Array.from(
+  { length: 120 },
+  (_, i) => 'L' + String(i).padStart(3, '0') + '=' + 'x'.repeat(40)
+).join('\r\n')
 
 interface SaveResult {
   ok: boolean
@@ -23,23 +32,36 @@ interface SaveResult {
   error?: string
 }
 
+/** Poll a predicate over the terminal buffer text — the comparison runs HERE in Node. Same
+ *  boolean contract as `pollEval`. */
+async function pollBuf(
+  page: Page,
+  id: string,
+  pred: (b: string | null) => boolean,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect.poll(async () => pred(await readBuf(page, id)), { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
 test.describe('@terminal save output to file (S1)', () => {
   test('writes the full buffer to the chosen path; cancel is a silent no-op', async ({
     page,
     electronApp
   }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'exit' })
-    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
     expect(
-      await pollEval(page, `(${readBuf(id)} || '').includes('process exited')`, 8000),
+      await pollBuf(page, id, (b) => (b || '').includes('process exited'), 8000),
       'shell exited (PTY drained — no further output to race)'
     ).toBe(true)
-    await evalIn(
-      page,
-      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, ${WRITE_LINES})`
-    )
+    await callE2E(page, { m: 'resetTerminalWrite', a: [id, WRITE_LINES] })
     expect(
-      await pollEval(page, `(${readBuf(id)}.match(/L\\d{3}/g) || []).length === 120`, 6000),
+      await pollBuf(page, id, (b) => ((b ?? '').match(/L\d{3}/g) || []).length === 120, 6000),
       'buffer filled with 120 marker lines'
     ).toBe(true)
 
@@ -58,8 +80,8 @@ test.describe('@terminal save output to file (S1)', () => {
       d.showSaveDialog = async () => ({ canceled: false, filePath: p })
     }, tmpPath)
 
-    const text = await evalIn<string>(page, readBuf(id))
-    const res = await evalIn<SaveResult>(page, save(text, 'e2e-save.txt'))
+    const text = await readBuf(page, id)
+    const res = await save(page, text, 'e2e-save.txt')
     expect(res.ok, 'save resolved ok').toBe(true)
     expect(res.path).toBe(tmpPath)
 
@@ -78,7 +100,7 @@ test.describe('@terminal save output to file (S1)', () => {
         filePath: undefined
       })
     })
-    const canceled = await evalIn<SaveResult>(page, save(text, 'e2e-save.txt'))
+    const canceled = await save(page, text, 'e2e-save.txt')
     expect(canceled.ok, 'cancel is not ok').toBe(false)
     expect(canceled.canceled, 'cancel flagged').toBe(true)
 

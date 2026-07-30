@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval, seed } from './helpers'
 
 /**
  * Wave-0 corrupt-`canvas.json` recovery (Audit-A data-loss seam). Drives the REAL
@@ -38,9 +38,9 @@ test.describe('@core corrupt canvas.json recovery (Wave-0 data-loss seam)', () =
       // Empty the live store so a recovered board can ONLY have come from the .bak on disk.
       await evalIn(page, 'window.__canvasE2E.reset()')
 
-      const res = await evalIn<{ status: string; error: string | null; boardCount: number }>(
+      const res = await callE2E<{ status: string; error: string | null; boardCount: number }>(
         page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
+        { m: 'openProjectFromDisk', a: [tmp] }
       )
       expect(res.status, 'recovered to open, not error / black screen').toBe('open')
       expect(res.boardCount, 'the .bak board was restored from disk').toBe(1)
@@ -71,9 +71,9 @@ test.describe('@core corrupt canvas.json recovery (Wave-0 data-loss seam)', () =
       await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json.bak', TOO_NEW)
       await evalIn(page, 'window.__canvasE2E.reset()')
 
-      const res = await evalIn<{ status: string; error: string | null; boardCount: number }>(
+      const res = await callE2E<{ status: string; error: string | null; boardCount: number }>(
         page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
+        { m: 'openProjectFromDisk', a: [tmp] }
       )
       expect(res.status, 'unrecoverable → error (not a silent blank canvas)').toBe('error')
       expect(res.error ?? '', 'carries the original too-new schema message').toContain(

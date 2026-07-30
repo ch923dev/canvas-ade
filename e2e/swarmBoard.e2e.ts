@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { callE2E, mainCall, seed } from './helpers'
 
 /**
  * @core Swarm board (orchestration S1) — the chat-driven orchestration surface, against the
@@ -42,7 +42,7 @@ test('@core composer round-trips a real MAIN turn (mock brain): user bubble + st
     const id = await seed(page, 'swarm')
     // Camera-based canvas: under the FULL suite prior specs' seeds push the cursor far right,
     // so the board lands off-viewport and clicks fail actionability — fit it first.
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     const board = page.locator('[data-test="swarm-board"]')
     await board.locator('[data-test="swarm-composer"]').fill('hello swarm')
     await board.locator('[data-test="swarm-send"]').click()
@@ -70,7 +70,7 @@ test('@core multi-instance: two swarm boards hold two independent runs (no state
     const second = boards.nth(1)
     // The canvas is camera-based (no scrolling): fit the board being DRIVEN into the viewport
     // before clicking into it — the sibling assertions are DOM-only and don't need the camera.
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(idA)})`)
+    await callE2E(page, { m: 'fitView', a: [idA] })
     await first.locator('[data-test="swarm-composer"]').fill('run A goal')
     await first.locator('[data-test="swarm-send"]').click()
     await expect(first.locator('.sw-msg.you')).toContainText('run A goal')
@@ -79,7 +79,7 @@ test('@core multi-instance: two swarm boards hold two independent runs (no state
     await expect(second.locator('.sw-msg')).toHaveCount(0)
     await expect(second.locator('[data-test="swarm-run-timer"]')).toContainText('no run yet')
     // And it can run its own independent turn.
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(idB)})`)
+    await callE2E(page, { m: 'fitView', a: [idB] })
     await second.locator('[data-test="swarm-composer"]').fill('run B goal')
     await second.locator('[data-test="swarm-send"]').click()
     await expect(second.locator('.sw-msg.you')).toContainText('run B goal')
@@ -91,7 +91,7 @@ test('@core multi-instance: two swarm boards hold two independent runs (no state
 
 test('@core pause toggles + is narrated in the chat spine', async ({ page }) => {
   const id = await seed(page, 'swarm')
-  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+  await callE2E(page, { m: 'fitView', a: [id] })
   const board = page.locator('[data-test="swarm-board"]')
   await board.locator('[data-test="swarm-pause"]').click()
   await expect(board.locator('[data-test="swarm-pause"]')).toContainText('Resume')

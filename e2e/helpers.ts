@@ -76,6 +76,27 @@ export function mainCall<T>(
   ) as Promise<T>
 }
 
+/**
+ * Call a `window.api.*` preload method with REAL arguments — the eval-free counterpart to the old
+ * `` evalIn(page, `window.api.x.y(${JSON.stringify(v)})`) `` shape. `path` is dot-separated below
+ * `window.api` (e.g. `'mcpServers.setEnabled'`); the method is invoked on its parent object so
+ * `this` binding stays correct. Arguments cross by structured clone, never by code string.
+ */
+export function apiCall<T>(page: Page, path: string, ...args: unknown[]): Promise<T> {
+  return page.evaluate(
+    ({ path, args }) => {
+      const segs = path.split('.')
+      const name = segs.pop() as string
+      let parent = (globalThis as { api?: unknown }).api as Record<string, unknown> | undefined
+      for (const s of segs) parent = parent?.[s] as Record<string, unknown> | undefined
+      const fn = parent?.[name]
+      if (typeof fn !== 'function') throw new Error(`window.api.${path} is not a function`)
+      return (fn as (...a: unknown[]) => unknown).apply(parent, args)
+    },
+    { path, args }
+  ) as Promise<T>
+}
+
 /** Poll a renderer expression until it returns truthy or the timeout elapses. Same interpolation
  *  caveat as {@link evalIn} — for a data-bearing probe use {@link pollCall}, or read the value with
  *  {@link callE2E} and poll the comparison here in Node. */

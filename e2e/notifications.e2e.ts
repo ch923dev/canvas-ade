@@ -1,5 +1,6 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval, seed } from './helpers'
 
 /**
  * Desktop-notifications (SPEC Phase 5) — the end-to-end delivery path that only reproduces in the
@@ -14,9 +15,30 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  * / attentionStore / agentLifecycle / ptyLifecycle `.test.ts`); this sliver proves the REAL wiring.
  */
 
-const attention = (id: string): string => `window.__canvasE2E.attentionKind(${JSON.stringify(id)})`
-const ring = (id: string): string => `window.__canvasE2E.attentionRingKind(${JSON.stringify(id)})`
-const bucketOf = (id: string): string => `window.__canvasE2E.boardBucket(${JSON.stringify(id)})`
+// Typed VALUE readers (real-arg bridge calls) — the id crosses by structured clone and every
+// comparison against an expected kind/bucket runs in Node, never inside an eval'd code string
+// (CodeQL js/bad-code-sanitization).
+const attention = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'attentionKind', a: [id] })
+const ring = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'attentionRingKind', a: [id] })
+const bucketOf = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'boardBucket', a: [id] })
+
+/** Poll a predicate over one of the readers above — the comparison runs HERE in Node (the
+ *  terminalScrollback.e2e.ts `pollScale` shape). Same boolean contract as `pollEval`. */
+async function pollKind(
+  read: () => Promise<string | null>,
+  pred: (v: string | null) => boolean,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect.poll(async () => pred(await read()), { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 test.describe('@terminal @core desktop notifications (lifecycle → toast + on-canvas + gate)', () => {
   test.beforeEach(async ({ electronApp }) => {
@@ -69,17 +91,18 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
         .toBe(true)
 
       // (2) The on-canvas attention overlay rendered on THIS board with the right kind (→ colour).
-      const ringOk = await pollEval(page, `${ring(id)} === ${JSON.stringify(c.event)}`, 5000)
+      const ringOk = await pollKind(
+        () => ring(page, id),
+        (v) => v === c.event,
+        5000
+      )
       expect(ringOk, `on-canvas ring for ${c.event}`).toBe(true)
-      expect(await evalIn(page, attention(id))).toBe(c.event)
+      expect(await attention(page, id)).toBe(c.event)
 
       // (3) The status pill maps to the DESIGN colour for the bucket-changing events (warn / err).
       if (c.pill) {
-        expect(await evalIn(page, bucketOf(id)), `bucket for ${c.event}`).toBe(c.bucket)
-        const dot = await evalIn<string>(
-          page,
-          `window.__canvasE2E.bucketPillDot(${JSON.stringify(c.bucket)})`
-        )
+        expect(await bucketOf(page, id), `bucket for ${c.event}`).toBe(c.bucket)
+        const dot = await callE2E<string>(page, { m: 'bucketPillDot', a: [c.bucket] })
         expect(dot, `pill dot for ${c.event}`).toBe(c.pill)
       }
     }
@@ -105,8 +128,8 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     // A window for a (would-be) IPC to land, then assert nothing surfaced anywhere.
     await page.waitForTimeout(300)
     expect(await evalIn(page, 'window.__canvasE2E.notifyToasts()')).toEqual([])
-    expect(await evalIn(page, attention(id))).toBeNull()
-    expect(await evalIn(page, ring(id))).toBeNull()
+    expect(await attention(page, id)).toBeNull()
+    expect(await ring(page, id)).toBeNull()
     expect(await mainCall(electronApp, 'notifyOsCalls')).toEqual([])
   })
 
@@ -120,7 +143,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     await mainCall(electronApp, 'notifyDeliver', idOff, 'error')
     await page.waitForTimeout(300)
     expect(await evalIn(page, 'window.__canvasE2E.notifyToasts()')).toEqual([])
-    expect(await evalIn(page, attention(idOff))).toBeNull()
+    expect(await attention(page, idOff)).toBeNull()
     expect(await mainCall(electronApp, 'notifyOsCalls')).toEqual([])
 
     // (b) Master ON + onlyWhenUnfocused + window FOCUSED → the in-app toast + on-canvas pill DO
@@ -134,7 +157,11 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     await mainCall(electronApp, 'notifyDeliver', idOn, 'needs-input')
 
     expect(
-      await pollEval(page, `${attention(idOn)} === 'needs-input'`, 5000),
+      await pollKind(
+        () => attention(page, idOn),
+        (v) => v === 'needs-input',
+        5000
+      ),
       'attention delivered while focused'
     ).toBe(true)
     expect(
@@ -145,9 +172,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
       ),
       'toast delivered while focused'
     ).toBe(true)
-    expect(await evalIn(page, bucketOf(idOn)), 'warn pill delivered while focused').toBe(
-      'awaiting-review'
-    )
+    expect(await bucketOf(page, idOn), 'warn pill delivered while focused').toBe('awaiting-review')
     // ...but the OS layer was SKIPPED — asserted via the injected notify spy, never a real Notification.
     expect(await mainCall(electronApp, 'notifyOsCalls'), 'OS layer skipped while focused').toEqual(
       []

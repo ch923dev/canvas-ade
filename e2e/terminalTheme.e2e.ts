@@ -1,10 +1,27 @@
 // e2e/terminalTheme.e2e.ts — Lane B terminal theming (DOM renderer)
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { callE2E, evalIn, pollCall, seed } from './helpers'
 
-const J = (v: unknown): string => JSON.stringify(v)
-const bgOf = (id: string) => `(window.__canvasE2E.terminalThemeBg(${J(id)}) || '').toLowerCase()`
-const familyOf = (id: string) => `window.__canvasE2E.terminalFontFamily(${J(id)})`
+/** Value readers (structured clone — no board id is ever spliced into page code). */
+const bgOf = async (page: Page, id: string): Promise<string> =>
+  ((await callE2E<string | undefined>(page, { m: 'terminalThemeBg', a: [id] })) || '').toLowerCase()
+const familyOf = (page: Page, id: string): Promise<string | undefined> =>
+  callE2E<string | undefined>(page, { m: 'terminalFontFamily', a: [id] })
+const readBuf = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+
+/** Poll a Node-side check until true (the terminalScrollback poller shape, generalized — each poll
+ *  below compares a different reader, so the check closes over the reader). Same boolean contract
+ *  as `pollEval`. */
+async function pollTrue(check: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  try {
+    await expect.poll(check, { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 test.describe('@terminal terminal theming', () => {
   // The persistent _electron userData carries localStorage across specs, so clear the sticky
@@ -18,7 +35,7 @@ test.describe('@terminal terminal theming', () => {
 
   test('a theme switch applies live, persists, and does NOT respawn the PTY', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'exit' })
-    await pollEval(page, `window.__canvasE2E.terminalMounted(${J(id)})`, 8000)
+    await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
     // Drain the PTY before the direct buffer write (the terminalScrollback discipline): the
     // shell launches `exit`, and once the bridge's "[process exited]" line lands no further
@@ -28,37 +45,42 @@ test.describe('@terminal terminal theming', () => {
     // + buffer stay live after exit; the no-respawn contract (themeId must never be a spawn
     // dep) is provable on a drained term exactly the same way.
     expect(
-      await pollEval(
-        page,
-        `(window.__canvasE2E.readTerminal(${J(id)}) || '').includes('process exited')`,
+      await pollTrue(
+        async () => ((await readBuf(page, id)) || '').includes('process exited'),
         8000
       ),
       'shell exited (PTY drained — no further output)'
     ).toBe(true)
 
     // An unthemed board resolves to the Canvas default palette (--inset bg).
-    expect(await evalIn<string>(page, bgOf(id))).toBe('#0e0e10')
+    expect(await bgOf(page, id)).toBe('#0e0e10')
 
     // Write a unique marker into the buffer — a respawn would dispose the term and wipe it.
     const MARKER = 'THEMETESTMARKER'
-    await evalIn(page, `window.__canvasE2E.resetTerminalWrite(${J(id)}, ${J(MARKER)})`)
-    const landed = await pollEval(
-      page,
-      `(window.__canvasE2E.selectTerminal(${J(id)}, 0, 0, ${MARKER.length}), window.__canvasE2E.terminalSelection(${J(id)}) === ${J(MARKER)})`,
+    await callE2E(page, { m: 'resetTerminalWrite', a: [id, MARKER] })
+    // Select-then-read in ONE callE2E batch (one synchronous turn, like the old comma-expression);
+    // the === MARKER comparison runs here in Node.
+    const landed = await pollTrue(
+      async () =>
+        (await callE2E<string>(
+          page,
+          { m: 'selectTerminal', a: [id, 0, 0, MARKER.length] },
+          { m: 'terminalSelection', a: [id] }
+        )) === MARKER,
       3000
     )
     expect(landed, 'marker written into the live buffer').toBe(true)
 
     // Switch theme exactly the way the dialog Apply does (updateBoard with a themeId patch).
-    await evalIn(page, `window.__canvasE2E.patchBoard(${J(id)}, { themeId: 'dracula' })`)
+    await callE2E(page, { m: 'patchBoard', a: [id, { themeId: 'dracula' }] })
 
     // Live apply: the ANSI palette repaints on the SAME term (Dracula background #282a36).
-    const applied = await pollEval(page, `${bgOf(id)} === '#282a36'`, 3000)
+    const applied = await pollTrue(async () => (await bgOf(page, id)) === '#282a36', 3000)
     expect(applied, 'theme applied live without a respawn').toBe(true)
 
     // No respawn: the buffer marker survives (a respawn disposes the term + resets the buffer).
-    await evalIn(page, `window.__canvasE2E.selectTerminal(${J(id)}, 0, 0, ${MARKER.length})`)
-    const survived = await evalIn<string>(page, `window.__canvasE2E.terminalSelection(${J(id)})`)
+    await callE2E(page, { m: 'selectTerminal', a: [id, 0, 0, MARKER.length] })
+    const survived = await callE2E<string>(page, { m: 'terminalSelection', a: [id] })
     expect(survived, 'PTY/buffer survived the theme switch (no respawn)').toBe(MARKER)
 
     // Persisted on the board.
@@ -71,15 +93,18 @@ test.describe('@terminal terminal theming', () => {
 
   test('a font-family switch applies live and persists', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
-    await pollEval(page, `window.__canvasE2E.terminalMounted(${J(id)})`, 8000)
+    await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
 
     // Default 'system' resolves to the hinted OS terminal stack (--term-mono).
-    const start = await evalIn<string>(page, familyOf(id))
+    const start = await familyOf(page, id)
     expect(start).toContain('Cascadia Mono')
 
-    await evalIn(page, `window.__canvasE2E.patchBoard(${J(id)}, { fontFamilyId: 'courier' })`)
-    const applied = await pollEval(page, `/Courier/.test(${familyOf(id)} || '')`, 3000)
+    await callE2E(page, { m: 'patchBoard', a: [id, { fontFamilyId: 'courier' }] })
+    const applied = await pollTrue(
+      async () => /Courier/.test((await familyOf(page, id)) || ''),
+      3000
+    )
     expect(applied, 'font family applied live (Courier)').toBe(true)
 
     const boards = await evalIn<Array<{ id: string; fontFamilyId?: string }>>(
@@ -97,10 +122,10 @@ test.describe('@terminal terminal theming', () => {
       themeId: 'some-future-theme',
       launchCommand: 'echo ready'
     })
-    await pollEval(page, `window.__canvasE2E.terminalMounted(${J(id)})`, 8000)
+    await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
 
     // The terminal renders as the Canvas default (degrade-at-resolve) — never broken/empty.
-    expect(await evalIn<string>(page, bgOf(id)), 'unknown theme degraded to Canvas').toBe('#0e0e10')
+    expect(await bgOf(page, id), 'unknown theme degraded to Canvas').toBe('#0e0e10')
 
     // The stored id is PRESERVED verbatim (not rewritten) — forward-compat (ADR 0007).
     const boards = await evalIn<Array<{ id: string; themeId?: string }>>(

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { callE2E, mainCall, seed } from './helpers'
 
 /**
  * @core PR-3 read-only app self-model (app-side), against the REAL running app.
@@ -75,10 +75,7 @@ test.describe('@core describeApp (read-only app self-model via the app-side seam
     const b1 = await seed(page, 'terminal')
     const b2 = await seed(page, 'planning')
     // Create a Named Group over the two boards via the renderer (the same action Ctrl+G drives).
-    const gid = await evalIn<string>(
-      page,
-      `window.__canvasE2E.addGroup("Auth zone", [${JSON.stringify(b1)}, ${JSON.stringify(b2)}])`
-    )
+    const gid = await callE2E<string>(page, { m: 'addGroup', a: ['Auth zone', [b1, b2]] })
     // The group appears in the app-model once the renderer->MAIN mirror (mcp:boards) carries it.
     await expect
       .poll(

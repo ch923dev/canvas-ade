@@ -1,13 +1,6 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import {
-  evalIn,
-  mainCall,
-  openInspectorSection,
-  pollEval,
-  seed,
-  selectForInspector
-} from './helpers'
+import { callE2E, mainCall, openInspectorSection, seed, selectForInspector } from './helpers'
 
 const DETECTED_URL = 'http://localhost:3000'
 
@@ -50,6 +43,26 @@ function linkRead(page: Page, browserId: string): Promise<{ source: string | nul
   }, browserId)
 }
 
+/** Poll until a terminal's buffer contains `needle` — the buffer is read as a VALUE via the bridge
+ *  and matched HERE in Node (the id never enters page code). */
+async function pollTermIncludes(
+  page: Page,
+  id: string,
+  needle: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const readTerm = (): Promise<string | null> =>
+    callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+  try {
+    await expect
+      .poll(async () => ((await readTerm()) ?? '').includes(needle), { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
 test.describe('@preview terminal → browser preview link (live port-detect + action routing)', () => {
   test('Choose target opens the connect picker; Connect links; Push to preview refreshes (no picker)', async ({
     page,
@@ -58,7 +71,7 @@ test.describe('@preview terminal → browser preview link (live port-detect + ac
     const termId = await seed(page, 'terminal', { launchCommand: 'echo link', w: 360 })
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+    await callE2E(page, { m: 'fitView', a: [termId] })
     // The seed only stages the board — the PTY registers when the async pty:spawn settles
     // (a daemon round-trip since the PTY host landed), and writeTerminal against an
     // unregistered id silently no-ops (writeToPty → false). Wait for the live pid first,
@@ -70,11 +83,7 @@ test.describe('@preview terminal → browser preview link (live port-detect + ac
       )
       .toBe(true)
     await mainCall(electronApp, 'writeTerminal', termId, 'echo http://localhost:3000/\r')
-    const urlSeen = await pollEval(
-      page,
-      `(() => { const t = window.__canvasE2E.readTerminal(${JSON.stringify(termId)}); return typeof t === 'string' && t.includes('localhost:3000'); })()`,
-      8000
-    )
+    const urlSeen = await pollTermIncludes(page, termId, 'localhost:3000', 8000)
     expect(urlSeen, 'dev-server URL echoed into the terminal').toBe(true)
 
     // Reveal the Inspector for the terminal; Linking starts collapsed.

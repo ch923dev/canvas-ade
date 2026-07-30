@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, pollEval } from './helpers'
+import { callE2E, evalIn, pollEval } from './helpers'
 
 test.describe('@chrome named board groups — Ctrl+G create flow', () => {
   test('Ctrl+G on a 2-board selection mints a group + renders its box tab', async ({ page }) => {
@@ -19,7 +19,7 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
     expect(ids).toHaveLength(2)
 
     // 3. Select both (the group-create path reads selectedIds).
-    await evalIn(page, `window.__canvasE2E.setSelection(${JSON.stringify(ids)})`)
+    await callE2E(page, { m: 'setSelection', a: [ids] })
     expect(await evalIn<number>(page, `window.__canvasE2E.getGroups().length`)).toBe(0)
 
     // 4. The FAB appears once >=2 boards are selected.
@@ -47,7 +47,7 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
       page,
       `(() => [window.__canvasE2E.seedBoard('terminal'), window.__canvasE2E.seedBoard('planning')])()`
     )
-    await evalIn(page, `window.__canvasE2E.setSelection(${JSON.stringify(ids)})`)
+    await callE2E(page, { m: 'setSelection', a: [ids] })
     await page.keyboard.press('Control+g')
 
     const input = page.locator('.group-name-input')
@@ -69,7 +69,7 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
       page,
       `(() => [window.__canvasE2E.seedBoard('terminal'), window.__canvasE2E.seedBoard('planning')])()`
     )
-    await evalIn(page, `window.__canvasE2E.setSelection(${JSON.stringify(ids)})`)
+    await callE2E(page, { m: 'setSelection', a: [ids] })
     await page.keyboard.press('Control+g')
 
     const input = page.locator('.group-name-input')
@@ -106,10 +106,7 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
     await expect(page.locator('.group-pick-pop')).toHaveCount(0)
 
     // Mint a SECOND group → bare `f` now opens the which-group picker.
-    await evalIn(
-      page,
-      `window.__canvasE2E.addGroup('API', [${JSON.stringify(ids[2])}, ${JSON.stringify(ids[3])}])`
-    )
+    await callE2E(page, { m: 'addGroup', a: ['API', [ids[2], ids[3]]] })
     expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 2`, 2000)).toBe(true)
 
     await page.keyboard.press('f')
@@ -148,7 +145,7 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
     // Close, select the 3rd board, reopen → now enabled → click adds it to the group.
     await page.keyboard.press('Escape')
     await expect(page.locator('.group-ctx')).toHaveCount(0)
-    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(ids[2])}])`)
+    await callE2E(page, { m: 'setSelection', a: [[ids[2]]] })
     // Capture the 3rd board's position before the menu-add — read the arg-free board list and find
     // it Node-side (no value in the eval string → no js/bad-code-sanitization).
     const posOf = async (id: string): Promise<{ x: number; y: number }> => {
@@ -202,10 +199,7 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
       return { x: b.x, y: b.y }
     }
     const beforeC = await posOf(ids[2])
-    await evalIn(
-      page,
-      `window.__canvasE2E.addToGroupReflowed(${JSON.stringify(gid)}, ${JSON.stringify(ids[2])})`
-    )
+    await callE2E(page, { m: 'addToGroupReflowed', a: [gid, ids[2]] })
     // membership grew to 3
     expect(
       await pollEval(page, `window.__canvasE2E.getGroups()[0].boardIds.length === 3`, 2000)
@@ -231,14 +225,14 @@ test.describe('@chrome named board groups — Ctrl+G create flow', () => {
     await expect(page.locator('.group-box-tab')).toHaveCount(1)
 
     // Delete the FIRST board → group keeps its remaining member and its box tab.
-    await evalIn(page, `window.__canvasE2E.deleteBoard(${JSON.stringify(ids[0])})`)
+    await callE2E(page, { m: 'deleteBoard', a: [ids[0]] })
     expect(
       await pollEval(page, `window.__canvasE2E.getGroups()[0]?.boardIds.length === 1`, 2000)
     ).toBe(true)
     await expect(page.locator('.group-box-tab')).toHaveCount(1)
 
     // Delete the LAST board → the now-empty group is dropped entirely (no named-empty husk).
-    await evalIn(page, `window.__canvasE2E.deleteBoard(${JSON.stringify(ids[1])})`)
+    await callE2E(page, { m: 'deleteBoard', a: [ids[1]] })
     expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 0`, 2000)).toBe(true)
     await expect(page.locator('.group-box-tab')).toHaveCount(0)
   })

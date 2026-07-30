@@ -1,5 +1,53 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval, seed } from './helpers'
+
+// Strided pixel hash computed in-page (no MB-sized dataURLs over the wire). The stride (97) is
+// coprime with the RGBA stride so samples rotate channels. MODULE-LEVEL literal — its
+// interpolation into a probe string is the documented author-time exception, not a data flow.
+const HASH = `(() => {
+      const c = document.querySelector('canvas[data-test="backdrop-scene"]');
+      if (!c || c.width === 0) return null;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 0;
+      for (let i = 0; i < d.length; i += 97) h = (h * 31 + d[i]) | 0;
+      return h;
+    })()`
+
+// RF background root — module-level literal for the same author-time reason as HASH.
+const BG = '.react-flow__background'
+
+/** Poll a Node-side probe until truthy — `pollEval`'s boolean contract, values compared HERE
+ *  in Node (CodeQL js/bad-code-sanitization). */
+async function pollTrue(read: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  try {
+    await expect.poll(read, { timeout: timeoutMs }).toBeTruthy()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** One tick of the camera-fit dance (the proven whiteboard.e2e.ts shape): instant re-fit, then
+ *  measure the well on-screen. The board id crosses as a STRUCTURED ARG. */
+function fitTick(page: Page, id: string): Promise<boolean> {
+  return page.evaluate((bid) => {
+    const g = globalThis as any
+    g.__canvasE2E.fitCameraInstant(bid)
+    const node = g.document.querySelector('.react-flow__node[data-id=' + JSON.stringify(bid) + ']')
+    const well = node && node.querySelector('.pl-well')
+    if (!well || !(well.offsetWidth > 0)) return false
+    const r = well.getBoundingClientRect()
+    const scale = r.width / well.offsetWidth
+    return (
+      scale > 0.4 &&
+      r.left >= -2 &&
+      r.top >= -2 &&
+      r.right <= g.innerWidth + 2 &&
+      r.bottom <= g.innerHeight + 2
+    )
+  }, id)
+}
 
 /**
  * Canvas backdrop probes (docs/canvas-backdrop/spec.md section 7, S4):
@@ -37,10 +85,10 @@ test.describe('@chrome canvas backdrop (S4)', () => {
     )
     try {
       // Open the real temp project so the store carries a project dir (save target).
-      const opened = await evalIn<{ status: string }>(
-        page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-      )
+      const opened = await callE2E<{ status: string }>(page, {
+        m: 'openProjectFromDisk',
+        a: [tmp]
+      })
       expect(opened.status, 'fresh temp project opens clean').toBe('open')
 
       // Set a scene backdrop through the real store action (the picker's path).
@@ -55,10 +103,12 @@ test.describe('@chrome canvas backdrop (S4)', () => {
 
       // Flush through the REAL save IPC (the autosave path's own call — deterministic,
       // no 1s-debounce wait). expectedDir guards against racing a project switch.
-      const saved = await evalIn<{ ok: boolean }>(
-        page,
-        `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
-      )
+      // ONE page.evaluate keeps serialize→save in a single JS turn (as the old one-string eval
+      // did); the dir crosses as a structured arg, never into code.
+      const saved = await page.evaluate<{ ok: boolean }, string>((dir) => {
+        const g = globalThis as any
+        return g.api.project.save(JSON.parse(g.__canvasE2E.serializeDoc()), dir)
+      }, tmp)
       // C3: project.save now returns { ok, code? } (was a bare boolean).
       expect(saved.ok, 'project:save accepted the doc').toBe(true)
 
@@ -74,10 +124,10 @@ test.describe('@chrome canvas backdrop (S4)', () => {
       ).toBe(true)
 
       // Reopen from disk -> the backdrop settings round-trip (scene id verbatim).
-      const reopened = await evalIn<{ status: string }>(
-        page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-      )
+      const reopened = await callE2E<{ status: string }>(page, {
+        m: 'openProjectFromDisk',
+        a: [tmp]
+      })
       expect(reopened.status, 'reopen succeeds').toBe('open')
       const bg = await evalIn<{
         kind: string
@@ -102,12 +152,17 @@ test.describe('@chrome canvas backdrop (S4)', () => {
   }) => {
     // Seed a planning board with one arrow, then activate a backdrop OVER the whole pane.
     const planId = await seed(page, 'planning')
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 520, h: 500, elements: [
-      { id: 'bd-a', kind: 'arrow', x: 80, y: 320, x2: 300, y2: 120 }
-    ] })`
-    )
+    await callE2E(page, {
+      m: 'patchBoard',
+      a: [
+        planId,
+        {
+          w: 520,
+          h: 500,
+          elements: [{ id: 'bd-a', kind: 'arrow', x: 80, y: 320, x2: 300, y2: 120 }]
+        }
+      ]
+    })
     await evalIn(
       page,
       `window.__canvasE2E.setBackground({ kind: 'scene', scene: 'probe-scene', dim: 0.25, saturation: 0.7, gridDots: false })`
@@ -119,91 +174,86 @@ test.describe('@chrome canvas backdrop (S4)', () => {
     await page.waitForTimeout(180)
 
     // Camera-fit the board on-screen (the proven whiteboard.e2e.ts dance).
-    await evalIn(page, `window.__canvasE2E.enterCameraFullView(${JSON.stringify(planId)})`)
-    const fitted = await pollEval(
-      page,
-      `(() => {
-         const id = ${JSON.stringify(planId)};
-         window.__canvasE2E.fitCameraInstant(id);
-         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const well = node && node.querySelector('.pl-well');
-         if (!well || !(well.offsetWidth > 0)) return false;
-         const r = well.getBoundingClientRect();
-         const scale = r.width / well.offsetWidth;
-         return scale > 0.4 && r.left >= -2 && r.top >= -2 && r.right <= window.innerWidth + 2 && r.bottom <= window.innerHeight + 2;
-       })()`,
-      4000
-    )
+    await callE2E(page, { m: 'enterCameraFullView', a: [planId] })
+    const fitted = await pollTrue(() => fitTick(page, planId), 4000)
     expect(fitted, 'camera fit the board on-screen').toBe(true)
     await page.waitForTimeout(60)
 
     // Hit-test proof: the topmost element at the board's center is canvas content,
     // never the backdrop (pointer-events: none + below-RF stacking).
-    const hit = await evalIn<{ inBackdrop: boolean; inFlow: boolean }>(
-      page,
-      `(() => {
-         const id = ${JSON.stringify(planId)};
-         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const r = node.getBoundingClientRect();
-         const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-         return {
-           inBackdrop: !!(el && el.closest('[data-test="backdrop-layer"]')),
-           inFlow: !!(el && el.closest('.react-flow'))
-         };
-       })()`
-    )
+    const hit = await page.evaluate<{ inBackdrop: boolean; inFlow: boolean }, string>((bid) => {
+      const g = globalThis as any
+      const node = g.document.querySelector(
+        '.react-flow__node[data-id=' + JSON.stringify(bid) + ']'
+      )
+      const r = node.getBoundingClientRect()
+      const el = g.document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      return {
+        inBackdrop: !!(el && el.closest('[data-test="backdrop-layer"]')),
+        inFlow: !!(el && el.closest('.react-flow'))
+      }
+    }, planId)
     expect(hit.inBackdrop, 'backdrop never wins the hit-test').toBe(false)
     expect(hit.inFlow, 'the canvas is what the pointer reaches').toBe(true)
 
     // Select the arrow (selection is not the surface under test) so its endpoint
     // handle renders; setPointerCapture throws on a synthetic pointer (harmless).
-    const selected = await evalIn<boolean>(
-      page,
-      `(() => {
-         const id = ${JSON.stringify(planId)};
-         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const well = node && node.querySelector('.pl-well');
-         const path = well && well.querySelector('svg > path');
-         if (!well || !path) return false;
-         try {
-           path.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1 }));
-         } catch {}
-         try {
-           well.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 1 }));
-         } catch {}
-         return true;
-       })()`
-    )
+    const selected = await page.evaluate((bid) => {
+      const g = globalThis as any
+      const node = g.document.querySelector(
+        '.react-flow__node[data-id=' + JSON.stringify(bid) + ']'
+      )
+      const well = node && node.querySelector('.pl-well')
+      const path = well && well.querySelector('svg > path')
+      if (!well || !path) return false
+      try {
+        path.dispatchEvent(
+          new g.PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1 })
+        )
+      } catch {
+        /* pointerdown ctor/dispatch is best-effort — the old in-page IIFE swallowed it too */
+      }
+      try {
+        well.dispatchEvent(
+          new g.PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 1 })
+        )
+      } catch {
+        /* pointerdown ctor/dispatch is best-effort — the old in-page IIFE swallowed it too */
+      }
+      return true
+    }, planId)
     expect(selected, 'arrow path press dispatched').toBe(true)
     expect(
       await pollEval(page, `!!document.querySelector('[data-arrow-endpoint="end"]')`, 2000),
       'endpoint handle rendered'
     ).toBe(true)
 
-    const t = await evalIn<{
-      found: boolean
-      hx: number
-      hy: number
-      tx: number
-      ty: number
-      bx: number
-      by: number
-    }>(
-      page,
-      `(() => {
-         const id = ${JSON.stringify(planId)};
-         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const well = node && node.querySelector('.pl-well');
-         const h = document.querySelector('[data-arrow-endpoint="end"]');
-         if (!well || !h) return { found: false, hx: 0, hy: 0, tx: 0, ty: 0, bx: 0, by: 0 };
-         const hr = h.getBoundingClientRect();
-         const r = well.getBoundingClientRect();
-         const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1;
-         const bx = 200, by = 400; // board-local drop target, inside the 520x500 well
-         return { found: true, hx: hr.left + hr.width / 2, hy: hr.top + hr.height / 2,
-                  tx: r.left + bx * scale, ty: r.top + by * scale, bx, by };
-       })()`
-    )
+    const t = await page.evaluate<
+      { found: boolean; hx: number; hy: number; tx: number; ty: number; bx: number; by: number },
+      string
+    >((bid) => {
+      const g = globalThis as any
+      const node = g.document.querySelector(
+        '.react-flow__node[data-id=' + JSON.stringify(bid) + ']'
+      )
+      const well = node && node.querySelector('.pl-well')
+      const h = g.document.querySelector('[data-arrow-endpoint="end"]')
+      if (!well || !h) return { found: false, hx: 0, hy: 0, tx: 0, ty: 0, bx: 0, by: 0 }
+      const hr = h.getBoundingClientRect()
+      const r = well.getBoundingClientRect()
+      const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1
+      const bx = 200,
+        by = 400 // board-local drop target, inside the 520x500 well
+      return {
+        found: true,
+        hx: hr.left + hr.width / 2,
+        hy: hr.top + hr.height / 2,
+        tx: r.left + bx * scale,
+        ty: r.top + by * scale,
+        bx,
+        by
+      }
+    }, planId)
     expect(t.found, 'handle + well located').toBe(true)
 
     // The REAL OS drag (MAIN sendInputEvent): down on the handle, move, up at target.
@@ -233,15 +283,16 @@ test.describe('@chrome canvas backdrop (S4)', () => {
     })
     await page.waitForTimeout(140)
 
-    // The drag landed: the arrow head moved to the drop target (read via getBoards()).
-    const res = await evalIn<{ x2: number; y2: number } | null>(
-      page,
-      `(() => {
-         const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(planId)});
-         const a = (b && b.type === 'planning' ? b.elements : []).find((e) => e.id === 'bd-a');
-         return a ? { x2: a.x2, y2: a.y2 } : null;
-       })()`
+    // The drag landed: the arrow head moved to the drop target (read via getBoards() as VALUES,
+    // found in Node — the id never enters an eval'd code string).
+    const boards = await callE2E<
+      Array<{ id: string; type: string; elements?: Array<{ id: string; x2: number; y2: number }> }>
+    >(page, { m: 'getBoards' })
+    const board = boards.find((x) => x.id === planId)
+    const arrow = (board && board.type === 'planning' ? (board.elements ?? []) : []).find(
+      (e) => e.id === 'bd-a'
     )
+    const res = arrow ? { x2: arrow.x2, y2: arrow.y2 } : null
     await evalIn(page, 'window.__canvasE2E.exitCameraFullView()')
     expect(res, 'arrow still in the store').not.toBeNull()
     expect(Math.abs(res!.x2 - t.bx), 'head x2 moved to the drop target').toBeLessThanOrEqual(8)
@@ -261,16 +312,6 @@ test.describe('@chrome canvas backdrop (S4)', () => {
       'scene canvas mounted'
     ).toBe(true)
 
-    // Strided pixel hash computed in-page (no MB-sized dataURLs over the wire). The
-    // stride (97) is coprime with the RGBA stride so samples rotate channels.
-    const HASH = `(() => {
-      const c = document.querySelector('canvas[data-test="backdrop-scene"]');
-      if (!c || c.width === 0) return null;
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let h = 0;
-      for (let i = 0; i < d.length; i += 97) h = (h * 31 + d[i]) | 0;
-      return h;
-    })()`
     expect(await pollEval(page, `${HASH} !== null`, 4000), 'scene painted at least one frame').toBe(
       true
     )
@@ -305,21 +346,13 @@ test.describe('@chrome canvas backdrop (S4)', () => {
     expect(ids, 'drift + current + blossom-river at least').toEqual(
       expect.arrayContaining(['drift', 'current', 'blossom-river'])
     )
-    // Strided pixel hash (the reduced-motion probe's technique) — non-null ⇒ the scene
+    // The module-level HASH probe (the reduced-motion test's technique) — non-null ⇒ the scene
     // canvas sized and painted at least one frame.
-    const HASH = `(() => {
-      const c = document.querySelector('canvas[data-test="backdrop-scene"]');
-      if (!c || c.width === 0) return null;
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let h = 0;
-      for (let i = 0; i < d.length; i += 97) h = (h * 31 + d[i]) | 0;
-      return h;
-    })()`
     for (const id of ids) {
-      await evalIn(
-        page,
-        `window.__canvasE2E.setBackground({ kind: 'scene', scene: ${JSON.stringify(id)}, dim: 0.25, saturation: 0.7, gridDots: false })`
-      )
+      await callE2E(page, {
+        m: 'setBackground',
+        a: [{ kind: 'scene', scene: id, dim: 0.25, saturation: 0.7, gridDots: false }]
+      })
       expect(
         await pollEval(
           page,
@@ -382,47 +415,54 @@ test.describe('@chrome canvas backdrop (S4)', () => {
   test('grid lattice: gridStyle switches the RF background variant (S12)', async ({ page }) => {
     // A scene backdrop makes FadingDots opt-in (gated on gridDots, spec §3); the lattice
     // style then drives RF's native BackgroundVariant. dots ⇒ <circle>, lines/cross ⇒ <path>.
-    const bg = '.react-flow__background'
-    const setGrid = (patch: string): string =>
-      `window.__canvasE2E.setBackground({ kind: 'scene', scene: 'blossom-river', dim: 0.25, saturation: 0.7, ${patch} })`
+    // The patch is a real OBJECT through callE2E now — nothing is spliced into code.
+    const setGrid = (patch: Record<string, unknown>): Promise<unknown> =>
+      callE2E(page, {
+        m: 'setBackground',
+        a: [{ kind: 'scene', scene: 'blossom-river', dim: 0.25, saturation: 0.7, ...patch }]
+      })
 
     // Grid off ⇒ no RF background pattern paints at all (FadingDots returns null).
-    await evalIn(page, setGrid('gridDots: false'))
+    await setGrid({ gridDots: false })
     expect(
-      await pollEval(page, `document.querySelector('${bg}') === null`, 2000),
+      await pollEval(page, `document.querySelector('${BG}') === null`, 2000),
       'no grid pattern when gridDots is off'
     ).toBe(true)
 
     // Dots ⇒ the pattern uses <circle>.
-    await evalIn(page, setGrid('gridDots: true, gridStyle: "dots"'))
+    await setGrid({ gridDots: true, gridStyle: 'dots' })
     expect(
-      await pollEval(page, `!!document.querySelector('${bg} circle')`, 2000),
+      await pollEval(page, `!!document.querySelector('${BG} circle')`, 2000),
       'dots variant renders circles'
     ).toBe(true)
 
     // Lines ⇒ a <path>, no <circle>.
-    await evalIn(page, setGrid('gridDots: true, gridStyle: "lines"'))
+    await setGrid({ gridDots: true, gridStyle: 'lines' })
     expect(
       await pollEval(
         page,
-        `!!document.querySelector('${bg} path') && document.querySelector('${bg} circle') === null`,
+        `!!document.querySelector('${BG} path') && document.querySelector('${BG} circle') === null`,
         2000
       ),
       'lines variant renders a path and no circle'
     ).toBe(true)
     const linesPath = await evalIn<string>(
       page,
-      `document.querySelector('${bg} path')?.getAttribute('d') ?? ''`
+      `document.querySelector('${BG} path')?.getAttribute('d') ?? ''`
     )
 
     // Cross ⇒ also a <path>, but a geometry distinct from lines (robust to RF's exact d-string).
-    await evalIn(page, setGrid('gridDots: true, gridStyle: "cross"'))
+    // The lines baseline is a RUNTIME value, so the comparison runs HERE in Node over a fixed
+    // {d, circle} probe read each tick.
+    await setGrid({ gridDots: true, gridStyle: 'cross' })
     expect(
-      await pollEval(
-        page,
-        `(document.querySelector('${bg} path')?.getAttribute('d') ?? '') !== ${JSON.stringify(linesPath)} && document.querySelector('${bg} circle') === null`,
-        2000
-      ),
+      await pollTrue(async () => {
+        const v = await evalIn<{ d: string; circle: boolean }>(
+          page,
+          `({ d: document.querySelector('${BG} path')?.getAttribute('d') ?? '', circle: !!document.querySelector('${BG} circle') })`
+        )
+        return v.d !== linesPath && !v.circle
+      }, 2000),
       'cross variant renders a different path geometry than lines'
     ).toBe(true)
 

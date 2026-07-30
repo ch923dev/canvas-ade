@@ -1,10 +1,47 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed, selectForInspector } from './helpers'
+import { callE2E, evalIn, mainCall, pollCall, pollEval, seed, selectForInspector } from './helpers'
 
 const DL_NAME = 'canvas-e2e-download.txt'
-const runtimeStatus = (id: string, status: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
-const osrNonBlank = (id: string) => `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
+
+/** The board's preview runtime, read as a VALUE (the id crosses as a real arg, never spliced). */
+const runtimeOf = (page: Page, id: string): Promise<{ status: string } | null> =>
+  callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] })
+
+/** Poll until the runtime reaches `status` — the comparison runs HERE in Node, so neither the
+ *  seeded id nor the wanted status ever enters page code. Same boolean contract as `pollEval`. */
+async function pollStatus(
+  page: Page,
+  id: string,
+  status: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await runtimeOf(page, id))?.status === status, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+const pollNonBlank = (page: Page, id: string, timeoutMs: number): Promise<boolean> =>
+  pollCall(page, [{ m: 'osrCanvasNonBlank', a: [id] }], timeoutMs)
+
+/** Poll until a File board for `path` exists — the boards array is read as a VALUE via the bridge
+ *  and the match runs HERE in Node (the path never enters page code). */
+async function pollFileBoard(page: Page, path: string, timeoutMs: number): Promise<boolean> {
+  const hasIt = async (): Promise<boolean> =>
+    (await callE2E<Array<{ type: string; path?: string }>>(page, { m: 'getBoards' })).some(
+      (b) => b.type === 'file' && b.path === path
+    )
+  try {
+    await expect.poll(hasIt, { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * @preview — Project Library + the download relocation, end-to-end through the real stack:
@@ -20,10 +57,10 @@ test.describe('@preview Project Library (downloads → .canvas/downloads)', () =
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'library-', 'lib-test')
     try {
       // Open the project so MAIN's current dir → tmp (downloads now target tmp/.canvas/downloads).
-      const opened = await evalIn<{ status: string }>(
-        page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-      )
+      const opened = await callE2E<{ status: string }>(page, {
+        m: 'openProjectFromDisk',
+        a: [tmp]
+      })
       expect(opened.status, 'project opened').toBe('open')
 
       // The Library panel is closed at rest — only its reopen tab is present.
@@ -99,11 +136,7 @@ test.describe('@preview Project Library (downloads → .canvas/downloads)', () =
           pane.dispatchEvent(new DragEvent('drop', opts));
         })()`
       )
-      const fileBoardOpened = await pollEval(
-        page,
-        `window.__canvasE2E.getBoards().some((b) => b.type === 'file' && b.path === ${JSON.stringify('.canvas/downloads/' + DL_NAME)})`,
-        5000
-      )
+      const fileBoardOpened = await pollFileBoard(page, '.canvas/downloads/' + DL_NAME, 5000)
       expect(fileBoardOpened, 'dragging a Library row to the canvas opens it as a File board').toBe(
         true
       )
@@ -123,13 +156,13 @@ test.describe('@preview Project Library (downloads → .canvas/downloads)', () =
       'lib-shot'
     )
     try {
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       const url = await mainCall<string>(electronApp, 'localUrl')
       const id = await seed(page, 'browser', { url, viewport: 'desktop' })
       await page.waitForTimeout(150)
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-      expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000), 'connected').toBe(true)
-      expect(await pollEval(page, osrNonBlank(id), 8000), 'OSR painted').toBe(true)
+      await callE2E(page, { m: 'fitView', a: [id] })
+      expect(await pollStatus(page, id, 'connected', 12_000), 'connected').toBe(true)
+      expect(await pollNonBlank(page, id, 8000), 'OSR painted').toBe(true)
 
       // Open the Library on the Assets tab — empty before any screenshot. The open-state is the
       // panel's own (survives the prior test's reset), so open only if its reopen tab is present.

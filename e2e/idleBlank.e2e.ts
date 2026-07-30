@@ -1,5 +1,6 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, mainCall, pollCall, seed } from './helpers'
 
 /**
  * REGRESSION (PR #210 idle-page blank) — the OSR browser preview must paint an IDLE (static) page
@@ -32,10 +33,30 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  *
  * @preview
  */
-const runtimeStatus = (id: string, status: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
-const osrNonBlank = (id: string): string =>
-  `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
+const runtimeOf = (page: Page, id: string): Promise<{ status: string } | null> =>
+  callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] })
+
+/** Poll until the runtime reaches `status` — the comparison runs HERE in Node, so neither the
+ *  seeded id nor the wanted status ever enters page code. Same boolean contract as `pollEval`. */
+async function pollStatus(
+  page: Page,
+  id: string,
+  status: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await runtimeOf(page, id))?.status === status, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+const osrNonBlank = (page: Page, id: string): Promise<boolean> =>
+  callE2E<boolean>(page, { m: 'osrCanvasNonBlank', a: [id] })
+const pollNonBlank = (page: Page, id: string, timeoutMs: number): Promise<boolean> =>
+  pollCall(page, [{ m: 'osrCanvasNonBlank', a: [id] }], timeoutMs)
 
 const idleUrl = async (electronApp: Parameters<typeof mainCall>[0]): Promise<string> => {
   const base = await mainCall<string>(electronApp, 'localUrl')
@@ -49,19 +70,16 @@ test.describe('@preview idle (static) page OSR paint reliability', () => {
   }) => {
     const id = await seed(page, 'browser', { url: await idleUrl(electronApp) })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
 
     // Reaches connected (did-finish-load) — the gate every browser e2e uses.
-    expect(
-      await pollEval(page, runtimeStatus(id, 'connected'), 12_000),
-      'idle page connected'
-    ).toBe(true)
+    expect(await pollStatus(page, id, 'connected', 12_000), 'idle page connected').toBe(true)
 
     // Measure WITHOUT ever touching the Network panel (the workaround). The canvas must be non-blank
     // AND the offscreen pump must be live.
-    const painted = await pollEval(page, osrNonBlank(id), 8000)
+    const painted = await pollNonBlank(page, id, 8000)
     const paintingMain = await mainCall<boolean | null>(electronApp, 'osrPainting', id)
-    const nonBlank = await evalIn<boolean>(page, osrNonBlank(id))
+    const nonBlank = await osrNonBlank(page, id)
     console.log(
       `[idleblank/open] connected — osrPainting(main)=${paintingMain} nonBlank=${nonBlank} (poll8s=${painted})`
     )
@@ -77,12 +95,9 @@ test.describe('@preview idle (static) page OSR paint reliability', () => {
     // Open + paint an idle board (the same env-reliable path as above).
     const id = await seed(page, 'browser', { url: await idleUrl(electronApp) })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    expect(
-      await pollEval(page, runtimeStatus(id, 'connected'), 12_000),
-      'idle page connected'
-    ).toBe(true)
-    expect(await pollEval(page, osrNonBlank(id), 8000), 'idle page painted on open').toBe(true)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    expect(await pollStatus(page, id, 'connected', 12_000), 'idle page connected').toBe(true)
+    expect(await pollNonBlank(page, id, 8000), 'idle page painted on open').toBe(true)
 
     // Re-fire the board's did-finish-load → re-run the PRODUCTION onReady (registerCrashReadyGate)
     // over the live, already-loaded idle page, spying on wc.invalidate. The contract the fix

@@ -19,10 +19,29 @@
 // asserted end-to-end (renderer → shell:openExternal IPC → openExternalSafe) WITHOUT launching a
 // real OS browser.
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { callE2E, evalIn, pollCall, pollEval, seed } from './helpers'
 import type { Page, ElectronApplication } from '@playwright/test'
 
-const readBuf = (id: string) => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
+// Typed VALUE reader — the id crosses as a real argument (structured clone), never spliced into
+// an eval'd code string (CodeQL js/bad-code-sanitization).
+const readBuf = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+
+/** Poll a predicate over the terminal buffer text — the comparison runs HERE in Node. Same
+ *  boolean contract as `pollEval`. */
+async function pollBuf(
+  page: Page,
+  id: string,
+  pred: (b: string | null) => boolean,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect.poll(async () => pred(await readBuf(page, id)), { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** Browser boards as plain {id,url} (serializable) — the link router's create/route target. */
 function browserBoards(page: Page): Promise<{ id: string; url: string }[]> {
@@ -35,9 +54,9 @@ function browserBoards(page: Page): Promise<{ id: string; url: string }[]> {
 /** Seed a terminal and wait for its PTY to drain (so a later buffer write isn't overwritten). */
 async function seedDrained(page: Page): Promise<string> {
   const id = await seed(page, 'terminal', { launchCommand: 'exit' })
-  await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+  await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
   expect(
-    await pollEval(page, `(${readBuf(id)} || '').includes('process exited')`, 8000),
+    await pollBuf(page, id, (b) => (b || '').includes('process exited'), 8000),
     'shell exited (PTY drained)'
   ).toBe(true)
   return id
@@ -50,13 +69,10 @@ async function writeBuffer(
   content: string,
   sentinel: string
 ): Promise<void> {
-  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-  await evalIn(
-    page,
-    `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, ${JSON.stringify(content)})`
-  )
+  await callE2E(page, { m: 'fitView', a: [id] })
+  await callE2E(page, { m: 'resetTerminalWrite', a: [id, content] })
   expect(
-    await pollEval(page, `(${readBuf(id)} || '').includes(${JSON.stringify(sentinel)})`, 6000),
+    await pollBuf(page, id, (b) => (b || '').includes(sentinel), 6000),
     'known buffer present'
   ).toBe(true)
 }
@@ -68,10 +84,7 @@ function activateLink(
   uri: string,
   mods: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
 ): Promise<unknown> {
-  return evalIn(
-    page,
-    `window.__canvasE2E.activateTerminalLink(${JSON.stringify(id)}, ${JSON.stringify(uri)}, ${JSON.stringify(mods)})`
-  )
+  return callE2E(page, { m: 'activateTerminalLink', a: [id, uri, mods] })
 }
 
 test.describe('@terminal terminal links + unicode11', () => {
@@ -92,11 +105,9 @@ test.describe('@terminal terminal links + unicode11', () => {
 
   test('Unicode 11 is active and a wide-glyph line renders intact', async ({ page }) => {
     const id = await seedDrained(page)
-    expect(
-      await evalIn(page, `window.__canvasE2E.terminalUnicodeVersion(${JSON.stringify(id)})`)
-    ).toBe('11')
+    expect(await callE2E(page, { m: 'terminalUnicodeVersion', a: [id] })).toBe('11')
     await writeBuffer(page, id, 'CJK 日本語 + emoji 😀🎉 tail', 'tail')
-    const buf = await evalIn<string>(page, readBuf(id))
+    const buf = await readBuf(page, id)
     expect(buf).toContain('日本語')
     expect(buf).toContain('😀')
   })
@@ -106,10 +117,10 @@ test.describe('@terminal terminal links + unicode11', () => {
   }) => {
     const id = await seedDrained(page)
     await writeBuffer(page, id, 'http://localhost:5199/alpha', 'localhost:5199')
-    const p = await evalIn<{ x: number; y: number }>(
-      page,
-      `window.__canvasE2E.terminalCellPoint(${JSON.stringify(id)}, 8, 0, 0.5, 0.5)`
-    )
+    const p = await callE2E<{ x: number; y: number }>(page, {
+      m: 'terminalCellPoint',
+      a: [id, 8, 0, 0.5, 0.5]
+    })
     // A real hover over the URL cell: xterm resolves the link provider → the addon's hover fires.
     await page.mouse.move(Math.round(p.x) - 6, Math.round(p.y))
     await page.waitForTimeout(40)

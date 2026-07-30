@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed, selectForInspector } from './helpers'
+import { callE2E, evalIn, mainCall, seed, selectForInspector } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -277,7 +277,7 @@ test.describe('@mcp P4 external-worker feed', () => {
       // The publish control lives ON the board (the inspector's recap toggle does not), so the
       // camera has to actually be looking at it before a real click can land.
       await evalIn(page, `window.__canvasE2E.setSelection([])`)
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(board)})`)
+      await callE2E(page, { m: 'fitView', a: [board] })
       await page.getByRole('button', { name: /Publish findings/ }).click({ timeout: 8000 })
 
       const modal = page.locator('[data-testid="batch-confirm-modal"]')

@@ -1,17 +1,37 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import {
+  apiCall,
+  callE2E,
   deselectInspector,
   evalIn,
   mainCall,
   openInspectorSection,
-  pollEval,
   seed,
   selectForInspector
 } from './helpers'
 
-const runtimeStatus = (id: string, status: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+/** The board's preview runtime, read as a VALUE (the id crosses as a real arg, never spliced). */
+const runtimeOf = (page: Page, id: string): Promise<{ status: string } | null> =>
+  callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] })
+
+/** Poll until the runtime reaches `status` — the comparison runs HERE in Node, so neither the
+ *  seeded id nor the wanted status ever enters page code. Same boolean contract as `pollEval`. */
+async function pollStatus(
+  page: Page,
+  id: string,
+  status: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await runtimeOf(page, id))?.status === status, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** P5: the URL-bar toggle is gone — open the panel via Inspector › Developer › the Network
  *  inspector switch, then DESELECT so the left-docked Inspector can't occlude clicks on the
@@ -29,8 +49,8 @@ async function openNet(page: Page, id: string, opts: { reload?: boolean } = {}):
   // A caller that immediately injects SYNTHETIC rows via seedOsrNet (a reopen replay) passes
   // { reload: false } — the reload's clear-on-nav would otherwise race the seed and blank the list.
   if (opts.reload !== false) {
-    await evalIn(page, `window.api.reloadOsrPreview(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await apiCall(page, 'reloadOsrPreview', id)
+    await pollStatus(page, id, 'connected', 10_000)
   }
 }
 
@@ -48,8 +68,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    const connected = await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    const connected = await pollStatus(page, id, 'connected', 10_000)
     expect(connected, 'browser reaches connected').toBe(true)
 
     // The inspector is closed → its panel is absent (zero-IPC-when-closed).
@@ -83,8 +103,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
@@ -132,8 +152,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     const firstRow = page.locator('.bb-net-row').first()
@@ -169,8 +189,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
@@ -203,8 +223,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     // Default dock = bottom.
@@ -222,15 +242,15 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
 
     // Seed 1000 synthetic records (replay REPLACES the few real document-load rows). MAIN's ring
     // cap (MAX_RECORDS=1000) keeps the total at 1000 even if a stray live delta lands.
-    await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
+    await callE2E(page, { m: 'seedOsrNet', a: [id, 1000] })
 
     // The meta line reports the full 1000-record set …
     await expect(page.locator('.bb-net-meta')).toContainText(/1\d{3} requests/)
@@ -268,12 +288,12 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
-    await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
+    await callE2E(page, { m: 'seedOsrNet', a: [id, 1000] })
     await expect(page.locator('.bb-net-meta')).toContainText(/1\d{3} requests/)
 
     // Scroll to the bottom so the hook's scrollTop state is large, then close the inspector.
@@ -291,7 +311,7 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect
       .poll(
         async () => {
-          await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
+          await callE2E(page, { m: 'seedOsrNet', a: [id, 1000] })
           return (await page.locator('.bb-net-meta').textContent()) ?? ''
         },
         { timeout: 5000 }
@@ -310,8 +330,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     const panel = page.locator('.bb-net.bb-net-bottom')
@@ -344,8 +364,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     // document's body is evicted after navigation commits → "No resource with given identifier found").
     const id = await seed(page, 'browser', { url: `${base}?xhr=1` })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     // Select the JSON fetch row (urlName → "json").
@@ -390,8 +410,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     // ?big → the page fetches /json?big=1 (a 50,000-element array) as a loadable subresource.
     const id = await seed(page, 'browser', { url: `${base}?big=1` })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
@@ -429,8 +449,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     // inside default-collapsed (depth ≥ 2) containers, so it is hidden until the search auto-expands.
     const id = await seed(page, 'browser', { url: `${base}?find=1` })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
@@ -464,8 +484,8 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     // sampling (the main-document body is evicted post-commit — same gotcha as the JsonView test).
     const id = await seed(page, 'browser', { url: `${base}?xhr=1` })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+    await callE2E(page, { m: 'fitView', a: [id] })
+    await pollStatus(page, id, 'connected', 10_000)
 
     await openNet(page, id)
     await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })

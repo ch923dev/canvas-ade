@@ -8,8 +8,9 @@
 //
 // Determinism: the board launches `exit`, so the PTY dies and emits no more bytes; we wait for the
 // "[process exited]" marker, then resetTerminalWrite a known buffer. No live-shell race.
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollCall, seed } from './helpers'
 
 // needle ×3 (all lowercase) · "Foo"+"foo" → 2 case-insensitive / 1 case-sensitive · no "zzzzz".
 const CONTENT = [
@@ -20,34 +21,42 @@ const CONTENT = [
   'L4 needle gamma'
 ].join('\r\n')
 
-const readBuf = (id: string) => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
+/** Whole xterm framebuffer — read as a VALUE (structured clone), no id spliced into page code. */
+const readBuf = (page: Page, id: string): Promise<string | null> =>
+  callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+// Playwright SELECTOR builder — data, not code (never flows into an eval).
 const node = (id: string) => `.react-flow__node[data-id="${id}"]`
 
-async function seedWithBuffer(page: import('@playwright/test').Page): Promise<string> {
+/** Poll a Node-side check until true (the terminalScrollback poller shape, generalized). Same
+ *  boolean contract as `pollEval`. */
+async function pollTrue(check: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  try {
+    await expect.poll(check, { timeout: timeoutMs }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function seedWithBuffer(page: Page): Promise<string> {
   const id = await seed(page, 'terminal', { launchCommand: 'exit' })
-  await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+  await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
   expect(
-    await pollEval(page, `(${readBuf(id)} || '').includes('process exited')`, 8000),
+    await pollTrue(async () => ((await readBuf(page, id)) || '').includes('process exited'), 8000),
     'shell exited (PTY drained)'
   ).toBe(true)
-  await evalIn(
-    page,
-    `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, ${JSON.stringify(CONTENT)})`
-  )
+  await callE2E(page, { m: 'resetTerminalWrite', a: [id, CONTENT] })
   expect(
-    await pollEval(page, `(${readBuf(id)} || '').includes('needle gamma')`, 6000),
+    await pollTrue(async () => ((await readBuf(page, id)) || '').includes('needle gamma'), 6000),
     'known buffer present'
   ).toBe(true)
   return id
 }
 
 // Open the find bar through the real key path (not a state poke) so the keymap wiring is exercised.
-async function openFind(page: import('@playwright/test').Page, id: string): Promise<void> {
-  await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
-  await evalIn(
-    page,
-    `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(id)}, { key: 'f', ctrlKey: true })`
-  )
+async function openFind(page: Page, id: string): Promise<void> {
+  await callE2E(page, { m: 'focusTerminal', a: [id] })
+  await callE2E(page, { m: 'dispatchTerminalKey', a: [id, { key: 'f', ctrlKey: true }] })
 }
 
 test.describe('@terminal find-in-terminal (Ctrl+F)', () => {
@@ -118,26 +127,27 @@ test.describe('@terminal find-in-terminal (Ctrl+F)', () => {
     await expect(count).toHaveText('1 / 3')
 
     // Change launchCommand → the spawn effect re-runs (full xterm + SearchAddon replacement).
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { launchCommand: 'exit 0' })`
-    )
+    await callE2E(page, { m: 'patchBoard', a: [id, { launchCommand: 'exit 0' }] })
     await expect(input, 'find bar closes on a full re-spawn').toHaveCount(0)
   })
 })
 
 // ── Find-count fix: the two gated/streaming states the static-buffer specs above never cover ──
 
-const live = (id: string): string => `window.__canvasE2E.terminalLive(${JSON.stringify(id)})`
-const heldBytes = (id: string): string =>
-  `window.__canvasE2E.terminalHeldBytes(${JSON.stringify(id)})`
+const live = (page: Page, id: string): Promise<boolean> =>
+  callE2E<boolean>(page, { m: 'terminalLive', a: [id] })
+const heldBytes = (page: Page, id: string): Promise<number> =>
+  callE2E<number>(page, { m: 'terminalHeldBytes', a: [id] })
 
 /** Seed a LIVE shell terminal (unlike seedWithBuffer's dead `exit` PTY) framed in view. */
-async function seedLive(page: import('@playwright/test').Page): Promise<string> {
+async function seedLive(page: Page): Promise<string> {
   const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
-  await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 10_000)
-  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-  expect(await pollEval(page, `${live(id)} === true`, 4_000), 'terminal live in view').toBe(true)
+  await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 10_000)
+  await callE2E(page, { m: 'fitView', a: [id] })
+  expect(
+    await pollTrue(async () => (await live(page, id)) === true, 4_000),
+    'terminal live in view'
+  ).toBe(true)
   await page.waitForTimeout(500) // let the spawn banner finish streaming
   return id
 }
@@ -174,10 +184,13 @@ test.describe('@terminal find-in-terminal — live/gated buffers (find-count fix
 
     // Gate the board below LOD; produce the needle while hidden (bytes HELD, not rendered).
     await evalIn(page, `window.__canvasE2E.setZoom(0.3)`)
-    expect(await pollEval(page, `${live(id)} === false`, 4_000), 'gated below LOD').toBe(true)
+    expect(
+      await pollTrue(async () => (await live(page, id)) === false, 4_000),
+      'gated below LOD'
+    ).toBe(true)
     await mainCall(electronApp, 'writeTerminal', id, `echo FINDME_LATCH\r`)
     expect(
-      await pollEval(page, `${heldBytes(id)} > 0`, 8_000),
+      await pollTrue(async () => (await heldBytes(page, id)) > 0, 8_000),
       'needle bytes are held while gated (the stale-buffer precondition)'
     ).toBe(true)
 
