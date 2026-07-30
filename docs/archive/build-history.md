@@ -4759,3 +4759,59 @@ workers:1 · Linux Docker 348P 7.0m; an extra Linux run on the pre-fix head was 
 also claiming **v0.42.1**; no git conflict arose because both wrote the identical version
 line, so main now carries two PRs under 0.42.1. Accepted pre-release (no published build
 rides these numbers); the next PR bumps off 0.42.1 as usual.
+
+## 2026-07-30 — PR #402: Audit Phase 3 — R7 PTY flow control · R8 boot gate · R11 measure-then-decide · R14 dir invariant (`7bfab715`, v0.43.0)
+
+Fourth lane of the 2026-07-25 project-switch perf audit. Four implementation commits + a
+CodeQL follow-up + results docs, squash-merged. **Note: the squash title says "v0.42.0" —
+stale.** The bump was recomputed twice as `main` advanced under the open PR (0.40.0 at
+kickoff → 0.42.0 after #399 → **0.43.0** after #400/#401); a `gh pr edit --title` before
+merge was swallowed by a GraphQL Projects-classic deprecation error and the stale title
+rode into the squash subject. `package.json` inside the merge is correct at 0.43.0.
+
+**R14 (SM-1):** `withProjectDir()` in `ipcGuard.ts` — frame guard + current-dir +
+`expectedDir` pin enforced once. The audit counted three hand-rolled checks; there are
+**four** (`terminal:deleteSnapshot` carries the same pin and was missing from SM-1's
+list). All four replaced, per-channel rejection shapes preserved; a non-string pin now
+fails closed. Mutation-verified — neutering the pin fails 4 tests.
+
+**R8 (P-4):** fixture server gated off production via pure `shouldStartLocalServer`
+(`is.dev || CANVAS_E2E || CANVAS_SMOKE`); BUG-026/027 degrade-don't-crash kept verbatim
+in `startLocalServerIfNeeded`; boot marks added (`bootTiming.ts`, anchored on
+`process.getCreationTime()`, JSONL behind `CANVAS_BOOT_TIMING=1`). **Measured — paired
+A/B, packaged, unflavored, 8 interleaved pairs, discarded warm-up per arm:** bind segment
+`whenReady→localServer` **14.0 → 1.0 ms median, AFTER faster in 8/8 pairs** (deltas
++11…+15 ms); boot-to-first-paint **not resolvable** (paired deltas −155…+110 ms around a
+13 ms effect — recorded as a negative, not claimed). Arm identity proven from the records
+themselves (`localServer: "started"` ×8 vs `"skipped"` ×8). AUDIT §9 item 8.
+
+**R11 (DL-1/DL-2):** measure-then-decide, decided. `gcAssets` priced directly:
+referenced-asset path **0.37 ms** at 44 assets vs 61.83 ms unreferenced — and the worst
+path is **one-time** (second sweep 0.22 ms; orphans land in `.trash`, which the sweep
+skips). DL-1 (defer `readBak`+`gcAssets`) **dropped** with the negative recorded in
+AUDIT §9 item 7 + BASELINE.md. DL-2 shipped: `CanvasMemory.listBoardIds()` makes sync-fs
+per `project:open` **flat in board count** (was `14+2N`), mutation-verified.
+
+**R7 (P-3):** VS Code's watermark protocol on hop 1 in `ptyHost/flowControl.ts` —
+pause at 100k unacked / resume at 5k / MAIN acks every 5k, same-tick coalescing before
+`encodeLine`. Three permanent-failure modes closed and tested: ack size ≤ low watermark
+(asserted); zero-subscriber sessions never account/pause (a detached session has no
+acker); capability negotiated **additively** via `hello.flowControl` — a
+`PROTOCOL_VERSION` bump would orphan the sessions that survive an app update. 10 MB
+synthetic runaway: bounded backlog, every pause resumed, no deadlock; 4 production
+mutations killed.
+
+**Review + gates.** claude-review across three rounds (two pre-rebase + a fresh FULL
+post-force-push): **0 critical / 0 warning / 0 inline** — nothing owed a reply; one
+no-reply nit (macOS dock-reactivation can append a duplicate `readyToShow` mark —
+diagnostic-only). CodeQL caught **1 high** in the new opt-in bench (fixed-name output in
+the shared OS temp dir — `js/insecure-temporary-file`); fixed by defaulting the output
+under the repo's gitignored `test-results/`, re-verified, 0 open alerts. Manual dev check
+title-stamped pre-push (canvas renders; the R14 save path and R11 rehydrate path observed
+live). Full matrix run **twice**: pre-rebase on `b3a28956` (Win passed/0 failed · Linux
+container exit 0) and again on the rebased head `3e6c0f26` (**Win 348 passed 14.1m ·
+Linux 348 passed 6.6m, exit 0**). PR #403 (mcp 0.23.0 pin) landed on `main` between the
+second matrix and the merge — disjoint diff (`appModel.ts` + the pin), GitHub merged
+clean; noted that the MAIN checkout's shared `node_modules` still carries mcp 0.22.1
+(pnpm demands a from-scratch purge that can't run under three live sibling worktree
+sessions — deferred to an idle window).
