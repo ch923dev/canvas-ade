@@ -187,6 +187,12 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     tier: 'orchestrator'
   },
   {
+    name: 'publish_findings',
+    purpose:
+      'Batch every worker-reported finding into ONE per-row-vetoable confirm and ONE Kanban write (gated; flag-gated off by default).',
+    tier: 'orchestrator'
+  },
+  {
     name: 'visualize_plan',
     purpose:
       'Propose a plan visualization; the human picks the layout and a new board is created (gated).',

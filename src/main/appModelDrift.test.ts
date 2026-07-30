@@ -100,6 +100,9 @@ describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp regist
       'move_card',
       'update_card',
       'remove_card',
+      // 0.23.0 (P4): the end-of-run findings batch — registered for orchestrator AND lead, behind
+      // the same planningWrite flag as the other content writes.
+      'publish_findings',
       'visualize_plan'
     ]
 
