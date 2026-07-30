@@ -1,5 +1,5 @@
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
-import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
+import type { BoardResult, RunningMcpServer, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
@@ -292,10 +292,22 @@ export async function startMcpServer(
       const now = lead.designated()
       if (now !== before) opts.onLeadChanged?.(now)
     }
+    // Nullable alias for the HTTP server so `onBoardClosed` (built before the server exists) can
+    // reference it without a TDZ hazard — it is assigned right after createMcpHttpServer below,
+    // long before any board can close (the only close paths ride the server's own tools).
+    let liveHttp: RunningMcpServer | null = null
     const orchestrator = buildOrchestrator(registry, {
       cap: opts.cap,
       onBoardClosed: (boardId) => {
         connected.revoke(boardId)
+        // Audit Phase A follow-up (pkg 0.24.0): revoking the token only 401s FUTURE requests —
+        // the board's LIVE MCP sessions (transport + subscribeStatus listener) would otherwise
+        // linger until the package's 30-min idle sweep. Close them the moment the board dies.
+        // Fire-and-forget: teardown must not block on (or fail because of) session cleanup —
+        // but a failure is LOGGED, or a regression here would silently resurrect the leak.
+        void liveHttp?.closeSessionsForBoard(boardId).catch((err) => {
+          console.error(`MCP session cleanup failed for closed board ${boardId}`, err)
+        })
         const before = lead.designated()
         lead.onBoardClosed(boardId)
         notifyLead(before)
@@ -317,6 +329,7 @@ export async function startMcpServer(
       commandBoardId: 'app',
       planningWrite: () => planningWriteEnabled()
     })
+    liveHttp = server
     // 🔒 Agent Orchestration v1: mint a `connected`-tier token bound to a Terminal board. NEVER
     // logged (PLAN §6). Registered as the seam's `mintTerminalToken` delegate so the P3 spawn-time
     // provisioner can mint a per-board token without importing the ESM-only package or the store.
