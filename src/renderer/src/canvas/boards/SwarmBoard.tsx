@@ -212,6 +212,29 @@ export function SwarmBoard({
                 {run.ledger.counts.results === 1 ? '' : 's'}
               </span>
             )}
+            {/* base P5: the visible, revocable session-consent grants (design gate 2026-07-30).
+                One chip per pre-authorized role; Revoke applies on the NEXT dispatch (MAIN
+                re-derives consent inside the gate per act — BUG-021). No chips = per-write. */}
+            {run.consents.map((c) => (
+              <span
+                key={c.roleId}
+                className="sw-consent-chip"
+                data-test={`swarm-consent-${c.roleId}`}
+              >
+                <span className="sw-consent-dot" aria-hidden="true" />
+                {c.roleId} · session-consented
+                <button
+                  type="button"
+                  className="sw-consent-revoke"
+                  data-test={`swarm-consent-revoke-${c.roleId}`}
+                  onClick={() => {
+                    void window.api?.swarm?.consentRevoke?.(board.id, c.roleId)
+                  }}
+                >
+                  Revoke
+                </button>
+              </span>
+            ))}
             <span className="sw-spacer" />
             <button
               type="button"

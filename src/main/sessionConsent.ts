@@ -1,0 +1,181 @@
+/**
+ * Session-consent registry (orchestration base P5 — the `confirmPolicy` lever, item 9 of
+ * `docs/orchestration/03-mechanism.md`). Pre-authorizes a READ-ONLY role's dispatches for one
+ * swarm run's session so a reviewer fan-out does not pay N identical modals — WITHOUT ever
+ * silently bypassing the confirm gate:
+ *
+ *  - The grant is an EXPLICIT human opt-in, made on a real dispatch confirm that names the
+ *    role, the covered tools, and the live worker count (`ConfirmSessionConsent`).
+ *  - Enforcement lives at the single write gate (`dispatchGate`), which re-derives the whole
+ *    chain ON EVERY ACT (the BUG-021 discipline): worker registered → pack still registry-known
+ *    + `confirmPolicy: 'session-consented'` + read-only (`plan`) → spawn-time launch evidence
+ *    read-only → grant still active. ANY link missing ⇒ the per-write modal, unchanged.
+ *  - Q4 (resolved, load-bearing): a write-capable role can never be granted — refused at pack
+ *    validation (`validateRolePack`), at grant time (here), and at the gate (here again).
+ *  - Grants are IN-MEMORY ONLY and scoped (runId, roleId): revocation applies on the NEXT act,
+ *    app quit ends every grant, and a re-attached run starts consent-clean (fail-closed).
+ *  - Every consent-skipped dispatch still lands in the audit trail (the gate stamps
+ *    `consent=session` into the entry) and the act feed — autonomy changes WHO consents WHEN,
+ *    never whether the act is disclosed (the P4 rule).
+ *
+ * Electron-free singleton; both wiring sites (mcpBoot → the gate, jarvisBoot → the swarm
+ * session) inject it rather than importing MAIN singletons into module code under test.
+ */
+import { launchLooksReadOnly, rolePackById, validateRolePack } from '../shared/rolePacks'
+
+/** One registered swarm worker — the gate's join from a dispatch target to a role + run. */
+interface WorkerRegistration {
+  runId: string
+  roleId: string
+  /** Spawn-time evidence: pack eligible (session-consented + plan + valid) AND the COMMITTED
+   *  launch line still proved read-only (`launchLooksReadOnly`, the PR #381 lesson). */
+  eligible: boolean
+}
+
+/** An active grant's public snapshot (chip rendering + narration). */
+export interface SessionConsentSnapshot {
+  runId: string
+  roleId: string
+  roleName: string
+  grantedAt: number
+}
+
+/** The offer the gate attaches to a dispatch confirm when a grant COULD be made. */
+export interface SessionConsentOffer {
+  runId: string
+  roleId: string
+  roleName: string
+  workerCount: number
+}
+
+/** The swarm executor's consent seam (`SwarmRunCtx.consent`) — declared beside the registry. */
+export interface SwarmConsentSeam {
+  registerWorker: (boardId: string, roleId: string, launchCommand: string) => void
+}
+
+/** Leak guard, not a working limit (mirrors spawnEnvPolicy). FIFO eviction. */
+const MAX_WORKERS = 256
+
+const workers = new Map<string, WorkerRegistration>()
+/** Active grants keyed `runId:roleId`. */
+const grants = new Map<string, SessionConsentSnapshot>()
+const listeners = new Set<(runId: string) => void>()
+
+const grantKey = (runId: string, roleId: string): string => `${runId}:${roleId}`
+
+const emit = (runId: string): void => {
+  for (const l of [...listeners]) {
+    try {
+      l(runId)
+    } catch {
+      /* a listener error must never break the gate path */
+    }
+  }
+}
+
+/**
+ * A pack is consent-ELIGIBLE only when the whole Q4 chain holds: registry-known, structurally
+ * valid, declares `session-consented`, and is read-only. Re-derived wherever it matters — this
+ * helper is the one place the chain is spelled.
+ */
+function packEligible(roleId: string): boolean {
+  const pack = rolePackById(roleId)
+  if (!pack) return false
+  if (pack.confirmPolicy !== 'session-consented') return false
+  if (pack.permissionMode !== 'plan') return false
+  return validateRolePack(pack).length === 0
+}
+
+/**
+ * Record a spawned swarm worker. Called by the swarm spawn path with the COMMITTED pack and
+ * the COMMITTED launch line — eligibility is evidence-based, not declared: an edited launch
+ * that no longer proves read-only registers ineligible (its dispatches stay per-write).
+ */
+export function registerConsentWorker(
+  runId: string,
+  boardId: string,
+  roleId: string,
+  launchCommand: string
+): void {
+  if (!runId || !boardId || !roleId) return
+  if (!workers.has(boardId) && workers.size >= MAX_WORKERS) {
+    const oldest = workers.keys().next().value
+    if (oldest !== undefined) workers.delete(oldest)
+  }
+  workers.set(boardId, {
+    runId,
+    roleId,
+    eligible: packEligible(roleId) && launchLooksReadOnly(launchCommand)
+  })
+}
+
+/**
+ * 🔒 The gate's per-act check (BUG-021: re-derived HERE, inside the write, never cached at
+ * grant time). True ONLY when every link holds right now; any ambiguity reads false and the
+ * dispatch pays the ordinary per-write confirm.
+ */
+export function isDispatchConsented(boardId: string): boolean {
+  const w = workers.get(boardId)
+  if (!w || !w.eligible) return false
+  if (!packEligible(w.roleId)) return false // the pack itself, re-checked per act
+  return grants.has(grantKey(w.runId, w.roleId))
+}
+
+/**
+ * The offer to attach to this dispatch's confirm, or null (target not a consent-eligible
+ * worker, or a grant is already active — the gate then skips, it doesn't re-offer).
+ */
+export function consentOfferFor(boardId: string): SessionConsentOffer | null {
+  const w = workers.get(boardId)
+  if (!w || !w.eligible || !packEligible(w.roleId)) return null
+  if (grants.has(grantKey(w.runId, w.roleId))) return null
+  const pack = rolePackById(w.roleId)
+  let workerCount = 0
+  for (const reg of workers.values()) {
+    if (reg.runId === w.runId && reg.roleId === w.roleId && reg.eligible) workerCount += 1
+  }
+  return { runId: w.runId, roleId: w.roleId, roleName: pack?.name ?? w.roleId, workerCount }
+}
+
+/**
+ * Record a grant the human just made on the offer's confirm. Re-validates eligibility AT
+ * grant time (the reply proposes, MAIN disposes) — a stale/forged offer for a write-capable
+ * role records nothing. Returns whether a grant was recorded.
+ */
+export function grantSessionConsent(offer: SessionConsentOffer, now = Date.now()): boolean {
+  if (!offer?.runId || !offer.roleId) return false
+  if (!packEligible(offer.roleId)) return false
+  const pack = rolePackById(offer.roleId)
+  grants.set(grantKey(offer.runId, offer.roleId), {
+    runId: offer.runId,
+    roleId: offer.roleId,
+    roleName: pack?.name ?? offer.roleId,
+    grantedAt: now
+  })
+  emit(offer.runId)
+  return true
+}
+
+/** Revoke one grant. Takes effect on the NEXT act (the gate re-checks per dispatch). */
+export function revokeSessionConsent(runId: string, roleId: string): boolean {
+  const removed = grants.delete(grantKey(runId, roleId))
+  if (removed) emit(runId)
+  return removed
+}
+
+/** The active grants for one run — the swarm board's chip row renders exactly this. */
+export function activeConsents(runId: string): SessionConsentSnapshot[] {
+  return [...grants.values()].filter((g) => g.runId === runId)
+}
+
+/** Change notifications (grant/revoke), for the run-event push. Returns the unsubscribe. */
+export function onConsentChange(listener: (runId: string) => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+/** Test seam / app-lifecycle reset. */
+export function resetSessionConsent(): void {
+  workers.clear()
+  grants.clear()
+}

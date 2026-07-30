@@ -476,6 +476,19 @@ export interface BoardRegistry {
    */
   confirmBatch?(req: ConfirmBatchRequest): Promise<ConfirmBatchDecision>
   /**
+   * 🔒 base P5 session consent — the structural slice of `sessionConsent.ts` the dispatch gate
+   * consumes (per-act `check`, grant `offer` for the confirm's opt-in block, `grant` recording).
+   * Optional (the `confirmBatch?` idiom): a registry that does not wire it keeps the pre-P5
+   * always-per-write gate — fail-closed in the "more confirmation" direction.
+   */
+  sessionConsent?: {
+    check(targetId: string): boolean
+    offer(
+      targetId: string
+    ): { runId: string; roleId: string; roleName: string; workerCount: number } | null
+    grant(offer: { runId: string; roleId: string; roleName: string; workerCount: number }): boolean
+  }
+  /**
    * 🔒 Append one dispatch audit entry (T4.1). MAIN injects `getAuditLog().append`.
    * Every dispatch attempt — rejected / denied / failed / completed — is recorded with
    * the resolved target, full prompt, and nonce before/after the action runs.

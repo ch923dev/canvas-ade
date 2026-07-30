@@ -123,10 +123,37 @@ export interface GatedWriteResult {
   delivery: 'ready' | 'unconfirmed'
 }
 
+/**
+ * 🔒 Session consent (orchestration base P5) — the structural slice of `sessionConsent.ts` the
+ * gate consumes. `check` is the per-act re-derivation (BUG-021: never cached at grant time);
+ * `offer` names a grant the human COULD make on this dispatch's confirm; `grant` records an
+ * opt-in the human just made (and re-validates eligibility itself — the reply proposes, MAIN
+ * disposes). Absent ⇒ every dispatch pays the per-write confirm, exactly the pre-P5 gate.
+ */
+export interface DispatchConsentOffer {
+  runId: string
+  roleId: string
+  roleName: string
+  workerCount: number
+}
+
+export interface DispatchSessionConsent {
+  check(targetId: string): boolean
+  offer(targetId: string): DispatchConsentOffer | null
+  grant(offer: DispatchConsentOffer): boolean
+}
+
 /** The facet of the board registry + orchestrator plumbing the gate needs (injected). */
 export interface DispatchGateDeps {
   guard: DispatchGuard
-  confirm(req: { title: string; body: string }): Promise<{ approved: boolean }>
+  confirm(req: {
+    title: string
+    body: string
+    /** base P5: the session-consent OFFER the modal renders as an opt-in block (see above). */
+    sessionConsent?: { roleId: string; roleName: string; workerCount: number }
+  }): Promise<{ approved: boolean; sessionConsent?: boolean }>
+  /** base P5: the session-consent slice. Optional — absent keeps the pre-P5 per-write gate. */
+  sessionConsent?: DispatchSessionConsent
   writeToPty(id: string, text: string): boolean
   awaitReady?(
     id: string,
@@ -215,12 +242,47 @@ export function createGatedWriter(
     // carries the RESOLVED target + the EXACT (sanitized) payload the human is authorizing.
     // A `confirmOverride` (relay_prompts batch) supplies the decision from the outer per-row
     // modal instead — the step is still awaited + fail-closed, only its SOURCE differs.
-    const { approved } = d.confirmOverride
-      ? await d.confirmOverride()
-      : await deps.confirm({
-          title: d.confirmTitle,
-          body: d.confirmBody(safeText)
-        })
+    //
+    // 🔒 base P5 session consent — a THIRD decision source, never a bypass: a prompt dispatch
+    // (submit terminator, sanitized) whose target's role the human PRE-authorized for this
+    // session resolves approved WITHOUT a modal. The whole chain is re-derived per act inside
+    // `check` (BUG-021: worker registered → pack still session-consented + read-only → launch
+    // evidence read-only → grant active + unrevoked); anything ambiguous falls through to the
+    // per-write modal. The skip is stamped into the audit (`consent=session`) — autonomy
+    // changes WHO consents WHEN, never whether the act is disclosed. `interrupt` (Ctrl-C
+    // terminator) and un-sanitized writes never qualify: the grant covers a role's prompt
+    // DISPATCHES, nothing else.
+    const consentEligibleAct = d.terminator === '\r' && d.sanitize !== false
+    let approved: boolean
+    let consentSkipped = false
+    if (d.confirmOverride) {
+      ;({ approved } = await d.confirmOverride())
+    } else if (consentEligibleAct && deps.sessionConsent?.check(targetId) === true) {
+      approved = true
+      consentSkipped = true
+    } else {
+      // Attach the grant OFFER when this target's role could be session-consented and no
+      // grant is active — the opt-in rides a REAL dispatch confirm, so the human grants on
+      // exactly the act class the grant will cover.
+      const offer = consentEligibleAct ? (deps.sessionConsent?.offer(targetId) ?? null) : null
+      const decision = await deps.confirm({
+        title: d.confirmTitle,
+        body: d.confirmBody(safeText),
+        ...(offer
+          ? {
+              sessionConsent: {
+                roleId: offer.roleId,
+                roleName: offer.roleName,
+                workerCount: offer.workerCount
+              }
+            }
+          : {})
+      })
+      approved = decision.approved === true
+      // Record the opt-in ONLY on an approve that carried it; grant() re-validates the
+      // role's eligibility itself, so a stale offer for a write-capable role records nothing.
+      if (approved && offer && decision.sessionConsent === true) deps.sessionConsent?.grant(offer)
+    }
     if (!approved) {
       // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak it into
       // the guard's outstanding set forever (BUG-020). consume() deletes it. Abort the readiness
@@ -361,9 +423,12 @@ export function createGatedWriter(
       !ready && deps.activityStaleMs && safeText.length > 0
         ? `; echo=${echoSeen ? 'seen' : 'none'}`
         : ''
+    // base P5: a consent-skipped confirm is DISCLOSED in the trail — the forensic line must say
+    // which authority approved this write (the session grant, not a fresh modal).
+    const consentDetail = consentSkipped ? '; consent=session' : ''
     try {
       await audit(delivered ? 'dispatched' : 'dispatched_unconfirmed', {
-        detail: `${seqDetail}${readinessDetail}${echoDetail}`
+        detail: `${seqDetail}${readinessDetail}${echoDetail}${consentDetail}`
       })
     } catch (err) {
       console.error(

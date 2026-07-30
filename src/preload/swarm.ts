@@ -44,6 +44,8 @@ export interface SwarmRunEventPayload {
     | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
     /** S2: a between-turns run event narrated in the orchestrator's voice (worker died/stalled). */
     | { kind: 'narrate'; boardId?: string; status?: string; text: string }
+    /** base P5: the run's ACTIVE session-consent snapshot (one revocable chip per entry). */
+    | { kind: 'consent'; consents: Array<{ roleId: string; roleName: string }> }
 }
 
 export const swarmApi = {
@@ -65,6 +67,12 @@ export const swarmApi = {
   /** S2: the swarm board was deleted — drop its durable run too. */
   destroyRun: (runId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('swarm:destroyRun', { runId }),
+  /**
+   * base P5: revoke one role's session consent for this run. Takes effect on the NEXT dispatch
+   * (MAIN re-derives consent inside the gate per act); the chip row re-pushes on change.
+   */
+  consentRevoke: (runId: string, roleId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('swarm:consentRevoke', { runId, roleId }),
   /** S2: apply one triage-row action. A `reassign` returns the prompt to send as the next turn. */
   triageAction: (
     runId: string,

@@ -3,6 +3,7 @@ import type {
   ConfirmChoices,
   ConfirmDiff,
   ConfirmReplyDecision,
+  ConfirmSessionConsent,
   ConfirmWorkerConfig
 } from '../../../shared/mcpTypes'
 import { Modal } from './Modal'
@@ -42,6 +43,8 @@ interface ConfirmRequest {
   diff?: ConfirmDiff
   /** J4: MAIN-stamped Jarvis-tool origin (see routing note in the subscribe effect). */
   origin?: 'jarvis'
+  /** base P5: session-consent OFFER — renders the opt-in block; the reply carries the checkbox. */
+  sessionConsent?: ConfirmSessionConsent
 }
 type Reply = (decision: ConfirmReplyDecision) => void
 interface Pending extends ConfirmRequest {
@@ -49,19 +52,32 @@ interface Pending extends ConfirmRequest {
   // P5: the current chooser pick, initialized to `choices.default` on enqueue. Held ON the queue
   // item (not a separate reset-effect) so it can never leak across requests + rides back on approve.
   choice?: string
+  // base P5: the session-consent checkbox, DEFAULT OFF — a plain Approve stays a one-shot
+  // per-write approval. Held on the queue item for the same no-leak reason as `choice`.
+  consentChecked?: boolean
 }
 
 export default function ConfirmModal(): React.ReactElement | null {
   const [queue, setQueue] = useState<Pending[]>([])
   const current = queue[0] ?? null
 
-  // Answer the head request and advance the queue. Idempotent per request. The chooser pick rides
-  // back ONLY on an approve (a deny/cancel picked nothing) and only when the head had choices; MAIN
-  // re-validates it against the offered set (fail-safe).
+  // Answer the head request and advance the queue. Idempotent per request. The chooser pick and
+  // the session-consent opt-in ride back ONLY on an approve (a deny/cancel picked/granted
+  // nothing) and only when the head offered them; MAIN re-validates both (fail-safe).
   const answer = useCallback((approved: boolean): void => {
     setQueue((q) => {
       const [head, ...rest] = q
-      head?.reply(approved && head.choices ? { approved, choice: head.choice } : { approved })
+      head?.reply(
+        approved
+          ? {
+              approved,
+              ...(head.choices ? { choice: head.choice } : {}),
+              ...(head.sessionConsent && head.consentChecked === true
+                ? { sessionConsent: true }
+                : {})
+            }
+          : { approved }
+      )
       return rest
     })
   }, [])
@@ -69,6 +85,13 @@ export default function ConfirmModal(): React.ReactElement | null {
   // P5: update the head request's chooser pick (the tile click).
   const pickChoice = useCallback((id: string): void => {
     setQueue((q) => (q.length ? [{ ...q[0], choice: id }, ...q.slice(1)] : q))
+  }, [])
+
+  // base P5: toggle the head request's session-consent opt-in checkbox.
+  const toggleConsent = useCallback((): void => {
+    setQueue((q) =>
+      q.length ? [{ ...q[0], consentChecked: q[0].consentChecked !== true }, ...q.slice(1)] : q
+    )
   }, [])
 
   useEffect(() => {
@@ -86,6 +109,9 @@ export default function ConfirmModal(): React.ReactElement | null {
         r.origin === 'jarvis' &&
         !r.choices &&
         !r.workerConfig &&
+        // base P5: a consent OFFER needs this modal's opt-in block — the panel card is
+        // approve/deny only and would silently drop the grant surface.
+        !r.sessionConsent &&
         useJarvisStore.getState().panelOpen
       ) {
         useJarvisStore.getState().confirmRequested({ title: r.title, body: r.body }, reply)
@@ -300,6 +326,93 @@ export default function ConfirmModal(): React.ReactElement | null {
       >
         {current.body}
       </p>
+      {current.sessionConsent && (
+        // base P5 (design gate 2026-07-30): the session-consent opt-in — an EXPLICIT, scoped,
+        // default-OFF grant offered on a REAL dispatch confirm, never a blanket toggle. The
+        // scope rows say exactly what a grant covers and how it ends; MAIN re-validates the
+        // role's eligibility (read-only only, Q4) before recording anything.
+        <div
+          data-testid="confirm-session-consent"
+          style={{
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--r-inner)',
+            background: 'var(--surface)',
+            padding: 12,
+            margin: '0 0 16px'
+          }}
+        >
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={current.consentChecked === true}
+            data-testid="confirm-session-consent-toggle"
+            onClick={toggleConsent}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '18px 1fr',
+              gap: 10,
+              alignItems: 'start',
+              textAlign: 'left',
+              width: '100%',
+              padding: 0,
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--text)',
+              cursor: 'pointer',
+              font: 'inherit'
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                marginTop: 1,
+                width: 16,
+                height: 16,
+                borderRadius: 4,
+                border: `1px solid ${current.consentChecked ? 'var(--accent)' : 'var(--border-strong)'}`,
+                background: current.consentChecked ? 'var(--accent)' : 'var(--inset)',
+                color: 'var(--void)',
+                display: 'grid',
+                placeItems: 'center'
+              }}
+            >
+              {current.consentChecked ? '✓' : ''}
+            </span>
+            <span style={{ fontSize: 'var(--fs-body)', lineHeight: 'var(--lh-body)' }}>
+              Pre-authorize <b>{current.sessionConsent.roleName}</b> dispatches for this session
+            </span>
+          </button>
+          <div
+            style={{
+              margin: '8px 0 0 26px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 3,
+              fontFamily: 'var(--mono)',
+              fontSize: 'var(--fs-meta)',
+              lineHeight: 'var(--lh-meta)',
+              color: 'var(--text-3)'
+            }}
+          >
+            <span>
+              <span style={{ color: 'var(--ok)' }}>+</span> covers task dispatches into read-only{' '}
+              {current.sessionConsent.roleId} workers ({current.sessionConsent.workerCount} live)
+            </span>
+            <span>
+              <span style={{ color: 'var(--ok)' }}>+</span> every dispatch still logged to the act
+              feed + run ledger
+            </span>
+            <span>
+              <span style={{ color: 'var(--err)' }}>−</span> does not cover spawning workers, plan
+              writes, or any write-capable role
+            </span>
+            <span>
+              <span style={{ color: 'var(--err)' }}>−</span> ends on revoke (swarm board header) or
+              app quit
+            </span>
+          </div>
+        </div>
+      )}
       {current.choices && (
         // P5: the layout chooser — the upgraded gate (the `visualize_plan` picker). The pick rides
         // back on the decision's `choice`; MAIN re-validates it against this bounded option set.
@@ -367,7 +480,10 @@ export default function ConfirmModal(): React.ReactElement | null {
           data-testid="confirm-approve"
           onClick={() => answer(true)}
         >
-          {current.confirmLabel ?? 'Approve'}
+          {current.confirmLabel ??
+            (current.sessionConsent && current.consentChecked
+              ? 'Approve + pre-authorize'
+              : 'Approve')}
         </button>
       </div>
     </Modal>

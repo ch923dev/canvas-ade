@@ -48,6 +48,15 @@ export interface DispatchBatchDeps {
   confirmBatch?(req: ConfirmBatchRequest): Promise<ConfirmBatchDecision>
   runGatedWrite(d: GatedWriteInput): Promise<GatedWriteResult>
   audit(input: Omit<AuditInput, 'status'> & { status: DispatchStatus }): Promise<void>
+  /**
+   * 🔒 base P5: the session-consent per-act check (the same slice the single gate holds). When
+   * EVERY valid row's target is consented, the batch modal is skipped and each row runs the
+   * shared gate WITHOUT a confirmOverride — the gate then re-derives consent itself per row
+   * (BUG-021) and stamps `consent=session` into that row's audit; a revocation racing the batch
+   * simply surfaces that row's own per-write modal. A MIXED batch (any row unconsented) shows
+   * the full modal for every row, exactly today. Optional — absent keeps the pre-P5 batch.
+   */
+  isDispatchConsented?(targetId: string): boolean
 }
 
 /** Bound the modal: a runaway orchestrator must not be able to render a 500-row confirm. */
@@ -101,14 +110,23 @@ export function createDispatchBatchMethod(deps: DispatchBatchDeps): {
       // Nothing survived validation → no modal (every row already audited + recorded rejected).
       if (valid.length === 0) return results
 
+      // 🔒 base P5: when EVERY valid row's target is session-consented, skip the batch modal —
+      // each row still travels the shared gate, which re-derives consent per row and stamps
+      // `consent=session` into its audit. One unconsented row ⇒ the full modal for all rows.
+      const allConsented =
+        deps.isDispatchConsented !== undefined &&
+        valid.every((v) => deps.isDispatchConsented!(v.boardId))
+
       // ONE per-row confirm for every valid row (MAIN owns the decision, fail-closed). A registry
       // with no `confirmBatch` wired denies every row rather than falling back to un-gated writes.
-      const { decisions } = deps.confirmBatch
-        ? await deps.confirmBatch({
-            title: valid.length === 1 ? 'Dispatch 1 task' : `Dispatch ${valid.length} tasks`,
-            items: valid.map((v) => ({ label: v.title, body: v.safeText }))
-          })
-        : { decisions: valid.map(() => ({ approved: false })) }
+      const { decisions } = allConsented
+        ? { decisions: valid.map(() => ({ approved: true })) }
+        : deps.confirmBatch
+          ? await deps.confirmBatch({
+              title: valid.length === 1 ? 'Dispatch 1 task' : `Dispatch ${valid.length} tasks`,
+              items: valid.map((v) => ({ label: v.title, body: v.safeText }))
+            })
+          : { decisions: valid.map(() => ({ approved: false })) }
 
       for (let j = 0; j < valid.length; j++) {
         const v = valid[j]
@@ -122,9 +140,12 @@ export function createDispatchBatchMethod(deps: DispatchBatchDeps): {
             detailSuffix: `${v.boardId} (batch)`,
             // The batch modal already rendered + authorized this row; confirmOverride skips the
             // per-item modal, so these are placeholders the gate does not surface in batch mode.
+            // In the all-consented case the override is OMITTED: the gate then runs its own
+            // per-act consent re-check (BUG-021) and either skips with the consent stamp or —
+            // if the grant vanished mid-batch — raises that row's own per-write modal.
             confirmTitle: `Assign to "${v.title}"`,
             confirmBody: (s) => s,
-            confirmOverride: () => Promise.resolve({ approved }),
+            ...(allConsented ? {} : { confirmOverride: () => Promise.resolve({ approved }) }),
             // 🔒 BUG-021 TOCTOU: the human may have deleted the board (or replaced it with a
             // non-terminal of the same id) while the modal was open — re-verify before the nonce
             // is consumed and anything is written.
@@ -140,16 +161,19 @@ export function createDispatchBatchMethod(deps: DispatchBatchDeps): {
           })
           results[v.index] = { boardId: v.boardId, status: 'dispatched', delivery }
         } catch (err) {
-          // The gate throws on a human deny (confirmOverride approved:false), the TOCTOU vanish, or
-          // a PTY write failure — all already audited inside the gate. A declined row is the
-          // human's "no" (`denied`); anything approved that still failed is a `rejected`.
-          results[v.index] = approved
-            ? {
-                boardId: v.boardId,
-                status: 'rejected',
-                detail: err instanceof Error ? err.message : 'dispatch failed'
-              }
-            : { boardId: v.boardId, status: 'denied', detail: 'declined by the human gate' }
+          // The gate throws on a human deny (confirmOverride approved:false — or, on the
+          // all-consented path, the gate's OWN modal after a mid-batch revocation), the TOCTOU
+          // vanish, or a PTY write failure — all already audited inside the gate. A declined row
+          // is the human's "no" (`denied`); anything approved that still failed is a `rejected`.
+          const gateDenied = err instanceof Error && /denied by the human gate/.test(err.message)
+          results[v.index] =
+            approved && !gateDenied
+              ? {
+                  boardId: v.boardId,
+                  status: 'rejected',
+                  detail: err instanceof Error ? err.message : 'dispatch failed'
+                }
+              : { boardId: v.boardId, status: 'denied', detail: 'declined by the human gate' }
         }
       }
 

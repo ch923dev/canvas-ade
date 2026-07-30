@@ -66,6 +66,12 @@ export interface SwarmRun {
   ledger: SwarmLedgerSnapshot | null
   /** S2: this run came back from disk after a reload — drives the header's `restored` chip. */
   restored: boolean
+  /**
+   * base P5: the ACTIVE session-consent grants (one revocable header chip per entry). MAIN
+   * pushes the full snapshot on any grant/revoke; empty = nothing pre-authorized (no chip row).
+   * In-memory on both sides — a reload starts consent-clean by construction.
+   */
+  consents: Array<{ roleId: string; roleName: string }>
 }
 
 /** Per-run transcript cap — the chat is a working surface, not an archive (MAIN owns history). */
@@ -80,7 +86,8 @@ const emptyRun = (): SwarmRun => ({
   startedAt: null,
   paused: false,
   ledger: null,
-  restored: false
+  restored: false,
+  consents: []
 })
 
 /**
@@ -123,6 +130,8 @@ interface SwarmState {
   /** S2: adopt MAIN's durable projection. `restored` latches true — a run stays "restored" for
    *  the rest of the session, since later pushes carry restored:false by design. */
   setLedger: (boardId: string, snapshot: SwarmLedgerSnapshot) => void
+  /** base P5: adopt MAIN's active session-consent snapshot (full state, idempotent). */
+  setConsents: (boardId: string, consents: Array<{ roleId: string; roleName: string }>) => void
   /** Board deleted → drop its run. */
   removeRun: (boardId: string) => void
   /** Project load/switch → all runs are dead (the reset-on-load discipline, commandStore's). */
@@ -289,6 +298,13 @@ export const useSwarmStore = create<SwarmState>((set) => ({
         workerIds: mergeWorkers(r.workerIds, snapshot),
         workerMeta: mergeWorkerMeta(r.workerMeta, snapshot)
       }))
+    })),
+  setConsents: (boardId, consents) =>
+    set((s) => ({
+      runs: patch(s.runs, boardId, (r) =>
+        // Reference-stable when nothing changed (empty → empty is the common idle push).
+        r.consents.length === 0 && consents.length === 0 ? r : { ...r, consents }
+      )
     })),
   setPaused: (boardId, paused) =>
     set((s) => ({

@@ -38,6 +38,8 @@ import {
 import type { ConfirmChoices, ConfirmWorkerConfig } from './mcpConfirm'
 import type { JarvisToolDef } from './jarvisTools'
 import { sanitizeDispatchText } from './dispatchSanitize'
+import { describeEnvScrub, type SwarmEnvPolicySeam } from './spawnEnvPolicy'
+import type { SwarmConsentSeam } from './sessionConsent'
 import type { SwarmLedgerSnapshot, SwarmTaskSpec } from '../shared/swarmLedgerTypes'
 import { MAX_DISPATCH_BATCH } from './mcpDispatchBatch'
 
@@ -171,6 +173,12 @@ export type SwarmRunEvent =
    * the ledger actually holds.
    */
   | { kind: 'narrate'; boardId?: string; status?: string; text: string }
+  /**
+   * base P5: the run's ACTIVE session-consent snapshot (full state, idempotent — pushed on any
+   * grant/revoke and on board re-hydrate). The renderer renders one revocable chip per entry;
+   * an empty list clears the row. MAIN carries role ids + display names only.
+   */
+  | { kind: 'consent'; consents: Array<{ roleId: string; roleName: string }> }
 
 /**
  * S2: the DURABLE side-effects of a tool call. Supplied by the swarm session when a project (and
@@ -228,6 +236,19 @@ export interface SwarmRunCtx {
   ) => Promise<{ ok: true; worktree: string; branch: string } | { ok: false; reason: string }>
   /** S3: undo an allocation the human then denied — `git worktree remove`, clean only. */
   releaseWorktree?: (worktree: string) => Promise<void>
+  /**
+   * P5 secrets hygiene (A8-F3): `preview` = the credential var names the policy would withhold
+   * from this pack's worker NOW (the spawn confirm's disclosure — an untold scrub is a scrub
+   * the human did not agree to); `register` records the policy against the minted board id for
+   * `buildSpawnEnv`. Absent ⇒ no scrub, no disclosure (today's full-inherit behaviour).
+   */
+  envPolicy?: SwarmEnvPolicySeam
+  /**
+   * P5 session consent: register a spawned worker (board id → run + role + the COMMITTED
+   * launch's read-only evidence). The registry owns eligibility and re-derives the Q4 chain
+   * per act. Absent ⇒ no worker is ever consent-eligible — per-write forever, fail-closed.
+   */
+  consent?: SwarmConsentSeam
   /**
    * S2: the run's Planning board, written by `draw_plan` and read by `tick_plan_item`. A mutable
    * holder rather than a ledger read, so the plan strip still works for a run with NO ledger
@@ -516,9 +537,12 @@ export async function executeSwarmTool(
         const isolationNote = allocated
           ? ` It will run in its own git worktree at ${allocated.worktree} on a new branch ${allocated.branch} — a fresh checkout with no node_modules, so a build or test step must install first.`
           : ''
+        // P5 env-scrub disclosure: name the withheld credential vars BEFORE the human approves
+        // (the gate must describe the act it gates). Composed in spawnEnvPolicy — ONE string.
+        const envNote = describeEnvScrub(ctx.envPolicy?.preview(pack) ?? [])
         const decision = await ctx.confirm({
           title: 'Spawn a swarm worker?',
-          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${defaultLaunch}${isolationNote}`,
+          body: `The orchestrator wants to spawn "${workerName}" (${pack.id}, ${pack.permissionMode === 'plan' ? 'read-only' : 'write'}) running: ${defaultLaunch}${isolationNote}${envNote}`,
           workerConfig: {
             workerName,
             roleId: pack.id,
@@ -604,6 +628,11 @@ export async function executeSwarmTool(
         }
         ctx.workerRoles.set(spawned.id, finalPack.id)
         if (allocated) ctx.workerWorktrees.set(spawned.id, allocated)
+        // P5: record the COMMITTED pack's env policy + consent registration against the minted
+        // board id — the renderer's pty:spawn arrives a command-ack + mount later, so both
+        // registries are populated well before they are consulted.
+        ctx.envPolicy?.register(spawned.id, finalPack)
+        ctx.consent?.registerWorker(spawned.id, finalPack.id, launch)
         ctx.emit({
           kind: 'workerSpawned',
           workerId: spawned.id,

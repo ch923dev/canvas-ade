@@ -4,6 +4,7 @@ import type {
   ConfirmChoices,
   ConfirmDiff,
   ConfirmReplyDecision,
+  ConfirmSessionConsent,
   ConfirmWorkerConfig
 } from '../shared/mcpTypes'
 import { isForeignSender } from './ipcGuard'
@@ -28,7 +29,12 @@ import { isJarvisToolCall, jarvisToolCallSignal } from './jarvisToolContext'
 // P5 chooser + S1 worker-config contract types are CANONICAL in src/shared/mcpTypes.ts (both
 // sides import them — a MAIN/renderer field drift is a compile error, the McpCommand W1-D/F9
 // discipline). Re-exported here so MAIN-side callers keep their './mcpConfirm' import path.
-export type { ConfirmChoiceOption, ConfirmChoices, ConfirmWorkerConfig } from '../shared/mcpTypes'
+export type {
+  ConfirmChoiceOption,
+  ConfirmChoices,
+  ConfirmSessionConsent,
+  ConfirmWorkerConfig
+} from '../shared/mcpTypes'
 
 export interface ConfirmRequest {
   /** Short modal title (e.g. "Dispatch to terminal"). */
@@ -42,6 +48,13 @@ export interface ConfirmRequest {
   choices?: ConfirmChoices
   /** 🔒 S1: swarm spawn — when set, the renderer shows the worker-config dialog (see type doc). */
   workerConfig?: ConfirmWorkerConfig
+  /**
+   * 🔒 base P5: an optional session-consent OFFER — the modal renders the opt-in checkbox +
+   * scope block (see the shared type doc). The decision's `sessionConsent` rides back true
+   * only on an approve with the box checked; the requesting gate re-validates eligibility
+   * before recording anything.
+   */
+  sessionConsent?: ConfirmSessionConsent
   /**
    * Diagram Phase 3 (Option B): an optional STRUCTURED semantic diff for a diagram-spec write —
    * coloured rows + lint chips the modal renders in place of dumping the spec. PRESENTATION
@@ -199,12 +212,16 @@ export function requestConfirm(
                 : {})
             }
           : undefined
+      // 🔒 base P5: the session-consent opt-in — carried ONLY as an explicit `true` on an
+      // approve (fail-closed to "no grant"); the requesting gate re-validates eligibility.
+      const sessionConsent = approved && d?.sessionConsent === true ? true : undefined
       finish({
         approved,
         ...(choice !== undefined ? { choice } : {}),
         ...(launchCommand !== undefined ? { launchCommand } : {}),
         ...(rolePackId !== undefined ? { rolePackId } : {}),
-        ...(or !== undefined ? { openRouter: or } : {})
+        ...(or !== undefined ? { openRouter: or } : {}),
+        ...(sessionConsent !== undefined ? { sessionConsent } : {})
       })
     }
     // Backstop safety timeout (deny on expiry). Defaults to DEFAULT_TIMEOUT_MS so a frozen

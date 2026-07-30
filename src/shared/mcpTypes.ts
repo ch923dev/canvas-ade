@@ -181,6 +181,24 @@ export interface ConfirmWorkerConfig {
 }
 
 /**
+ * 🔒 Session-consent OFFER attached to a dispatch confirm (orchestration base P5). Present ONLY
+ * when the dispatch target is a worker whose role pack declares `confirmPolicy:
+ * 'session-consented'` (a READ-ONLY role, Q4) and no grant is active yet. The renderer renders
+ * an opt-in checkbox (default OFF) with the scope this data describes; the decision carries
+ * `sessionConsent: true` back ONLY on an approve with the box checked, and the requesting gate
+ * re-validates the role's eligibility before recording the grant ("the reply proposes, MAIN
+ * disposes"). Design signed off 2026-07-30 (the P5 design gate).
+ */
+export interface ConfirmSessionConsent {
+  /** The role pack the grant would cover (e.g. "code-reviewer"). */
+  roleId: string
+  /** The pack's display name — the checkbox line renders this. */
+  roleName: string
+  /** How many live workers of this role the grant would currently cover (scope disclosure). */
+  workerCount: number
+}
+
+/**
  * The renderer's confirm reply payload (the decision shape both sides speak). Every field
  * beyond `approved` is OPAQUE at the transport layer — MAIN's onReply shape-checks, and the
  * REQUESTING gate re-validates semantically before acting (fail-closed at every hop).
@@ -195,6 +213,9 @@ export interface ConfirmReplyDecision {
   rolePackId?: string
   /** 🔒 v20: the dialog-committed OpenRouter routing intent (never the key). */
   openRouter?: { enabled: boolean; model?: string }
+  /** 🔒 base P5: the human ALSO granted the request's `sessionConsent` offer (opt-in checkbox).
+   *  Meaningful only on an approve of a request that carried the offer; anything else is dropped. */
+  sessionConsent?: boolean
 }
 
 /**
