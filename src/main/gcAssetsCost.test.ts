@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { performance } from 'node:perf_hooks'
 import { gcAssets } from './projectStore'
@@ -86,8 +86,13 @@ describe.skipIf(!ENABLED)('gcAssets cost — referenced vs unreferenced (audit R
     const ref = round2(median(referenced))
     const unref = round2(median(unreferenced))
     // Written to a file rather than logged: vitest swallows test-side console output under this
-    // repo's reporter setup, and a measurement you cannot read is not a measurement.
-    const out = process.env.CANVAS_ASSET_BENCH_OUT ?? join(tmpdir(), 'gc-assets-cost.json')
+    // repo's reporter setup, and a measurement you cannot read is not a measurement. The default
+    // lands under the repo's own gitignored test-results/, not the world-shared OS temp dir — a
+    // fixed filename in tmpdir is symlink-attackable (CodeQL js/insecure-temporary-file).
+    const out =
+      process.env.CANVAS_ASSET_BENCH_OUT ??
+      join(process.cwd(), 'test-results', 'gc-assets-cost.json')
+    mkdirSync(dirname(out), { recursive: true })
     writeFileSync(
       out,
       JSON.stringify(
