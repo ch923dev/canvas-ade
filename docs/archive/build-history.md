@@ -4985,3 +4985,27 @@ reviewer zero inline findings. Version recomputed 0.43.3→**0.43.5** on the reb
 #408/#409 — #408 independently shipped 0.43.3 while the PR was open (the same
 rebase-swallows-the-bump class #409's entry warns about; caught by the recompute ritual).
 Pushed `--no-verify` per user directive (e2e paid once, at this merge gate, not on push).
+
+## PR #411 — e2e gate re-scope: smoke blocks / matrix manual (v0.43.6) · squash `16bc3e19` · 2026-07-31
+
+40-60 min of blocking e2e per merge (full Windows leg + Docker leg + full-leg flake-rerun
+ritual) had the user weighing DELETING the suite. Re-scoped instead: the only e2e that ever
+blocks is the `@core` smoke (~57 tests / 14 files — measured **71s cold / 25-27s warm**,
+E2E_WORKERS=2, retries:2) on every runtime-touching push and at `make check`; the FULL
+Windows+Linux matrix is **MANUAL-ONLY** (user decision mid-review, downgraded from
+auto-per-merge) via new `scripts/e2e-async-runner.mjs` — detached hidden node process (pwsh
+dies to the specs' taskkill sweeps), snapshot worktree `.worktrees/e2e-async-runner`, atomic
+O_EXCL lock (review [warning] + CodeQL js/file-system-race on the check-then-act draft —
+fixed in-PR), sequential legs, exit codes read from the child object, verdict →
+`.claude/coordination/e2e-async/last-result.json` + history.log + OS toast
+(GREEN/RED/INCOMPLETE; INCOMPLETE = Docker down, treat as RED). Launch: `make e2e-async` /
+`signal-merge.ps1 -E2E` (opt-IN; auto-launch removed) / `make check-full` (blocking) /
+`E2E_FULL_MATRIX=1`. Flake policy codified: known env class + isolated 3× green = DONE, no
+full-leg reruns, `--last-failed` beyond. Hook keeps NONE-skip/#395 construction,
+version-only strip, touched-spec path, stale-base gate. Validation: smoke 57/57 ×5 (one
+honest fail-closed block on a one-off env red); runner's first production run on `f46d367`
+= **GREEN** (win 349P/1 flaky exit 0 in 11.6m · linux exit 0 in 7.5m, lock released clean).
+Gate at merge: 6740/6742 units (2 = the documented pathSafe 8.3-TEMP ambient, reproduced on
+main), CI 4/4. Accepted trade, in TESTING.md: cross-OS-only regressions sit until someone
+runs the matrix — recommended after native-surface merges + before releases. Follow-up
+lane open: demotion audit (shrink the 99-file suite per the keep-set rule).
