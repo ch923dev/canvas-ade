@@ -4735,3 +4735,27 @@ targeted only this session's PIDs (the user's `@playwright/mcp` servers stayed u
 **Operational lesson:** `gh pr edit --title` can fail SILENTLY — it dies on a GraphQL
 Projects-classic deprecation error while printing only the warning, leaving the title unchanged.
 Retitle via REST instead: `gh api -X PATCH repos/<o>/<r>/pulls/<n> -f title=…`.
+
+## 2026-07-30 — PR #403 (`43806192`): pin `@expanse-ade/mcp` 0.23.0 — publish_findings reaches the app (v0.42.1)
+
+The P4 last-mile: the package published earlier the same day (0.23.0, package PR #14,
+tag→OIDC) pinned into the app, so the agent-triggered `publish_findings` tool is now
+registered live (the human "Publish findings →" recap trigger worked on 0.22.1 already).
+Two-file bump (pin + lockfile) plus one earned fix: the **F25 drift guard did exactly its
+job** — CI failed because 0.23.0 registers `publish_findings` for the orchestrator and
+lead tiers and the hand-maintained `APP_TOOLS` catalog + `LEAD_TOOLS` parity anchor had
+not acknowledged it. (It failed only on CI because the local run's `src/main/mcp` glob
+missed `appModelDrift.test.ts` — the guard's whole point is that the build, not memory,
+enforces lockstep.) Isolated worktree install per the junction procedure; fresh tree
+needed `node node_modules/electron/install.js` (the binary is not fetched into a new
+isolated tree). Dev check: build + headless smoke green, renderer screenshot eyeballed.
+
+Verified: typecheck against the 0.23.0 `Orchestrator` interface, 481 MCP-area unit/
+integration + drift guard 14/14, full matrix on the exact merge head `e559592b` (Win 349P
+workers:1 · Linux Docker 348P 7.0m; an extra Linux run on the pre-fix head was also green
+— the dep change itself was clean cross-OS). Review: two rounds, 0 findings, 0 inline.
+
+**Version-collision disclosure:** PR #401 (e2e bridge parameterization) landed mid-flight
+also claiming **v0.42.1**; no git conflict arose because both wrote the identical version
+line, so main now carries two PRs under 0.42.1. Accepted pre-release (no published build
+rides these numbers); the next PR bumps off 0.42.1 as usual.
