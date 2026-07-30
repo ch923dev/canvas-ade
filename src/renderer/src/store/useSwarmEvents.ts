@@ -110,6 +110,9 @@ export function useSwarmEvents(): void {
         const who = ev.boardId ? workerTitle(runId, ev.boardId) : ''
         if (ev.status) store.addStatusLine(runId, who ? `${who} · ${ev.status}` : ev.status)
         store.addOrchMessage(runId, who ? `${who} ${ev.text}` : ev.text)
+      } else if (ev.kind === 'consent') {
+        // base P5: the active session-consent snapshot — the header's revocable chip row.
+        store.setConsents(runId, ev.consents)
       }
     })
 

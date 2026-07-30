@@ -38,6 +38,7 @@ import { listBoardMirror, listConnectors, listGroups, subscribeBoardStatus } fro
 import { sendMcpCommand } from './mcpCommand'
 import { appendAuditEntry } from './auditIpc'
 import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
+import { consentOfferFor, grantSessionConsent, isDispatchConsented } from './sessionConsent'
 import { registerOrchestrationLeadHandlers } from './orchestrationLead'
 import { findingsPublishDeps, registerFindingsHandlers } from './findingsIpc'
 import { publishFindings } from './findingsPublish'
@@ -103,6 +104,14 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     confirm: (req) => requestConfirm(ipcMain, getWin, req),
     // The per-row BATCH human-confirm gate (relay_prompts) — fail-closed; ONE modal, N rows.
     confirmBatch: (req) => requestConfirmBatch(ipcMain, getWin, req),
+    // 🔒 base P5 session consent: the dispatch gate's per-act check / grant offer / grant
+    // recording, backed by the in-memory `sessionConsent.ts` registry (read-only roles only,
+    // Q4 — re-derived on every act, fail-closed to per-write).
+    sessionConsent: {
+      check: (id) => isDispatchConsented(id),
+      offer: (id) => consentOfferFor(id),
+      grant: (offer) => grantSessionConsent(offer)
+    },
     // Append to the append-only dispatch audit trail (T4.1). appendAuditEntry resolves the log
     // lazily at dispatch time and surfaces-then-rethrows a failed write (forensic gap — auditIpc.ts).
     audit: appendAuditEntry,

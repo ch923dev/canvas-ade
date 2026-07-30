@@ -293,6 +293,9 @@ export function buildOrchestrator(
     // — an older registry/test keeps the raw-write, readiness-only-ack behaviour.
     isBracketedPaste: registry.isBracketedPaste?.bind(registry),
     activityStaleMs: registry.boardActivityStaleMs?.bind(registry),
+    // 🔒 base P5: the session-consent slice (per-act check / grant offer / grant recording).
+    // Optional — an unwired registry keeps the always-per-write gate.
+    sessionConsent: registry.sessionConsent,
     audit: writeAudit
   })
 
@@ -307,6 +310,10 @@ export function buildOrchestrator(
     listBoards: () => registry.listBoards(),
     confirmBatch: registry.confirmBatch ? (req) => registry.confirmBatch!(req) : undefined,
     runGatedWrite,
+    // 🔒 base P5: an all-consented round skips the batch modal; the gate still re-checks per row.
+    isDispatchConsented: registry.sessionConsent
+      ? (id) => registry.sessionConsent!.check(id)
+      : undefined,
     audit: writeAudit
   })
 

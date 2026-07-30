@@ -24,6 +24,19 @@ import { requestConfirm } from './mcpConfirm'
 import { subscribeBoardStatus } from './boardRegistry'
 import { isResultSynthesized, readBoardResult } from './boardResults'
 import { getTerminalActivityStaleMs } from './pty'
+import {
+  envPolicyForPack,
+  getSpawnEnvPolicy,
+  registerSpawnEnvPolicy,
+  secretEnvNamesPresent
+} from './spawnEnvPolicy'
+import { setSpawnEnvPolicyProvider } from './ptySpawnEnv'
+import {
+  activeConsents,
+  onConsentChange,
+  registerConsentWorker,
+  revokeSessionConsent
+} from './sessionConsent'
 
 interface LlmJarvisBootDeps {
   llmDataDir: string
@@ -45,6 +58,11 @@ export function wireLlmJarvis(
   getWin: () => BrowserWindow | null,
   deps: LlmJarvisBootDeps
 ): SwarmHandlers {
+  // P5 (A8-F3): per-board env policy for buildSpawnEnv — swarm-registered read-only roles get
+  // the credential deny-list applied to their inherited env; every other board resolves
+  // undefined ⇒ full inherit, exactly today's path. Wired here beside the swarm seams that
+  // feed the registry (index.ts sits at its max-lines ratchet).
+  setSpawnEnvPolicyProvider(getSpawnEnvPolicy)
   registerLlmHandlers(ipcMain, getWin, deps.llmDataDir, undefined, deps.llmEncryptor)
   // Jarvis J3: the voice-brain session. Key = the llmKeyStore `anthropic` slot (same
   // encryptor as the LLM handlers above).
@@ -111,6 +129,28 @@ export function wireLlmJarvis(
       //                      few hundred ms — and the sweep never revisits an already-`blocked`
       //                      task, so a late synthesis would never be salvaged at all.
       synthesizeNow: (boardId) => deps.synthesizeNow(boardId)
+    },
+    // P5 secrets hygiene (A8-F3): read-only role packs get the curated credential deny-list
+    // applied to their inherited spawn env. `preview` feeds the spawn confirm's disclosure
+    // (live names, so the human reads exactly what will be withheld); `register` records the
+    // policy for the minted board id, consumed by buildSpawnEnv at pty:spawn.
+    envPolicy: {
+      preview: (pack) => (envPolicyForPack(pack) ? secretEnvNamesPresent(process.env) : []),
+      register: (boardId, pack) => {
+        const policy = envPolicyForPack(pack)
+        if (policy) registerSpawnEnvPolicy(boardId, policy)
+      }
+    },
+    // P5 session consent (the confirmPolicy lever): worker registration at spawn, the Revoke
+    // path, and the chip row's snapshot + change push — all backed by the ONE in-memory
+    // `sessionConsent.ts` registry the dispatch gate enforces against (wired in mcpBoot).
+    sessionConsent: {
+      registerWorker: (runId, boardId, roleId, launchCommand) =>
+        registerConsentWorker(runId, boardId, roleId, launchCommand),
+      revoke: (runId, roleId) => revokeSessionConsent(runId, roleId),
+      active: (runId) =>
+        activeConsents(runId).map((g) => ({ roleId: g.roleId, roleName: g.roleName })),
+      onChange: (listener) => onConsentChange(listener)
     }
   })
 }

@@ -441,3 +441,91 @@ describe('swarmWatch — lifecycle', () => {
     expect(subs).toBe(0)
   })
 })
+
+describe('swarmWatch — re-attach (base P5, the v2 upgrade over drain)', () => {
+  it('a run that is not interrupted never re-attaches (the latch)', () => {
+    const h = harness()
+    expect(h.watch.reattach('run1')).toEqual({
+      reattached: false,
+      adopted: 0,
+      reconciled: 0,
+      lost: 0
+    })
+    expect(h.read().state).toBe('live')
+  })
+
+  it('a still-live worker is RE-ADOPTED: task stays in_progress, stall clock restarts', () => {
+    const h = harness()
+    h.watch.drain()
+    expect(h.read().state).toBe('interrupted')
+    h.at(30 * MIN)
+    h.stale.set('w1', 5_000) // a live PTY session — the probe answers
+    const r = h.watch.reattach('run1')
+    expect(r).toEqual({ reattached: true, adopted: 1, reconciled: 0, lost: 0 })
+    const l = h.read()
+    expect(l.state).toBe('live')
+    const t = l.tasks[0]
+    expect(t.state).toBe('in_progress')
+    expect(t.assignment!.lastActivityAt).toBe(30 * MIN) // silence while unwatched is forgiven
+    expect(l.events.some((e) => e.kind === 'restored')).toBe(true)
+    expect(h.narrations.some((n) => n.status === 're-attached')).toBe(true)
+    // The flip IS the no-double-adopt latch.
+    expect(h.watch.reattach('run1').reattached).toBe(false)
+  })
+
+  it('a dead worker with a result is RECONCILED (settled from the ledger, not re-dispatched)', () => {
+    const h = harness({
+      salvage: { present: true, status: 'done', summary: 'shipped', refs: ['a.ts'] }
+    })
+    h.watch.drain() // attaches the salvage as t.result, marks interrupted
+    h.at(10 * MIN)
+    // No live session for w1 (stale map has no entry).
+    const r = h.watch.reattach('run1')
+    expect(r).toEqual({ reattached: true, adopted: 0, reconciled: 1, lost: 0 })
+    const t = h.read().tasks[0]
+    expect(t.state).toBe('done')
+    expect(t.result!.summary).toBe('shipped')
+    expect(t.result!.provenance).toBe('claimed')
+  })
+
+  it('a failing self-verdict reconciles to failed, and a synthesis carries its provenance', () => {
+    const h = harness({
+      synthesizes: { present: true, status: 'failed: build broke', synthesized: true }
+    })
+    h.watch.drain()
+    h.at(MIN)
+    const r = h.watch.reattach('run1')
+    expect(r.reconciled).toBe(1)
+    const t = h.read().tasks[0]
+    expect(t.state).toBe('failed')
+    expect(t.result!.provenance).toBe('synthesized')
+  })
+
+  it('a dead worker with NOTHING to salvage lands blocked+lost with its own narration', () => {
+    const h = harness()
+    h.watch.drain()
+    h.at(MIN)
+    const r = h.watch.reattach('run1')
+    expect(r).toEqual({ reattached: true, adopted: 0, reconciled: 0, lost: 1 })
+    const t = h.read().tasks[0]
+    expect(t.state).toBe('blocked')
+    expect(t.blockedTag).toBe('lost')
+    expect(h.narrations.some((n) => n.boardId === 'w1' && n.status === 'lost')).toBe(true)
+    // The next turn's brain learns both the summary and the loss.
+    const notices = h.watch.takeNotices('run1')
+    expect(notices.some((n) => n.includes('re-attached'))).toBe(true)
+    expect(notices.some((n) => n.includes('w1'))).toBe(true)
+  })
+
+  it('a task settled between drain and re-attach is never rewritten (BUG-021 re-check)', () => {
+    const h = harness()
+    h.watch.drain()
+    // The orchestrator's await_worker settled it legitimately before the re-attach ran.
+    h.store.update('run1', (l) => {
+      l.tasks[0].state = 'done'
+    })
+    const r = h.watch.reattach('run1')
+    expect(r).toEqual({ reattached: true, adopted: 0, reconciled: 0, lost: 0 })
+    expect(h.read().tasks[0].state).toBe('done')
+  })
+})

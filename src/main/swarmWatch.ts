@@ -131,6 +131,28 @@ export interface SwarmWatch {
   /** Failure case B — SYNCHRONOUS drain of every live run (safe inside the quit chain). */
   drain(): void
   /**
+   * 🔒 base P5 — re-attach (the v2 upgrade over drain's clean shutdown, `03-mechanism.md` §156).
+   * For a run the drain marked `interrupted`: walk its open assignments BY BOARD ID (the stable
+   * join key across a restart, A4-F7) and reconcile each —
+   *   - board still has a LIVE PTY session → RE-ADOPT: leave the task `in_progress`, restart its
+   *     stall clock; the (already-subscribed) watch covers it again the moment the run is `live`.
+   *   - board dead but a result exists (its own `write_result`, drain's salvage, or a synthesis
+   *     forced NOW) → RECONCILE: settle the task from that result (provenance carried, never
+   *     upgraded) instead of re-dispatching finished work.
+   *   - board dead with nothing to salvage → `blocked`+`lost`, the same verdict case A records.
+   * Then flip the run `interrupted` → `live` and append the reserved `restored` event. The state
+   * flip IS the no-double-adopt latch: a second call finds a `live` run and no-ops. Session
+   * consents are deliberately NOT restored — a re-attached run starts per-write (fail-closed).
+   * Narrations ride `narrate`/`takeNotices` exactly like case A, so the human and the next
+   * orchestrator turn both learn what survived.
+   */
+  reattach(runId: string): {
+    reattached: boolean
+    adopted: number
+    reconciled: number
+    lost: number
+  }
+  /**
    * Take (and clear) the run events that happened since the last turn, as prompt lines. The brain
    * must learn a worker died from its own context, or the next turn will await a dead board.
    */
@@ -445,6 +467,116 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
     }
   }
 
+  /**
+   * base P5 — see the interface doc. Salvage reads happen OUTSIDE the ledger write (the
+   * `recordDeath`/`drain` discipline: `safeRead` may synthesize, and a throwing accessor must
+   * never escape inside `store.update`); the write itself re-finds every task and re-checks its
+   * state, so a task settled between the read and the write is never rewritten.
+   */
+  const reattach = (
+    runId: string
+  ): { reattached: boolean; adopted: number; reconciled: number; lost: number } => {
+    const none = { reattached: false, adopted: 0, reconciled: 0, lost: 0 }
+    const before = deps.store.readRun(runId)
+    // The state check IS the latch: only an interrupted run re-attaches, and the flip below
+    // makes a second call (a board re-mount, a double restore) a no-op.
+    if (!before || before.state !== 'interrupted') return none
+    const open = before.tasks.filter((t) => t.state === 'in_progress' && t.assignment)
+    const salvaged = new Map<string, SwarmSalvage>()
+    const alive = new Map<string, boolean>()
+    for (const t of open) {
+      const boardId = t.assignment!.boardId
+      if (!salvaged.has(boardId)) {
+        salvaged.set(boardId, safeRead(boardId))
+        // `undefined` staleness = no live PTY session for this board (the probe's contract).
+        alive.set(boardId, deps.activityStaleMs?.(boardId) !== undefined)
+      }
+    }
+    let adopted = 0
+    let reconciled = 0
+    const lostTasks: Array<{ boardId: string; taskId: string }> = []
+    deps.store.update(runId, (l) => {
+      const at = now()
+      for (const openTask of open) {
+        const t = l.tasks.find((x) => x.taskId === openTask.taskId)
+        if (!t || t.state !== 'in_progress' || !t.assignment) continue
+        const boardId = t.assignment.boardId
+        if (alive.get(boardId) === true) {
+          // RE-ADOPT: the worker outlived the orchestrator (A1-F9/A4-F7) and is still going.
+          // Restart the stall clock from NOW — the silence it accumulated while nobody was
+          // watching is not the worker's fault.
+          t.assignment.lastActivityAt = at
+          adopted += 1
+          continue
+        }
+        const s = salvaged.get(boardId)
+        const result = s?.present === true ? s : undefined
+        if (result || t.result) {
+          // RECONCILE, never re-dispatch: prefer the fresh salvage (a synthesis may have landed
+          // since the drain attached its copy), else the result the drain preserved.
+          const provenance: SwarmProvenance = result
+            ? result.synthesized === true
+              ? 'synthesized'
+              : 'claimed'
+            : t.result!.provenance
+          if (result) {
+            t.result = {
+              status: (result.status ?? 'unknown').slice(0, MAX_LEDGER_LINE),
+              summary: result.summary ?? '',
+              refs: Array.isArray(result.refs) ? result.refs : [],
+              provenance,
+              at
+            }
+          }
+          // The worker's own verdict decides the terminal state (the ledgerSession.settled
+          // rule); provenance — never upgraded — records what that verdict is worth.
+          const failed = /^(fail|error|blocked)/i.test(t.result!.status)
+          setTaskState(l, t.taskId, failed ? 'failed' : 'done', at, provenance)
+          reconciled += 1
+          continue
+        }
+        // Dead with nothing to salvage — case A's verdict, discovered late.
+        setTaskState(l, t.taskId, 'blocked', at)
+        setBlockedTag(l, t.taskId, 'lost', at)
+        t.assignment.lastActivityAt = at
+        lostTasks.push({ boardId, taskId: t.taskId })
+      }
+      l.state = 'live'
+      l.eventSeq += 1
+      // The RESERVED event kind (shipped in the S2 vocabulary for exactly this moment).
+      l.events.push({
+        seq: l.eventSeq,
+        at,
+        kind: 'restored',
+        workers: adopted,
+        results: reconciled
+      })
+    })
+    const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? '' : 's'}`
+    const summary =
+      `re-attached to this run — ${plural(adopted, 'worker')} still live and re-adopted, ` +
+      `${plural(reconciled, 'result')} reconciled from the ledger` +
+      (lostTasks.length > 0 ? `, ${plural(lostTasks.length, 'task')} lost` : '') +
+      '. Session consents were reset — dispatches ask again.'
+    deps.narrate(runId, { status: 're-attached', text: summary })
+    note(runId, summary)
+    const after = deps.store.readRun(runId)
+    for (const { boardId, taskId } of lostTasks) {
+      const t = after ? after.tasks.find((x) => x.taskId === taskId) : undefined
+      const label = after && t ? taskLabel(after, t) : 'its task'
+      const n: SwarmNarration = {
+        boardId,
+        status: 'lost',
+        text: `was gone when the run re-attached — ${label} is marked lost and back on the triage queue.`
+      }
+      deps.narrate(runId, n)
+      note(runId, `worker ${boardId} ${n.text}`)
+      deps.observeBlocked?.(boardId, 'lost', 're-attach found no live session', undefined)
+    }
+    deps.changed(runId)
+    return { reattached: true, adopted, reconciled, lost: lostTasks.length }
+  }
+
   return {
     start() {
       if (unsubscribe === null) unsubscribe = deps.subscribeStatus(onStatus)
@@ -457,6 +589,7 @@ export function createSwarmWatch(deps: SwarmWatchDeps): SwarmWatch {
       stopSweep = null
     },
     drain,
+    reattach,
     takeNotices(runId) {
       const list = notices.get(runId) ?? []
       notices.delete(runId)

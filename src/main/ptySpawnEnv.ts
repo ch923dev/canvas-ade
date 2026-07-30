@@ -1,4 +1,6 @@
 // src/main/ptySpawnEnv.ts
+import { filterSpawnEnvBase, type SpawnEnvPolicy } from './spawnEnvPolicy'
+
 /**
  * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
  * Returns a record to merge LAST into the spawn env, or undefined for no extra env.
@@ -104,6 +106,19 @@ function openRouterEnv(intent: OpenRouterSpawnIntent | undefined): Record<string
   }
 }
 
+/**
+ * P5 secrets hygiene (A8-F3): per-board env policy, applied to the INHERITED `process.env`
+ * base only — deliberate injections below (our baseline vars, OpenRouter routing, the recap
+ * seam) are never filtered. index.ts wires `spawnEnvPolicy.getSpawnEnvPolicy` here; pty.ts
+ * stays decoupled, and — like every seam in this file — a provider error never breaks a spawn.
+ */
+export type SpawnEnvPolicyProvider = (boardId: string) => SpawnEnvPolicy | undefined
+let spawnEnvPolicyProvider: SpawnEnvPolicyProvider | undefined
+
+export function setSpawnEnvPolicyProvider(fn: SpawnEnvPolicyProvider | undefined): void {
+  spawnEnvPolicyProvider = fn
+}
+
 export function buildSpawnEnv(
   provider: RecapEnvProvider | undefined,
   opts: {
@@ -122,12 +137,24 @@ export function buildSpawnEnv(
   } catch {
     recapEnv = undefined // policy must never break a spawn
   }
+  // P5: resolve + apply this board's env policy to the inherited base BEFORE any deliberate
+  // injection, so a role-scrubbed worker still gets routing/recap/baseline vars intact.
+  let policy: SpawnEnvPolicy | undefined
+  try {
+    policy = spawnEnvPolicyProvider?.(opts.id)
+  } catch {
+    policy = undefined // policy must never break a spawn
+  }
+  const { env: inherited, scrubbed } = filterSpawnEnvBase(process.env, policy)
   const env = {
-    ...process.env,
+    ...inherited,
     FORCE_HYPERLINK: '1',
     // OpenRouter routing before the recap seam; the two key-sets are disjoint anyway.
     ...openRouterEnv(opts.openRouter)
   } as Record<string, string>
+  // Disclosure to the worker itself: a silently-scrubbed env reads as "broken shell" — the
+  // names live in the env so the agent can SAY a credential was withheld instead of guessing.
+  if (scrubbed.length > 0) env.CANVAS_ENV_SCRUBBED = scrubbed.join(',')
   // Alt-screen decision (T1d) — set AFTER the process.env spread (so an inherited
   // CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN from a parent Claude session can't leak past an ON) but
   // BEFORE the recap seam (so recap stays the LAST word and can still override this key — its

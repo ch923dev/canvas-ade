@@ -6,7 +6,7 @@
  * build never wires a provider, so "no provider ⇒ no vars" IS the compile-gate contract here.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildSpawnEnv, setOpenRouterKeyProvider } from './ptySpawnEnv'
+import { buildSpawnEnv, setOpenRouterKeyProvider, setSpawnEnvPolicyProvider } from './ptySpawnEnv'
 
 const OR_KEYS = [
   'OPENROUTER_API_KEY',
@@ -16,7 +16,10 @@ const OR_KEYS = [
   'ANTHROPIC_MODEL'
 ] as const
 
-afterEach(() => setOpenRouterKeyProvider(undefined))
+afterEach(() => {
+  setOpenRouterKeyProvider(undefined)
+  setSpawnEnvPolicyProvider(undefined)
+})
 
 describe('buildSpawnEnv — baseline', () => {
   it('sets the baseline vars and scrubs nested Claude session identity', () => {
@@ -151,5 +154,51 @@ describe('buildSpawnEnv — OpenRouter routing (v20)', () => {
     })
     expect(env.ANTHROPIC_BASE_URL).toBe('http://recap-override')
     expect(env.OPENROUTER_API_KEY).toBe('sk-or-secret')
+  })
+})
+
+describe('buildSpawnEnv — P5 per-board env policy (A8-F3 secrets hygiene)', () => {
+  afterEach(() => {
+    delete process.env.GITHUB_TOKEN
+    delete process.env.AWS_SECRET_ACCESS_KEY
+  })
+
+  it('a scrub policy drops deny-listed inherited vars + discloses them in CANVAS_ENV_SCRUBBED', () => {
+    process.env.GITHUB_TOKEN = 'ghp_secret'
+    process.env.AWS_SECRET_ACCESS_KEY = 'aws-secret'
+    setSpawnEnvPolicyProvider((id) => (id === 'scrubbed' ? { scrub: 'secrets' } : undefined))
+    const env = buildSpawnEnv(undefined, { id: 'scrubbed' })
+    expect(env.GITHUB_TOKEN).toBeUndefined()
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
+    const disclosed = (env.CANVAS_ENV_SCRUBBED ?? '').split(',')
+    expect(disclosed).toContain('GITHUB_TOKEN')
+    expect(disclosed).toContain('AWS_SECRET_ACCESS_KEY')
+    // Baseline injections survive the filter (it applies to the inherited base only).
+    expect(env.FORCE_HYPERLINK).toBe('1')
+  })
+
+  it('a board the provider resolves NO policy for inherits everything (no disclosure var)', () => {
+    process.env.GITHUB_TOKEN = 'ghp_secret'
+    setSpawnEnvPolicyProvider(() => undefined)
+    const env = buildSpawnEnv(undefined, { id: 'plain' })
+    expect(env.GITHUB_TOKEN).toBe('ghp_secret')
+    expect(env.CANVAS_ENV_SCRUBBED).toBeUndefined()
+  })
+
+  it('deliberate OpenRouter injection survives a scrub that denies OPENROUTER_API_KEY', () => {
+    setSpawnEnvPolicyProvider(() => ({ scrub: 'secrets' }))
+    setOpenRouterKeyProvider(() => 'sk-or-deliberate')
+    const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
+    expect(env.OPENROUTER_API_KEY).toBe('sk-or-deliberate')
+  })
+
+  it('a throwing policy provider never breaks the spawn (full inherit, baseline intact)', () => {
+    process.env.GITHUB_TOKEN = 'ghp_secret'
+    setSpawnEnvPolicyProvider(() => {
+      throw new Error('registry exploded')
+    })
+    const env = buildSpawnEnv(undefined, { id: 'b1' })
+    expect(env.GITHUB_TOKEN).toBe('ghp_secret')
+    expect(env.FORCE_HYPERLINK).toBe('1')
   })
 })

@@ -258,3 +258,126 @@ describe('createGatedWriter — confirmOverride (relay_prompts batch seam)', () 
     expect(state.confirmCalls).toBe(1)
   })
 })
+
+describe('createGatedWriter — session consent (base P5)', () => {
+  const consent = (over?: {
+    checked?: boolean
+    offer?: { runId: string; roleId: string; roleName: string; workerCount: number } | null
+  }): { slice: NonNullable<DispatchGateDeps['sessionConsent']>; granted: unknown[] } => {
+    const granted: unknown[] = []
+    return {
+      granted,
+      slice: {
+        check: () => over?.checked === true,
+        offer: () => over?.offer ?? null,
+        grant: (o) => {
+          granted.push(o)
+          return true
+        }
+      }
+    }
+  }
+
+  it('an ACTIVE consent skips the modal, writes, and stamps consent=session into the audit', async () => {
+    const { slice } = consent({ checked: true })
+    const { deps, writes, audits } = makeDeps()
+    let modals = 0
+    deps.confirm = async () => {
+      modals += 1
+      return { approved: true }
+    }
+    deps.sessionConsent = slice
+    const r = await createGatedWriter(deps)(input())
+    expect(modals).toBe(0) // no modal — the session grant is the decision source
+    expect(writes).toEqual(['hello world', '\r'])
+    expect(r.delivery).toBe('ready')
+    const dispatched = audits.find((a) => a.status === 'dispatched')
+    expect(dispatched?.detail).toContain('consent=session')
+  })
+
+  it('NO active consent falls through to the per-write modal (nothing skipped)', async () => {
+    const { slice } = consent({ checked: false })
+    const { deps, writes } = makeDeps()
+    let modals = 0
+    deps.confirm = async () => {
+      modals += 1
+      return { approved: true }
+    }
+    deps.sessionConsent = slice
+    await createGatedWriter(deps)(input())
+    expect(modals).toBe(1)
+    expect(writes).toEqual(['hello world', '\r'])
+  })
+
+  it('interrupt (Ctrl-C) NEVER rides a session grant — the grant covers dispatches only', async () => {
+    const { slice } = consent({ checked: true })
+    const { deps } = makeDeps()
+    let modals = 0
+    deps.confirm = async () => {
+      modals += 1
+      return { approved: true }
+    }
+    deps.sessionConsent = slice
+    await createGatedWriter(deps)(
+      input({ type: 'interrupt', text: '', terminator: '\x03', sanitize: false })
+    )
+    expect(modals).toBe(1) // paid the modal despite an "active" grant
+  })
+
+  it('the modal carries the OFFER, and approve+opt-in records the grant', async () => {
+    const offer = {
+      runId: 'r1',
+      roleId: 'code-reviewer',
+      roleName: 'Code reviewer',
+      workerCount: 2
+    }
+    const { slice, granted } = consent({ offer })
+    const { deps } = makeDeps()
+    let seenOffer: unknown
+    deps.confirm = async (req) => {
+      seenOffer = req.sessionConsent
+      return { approved: true, sessionConsent: true }
+    }
+    deps.sessionConsent = slice
+    await createGatedWriter(deps)(input())
+    expect(seenOffer).toEqual({
+      roleId: 'code-reviewer',
+      roleName: 'Code reviewer',
+      workerCount: 2
+    })
+    expect(granted).toEqual([offer])
+  })
+
+  it('approve WITHOUT the opt-in records nothing; a deny records nothing and evicts', async () => {
+    const offer = {
+      runId: 'r1',
+      roleId: 'code-reviewer',
+      roleName: 'Code reviewer',
+      workerCount: 1
+    }
+    {
+      const { slice, granted } = consent({ offer })
+      const { deps } = makeDeps()
+      deps.confirm = async () => ({ approved: true }) // no sessionConsent flag
+      deps.sessionConsent = slice
+      await createGatedWriter(deps)(input())
+      expect(granted).toEqual([])
+    }
+    {
+      const { slice, granted } = consent({ offer })
+      const { deps, audits } = makeDeps()
+      deps.confirm = async () => ({ approved: false, sessionConsent: true }) // deny "with" opt-in
+      deps.sessionConsent = slice
+      await expect(createGatedWriter(deps)(input())).rejects.toThrow(/denied/)
+      expect(granted).toEqual([])
+      expect(audits.some((a) => a.status === 'denied')).toBe(true)
+    }
+  })
+
+  it('no sessionConsent slice wired = the pre-P5 gate, byte-identical', async () => {
+    const { deps, writes, audits } = makeDeps()
+    await createGatedWriter(deps)(input())
+    expect(writes).toEqual(['hello world', '\r'])
+    expect(audits.find((a) => a.status === 'dispatched')?.detail).not.toContain('consent')
+  })
+})

@@ -82,6 +82,45 @@
   white-space: nowrap;
 }
 
+/* base P5 — active session-consent chip (design gate 2026-07-30): accent-washed pill naming the
+   pre-authorized role, with its Revoke inline. One chip per consented role; absent = per-write. */
+.sw-consent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-pill);
+  padding: 1px 3px 1px 8px;
+  white-space: nowrap;
+}
+.sw-consent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.sw-consent-revoke {
+  font-family: var(--ui);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+  cursor: pointer;
+}
+.sw-consent-revoke:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .sw-plan {
   display: flex;
   align-items: center;

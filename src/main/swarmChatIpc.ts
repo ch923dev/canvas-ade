@@ -135,6 +135,25 @@ export interface SwarmIpcDeps {
     SwarmWatchDeps,
     'subscribeStatus' | 'readResult' | 'activityStaleMs' | 'synthesizeNow'
   >
+  /**
+   * P5 secrets hygiene: the per-role env policy seam (preview for the spawn confirm's
+   * disclosure + register-by-board-id for `buildSpawnEnv`). Injected — the registry is a MAIN
+   * singleton (`spawnEnvPolicy.ts`) and this module keeps its no-MAIN-singletons shape. Absent
+   * ⇒ workers inherit the full env exactly as before P5.
+   */
+  envPolicy?: SwarmRunCtx['envPolicy']
+  /**
+   * P5 session consent: the swarm-side slice of `sessionConsent.ts` (worker registration at
+   * spawn, revoke, the active-grant snapshot for the chip row, and change notifications for
+   * the push). Injected for the same no-MAIN-singletons reason as `envPolicy`. Absent ⇒ no
+   * worker is ever consent-eligible and the chip row never renders — per-write everywhere.
+   */
+  sessionConsent?: {
+    registerWorker(runId: string, boardId: string, roleId: string, launchCommand: string): void
+    revoke(runId: string, roleId: string): boolean
+    active(runId: string): Array<{ roleId: string; roleName: string }>
+    onChange(listener: (runId: string) => void): () => void
+  }
 }
 
 /** What the boot wiring keeps a handle on after registration (the quit-path drain). */
@@ -482,6 +501,17 @@ export function registerSwarmHandlers(
       emit: (ev: SwarmRunEvent) =>
         push('swarm:runEvent', { runId, ev } satisfies SwarmRunEventPush),
       confirm,
+      // P5: the env-policy seam rides through to spawn_worker (disclosure + registration).
+      ...(deps.envPolicy ? { envPolicy: deps.envPolicy } : {}),
+      // P5: consent registration binds the RUN id here (the executor never learns it).
+      ...(deps.sessionConsent
+        ? {
+            consent: {
+              registerWorker: (boardId: string, roleId: string, launchCommand: string) =>
+                deps.sessionConsent!.registerWorker(runId, boardId, roleId, launchCommand)
+            }
+          }
+        : {}),
       // S2: durable recording. The facet doubles as the planning reader (RunningMcp exposes
       // boardPlanning), so a task can join the checklist item it fulfils.
       ledger: session.ledger.hooks(() => facet)
@@ -574,6 +604,12 @@ export function registerSwarmHandlers(
     if (!runId) return { restored: false }
     // Read WITHOUT creating: mounting a board must never mint a ledger for a run that never ran.
     const session = sessionFor(runId)
+    // 🔒 base P5 — re-attach v2 BEFORE projecting, so the snapshot below already reflects the
+    // reconciled truth (state flipped live, finished-while-away results settled, dead workers
+    // lost). Idempotent: only an `interrupted` run re-attaches (the flip is the latch), so a
+    // plain reload of a live/done run — and a second mount — fall straight through. The
+    // narrations it pushes land before the ledger snapshot, matching the chat's read order.
+    watch?.reattach(runId)
     const snapshot = session.ledger.snapshot({ restored: true })
     if (!snapshot) return { restored: false }
     // 🔒 S3: rebuild the worker→worktree map from the durable assignments. Without this a
@@ -587,7 +623,20 @@ export function registerSwarmHandlers(
       if (held)
         session.workerWorktrees.set(w.boardId, { worktree: held.worktree, branch: held.branch })
     }
+    // 🔒 base P5: rebuild the worker→ROLE map too — the dispatch write-cap and the consent gate
+    // both key off it, and before this a reloaded run believed every worker was role-less (the
+    // write ceiling read wrong AND no worker could ever be consent-eligible again... which for
+    // consent is actually the intended fail-closed default — eligibility needs the spawn-time
+    // launch evidence a restart does not have, so roles are rebuilt but consent registration is
+    // deliberately NOT). In-memory values from THIS session win over the ledger's.
+    for (const w of snapshot.workers) {
+      if (w.role && !session.workerRoles.has(w.boardId)) {
+        session.workerRoles.set(w.boardId, w.role)
+      }
+    }
     push('swarm:runEvent', { runId, ev: { kind: 'ledger', snapshot } })
+    // base P5: re-hydrate the consent chip row (empty after a restart by construction).
+    pushConsents(runId)
     // The trees moved while we were not running (or were deleted by hand) — stat and re-push.
     kickRefresh(runId)
     return { restored: true }
@@ -726,6 +775,33 @@ export function registerSwarmHandlers(
     return outcome
   })
 
+  /**
+   * 🔒 P5 session consent — the chip row's push + the Revoke path. `pushConsents` sends the
+   * FULL active-grant snapshot for one run (idempotent, so a re-push after any change or a
+   * board mount re-hydrate is always correct); the module-level onChange subscription keeps the
+   * chip live for grants made inside the dispatch gate (which this module never sees directly).
+   * Revocation takes effect on the NEXT act — the gate re-derives consent per dispatch.
+   */
+  const pushConsents = (runId: string): void => {
+    if (!deps.sessionConsent) return
+    push('swarm:runEvent', {
+      runId,
+      ev: { kind: 'consent', consents: deps.sessionConsent.active(runId) }
+    })
+  }
+  const unsubscribeConsent = deps.sessionConsent?.onChange((runId) => pushConsents(runId))
+
+  ipcMain.handle('swarm:consentRevoke', (e, payload: unknown): { ok: boolean } => {
+    if (guard(e)) return { ok: false }
+    const p = payload as { runId?: unknown; roleId?: unknown } | null
+    const runId = runIdOf(payload)
+    const roleId = typeof p?.roleId === 'string' ? p.roleId : ''
+    if (!runId || !roleId || !deps.sessionConsent) return { ok: false }
+    const ok = deps.sessionConsent.revoke(runId, roleId)
+    // The onChange subscription re-pushes the snapshot; a no-op revoke pushes nothing.
+    return { ok }
+  })
+
   /** S2: the swarm board was deleted — the durable run goes with it (no orphan sidecars). */
   ipcMain.handle('swarm:destroyRun', (e, payload: unknown): { ok: boolean } => {
     if (guard(e)) return { ok: false }
@@ -748,6 +824,9 @@ export function registerSwarmHandlers(
         console.warn('[swarm] run drain failed on quit (non-fatal — teardown continues)', err)
       }
     },
-    dispose: () => watch?.stop()
+    dispose: () => {
+      watch?.stop()
+      unsubscribeConsent?.()
+    }
   }
 }

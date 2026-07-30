@@ -892,3 +892,82 @@ describe('S3 · the ledger records where the work went', () => {
     expect(arg.branch).toBeUndefined()
   })
 })
+
+describe('spawn_worker — base P5 env-scrub disclosure + registrations', () => {
+  it('the confirm body names the withheld credential vars BEFORE the human approves', async () => {
+    const ctx = ctxStub({
+      envPolicy: {
+        preview: () => ['AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN'],
+        register: vi.fn()
+      }
+    })
+    await executeSwarmTool('spawn_worker', { name: 'Rev', role: 'code-reviewer' }, facetStub(), ctx)
+    const body = (ctx.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0].body as string
+    expect(body).toContain('2 credential vars will be withheld')
+    expect(body).toContain('AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN')
+    expect(body).toContain('agent-auth vars are kept')
+  })
+
+  it('a long deny-list is capped in the modal (first 8 + a count), never dumped whole', async () => {
+    const names = Array.from({ length: 11 }, (_, i) => `SECRET_${i}`)
+    const ctx = ctxStub({
+      envPolicy: { preview: () => names, register: vi.fn() }
+    })
+    await executeSwarmTool('spawn_worker', { name: 'Rev', role: 'code-reviewer' }, facetStub(), ctx)
+    const body = (ctx.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0].body as string
+    expect(body).toContain('11 credential vars')
+    expect(body).toContain('+3 more')
+    expect(body).not.toContain('SECRET_10')
+  })
+
+  it('after an approved spawn, env policy + consent worker register against the MINTED id', async () => {
+    const register = vi.fn()
+    const registerWorker = vi.fn()
+    const ctx = ctxStub({
+      envPolicy: { preview: () => [], register },
+      consent: { registerWorker }
+    })
+    await executeSwarmTool('spawn_worker', { name: 'Rev', role: 'code-reviewer' }, facetStub(), ctx)
+    expect(register).toHaveBeenCalledWith(
+      'spawned-1',
+      expect.objectContaining({ id: 'code-reviewer' })
+    )
+    expect(registerWorker).toHaveBeenCalledWith(
+      'spawned-1',
+      'code-reviewer',
+      expect.stringContaining('--permission-mode plan')
+    )
+  })
+
+  it('a DENIED spawn registers nothing (no policy, no consent worker)', async () => {
+    const register = vi.fn()
+    const registerWorker = vi.fn()
+    const ctx = ctxStub({
+      confirm: vi.fn(async () => ({ approved: false })),
+      envPolicy: { preview: () => [], register },
+      consent: { registerWorker }
+    })
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'Rev', role: 'code-reviewer' },
+      facetStub(),
+      ctx
+    )
+    expect(out.denied).toBe(true)
+    expect(register).not.toHaveBeenCalled()
+    expect(registerWorker).not.toHaveBeenCalled()
+  })
+
+  it('absent seams change nothing — no disclosure line, no registration calls (degraded path)', async () => {
+    const ctx = ctxStub()
+    const out = await executeSwarmTool(
+      'spawn_worker',
+      { name: 'Rev', role: 'code-reviewer' },
+      facetStub(),
+      ctx
+    )
+    expect(out.isError).toBeUndefined()
+    const body = (ctx.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0].body as string
+    expect(body).not.toContain('withheld')
+  })
+})
