@@ -5009,3 +5009,37 @@ Gate at merge: 6740/6742 units (2 = the documented pathSafe 8.3-TEMP ambient, re
 main), CI 4/4. Accepted trade, in TESTING.md: cross-OS-only regressions sit until someone
 runs the matrix — recommended after native-surface merges + before releases. Follow-up
 lane open: demotion audit (shrink the 99-file suite per the keep-set rule).
+
+## PR #407 — base P5: session-consent lever, per-role env scrub, re-attach v2 (v0.44.0) · squash `7fe9d8c2` · 2026-07-31
+
+Orchestration base Phase 5, all three levers behind a signed design gate (artifact + ×2
+AskUserQuestion, 2026-07-30): **(1) session consent** — new `confirmPolicy:
+'session-consented'` role-pack tier lets the human pre-authorize a READ-ONLY role's
+dispatches for one swarm run; grant is made ON a real dispatch confirm (role + tools +
+live worker count named), enforced at the single `dispatchGate` write gate with the whole
+chain re-derived per act (BUG-021): registry-known pack + `session-consented` +
+`permissionMode: 'plan'` + spawn-time `launchLooksReadOnly` evidence + grant still active
+— any link missing ⇒ the ordinary per-write modal. Q4 structural refusal ×3 (pack
+validation, grant time, gate). Grants in-memory only, revocable from the swarm board's
+consent chips, `consent=session` stamped into audit + act feed; re-attached runs start
+consent-clean. **(2) per-role env deny-list** (the A8-F3 secrets gap) — `spawnEnvPolicy.ts`
+curated credential names + `AZURE_` prefix filtered from the INHERITED `process.env` base
+in `buildSpawnEnv` for `plan`-posture workers only; deliberate injections never scrubbed,
+`ANTHROPIC_*`/`CLAUDE_*` never denied, disclosure in both directions (spawn-confirm
+sentence + `CANVAS_ENV_SCRUBBED` for the worker). Off-vocabulary ⇒ fail-open to
+today's full-inherit. **(3) re-attach v2** — `swarmWatch.reattach(runId)` re-adopts live
+workers on an interrupted→live flip (no-double-adopt latch), reconciles
+finished-while-away results, marks dead-with-nothing-to-salvage tasks lost. ~69 new unit
+cases. War story: the grant-key delimiter briefly shipped as embedded NUL bytes — legal in
+a JS template literal (typecheck/lint/tests all green) but git's binary heuristic made the
+FILE binary (GitHub "binary file not shown", diff unreviewable — the reviewer's
+[critical], inline comment impossible on a binary file; disposition posted as a PR
+comment). Fixed to `:` pre-merge. Rebased over #409/#410/#411; the #409 `@expanse-ade/mcp`
+0.23.0→0.24.0 pin rode in and stale worktree node_modules failed typecheck
+(`closeSessionsForBoard` missing) until a `pnpm install` — the "rebase moves your deps"
+class. First merge under the #411 ritual: `make check` trio green, units at the documented
+ambient floor (5: pathSafe symlink + pty.recapenv), `@core` smoke 57/57 at push (34.5s),
+CI 4/4, reviewer FULL re-read post-rebase zero findings; full matrix launched async
+post-merge (native-surface merge — recommended case). Eyeball dev-check done by the user
+pre-rebase (title-stamped). MCP plan-board ticks + `write_result` deferred — app down all
+session.
