@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { apiCall, callE2E, evalIn, mainCall, seed } from './helpers'
 
 /**
  * @core Swarm run ledger + triage (orchestration S2) — the survivability half, against the REAL
@@ -90,7 +90,7 @@ test('@core a run restores from disk: the header chip, the worker cards and the 
 }) => {
   const tmp = await mainCall<string>(electronApp, 'createTempProject', 'swarm-led-', 'swarm-led')
   try {
-    await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+    await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
     // A fresh project fires the one-time recap-consent prompt — a modal whose scrim sits over the
     // board and eats clicks. Dismiss it (best-effort: it asks once per undecided project).
     await page
@@ -101,7 +101,7 @@ test('@core a run restores from disk: the header chip, the worker cards and the 
     // the board's right edge, where the triage row's buttons live. Close it.
     await evalIn(page, `window.__canvasE2E.closeDigest()`)
     const id = await seed(page, 'swarm')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     const now = Date.now()
 
     const wrote = await mainCall<boolean>(
@@ -145,10 +145,7 @@ test('@core a run restores from disk: the header chip, the worker cards and the 
     expect(wrote).toBe(true)
 
     // The REAL restore IPC — the identical call the board makes on mount.
-    const restored = await evalIn<{ restored: boolean }>(
-      page,
-      `window.api.swarm.restore(${JSON.stringify(id)})`
-    )
+    const restored = await apiCall<{ restored: boolean }>(page, 'swarm.restore', id)
     expect(restored.restored).toBe(true)
 
     const board = page.locator('[data-test="swarm-board"]')
@@ -187,7 +184,7 @@ test('@core a triage Reassign asks MAIN, which un-assigns the task and hands bac
 }) => {
   const tmp = await mainCall<string>(electronApp, 'createTempProject', 'swarm-tri-', 'swarm-tri')
   try {
-    await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+    await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
     // A fresh project fires the one-time recap-consent prompt — a modal whose scrim sits over the
     // board and eats clicks. Dismiss it (best-effort: it asks once per undecided project).
     await page
@@ -198,7 +195,7 @@ test('@core a triage Reassign asks MAIN, which un-assigns the task and hands bac
     // the board's right edge, where the triage row's buttons live. Close it.
     await evalIn(page, `window.__canvasE2E.closeDigest()`)
     const id = await seed(page, 'swarm')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     const now = Date.now()
     await mainCall(
       electronApp,
@@ -216,7 +213,7 @@ test('@core a triage Reassign asks MAIN, which un-assigns the task and hands bac
         }
       ])
     )
-    await evalIn(page, `window.api.swarm.restore(${JSON.stringify(id)})`)
+    await apiCall(page, 'swarm.restore', id)
 
     const board = page.locator('[data-test="swarm-board"]')
     const row = board.locator('[data-test="swarm-triage-lost"]')
@@ -261,7 +258,7 @@ test('@core the plan strip edits write THROUGH to the Planning board (D2 always-
   // is a terminal that never mounts or spawns (it reads as a PTY failure and is not one). The
   // plan board is read through the STORE here, never clicked, so its position is irrelevant.
   const id = await seed(page, 'swarm')
-  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+  await callE2E(page, { m: 'fitView', a: [id] })
   const planId = await seed(page, 'planning', {
     elements: [
       {
@@ -279,10 +276,7 @@ test('@core the plan strip edits write THROUGH to the Planning board (D2 always-
     ]
   })
   // Bind the strip to that plan board through the run mirror's own event shape.
-  await evalIn(
-    page,
-    `window.__canvasE2E.swarmSetPlanBoard(${JSON.stringify(id)}, ${JSON.stringify(planId)})`
-  )
+  await callE2E(page, { m: 'swarmSetPlanBoard', a: [id, planId] })
 
   const board = page.locator('[data-test="swarm-board"]')
   const chips = board.locator('[data-test="swarm-plan-chip"]')

@@ -1,5 +1,5 @@
 import { test as base, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { apiCall, callE2E, evalIn, mainCall, pollEval, seed } from './helpers'
 import type { Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -137,7 +137,7 @@ async function boardStatus(c: McpClient, id: string): Promise<string | null> {
 
 /** Read a board's xterm framebuffer text through the renderer hook (assert a write landed). */
 function readTerminalText(page: Page, id: string): Promise<string | null> {
-  return evalIn<string | null>(page, `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`)
+  return callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
 }
 
 /** Whether a board `id` is on the canvas. Structured-arg eval -- the id is passed as DATA, never
@@ -326,11 +326,11 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
   }) => {
     const sid = await seed(page, 'terminal')
     // fitView guarantees the board is measured -> the PTY spawns -> status running.
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(sid)})`)
+    await callE2E(page, { m: 'fitView', a: [sid] })
     await expect.poll(() => boardStatus(mcp.orch, sid), { timeout: 8000 }).toBe('running')
     // After spawn-success the board emits no further state until exit, so the forced idle
     // is the last writer and cannot be clobbered by a late spawn.
-    await evalIn(page, `window.__canvasE2E.setTerminalDown(${JSON.stringify(sid)})`)
+    await callE2E(page, { m: 'setTerminalDown', a: [sid] })
     await expect.poll(() => boardStatus(mcp.orch, sid), { timeout: 8000 }).toBe('idle')
     // The templated per-board resource agrees with the list (same bucket, id echoed).
     const res = await mcp.orch.readJson<{ id: string; status: string }>(
@@ -343,7 +343,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
   test('a browser that fails to load surfaces in canvas://attention', async ({ page, mcp }) => {
     // Nothing listens on :59999 -> connection refused -> the board reaches `failed`.
     const did = await seed(page, 'browser', { url: 'http://127.0.0.1:59999/' })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(did)})`)
+    await callE2E(page, { m: 'fitView', a: [did] })
     await expect.poll(() => boardStatus(mcp.orch, did), { timeout: 14000 }).toBe('failed')
     const attention =
       await mcp.orch.readJson<Array<{ id: string; status: string }>>('canvas://attention')
@@ -363,7 +363,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       droppedOlder: boolean
     }
     const oid = await seed(page, 'terminal')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(oid)})`)
+    await callE2E(page, { m: 'fitView', a: [oid] })
     await expect.poll(() => boardStatus(mcp.orch, oid), { timeout: 8000 }).toBe('running')
     // ~71 chars/line, 9 of them ANSI; 5000 lines ~= 355 KB raw > the 256 KB ring cap.
     const chunk = '\x1b[31m' + 'L'.repeat(60) + '\x1b[0m\n'
@@ -699,7 +699,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       .poll(() => boardLaunchCommand(page, id), { timeout: 6000 })
       .toBe(`echo ${sentinel}`)
     // …and actually RAN: the PTY output carries the sentinel (not a bare idle shell).
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     await expect.poll(() => boardStatus(mcp.orch, id), { timeout: 8000 }).toBe('running')
     await expect
       .poll(
@@ -946,19 +946,13 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(aId).not.toBe('')
     expect(bId).not.toBe('')
     expect(cId).not.toBe('')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(bId)})`)
+    await callE2E(page, { m: 'fitView', a: [bId] })
     await expect.poll(() => boardStatus(mcp.orch, bId), { timeout: 8000 }).toBe('running')
     await expect.poll(() => boardStatus(mcp.orch, cId), { timeout: 8000 }).toBe('running')
 
     // Draw the orchestration cables A->B and A->C (the routes), wait for the MAIN mirror to carry both.
-    await evalIn(
-      page,
-      `window.__canvasE2E.addConnector(${JSON.stringify(aId)}, ${JSON.stringify(bId)}, 'orchestration')`
-    )
-    await evalIn(
-      page,
-      `window.__canvasE2E.addConnector(${JSON.stringify(aId)}, ${JSON.stringify(cId)}, 'orchestration')`
-    )
+    await callE2E(page, { m: 'addConnector', a: [aId, bId, 'orchestration'] })
+    await callE2E(page, { m: 'addConnector', a: [aId, cId, 'orchestration'] })
     await expect
       .poll(
         async () => {
@@ -1077,7 +1071,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // Happy path: hand off an echo sentinel, drive the confirm modal, assert it lands in the PTY.
     const tId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
     expect(tId).not.toBe('')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(tId)})`)
+    await callE2E(page, { m: 'fitView', a: [tId] })
     await expect.poll(() => boardStatus(mcp.orch, tId), { timeout: 8000 }).toBe('running')
     const sentinel = 'CANVAS_MCP_HANDOFF_OK'
     const handoffP = mcp.orch.call('handoff_prompt', { boardId: tId, prompt: `echo ${sentinel}` })
@@ -1085,7 +1079,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(await pollEval(page, MODAL, 8000)).toBe(true)
     await evalIn(page, APPROVE)
     // Flip idle so the bounded await-idle returns promptly (the write already happened).
-    await evalIn(page, `window.__canvasE2E.setTerminalDown(${JSON.stringify(tId)})`)
+    await callE2E(page, { m: 'setTerminalDown', a: [tId] })
     expect(acked(await handoffP)).toBe(true)
     await expect
       .poll(
@@ -1119,7 +1113,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // Happy path: the call RESOLVES the moment the write lands (no await-idle, unlike handoff).
     const taId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
     expect(taId).not.toBe('')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(taId)})`)
+    await callE2E(page, { m: 'fitView', a: [taId] })
     await expect.poll(() => boardStatus(mcp.orch, taId), { timeout: 8000 }).toBe('running')
     const sentinel = 'CANVAS_MCP_ASSIGN_OK'
     const assignP = mcp.orch.call('assign_prompt', { boardId: taId, prompt: `echo ${sentinel}` })
@@ -1154,7 +1148,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       "setTimeout(()=>{clearInterval(t);console.log('BOOT_DONE');" +
       'process.stdin.pipe(process.stdout)},4000)"'
     const wId = await seed(page, 'terminal', { launchCommand: bootScript })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(wId)})`)
+    await callE2E(page, { m: 'fitView', a: [wId] })
     await expect.poll(() => boardStatus(mcp.orch, wId), { timeout: 8000 }).toBe('running')
     // Dispatch IMMEDIATELY — mid-boot, while BOOTING lines are still streaming.
     const sentinel = 'CANVAS_MCP_READINESS_OK'
@@ -1196,7 +1190,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // Happy path: a Ctrl-C has no echo, so verify via the audit trail (interrupt/dispatched).
     const tiId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
     expect(tiId).not.toBe('')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(tiId)})`)
+    await callE2E(page, { m: 'fitView', a: [tiId] })
     await expect.poll(() => boardStatus(mcp.orch, tiId), { timeout: 8000 }).toBe('running')
     const intP = mcp.orch.call('interrupt', { boardId: tiId })
     expect(await pollEval(page, MODAL, 8000)).toBe(true)
@@ -1204,12 +1198,16 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(acked(await intP)).toBe(true)
     await expect
       .poll(
-        () =>
-          evalIn<boolean>(
+        async () => {
+          const es = await apiCall<Array<{ type: string; targetId: string; status: string }>>(
             page,
-            `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
-              ` e.type === 'interrupt' && e.targetId === ${JSON.stringify(tiId)} && e.status === 'dispatched'))`
-          ),
+            'mcp.readAudit',
+            { limit: 50 }
+          )
+          return es.some(
+            (e) => e.type === 'interrupt' && e.targetId === tiId && e.status === 'dispatched'
+          )
+        },
         { timeout: 4000 }
       )
       .toBe(true)
@@ -1234,14 +1232,11 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const rbId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
     expect(raId).not.toBe('')
     expect(rbId).not.toBe('')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(rbId)})`)
+    await callE2E(page, { m: 'fitView', a: [rbId] })
     await expect.poll(() => boardStatus(mcp.orch, rbId), { timeout: 8000 }).toBe('running')
     // Draw the orchestration cable A->B (same store path as the real gesture) + wait for
     // the MAIN mirror to carry it (the cable IS the route).
-    await evalIn(
-      page,
-      `window.__canvasE2E.addConnector(${JSON.stringify(raId)}, ${JSON.stringify(rbId)}, 'orchestration')`
-    )
+    await callE2E(page, { m: 'addConnector', a: [raId, rbId, 'orchestration'] })
     await expect
       .poll(
         async () => {
@@ -1304,17 +1299,14 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const srcId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
     expect(srcId).not.toBe('')
     const dstId = await seed(page, 'terminal', { launchCommand: `node "${repl}" "${dump}"` })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(dstId)})`)
+    await callE2E(page, { m: 'fitView', a: [dstId] })
     await expect.poll(() => boardStatus(mcp.orch, dstId), { timeout: 8000 }).toBe('running')
     // READY visible ⇒ the REPL's `?2004h` (written before it) has flowed through onData ⇒ the
     // MAIN tracker has armed paste framing for this board.
     await expect
       .poll(async () => (await readTerminalText(page, dstId)) ?? '', { timeout: 10000 })
       .toContain('PASTE_REPL_READY')
-    await evalIn(
-      page,
-      `window.__canvasE2E.addConnector(${JSON.stringify(srcId)}, ${JSON.stringify(dstId)}, 'orchestration')`
-    )
+    await callE2E(page, { m: 'addConnector', a: [srcId, dstId, 'orchestration'] })
     await expect
       .poll(
         async () => {
@@ -1347,13 +1339,19 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // BYTE-EXACT dump above is the real integrity proof.
     await expect
       .poll(
-        () =>
-          evalIn<boolean>(
+        async () => {
+          const es = await apiCall<Array<{ type: string; targetId: string; status: string }>>(
             page,
-            `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
-              ` e.type === 'relay_prompt' && e.targetId === ${JSON.stringify(dstId)} &&` +
-              ` (e.status === 'dispatched' || e.status === 'dispatched_unconfirmed')))`
-          ),
+            'mcp.readAudit',
+            { limit: 50 }
+          )
+          return es.some(
+            (e) =>
+              e.type === 'relay_prompt' &&
+              e.targetId === dstId &&
+              (e.status === 'dispatched' || e.status === 'dispatched_unconfirmed')
+          )
+        },
         { timeout: 4000 }
       )
       .toBe(true)
@@ -1378,7 +1376,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const bId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
     expect(aId).not.toBe('')
     expect(bId).not.toBe('')
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(bId)})`)
+    await callE2E(page, { m: 'fitView', a: [bId] })
     await expect.poll(() => boardStatus(mcp.orch, bId), { timeout: 8000 }).toBe('running')
 
     // Mint a connected-tier token BOUND to board A (the seam minter the P3 provisioner uses) and
@@ -1420,10 +1418,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
 
       // Draw the orchestration cable A→B (same store path as the real gesture) and wait for the
       // MAIN mirror to carry it (canRelay reads that mirror).
-      await evalIn(
-        page,
-        `window.__canvasE2E.addConnector(${JSON.stringify(aId)}, ${JSON.stringify(bId)}, 'orchestration')`
-      )
+      await callE2E(page, { m: 'addConnector', a: [aId, bId, 'orchestration'] })
       await expect
         .poll(
           async () => {
@@ -1513,7 +1508,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
         { timeout: 6000 }
       )
       .toBe(true)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(wId)})`)
+    await callE2E(page, { m: 'fitView', a: [wId] })
     await expect.poll(() => boardStatus(mcp.orch, wId), { timeout: 8000 }).toBe('running')
     // A connected client bound to A relays into its freshly-spawned worker — authorized by the
     // auto-cable, still human-confirmed, and readiness-gated into the worker's ready REPL.
@@ -1569,14 +1564,14 @@ test.describe('@core @planning @mcp S5 file context on canvas://boards (over the
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s5mcp-', 'S5')
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A = 1\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
 
       // A File board bound to a.ts (carries FileBoard.path → the mirror's `path`).
       const fileId = await seed(page, 'file', { path: 'a.ts' })
 
       // A Planning board with a fileref dropped on it (the real S4 drop path → a `fileref` element).
       const planId = await seed(page, 'planning')
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+      await callE2E(page, { m: 'fitView', a: [planId] })
       await expect(page.locator(`.react-flow__node[data-id="${planId}"] .pl-well`)).toBeVisible({
         timeout: 6000
       })

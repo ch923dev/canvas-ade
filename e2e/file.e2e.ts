@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed, selectForInspector } from './helpers'
+import { callE2E, evalIn, mainCall, seed, selectForInspector } from './helpers'
 
 /**
  * Minimal typed view of the browser DOM globals these tree/title probes drive via `page.evaluate`.
@@ -58,7 +58,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'demo.ts', src)
 
       const id = await seed(page, 'file', { path: 'demo.ts' })
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'fitView', a: [id] })
       const node = `.react-flow__node[data-id="${id}"]`
 
       // 1) A seeded board is SELECTED → the live CodeMirror editor mounts straight away (the locked
@@ -68,13 +68,15 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await expect(editor).toContainText('greet')
 
       // 2) Font stepper: the Inspector's Appearance stepper grows the editor font (P5 — the
-      //    title-bar A-/A+ cluster is gone; read --cm-font off the host; DOM globals aren't typed
-      //    in the e2e tsconfig, so go through a string eval).
+      //    title-bar A-/A+ cluster is gone; read --cm-font off the host via locator.evaluate —
+      //    the selector is DATA, and DOM globals aren't typed in the e2e tsconfig, so globalThis
+      //    is any-cast in the page callback).
       const readFont = (): Promise<number> =>
-        evalIn<number>(
-          page,
-          `parseFloat(getComputedStyle(document.querySelector('${node} [data-test="file-editor"]')).getPropertyValue('--cm-font'))`
-        )
+        page
+          .locator(`${node} [data-test="file-editor"]`)
+          .evaluate((el) =>
+            parseFloat((globalThis as any).getComputedStyle(el).getPropertyValue('--cm-font'))
+          )
       const fontBefore = await readFont()
       await selectForInspector(page, id)
       const incBtn = page.locator(
@@ -225,7 +227,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'long.md', blocks.join('\n'))
 
       const id = await seed(page, 'file', { path: 'long.md' })
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await callE2E(page, { m: 'fitView', a: [id] })
       const node = `.react-flow__node[data-id="${id}"]`
 
       // Enter Split: source editor (left, board selected) + rendered preview (right).
@@ -240,28 +242,24 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await page.waitForTimeout(200)
 
       // Scroll the SOURCE scroller to the bottom and run the sync handler, then read both panes.
-      const res = await evalIn<{
-        srcRange: number
-        pvRange: number
-        beforePv: number
-        afterPv: number
-      }>(
-        page,
-        `(() => {
-          const root = ${JSON.stringify(node)}
-          const sc = document.querySelector(root + ' [data-test="file-editor"] .cm-scroller')
-          const pv = document.querySelector(root + ' .cm-md-preview')
-          const beforePv = pv.scrollTop
-          sc.scrollTop = sc.scrollHeight
-          sc.dispatchEvent(new Event('scroll'))
-          return {
-            srcRange: sc.scrollHeight - sc.clientHeight,
-            pvRange: pv.scrollHeight - pv.clientHeight,
-            beforePv,
-            afterPv: pv.scrollTop
-          }
-        })()`
-      )
+      // The board-node selector crosses as a STRUCTURED ARG (never spliced into eval'd code).
+      const res = await page.evaluate<
+        { srcRange: number; pvRange: number; beforePv: number; afterPv: number },
+        string
+      >((root) => {
+        const g = globalThis as any
+        const sc = g.document.querySelector(root + ' [data-test="file-editor"] .cm-scroller')
+        const pv = g.document.querySelector(root + ' .cm-md-preview')
+        const beforePv = pv.scrollTop
+        sc.scrollTop = sc.scrollHeight
+        sc.dispatchEvent(new g.Event('scroll'))
+        return {
+          srcRange: sc.scrollHeight - sc.clientHeight,
+          pvRange: pv.scrollHeight - pv.clientHeight,
+          beforePv,
+          afterPv: pv.scrollTop
+        }
+      }, node)
 
       // Preconditions: both panes overflow, and the preview began at the top.
       expect(res.srcRange, 'source pane has scroll range').toBeGreaterThan(0)
@@ -310,17 +308,21 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await expect(editor).toContainText('A_FILE', { timeout: 6000 })
 
       // Dispatch a synthetic file-ref drop (the MIME the tree emits) onto the board content; the
-      // board's onDrop should rebind its `path` to the dropped file.
-      await evalIn(
-        page,
-        `(() => {
-          const host = document.querySelector('${node} [data-test="file-editor"]')
-            || document.querySelector('${node} [data-test="file-snapshot"]')
-          const dt = new DataTransfer()
-          dt.setData('application/x-canvas-ade-fileref', JSON.stringify({ path: 'b.ts', label: 'b.ts' }))
-          host.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
-        })()`
-      )
+      // board's onDrop should rebind its `path` to the dropped file. Selector as a structured arg.
+      await page.evaluate((root) => {
+        const g = globalThis as any
+        const host =
+          g.document.querySelector(root + ' [data-test="file-editor"]') ||
+          g.document.querySelector(root + ' [data-test="file-snapshot"]')
+        const dt = new g.DataTransfer()
+        dt.setData(
+          'application/x-canvas-ade-fileref',
+          JSON.stringify({ path: 'b.ts', label: 'b.ts' })
+        )
+        host.dispatchEvent(
+          new g.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+        )
+      }, node)
 
       // Rebound to b.ts → the editor now shows b.ts content, read live from disk.
       await expect(editor).toContainText('B_FILE', { timeout: 6000 })
@@ -342,7 +344,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3drag-', 'Drag')
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'alpha.ts', 'export const A = 1\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
       // (a real user can't interact with the still-hidden, unmounted tree either).
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -390,7 +392,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       mkdirSync(join(tmp, 'pkg', 'sub'), { recursive: true })
       writeFileSync(join(tmp, 'pkg', 'sub', 'leaf.ts'), 'export const L = 1\n')
       writeFileSync(join(tmp, 'zzz.txt'), 'root sibling\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
       // (a real user can't interact with the still-hidden, unmounted tree either).
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -432,7 +434,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A = 1\n')
       await mainCall(electronApp, 'writeProjectFile', tmp, 'b.ts', 'export const B = 2\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
       // (a real user can't interact with the still-hidden, unmounted tree either).
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -495,7 +497,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3italic-', 'Italic')
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'note.ts', 'export const N = 1\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
       // (a real user can't interact with the still-hidden, unmounted tree either).
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -565,7 +567,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       for (const f of ['a.ts', 'b.ts', 'c.ts']) {
         await mainCall(electronApp, 'writeProjectFile', tmp, f, `export const X = '${f}'\n`)
       }
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
       // (a real user can't interact with the still-hidden, unmounted tree either).
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -620,7 +622,7 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3dot-', 'Dot')
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'x.ts', 'export const X = 1\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
       // (a real user can't interact with the still-hidden, unmounted tree either).
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -678,26 +680,36 @@ test.describe('@core @planning S4 planning file-reference chip (DnD drop + click
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s4chip-', 'Chip')
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A_FILE = 1\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
 
       // A Planning board on screen (fitView so its well has a real on-screen rect for the drop).
       const planId = await seed(page, 'planning')
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+      await callE2E(page, { m: 'fitView', a: [planId] })
       const wellSel = `.react-flow__node[data-id="${planId}"] .pl-well`
       await expect(page.locator(wellSel)).toBeVisible({ timeout: 6000 })
 
-      // Dispatch a synthetic file-ref drop (the MIME the tree emits) at the well centre.
-      await evalIn(
-        page,
-        `(() => {
-          const well = document.querySelector(${JSON.stringify(wellSel)})
-          const r = well.getBoundingClientRect()
-          const cx = r.left + r.width / 2, cy = r.top + r.height / 2
-          const dt = new DataTransfer()
-          dt.setData('application/x-canvas-ade-fileref', JSON.stringify({ path: 'a.ts', label: 'a.ts' }))
-          well.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: cx, clientY: cy }))
-        })()`
-      )
+      // Dispatch a synthetic file-ref drop (the MIME the tree emits) at the well centre — the
+      // well element is resolved by the locator (selector as DATA), the drop runs in-page.
+      await page.locator(wellSel).evaluate((well) => {
+        const g = globalThis as any
+        const r = well.getBoundingClientRect()
+        const cx = r.left + r.width / 2,
+          cy = r.top + r.height / 2
+        const dt = new g.DataTransfer()
+        dt.setData(
+          'application/x-canvas-ade-fileref',
+          JSON.stringify({ path: 'a.ts', label: 'a.ts' })
+        )
+        well.dispatchEvent(
+          new g.DragEvent('drop', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: dt,
+            clientX: cx,
+            clientY: cy
+          })
+        )
+      })
 
       // A fileref element now lives on the planning board, bound to a.ts.
       const fileRefPaths = (): Promise<string[]> =>
@@ -725,23 +737,36 @@ test.describe('@core @planning S4 planning file-reference chip (DnD drop + click
         )
       expect(await fileBoardPaths()).toEqual([]) // the drop made a chip, NOT a File board
 
-      // `count` press+release click cycles on the chip centre, ALL inside one renderer eval so their
-      // pointerup timeStamps are < DBLCLICK_MS apart (separate IPC round-trips could exceed it). The
-      // drag setup calls setPointerCapture, which throws on a synthetic pointer, so each pointerdown
-      // is wrapped; the click resolver is armed BEFORE that setup, so the window pointerups drive it.
+      // `count` press+release click cycles on the chip centre, ALL inside one renderer evaluate so
+      // their pointerup timeStamps are < DBLCLICK_MS apart (separate IPC round-trips could exceed
+      // it). The drag setup calls setPointerCapture, which throws on a synthetic pointer, so each
+      // pointerdown is wrapped; the click resolver is armed BEFORE that setup, so the window
+      // pointerups drive it. The chip is locator-resolved and `count` crosses as a REAL arg.
       const chipClicks = (count: number): Promise<unknown> =>
-        evalIn(
-          page,
-          `(() => {
-            const chip = document.querySelector(${JSON.stringify(chipSel)})
-            const r = chip.getBoundingClientRect()
-            const cx = r.left + r.width / 2, cy = r.top + r.height / 2
-            for (let i = 0; i < ${count}; i++) {
-              try { chip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: cx, clientY: cy })) } catch (e) {}
-              window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: cx, clientY: cy }))
+        page.locator(chipSel).evaluate((chip, n) => {
+          const g = globalThis as any
+          const r = chip.getBoundingClientRect()
+          const cx = r.left + r.width / 2,
+            cy = r.top + r.height / 2
+          for (let i = 0; i < n; i++) {
+            try {
+              chip.dispatchEvent(
+                new g.PointerEvent('pointerdown', {
+                  bubbles: true,
+                  button: 0,
+                  pointerId: 1,
+                  clientX: cx,
+                  clientY: cy
+                })
+              )
+            } catch {
+              /* pointerdown ctor/dispatch is best-effort — the old in-page IIFE swallowed it too */
             }
-          })()`
-        )
+            g.dispatchEvent(
+              new g.PointerEvent('pointerup', { bubbles: true, clientX: cx, clientY: cy })
+            )
+          }
+        }, count)
 
       // A SINGLE click only SELECTS the chip (so the resize handle is reachable) — it must NOT open
       // the file. Wait past DBLCLICK_MS so it can't be the first half of a double-click.

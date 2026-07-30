@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 import type { Page } from '@playwright/test'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, seed } from './helpers'
 
 /**
  * Voice V3 — pill + flyout + terminal injection (docs/research/2026-07-02-voice-to-text,
@@ -28,18 +28,39 @@ const voiceState = (
 }> => page.evaluate(() => (globalThis as any).__canvasE2E.voiceState())
 
 const chunks = (page: Page, id: string): Promise<string[]> =>
-  evalIn<string[]>(page, `window.__canvasE2E.readTerminalInputChunks(${JSON.stringify(id)})`)
+  callE2E<string[]>(page, { m: 'readTerminalInputChunks', a: [id] })
+
+/** Poll until a terminal's framebuffer contains `needle` — the read is a real-arg bridge call
+ *  and the comparison runs HERE in Node, so neither the id nor the needle is ever spliced into
+ *  page code (the terminalScrollback.e2e.ts poller shape). */
+async function pollTerminalHas(
+  page: Page,
+  id: string,
+  needle: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(
+        async () => {
+          const t = await callE2E<string | null>(page, { m: 'readTerminal', a: [id] })
+          return typeof t === 'string' && t.includes(needle)
+        },
+        { timeout: timeoutMs }
+      )
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** Seed a terminal, wait for its shell to be live, select it as the dictation target. */
 async function seedTarget(page: Page): Promise<string> {
   const id = await seed(page, 'terminal', { launchCommand: `echo ${READY}` })
-  const ok = await pollEval(
-    page,
-    `(() => { const t = window.__canvasE2E.readTerminal(${JSON.stringify(id)}); return typeof t === 'string' && t.includes(${JSON.stringify(READY)}); })()`,
-    15_000
-  )
+  const ok = await pollTerminalHas(page, id, READY, 15_000)
   expect(ok, 'terminal shell live').toBe(true)
-  await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
+  await callE2E(page, { m: 'setSelection', a: [[id]] })
   return id
 }
 
@@ -95,7 +116,7 @@ test.describe('@terminal @voice voice composer (stub engine → pill/flyout/inje
     await page.keyboard.type(' now')
     await expect.poll(async () => (await voiceState(page)).draft).toBe(`${STUB_FINAL} now`)
 
-    await evalIn(page, `window.__canvasE2E.clearTerminalInput(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'clearTerminalInput', a: [id] })
     await page.locator('[data-test="voice-flyout-send"]').click()
 
     // Exact PTY bytes: the paste chunk(s) carry the text (bracketed markers allowed),
@@ -122,7 +143,7 @@ test.describe('@terminal @voice voice composer (stub engine → pill/flyout/inje
   test('Insert pastes only — zero \\r reaches the PTY', async ({ page }) => {
     const id = await seedTarget(page)
     await dictateFinal(page)
-    await evalIn(page, `window.__canvasE2E.clearTerminalInput(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'clearTerminalInput', a: [id] })
     await page.locator('[data-test="voice-flyout-insert"]').click()
     await expect
       .poll(async () => (await chunks(page, id)).join(''), { timeout: 10_000 })
@@ -140,7 +161,7 @@ test.describe('@terminal @voice voice composer (stub engine → pill/flyout/inje
     const id = await seedTarget(page)
     // The primary flow: hands in the terminal (xterm stopPropagation()s bubble keydown —
     // the pill listens in the capture phase).
-    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'focusTerminal', a: [id] })
     await page.keyboard.press('Control+Shift+M')
     await expect
       .poll(async () => (await voiceState(page)).capturing, { timeout: 10_000 })

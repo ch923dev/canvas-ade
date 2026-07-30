@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { apiCall, evalIn, mainCall, seed } from './helpers'
 
 /**
  * @mcp External MCP servers — the net-new "add external MCP server" feature, e2e.
@@ -69,16 +69,13 @@ test('@mcp on-disk: an enabled server is written into a spawned claude terminal,
   const mcpFile = await mainCall<string>(electronApp, 'joinPath', tmp, '.mcp.json')
 
   // Register an http server (no headers) targeting claude, enabled — over the real IPC.
-  const saved = await evalIn<{ ok: boolean; id?: string }>(
-    page,
-    `window.api.mcpServers.save(${JSON.stringify({
-      name: 'e2e-disk-server',
-      enabled: true,
-      transport: 'http',
-      url: 'https://example.test/mcp',
-      targets: ['claude']
-    })})`
-  )
+  const saved = await apiCall<{ ok: boolean; id?: string }>(page, 'mcpServers.save', {
+    name: 'e2e-disk-server',
+    enabled: true,
+    transport: 'http',
+    url: 'https://example.test/mcp',
+    targets: ['claude']
+  })
   expect(saved.ok, 'save persisted').toBe(true)
   const id = saved.id as string
 
@@ -102,7 +99,7 @@ test('@mcp on-disk: an enabled server is written into a spawned claude terminal,
     })
 
     // Disable it → the onRegistryChanged cleanup removes the entry from the tracked project dir.
-    await evalIn(page, `window.api.mcpServers.setEnabled(${JSON.stringify(id)}, false)`)
+    await apiCall(page, 'mcpServers.setEnabled', id, false)
     await expect
       .poll(
         async () => {
@@ -114,6 +111,6 @@ test('@mcp on-disk: an enabled server is written into a spawned claude terminal,
       )
       .toBe(false)
   } finally {
-    await evalIn(page, `window.api.mcpServers.remove(${JSON.stringify(id)})`)
+    await apiCall(page, 'mcpServers.remove', id)
   }
 })

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { callE2E, evalIn, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -75,7 +75,7 @@ test.describe('@chrome command palette (real OS input)', () => {
     // the DOM so the real chord reaches the window keymap (a full-view TERMINAL's xterm
     // swallows Ctrl+K by design — that path is pinned as a shortcuts-sheet row instead).
     const id = await seed(page, 'browser')
-    await evalIn(page, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'openFullViewAnimated', a: [id] })
     await expect(page.locator('.fullview-scrim')).toBeVisible()
     await page.waitForTimeout(250)
 
@@ -96,7 +96,7 @@ test.describe('@chrome command palette (real OS input)', () => {
   }) => {
     const id = await seed(page, 'planning')
     await evalIn(page, `window.__canvasE2E.fitView()`)
-    await evalIn(page, `window.__canvasE2E.setSelection(${JSON.stringify([id])})`)
+    await callE2E(page, { m: 'setSelection', a: [[id]] })
     await page.waitForTimeout(200)
 
     await page.keyboard.press('Control+k')

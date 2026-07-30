@@ -1,6 +1,18 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, seed } from './helpers'
 import type { Page } from '@playwright/test'
+
+/** Poll a Node-side probe until truthy — `pollEval`'s boolean contract, but the probe reads
+ *  VALUES (locator counts / structured-arg evaluates); no runtime id ever enters an eval'd
+ *  code string (CodeQL js/bad-code-sanitization). */
+async function pollTrue(read: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  try {
+    await expect.poll(read, { timeout: timeoutMs }).toBeTruthy()
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** Read the current React Flow viewport zoom from the DOM transform. */
 async function rfZoom(page: Page): Promise<number> {
@@ -31,10 +43,11 @@ test.describe('@planning text create + edit (real OS input)', () => {
   }) => {
     const planId = await seed(page, 'planning', { w: 560, h: 420 })
 
-    // Confirm the board + its well mounted (React rendered) before driving input.
-    const wellSel = `.react-flow__node[data-id=${JSON.stringify(planId)}] .pl-well`
+    // Confirm the board + its well mounted (React rendered) before driving input. The selector
+    // is DATA for the locator API, not an eval sink.
+    const wellSel = `.react-flow__node[data-id="${planId}"] .pl-well`
     expect(
-      await pollEval(page, `!!document.querySelector('${wellSel}')`, 4000),
+      await pollTrue(async () => (await page.locator(wellSel).count()) > 0, 4000),
       'planning well mounted'
     ).toBe(true)
 
@@ -54,20 +67,18 @@ test.describe('@planning text create + edit (real OS input)', () => {
     // board into the Board Inspector (P3), but the S/N/X/C/D/A/P/E shortcuts stay the always-on
     // fast path — handled by the focused well's keydown (shortcutTool → setTool('text')). Focus
     // the well, then press x (real key via CDP, routed to the focused element).
-    await evalIn(page, `document.querySelector('${wellSel}').focus()`)
+    await page.locator(wellSel).focus()
     await page.keyboard.press('x')
 
-    // Read the well's top-left to compute absolute drag start coords.
-    const well = await evalIn<{ x: number; y: number }>(
-      page,
-      `(() => {
-         const n = document.querySelector('.react-flow__node[data-id=${JSON.stringify(planId)}]');
-         const w = n && n.querySelector('.pl-well');
-         if (!w) return { x: 200, y: 200 };
-         const r = w.getBoundingClientRect();
-         return { x: Math.round(r.left + 60), y: Math.round(r.top + 60) };
-       })()`
-    )
+    // Read the well's top-left to compute absolute drag start coords (id as a structured arg).
+    const well = await page.evaluate<{ x: number; y: number }, string>((id) => {
+      const g = globalThis as any
+      const n = g.document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']')
+      const w = n && n.querySelector('.pl-well')
+      if (!w) return { x: 200, y: 200 }
+      const r = w.getBoundingClientRect()
+      return { x: Math.round(r.left + 60), y: Math.round(r.top + 60) }
+    }, planId)
 
     // Drag a wide (220px) × tall (90px) box inside the well.
     // At zoom=1: board width = 220px (≥ MIN_TEXT_WIDTH_PX=40); board height = 90px
@@ -91,9 +102,9 @@ test.describe('@planning text create + edit (real OS input)', () => {
       clickCount: 1
     })
     // Wait for the draft-preview element to confirm the pointerdown was processed.
-    const downProcessed = await pollEval(
-      page,
-      `!!document.querySelector('.react-flow__node[data-id=${JSON.stringify(planId)}] .pl-well [aria-hidden="true"]')`,
+    const draftSel = `.react-flow__node[data-id="${planId}"] .pl-well [aria-hidden="true"]`
+    const downProcessed = await pollTrue(
+      async () => (await page.locator(draftSel).count()) > 0,
       2000
     )
     expect(downProcessed, 'draft textbox preview appeared after mouseDown').toBe(true)
@@ -116,16 +127,19 @@ test.describe('@planning text create + edit (real OS input)', () => {
     // getBoards() returns Board[] with .elements directly (PlanningBoard has
     // `elements: PlanningElement[]` — NOT `data.elements`; confirmed from e2eHooks.ts
     // and textToolbar.e2e.ts line 103).
-    const ok = await pollEval(
-      page,
-      `(() => {
-         const b = window.__canvasE2E.getBoards().find(b => b.id === ${JSON.stringify(planId)});
-         if (!b || b.type !== 'planning') return false;
-         const t = b.elements.find(e => e.kind === 'text');
-         return !!t && typeof t.width === 'number' && t.width >= 40 && t.fontSize === 'XL';
-       })()`,
-      4000
-    )
+    const ok = await pollTrue(async () => {
+      const boards = await callE2E<
+        Array<{
+          id: string
+          type: string
+          elements?: Array<{ kind: string; width?: unknown; fontSize?: unknown }>
+        }>
+      >(page, { m: 'getBoards' })
+      const b = boards.find((x) => x.id === planId)
+      if (!b || b.type !== 'planning') return false
+      const t = (b.elements ?? []).find((e) => e.kind === 'text')
+      return !!t && typeof t.width === 'number' && t.width >= 40 && t.fontSize === 'XL'
+    }, 4000)
     expect(ok, 'area text element with width >= 40 and fontSize XL appeared in the store').toBe(
       true
     )
@@ -144,25 +158,26 @@ test.describe('@planning text create + edit (real OS input)', () => {
     const planId = await seed(page, 'planning', { w: 520, h: 400 })
 
     // Inject an empty text element via patchBoard — same shape as textToolbar.e2e.ts uses.
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { elements: [
-        { id: 'txt', kind: 'text', x: 120, y: 140, text: '' }
-      ] })`
-    )
+    await callE2E(page, {
+      m: 'patchBoard',
+      a: [planId, { elements: [{ id: 'txt', kind: 'text', x: 120, y: 140, text: '' }] }]
+    })
 
     // Poll: focus the textarea (if not already auto-focused) then check the toolbar exists.
     // The toolbar class is .pl-text-toolbar (TextToolbar.tsx className="pl-text-toolbar").
     // The textarea is inside .pl-text (FreeText.tsx className="pl-text").
-    const shown = await pollEval(
-      page,
-      `(() => {
-         const n = document.querySelector('.react-flow__node[data-id=${JSON.stringify(planId)}]');
-         if (!n) return false;
-         const ta = n.querySelector('.pl-text textarea');
-         if (ta) ta.focus();
-         return !!(n.querySelector('.pl-text-toolbar'));
-       })()`,
+    const shown = await pollTrue(
+      () =>
+        page.evaluate((id) => {
+          const g = globalThis as any
+          const n = g.document.querySelector(
+            '.react-flow__node[data-id=' + JSON.stringify(id) + ']'
+          )
+          if (!n) return false
+          const ta = n.querySelector('.pl-text textarea')
+          if (ta) ta.focus()
+          return !!n.querySelector('.pl-text-toolbar')
+        }, planId),
       3000
     )
     expect(shown, 'TextToolbar appeared from editing alone (no grip-select)').toBe(true)

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval } from './helpers'
 
 /**
  * File-tree epic (S2) — the docked file tree end-to-end through the REAL stack:
@@ -21,10 +21,7 @@ test.describe('@chrome file tree side panel (S2)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'README.md', '# hi\n')
       await mainCall(electronApp, 'writeProjectFile', tmp, 'alpha.ts', 'export {}\n')
-      const res = await evalIn<{ status: string }>(
-        page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-      )
+      const res = await callE2E<{ status: string }>(page, { m: 'openProjectFromDisk', a: [tmp] })
       expect(res.status, 'project opened').toBe('open')
       // SLICE-013: the FileTree is lazy — reveal the panel so it mounts before we probe its rows.
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
@@ -62,7 +59,7 @@ test.describe('@chrome file tree side panel (S2)', () => {
     )
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'seed.txt', 'seed\n')
-      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
       // SLICE-013: the FileTree is lazy — reveal the panel so it mounts before we probe its rows.
       await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await pollEval(

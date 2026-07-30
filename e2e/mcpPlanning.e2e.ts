@@ -1,5 +1,5 @@
 import { test as base, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -319,7 +319,7 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     })
     expect(labelHeight).toBeGreaterThan(20) // > one 16px line → it wrapped + auto-grew
     // Frame the planning board + let the cards measure/grow, then capture a visual of the columns.
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await callE2E(page, { m: 'fitView', a: [planId] })
     await page.waitForTimeout(700)
     await page.screenshot({ path: 'test-results/planning-mcp-sections.png' })
   })

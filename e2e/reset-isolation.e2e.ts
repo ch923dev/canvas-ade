@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, evalIn, mainCall, pollEval, seed } from './helpers'
 
 /**
  * Test-isolation contract for `window.__canvasE2E.reset()`. `reset()` is the per-test
@@ -26,10 +26,7 @@ test.describe('@core reset() clean-slate contract (test isolation)', () => {
       // exactly as recovery.e2e.ts does — this is the state that leaks across specs.
       await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json', TOO_NEW)
       await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json.bak', TOO_NEW)
-      const res = await evalIn<{ status: string }>(
-        page,
-        `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-      )
+      const res = await callE2E<{ status: string }>(page, { m: 'openProjectFromDisk', a: [tmp] })
       expect(res.status, 'precondition: app is on the error WelcomeScreen').toBe('error')
       expect(
         await evalIn<boolean>(page, `document.querySelector('.react-flow__viewport') === null`),
@@ -39,11 +36,13 @@ test.describe('@core reset() clean-slate contract (test isolation)', () => {
       // reset() must restore the clean slate: canvas mounted + a seeded board renders.
       await evalIn(page, 'window.__canvasE2E.reset()')
       const id = await seed(page, 'planning')
-      const rendered = await pollEval(
-        page,
-        `document.querySelector('.react-flow__node[data-id=${JSON.stringify(id)}]') !== null`,
-        4000
-      )
+      // The id rides in a Playwright SELECTOR (data, not code); attached = the old
+      // `querySelector(...) !== null` presence probe, same 4s bound, same boolean contract.
+      const rendered = await page
+        .locator(`.react-flow__node[data-id="${id}"]`)
+        .waitFor({ state: 'attached', timeout: 4000 })
+        .then(() => true)
+        .catch(() => false)
       expect(rendered, 'seeded board renders after reset() (canvas re-mounted)').toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)

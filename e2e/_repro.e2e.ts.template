@@ -18,7 +18,7 @@
  * toBeVisible — a weak assertion "verifies" nothing.
  */
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { callE2E, mainCall, seed } from './helpers'
 
 test.describe('REPRO (scratch — do not commit)', () => {
   test('describe the bug in the expected/actual sense here', async ({ page, electronApp }) => {
@@ -29,13 +29,15 @@ test.describe('REPRO (scratch — do not commit)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
 
     // --- act: drive the exact reported steps ---------------------------------------
     // Real OS input (preserves the camera transform / hit-testing):
     //   await mainCall(electronApp, 'sendInput', { type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
-    // Renderer state:           await evalIn(page, 'window.__canvasE2E.<hook>(...)')
-    // Read board/runtime/term:  window.__canvasE2E.getBoards() / getRuntime(id) / readTerminal(id)
+    // Renderer state (REAL args, never spliced into an eval'd code string):
+    //   await callE2E(page, { m: '<hook>', a: [id, more] })
+    // Read board/runtime/term as VALUES, compare in Node:
+    //   await callE2E(page, { m: 'getBoards' }) / { m: 'getRuntime', a: [id] } / { m: 'readTerminal', a: [id] }
 
     // --- native-view evidence (Browser boards) -------------------------------------
     // A WebContentsView paints ABOVE all HTML, so page.screenshot() is BLANK there. The
@@ -47,11 +49,22 @@ test.describe('REPRO (scratch — do not commit)', () => {
       console.log('[repro] native-view PNG written:', ok, png)
 
       // --- assert: the EXPECTED (correct) behavior — fails before the fix ------------
-      const connected = await pollEval(
-        page,
-        `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === 'connected'; })()`,
-        10_000
-      )
+      // Read the VALUE with callE2E (id as a real arg) and compare HERE in Node — never
+      // interpolate a runtime id into an eval string (CodeQL js/bad-code-sanitization).
+      let connected = false
+      try {
+        await expect
+          .poll(
+            async () =>
+              (await callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] }))
+                ?.status,
+            { timeout: 10_000 }
+          )
+          .toBe('connected')
+        connected = true
+      } catch {
+        /* stays false — asserted with the message below */
+      }
       expect(connected, 'REPLACE THIS with the real expected outcome of the bug').toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)

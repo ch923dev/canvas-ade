@@ -1,9 +1,30 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { apiCall, callE2E, mainCall, pollCall, seed } from './helpers'
 
-const runtimeStatus = (id: string, status: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
-const osrNonBlank = (id: string) => `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
+/** The board's preview runtime, read as a VALUE (the id crosses as a real arg, never spliced). */
+const runtimeOf = (page: Page, id: string): Promise<{ status: string } | null> =>
+  callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] })
+
+/** Poll until the runtime reaches `status` — the comparison runs HERE in Node, so neither the
+ *  seeded id nor the wanted status ever enters page code. Same boolean contract as `pollEval`. */
+async function pollStatus(
+  page: Page,
+  id: string,
+  status: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await runtimeOf(page, id))?.status === status, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
+const pollNonBlank = (page: Page, id: string, timeoutMs: number): Promise<boolean> =>
+  pollCall(page, [{ m: 'osrCanvasNonBlank', a: [id] }], timeoutMs)
 
 test.describe('@preview browser board — screenshot (OSR offscreen window)', () => {
   test('captures the live OSR preview to an assets/ PNG file', async ({ page, electronApp }) => {
@@ -18,17 +39,18 @@ test.describe('@preview browser board — screenshot (OSR offscreen window)', ()
       const url = await mainCall<string>(electronApp, 'localUrl')
       const id = await seed(page, 'browser', { url, viewport: 'desktop' })
       await page.waitForTimeout(150)
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-      const connected = await pollEval(page, runtimeStatus(id, 'connected'), 12_000)
+      await callE2E(page, { m: 'fitView', a: [id] })
+      const connected = await pollStatus(page, id, 'connected', 12_000)
       expect(connected, 'connected before screenshot').toBe(true)
       // The OSR window must have painted before capturePage returns a non-blank frame; the
       // visible <canvas> going non-blank proves frames are flowing from the offscreen window.
-      const painted = await pollEval(page, osrNonBlank(id), 8000)
+      const painted = await pollNonBlank(page, id, 8000)
       expect(painted, 'OSR painted before screenshot').toBe(true)
 
-      const res = await evalIn<{ ok: boolean; assetId: string | null }>(
+      const res = await apiCall<{ ok: boolean; assetId: string | null }>(
         page,
-        `window.api.screenshotPreview(${JSON.stringify(id)})`
+        'screenshotPreview',
+        id
       )
       expect(res.ok, 'screenshot ok').toBe(true)
       expect(res.assetId, 'assetId returned (project open)').toBeTruthy()

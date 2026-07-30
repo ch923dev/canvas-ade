@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { apiCall, callE2E, evalIn, mainCall, seed } from './helpers'
 
 /**
  * @core Workspace isolation (orchestration S3) — the parallel-writers slice, against the REAL app.
@@ -76,14 +76,14 @@ function ledgerFor(boardId: string, now: number, tasks: Array<Record<string, unk
 
 /** Open a temp project and get the swarm board out of the way of the recap/digest chrome. */
 async function openBoard(page: Parameters<typeof seed>[0], tmp: string): Promise<string> {
-  await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+  await callE2E(page, { m: 'openProjectFromDisk', a: [tmp] })
   await page
     .getByRole('button', { name: /^no thanks$/i })
     .click({ timeout: 8000 })
     .catch(() => undefined)
   await evalIn(page, `window.__canvasE2E.closeDigest()`)
   const id = await seed(page, 'swarm')
-  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+  await callE2E(page, { m: 'fitView', a: [id] })
   return id
 }
 
@@ -195,10 +195,7 @@ test('@core the board renders the worktree chip, the overlap warning and the mer
     )
     expect(wrote).toBe(true)
 
-    expect(
-      (await evalIn<{ restored: boolean }>(page, `window.api.swarm.restore(${JSON.stringify(id)})`))
-        .restored
-    ).toBe(true)
+    expect((await apiCall<{ restored: boolean }>(page, 'swarm.restore', id)).restored).toBe(true)
 
     const board = page.locator('[data-test="swarm-board"]')
 

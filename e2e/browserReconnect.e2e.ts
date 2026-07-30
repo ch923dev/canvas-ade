@@ -1,10 +1,30 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { callE2E, seed } from './helpers'
 import { createServer, type Server } from 'http'
 import { once } from 'events'
 
-const runtimeStatus = (id: string, status: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+/** The board's preview runtime, read as a VALUE (the id crosses as a real arg, never spliced). */
+const runtimeOf = (page: Page, id: string): Promise<{ status: string } | null> =>
+  callE2E<{ status: string } | null>(page, { m: 'getRuntime', a: [id] })
+
+/** Poll until the runtime reaches `status` — the comparison runs HERE in Node, so neither the
+ *  seeded id nor the wanted status ever enters page code. Same boolean contract as `pollEval`. */
+async function pollStatus(
+  page: Page,
+  id: string,
+  status: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => (await runtimeOf(page, id))?.status === status, { timeout: timeoutMs })
+      .toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 async function freePort(): Promise<number> {
   const s = createServer()
@@ -22,9 +42,9 @@ test.describe('@preview browser board — auto-reconnect', () => {
     const url = `http://127.0.0.1:${port}/`
     const id = await seed(page, 'browser', { url, viewport: 'desktop' })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
 
-    const failed = await pollEval(page, runtimeStatus(id, 'load-failed'), 12_000)
+    const failed = await pollStatus(page, id, 'load-failed', 12_000)
     expect(failed, 'reaches load-failed while nothing is listening').toBe(true)
 
     // Now start a server on that exact port — the engine should auto-reload + connect.
@@ -35,7 +55,7 @@ test.describe('@preview browser board — auto-reconnect', () => {
     server.listen(port, '127.0.0.1')
     await once(server, 'listening')
     try {
-      const connected = await pollEval(page, runtimeStatus(id, 'connected'), 20_000)
+      const connected = await pollStatus(page, id, 'connected', 20_000)
       expect(connected, 'auto-reconnects without a manual reload').toBe(true)
     } finally {
       await new Promise<void>((r) => server.close(() => r()))

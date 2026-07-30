@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall } from './helpers'
+import { apiCall, mainCall } from './helpers'
 
 /**
  * PR-4 (Command-board prerequisite): the result synthesizer materializes a board's structured
@@ -105,11 +105,14 @@ test('@core never clobbers an explicit write_result', async ({ page, electronApp
     // Wait for the learned path to flow in (recap:get sees the fixture turns), then drive onSettle.
     await expect
       .poll(
-        () =>
-          evalIn<number>(
+        async () => {
+          const b = await apiCall<{ facts: { turns: { user: number; agent: number } } } | null>(
             page,
-            `window.api.recap.get(${JSON.stringify(id)}).then((b) => (b ? b.facts.turns.user + b.facts.turns.agent : 0))`
-          ),
+            'recap.get',
+            id
+          )
+          return b ? b.facts.turns.user + b.facts.turns.agent : 0
+        },
         { timeout: 10_000 }
       )
       .toBeGreaterThan(0)

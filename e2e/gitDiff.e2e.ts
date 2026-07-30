@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { callE2E, mainCall, seed } from './helpers'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -117,7 +117,7 @@ test.describe('@terminal gitDiff (read-only working-tree diff via the app-side s
     test.slow() // real PTY spawn + mirror propagation
     const id = await seed(page, 'terminal', { cwd: repo })
     // Measure the board so its PTY spawns — the spawn is what records the cwd in boardCwds.
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await callE2E(page, { m: 'fitView', a: [id] })
     // The diff appears once the mirror carries the board AND the PTY has spawned its cwd.
     await expect
       .poll(() => callGitDiff(electronApp, id), { timeout: 20_000 })

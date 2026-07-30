@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed, selectForInspector } from './helpers'
+import { apiCall, callE2E, evalIn, mainCall, seed, selectForInspector } from './helpers'
 
 /**
  * Recap redesign S1: the flip-to-recap proofs against the two-zone face.
@@ -194,11 +194,14 @@ test('@terminal facts render from the transcript with no LLM key', async ({
     // uses until the learned path lands and the facts see the fixture turns.
     await expect
       .poll(
-        () =>
-          evalIn<number>(
+        async () => {
+          const b = await apiCall<{ facts: { turns: { user: number; agent: number } } } | null>(
             page,
-            `window.api.recap.get(${JSON.stringify(id)}).then((b) => (b ? b.facts.turns.user + b.facts.turns.agent : 0))`
-          ),
+            'recap.get',
+            id
+          )
+          return b ? b.facts.turns.user + b.facts.turns.agent : 0
+        },
         { timeout: 10_000 }
       )
       .toBeGreaterThan(0)
@@ -254,16 +257,13 @@ test('@terminal stale recap + no LLM key: refresh surfaces the why-note', async 
     // Bind the RENDERER to the temp project and flush the seeded board into canvas.json —
     // summaryLoop.run() re-reads the doc from disk, so an unsaved board would report
     // skipped{board-missing} (a legit-null note) instead of exercising the LLM gate.
-    const opened = await evalIn<{ status: string }>(
-      page,
-      `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-    )
+    const opened = await callE2E<{ status: string }>(page, { m: 'openProjectFromDisk', a: [tmp] })
     expect(opened.status, 'fresh temp project opens clean').toBe('open')
     const id = await seed(page, 'terminal', { launchCommand: 'claude', agentTranscriptPath: 'x' })
-    const saved = await evalIn<{ ok: boolean }>(
-      page,
-      `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
-    )
+    // Serialize in the page, parse + save with REAL args (nothing else drives the store between
+    // the two round-trips, so the doc cannot change under us).
+    const doc = await callE2E<string>(page, { m: 'serializeDoc' })
+    const saved = await apiCall<{ ok: boolean }>(page, 'project.save', JSON.parse(doc), tmp)
     // C3: project.save now returns { ok, code? } (was a bare boolean).
     expect(saved.ok, 'seeded board flushed to canvas.json').toBe(true)
     const stale = mkNarrative()
@@ -323,16 +323,12 @@ test('@terminal manual refresh regenerates the narrative in place (mock LLM)', a
     // consent is decided - another scrim that would swallow the Inspector clicks).
     await evalIn<{ ok: boolean }>(page, `window.api.orchestration.setConsent('declined')`)
     // Bind the renderer + flush the board to disk (see the why-note spec) so run() finds it.
-    const opened = await evalIn<{ status: string }>(
-      page,
-      `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
-    )
+    const opened = await callE2E<{ status: string }>(page, { m: 'openProjectFromDisk', a: [tmp] })
     expect(opened.status, 'fresh temp project opens clean').toBe('open')
     const id = await seed(page, 'terminal', { launchCommand: 'claude' })
-    const saved = await evalIn<{ ok: boolean }>(
-      page,
-      `window.api.project.save(JSON.parse(window.__canvasE2E.serializeDoc()), ${JSON.stringify(tmp)})`
-    )
+    // Serialize in the page, parse + save with REAL args (see the why-note spec).
+    const doc = await callE2E<string>(page, { m: 'serializeDoc' })
+    const saved = await apiCall<{ ok: boolean }>(page, 'project.save', JSON.parse(doc), tmp)
     // C3: project.save now returns { ok, code? } (was a bare boolean).
     expect(saved.ok, 'seeded board flushed to canvas.json').toBe(true)
     await mainCall(electronApp, 'recordRecapSession', id, transcript)
@@ -340,11 +336,14 @@ test('@terminal manual refresh regenerates the narrative in place (mock LLM)', a
     // wait for the learned map entry to land (same poll as the facts spec)
     await expect
       .poll(
-        () =>
-          evalIn<number>(
+        async () => {
+          const b = await apiCall<{ facts: { turns: { user: number; agent: number } } } | null>(
             page,
-            `window.api.recap.get(${JSON.stringify(id)}).then((b) => (b ? b.facts.turns.user + b.facts.turns.agent : 0))`
-          ),
+            'recap.get',
+            id
+          )
+          return b ? b.facts.turns.user + b.facts.turns.agent : 0
+        },
         { timeout: 10_000 }
       )
       .toBeGreaterThan(0)
