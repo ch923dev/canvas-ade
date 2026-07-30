@@ -105,6 +105,26 @@ export function finiteDims(
 }
 
 /**
+ * Terminal-clip fix — the row-shed arithmetic shared by `fitWhole`'s synchronous shed and its
+ * deferred clip-verify pass. Given the current row count, the measured spill of the rendered grid
+ * past the well's clip boundary (`overflow = gridBottom − wellBottom`, screen px), and the
+ * rendered cell height, return the row count that pulls the (top-aligned) grid bottom back inside
+ * the well: each shed lifts the grid bottom by exactly one cell. Tolerates 1px of sub-pixel
+ * rounding (mirrors the e2e probe's tolerance); never sheds below one row; a non-positive cell
+ * height (unlaid-out well → zero rects) returns the input unchanged rather than looping.
+ */
+export function shedTargetRows(rows: number, overflow: number, cellH: number): number {
+  if (!(cellH > 0)) return rows
+  let r = rows
+  let ov = overflow
+  while (ov > 1 && r > 1) {
+    r -= 1
+    ov -= cellH
+  }
+  return r
+}
+
+/**
  * T2·D3 — the write-coalescer's fit-hold gate. PTY bytes render only when the board is live
  * (on-screen ∧ ≥ LOD), no resize-backstop snapshot is mid-flight, AND the grid has been fitted to
  * a real finite layout (`gridFitted`). Until `gridFitted`, incoming bytes are HELD so an adopt's

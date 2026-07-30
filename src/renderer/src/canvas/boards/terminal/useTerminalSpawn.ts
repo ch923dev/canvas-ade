@@ -50,6 +50,8 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { runBackstopFit } from './terminalResizeBackstop'
 import type { BackstopGate } from './terminalResizeBackstop'
+import { verifyAfterFit, cancelClipVerify, measureClipGeometry } from './terminalClipVerify'
+import type { ClipVerifySlot } from './terminalClipVerify'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
@@ -117,7 +119,8 @@ import {
   fitHoldReleased,
   shouldReleaseFitHold,
   buildSnapshot,
-  nextReceived
+  nextReceived,
+  shedTargetRows
 } from './terminalSpawnMath'
 export { conptyHint, fullViewScale, resolveSpawnArgs, nextStateAfterAdopt, finiteDims }
 
@@ -516,6 +519,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   }, [board.id, state])
   useEffect(() => () => useTerminalRuntimeStore.getState().clear(board.id), [board.id])
 
+  // Clip-verify watch window (terminal-clip fix) — semantics + rationale in terminalClipVerify.ts.
+  // Coalesced through this single slot (a newer fit cancels the pending chain); unmount kills it
+  // (the term-identity guard would no-op it anyway — just don't leave a rAF running into a
+  // torn-down tree). Scheduled by fitWhole's tail via verifyAfterFit.
+  const clipVerifyRef = useRef<ClipVerifySlot>({ handle: 0, late: 0 })
+  useEffect(() => () => cancelClipVerify(clipVerifyRef.current), [])
+
   // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
   // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it
   // overcounts by one row; the 12px top padding then pushes the grid past the well bottom by a
@@ -595,24 +605,23 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // for the opposite ordering.
       portRef.current?.postMessage({ t: 'resize', cols: term.cols, rows: term.rows })
     }
-    // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
-    // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
-    // `screenRef` is the term.open() host; `.closest('.nowheel')` walks up to the screenWrap.
-    const screenEl = screenRef.current?.querySelector('.xterm-screen') as HTMLElement | null
-    const wellEl = screenRef.current?.closest('.nowheel') as HTMLElement | null
-    if (!screenEl || !wellEl) return
-    // Compute the final row count in JS and call term.resize AT MOST ONCE (one PTY IPC instead of N).
-    // Each row shed lifts the (top-aligned) grid bottom by exactly one cell height (font-fixed,
-    // constant across sheds), so we can arithmetically determine the target row count upfront.
-    const grid = screenEl.getBoundingClientRect()
-    const cellH = grid.height / Math.max(1, term.rows) // rendered cell height (font-fixed)
-    let rows = term.rows
-    let overflow = grid.bottom - wellEl.getBoundingClientRect().bottom
-    while (overflow > 1 && rows > 1) {
-      rows -= 1
-      overflow -= cellH // each shed lifts the (top-aligned) grid bottom by one cell
-    }
-    if (rows !== term.rows) term.resize(term.cols, rows) // single PTY resize
+    // Measure the SAME geometry the Task-11 probe (terminalGeometry) reads — the rendered
+    // `.xterm-screen` grid vs the `.nowheel` well that clips it (measureClipGeometry) — and
+    // shed to the whole-cell row count with AT MOST ONE term.resize (one PTY IPC instead of N).
+    const m = measureClipGeometry(screenRef.current, term.rows, term.cols)
+    if (!m) return
+    const rows = shedTargetRows(m.rows, m.overflow, m.cellH)
+    if (rows !== m.rows) term.resize(m.cols, rows) // single PTY resize
+    // Clip-proofing (terminal-clip fix): the rect above is only trustworthy when xterm applied
+    // this fit's row-count change synchronously — under load the DOM reflow lands 1-2 frames
+    // later, the stale rect reads CLEAN, the shed skips, and the real spill materializes after
+    // this function returned. The deferred watch window catches it (terminalClipVerify.ts);
+    // every getter reads live state at tick time, so a mid-window respawn/portal-hop is safe.
+    verifyAfterFit(clipVerifyRef.current, {
+      term: () => (termRef.current === term ? term : null),
+      host: () => screenRef.current,
+      backstopInFlight: () => resizeBackstopRef.current
+    })
     // Any real fit establishes the grid (S3): with the full-view freeze gone, a session born in
     // full view must ALSO establish, so its exit refit rides the lossless backstop instead of a
     // plain reflow. (Pre-S3 this was in-canvas-only — the freeze keyed off an in-canvas base.)
