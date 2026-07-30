@@ -60,6 +60,72 @@ async function readMarkers(page: Page, id: string): Promise<string[]> {
   return markers(await readBuf(page, id))
 }
 
+// ── Phase-A flake instrumentation (scrollback-flake diagnosis lane, 2026-07-30) ──
+// Logs, at each step, exactly what the predicates already read (values come back over
+// callE2E; the read + serialization happen HERE in Node — nothing is spliced into page
+// code). `terminalGeometry` is node-scoped so it reads null while the xterm lives in the
+// full-view portal — that null is itself signal (in-modal probes rely on counterScale).
+async function logProbe(page: Page, id: string, tag: string): Promise<void> {
+  const s = await scaleOf(page, id).catch(() => 'ERR')
+  const g = await callE2E<unknown>(page, { m: 'terminalGeometry', a: [id] }).catch(() => 'ERR')
+  const nMarkers = markers(await readBuf(page, id).catch(() => null)).length
+  console.log(`[scrollback-probe] ${tag} ${JSON.stringify({ s, g, nMarkers })}`)
+}
+
+/** Camera forensics: where the viewport sits when a test begins / after its zoom call —
+ *  pins down which spec/test leaves the camera at the position that hides the seeded board. */
+async function logCamera(page: Page, tag: string): Promise<void> {
+  const vp = await callE2E<{ x: number; y: number; zoom: number }>(page, {
+    m: 'getViewport',
+    a: []
+  }).catch(() => null)
+  console.log(`[scrollback-probe] ${tag} ${JSON.stringify({ vp })}`)
+}
+
+/** Frame the seeded board fully in view at the target zoom before any render-dependent step.
+ *  A predecessor spec can leave the camera panned anywhere (reset() deliberately keeps it — the
+ *  step-4 camera contract), and an off-viewport terminal RENDERS NOTHING: the Lane-A liveness gate
+ *  holds its PTY bytes until the board is visible. That hold was the paired-adjacency failure
+ *  root-caused in docs/reviews/2026-07-30-terminalScrollback-non1zoom-flake.md — so each test
+ *  frames its own board instead of trusting the inherited camera. Fit THEN zoom: fitCameraInstant
+ *  centers the board (re-fit each poll tick — the RF measurement race), and the center-anchored
+ *  zoomTo keeps that center, so the board stays on-screen at the target zoom. Every board in this
+ *  spec fits fully inside the window at its target zoom, so full containment is the settle
+ *  predicate. All reads come back as VALUES over callE2E; the geometry compare runs HERE in Node
+ *  (the two `evalIn` literals are fixed text — nothing is spliced into page code). */
+async function ensureBoardInView(page: Page, id: string, zoom: number): Promise<void> {
+  const framed = async (): Promise<boolean> => {
+    await callE2E(page, { m: 'fitCameraInstant', a: [id] })
+    await callE2E(page, { m: 'setZoom', a: [zoom] })
+    const vp = await callE2E<{ x: number; y: number; zoom: number } | null>(page, {
+      m: 'getViewport',
+      a: []
+    })
+    const b = (
+      await callE2E<Array<{ id: string; x: number; y: number; w: number; h: number }> | null>(
+        page,
+        { m: 'getBoards', a: [] }
+      )
+    )?.find((bd) => bd.id === id)
+    const winW = await evalIn<number>(page, `window.innerWidth`)
+    const winH = await evalIn<number>(page, `window.innerHeight`)
+    if (!vp || !b || Math.abs(vp.zoom - zoom) > 1e-6) return false
+    const left = b.x * vp.zoom + vp.x
+    const top = b.y * vp.zoom + vp.y
+    return (
+      left >= -2 && top >= -2 && left + b.w * vp.zoom <= winW + 2 && top + b.h * vp.zoom <= winH + 2
+    )
+  }
+  let ok = true
+  try {
+    await expect.poll(framed, { timeout: 8000 }).toBe(true)
+  } catch {
+    ok = false
+  }
+  if (!ok) await logCamera(page, 'ensure-in-view:failed')
+  expect(ok, 'board framed fully in view at the target zoom').toBe(true)
+}
+
 /** Poll a predicate over the live counter-scale. The comparison runs HERE, in Node, so a baseline
  *  like `colsBefore` never has to reach the page at all. Same boolean contract as `pollEval`. */
 async function pollScale(
@@ -135,16 +201,53 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
   async function fillBuffer(page: Page, id: string): Promise<void> {
     // best-effort, exactly as before: the buffer asserts below are the real gate
     await pollCall(page, [{ m: 'terminalMounted', a: [id] }], 8000)
-    expect(
-      await pollBuf(page, id, (buf) => buf.includes('process exited'), 8000),
-      'shell exited (PTY drained — no further output)'
-    ).toBe(true)
+    const exited = await pollBuf(page, id, (buf) => buf.includes('process exited'), 8000)
+    if (!exited) {
+      // Phase-A forensics for the paired-adjacency failure (this exact assert, every repro):
+      // discriminates "board off-viewport ⇒ Lane-A liveness gate HOLDS the PTY bytes"
+      // (held > 0, live false, buf empty — test-side visibility assumption) from "liveness
+      // flag stale while visible" (live false but board ∩ viewport ≠ ∅ — a production bug)
+      // from "PTY never spawned/emitted" (held 0, buf empty).
+      const mounted = await callE2E<boolean>(page, { m: 'terminalMounted', a: [id] }).catch(
+        () => 'ERR'
+      )
+      const live = await callE2E<boolean>(page, { m: 'terminalLive', a: [id] }).catch(() => 'ERR')
+      const held = await callE2E<number>(page, { m: 'terminalHeldBytes', a: [id] }).catch(
+        () => 'ERR'
+      )
+      const vp = await callE2E<{ x: number; y: number; zoom: number }>(page, {
+        m: 'getViewport',
+        a: []
+      }).catch(() => null)
+      const boards = await callE2E<
+        Array<{ id: string; x: number; y: number; w: number; h: number }>
+      >(page, { m: 'getBoards', a: [] }).catch(() => null)
+      const b = boards?.find((bd) => bd.id === id)
+      const buf = await readBuf(page, id)
+      const win = await evalIn(page, `window.innerWidth + 'x' + window.innerHeight`)
+      console.log(
+        `[scrollback-probe] fill:exit-marker-missing ${JSON.stringify({
+          mounted,
+          live,
+          held,
+          vp,
+          win,
+          board: b ? { x: b.x, y: b.y, w: b.w, h: b.h } : null,
+          buf: buf === null ? null : { len: buf.length, tail: buf.slice(-160) }
+        })}`
+      )
+    }
+    expect(exited, 'shell exited (PTY drained — no further output)').toBe(true)
     await callE2E(page, { m: 'focusTerminal', a: [id] })
     await callE2E(page, { m: 'resetTerminalWrite', a: [id, WRITE_LINES] })
-    expect(
-      await pollBuf(page, id, (buf) => markers(buf).length === EXPECTED_MARKERS.length, 6000),
-      'clean written block present before the round-trip'
-    ).toBe(true)
+    const clean = await pollBuf(
+      page,
+      id,
+      (buf) => markers(buf).length === EXPECTED_MARKERS.length,
+      6000
+    )
+    if (!clean) await logProbe(page, id, 'fill:write-incomplete')
+    expect(clean, 'clean written block present before the round-trip').toBe(true)
   }
 
   // The async backstop rewrite parses over frames — never diff markers mid-parse.
@@ -160,7 +263,8 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
     // frozen grid letterboxed the width (the user's "dead space at the right"). S3 must fill
     // that slack with real columns: cols in full view STRICTLY exceed the in-canvas count.
     const id = await seed(page, 'terminal', { launchCommand: 'exit', w: 520, h: 520 })
-    await callE2E(page, { m: 'setZoom', a: [1] }) // snapped working zoom (the common maximize case)
+    await logCamera(page, 't1:post-seed')
+    await ensureBoardInView(page, id, 1) // snapped working zoom (the common maximize case)
     await fillBuffer(page, id)
 
     expect(await readMarkers(page, id), 'sanity: all 120 lines present before').toEqual(
@@ -221,7 +325,8 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
     // letterbox and could hide the agent's input. The S3 refit grows rows to fill the modal
     // height (pre-S3 this was the rows-only fill hook; now the backstop fit owns both axes).
     const id = await seed(page, 'terminal', { launchCommand: 'exit', w: 900, h: 200 })
-    await callE2E(page, { m: 'setZoom', a: [1] })
+    await logCamera(page, 't2:post-seed')
+    await ensureBoardInView(page, id, 1)
     await fillBuffer(page, id)
 
     const inCanvasRows = await settledRows(page, id)
@@ -279,16 +384,18 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
   }) => {
     await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '${PINNED}')`)
     const id = await seed(page, 'terminal', { launchCommand: 'exit' })
+    await logCamera(page, 't3:post-seed')
     // A non-1 camera zoom: under the DOM renderer the in-canvas host rides the camera transform
     // directly (NO counter-scale — the render font stays pinned regardless of zoom). Full view
     // flips to the portal (font scales up via fullViewScale, then the S3 backstop refit) and back.
     // cols settle differently across that transition, but NO LINE may be lost/duped.
-    await callE2E(page, { m: 'setZoom', a: [1.5] })
+    await ensureBoardInView(page, id, 1.5)
     expect(
       await pollEval(page, `Math.abs(window.__canvasE2E.getZoom() - 1.5) < 1e-6`, 4000),
       'camera settled at 1.5 (render font stays pinned in-canvas)'
     ).toBe(true)
     await fillBuffer(page, id)
+    await logProbe(page, id, 'nz:filled')
 
     expect(await readMarkers(page, id), 'sanity: all 120 lines present before').toEqual(
       EXPECTED_MARKERS
@@ -296,18 +403,37 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
 
     await callE2E(page, { m: 'setFullView', a: [id] })
     expect(await pollEval(page, IN_MODAL, 4000), 'relocated to modal').toBe(true)
+    await logProbe(page, id, 'nz:in-modal')
     // Full view scales the render font up (Pure A1's magnification is preserved) — font > pinned.
+    // NOTE (Phase A): single-shot read — a null counterScale here reads as 0 and fails without
+    // a poll; the probe line above records what the read actually saw.
     expect(
       (await scaleOf(page, id))?.effectiveFont ?? 0,
       'font scaled up in full view'
     ).toBeGreaterThanOrEqual(PINNED)
     await callE2E(page, { m: 'setFullView', a: [null] })
     expect(await pollEval(page, `!(${IN_MODAL})`, 4000), 'back on canvas').toBe(true)
+    await logProbe(page, id, 'nz:back-on-canvas')
 
     await awaitMarkersSettled(page, id)
-    expect(
-      await readMarkers(page, id),
-      'every line survives the non-1-zoom full-view round-trip'
-    ).toEqual(EXPECTED_MARKERS)
+    const after = await readMarkers(page, id)
+    // Marker forensics BEFORE the assert: a lost line shows as `missing`, a duplicated one as
+    // `duped`, a reorder as inOrder:false — the toEqual diff alone buries this in 120 lines.
+    const counts = new Map<string, number>()
+    for (const m of after) counts.set(m, (counts.get(m) ?? 0) + 1)
+    console.log(
+      `[scrollback-probe] nz:final ${JSON.stringify({
+        n: after.length,
+        missing: EXPECTED_MARKERS.filter((m) => !counts.has(m)).slice(0, 12),
+        duped: [...counts.entries()]
+          .filter(([, c]) => c > 1)
+          .map(([m]) => m)
+          .slice(0, 12),
+        inOrder: after.join(',') === EXPECTED_MARKERS.join(',')
+      })}`
+    )
+    expect(after, 'every line survives the non-1-zoom full-view round-trip').toEqual(
+      EXPECTED_MARKERS
+    )
   })
 })
