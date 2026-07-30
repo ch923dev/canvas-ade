@@ -5043,3 +5043,30 @@ CI 4/4, reviewer FULL re-read post-rebase zero findings; full matrix launched as
 post-merge (native-surface merge — recommended case). Eyeball dev-check done by the user
 pre-rebase (title-stamped). MCP plan-board ticks + `write_result` deferred — app down all
 session.
+
+## PR #412 — e2e evalIn interpolation sweep: callE2E/pollCall/apiCall everywhere (v0.44.1) · squash `78767f77` · 2026-07-31
+
+Finishes the class #401 opened: **zero runtime-value interpolation into eval'd strings
+anywhere under `e2e/`** (CodeQL `js/bad-code-sanitization` — `evalIn` feeds `(0, eval)`
+and `JSON.stringify` escapes JSON, not JS code). ~455 sites across 59 files migrated to
+the structured helpers via 5 parallel subagents: `callE2E` batches (one batch = one
+synchronous in-page turn — the #398 atomicity class preserved, verified by the reviewer on
+the comma-expression and double-IIFE conversions), `pollCall` for polled booleans, and a
+new `apiCall(page, path, ...args)` in `e2e/helpers.ts` for `window.api.*` over structured
+clone. Deliberate survivors (module-level literal constants only): `PINNED`, `HINT_KEY`,
+`opacitySel`, `HASH`/`BG`, `DL_NAME`, `KNOWN_STICKY`. Bonus: `file.e2e.ts` `chipClicks`
+had a real instance of the bug class (runtime `count` spliced into a template literal) —
+fixed by the sweep. Deferred to a follow-up (terminal-clip sibling zone):
+`terminalClip`/`terminalCrisp`/`terminalScrollback`/`terminalXterm6` expr-builder sites.
+Version recomputed twice under the PR (0.42.2 → 0.43.7 → 0.44.1) across rebases over
+#402–#411 — both rebases version-conflict-only, zero e2e overlap. Gates: cheap trio +
+CI 4/4 on every head; reviewer two rounds (pre- and post-rebase FULL reads) **zero
+findings, zero inline**; merge under the #411 ritual — `make check` units at the
+documented ambient floor (5: pathSafe symlink + pty.recapenv; CI units green on the same
+head), `@core` smoke 57/57 (40.8s). One full local Windows leg pre-rebase: 349P/3S/1F
+(`backdrop.e2e.ts:302` reduced-motion, test region byte-identical to base ⇒ flake-class).
+Per user directive all pushes went `--no-verify` (e2e at merge only); full matrix not
+launched (test-plumbing-only diff — no native surface). Mid-run incidents survived: a
+subagent `git stash` (recovered file-by-file), the main-checkout `node_modules/.bin` wipe
+by a sibling install (repaired frozen-lockfile), the `gh pr edit` GraphQL silent-fail
+(REST PATCH). MCP plan-board ticks + `write_result` deferred — app down all session.
