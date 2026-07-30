@@ -46,7 +46,8 @@ import { registerMicPermissionPosture } from './micPermission'
 import { disposeVoiceSession, registerVoiceHandlers } from './voiceIpc'
 import { applyVoiceBootEnv, runVoiceSpikeGate } from './voiceBoot'
 import { applyDevProfileIsolation } from './profileIsolation'
-import { startLocalServer, type LocalServer } from './localServer'
+import { startLocalServerIfNeeded, type LocalServer } from './localServer'
+import { bootTiming, markFirstPaint } from './bootTiming'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
@@ -176,6 +177,10 @@ let resultSynth: ResultSynthesizer | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
+// Audit R8: the boot timeline. `moduleLoad` is the first thing our JS can observe; everything
+// before it (Chromium/V8 start-up) is covered because the anchor is process CREATION time.
+bootTiming.mark('moduleLoad')
+
 // Dev profile isolation (profileIsolation.ts): every unpackaged instance gets a PER-CHECKOUT
 // userData (main-checkout dev, worktree devs, the e2e/smoke harnesses), so concurrent instances
 // never share a Chromium profile or the app's JSON stores — the "close all Expanse windows
@@ -238,7 +243,13 @@ function createWindow(): void {
   // `quitting` latch). Re-armed here so a tray-reopened window is guarded like the first.
   attachCloseGuard(mainWindow)
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // R8's boot-to-first-paint endpoint: `ready-to-show` is Chromium's "the renderer has painted a
+  // frame, showing now will not flash" signal, which is the closest honest proxy for first paint
+  // available in MAIN. Marked BEFORE show() so the mark is not charged for the window animation.
+  mainWindow.on('ready-to-show', () => {
+    markFirstPaint({ userDataDir: app.getPath('userData'), packaged: app.isPackaged })
+    mainWindow?.show()
+  })
 
   // BUG-005: offscreen preview renderers + the Mermaid worker are NOT torn down
   // automatically with their window — close them on window destruction so a macOS
@@ -379,6 +390,7 @@ if (!gotSingleInstanceLock) {
 if (app.isPackaged && gotSingleInstanceLock) deepLinks.installPackagedHandlers()
 
 app.whenReady().then(async () => {
+  bootTiming.mark('whenReady')
   // A second packaged instance (no lock) is already quitting — don't build a window or wire IPC.
   if (!gotSingleInstanceLock) return
   // Voice V2/V5 spike gate (voiceBoot.ts): prove the sherpa addon loads in THIS layout
@@ -485,22 +497,27 @@ app.whenReady().then(async () => {
     recordRecapHookDir(userData, dir, cwd)
   })
 
-  // The local preview server is a convenience (dev/preview fallback URL), not a hard
-  // boot dependency. If listen() fails (EACCES from AV/firewall loopback denial,
-  // EMFILE/ENFILE under fd exhaustion, ENETDOWN), surface a clear diagnostic and
-  // degrade gracefully — boot the window with an empty fallback URL rather than
-  // crashing to app.exit(1) via the uncaughtException sink with no message.
-  let defaultPreviewUrl = ''
-  try {
-    localServer = await startLocalServer()
-    defaultPreviewUrl = localServer.url
-  } catch (err) {
-    console.error(
-      'Could not bind local preview server on 127.0.0.1 — continuing without it. ' +
-        'Boards open with an explicit URL still work.',
-      err
-    )
-  }
+  // ── Local fixture server: TEST SURFACE ONLY (audit R8 / P-4) ──────────────────────────────
+  // localServer.ts serves hardcoded fixture HTML (`/`, `/static`, `/static2`, `/download`,
+  // `/json`). It is NOT the MCP transport — MCP has its own loopback server, started lazily by
+  // createMcpBoot/ensureMcp below. Its URL lands in exactly one local, `defaultPreviewUrl`, whose
+  // only consumers are installE2EMain (gated __ENABLE_E2E_MAIN__ ∧ CANVAS_E2E) and runSelfTest
+  // (gated CANVAS_SMOKE). In a distributed build the bound port is read by NOTHING — yet every
+  // user paid an AV/firewall-inspected loopback bind on the critical boot path, ahead of the 17
+  // handler registrations and createWindow().
+  //
+  // So it now starts only where something reads it, and EAGERLY there: the 26 `@preview` specs
+  // and the smoke self-test see the identical server they always did, and `is.dev` keeps every
+  // fixture route serving under `pnpm dev` (AUDIT §9 item 4).
+  //
+  // The BUG-026/027 handling below is kept verbatim — it is careful and correct, it was merely
+  // guarding a server production does not need. A listen() failure (EACCES from an AV/firewall
+  // loopback denial, EMFILE/ENFILE under fd exhaustion, ENETDOWN) must degrade with a diagnostic,
+  // never crash to app.exit(1) through the uncaughtException sink.
+  const local = await startLocalServerIfNeeded({ isDev: is.dev, env: process.env })
+  localServer = local.server
+  const defaultPreviewUrl = local.url
+  bootTiming.mark('localServer', { localServer: local.status })
   registerPtyHandlers(ipcMain, () => mainWindow)
   // PTY-host boot (DESIGN.md 2026-07-12): failure notifier (muted headless) + reattach warm-up.
   bootPtyHost({ muted: process.env.CANVAS_E2E === '1' || Boolean(SMOKE) })
@@ -1087,6 +1104,11 @@ app.whenReady().then(async () => {
   }
   // (The MCP dispatch audit trail is now registered earlier, before startMcpServer — BUG-025.)
 
+  // R8: everything between `whenReady` and here is boot work that runs BEFORE any window exists —
+  // the 28 register*Handlers() calls plus the local-server bind this phase gated off. Window
+  // construction itself is bracketed by this mark and `readyToShow`, so it needs no mark of its
+  // own (index.ts sits at its file-size pin; see eslint.config.mjs).
+  bootTiming.mark('beforeCreateWindow')
   createWindow()
   // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
   // `onSettle` deterministically (it is created above in this same setup scope).

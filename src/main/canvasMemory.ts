@@ -19,6 +19,9 @@ const GITIGNORE = '.gitignore'
 /** S2 run-ledger filename parts — the ONE place the `run-<id>.json` shape is spelled. */
 const RUN_PREFIX = 'run-'
 const RUN_SUFFIX = '.json'
+/** `board-<id>.md` — the Tier-2 summary sidecar. Mirrors `paths.board()`. */
+const BOARD_PREFIX = 'board-'
+const BOARD_SUFFIX = '.md'
 
 /**
  * Default-private (ADR 0009): track ONLY the canvas document. The binary asset blobs, the
@@ -77,6 +80,14 @@ export interface CanvasMemory {
   writeIndex(md: string): void
   writeProject(md: string): void
   readBoard(id: string): string | undefined
+  /**
+   * Audit R11/DL-2: every board id that HAS a cached summary on disk, in ONE `readdirSync`.
+   * `readBoard(id) === undefined` was the only way to ask "is this summary present?", and it costs
+   * an `existsSync` PLUS a full `readFileSync` of a file the caller then discards — 2 sync fs calls
+   * per board on the `project:open` IPC thread. Presence is a directory question, so ask the
+   * directory once. Same `safeBoardId` re-guard as `listRunIds`.
+   */
+  listBoardIds(): string[]
   /** S1: JSON twin of writeBoard/readBoard for `board-<id>.recap.json` (same id guard). */
   writeBoardRecap(id: string, data: unknown): boolean
   readBoardRecap(id: string): unknown
@@ -176,6 +187,21 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     readBoard(id) {
       if (!safeBoardId(id)) return undefined
       return readMd(paths.board(id))
+    },
+    listBoardIds() {
+      try {
+        return (
+          readdirSync(memoryDir)
+            // `board-<id>.recap.json` shares the prefix but not the extension, so the `.md` test
+            // keeps the two sidecar families apart.
+            .filter((f) => f.startsWith(BOARD_PREFIX) && f.endsWith(BOARD_SUFFIX))
+            .map((f) => f.slice(BOARD_PREFIX.length, -BOARD_SUFFIX.length))
+            // Re-guard: a hand-dropped `board-../x.md` must never be reported as a live id.
+            .filter((id) => safeBoardId(id))
+        )
+      } catch {
+        return [] // no memory dir yet (or unreadable) → nothing cached
+      }
     },
     writeBoardRecap(id, data) {
       if (!safeBoardId(id)) return false

@@ -38,7 +38,19 @@ export interface SessionMeta {
 
 /** client → daemon */
 export type ClientMsg =
-  | { op: 'hello'; token: string; version: number }
+  | {
+      op: 'hello'
+      token: string
+      version: number
+      /**
+       * R7: this client speaks the ack/pause flow-control protocol (flowControl.ts). OPTIONAL +
+       * additive, and deliberately NOT a `PROTOCOL_VERSION` bump: a bump orphans the sessions
+       * surviving an app update (MAIN drains-and-respawns on mismatch), which is exactly what the
+       * daemon exists to prevent. An OLD daemon ignores the field; a NEW daemon leaves accounting
+       * off without it, so it never pauses a pty for a client that will never ack.
+       */
+      flowControl?: boolean
+    }
   | {
       op: 'spawn'
       id: string
@@ -52,6 +64,8 @@ export type ClientMsg =
     }
   | { op: 'attach'; id: string }
   | { op: 'input'; id: string; data: string }
+  /** R7: `chars` of this session's output have been consumed — retire that much unacked debt. */
+  | { op: 'ack'; id: string; chars: number }
   | { op: 'resize'; id: string; cols: number; rows: number }
   | { op: 'kill'; id: string }
   | { op: 'list' }

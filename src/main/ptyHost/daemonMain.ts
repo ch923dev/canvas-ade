@@ -30,6 +30,7 @@ import {
   type SessionMeta
 } from './protocol'
 import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
+import { createSessionFlow, type SessionFlow } from './flowControl'
 
 // node-pty resolves relative to the daemon's own on-disk location: the stage dir carries a
 // node_modules/node-pty subset beside ptyHostDaemon.js; in dev the walk-up finds the checkout's
@@ -74,10 +75,24 @@ interface Session {
   meta: SessionMeta
   subscribers: Set<net.Socket>
   lastPidSent: number
+  /** R7: the watermark/coalescing state machine for this session's output (flowControl.ts). */
+  flow: SessionFlow
 }
 
 const sessions = new Map<string, Session>()
+/**
+ * R7: connections whose `hello` declared flow-control support. A session only accounts (and can
+ * only pause) while a capable client is subscribed — an OLD app reattaching to a NEW daemon after
+ * an update never acks, and pausing for it would freeze a live agent with no way back.
+ */
+const flowCapable = new Set<net.Socket>()
 let idleTimer: ReturnType<typeof setTimeout> | null = null
+
+/** R7: recompute a session's accounting state from its CURRENT subscribers. */
+function syncFlowState(s: Session): void {
+  s.flow.setEnabled([...s.subscribers].some((sub) => flowCapable.has(sub)))
+  s.flow.setSubscribers(s.subscribers.size)
+}
 
 function send(sock: net.Socket, msg: DaemonMsg): void {
   if (!sock.destroyed) sock.write(encodeLine(msg))
@@ -177,17 +192,45 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
         rows: msg.rows,
         meta: msg.meta,
         subscribers: new Set([sock]),
-        lastPidSent: 0
+        lastPidSent: 0,
+        // R7: one coalesced `ev:output` per tick, and the pause/resume watermarks on top of it.
+        // pause/resume are guarded — a node-pty build without them must degrade to today's
+        // unthrottled behavior, never take the daemon down.
+        flow: createSessionFlow({
+          send: (data) => {
+            for (const sub of s.subscribers) send(sub, { ev: 'output', id: msg.id, data })
+          },
+          pause: () => {
+            try {
+              proc.pause()
+            } catch {
+              /* pty already gone / pause unsupported — degrade to unthrottled */
+            }
+          },
+          resume: () => {
+            try {
+              proc.resume()
+            } catch {
+              /* see pause */
+            }
+          }
+        })
       }
       sessions.set(msg.id, s)
+      syncFlowState(s)
       if (idleTimer) clearTimeout(idleTimer)
       proc.onData((d) => {
         pushDaemonRing(s.ring, d, RING_CAP)
         maybePushPid(msg.id, s)
-        for (const sub of s.subscribers) send(sub, { ev: 'output', id: msg.id, data: d })
+        s.flow.push(d)
       })
       proc.onExit(({ exitCode }) => {
         log(`session ${msg.id} exited code=${exitCode}`)
+        // The last output must reach subscribers BEFORE the exit that explains it — a coalesced
+        // chunk still sitting in this tick's buffer would otherwise arrive after the exit, or be
+        // dropped with the session (mirrors MAIN's drainBatch discipline in ptyDataBatch.ts).
+        s.flow.flush()
+        s.flow.dispose()
         for (const sub of s.subscribers) send(sub, { ev: 'exit', id: msg.id, code: exitCode })
         sessions.delete(msg.id)
         armIdleExit()
@@ -202,7 +245,12 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
         send(sock, { ev: 'error', id: msg.id, message: `no session ${msg.id}` })
         return
       }
+      // R7: flush BEFORE the replay is built, or this tick's buffered chunk — already in the ring,
+      // so already inside the replay — would be re-sent to the new subscriber as fresh output and
+      // land twice on its terminal.
+      s.flow.flush()
       s.subscribers.add(sock)
+      syncFlowState(s)
       log(`attach ${msg.id} (ring ${s.ring.len})`)
       send(sock, {
         ev: 'replay',
@@ -225,6 +273,12 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
       }
       break
     }
+    case 'ack': {
+      // R7: the consumer processed `chars` characters — retire that much debt, and un-pause the
+      // pty once the backlog is back under the low watermark.
+      sessions.get(msg.id)?.flow.ack(msg.chars)
+      break
+    }
     case 'resize': {
       const s = sessions.get(msg.id)
       if (!s) return
@@ -245,6 +299,8 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
         return
       }
       const pid = s.proc.pid
+      s.flow.flush() // last words before the tree dies (see the onExit note)
+      s.flow.dispose()
       sessions.delete(msg.id)
       void killTree(pid).then(() => {
         try {
@@ -263,6 +319,8 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
     case 'shutdown': {
       log('shutdown requested — killing all sessions')
       const kills = [...sessions.entries()].map(([id, s]) => {
+        s.flow.flush()
+        s.flow.dispose()
         sessions.delete(id)
         return killTree(s.proc.pid).then(() => {
           try {
@@ -298,6 +356,11 @@ const server = net.createServer((sock) => {
           return
         }
         authed = true
+        // R7: capability negotiation by ADDITIVE hello field, not a PROTOCOL_VERSION bump — a bump
+        // would orphan the sessions surviving an app update, which is the whole point of the
+        // daemon (protocol.ts: MAIN drains-and-respawns on mismatch). An old daemon ignores the
+        // unknown field; this new daemon leaves accounting off for a client that never sent it.
+        if ((msg as { flowControl?: unknown }).flowControl === true) flowCapable.add(sock)
         send(sock, { ev: 'hello', version: PROTOCOL_VERSION, pid: process.pid })
         return
       }
@@ -315,7 +378,13 @@ const server = net.createServer((sock) => {
   )
   sock.on('data', (chunk) => feed(chunk.toString('utf8')))
   sock.on('close', () => {
-    for (const s of sessions.values()) s.subscribers.delete(sock)
+    flowCapable.delete(sock)
+    for (const s of sessions.values()) {
+      if (s.subscribers.delete(sock)) syncFlowState(s)
+    }
+    // R7: a session that just lost its LAST subscriber has its debt cleared and is resumed by
+    // syncFlowState. Sessions outlive the app on purpose, and an unattached one receives no acks —
+    // left accounting, it would pause at the high watermark and stay frozen until the app returned.
     log('client disconnected (sessions keep running)')
   })
   sock.on('error', () => {

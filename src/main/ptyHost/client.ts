@@ -23,6 +23,7 @@ import {
   type SessionInfo,
   type SessionMeta
 } from './protocol'
+import { createAckCounter } from './flowControl'
 import { ensureStaged, sweepOldStages, type StageSources } from './runtimeStage'
 // Pure discovery-state helpers (pipe-name derivation, state-file repair) live in ./state so the
 // unit suite imports them without dragging this module's electron dependency in.
@@ -102,14 +103,38 @@ function sendMsg(msg: ClientMsg): void {
   if (sock && !sock.destroyed) sock.write(encodeLine(msg))
 }
 
+/**
+ * R7: per-session ack debt. MAIN is the consumer half of the daemon's watermark protocol — it acks
+ * every `CHAR_COUNT_ACK_SIZE` chars it has HANDED OFF (the handlers below own the data by then;
+ * hops 2–4 have their own batching and back-pressure). Without acks the daemon's unacked count
+ * only ever grows, so a session would pause at the high watermark and never come back.
+ */
+const ackCounters = new Map<string, ReturnType<typeof createAckCounter>>()
+
+function ackFor(id: string): ReturnType<typeof createAckCounter> {
+  let c = ackCounters.get(id)
+  if (!c) {
+    c = createAckCounter()
+    ackCounters.set(id, c)
+  }
+  return c
+}
+
 function routeMsg(msg: DaemonMsg): void {
   switch (msg.ev) {
-    case 'output':
+    case 'output': {
       handlers.get(msg.id)?.onData.forEach((fn) => fn(msg.data))
+      // Ack AFTER the hand-off, so the debt reflects what has actually been consumed. Sent even
+      // when no handler is registered: the daemon counted those chars against this session either
+      // way, and leaving them unacked would pause a pty for output nobody is waiting on.
+      const due = ackFor(msg.id).received(msg.data.length)
+      if (due > 0) sendMsg({ op: 'ack', id: msg.id, chars: due })
       break
+    }
     case 'exit': {
       const h = handlers.get(msg.id)
       handlers.delete(msg.id)
+      ackCounters.delete(msg.id)
       h?.onExit.forEach((fn) => fn({ exitCode: msg.code }))
       break
     }
@@ -165,6 +190,7 @@ function onConnectionLost(): void {
   for (const fn of pending.killed.values()) fn()
   pending.killed.clear()
   pending.lists.length = 0
+  ackCounters.clear()
   if (handlers.size > 0) {
     notifyOnce('Terminal host disconnected — running sessions were interrupted.')
     const all = [...handlers.values()]
@@ -234,8 +260,10 @@ function connectTo(
         routeMsg(msg)
       })
       s.on('data', (c) => feed(c.toString('utf8')))
+      // R7: declare the ack/pause capability additively (see protocol.ts). An older daemon —
+      // one that survived an app update — ignores the field and behaves exactly as before.
       s.once('connect', () =>
-        s.write(encodeLine({ op: 'hello', token, version: PROTOCOL_VERSION }))
+        s.write(encodeLine({ op: 'hello', token, version: PROTOCOL_VERSION, flowControl: true }))
       )
       s.once('error', (err) => {
         if (settled || finished) return
@@ -464,8 +492,12 @@ class DaemonPty implements IPty {
   clear(): void {
     /* ConPTY buffer clear is daemon-internal; not needed by any MAIN path */
   }
+  // R7 note: flow control IS live, but it lives entirely on the far side of the pipe — the daemon
+  // owns the real pty and pauses it against its own watermarks, driven by the `ack` messages
+  // routeMsg sends above. Pausing here would only stop MAIN reading a socket whose producer is
+  // already throttled, so these stay no-ops (pty.ts never calls them either way).
   pause(): void {
-    /* flow control unused (matches in-proc usage — pty.ts never pauses) */
+    /* see the note above — the pause that matters is the daemon's, on the real pty */
   }
   resume(): void {
     /* see pause */
@@ -597,6 +629,7 @@ export function disconnectPtyHost(): void {
   sock = null // clear FIRST so the close handler skips onConnectionLost's exit fan-out
   ready = null
   handlers.clear()
+  ackCounters.clear() // R7: a reattach starts a fresh debt (the daemon cleared its side too)
   try {
     s?.destroy()
   } catch {

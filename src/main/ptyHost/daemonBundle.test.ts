@@ -26,7 +26,12 @@ describe('daemonBundle', () => {
     // Exactly the daemon's own plain-Node modules. Growth here means someone made daemonMain
     // reach into app-runtime code — keep the daemon standalone (it runs under RUN_AS_NODE
     // from a stage dir where nothing else exists).
+    // `flowControl.ts` joined the set in audit R7: it is the pause/resume watermark machine, and
+    // like protocol.ts it is deliberately dependency-free (no electron, no node-pty, no app
+    // runtime) precisely so BOTH the daemon and MAIN's client can share one definition of the
+    // constants — an ack size and a watermark that disagreed across two files would deadlock a
+    // terminal permanently.
     const names = built.inputs.map((i) => i.replace(/\\/g, '/').split('/').pop()).sort()
-    expect(names).toEqual(['daemonMain.ts', 'protocol.ts', 'ring.ts'])
+    expect(names).toEqual(['daemonMain.ts', 'flowControl.ts', 'protocol.ts', 'ring.ts'])
   })
 })
