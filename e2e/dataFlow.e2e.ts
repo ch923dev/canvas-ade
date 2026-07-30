@@ -103,6 +103,13 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       `window.__canvasE2E.getBoards().some(b => b.type === 'planning' && (b.elements||[]).some(e => e.kind === 'diagram' && /erDiagram/.test(e.source)))`
     )
     expect(hasErd).toBe(true)
+
+    // Parting camera: leave the viewport framed on `src` — the FIRST-seeded board, at x≈0 — per
+    // the cross-spec camera contract (e2eHooks reset() step 4: the camera is deliberately NOT
+    // reset between tests). The old parting state (`fitView(df)`, the second-seeded board) panned
+    // the camera ~500 world-px right, off the next spec's seed origin — the terminalScrollback
+    // paired-adjacency failure (docs/reviews/2026-07-30-terminalScrollback-non1zoom-flake.md).
+    await callE2E(page, { m: 'fitCameraInstant', a: [src] })
   })
 
   test('a flat API draws zero entity→entity / lineage edges (graceful degradation)', async ({
@@ -136,6 +143,8 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       .toBeGreaterThan(0)
     // rel AND lineage both map to dependency-kind edges — a flat API draws none of either
     expect(await node.locator('g.pl-spec-edge[data-kind="dependency"]').count()).toBe(0)
+    // parting camera contract — frame the FIRST-seeded board (see test 1)
+    await callE2E(page, { m: 'fitCameraInstant', a: [src] })
   })
 
   test('noise filters are on by default and hide non-API records (toggleable)', async ({
@@ -173,5 +182,7 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
       5000
     )
     expect(hiddenGone, 'clearing the filter removes the Hidden meta').toBe(true)
+    // parting camera contract — frame the FIRST-seeded board (see test 1)
+    await callE2E(page, { m: 'fitCameraInstant', a: [src] })
   })
 })

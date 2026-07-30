@@ -82,6 +82,50 @@ async function logCamera(page: Page, tag: string): Promise<void> {
   console.log(`[scrollback-probe] ${tag} ${JSON.stringify({ vp })}`)
 }
 
+/** Frame the seeded board fully in view at the target zoom before any render-dependent step.
+ *  A predecessor spec can leave the camera panned anywhere (reset() deliberately keeps it — the
+ *  step-4 camera contract), and an off-viewport terminal RENDERS NOTHING: the Lane-A liveness gate
+ *  holds its PTY bytes until the board is visible. That hold was the paired-adjacency failure
+ *  root-caused in docs/reviews/2026-07-30-terminalScrollback-non1zoom-flake.md — so each test
+ *  frames its own board instead of trusting the inherited camera. Fit THEN zoom: fitCameraInstant
+ *  centers the board (re-fit each poll tick — the RF measurement race), and the center-anchored
+ *  zoomTo keeps that center, so the board stays on-screen at the target zoom. Every board in this
+ *  spec fits fully inside the window at its target zoom, so full containment is the settle
+ *  predicate. All reads come back as VALUES over callE2E; the geometry compare runs HERE in Node
+ *  (the two `evalIn` literals are fixed text — nothing is spliced into page code). */
+async function ensureBoardInView(page: Page, id: string, zoom: number): Promise<void> {
+  const framed = async (): Promise<boolean> => {
+    await callE2E(page, { m: 'fitCameraInstant', a: [id] })
+    await callE2E(page, { m: 'setZoom', a: [zoom] })
+    const vp = await callE2E<{ x: number; y: number; zoom: number } | null>(page, {
+      m: 'getViewport',
+      a: []
+    })
+    const b = (
+      await callE2E<Array<{ id: string; x: number; y: number; w: number; h: number }> | null>(
+        page,
+        { m: 'getBoards', a: [] }
+      )
+    )?.find((bd) => bd.id === id)
+    const winW = await evalIn<number>(page, `window.innerWidth`)
+    const winH = await evalIn<number>(page, `window.innerHeight`)
+    if (!vp || !b || Math.abs(vp.zoom - zoom) > 1e-6) return false
+    const left = b.x * vp.zoom + vp.x
+    const top = b.y * vp.zoom + vp.y
+    return (
+      left >= -2 && top >= -2 && left + b.w * vp.zoom <= winW + 2 && top + b.h * vp.zoom <= winH + 2
+    )
+  }
+  let ok = true
+  try {
+    await expect.poll(framed, { timeout: 8000 }).toBe(true)
+  } catch {
+    ok = false
+  }
+  if (!ok) await logCamera(page, 'ensure-in-view:failed')
+  expect(ok, 'board framed fully in view at the target zoom').toBe(true)
+}
+
 /** Poll a predicate over the live counter-scale. The comparison runs HERE, in Node, so a baseline
  *  like `colsBefore` never has to reach the page at all. Same boolean contract as `pollEval`. */
 async function pollScale(
@@ -220,7 +264,7 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
     // that slack with real columns: cols in full view STRICTLY exceed the in-canvas count.
     const id = await seed(page, 'terminal', { launchCommand: 'exit', w: 520, h: 520 })
     await logCamera(page, 't1:post-seed')
-    await callE2E(page, { m: 'setZoom', a: [1] }) // snapped working zoom (the common maximize case)
+    await ensureBoardInView(page, id, 1) // snapped working zoom (the common maximize case)
     await fillBuffer(page, id)
 
     expect(await readMarkers(page, id), 'sanity: all 120 lines present before').toEqual(
@@ -282,7 +326,7 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
     // height (pre-S3 this was the rows-only fill hook; now the backstop fit owns both axes).
     const id = await seed(page, 'terminal', { launchCommand: 'exit', w: 900, h: 200 })
     await logCamera(page, 't2:post-seed')
-    await callE2E(page, { m: 'setZoom', a: [1] })
+    await ensureBoardInView(page, id, 1)
     await fillBuffer(page, id)
 
     const inCanvasRows = await settledRows(page, id)
@@ -345,7 +389,7 @@ test.describe('@terminal full-view scrollback is preserved across the S3 backsto
     // directly (NO counter-scale — the render font stays pinned regardless of zoom). Full view
     // flips to the portal (font scales up via fullViewScale, then the S3 backstop refit) and back.
     // cols settle differently across that transition, but NO LINE may be lost/duped.
-    await callE2E(page, { m: 'setZoom', a: [1.5] })
+    await ensureBoardInView(page, id, 1.5)
     expect(
       await pollEval(page, `Math.abs(window.__canvasE2E.getZoom() - 1.5) < 1e-6`, 4000),
       'camera settled at 1.5 (render font stays pinned in-canvas)'

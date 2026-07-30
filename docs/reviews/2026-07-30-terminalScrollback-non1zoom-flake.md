@@ -118,21 +118,28 @@ visible world `[-161, 681]` ⊇ board.
 - Instrumenting xterm's internal cell metric (the clip playbook's step) proved unnecessary — the
   failure is upstream of any font/metric machinery.
 
-## Fix plan (Phase B — after `terminal-clip` merges; spec-side only)
+## Fix (Phase B — landed in this PR after `terminal-clip` merged as #405; spec-side only)
 
-1. **Harden `terminalScrollback.e2e.ts`:** after each test's `setZoom`, ensure the seeded board is
-   in view (`fitCameraInstant(id)` — existing hook, instant, converges) before `fillBuffer`. Kills
-   the flake regardless of predecessor behavior. Applies to all three tests (tests 1–2 pass today
-   by 12px/392px of luck).
-2. **Fix the contract violation in `dataFlow.e2e.ts`:** its tests should leave the camera framed
-   per the reset() step-4 contract (fit `src`, the FIRST-seeded board, or `fitCameraInstant` it
-   at teardown). Cross-zone edit — coordinated on ACTIVE-WORK (the terminal-clip lane also
-   benefits: it removes their adjacency *trigger*, though their shed defect must still be fixed on
-   its own merits).
-3. Keep the Phase-A instrumentation (probe lines are cheap, run-forensic, and use only existing
-   hooks through the #401 transport discipline) — or strip `logCamera`/`logProbe` to the failure
-   branches only, reviewer's call.
-4. Re-run the battery at `--retries=0` post-fix: expect paired 0/N.
+1. **`terminalScrollback.e2e.ts` hardened:** each test frames its own board with
+   `ensureBoardInView(id, zoom)` — a Node-side poll that re-runs `fitCameraInstant` (center the
+   board; re-fit each tick, the RF measurement race) then the center-anchored `setZoom`, and
+   settles on full board∩window containment computed HERE from `getViewport`/`getBoards` values
+   (no page-code splice). Replaces the bare `setZoom` in all three tests — tests 1–2 passed the
+   paired run only by 12px/392px of board width.
+2. **`dataFlow.e2e.ts` contract violation fixed:** every test now parts with
+   `fitCameraInstant(src)` — the FIRST-seeded board, per the reset() step-4 contract. This removes
+   the adjacency *trigger* for any later spec (it was also the terminal-clip lane's trigger; their
+   shed defect was fixed on its own merits in #405). Cross-zone edit, declared on ACTIVE-WORK.
+3. Phase-A instrumentation kept (probe lines are cheap, run-forensic, and use only existing hooks
+   through the #401 transport discipline) — strip to failure branches on reviewer request.
+4. Post-fix battery at `--retries=0`: see the verification table below.
+
+## Post-fix verification
+
+| configuration | runs | failures |
+|---|---|---|
+| paired: `playwright test dataFlow terminalScrollback` | 5 | **0** (was 9/9) |
+| `terminalScrollback.e2e.ts` alone (regression sanity) | 3 | **0** |
 
 Constraints honored: no poll timeout was shrunk; no retry/skip changes; all new probes go through
 `callE2E`/`pollCall` (the one `evalIn` addition is a fixed-text literal, `window.innerWidth…`);
