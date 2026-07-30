@@ -4953,3 +4953,35 @@ choke-point wiring lines; ratchet downward on the next split). Version recompute
 bump**, main having independently shipped the same patch version, leaving the branch with
 no bump at all behind a green gate. Out of scope: no repair path for an already-poisoned
 doc (a real downgrade must DROP newer-only content, which needs consent).
+
+## 2026-07-31 — PR #410: kill the terminalScrollback paired-adjacency e2e flake (`f4d7f4bf`, v0.43.5)
+
+Test-side only — no production change. Phase A root-caused the "NON-1-zoom" flake as a
+**deterministic adjacency**, not a probabilistic one: `playwright test dataFlow
+terminalScrollback` failed the same test 9/9 at `retries:0` while the spec alone passed 6/6.
+Forensics (all via `callE2E` values): the terminal mounted, the PTY spawned and emitted
+(401 bytes **held** by the Lane-A liveness coalescer), but `live=false` and the buffer stayed
+empty — the board was genuinely off-viewport, so the render-liveness gate correctly held the
+bytes and the `'process exited'` marker never reached the buffer the spec polls. Trigger:
+`dataFlow.e2e.ts` parted with `fitView(df)` — the SECOND-seeded board — leaving the camera at
+`{x:-508}`, violating the e2eHooks `reset()` step-4 cross-spec camera contract ("frame near
+x≈0 — fit the board you seeded FIRST"). Test 3's default 420-wide board at x=0 was the only
+one narrower than the 508px parting pan; the center-anchored `setZoom(1.5)` widened the miss
+(`632 − (632+508)×1.5 = −1078`, matching the forensic line exactly). Verdict: the product
+behaved as designed at every step (the held bytes flush losslessly on visibility); disjoint
+from the terminal-clip `fitWhole` shed defect (#405), which shares only the trigger source.
+The fix: `terminalScrollback` tests each frame their own board via `ensureBoardInView` —
+re-fit each poll tick (`fitCameraInstant`, the RF measurement race) THEN the center-anchored
+zoom, settling on full board∩window containment computed in Node from `getViewport`/
+`getBoards` values (no page-code splice; #401 transport discipline); `dataFlow` now parts on
+its FIRST-seeded board. Diagnosis doc `docs/reviews/2026-07-30-terminalScrollback-non1zoom-flake.md`
++ README index; kickoff deleted per doc lifecycle. Batteries: paired 0/5 (was 9/9), alone
+0/3. Merge-gate matrix (both legs, serial): Windows first pass 349P/**1F** —
+`planningClipboard` real-OS Ctrl+V landed 0 elements, unrelated to the diff; 3/3 green
+isolated + a clean full-leg rerun **350P/0F** pinned it as the shared-OS-clipboard
+contention class (this box runs parallel sessions) — Linux leg **348P/0F**. Units at the
+documented ambient floor (5: pathSafe symlink + pty.recapenv), cheap trio green, CI 4/4,
+reviewer zero inline findings. Version recomputed 0.43.3→**0.43.5** on the rebase over
+#408/#409 — #408 independently shipped 0.43.3 while the PR was open (the same
+rebase-swallows-the-bump class #409's entry warns about; caught by the recompute ritual).
+Pushed `--no-verify` per user directive (e2e paid once, at this merge gate, not on push).
