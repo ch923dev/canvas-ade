@@ -498,6 +498,9 @@ export function registerSwarmHandlers(
       releaseWorktree: async (worktree: string): Promise<void> => {
         await worktrees.removeIfClean(worktree)
       },
+      // Docked-terminals: the run IS its swarm board (runId = the board id the renderer sent),
+      // so workers spawn docked into this board's viewport (dock-by-default).
+      dockHostId: runId,
       emit: (ev: SwarmRunEvent) =>
         push('swarm:runEvent', { runId, ev } satisfies SwarmRunEventPush),
       confirm,

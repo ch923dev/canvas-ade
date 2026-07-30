@@ -3,7 +3,8 @@ import type { RefObject } from 'react'
 import { useReactFlow, useStoreApi } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useTerminalLivenessStore } from '../../store/terminalLivenessStore'
-import type { TerminalBoard } from '../../lib/boardSchema'
+import { useDockStore } from '../../store/dockStore'
+import type { Board, TerminalBoard } from '../../lib/boardSchema'
 import { worldRectToScreen } from '../../lib/cameraBounds'
 import { isOsrVisible } from '../../lib/osrLiveness'
 import { LOD_ZOOM } from '../../lib/canvasView'
@@ -62,18 +63,35 @@ export function useTerminalLiveness(
     const paneOffset = { x: pane.x, y: pane.y }
     const paneBox = pane
     const fvId = fullViewIdRef.current
-    const boards = useCanvasStore
-      .getState()
-      .boards.filter((b): b is TerminalBoard => b.type === 'terminal')
+    const allBoards = useCanvasStore.getState().boards
+    const boards = allBoards.filter((b): b is TerminalBoard => b.type === 'terminal')
+    const dockActive = useDockStore.getState().active
+
+    // Visibility of one board's CANVAS rect (shared by the plain path and the dock-host path).
+    const rectVisible = (b: Board): boolean => {
+      const screen = worldRectToScreen({ x: b.x, y: b.y, width: b.w, height: b.h }, vp, paneOffset)
+      return isOsrVisible({ screen, pane: paneBox, zoom: vp.zoom, lod: LOD_ZOOM })
+    }
 
     const next: Record<string, boolean> = {}
     for (const b of boards) {
-      const screen = worldRectToScreen({ x: b.x, y: b.y, width: b.w, height: b.h }, vp, paneOffset)
+      // Swarm docked-terminals: a docked worker has NO canvas node — its own x/y are stale
+      // parking coordinates — so visibility is its HOST swarm board's rect, and only the
+      // ACTIVE dock tab renders (inactive tabs hold bytes exactly like an off-screen board).
+      // A dangling host reads not-live (nothing can be painting it); the fromObject/applier
+      // reconciles clear the flag, this just refuses to mark an unreachable surface live.
+      if (b.dockedIn) {
+        const host = allBoards.find((h) => h.id === b.dockedIn && h.type === 'swarm')
+        next[b.id] =
+          host !== undefined &&
+          dockActive[host.id] === b.id &&
+          (host.id === fvId || rectVisible(host))
+        continue
+      }
       // A PORTAL-full-viewed terminal renders in the modal no matter where its canvas node sits —
       // force it live so its PTY output keeps painting (else maximising an off-screen/below-LOD
       // terminal would show a frozen modal). Otherwise: on-screen ∧ ≥ LOD.
-      next[b.id] =
-        b.id === fvId || isOsrVisible({ screen, pane: paneBox, zoom: vp.zoom, lod: LOD_ZOOM })
+      next[b.id] = b.id === fvId || rectVisible(b)
     }
 
     // Diff-skip: only write when the live map actually changed (no store churn on a no-flip settle,
@@ -132,4 +150,17 @@ export function useTerminalLiveness(
     fullViewIdRef.current = fullViewId
     reconcile()
   }, [fullViewId, reconcile])
+
+  // Swarm docked-terminals: a dock tab switch changes which docked worker renders without
+  // touching the camera or the boards array — reconcile on the dock selection too, so the
+  // newly-active tab flushes its held bytes and the deactivated one starts holding.
+  useEffect(() => {
+    let prev = useDockStore.getState().active
+    return useDockStore.subscribe((s) => {
+      if (s.active !== prev) {
+        prev = s.active
+        reconcile()
+      }
+    })
+  }, [reconcile])
 }

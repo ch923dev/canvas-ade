@@ -135,6 +135,8 @@ export interface RunningMcp {
     sourceBoardId?: string
     /** v20/S1: terminal-only OpenRouter routing intent (validated in mcpLifecycle). */
     openRouter?: { enabled: boolean; model?: string }
+    /** Swarm docked-terminals: terminal-only hosting swarm board id (validated in mcpLifecycle). */
+    dockedIn?: string
   }): Promise<{ id: string }>
   /**
    * Phase C / C1: dispatch a prompt into a board's PTY through the SAME gated path the

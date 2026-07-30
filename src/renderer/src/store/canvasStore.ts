@@ -37,7 +37,7 @@ import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { freeSlot, PLACE_GAP } from '../lib/freeSlot'
 import { useCommandStore, commandStoreDefaults } from './commandStore'
-import { applyBoardPatch } from './boardPatch'
+import { applyBoardPatch, clearRefsToRemoved } from './boardPatch'
 import { makeTransferElements, type TransferElements } from './planningTransfer'
 import { createConnectorSlice } from './slices/connectorSlice'
 import { createFileBoardSlice } from './slices/fileBoardSlice'
@@ -761,12 +761,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (!s.boards.some((b) => b.id === id)) return s
       const next = s.boards
         .filter((b) => b.id !== id)
-        // Clear a preview link whose source terminal was just removed (Slice C′).
-        .map((b) =>
-          b.type === 'browser' && b.previewSourceId === id
-            ? { ...b, previewSourceId: undefined }
-            : b
-        )
+        // Same-step reference sweep (preview link / docked worker) — see clearRefsToRemoved.
+        .map((b) => clearRefsToRemoved(b, id))
       // Drop connectors incident to the removed board IN THE SAME tracked step (M2), so
       // one undo restores both the board and its cables. Only mint a new connectors array
       // when something is actually dropped (else keep the ref so trackedChange can no-op).

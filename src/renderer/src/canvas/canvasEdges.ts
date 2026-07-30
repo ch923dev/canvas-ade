@@ -13,6 +13,7 @@
 import { MarkerType, type Edge } from '@xyflow/react'
 import type { Board, Connector } from '../lib/boardSchema'
 import type { CommandTask } from '../store/commandStore'
+import { isCanvasVisibleBoard } from './boardNodes'
 import { previewEdges } from '../lib/previewEdges'
 import { orchestrationEdges } from '../lib/orchestrationEdges'
 import { routingEdges } from '../lib/routingEdges'
@@ -58,13 +59,16 @@ const ORCH_MARKER_DEFAULT = {
 }
 
 export function buildCanvasEdges({
-  boards,
+  boards: allBoards,
   runningIds,
   connectors,
   selectedConnectorId,
   commandTasks,
   onRemoveConnector
 }: BuildCanvasEdgesArgs): Edge[] {
+  // Docked-terminals: a docked worker has no canvas node, so an edge touching it would dangle —
+  // every builder below resolves endpoints against the same filtered list the node build uses.
+  const boards = allBoards.filter(isCanvasVisibleBoard)
   const preview = previewEdges(boards, runningIds).map((e) => ({
     ...e,
     markerEnd: PREVIEW_MARKER

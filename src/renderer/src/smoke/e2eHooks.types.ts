@@ -47,6 +47,9 @@ export interface CanvasE2E {
    * having to drive a whole LLM turn to get a plan drawn first.
    */
   swarmSetPlanBoard: (runId: string, planBoardId: string) => void
+  /** Docked-terminals e2e: register a seeded board as a run's worker — the SAME `addWorker`
+   *  store action the real `workerSpawned` push drives (rail membership + the re-dock pill). */
+  swarmAddWorker: (runId: string, workerBoardId: string, role?: string) => void
   /** Set the multi-selection (group create path). */
   setSelection: (ids: string[]) => void
   /** Current selection (D4-B Tab-cycle probe asserts on it). */

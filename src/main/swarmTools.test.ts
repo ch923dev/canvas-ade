@@ -349,6 +349,26 @@ describe('executeSwarmTool', () => {
     expect(ctx.events[0]).toMatchObject({ kind: 'workerSpawned', workerId: 'spawned-1' })
   })
 
+  it('spawn_worker docks the worker into the run board when ctx.dockHostId is set (and not otherwise)', async () => {
+    // Docked-terminals: the swarm session binds its own board id as dockHostId, so workers are
+    // born docked (dock-by-default). A ctx without one (test harness / no board) spawns onto the
+    // canvas exactly as before — the key must be ABSENT, not undefined-valued.
+    const facet = facetStub()
+    await executeSwarmTool(
+      'spawn_worker',
+      { name: 'w', role: 'builder' },
+      facet,
+      ctxStub({ dockHostId: 'swarm-board-1' })
+    )
+    expect(facet.spawnBoard).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'terminal', dockedIn: 'swarm-board-1' })
+    )
+    const facet2 = facetStub()
+    await executeSwarmTool('spawn_worker', { name: 'w', role: 'builder' }, facet2, ctxStub())
+    const input = (facet2.spawnBoard as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect('dockedIn' in input).toBe(false)
+  })
+
   it('spawn_worker confirm carries workerConfig; the dialog commit sets launch + role', async () => {
     const facet = facetStub()
     // The human commits an edited launch + a different role in the worker-config dialog.

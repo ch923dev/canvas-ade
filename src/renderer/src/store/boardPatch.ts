@@ -37,7 +37,10 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     // v20 (OpenRouter routing, compile-gated): the dialog Apply patches the whole
     // {enabled, model?} object — MUST be listed or the patch is silently dropped
     // (the PATCHABLE_KEYS-for-additive-field gotcha, see the kanban note below).
-    'openRouter'
+    'openRouter',
+    // Swarm docked-terminals: the hosting swarm board's id; pop-out/re-dock patch it via
+    // updateBoard (undefined clears it), so it MUST be listed (same gotcha as above).
+    'dockedIn'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements'],
@@ -59,6 +62,21 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   // v23 swarm board (orchestration S1): no per-type persisted fields — run state is ephemeral
   // swarmStore state (scene/session split), never routed through a board patch.
   swarm: [...COMMON_KEYS]
+}
+
+/**
+ * Clear a surviving board's references to a just-removed board — `removeBoard`'s same-step
+ * sweep (one undo restores the board AND the references together): a Browser preview link
+ * whose source terminal died (Slice C′), and a docked worker whose HOST swarm board died
+ * (docked-terminals — a dangling dockedIn would leave the terminal with no surface to render
+ * it, so it pops back onto the canvas). Pure; returns the board unchanged when nothing refers.
+ */
+export function clearRefsToRemoved(b: Board, removedId: string): Board {
+  if (b.type === 'browser' && b.previewSourceId === removedId) {
+    return { ...b, previewSourceId: undefined }
+  }
+  if (b.type === 'terminal' && b.dockedIn === removedId) return { ...b, dockedIn: undefined }
+  return b
 }
 
 /**

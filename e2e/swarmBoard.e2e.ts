@@ -119,6 +119,49 @@ test('@core LEAD badge rides the real leadChanged push: grant shows it, revoke c
   await expect(page.locator('[data-test="terminal-lead-badge"]')).toHaveCount(0)
 })
 
+test('@core docked worker renders INSIDE the swarm board (no canvas node); pop-out and re-dock hand the live surface across', async ({
+  page
+}) => {
+  const swarmId = await seed(page, 'swarm')
+  const workerId = await seed(page, 'terminal', { title: 'w-dock', dockedIn: swarmId })
+  // Run membership through the same store action the real workerSpawned push drives — the
+  // rail card and the popped-out board's re-dock pill key off it.
+  await evalIn(
+    page,
+    `window.__canvasE2E.swarmAddWorker(${JSON.stringify(swarmId)}, ${JSON.stringify(workerId)}, 'reviewer')`
+  )
+  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(swarmId)})`)
+  const board = page.locator('[data-test="swarm-board"]')
+  // The worker renders as a dock pane + a rail tab — and NOT as a React Flow canvas node.
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toBeVisible()
+  await expect(board.locator(`[data-test="swarm-card-${workerId}"]`)).toBeVisible()
+  await expect(board.locator('[data-test="swarm-workers"]')).toContainText('Workers · 1')
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(0)
+  // Pop out → a real canvas TerminalBoard node appears and the pane is gone; the rail card
+  // stays (marked ↗ — it now jumps to the canvas board).
+  await board.locator(`[data-test="swarm-dock-popout-${workerId}"]`).click()
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(1)
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toHaveCount(0)
+  await expect(board.locator(`[data-test="swarm-card-${workerId}"] .sw-popped`)).toBeVisible()
+  // Re-dock from the popped-out board's title-bar pill → back inside the dock, node gone.
+  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(workerId)})`)
+  await page.locator(`[data-test="swarm-redock-${workerId}"]`).click()
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(0)
+  await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(swarmId)})`)
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toBeVisible()
+})
+
+test('@core deleting the host swarm board pops its docked workers back onto the canvas', async ({
+  page
+}) => {
+  const swarmId = await seed(page, 'swarm')
+  const workerId = await seed(page, 'terminal', { title: 'w-orphan', dockedIn: swarmId })
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(0)
+  await evalIn(page, `window.__canvasE2E.deleteBoard(${JSON.stringify(swarmId)})`)
+  // The worker must not be stranded invisible — it lands as an ordinary canvas terminal.
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(1)
+})
+
 test('@core Settings › Orchestration no longer renders the deleted Lead terminal picker', async ({
   page
 }) => {

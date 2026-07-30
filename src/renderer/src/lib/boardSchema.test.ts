@@ -1458,6 +1458,60 @@ describe('migrate', () => {
     expect(dfTerm.sourceBoardId).toBeUndefined() // source is a terminal, not a browser
   })
 
+  // Swarm docked-terminals: dockedIn round-trips beside its host swarm board (additive
+  // optional field — no schema bump, the previewSourceId discipline).
+  it('round-trips a terminal dockedIn when the host swarm board is present', () => {
+    const boards: Board[] = [
+      { id: 'sw1', type: 'swarm', x: 0, y: 0, w: 900, h: 620, title: 'Swarm' },
+      {
+        id: 'w1',
+        type: 'terminal',
+        x: 0,
+        y: 0,
+        w: 420,
+        h: 340,
+        title: 'reviewer-1',
+        dockedIn: 'sw1'
+      }
+    ]
+    const out = fromObject(JSON.parse(JSON.stringify(toObject(boards, null))))
+    expect(out.boards).toEqual(boards)
+  })
+
+  // A dangling / non-swarm dockedIn is dropped on load — a stranded dock reference would hide
+  // the terminal from the canvas with nothing left to render it (mirrors the drops above).
+  it('drops a terminal dockedIn pointing at a missing or non-swarm board', () => {
+    const boards: Board[] = [
+      {
+        id: 'b1',
+        type: 'browser',
+        x: 0,
+        y: 0,
+        w: 700,
+        h: 500,
+        title: 'B',
+        viewport: 'desktop',
+        url: 'http://localhost:3000'
+      },
+      { id: 'wGone', type: 'terminal', x: 0, y: 0, w: 420, h: 340, title: 'W', dockedIn: 'ghost' },
+      { id: 'wWrong', type: 'terminal', x: 0, y: 0, w: 420, h: 340, title: 'W', dockedIn: 'b1' }
+    ]
+    const out = fromObject(JSON.parse(JSON.stringify(toObject(boards, null))))
+    const gone = out.boards.find((b) => b.id === 'wGone') as TerminalBoard
+    const wrong = out.boards.find((b) => b.id === 'wWrong') as TerminalBoard
+    expect(gone.dockedIn).toBeUndefined() // host board does not exist
+    expect(wrong.dockedIn).toBeUndefined() // host is a browser, not a swarm board
+  })
+
+  // A non-string dockedIn is rejected by deep validation (→ .bak fallback).
+  it('rejects a terminal board with a non-string dockedIn', () => {
+    expect(() =>
+      fromObject(
+        wrap({ id: 'w', type: 'terminal', x: 0, y: 0, w: 420, h: 340, title: 'W', dockedIn: 7 })
+      )
+    ).toThrow()
+  })
+
   // A dataflow board with a non-string sourceBoardId is rejected by deep validation (→ .bak fallback).
   it('rejects a dataflow board with a non-string sourceBoardId', () => {
     expect(() =>

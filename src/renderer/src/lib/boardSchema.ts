@@ -208,6 +208,13 @@ export interface TerminalBoard extends BoardCommon {
    * and the launch line echoes in the PTY — the key lives ONLY in the encrypted key store.
    */
   openRouter?: { enabled: boolean; model?: string }
+  /**
+   * Swarm docked-terminals: the SWARM board this worker terminal renders inside (dock
+   * viewport) instead of as a canvas node — it stays a full board (PTY/ledger/consent/env
+   * all board-id-keyed). Optional + default-at-read ⇒ NO SCHEMA_VERSION bump (mirrors
+   * previewSourceId); a dangling/non-swarm reference is dropped in fromObject below.
+   */
+  dockedIn?: string
 }
 
 export interface BrowserBoard extends BoardCommon {
@@ -1263,10 +1270,14 @@ export function fromObject(doc: unknown): CanvasDoc {
   // dangling binding is a stale half-link (mirrors the previewSourceId reconcile above). Clear it
   // rather than fail the load; the board reopens unbound and the user re-binds.
   const browserIdSet = new Set(owned.boards.filter((b) => b.type === 'browser').map((b) => b.id))
+  // Swarm docked-terminals: same discipline for a dockedIn whose host is gone or not a swarm
+  // board — a stranded reference would hide the terminal with nothing left to render it.
+  const swarmIdSet = new Set(owned.boards.filter((b) => b.type === 'swarm').map((b) => b.id))
   for (const b of owned.boards) {
     if (b.type === 'dataflow' && b.sourceBoardId && !browserIdSet.has(b.sourceBoardId)) {
       delete b.sourceBoardId
     }
+    if (b.type === 'terminal' && b.dockedIn && !swarmIdSet.has(b.dockedIn)) delete b.dockedIn
   }
   // v17: drop a Kanban card whose columnId matches no column on its OWN board — a stale ref (a
   // hand-edited canvas.json, or a column removed out from under a card). assertBoard already proved

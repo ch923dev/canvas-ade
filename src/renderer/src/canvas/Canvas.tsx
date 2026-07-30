@@ -308,6 +308,9 @@ function CanvasInner(): ReactElement {
   // memo cache: identical board+flag inputs return the identical node refs, so the
   // double-invoke under StrictMode stays idempotent.
   const [nodeCache] = useState<NodeCache>(() => new Map())
+  // Swarm docked-terminals: docked workers render inside their swarm board's dock viewport,
+  // not as canvas nodes — buildBoardNodes AND buildCanvasEdges filter them internally
+  // (see isCanvasVisibleBoard in boardNodes.ts).
   const nodes = useMemo<BoardFlowNode[]>(
     () =>
       buildBoardNodes(boards, { selectedIds, focusedId, fullViewId, cameraFullViewId }, nodeCache),
