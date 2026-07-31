@@ -241,7 +241,7 @@ describe('triage dedupe — one row per worker (2026-07-31 user rule)', () => {
     expect(rows[0]).toMatchObject({ tag: 'stalled', boardId: 'w1' }) // stalled outranks unreviewed
   })
 
-  it('dedupeTriage keeps distinct workers apart and exempts the run-level merge_ready row', () => {
+  it('dedupeTriage keeps distinct workers apart and exempts every work-product row', () => {
     const row = (id: string, tag: SwarmTriageRow['tag'], boardId: string): SwarmTriageRow => ({
       id,
       tag,
@@ -252,11 +252,14 @@ describe('triage dedupe — one row per worker (2026-07-31 user rule)', () => {
     const out = dedupeTriage([
       row('a', 'stalled', 'w1'),
       row('b', 'unreviewed', 'w2'),
+      row('ov', 'overlap', 'w1'), // a branch-pair warning — an artifact, not attention noise
+      row('dw', 'dirty_worktree', 'w1'), // a preserved tree — the only path to Resolve…
       row('merge-sequence', 'merge_ready', 'w1'), // run-level: boardId is just the sequence head
       row('c', 'lost', 'w1')
     ])
-    // w1 keeps `lost` (highest rank), w2 keeps its own row, merge_ready survives untouched.
-    expect(out.map((r) => r.id).sort()).toEqual(['b', 'c', 'merge-sequence'])
+    // w1's ATTENTION rows collapse to `lost` (highest rank); w2 keeps its own; every
+    // work-product row survives untouched even though all three share w1's boardId.
+    expect(out.map((r) => r.id).sort()).toEqual(['b', 'c', 'dw', 'merge-sequence', 'ov'])
   })
 })
 

@@ -521,15 +521,28 @@ export function sortTriage(rows: SwarmTriageRow[]): SwarmTriageRow[] {
 }
 
 /**
- * ONE row per worker (user rule, 2026-07-31): a board with several concurrent conditions keeps
- * only its highest-risk row (`SWARM_BLOCKED_TAGS` order; ties → first assembled), because two
- * notifications about one worker read as a nag list, not triage. Run-level rows are exempt —
- * `merge_ready` is about the RUN and its `boardId` is just the sequence head, so deduping it
- * against that worker's own row would delete the run's one integration signal. An `overlap`
- * row dedupes on its ANCHOR board only (`boardId`, the branch that has to move); being named
- * as the earlier branch (`boardId2`) is context, not that worker's notification. The renderer's
- * `needs_input` source keeps its own board-wins filter (`mergeTriage`), so the invariant holds
- * across both sources.
+ * The tags that mean "this WORKER needs a human" — the class the one-row-per-worker rule (user
+ * rule, 2026-07-31) applies to. Work-product tags are deliberately NOT here: an `overlap` row is
+ * a distinct branch-pair warning, a `dirty_worktree` row is a preserved tree on disk (and the
+ * only path to Resolve…), and `merge_ready` is the run's one integration signal — collapsing any
+ * of them into a worker's attention row would hide an artifact, not silence a nag.
+ */
+const WORKER_ATTENTION_TAGS: ReadonlySet<SwarmTriageRow['tag']> = new Set([
+  'needs_input',
+  'lost',
+  'failing_check',
+  'stalled',
+  'dependency',
+  'unreviewed'
+])
+
+/**
+ * ONE attention row per worker (user rule, 2026-07-31): a board with several concurrent
+ * attention conditions keeps only its highest-risk row (`SWARM_BLOCKED_TAGS` order; ties →
+ * first assembled), because two "needs you" notifications about one worker read as a nag list,
+ * not triage. Only {@link WORKER_ATTENTION_TAGS} dedupe; work-product rows pass through
+ * untouched. The renderer's `needs_input` source keeps its own board-wins filter
+ * (`mergeTriage`), so the invariant holds across both sources.
  */
 export function dedupeTriage(rows: SwarmTriageRow[]): SwarmTriageRow[] {
   const rank = (t: SwarmTriageRow['tag']): number => {
@@ -538,11 +551,11 @@ export function dedupeTriage(rows: SwarmTriageRow[]): SwarmTriageRow[] {
   }
   const best = new Map<string, SwarmTriageRow>()
   for (const row of rows) {
-    if (row.tag === 'merge_ready') continue
+    if (!WORKER_ATTENTION_TAGS.has(row.tag)) continue
     const cur = best.get(row.boardId)
     if (!cur || rank(row.tag) < rank(cur.tag)) best.set(row.boardId, row)
   }
-  return rows.filter((row) => row.tag === 'merge_ready' || best.get(row.boardId) === row)
+  return rows.filter((row) => !WORKER_ATTENTION_TAGS.has(row.tag) || best.get(row.boardId) === row)
 }
 
 /**
