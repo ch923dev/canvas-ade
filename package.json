@@ -1,6 +1,6 @@
 {
   "name": "canvas-ade",
-  "version": "0.44.1",
+  "version": "0.44.2",
   "description": "An infinite, zoomable canvas for AI-assisted development.",
   "author": "cdeasis923",
   "license": "UNLICENSED",
@@ -53,12 +53,12 @@
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "//sca-pins": "electron-builder-squirrel-windows is NOT a build target (win = nsis) — the explicit devDependency exists because app-builder-lib exact-peer-pins it, the lockfile had a stale 25.1.8 peer auto-install resolution, and pnpm overrides do NOT apply to peer auto-install (pnpm#4214). The stale 25.x line dragged app-builder-lib@25.1.8 (GHSA-7g7r-gx96-252g) + builder-util-runtime@9.2.10 (GHSA-p2f4-r6v6-j797) — both HIGH, both SCA-gate blockers. Keep this dep version-matched to electron-builder.",
-  "//packaging-pins": "ajv + signal-exit are NOT imported by app code — they pin their PROD transitive versions (ajv@8 via @expanse-ade/mcp's MCP SDK; signal-exit@4 via write-file-atomic@8) into the node_modules ROOT. electron-builder only collects depth-1 deps; pnpm otherwise nests these under their consumers while the dev-hoisted ajv@6/signal-exit@3 take root, so the PACKAGED app crashes (MODULE_NOT_FOUND on signal-exit / onExit-not-a-function on save). DO NOT remove as 'unused'. See docs/contributing/releasing.md › Packaging dependency pins.",
+  "//packaging-pins": "ajv + signal-exit are NOT imported by app code — they pin their PROD transitive versions (signal-exit@4 via write-file-atomic@8; ajv@8 historically via @expanse-ade/mcp's v1 MCP SDK — the v2 split packages (mcp 0.25.0+) no longer pull ajv, but the pin stays so the ROOT resolution can never regress to the dev-hoisted ajv@6) into the node_modules ROOT. electron-builder only collects depth-1 deps; pnpm otherwise nests these under their consumers while the dev-hoisted ajv@6/signal-exit@3 take root, so the PACKAGED app crashes (MODULE_NOT_FOUND on signal-exit / onExit-not-a-function on save). DO NOT remove as 'unused'. See docs/contributing/releasing.md › Packaging dependency pins.",
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@expanse-ade/diagram": "0.1.0",
-    "@expanse-ade/mcp": "0.24.0",
+    "@expanse-ade/mcp": "0.25.0",
     "@uiw/codemirror-extensions-langs": "^4.25.10",
     "codemirror-lang-mermaid": "^0.5.0",
     "@uiw/react-codemirror": "^4.25.10",
