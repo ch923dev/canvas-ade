@@ -165,6 +165,14 @@ export interface TerminalSpawnDeps {
    * the fontStepRef seam); `shiftKey` carries the board↔external destination flip.
    */
   onLinkActivate: (uri: string, opts: { shiftKey: boolean }) => void
+  /**
+   * True for a swarm DOCK pane (docked worker terminal). Forces counterScale to 1: the pane
+   * inherits the HOST swarm board's full-view context, and the solo-board scale-up would
+   * compute fullViewScale from the WORKER board's stale parked w/h vs the whole window — a
+   * ×3-5 font blow-up in swarm full view. A dock pane's well grows with the modal, so the
+   * right full-view behavior is the pinned font refitting to MORE columns, not bigger text.
+   */
+  dockPane?: boolean
 }
 
 /**
@@ -466,7 +474,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [isFullView])
-  const counterScale = isFullView ? fullViewScale(board.w, board.h, fvWinSize.w, fvWinSize.h) : 1
+  // Dock panes force 1 (see TerminalSpawnDeps.dockPane — the swarm full-view font blow-up).
+  const counterScale =
+    isFullView && !deps.dockPane ? fullViewScale(board.w, board.h, fvWinSize.w, fvWinSize.h) : 1
   // Ref mirror for the spawn closure (initial font) — NEVER a spawn dep, so a full-view
   // toggle cannot respawn the PTY (mirrors fontSizeRef).
   const counterScaleRef = useRef(counterScale)

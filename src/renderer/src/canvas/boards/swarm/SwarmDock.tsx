@@ -125,7 +125,10 @@ function DockedPane({
     fontResetRef,
     pasteIntoTerminal,
     configPending: false,
-    onLinkActivate
+    onLinkActivate,
+    // Swarm full view must NOT blow the pane's font up by the WORKER board's stale parked
+    // w/h vs the window (counterScale stays 1; the well refits to more columns instead).
+    dockPane: true
   })
   // Terminal parity (eyeball fix 2026-07-31): the SAME settled font seam + transition refit
   // TerminalBoard runs — without it the pane's render font never re-syncs and a resize/zoom
