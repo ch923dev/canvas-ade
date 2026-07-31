@@ -38,7 +38,12 @@ import { agentIdentity, isRunning } from '../terminalState'
 import { presetById } from '../terminal/agentPresets'
 import { useInterruptFeedback } from '../terminal/useInterruptFeedback'
 import { useTerminalReraster } from '../terminal/useTerminalReraster'
-import { resolveInitialFont } from '../terminal/terminalFont'
+import {
+  clampTerminalFont,
+  DEFAULT_TERMINAL_FONT,
+  resolveInitialFont,
+  writeStickyFont
+} from '../terminal/terminalFont'
 import { TerminalIdleAffordance } from '../terminal/TerminalIdleAffordance'
 import { TerminalFindBar } from '../terminal/TerminalFindBar'
 import { screen } from '../terminal/terminalBoardStyles'
@@ -84,10 +89,12 @@ function DockedPane({
   onRemove
 }: DockedPaneProps): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
-  // Font nudges are a canvas-terminal affordance (Inspector/menu); the dock keeps the sticky
-  // default, so the keymap's Ctrl±/0 bridges are inert here.
+  // Font nudges are LIVE in the dock (user ask 2026-07-31 — the stubs made Ctrl±/0 inert here):
+  // the refs feed the terminal keymap bridges; `setFont` below is TerminalBoard's persist path
+  // verbatim (per-board pin + sticky default + one undo step per burst).
   const fontStepRef = useRef<(delta: number) => void>(() => {})
   const fontResetRef = useRef<() => void>(() => {})
+  const fontBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const projectDir = useCanvasStore((s) => s.project.dir)
   // Links: the dock has no push-to-preview wiring (that is canvas-board sugar) — a
   // Ctrl/Cmd-clicked URL opens in the OS browser; MAIN re-validates the scheme.
@@ -129,6 +136,55 @@ function DockedPane({
     liveFontRef,
     identityStyle: screen
   })
+  // Per-board font size — TerminalBoard's persist path verbatim: clamp, burst-collapsed undo
+  // checkpoint, per-board pin via updateBoard, sticky new-terminal default (reset skips sticky).
+  const updateBoard = useCanvasStore((s) => s.updateBoard)
+  const setFont = useCallback(
+    (next: number, sticky = true): void => {
+      const clamped = clampTerminalFont(next)
+      if (clamped === liveFontRef.current) return
+      liveFontRef.current = clamped
+      if (fontBurstRef.current === null) useCanvasStore.getState().beginChange()
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+      fontBurstRef.current = setTimeout(() => {
+        fontBurstRef.current = null
+      }, 500)
+      updateBoard(board.id, { fontSize: clamped })
+      if (sticky) writeStickyFont(clamped)
+    },
+    [board.id, updateBoard]
+  )
+  const nudgeFont = useCallback(
+    (delta: number): void => setFont(liveFontRef.current + delta),
+    [setFont]
+  )
+  const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT, false), [setFont])
+  useEffect(() => {
+    fontStepRef.current = nudgeFont
+    fontResetRef.current = resetFont
+  }, [nudgeFont, resetFont])
+  useEffect(
+    () => () => {
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+    },
+    []
+  )
+  // Ctrl+wheel font zoom over the well (the TerminalBoard listener verbatim — VS Code / iTerm
+  // idiom; macOS pinch arrives as ctrl-wheel). NATIVE non-passive listener: React's synthetic
+  // onWheel is passive, so preventDefault would no-op. Plain wheel stays scrollback.
+  useEffect(() => {
+    const el = screenRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      if (e.deltaY === 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      fontStepRef.current(e.deltaY < 0 ? 1 : -1)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
   // Refit when devicePixelRatio changes (monitor move) — the host doesn't resize, so the RO
   // never fires, but the cell height changed (the TerminalBoard dpr effect, verbatim).
   useEffect(() => {
@@ -169,6 +225,24 @@ function DockedPane({
         {roleLabel && <span className="sw-role">{roleLabel}</span>}
         <span className="sw-vp-activity">{activity}</span>
         <span className="sw-spacer" />
+        <button
+          type="button"
+          className="sw-btn sm"
+          onClick={() => nudgeFont(-1)}
+          title="Smaller terminal font (Ctrl+− / Ctrl+wheel)"
+          data-test={`swarm-dock-font-dec-${board.id}`}
+        >
+          A−
+        </button>
+        <button
+          type="button"
+          className="sw-btn sm"
+          onClick={() => nudgeFont(1)}
+          title="Larger terminal font (Ctrl+= / Ctrl+wheel · Ctrl+0 resets)"
+          data-test={`swarm-dock-font-inc-${board.id}`}
+        >
+          A+
+        </button>
         {interruptSent && <span className="sw-vp-int">interrupt sent</span>}
         {running && (
           <button
