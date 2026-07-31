@@ -5134,3 +5134,31 @@ green on the same head); `@core` smoke 61/61 pre-push on the final head; manual 
 title-stamped + user-eyeballed. Force-push and the merge command itself were both
 classifier-blocked → user ran them (`--force-with-lease --no-verify`, `gh pr merge`). MCP
 plan board deferred — app down all session.
+
+## PR #418 — notification audit: P1/P2 fixes + test wave (v0.45.1) · squash `76e8eff9` · 2026-07-31
+
+Remediation PR for the 2026-07-31 notifications audit (4 recon agents, every claim verified at
+file:line; P3 backlog recorded in `docs/reviews/2026-07-31-notifications-audit.md`). The three P1s:
+**(1) dead OS-click** — clicking an OS notification with the window closed/tray-resident was a
+silent no-op and the event was dropped forever; now a pending ring-buffer queue (`notifyQueue.ts`,
+cap 100, foreign-sender-guarded drain IPC) + optional `ensureWindow` dep composed in
+`backgroundSessionsBoot` (tray → `reopenFromTray`, else `createWindow`, `before-quit` latch)
+recovers both the focus intent and the backlog; the renderer drains pull-not-push (listeners first —
+race-free by construction) and replays quietly: every mark lands, ONE aggregate toast. **(2)
+sticky-toast starvation** — blocked/error toasts were sticky + unkeyed with a visible-3 window, so
+three unattended stickies wedged the channel permanently; now lifecycle toasts are keyed
+`lifecycle:${boardId}:${mark}` (re-fires replace in place), `selectVisibleToasts` guarantees ≥1
+transient-reachable slot (maxSticky 2/3), and `evictExcessSticky` backstops memory. **(3) zero
+tests on `lifecycleNotifications.ts`** — closed with a full deliver matrix (gate/OS/cwd/payload
+byte-identity/destroyed-window/click-alive/click-dead/raise-throws). P2s: deliver-level dedupe
+(`notifyDedupe.ts`, 10s window spanning IDLE_PROMPT_MS, gate-first so silenced events can't poison
+the window — kills the hook-vs-idle double `needs-input`), master-switch gate on
+`backgroundSessions` OS notify (fail-open on unreadable config), try/catch around `defaultOsNotify`
+(timer-path throw must not kill the in-app push), stale-Focus feedback (ghost mark cleared + keyed
+toast instead of a silent no-op), shared `headlessHarness.ts` (3 copies → 1 zero-dep leaf). e2e:
+`notifySetDedupeMs`/`notifyReset` seam + dedupe assertion in the `@core` notifications spec.
+Version 0.45.0 → 0.45.1 (rebased over #416, bump recomputed off the new tip). Gates: CI 4/4;
+claude-review fully clean (0 critical / 0 warning / 0 inline; 2 no-reply nits); manual dev check
+title-stamped + user-eyeballed. `make check` at merge: units at the documented ambient floor
+(pathSafe ×2 8.3-TEMP; one DiagramCard waitFor load-flake, 3× green isolated) + `@core` smoke
+62/62 green.
