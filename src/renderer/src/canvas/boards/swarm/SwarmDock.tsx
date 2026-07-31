@@ -41,9 +41,13 @@ import { useTerminalReraster } from '../terminal/useTerminalReraster'
 import {
   clampTerminalFont,
   DEFAULT_TERMINAL_FONT,
+  MAX_TERMINAL_FONT,
+  MIN_TERMINAL_FONT,
   resolveInitialFont,
   writeStickyFont
 } from '../terminal/terminalFont'
+import { buildTerminalMenuEntries } from '../terminal/terminalMenu'
+import { ElementContextMenu, type MenuEntry } from '../planning/ElementContextMenu'
 import { TerminalIdleAffordance } from '../terminal/TerminalIdleAffordance'
 import { TerminalFindBar } from '../terminal/TerminalFindBar'
 import { screen } from '../terminal/terminalBoardStyles'
@@ -111,7 +115,8 @@ function DockedPane({
     fitWhole,
     counterScale,
     findOpen,
-    findApi
+    findApi,
+    selectionFallback
   } = useTerminalSpawn({
     board,
     projectDir,
@@ -185,6 +190,33 @@ function DockedPane({
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
+  // Terminal-config FLYOUT (user feedback 2026-08-01: config lives in a flyout, not header
+  // chrome): the SAME menu the canvas terminal opens on right-click (Copy / Paste / Select all /
+  // Clear / Save / font ±·reset), reachable from the header ⋯ AND by right-click on the well
+  // (with TerminalBoard's mouse-mode guard — a TUI keeps its right-click unless Shift is held).
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
+  const openMenuAt = useCallback(
+    (x: number, y: number): void => {
+      const term = termRef.current
+      if (!term) return
+      setMenu({
+        x,
+        y,
+        entries: buildTerminalMenuEntries({
+          hasSel: term.hasSelection() || selectionFallback() !== '',
+          selectionFallback,
+          boardId: board.id,
+          effectiveFont: clampTerminalFont(board.fontSize ?? bornFont),
+          minFont: MIN_TERMINAL_FONT,
+          maxFont: MAX_TERMINAL_FONT,
+          termRef,
+          nudgeFont,
+          resetFont
+        })
+      })
+    },
+    [termRef, selectionFallback, board.id, board.fontSize, bornFont, nudgeFont, resetFont]
+  )
   // Refit when devicePixelRatio changes (monitor move) — the host doesn't resize, so the RO
   // never fires, but the cell height changed (the TerminalBoard dpr effect, verbatim).
   useEffect(() => {
@@ -225,24 +257,6 @@ function DockedPane({
         {roleLabel && <span className="sw-role">{roleLabel}</span>}
         <span className="sw-vp-activity">{activity}</span>
         <span className="sw-spacer" />
-        <button
-          type="button"
-          className="sw-btn sm"
-          onClick={() => nudgeFont(-1)}
-          title="Smaller terminal font (Ctrl+− / Ctrl+wheel)"
-          data-test={`swarm-dock-font-dec-${board.id}`}
-        >
-          A−
-        </button>
-        <button
-          type="button"
-          className="sw-btn sm"
-          onClick={() => nudgeFont(1)}
-          title="Larger terminal font (Ctrl+= / Ctrl+wheel · Ctrl+0 resets)"
-          data-test={`swarm-dock-font-inc-${board.id}`}
-        >
-          A+
-        </button>
         {interruptSent && <span className="sw-vp-int">interrupt sent</span>}
         {running && (
           <button
@@ -266,6 +280,15 @@ function DockedPane({
         <button
           type="button"
           className="sw-btn sm"
+          onClick={(e) => openMenuAt(e.clientX, e.clientY)}
+          title="Terminal options — copy/paste, font size (also right-click the terminal)"
+          data-test={`swarm-dock-menu-${board.id}`}
+        >
+          ⋯
+        </button>
+        <button
+          type="button"
+          className="sw-btn sm"
           onClick={() => onRemove(board.id)}
           title="Remove worker board (undo restores it)"
           data-test={`swarm-dock-close-${board.id}`}
@@ -281,6 +304,16 @@ function DockedPane({
           e.stopPropagation()
           termRef.current?.focus()
         }}
+        onContextMenu={(e) => {
+          // TerminalBoard's mouse-mode guard verbatim: a TUI in mouse-tracking mode keeps its
+          // right-click unless Shift is held.
+          const term = termRef.current
+          if (!term) return
+          if (term.modes.mouseTrackingMode !== 'none' && !e.shiftKey) return
+          e.preventDefault()
+          e.stopPropagation()
+          openMenuAt(e.clientX, e.clientY)
+        }}
       >
         <div ref={screenRef} style={screenStyle} />
         {findOpen && <TerminalFindBar api={findApi} />}
@@ -291,6 +324,14 @@ function DockedPane({
           identity={identity}
           onStart={() => startLaunchRef.current?.()}
         />
+        {menu && (
+          <ElementContextMenu
+            x={menu.x}
+            y={menu.y}
+            entries={menu.entries}
+            onClose={() => setMenu(null)}
+          />
+        )}
       </div>
     </section>
   )
