@@ -9,12 +9,17 @@
 // build-to-build noise (hash-only churn is byte-stable). Raise it DELIBERATELY (with a
 // PR-body note) when a feature legitimately grows the entry; never raise it to silence a
 // regression you can lazy-load instead.
+// 2026-08-01 (v0.47.1, PR #422): 425,000 → 432,000. The old headroom had eroded to 136 B
+// across #416–#421 (measured main = 424,864 B); #422's +539 B of eager store/lib code
+// (boardSchema docked predicates, tidyApply, selection filter — entry-chunk by nature, its
+// UI rides the lazy swarm chunk) tripped the wire. New budget restores ~6.6 KB headroom
+// over the measured 425,403 B.
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 
-const BUDGET_GZIP_BYTES = 425_000
+const BUDGET_GZIP_BYTES = 432_000
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, 'out', 'renderer')
