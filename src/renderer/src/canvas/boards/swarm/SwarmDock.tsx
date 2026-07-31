@@ -193,8 +193,8 @@ function DockedPane({
   // Right-click terminal menu (canvas-terminal parity): the SAME menu the canvas terminal opens
   // on right-click (Copy / Paste / Select all / Clear / Save / font ±·reset), with TerminalBoard's
   // mouse-mode guard — a TUI keeps its right-click unless Shift is held. The DISCOVERABLE config
-  // surface is the swarm BOARD's ⋯ flyout (SwarmBoard menuExtraItems — user feedback 2026-08-01);
-  // this stays as the in-place idiom every terminal user reaches for.
+  // surface is the Board Inspector flyout (SwarmBoard → SwarmInspector — user feedback
+  // 2026-08-01 "I meant here"); this stays as the in-place idiom every terminal user reaches for.
   const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
   const openMenuAt = useCallback(
     (x: number, y: number): void => {
