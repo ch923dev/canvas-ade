@@ -448,6 +448,27 @@ export type Board =
   | KanbanBoard
   | SwarmBoard
 
+/**
+ * A worker terminal docked inside a swarm board (`dockedIn` set). Such a board renders in its
+ * host's dock viewport — it has NO canvas presence: no React Flow node, no selectability, no
+ * claim on placement space (its stored x/y are stale parking coordinates). The ONE predicate
+ * every canvas-geometry/selection consumer shares (`isCanvasVisibleBoard`, `freeSlot`, tidy/
+ * tile, `setSelection`) so "docked = not on the canvas" can't drift per call site.
+ */
+export function isDockedTerminal(b: Board): boolean {
+  return b.type === 'terminal' && b.dockedIn !== undefined
+}
+
+/**
+ * Selection filter (dedup + docked eviction): a docked worker can never be selected — it has
+ * no React Flow node, so RF could never emit the deselect that would evict it; a ghost id
+ * inflates the group-fab count and blocks the Board Inspector's single-selection gate.
+ */
+export function dropDockedFromSelection(boards: Board[], ids: string[]): string[] {
+  const docked = new Set(boards.filter(isDockedTerminal).map((b) => b.id))
+  return [...new Set(ids)].filter((id) => !docked.has(id))
+}
+
 // ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
 // A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
 // link (Browser ← its source terminal); `orchestration` is a user-drawn relationship

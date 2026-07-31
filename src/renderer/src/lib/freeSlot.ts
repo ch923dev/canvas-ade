@@ -5,7 +5,7 @@
  * `addBoard`/`spawnGroup` call `freeSlot` to tuck a new board into open space, and share `PLACE_GAP`
  * as the inter-board margin. Tidy mirrors the same gap (`tidyLayout`).
  */
-import type { Board } from './boardSchema'
+import { isDockedTerminal, type Board } from './boardSchema'
 
 /** Gap (world px) kept between boards when auto-placing a new one. */
 export const PLACE_GAP = 28
@@ -44,8 +44,13 @@ export function overlapsAny(
   at: { x: number; y: number },
   size: { w: number; h: number }
 ): boolean {
+  // A docked worker terminal has NO canvas presence — its x/y are stale parking coordinates,
+  // so it must never block a placement (an invisible board reserving a slot reads as a hole
+  // in the layout). Filtered here, at the canonical predicate, so freeSlot + the canvas-aware
+  // nudge + every future caller all agree.
   return boards.some(
     (b) =>
+      !isDockedTerminal(b) &&
       at.x < b.x + b.w + PLACE_GAP &&
       b.x < at.x + size.w + PLACE_GAP &&
       at.y < b.y + b.h + PLACE_GAP &&

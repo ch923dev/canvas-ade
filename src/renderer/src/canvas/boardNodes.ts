@@ -8,7 +8,7 @@
  * Pure except for the caller-owned `cache` (a useRef Map): identical inputs return the
  * identical node reference, which makes this unit-testable without React.
  */
-import type { Board } from '../lib/boardSchema'
+import { isDockedTerminal, type Board } from '../lib/boardSchema'
 import type { BoardFlowNode } from './BoardNode'
 
 /** Selection / focus / full-view flags that drive per-node dim + full-view state. */
@@ -36,7 +36,7 @@ export type NodeCache = Map<string, CacheEntry>
  * it just has no React Flow node (and no edges — the edge builders resolve endpoints against
  * the filtered list). Pop-out clears the flag and puts it straight back.
  */
-export const isCanvasVisibleBoard = (b: Board): boolean => !(b.type === 'terminal' && b.dockedIn)
+export const isCanvasVisibleBoard = (b: Board): boolean => !isDockedTerminal(b)
 
 export function buildBoardNodes(
   boards: Board[],

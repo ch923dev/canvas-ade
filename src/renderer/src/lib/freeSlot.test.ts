@@ -38,6 +38,13 @@ describe('freeSlot', () => {
     const b = freeSlot(boards, { x: 0, y: 0 }, { w: 100, h: 100 })
     expect(a).toEqual(b)
   })
+
+  it('ignores a DOCKED worker terminal — an invisible board must not reserve placement space', () => {
+    // A docked worker renders inside its host swarm board's dock; its x/y are stale parking
+    // coordinates. Placement over them must succeed verbatim (no phantom hole in the layout).
+    const docked = { ...board(0, 0), dockedIn: 'sw-1' } as Board
+    expect(freeSlot([docked], { x: 0, y: 0 }, { w: 100, h: 100 })).toEqual({ x: 0, y: 0 })
+  })
 })
 
 describe('viewportCenterWorld (spawn anchor — off-screen-spawn fix 2026-06-18)', () => {

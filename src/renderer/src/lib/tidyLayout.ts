@@ -18,7 +18,7 @@
  * camera doesn't teleport. Fewer than 2 boards is a no-op. Safe for undo/redo + persistence.
  */
 
-import type { BoardType, BrowserViewport } from './boardSchema'
+import { isDockedTerminal, type Board, type BoardType, type BrowserViewport } from './boardSchema'
 
 export type TidyMode = 'smart' | 'by-type' | 'grid'
 
@@ -263,4 +263,25 @@ export function tidyLayout(boards: readonly TidyBoard[], opts: TidyOptions = {})
     default:
       return smartLayout(list, gap, originX, originY)
   }
+}
+
+/**
+ * Apply tidy to the FULL board list (the store's `tidyBoards` body, extracted pure — max-lines
+ * doctrine). Docked worker terminals are NOT canvas geometry: they get no cell and their
+ * (stale parking) coordinates are never rewritten. Returns the repositioned array, or null
+ * when there is nothing to do (<2 canvas boards / already tidy) so the store can no-op
+ * without a phantom undo step.
+ */
+export function tidyApply(all: Board[], opts: TidyOptions = {}): Board[] | null {
+  const canvasBoards = all.filter((b) => !isDockedTerminal(b))
+  if (canvasBoards.length < 2) return null
+  const pos = new Map(tidyLayout(canvasBoards, opts).map((p) => [p.id, p]))
+  let changed = false
+  const boards = all.map((b) => {
+    const p = pos.get(b.id)
+    if (!p || (p.x === b.x && p.y === b.y)) return b
+    changed = true
+    return { ...b, x: p.x, y: p.y }
+  })
+  return changed ? boards : null
 }

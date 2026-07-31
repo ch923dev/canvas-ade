@@ -20,7 +20,9 @@ import {
   type NamedGroup,
   type TerminalBoard,
   createBoard,
+  dropDockedFromSelection,
   fromObject,
+  isDockedTerminal,
   toObject,
   previewConnectorsFor,
   MIN_BOARD_SIZE,
@@ -33,7 +35,7 @@ import { reconcileSession, type CanvasSession } from '../lib/sessionSidecar'
 import { showToast } from './toastStore'
 import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
-import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
+import { tidyApply, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { freeSlot, PLACE_GAP } from '../lib/freeSlot'
 import { useCommandStore, commandStoreDefaults } from './commandStore'
@@ -171,6 +173,13 @@ export interface CanvasState {
       path?: string
       /** MCP spawn_board only (2b): the agent-chosen title (sanitized + clamped upstream). */
       title?: string
+      /**
+       * `false` = add WITHOUT selecting (the MCP docked-worker spawn: the board mounts inside a
+       * swarm board's dock, so auto-selecting it would plant an invisible, RF-unevictable ghost
+       * in `selectedIds`). Omitting the selection from the tracked step also keeps undo/redo
+       * from ever resurrecting that ghost. Default (undefined/true) = select, as always.
+       */
+      select?: boolean
     }
   ) => string
   /**
@@ -680,7 +689,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       trackedChange(
         s,
         { boards: [...s.boards, board] },
-        { selection: { selectedId: id, selectedIds: [id] }, reflectPresent: false }
+        // select:false (docked-worker spawn) omits the selection entirely — trackedChange
+        // leaves the current selection untouched (see its contract above).
+        opts?.select === false
+          ? { reflectPresent: false }
+          : { selection: { selectedId: id, selectedIds: [id] }, reflectPresent: false }
       )
     )
     if (pending) set({ configPendingId: id })
@@ -902,29 +915,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   tidyBoards: (mode, aspect) =>
     set((s) => {
-      // Nothing to organise with fewer than two boards.
-      if (s.boards.length < 2) return s
-      // Board carries id/x/y/w/h/type (+ viewport/previewSourceId on browsers) — exactly
-      // the fields tidyLayout reads for smart/by-type grouping.
-      const pos = new Map(tidyLayout(s.boards, { mode, aspect }).map((p) => [p.id, p]))
-      let changed = false
-      const boards = s.boards.map((b) => {
-        const p = pos.get(b.id)
-        if (!p || (p.x === b.x && p.y === b.y)) return b
-        changed = true
-        return { ...b, x: p.x, y: p.y }
-      })
-      // One tracked step for the whole re-pack. trackedChange no-ops when nothing moved
-      // (already tidy → no phantom step, redo branch kept). A following zero-movement
-      // gesture records nothing under the lazy-checkpoint model (#BUG M3 closed), and a
-      // real nudge right after gets its own granular step (no coalescing).
-      return trackedChange(s, changed ? { boards } : null, { reflectPresent: true })
+      // The whole re-pack lives in tidyApply (pure, lib): docked workers get no cell and keep
+      // their parking coordinates; null = nothing to do (<2 canvas boards / already tidy).
+      // One tracked step; trackedChange no-ops on null (no phantom step, redo branch kept). A
+      // following zero-movement gesture records nothing under the lazy-checkpoint model
+      // (#BUG M3 closed), and a real nudge right after gets its own granular step.
+      const boards = tidyApply(s.boards, { mode, aspect })
+      return trackedChange(s, boards ? { boards } : null, { reflectPresent: true })
     }),
 
   tileBoards: (template, area, record = true) =>
     set((s) => {
-      if (s.boards.length < 1) return s
-      const rects = new Map(tileLayout(s.boards, template, area).map((r) => [r.id, r]))
+      // Same rule as tidyBoards: docked worker terminals get no tile zone.
+      const canvasBoards = s.boards.filter((b) => !isDockedTerminal(b))
+      if (canvasBoards.length < 1) return s
+      const rects = new Map(tileLayout(canvasBoards, template, area).map((r) => [r.id, r]))
       let changed = false
       const boards = s.boards.map((b) => {
         const r = rects.get(b.id)
@@ -1065,9 +1070,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { background: next }
     }),
 
-  selectBoard: (id) => set({ selectedId: id, selectedIds: id ? [id] : [] }),
+  // Docked worker terminals must never sit in the selection (no RF node ⇒ RF can never emit
+  // the deselect that evicts them — the ghost "Group 2" fab / never-opening Inspector bug; see
+  // dropDockedFromSelection). selectBoard no-ops on a docked id — clearing the user's real
+  // selection would be worse; setSelection silently drops docked ids.
+  selectBoard: (id) => {
+    if (id && dropDockedFromSelection(get().boards, [id]).length === 0) return
+    set({ selectedId: id, selectedIds: id ? [id] : [] })
+  },
   setSelection: (ids) => {
-    const selectedIds = [...new Set(ids)]
+    const selectedIds = dropDockedFromSelection(get().boards, ids)
     set({ selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null })
   },
   setTool: (tool) => set({ tool }),
