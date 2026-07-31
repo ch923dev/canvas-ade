@@ -30,7 +30,7 @@ import { useCommandStore, type CommandTask, type WorkerConfig } from '../../../s
 import {
   canDispatch,
   compositionOf,
-  DISPATCH_ENGINEER_SYSTEM,
+  dispatchEngineerSystem,
   fallbackTitle,
   isCapError,
   isFailureResult,
@@ -55,7 +55,9 @@ async function engineerDispatch(task: string): Promise<EngineeredDispatch> {
   if (!summarize) return { title: fallbackTitle(task), prompt: task }
   try {
     return parseEngineeredDispatch(
-      await summarize({ system: DISPATCH_ENGINEER_SYSTEM, text: task }),
+      // No pack yet — the config dialog commits the role AFTER engineering, so the system prompt
+      // states the posture-conditional capability truth rather than assuming a writer.
+      await summarize({ system: dispatchEngineerSystem(), text: task }),
       task
     )
   } catch {

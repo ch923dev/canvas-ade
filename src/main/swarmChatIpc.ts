@@ -34,7 +34,7 @@ import {
   type JarvisStreamDeps,
   type JarvisToolUse
 } from './jarvisBrain'
-import { composeSwarmSystem } from './swarmPrompt'
+import { composeSwarmSystem, composeTurnRoster, turnRosterWorkers } from './swarmPrompt'
 import {
   buildSwarmToolDefs,
   executeSwarmTool,
@@ -386,7 +386,31 @@ export function registerSwarmHandlers(
         ]
         let system = systemBlocks(session.paused)
         const tools = toolsAttached ? buildSwarmToolDefs() : undefined
-        const messages: JarvisMessage[] = composeMessages(session.history, prompt)
+        // Prompt-overhaul §3.3(2): the LIVE worker roster rides the USER turn — never the cached
+        // system block (per-turn text there busts the prompt cache every turn), and REQUEST-ONLY
+        // (history keeps the plain prompt below), so stale rosters never accumulate in the
+        // transcript. This is the ambient state that makes spawn-vs-reuse a decision against the
+        // truth instead of a tool result several turns back behind a confirm gate (orphan spawns).
+        let turnPrompt = prompt
+        if (facet !== null) {
+          try {
+            const app = await facet.describeApp()
+            const ledger = ledgerStore.readRun(runId)
+            const roster = composeTurnRoster(
+              turnRosterWorkers(session.workerRoles, app.canvas.boards, ledger),
+              ledger
+                ? {
+                    done: ledger.planItems.filter((p) => p.done).length,
+                    total: ledger.planItems.length
+                  }
+                : null
+            )
+            if (roster) turnPrompt = `${roster}\n\n${prompt}`
+          } catch {
+            /* the roster is ambient best-effort — a failed read must never block the turn */
+          }
+        }
+        const messages: JarvisMessage[] = composeMessages(session.history, turnPrompt)
         const key = providerKey(shared) ?? ''
         const requestCfg: LlmConfig = isJarvisMockEnabled(streamDeps.env)
           ? { ...shared, provider: 'anthropic' }

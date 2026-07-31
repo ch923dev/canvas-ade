@@ -267,7 +267,7 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
     {
       name: 'list_workers',
       description:
-        'List the boards on the canvas (id, type, title, status). Terminal boards you spawned are your workers.',
+        'List the boards on the canvas (id, type, title, status). Terminal boards you spawned are your workers. This is the authoritative roster — check it for an idle role-match before any spawn, and re-check it after a confirm gate or denial (your memory of the roster is stale; this tool is the truth).',
       input_schema: { type: 'object', properties: {} }
     },
     {
@@ -323,7 +323,11 @@ export function buildSwarmToolDefs(): JarvisToolDef[] {
         properties: {
           workerId: { type: 'string' },
           objective: { type: 'string', description: 'What done looks like' },
-          context: { type: 'string', description: 'What the worker must know' },
+          context: {
+            type: 'string',
+            description:
+              'What the worker must know: background, key questions, suggested starting points or sources, and what other in-flight workers own'
+          },
           boundaries: { type: 'string', description: 'What it must NOT touch' },
           outputFormat: { type: 'string', description: 'How to report back (write_result)' },
           activity: {

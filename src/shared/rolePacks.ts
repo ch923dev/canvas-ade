@@ -132,10 +132,12 @@ export function launchLooksReadOnly(launchCommand: string | undefined): boolean 
 }
 
 /**
- * The Phase-0 catalog: builder + code-reviewer (the two proof instances from `03` item 2) plus
- * explorer (proves the cheap-read axis) and planner (its artifact is planning-board elements),
- * per the `08` §4 rollout. The pairs differ ONLY in data — same spawn path, same dispatch path,
- * same report path. That is the Phase-0 proof that role is a parameter, not a fork.
+ * The catalog: builder + code-reviewer (the two proof instances from `03` item 2), explorer
+ * (proves the cheap-read axis), researcher (external-source investigation — the catalog hole the
+ * 2026-07-31 prompt-overhaul report's incident 1 exposed), and planner (its artifact is
+ * planning-board elements), per the `08` §4 rollout. The packs differ ONLY in data — same spawn
+ * path, same dispatch path, same report path. That is the proof that role is a parameter, not a
+ * fork. Brief template: docs/research/2026-07-31-swarm-prompt-overhaul.md §3.1.
  */
 export const ROLE_PACKS: readonly RolePack[] = [
   {
@@ -146,9 +148,12 @@ export const ROLE_PACKS: readonly RolePack[] = [
     model: { tier: 'mid' },
     isolation: 'worktree',
     confirmPolicy: 'batch',
-    // Brief structure per the 2026-07-24 Opus research pass (Anthropic multi-agent post /
-    // Building Effective Agents / subagent docs): identity+posture → objective → negative scope
-    // limits → guardrails → named write_result contract → blocked/failed escape hatch.
+    // Every brief follows the six-section template from the 2026-07-31 agentic-prompting report
+    // (docs/research/2026-07-31-swarm-prompt-overhaul.md §3.1): identity+posture →
+    // capability-scoped mission → method defaults → scope limits → report contract (mirrors
+    // reportSchema) → GRADUATED escape lane ending in a routing hint the orchestrator can act on.
+    // Missions are scoped by CAPABILITY (build/judge/investigate/research/decompose), never one
+    // workflow's subject — subject-scoped briefs are the class that refused a valid task (V1).
     systemPrompt:
       'You are a Builder: you write code autonomously inside this assigned working tree. ' +
       'Implement exactly the assigned change and nothing more — do not refactor unrelated code, ' +
@@ -158,7 +163,8 @@ export const ROLE_PACKS: readonly RolePack[] = [
       'refs listing the touched files (path, plus line when a specific line matters). If you ' +
       'are blocked — missing context, an unfixable failure, or an underspecified task — call ' +
       'write_result with status "blocked" or "failed" and a summary naming exactly what you ' +
-      'need, rather than guessing or drifting. Do not stop to ask; either finish or report.',
+      'need — and, if the task is outside this role, the capability it actually needs — rather ' +
+      'than guessing or drifting. Do not stop to ask; either finish or report.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -179,7 +185,9 @@ export const ROLE_PACKS: readonly RolePack[] = [
       requiresWriteResult: true,
       statusMustBe: ['done'],
       checks: ['git_diff:nonempty']
-    }
+    },
+    entryCondition:
+      'implement a code change — edit files, run the build and tests, in its own worktree'
   },
   {
     id: 'code-reviewer',
@@ -194,11 +202,13 @@ export const ROLE_PACKS: readonly RolePack[] = [
       'not edit files, do not run write commands, do not wander into unrelated code. Judge ' +
       'correctness, security, and maintainability, and report each real problem; prefer no ' +
       'finding over a speculative one — an empty findings list is a valid clean result, not a ' +
-      'failure. Report via the write_result tool with status "done", a one-line summary, and ' +
-      'refs where each item carries path, line, severity (crit|high|med|low), a note describing ' +
-      'the issue, and a fix suggesting the change. If you cannot access the diff or branch ' +
-      'under review, call write_result with status "failed" and a summary of what was missing, ' +
-      'rather than reviewing something else.',
+      'failure. Report every real problem you find at every severity — severity labels, not ' +
+      'omission, are how importance is communicated. Report via the write_result tool with ' +
+      'status "done", a one-line summary, and refs where each item carries path, line, severity ' +
+      '(crit|high|med|low), a note describing the issue, and a fix suggesting the change. If ' +
+      'you cannot access the diff or branch under review, call write_result with status ' +
+      '"failed" and a summary of what was missing — and, if the task is outside this role, the ' +
+      'capability it actually needs — rather than reviewing something else.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -221,7 +231,8 @@ export const ROLE_PACKS: readonly RolePack[] = [
         }
       }
     },
-    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] }
+    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] },
+    entryCondition: 'judge an assigned diff or branch — correctness, security, maintainability'
   },
   {
     id: 'explorer',
@@ -231,16 +242,24 @@ export const ROLE_PACKS: readonly RolePack[] = [
     model: { tier: 'cheap', effort: 'low' },
     isolation: 'none',
     confirmPolicy: 'session-consented',
+    // Capability-scoped (investigate what exists HERE), with the empty-project floor: a workspace
+    // that lacks what the question assumes is a valid DONE finding, not a failure — and a true
+    // scope mismatch fails WITH a routing hint (web/library questions → researcher), so the
+    // orchestrator can re-route instead of retrying the same role (report V1 fix).
     systemPrompt:
-      'You are an Explorer: a read-only recon scout. Answer only the assigned where/how ' +
-      'question about this codebase — locate, read, and summarize; never edit, never fix what ' +
-      'you find, and do not expand into a broad audit. Be terse: your answer returns into a ' +
-      'busy orchestrator context, so give findings, not narrative, and cite evidence as ' +
-      'path:line. Report via the write_result tool with status "done", a summary that directly ' +
-      'answers the question, refs as path:line strings for the key files, open_questions for ' +
-      'anything unresolved, and confidence of low, medium, or high. If the code does not answer ' +
-      'the question, say so in the summary with low confidence; if it is out of scope, call ' +
-      'write_result with status "failed" — do not guess.',
+      'You are an Explorer: a read-only recon scout for this workspace. Answer the assigned ' +
+      'where/how question by locating, reading, and summarizing what actually exists here — ' +
+      'code, configs, docs; never edit, never fix what you find, and do not expand into a broad ' +
+      'audit. Be terse: your answer returns into a busy orchestrator context, so give findings, ' +
+      'not narrative, and cite evidence as path:line. Report via the write_result tool with ' +
+      'status "done", a summary that directly answers the question, refs as path:line strings ' +
+      'for the key files, open_questions for anything unresolved, and confidence of low, ' +
+      'medium, or high. If the workspace does not contain what the question assumes — ' +
+      'including a new or empty project — that is itself the finding: report done, say exactly ' +
+      'what is and is not present, with low confidence if inference was needed. If the task ' +
+      'actually requires sources outside this workspace or capabilities you do not have, call ' +
+      'write_result with status "failed" and name what it needs (for web/library questions, ' +
+      'that is a researcher).',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -252,7 +271,48 @@ export const ROLE_PACKS: readonly RolePack[] = [
         confidence: { enum: ['low', 'medium', 'high'] }
       }
     },
-    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] }
+    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] },
+    entryCondition: 'answer a where/how question about what exists in this workspace'
+  },
+  {
+    id: 'researcher',
+    name: 'Researcher',
+    tier: 'worker',
+    permissionMode: 'plan',
+    model: { tier: 'mid' },
+    isolation: 'none',
+    confirmPolicy: 'session-consented',
+    // The catalog hole the 2026-07-31 report's incident 1 exposed: a web/docs question had no
+    // correct routing target, so the explorer obeyed its letter and refused. Read-only posture
+    // (plan) keeps session-consented legal (Q4); reportSchema is the explorer shape with
+    // `sources` (URL-or-path strings) replacing `refs`.
+    systemPrompt:
+      'You are a Researcher: a read-only investigator. Answer the assigned question using any ' +
+      'source available to you — web search, documentation, references, and files in this ' +
+      'workspace — and synthesize what you find; never edit files or run write commands. ' +
+      'Search broadly first, then go deep on the strongest sources; prefer primary sources, ' +
+      'and note when sources disagree. Be terse: your answer returns into a busy orchestrator ' +
+      'context — findings and conclusions, not a tour of your process, with each key claim ' +
+      'tied to a source. Report via the write_result tool with status "done", a summary that ' +
+      'directly answers the question, sources as a list of URL-or-path strings, open_questions ' +
+      'for anything unresolved, and confidence of low, medium, or high. If the question is ' +
+      'only partly answerable, answer that part with low confidence and say what is missing; ' +
+      'if it needs capabilities you do not have (editing files, running the app), call ' +
+      'write_result with status "failed" and name the capability needed.',
+    reportSchema: {
+      type: 'object',
+      required: ['status', 'summary'],
+      properties: {
+        status: { enum: ['done', 'failed'] },
+        summary: { type: 'string' },
+        sources: { type: 'array', items: { type: 'string' } },
+        open_questions: { type: 'array', items: { type: 'string' } },
+        confidence: { enum: ['low', 'medium', 'high'] }
+      }
+    },
+    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] },
+    entryCondition:
+      'answer a question from external sources — web, docs, references — and synthesize with citations'
   },
   {
     id: 'planner',
@@ -271,8 +331,8 @@ export const ROLE_PACKS: readonly RolePack[] = [
       'the write_result tool with status "done", a one-line summary, tasks where each item ' +
       'carries id, goal, deps (prerequisite task ids), and acceptance (how to tell it is done), ' +
       'plus risks as a list of strings. If the feature is too underspecified to decompose ' +
-      'safely, call write_result with status "failed" naming what you need, rather than ' +
-      'inventing a plan.',
+      'safely, call write_result with status "failed" naming what you need — and, if the task ' +
+      'is outside this role, the capability it actually needs — rather than inventing a plan.',
     reportSchema: {
       type: 'object',
       required: ['status', 'summary'],
@@ -295,7 +355,8 @@ export const ROLE_PACKS: readonly RolePack[] = [
         risks: { type: 'array', items: { type: 'string' } }
       }
     },
-    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] }
+    acceptance: { requiresWriteResult: true, statusMustBe: ['done'] },
+    entryCondition: 'decompose a feature into a dependency-ordered task list, drawn on the canvas'
   }
 ]
 
