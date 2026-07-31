@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createSwarmLedgerStore, type LedgerMemory } from './swarmLedger'
 import { createSwarmLedgerSession } from './swarmLedgerSession'
+import { triageRows } from './swarmLedgerProject'
 import { SWARM_STALL_THRESHOLD_MS, type SwarmTask } from '../shared/swarmLedgerTypes'
 
 /**
@@ -355,5 +356,53 @@ describe('S3 · the ledger records the worker tree', () => {
     // It needs async git, so it rides `swarm:worktreeDispose` — a half-action here would be a
     // worktree write that never happened reported as if it had.
     expect(s.applyAction('t1', 'resolve')).toEqual({ ok: false })
+  })
+})
+
+describe('ackBoard — acknowledge-on-focus snoozes the workers row (Wait semantics, never dismiss)', () => {
+  it('snoozes a stalled task: row leaves the queue, stall clock restarts, condition resurfaces', () => {
+    const at = SWARM_STALL_THRESHOLD_MS + MIN
+    const s = session({ assignment: assignment(0) }, at)
+    expect(triageRows(s.read(), at).some((r) => r.tag === 'stalled')).toBe(true)
+    expect(s.ledger.ackBoard('w1')).toBe(true)
+    const t = s.read().tasks[0]
+    expect(t.snoozedUntil).toBe(at + SWARM_STALL_THRESHOLD_MS)
+    expect(t.assignment?.lastActivityAt).toBe(at) // Wait parity: the stall clock restarts
+    expect(t.dismissed).toBeUndefined() // snooze, NEVER a permanent dismiss
+    expect(triageRows(s.read(), at + MIN)).toEqual([])
+    // A persisting stall resurfaces once the snooze and a fresh threshold both elapse.
+    const later = at + SWARM_STALL_THRESHOLD_MS + MIN
+    expect(triageRows(s.read(), later).some((r) => r.tag === 'stalled')).toBe(true)
+  })
+
+  it('acks only the named worker, and reports false when nothing produced a row', () => {
+    // Healthy in-progress task — no row, nothing to ack.
+    const healthy = session({}, 5 * MIN)
+    expect(healthy.ledger.ackBoard('w1')).toBe(false)
+    expect(healthy.read().tasks[0].snoozedUntil).toBeUndefined()
+    // A stalled task on w1 is untouched by an ack aimed at another board.
+    const at = SWARM_STALL_THRESHOLD_MS + MIN
+    const other = session({ assignment: assignment(0) }, at)
+    expect(other.ledger.ackBoard('w-other')).toBe(false)
+    expect(other.read().tasks[0].snoozedUntil).toBeUndefined()
+  })
+
+  it('snoozes blocked-tagged tasks and unseen unreviewed results; dismissed tasks stay untouched', () => {
+    const at = 5 * MIN
+    const lost = session({ state: 'failed', blockedTag: 'lost', result: salvaged }, at)
+    expect(lost.ledger.ackBoard('w1')).toBe(true)
+    expect(lost.read().tasks[0].snoozedUntil).toBe(at + SWARM_STALL_THRESHOLD_MS)
+    // The harness stamps lastSeenAt at run creation (= now), so rewind it: an UNSEEN result is
+    // one that landed after the human's last look.
+    const unreviewed = session({ state: 'done', result: salvaged }, at)
+    unreviewed.store.update('run1', (l) => {
+      l.lastSeenAt = 0
+    })
+    expect(unreviewed.ledger.ackBoard('w1')).toBe(true)
+    const dismissed = session({ state: 'done', result: salvaged, dismissed: true }, at)
+    dismissed.store.update('run1', (l) => {
+      l.lastSeenAt = 0
+    })
+    expect(dismissed.ledger.ackBoard('w1')).toBe(false)
   })
 })

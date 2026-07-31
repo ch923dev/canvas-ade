@@ -166,6 +166,11 @@ export function SwarmBoard({
   const flip = useTerminalFlip()
   const openWorker = useCallback(
     (id: string): void => {
+      // Acknowledge-on-focus: focusing a worker snoozes its triage row (Wait semantics — MAIN
+      // re-derives which tasks; a persisting condition resurfaces). Fire-and-forget: the jump
+      // must never wait on the ledger write. Covers all three focus paths through this handler —
+      // a triage row's Open, a rail worker-card click, and a dock activation.
+      void window.api?.swarm?.ackWorker?.(board.id, id)
       const b = useCanvasStore.getState().boards.find((x) => x.id === id)
       if (b && b.type === 'terminal' && b.dockedIn === board.id) {
         useDockStore.getState().setActive(board.id, id)

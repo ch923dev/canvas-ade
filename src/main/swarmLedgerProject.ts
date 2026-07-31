@@ -403,7 +403,7 @@ export function triageRows(
       })
     }
   }
-  return sortTriage(rows)
+  return sortTriage(dedupeTriage(rows))
 }
 
 /**
@@ -518,6 +518,31 @@ export function sortTriage(rows: SwarmTriageRow[]): SwarmTriageRow[] {
     .map((row, i) => ({ row, i }))
     .sort((a, b) => rank(a.row.tag) - rank(b.row.tag) || a.i - b.i)
     .map((e) => e.row)
+}
+
+/**
+ * ONE row per worker (user rule, 2026-07-31): a board with several concurrent conditions keeps
+ * only its highest-risk row (`SWARM_BLOCKED_TAGS` order; ties → first assembled), because two
+ * notifications about one worker read as a nag list, not triage. Run-level rows are exempt —
+ * `merge_ready` is about the RUN and its `boardId` is just the sequence head, so deduping it
+ * against that worker's own row would delete the run's one integration signal. An `overlap`
+ * row dedupes on its ANCHOR board only (`boardId`, the branch that has to move); being named
+ * as the earlier branch (`boardId2`) is context, not that worker's notification. The renderer's
+ * `needs_input` source keeps its own board-wins filter (`mergeTriage`), so the invariant holds
+ * across both sources.
+ */
+export function dedupeTriage(rows: SwarmTriageRow[]): SwarmTriageRow[] {
+  const rank = (t: SwarmTriageRow['tag']): number => {
+    const i = SWARM_BLOCKED_TAGS.indexOf(t)
+    return i < 0 ? SWARM_BLOCKED_TAGS.length : i
+  }
+  const best = new Map<string, SwarmTriageRow>()
+  for (const row of rows) {
+    if (row.tag === 'merge_ready') continue
+    const cur = best.get(row.boardId)
+    if (!cur || rank(row.tag) < rank(cur.tag)) best.set(row.boardId, row)
+  }
+  return rows.filter((row) => row.tag === 'merge_ready' || best.get(row.boardId) === row)
 }
 
 /**

@@ -784,6 +784,22 @@ export function registerSwarmHandlers(
   })
 
   /**
+   * Acknowledge-on-focus (user rule, 2026-07-31): focusing a worker snoozes its triage row with
+   * Wait semantics — the renderer only names the board it focused; which tasks that snoozes is
+   * re-derived in the ledger session. Re-pushed only when something actually changed, so the
+   * common focus (no row) costs no render.
+   */
+  ipcMain.handle('swarm:ackWorker', (e, payload: unknown): { ok: boolean } => {
+    if (guard(e)) return { ok: false }
+    const p = payload as { runId?: unknown; workerId?: unknown } | null
+    const runId = runIdOf(payload)
+    const workerId = typeof p?.workerId === 'string' ? p.workerId : ''
+    if (!runId || !workerId) return { ok: false }
+    if (sessionFor(runId).ledger.ackBoard(workerId)) pushLedger(runId)
+    return { ok: true }
+  })
+
+  /**
    * 🔒 S2 triage action — the renderer PROPOSES a row id + an action name; MAIN re-derives
    * everything else from the ledger and refuses anything off-contract. Nothing here writes to a
    * PTY: a `reassign` comes back as a PROMPT the renderer sends as the next orchestrator turn, so

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSnapshot,
+  dedupeTriage,
   discloseFor,
   fmtDur,
   isStalled,
@@ -222,6 +223,40 @@ describe('worker states', () => {
   it('leaves `state` absent for a healthy worker so S1s derivation still stands', () => {
     const l = ledger({ tasks: [task({ assignment: assign({ lastActivityAt: 17 * MIN }) })] })
     expect(workerStates(l, 18 * MIN)[0].state).toBeUndefined()
+  })
+})
+
+describe('triage dedupe — one row per worker (2026-07-31 user rule)', () => {
+  it('a worker with several concurrent conditions keeps only its highest-risk row', () => {
+    // t1 stalled (silent past threshold) + t2 an unseen unreviewed result, BOTH on w1.
+    const now = SWARM_STALL_THRESHOLD_MS + MIN
+    const l = ledger({
+      tasks: [
+        task({ taskId: 't1' }),
+        task({ taskId: 't2', state: 'done', assignment: assign(), result: result({ at: 5 }) })
+      ]
+    })
+    const rows = triageRows(l, now)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ tag: 'stalled', boardId: 'w1' }) // stalled outranks unreviewed
+  })
+
+  it('dedupeTriage keeps distinct workers apart and exempts the run-level merge_ready row', () => {
+    const row = (id: string, tag: SwarmTriageRow['tag'], boardId: string): SwarmTriageRow => ({
+      id,
+      tag,
+      boardId,
+      text: '',
+      actions: []
+    })
+    const out = dedupeTriage([
+      row('a', 'stalled', 'w1'),
+      row('b', 'unreviewed', 'w2'),
+      row('merge-sequence', 'merge_ready', 'w1'), // run-level: boardId is just the sequence head
+      row('c', 'lost', 'w1')
+    ])
+    // w1 keeps `lost` (highest rank), w2 keeps its own row, merge_ready survives untouched.
+    expect(out.map((r) => r.id).sort()).toEqual(['b', 'c', 'merge-sequence'])
   })
 })
 
