@@ -5070,3 +5070,36 @@ launched (test-plumbing-only diff — no native surface). Mid-run incidents surv
 subagent `git stash` (recovered file-by-file), the main-checkout `node_modules/.bin` wipe
 by a sibling install (repaired frozen-lockfile), the `gh pr edit` GraphQL silent-fail
 (REST PATCH). MCP plan-board ticks + `write_result` deferred — app down all session.
+
+## PR #415 — Audit Phase 4: R12 bundle lazy-load + gzip budget, R13 timer teardown, R15 hygiene (v0.44.3) · squash `386820e6` · 2026-07-31
+
+Phase 4 of the 2026-07-25 project-switch perf audit (§9 items 9–10 hold the full record).
+**R12:** `diagramPackageBridge` moves off `main.tsx` into the PlanningBoard/DataFlowBoard
+lazy roots — entry chunk 427,657 → 419,973 B gzip (−7.7 KB; honest note: elkjs/CodeMirror
+were already lazy, this is root+styles+seam wiring). `@xterm/addon-webgl` dropped (measured
+NEGATIVE for the bundle — orphaned importer, already tree-shaken; removed as dep hygiene
+with `TerminalSmoke.tsx` + the smoke webgl probe). New CI gate: `scripts/bundle-budget.mjs`
+in `pr.yml` fails entry gzip > 425,000 B. An interim `?worker&url` ELK-import variant was
+REVERTED mid-merge-gate: vitest 4's module runner denies `?worker&url` ids ("Denied ID"),
+suite-level-crashing all 9 planning spec files that import the PlanningBoard graph — a
+class the test-COUNT floor check missed (file-count matters too). Classic `?worker` emits
+the identical asset. **R13:** zero boards ⇒ zero timers — `useBrowserAutoConnect` interval
+gated on browser boards present (+gate test), run timer isolated into an always-mounted
+`RunTimer` leaf (`BoardFrame` gains `labelSuffix`/`srLabel`, span display-gated), PTY idle
+monitor rewritten event-driven (poke-armed one-shot unref'd timers, lazy re-arm;
+`forgetBoardSideState` funnel at all 5 forget sites; 8 mechanism tests). Idle CPU measured
+both arms, empty project: 0.273% → 0.195% of one core — inside the 15.6 ms quantum noise,
+recorded honestly; the binding proof is the load-independent timer-count tests. **R15:**
+PS-5 dead hotkey-failures surface deleted end-to-end; H-5 comment de-drifts (CLAUDE.md MCP
+pin now points at the manifest); worktree prune all tiers (user-authorized: 10 registered
+removed — 4 merged, 6 parked with branches kept; 41 orphan husk dirs deleted
+junction-safe); `BoardNode.errorboundary` explicit 30s timeouts (in-test dynamic import
+pays the full graph transform; 5s default flaked ~50% under sibling-lane load); PHASE3/4
+kickoff docs deleted. Version recomputed twice across rebases (0.44.0 → 0.44.2 → 0.44.3 —
+the #414 collision case: main took 0.44.2 mid-flight). Gates: CI 4/4 on both heads;
+reviewer FULL round zero findings zero inline + quiet delta round; `make check` cheap trio
+green, units at the documented ambient floor, @core smoke 57/57; manual dev check
+title-stamped (`PR#phase4 R12 dev check` confirmed in window title) — spec diagram styled,
+ELK off-thread, icon seam live on a cold seeded project. Idle-CPU harness + sampler in the
+session scratchpad. The final force-push ran by the user (`--no-verify`) after the
+permission classifier repeatedly blocked it.
