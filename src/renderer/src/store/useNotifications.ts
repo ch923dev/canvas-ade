@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useAttentionStore, type AttentionKind } from './attentionStore'
 import { useCanvasStore } from './canvasStore'
+import { useNotificationCenterStore } from './notificationCenterStore'
 import { showToast } from './toastStore'
 
 /**
@@ -54,29 +55,49 @@ const BG_TOAST: Record<'warned' | 'closed' | 'evicted', (name: string) => string
   evicted: (name) => `Background project ${name} was closed to free memory.`
 }
 
+/**
+ * Focus a board from a notification surface (toast action, OS-click intent, a bell row) with the
+ * stale-target guard (audit P2-5): a Focus on a board that no longer exists on this canvas
+ * (deleted, or another project's id replayed from the tray backlog) used to silently no-op —
+ * pendingFocusId was set, the consumer bailed, and a phantom id sat in selectedIds. Surface it,
+ * and drop the ghost attention mark so it stops counting as unseen. Exported for the bell panel —
+ * one guard, every surface.
+ */
+export function focusBoardFromNotification(boardId: string): void {
+  const exists = useCanvasStore.getState().boards.some((b) => b.id === boardId)
+  if (!exists) {
+    useAttentionStore.getState().clearAttention(boardId)
+    showToast({
+      id: 'notify-stale-focus',
+      message: 'That board is no longer on this canvas',
+      kind: 'info'
+    })
+    return
+  }
+  useCanvasStore.setState({ pendingFocusId: boardId })
+  useCanvasStore.getState().selectBoard(boardId)
+}
+
+/** Toast/history copy for one lifecycle signal (board title joined live at receipt). */
+function composeMessage(
+  boardId: string,
+  mark: AttentionKind,
+  detail: string | undefined
+): { name: string; message: string } {
+  const board = useCanvasStore.getState().boards.find((b) => b.id === boardId)
+  const name = board?.title?.trim() || 'Agent'
+  // P4: `detail` carries MAIN's composed reason (`silent 11m`, `failing check`). Appended, not
+  // substituted — the reason has to reach the surface or it does not exist.
+  const reason = typeof detail === 'string' && detail.trim().length > 0 ? ` — ${detail}` : ''
+  return { name, message: `${name} ${TOAST[mark].verb}${reason}` }
+}
+
 export function useNotifications(): void {
   useEffect(() => {
     const api = window.api?.notify
     if (!api) return
 
-    const focus = (boardId: string): void => {
-      // Stale-target guard (audit P2-5): a Focus click on a board that no longer exists on this
-      // canvas (deleted, or another project's id replayed from the tray backlog) used to silently
-      // no-op — pendingFocusId was set, the consumer bailed, and a phantom id sat in selectedIds.
-      // Surface it, and drop the ghost attention mark so it stops counting as unseen.
-      const exists = useCanvasStore.getState().boards.some((b) => b.id === boardId)
-      if (!exists) {
-        useAttentionStore.getState().clearAttention(boardId)
-        showToast({
-          id: 'notify-stale-focus',
-          message: 'That board is no longer on this canvas',
-          kind: 'info'
-        })
-        return
-      }
-      useCanvasStore.setState({ pendingFocusId: boardId })
-      useCanvasStore.getState().selectBoard(boardId)
-    }
+    const focus = focusBoardFromNotification
 
     const handleLifecycle = ({
       boardId,
@@ -86,19 +107,24 @@ export function useNotifications(): void {
     }: Parameters<Parameters<typeof api.onLifecycle>[0]>[0]): void => {
       const mark = markFor(event, attention)
       useAttentionStore.getState().setAttention(boardId, mark)
-      const board = useCanvasStore.getState().boards.find((b) => b.id === boardId)
-      const name = board?.title?.trim() || 'Agent'
       const spec = TOAST[mark]
-      // P4: `detail` carries MAIN's composed reason (`silent 11m`, `failing check`). Appended, not
-      // substituted — the reason has to reach the surface or it does not exist, and the toast is
-      // the only place it appears for a board the human is not looking at.
-      const reason = typeof detail === 'string' && detail.trim().length > 0 ? ` — ${detail}` : ''
+      const { name, message } = composeMessage(boardId, mark, detail)
+      // Bell PR: every ingested event also lands in the session history (unread) — the toast is
+      // transient, the history row is what the bell badge counts.
+      useNotificationCenterStore.getState().add({
+        boardId,
+        boardTitle: name,
+        kind: mark,
+        message,
+        ...(typeof detail === 'string' ? { detail } : {}),
+        at: Date.now()
+      })
       showToast({
         // Keyed per (board, mark) — audit P1-2a: a re-fire updates the row in place (countdown
         // restarts on the message change) instead of appending without bound; sticky occupancy is
         // bounded by live boards, not event count.
         id: `lifecycle:${boardId}:${mark}`,
-        message: `${name} ${spec.verb}${reason}`,
+        message,
         kind: spec.kind,
         sticky: spec.sticky,
         action: { label: 'Focus', run: () => focus(boardId) }
@@ -119,13 +145,32 @@ export function useNotifications(): void {
       .then((items) => {
         if (!items || items.length === 0) return
         const boards = new Set<string>()
+        const history: Parameters<
+          ReturnType<typeof useNotificationCenterStore.getState>['addMany']
+        >[0] = []
         for (const item of items) {
           if (item.t === 'lifecycle') {
             const mark = markFor(item.payload.event, item.payload.attention)
             useAttentionStore.getState().setAttention(item.payload.boardId, mark)
             boards.add(item.payload.boardId)
+            // Bell PR: the backlog lands in history too — quiet on the toast channel, fully
+            // enumerated in the panel. `at` is MAIN's enqueue clock, so rows date correctly.
+            const { name, message } = composeMessage(
+              item.payload.boardId,
+              mark,
+              item.payload.detail
+            )
+            history.push({
+              boardId: item.payload.boardId,
+              boardTitle: name,
+              kind: mark,
+              message,
+              ...(typeof item.payload.detail === 'string' ? { detail: item.payload.detail } : {}),
+              at: item.at
+            })
           }
         }
+        useNotificationCenterStore.getState().addMany(history)
         if (boards.size > 0) {
           const one = boards.size === 1 ? [...boards][0] : null
           showToast({
@@ -159,12 +204,27 @@ export function useNotifications(): void {
       : (): void => {}
 
     // Attention is unseen-state: selecting a board (click, marquee, focus action, OS click —
-    // they all land in `selectedIds`) means the user saw it → drop its mark. clearAttention
-    // no-ops without a state change when the board carries none, so this per-change loop is
-    // render-cheap.
+    // they all land in `selectedIds`) means the user saw it → drop its mark AND read its bell
+    // rows (the ONE unread model — sync rule 2). Both no-op without a state change when there
+    // is nothing to do, so this per-change loop is render-cheap.
     const offSelect = useCanvasStore.subscribe((s) => {
       const { byId, clearAttention } = useAttentionStore.getState()
-      for (const id of s.selectedIds) if (byId[id]) clearAttention(id)
+      const { markBoardRead } = useNotificationCenterStore.getState()
+      for (const id of s.selectedIds) {
+        if (byId[id]) clearAttention(id)
+        markBoardRead(id)
+      }
+    })
+
+    // Project switch → drop the bell history (sync rule 4): board ids are project-scoped, so a
+    // bell full of unreachable rows would be worse than an empty one. The attention marks stay
+    // (documented P3-3 — the MCP mirror consumes them; wiring a switch-time attention reset is
+    // a separate open item).
+    let prevDir = useCanvasStore.getState().project.dir
+    const offProject = useCanvasStore.subscribe((s) => {
+      if (s.project.dir === prevDir) return
+      prevDir = s.project.dir
+      useNotificationCenterStore.getState().clear()
     })
 
     return () => {
@@ -172,6 +232,7 @@ export function useNotifications(): void {
       offFocus()
       offBg()
       offSelect()
+      offProject()
     }
   }, [])
 }

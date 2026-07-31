@@ -11,13 +11,14 @@ import type { BoardType } from '../lib/boardSchema'
 import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import { FIT_FRAME, RESET_FRAME } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
-import { Icon, type IconName } from './Icon'
+import { ToolBtn } from './ToolBtn'
 import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
 import { SettingsPanel } from './settings/SettingsPanel'
 import { UpdateBadgeDot } from './UpdateBadgeDot'
 import type { SettingsSectionId } from './settings/settingsSections'
 import { BackdropPicker } from './BackdropPicker'
+import { NotificationBell } from './NotificationBell'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { RecapConsentModal } from './RecapConsentModal'
 import { isE2E } from '../smoke/e2eRegistry'
@@ -189,6 +190,9 @@ function CameraCluster({
         <TidyMenu onTidy={onTidy} />
         {/* Backdrop wallpaper picker (docs/canvas-backdrop spec §3) — Tidy's sibling. */}
         <BackdropPicker />
+        {/* Notification bell (audit PR2) — session history + unified unread. Subscribes for
+            itself (memo contract); account+settings stay the terminal group. */}
+        <NotificationBell />
         <span style={styles.divider} />
         {/* Phase 1 accounts: the account pill sits immediately before the Settings gear
             (DESIGN.md › Surface 1). Signed-out → SignInView; signed-in → Settings/Account.
@@ -472,59 +476,8 @@ export function Dock(): ReactElement {
 }
 
 // ── Small button primitives ───────────────────────────────────────────────────
-function ToolBtn({
-  name,
-  title,
-  active = false,
-  big = false,
-  pressed,
-  expanded,
-  onClick
-}: {
-  name: IconName
-  title: string
-  active?: boolean
-  big?: boolean
-  /** CHROME-02: toggle buttons (dock arming) pass their on/off state → aria-pressed.
-   *  Omitted for plain action buttons (zoom/fit/settings) so they stay un-toggled to AT. */
-  pressed?: boolean
-  /** CHROME-02: popup triggers (Tidy) pass their open state → aria-haspopup + aria-expanded. */
-  expanded?: boolean
-  onClick: () => void
-}): ReactElement {
-  const [hover, setHover] = useState(false)
-  return (
-    <button
-      // ca-t-ctl (A12): hover transition via class so reduced-motion can suppress it.
-      className="ca-t-ctl"
-      title={title}
-      // CHROME-02: undefined ⇒ React omits the attr (correct for plain action buttons).
-      aria-pressed={pressed}
-      aria-haspopup={expanded === undefined ? undefined : 'menu'}
-      aria-expanded={expanded}
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        width: big ? 32 : 28,
-        height: 28,
-        display: 'grid',
-        placeItems: 'center',
-        border: 'none',
-        borderRadius: 6,
-        cursor: 'pointer',
-        background: active
-          ? 'var(--accent-wash)'
-          : hover
-            ? 'var(--surface-overlay)'
-            : 'transparent',
-        color: active ? 'var(--accent)' : hover ? 'var(--text)' : 'var(--text-3)'
-      }}
-    >
-      <Icon name={name} size={16} />
-    </button>
-  )
-}
+// ToolBtn moved to its own file (bell PR) so chrome siblings can use it without an
+// AppChrome import cycle; imported above, call sites unchanged.
 
 function DockBtn({
   type,

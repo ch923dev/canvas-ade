@@ -50,6 +50,7 @@ import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useAskOnSwitchStore } from '../store/askOnSwitchStore'
 import { useToastStore } from '../store/toastStore'
 import { useAttentionStore } from '../store/attentionStore'
+import { selectUnreadCount, useNotificationCenterStore } from '../store/notificationCenterStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
@@ -578,6 +579,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // bottom-right region AND register a chrome-exclusion zone that demotes any live
       // board under it (the island joins resolveChromeZones while visible).
       useToastStore.getState().clearToasts()
+      // Bell PR: the notification-center history is the same global-ephemeral class — rows
+      // (and their unread count on the badge) from one spec would leak into the next.
+      // (attentionStore is deliberately NOT reset here — documented open item P3-11.)
+      useNotificationCenterStore.getState().clear()
       useSaveStatusStore.getState().clearSaveFailure()
       // The settled-zoom store is global ephemeral state too — a spec that left it at a
       // non-1 zoom would seed the next spec's terminals with a stale crisp/suspend value
@@ -931,6 +936,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // ring/badge actually rendered on the board (not just that the store was set).
       const el = document.querySelector(`.react-flow__node[data-id="${id}"] .ca-attn`)
       return (el?.getAttribute('data-kind') ?? null) as E2EAttentionKind | null
+    },
+    notifyHistory() {
+      return useNotificationCenterStore.getState().items.map((n) => ({
+        boardId: n.boardId,
+        boardTitle: n.boardTitle,
+        kind: n.kind,
+        message: n.message,
+        read: n.read
+      }))
+    },
+    notifyUnread() {
+      return selectUnreadCount(useNotificationCenterStore.getState().items)
     }
   }
   window.__canvasE2E = api

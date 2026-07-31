@@ -29,6 +29,10 @@ interface AttentionState {
   /** The user saw the board (select / focus) — drop the mark. No-op (no state
    *  identity change) when the board carries none, so subscribers don't churn. */
   clearAttention: (boardId: string) => void
+  /** "Mark all as read" (the notification-center bell) — the user asserted they saw
+   *  EVERYTHING, so every ring/badge drops at once. Same no-op-identity discipline;
+   *  re-publishing `canvas://attention` as settled is the correct side effect. */
+  clearAll: () => void
 }
 
 export const useAttentionStore = create<AttentionState>()((set, get) => ({
@@ -44,5 +48,9 @@ export const useAttentionStore = create<AttentionState>()((set, get) => ({
       delete next[boardId]
       return { byId: next }
     })
+  },
+  clearAll: () => {
+    if (Object.keys(get().byId).length === 0) return
+    set({ byId: {} })
   }
 }))

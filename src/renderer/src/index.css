@@ -25,6 +25,7 @@
 @import './styles/chrome/menu.css';
 @import './styles/chrome/projectdock.css';
 @import './styles/chrome/tidy.css';
+@import './styles/chrome/notification-bell.css';
 @import './styles/chrome/fullview.css';
 @import './styles/boards/terminal.css';
 @import './styles/islands/toast.css';

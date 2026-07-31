@@ -39,4 +39,19 @@ describe('attentionStore', () => {
     useAttentionStore.getState().clearAttention('nope')
     expect(useAttentionStore.getState().byId).toBe(before)
   })
+
+  it('clearAll drops every mark at once (bell "Mark all as read")', () => {
+    const s = useAttentionStore.getState()
+    s.setAttention('b1', 'done')
+    s.setAttention('b2', 'error')
+    s.setAttention('b3', 'blocked')
+    useAttentionStore.getState().clearAll()
+    expect(useAttentionStore.getState().byId).toEqual({})
+  })
+
+  it('clearAll on an empty store is a no-op (state identity unchanged)', () => {
+    const before = useAttentionStore.getState().byId
+    useAttentionStore.getState().clearAll()
+    expect(useAttentionStore.getState().byId).toBe(before)
+  })
 })
