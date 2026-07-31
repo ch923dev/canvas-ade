@@ -5,6 +5,8 @@ import {
   fmtDur,
   isStalled,
   liveWorktrees,
+  planHolders,
+  planOwners,
   silentMs,
   sortTriage,
   triageRows,
@@ -711,5 +713,34 @@ describe('S3 · 🔒 a REUSED worker never exposes its live worktree to a destru
       wtStatuses(['t1'])
     )
     expect(rows.filter((r) => r.tag === 'dirty_worktree')).toHaveLength(1)
+  })
+})
+
+describe('planHolders — the plan-kanban worker mapping (planOwners twin)', () => {
+  const plan = (over: Partial<SwarmRunLedger> = {}): SwarmRunLedger =>
+    ledger({
+      planItems: [
+        { id: 'i1', label: 'held', done: false, ownerTaskId: 't1' },
+        { id: 'i2', label: 'free', done: false },
+        { id: 'i3', label: 'settled owner', done: false, ownerTaskId: 't2' }
+      ],
+      tasks: [
+        task({ taskId: 't1', assignment: assign({ boardId: 'w1' }) }),
+        task({ taskId: 't2', state: 'done', assignment: assign({ boardId: 'w2' }) })
+      ],
+      ...over
+    })
+
+  it('maps a held item to its worker BOARD, and only a live in_progress hold counts', () => {
+    expect(planHolders(plan())).toEqual({ i1: 'w1' })
+  })
+
+  it('keys agree with planOwners exactly — dot and column can never disagree', () => {
+    const l = plan()
+    expect(Object.keys(planHolders(l))).toEqual(Object.keys(planOwners(l, 0)))
+  })
+
+  it('rides the snapshot', () => {
+    expect(buildSnapshot(plan(), { now: 0 }).planHolders).toEqual({ i1: 'w1' })
   })
 })

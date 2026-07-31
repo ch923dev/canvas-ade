@@ -32,13 +32,21 @@ import { useDockStore } from '../../store/dockStore'
 import { SwarmWorkerCards } from './swarm/SwarmWorkerCards'
 import { SwarmDock } from './swarm/SwarmDock'
 import { SwarmPlanStrip } from './swarm/SwarmPlanStrip'
+import { SwarmPlanKanban } from './swarm/SwarmPlanKanban'
 import { SwarmTriage } from './swarm/SwarmTriage'
 import { DockDivider } from './swarm/DockDivider'
 import { useDockLayout } from './swarm/useDockLayout'
-import type { SwarmTriageAction, SwarmTriageRow } from '../../../../shared/swarmLedgerTypes'
+import { useTerminalFlip } from './useTerminalFlip'
+import type {
+  SwarmTriageAction,
+  SwarmTriageRow,
+  SwarmWorkerLedgerState
+} from '../../../../shared/swarmLedgerTypes'
 
 /** Reference-stable empty owner map — a fresh `{}` per render would re-render the strip forever. */
 const EMPTY_OWNERS: Record<string, 'working' | 'stalled'> = {}
+const EMPTY_HOLDERS: Record<string, string> = {}
+const EMPTY_WORKERS: SwarmWorkerLedgerState[] = []
 
 /** Focus/select a board on the canvas (the notifications focus intent — camera-fit + select). */
 function jumpToBoard(boardId: string): void {
@@ -153,6 +161,9 @@ export function SwarmBoard({
   // Region layout (eyeball feedback): divider-driven chat/rail widths + triage height,
   // persisted on the board (`dockLayout`); the viewport takes the rest.
   const { sizes, handlersFor } = useDockLayout(board)
+  // Task #12: the strip⇄kanban flip — the terminal recap mechanism verbatim (flat-at-rest 3D).
+  // Ephemeral session state, never serialized; a reload always lands on the strip face.
+  const flip = useTerminalFlip()
   const openWorker = useCallback(
     (id: string): void => {
       const b = useCanvasStore.getState().boards.find((x) => x.id === id)
@@ -229,187 +240,228 @@ export function SwarmBoard({
       onRemoveFromAllGroups={onRemoveFromAllGroups}
       onStartConnect={onStartConnect}
     >
-      <div className="sw-root" data-test="swarm-board">
-        {/* ── region 5 · header strip + region 2 · plan strip ── */}
-        <div className="sw-head">
-          <div className="sw-head-row">
-            <span className="sw-timer" data-test="swarm-run-timer">
-              {run.startedAt !== null
-                ? `run ${fmtElapsed(Math.max(0, now - run.startedAt))}`
-                : 'no run yet'}
-            </span>
-            {/* S2: the ledger's one visible moment — this run came back from disk. Honest about
+      {/* Task #12 flip stage (T15's shape): perspective only mid-fold, flat at rest. The FRONT
+          face (chat/dock/triage — incl. every docked worker terminal) stays MOUNTED across the
+          flip so no PTY ever tears down; when flipped it just loses pointer events under the
+          opaque kanban overlay. `isolate` contains the front face's stacking so nothing in it
+          paints over the back face (the TerminalBoard lesson). */}
+      <div style={{ position: 'absolute', inset: 0, ...flip.perspectiveStyle }}>
+        <div style={flip.stageStyle}>
+          <div
+            className="sw-root"
+            data-test="swarm-board"
+            style={{ pointerEvents: flip.flipped ? 'none' : 'auto', isolation: 'isolate' }}
+          >
+            {/* ── region 5 · header strip + region 2 · plan strip ── */}
+            <div className="sw-head">
+              <div className="sw-head-row">
+                <span className="sw-timer" data-test="swarm-run-timer">
+                  {run.startedAt !== null
+                    ? `run ${fmtElapsed(Math.max(0, now - run.startedAt))}`
+                    : 'no run yet'}
+                </span>
+                {/* S2: the ledger's one visible moment — this run came back from disk. Honest about
                 what survived: the run's FACTS did, a dead worker's live PTY did not. */}
-            {run.restored && run.ledger && (
-              <span className="sw-restored" data-test="swarm-restored">
-                restored · {run.ledger.counts.workers} worker
-                {run.ledger.counts.workers === 1 ? '' : 's'} · {run.ledger.counts.results} result
-                {run.ledger.counts.results === 1 ? '' : 's'}
-              </span>
-            )}
-            {/* base P5: the visible, revocable session-consent grants (design gate 2026-07-30).
+                {run.restored && run.ledger && (
+                  <span className="sw-restored" data-test="swarm-restored">
+                    restored · {run.ledger.counts.workers} worker
+                    {run.ledger.counts.workers === 1 ? '' : 's'} · {run.ledger.counts.results}{' '}
+                    result
+                    {run.ledger.counts.results === 1 ? '' : 's'}
+                  </span>
+                )}
+                {/* base P5: the visible, revocable session-consent grants (design gate 2026-07-30).
                 One chip per pre-authorized role; Revoke applies on the NEXT dispatch (MAIN
                 re-derives consent inside the gate per act — BUG-021). No chips = per-write. */}
-            {run.consents.map((c) => (
-              <span
-                key={c.roleId}
-                className="sw-consent-chip"
-                data-test={`swarm-consent-${c.roleId}`}
-              >
-                <span className="sw-consent-dot" aria-hidden="true" />
-                {c.roleId} · session-consented
+                {run.consents.map((c) => (
+                  <span
+                    key={c.roleId}
+                    className="sw-consent-chip"
+                    data-test={`swarm-consent-${c.roleId}`}
+                  >
+                    <span className="sw-consent-dot" aria-hidden="true" />
+                    {c.roleId} · session-consented
+                    <button
+                      type="button"
+                      className="sw-consent-revoke"
+                      data-test={`swarm-consent-revoke-${c.roleId}`}
+                      onClick={() => {
+                        void window.api?.swarm?.consentRevoke?.(board.id, c.roleId)
+                      }}
+                    >
+                      Revoke
+                    </button>
+                  </span>
+                ))}
+                <span className="sw-spacer" />
                 <button
                   type="button"
-                  className="sw-consent-revoke"
-                  data-test={`swarm-consent-revoke-${c.roleId}`}
-                  onClick={() => {
-                    void window.api?.swarm?.consentRevoke?.(board.id, c.roleId)
-                  }}
+                  className="sw-btn"
+                  onClick={togglePause}
+                  aria-pressed={run.paused}
+                  data-test="swarm-pause"
                 >
-                  Revoke
+                  {run.paused ? 'Resume' : 'Pause all'}
                 </button>
-              </span>
-            ))}
-            <span className="sw-spacer" />
-            <button
-              type="button"
-              className="sw-btn"
-              onClick={togglePause}
-              aria-pressed={run.paused}
-              data-test="swarm-pause"
-            >
-              {run.paused ? 'Resume' : 'Pause all'}
-            </button>
-          </div>
-          <SwarmPlanStrip
-            planBoardId={run.planBoardId}
-            owners={run.ledger?.planOwners ?? EMPTY_OWNERS}
-            onOpen={jumpToBoard}
-          />
-        </div>
-
-        <div
-          className="sw-body"
-          style={{
-            gridTemplateColumns: `${sizes.chat}px 6px 1fr`,
-            gridTemplateRows: '1fr 6px auto'
-          }}
-        >
-          {/* ── region 1 · chat spine ── */}
-          <aside className="sw-chat" data-test="swarm-chat">
-            <div className="sw-chat-head">
-              <span className="sw-orch-dot" data-active={run.turnActive || undefined} />
-              <b>Orchestrator</b>
-              <span className="sw-brain-chip">app-resident</span>
-            </div>
-            <div className="sw-msgs" ref={msgsRef}>
-              {run.messages.length === 0 && (
-                <div className="sw-empty">
-                  Describe the work — the orchestrator plans, spawns workers, and narrates the run
-                  here. Every dispatch still asks you first.
-                </div>
-              )}
-              {run.messages.map((m) =>
-                m.role === 'status' ? (
-                  <div key={m.id} className="sw-statusline">
-                    {m.text}
-                  </div>
-                ) : (
-                  <div key={m.id} className={`sw-msg ${m.role === 'you' ? 'you' : 'orch'}`}>
-                    <div className="sw-who">{m.role === 'you' ? 'you' : 'orch'}</div>
-                    <p>
-                      {m.text}
-                      {m.streaming && <span className="sw-cursor" />}
-                    </p>
-                  </div>
-                )
-              )}
-            </div>
-            <div className="sw-composer">
-              <div className="sw-composer-box">
-                <input
-                  type="text"
-                  placeholder="Steer the run…"
-                  aria-label="Message the orchestrator"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') send()
-                    e.stopPropagation() // canvas hotkeys must not fire while typing here
-                  }}
-                  data-test="swarm-composer"
-                />
-                {run.turnActive ? (
-                  <button
-                    type="button"
-                    className="sw-btn sm"
-                    onClick={() => void window.api?.swarm?.cancelTurn?.(board.id)}
-                    data-test="swarm-stop"
-                  >
-                    Stop
-                  </button>
-                ) : (
-                  <button type="button" className="sw-btn sm" onClick={send} data-test="swarm-send">
-                    Send
-                  </button>
-                )}
               </div>
-              <div className="sw-hint">one voice — workers never post here</div>
+              <SwarmPlanStrip
+                planBoardId={run.planBoardId}
+                owners={run.ledger?.planOwners ?? EMPTY_OWNERS}
+                onOpen={jumpToBoard}
+                onFlip={flip.toggle}
+              />
             </div>
-          </aside>
 
-          {/* chat ↔ body divider (grid col 2, spans every row). */}
-          <DockDivider
-            axis="x"
-            {...handlersFor('chat')}
-            testId="swarm-div-chat"
-            style={{ gridColumn: 2, gridRow: '1 / 4' }}
-          />
+            <div
+              className="sw-body"
+              style={{
+                gridTemplateColumns: `${sizes.chat}px 6px 1fr`,
+                gridTemplateRows: '1fr 6px auto'
+              }}
+            >
+              {/* ── region 1 · chat spine ── */}
+              <aside className="sw-chat" data-test="swarm-chat">
+                <div className="sw-chat-head">
+                  <span className="sw-orch-dot" data-active={run.turnActive || undefined} />
+                  <b>Orchestrator</b>
+                  <span className="sw-brain-chip">app-resident</span>
+                </div>
+                <div className="sw-msgs" ref={msgsRef}>
+                  {run.messages.length === 0 && (
+                    <div className="sw-empty">
+                      Describe the work — the orchestrator plans, spawns workers, and narrates the
+                      run here. Every dispatch still asks you first.
+                    </div>
+                  )}
+                  {run.messages.map((m) =>
+                    m.role === 'status' ? (
+                      <div key={m.id} className="sw-statusline">
+                        {m.text}
+                      </div>
+                    ) : (
+                      <div key={m.id} className={`sw-msg ${m.role === 'you' ? 'you' : 'orch'}`}>
+                        <div className="sw-who">{m.role === 'you' ? 'you' : 'orch'}</div>
+                        <p>
+                          {m.text}
+                          {m.streaming && <span className="sw-cursor" />}
+                        </p>
+                      </div>
+                    )
+                  )}
+                </div>
+                <div className="sw-composer">
+                  <div className="sw-composer-box">
+                    <input
+                      type="text"
+                      placeholder="Steer the run…"
+                      aria-label="Message the orchestrator"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') send()
+                        e.stopPropagation() // canvas hotkeys must not fire while typing here
+                      }}
+                      data-test="swarm-composer"
+                    />
+                    {run.turnActive ? (
+                      <button
+                        type="button"
+                        className="sw-btn sm"
+                        onClick={() => void window.api?.swarm?.cancelTurn?.(board.id)}
+                        data-test="swarm-stop"
+                      >
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="sw-btn sm"
+                        onClick={send}
+                        data-test="swarm-send"
+                      >
+                        Send
+                      </button>
+                    )}
+                  </div>
+                  <div className="sw-hint">one voice — workers never post here</div>
+                </div>
+              </aside>
 
-          {/* ── region 3 · worker dock: rail (tabs) + divider + embedded terminal viewport ── */}
-          <main
-            className="sw-canvas"
-            data-test="swarm-workers"
-            style={{ gridColumn: 3, gridRow: 1 }}
-          >
-            <SwarmWorkerCards
-              run={run}
-              attention={attention}
-              running={running}
-              now={now}
-              titleOf={titleOf}
-              onOpen={openWorker}
-              dockedIds={dockedIds}
-              activeDockId={activeDockId ?? null}
-              width={sizes.rail}
-            />
-            <DockDivider axis="x" {...handlersFor('rail')} testId="swarm-div-rail" />
-            <SwarmDock
-              swarmId={board.id}
-              docked={dockedBoards}
-              run={run}
-              attention={attention}
-              running={running}
-            />
-          </main>
+              {/* chat ↔ body divider (grid col 2, spans every row). */}
+              <DockDivider
+                axis="x"
+                {...handlersFor('chat')}
+                testId="swarm-div-chat"
+                style={{ gridColumn: 2, gridRow: '1 / 4' }}
+              />
 
-          {/* viewport ↔ triage divider (drag DOWN shrinks the strip → dir −1). */}
-          <DockDivider
-            axis="y"
-            {...handlersFor('triage', -1)}
-            testId="swarm-div-triage"
-            style={{ gridColumn: 3, gridRow: 2 }}
-          />
+              {/* ── region 3 · worker dock: rail (tabs) + divider + embedded terminal viewport ── */}
+              <main
+                className="sw-canvas"
+                data-test="swarm-workers"
+                style={{ gridColumn: 3, gridRow: 1 }}
+              >
+                <SwarmWorkerCards
+                  run={run}
+                  attention={attention}
+                  running={running}
+                  now={now}
+                  titleOf={titleOf}
+                  onOpen={openWorker}
+                  dockedIds={dockedIds}
+                  activeDockId={activeDockId ?? null}
+                  width={sizes.rail}
+                />
+                <DockDivider axis="x" {...handlersFor('rail')} testId="swarm-div-rail" />
+                <SwarmDock
+                  swarmId={board.id}
+                  docked={dockedBoards}
+                  run={run}
+                  attention={attention}
+                  running={running}
+                />
+              </main>
 
-          {/* ── region 4 · triage queue ── */}
-          <SwarmTriage
-            run={run}
-            attention={attention}
-            titleOf={titleOf}
-            onOpen={openWorker}
-            onAction={onTriageAction}
-            height={sizes.triage}
-          />
+              {/* viewport ↔ triage divider (drag DOWN shrinks the strip → dir −1). */}
+              <DockDivider
+                axis="y"
+                {...handlersFor('triage', -1)}
+                testId="swarm-div-triage"
+                style={{ gridColumn: 3, gridRow: 2 }}
+              />
+
+              {/* ── region 4 · triage queue ── */}
+              <SwarmTriage
+                run={run}
+                attention={attention}
+                titleOf={titleOf}
+                onOpen={openWorker}
+                onAction={onTriageAction}
+                height={sizes.triage}
+              />
+            </div>
+          </div>
+          {/* Kanban back face: rendered only while flipped (no cost on the resting board),
+              opaque (.sw-kb paints var(--surface)) so it fully covers the front. `nodrag
+              nowheel` keeps React Flow from treating clicks as node-drags or wheel as zoom. */}
+          {flip.flipped && (
+            <div
+              className="nodrag nowheel"
+              style={{ position: 'absolute', inset: 0 }}
+              data-test="swarm-kanban-wrap"
+            >
+              <SwarmPlanKanban
+                planBoardId={run.planBoardId}
+                workers={run.ledger?.workers ?? EMPTY_WORKERS}
+                holders={run.ledger?.planHolders ?? EMPTY_HOLDERS}
+                owners={run.ledger?.planOwners ?? EMPTY_OWNERS}
+                titleOf={titleOf}
+                onOpenPlan={jumpToBoard}
+                onOpenWorker={openWorker}
+                onBack={flip.toggle}
+              />
+            </div>
+          )}
         </div>
       </div>
     </BoardFrame>

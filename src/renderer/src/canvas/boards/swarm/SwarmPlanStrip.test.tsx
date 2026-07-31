@@ -155,3 +155,30 @@ describe('SwarmPlanStrip — editing writes through to the plan board (D2 always
     expect(onKey).not.toHaveBeenCalled()
   })
 })
+
+describe('SwarmPlanStrip — the kanban flip affordance (task #12)', () => {
+  it('renders the ⊞ button only when a flip handler is wired, and it fires', () => {
+    seed([{ id: 'i1', label: 'recon', done: false }])
+    const onFlip = vi.fn()
+    render(<SwarmPlanStrip planBoardId={PLAN_ID} owners={{}} onOpen={vi.fn()} onFlip={onFlip} />)
+    fireEvent.click(one('swarm-plan-flip'))
+    expect(onFlip).toHaveBeenCalledTimes(1)
+  })
+
+  it('no handler ⇒ no button (test/legacy renders stay byte-identical)', () => {
+    seed([{ id: 'i1', label: 'recon', done: false }])
+    render(<SwarmPlanStrip planBoardId={PLAN_ID} owners={{}} onOpen={vi.fn()} />)
+    expect(all('swarm-plan-flip')[0] ?? null).toBeNull()
+  })
+
+  it('double-click on the strip SURFACE flips — but never through a control', () => {
+    seed([{ id: 'i1', label: 'recon', done: false }])
+    const onFlip = vi.fn()
+    render(<SwarmPlanStrip planBoardId={PLAN_ID} owners={{}} onOpen={vi.fn()} onFlip={onFlip} />)
+    fireEvent.doubleClick(one('swarm-plan-strip'))
+    expect(onFlip).toHaveBeenCalledTimes(1)
+    // A double-click landing on a chip's checkbox must act as two ticks, not a flip.
+    fireEvent.doubleClick(one('swarm-plan-tick'))
+    expect(onFlip).toHaveBeenCalledTimes(1)
+  })
+})

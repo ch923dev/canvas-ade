@@ -539,6 +539,22 @@ export function planOwners(
   return out
 }
 
+/**
+ * Which worker BOARD holds each plan item — `planOwners`' twin, keyed to the worker instead of
+ * anonymised. Same walk, same liveness rules, so the strip's owner dot and the plan-kanban's
+ * worker column can never disagree about who holds what.
+ */
+export function planHolders(ledger: SwarmRunLedger): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const item of ledger.planItems) {
+    if (!item.ownerTaskId) continue
+    const task = ledger.tasks.find((t) => t.taskId === item.ownerTaskId)
+    if (!task || task.state !== 'in_progress' || !task.assignment) continue
+    out[item.id] = task.assignment.boardId
+  }
+  return out
+}
+
 /** The whole renderer-facing projection. `restored` is true only on the post-rehydrate push. */
 export function buildSnapshot(
   ledger: SwarmRunLedger,
@@ -568,6 +584,7 @@ export function buildSnapshot(
       results: ledger.tasks.filter((t) => t.result !== undefined).length
     },
     planOwners: planOwners(ledger, opts.now, thresholdMs),
+    planHolders: planHolders(ledger),
     workers,
     triage: triageRows(ledger, opts.now, thresholdMs, worktrees, integration),
     mergeSequence: integration.sequence

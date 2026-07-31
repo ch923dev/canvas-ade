@@ -336,6 +336,12 @@ export interface SwarmLedgerSnapshot {
    * the plan's source of truth), so the ledger never becomes a second, drifting copy of the plan.
    */
   planOwners: Record<string, 'working' | 'stalled'>
+  /**
+   * Plan-item id → the worker BOARD currently holding it — `planOwners`' twin, keyed to the
+   * worker instead of anonymised, for the plan-kanban's "who is doing what" columns. Additive
+   * optional: an older snapshot simply lacks it and the kanban degrades to Queue/Done only.
+   */
+  planHolders?: Record<string, string>
   workers: SwarmWorkerLedgerState[]
   /** Already risk-ordered by `SWARM_BLOCKED_TAGS` order; the renderer does not re-sort. */
   triage: SwarmTriageRow[]
