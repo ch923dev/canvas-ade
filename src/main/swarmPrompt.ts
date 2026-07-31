@@ -29,6 +29,7 @@
  */
 import { ROLE_PACKS } from '../shared/rolePacks'
 import type { SwarmRunLedger } from '../shared/swarmLedgerTypes'
+import { TERMINAL_TASK_STATES } from './swarmLedger'
 
 /** One line per role so the model picks by purpose, not by guessing ids. */
 const roleCatalog = (): string =>
@@ -140,19 +141,29 @@ export function turnRosterWorkers(
 ): TurnRosterWorker[] {
   const known = new Map<string, TurnRosterWorker>()
   for (const [id, role] of roles) known.set(id, { id, role })
-  // Ledger pass: newest assignment per board wins (a worker's second task supersedes its first).
+  // Ledger pass: the NEWEST task entry per board is the worker's current one, and it reads busy
+  // only while that entry is non-terminal — a board whose latest task finished is idle. A raw
+  // fold over all history would let an old, never-revisited `blocked` entry's activity/stalled
+  // shadow a later finish, showing a fully idle worker as stuck forever — so the orchestrator
+  // spawns a duplicate instead of reusing it, the exact incident class this roster exists to
+  // prevent (PR #417 review). Deliberately NOT taskForBoard's prefer-open resolution: that
+  // preference exists to route a worker's re-settle onto its open row, and here it would keep
+  // the same stale blocked entry current past a newer finished task.
+  const current = new Map<string, SwarmRunLedger['tasks'][number]>()
   for (const task of ledger?.tasks ?? []) {
     const a = task.assignment
     if (!a) continue
-    const row = known.get(a.boardId) ?? { id: a.boardId, role: a.role }
-    known.set(a.boardId, row)
-    if (task.state === 'in_progress' || task.state === 'blocked') {
-      row.activity = task.activeForm
-      if (task.state === 'blocked') row.stalled = true
-      if (task.planItemId && ledger) {
-        const idx = ledger.planItems.findIndex((p) => p.id === task.planItemId)
-        if (idx >= 0) row.planItem = idx + 1
-      }
+    if (!known.has(a.boardId)) known.set(a.boardId, { id: a.boardId, role: a.role })
+    current.set(a.boardId, task)
+  }
+  for (const [boardId, task] of current) {
+    if (TERMINAL_TASK_STATES.has(task.state)) continue
+    const row = known.get(boardId)!
+    row.activity = task.activeForm
+    if (task.state === 'blocked') row.stalled = true
+    if (task.planItemId && ledger) {
+      const idx = ledger.planItems.findIndex((p) => p.id === task.planItemId)
+      if (idx >= 0) row.planItem = idx + 1
     }
   }
   if (boards === null) return [...known.values()]

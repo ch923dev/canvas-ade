@@ -436,8 +436,13 @@ export function taskById(l: SwarmRunLedger, taskId: string): SwarmTask | undefin
   return l.tasks.find((t) => t.taskId === taskId)
 }
 
-/** Terminal task states — a task here is finished and will never be worked again. */
-const TERMINAL_TASK_STATES: ReadonlySet<SwarmTaskState> = new Set(['done', 'failed', 'cancelled'])
+/** Terminal task states — a task here is finished and will never be worked again. (Exported for
+ *  the per-turn roster, which mirrors {@link taskForBoard}'s current-task resolution.) */
+export const TERMINAL_TASK_STATES: ReadonlySet<SwarmTaskState> = new Set([
+  'done',
+  'failed',
+  'cancelled'
+])
 
 /**
  * The task a worker board is currently working, if any — else the last one it finished.

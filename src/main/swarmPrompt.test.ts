@@ -171,6 +171,37 @@ describe('turnRosterWorkers — joins session roles, live boards, and the ledger
     expect(blocked[0].stalled).toBe(true)
   })
 
+  it('a reused board resolves to its NEWEST non-terminal task — stale history cannot shadow it (PR #417 review)', () => {
+    // Task 1 went blocked and was never revisited; task 2 was dispatched to the same worker and
+    // finished. The worker is fully idle — a forward fold over history would keep it "stalled".
+    const idle = turnRosterWorkers(
+      new Map([['w1', 'builder']]),
+      [{ id: 'w1' }],
+      ledgerWith({
+        tasks: [
+          busyTask('w1', { taskId: 't1', state: 'blocked' }),
+          busyTask('w1', { taskId: 't2', state: 'done', activeForm: 'Second task…' })
+        ]
+      })
+    )
+    expect(idle[0].activity).toBeUndefined()
+    expect(idle[0].stalled).toBeUndefined()
+    // Old blocked + new in-flight: the newest non-terminal wins — busy with the NEW activity,
+    // and the old entry's blocked flag does not leak onto the current task.
+    const busy = turnRosterWorkers(
+      new Map([['w1', 'builder']]),
+      [{ id: 'w1' }],
+      ledgerWith({
+        tasks: [
+          busyTask('w1', { taskId: 't1', state: 'blocked' }),
+          busyTask('w1', { taskId: 't2', activeForm: 'Second task…' })
+        ]
+      })
+    )
+    expect(busy[0].activity).toBe('Second task…')
+    expect(busy[0].stalled).toBeUndefined()
+  })
+
   it('re-seeds workers from ledger assignments when the session map is empty (post-restart)', () => {
     const rows = turnRosterWorkers(
       new Map(),
