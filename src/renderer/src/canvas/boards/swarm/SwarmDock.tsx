@@ -38,7 +38,16 @@ import { agentIdentity, isRunning } from '../terminalState'
 import { presetById } from '../terminal/agentPresets'
 import { useInterruptFeedback } from '../terminal/useInterruptFeedback'
 import { useTerminalReraster } from '../terminal/useTerminalReraster'
-import { resolveInitialFont } from '../terminal/terminalFont'
+import {
+  clampTerminalFont,
+  DEFAULT_TERMINAL_FONT,
+  MAX_TERMINAL_FONT,
+  MIN_TERMINAL_FONT,
+  resolveInitialFont,
+  writeStickyFont
+} from '../terminal/terminalFont'
+import { buildTerminalMenuEntries } from '../terminal/terminalMenu'
+import { ElementContextMenu, type MenuEntry } from '../planning/ElementContextMenu'
 import { TerminalIdleAffordance } from '../terminal/TerminalIdleAffordance'
 import { TerminalFindBar } from '../terminal/TerminalFindBar'
 import { screen } from '../terminal/terminalBoardStyles'
@@ -84,10 +93,12 @@ function DockedPane({
   onRemove
 }: DockedPaneProps): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
-  // Font nudges are a canvas-terminal affordance (Inspector/menu); the dock keeps the sticky
-  // default, so the keymap's Ctrl±/0 bridges are inert here.
+  // Font nudges are LIVE in the dock (user ask 2026-07-31 — the stubs made Ctrl±/0 inert here):
+  // the refs feed the terminal keymap bridges; `setFont` below is TerminalBoard's persist path
+  // verbatim (per-board pin + sticky default + one undo step per burst).
   const fontStepRef = useRef<(delta: number) => void>(() => {})
   const fontResetRef = useRef<() => void>(() => {})
+  const fontBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const projectDir = useCanvasStore((s) => s.project.dir)
   // Links: the dock has no push-to-preview wiring (that is canvas-board sugar) — a
   // Ctrl/Cmd-clicked URL opens in the OS browser; MAIN re-validates the scheme.
@@ -104,7 +115,8 @@ function DockedPane({
     fitWhole,
     counterScale,
     findOpen,
-    findApi
+    findApi,
+    selectionFallback
   } = useTerminalSpawn({
     board,
     projectDir,
@@ -113,7 +125,10 @@ function DockedPane({
     fontResetRef,
     pasteIntoTerminal,
     configPending: false,
-    onLinkActivate
+    onLinkActivate,
+    // Swarm full view must NOT blow the pane's font up by the WORKER board's stale parked
+    // w/h vs the window (counterScale stays 1; the well refits to more columns instead).
+    dockPane: true
   })
   // Terminal parity (eyeball fix 2026-07-31): the SAME settled font seam + transition refit
   // TerminalBoard runs — without it the pane's render font never re-syncs and a resize/zoom
@@ -129,6 +144,83 @@ function DockedPane({
     liveFontRef,
     identityStyle: screen
   })
+  // Per-board font size — TerminalBoard's persist path verbatim: clamp, burst-collapsed undo
+  // checkpoint, per-board pin via updateBoard, sticky new-terminal default (reset skips sticky).
+  const updateBoard = useCanvasStore((s) => s.updateBoard)
+  const setFont = useCallback(
+    (next: number, sticky = true): void => {
+      const clamped = clampTerminalFont(next)
+      if (clamped === liveFontRef.current) return
+      liveFontRef.current = clamped
+      if (fontBurstRef.current === null) useCanvasStore.getState().beginChange()
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+      fontBurstRef.current = setTimeout(() => {
+        fontBurstRef.current = null
+      }, 500)
+      updateBoard(board.id, { fontSize: clamped })
+      if (sticky) writeStickyFont(clamped)
+    },
+    [board.id, updateBoard]
+  )
+  const nudgeFont = useCallback(
+    (delta: number): void => setFont(liveFontRef.current + delta),
+    [setFont]
+  )
+  const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT, false), [setFont])
+  useEffect(() => {
+    fontStepRef.current = nudgeFont
+    fontResetRef.current = resetFont
+  }, [nudgeFont, resetFont])
+  useEffect(
+    () => () => {
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+    },
+    []
+  )
+  // Ctrl+wheel font zoom over the well (the TerminalBoard listener verbatim — VS Code / iTerm
+  // idiom; macOS pinch arrives as ctrl-wheel). NATIVE non-passive listener: React's synthetic
+  // onWheel is passive, so preventDefault would no-op. Plain wheel stays scrollback.
+  useEffect(() => {
+    const el = screenRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      if (e.deltaY === 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      fontStepRef.current(e.deltaY < 0 ? 1 : -1)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+  // Right-click terminal menu (canvas-terminal parity): the SAME menu the canvas terminal opens
+  // on right-click (Copy / Paste / Select all / Clear / Save / font ±·reset), with TerminalBoard's
+  // mouse-mode guard — a TUI keeps its right-click unless Shift is held. The DISCOVERABLE config
+  // surface is the Board Inspector flyout (SwarmBoard → SwarmInspector — user feedback
+  // 2026-08-01 "I meant here"); this stays as the in-place idiom every terminal user reaches for.
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
+  const openMenuAt = useCallback(
+    (x: number, y: number): void => {
+      const term = termRef.current
+      if (!term) return
+      setMenu({
+        x,
+        y,
+        entries: buildTerminalMenuEntries({
+          hasSel: term.hasSelection() || selectionFallback() !== '',
+          selectionFallback,
+          boardId: board.id,
+          effectiveFont: clampTerminalFont(board.fontSize ?? bornFont),
+          minFont: MIN_TERMINAL_FONT,
+          maxFont: MAX_TERMINAL_FONT,
+          termRef,
+          nudgeFont,
+          resetFont
+        })
+      })
+    },
+    [termRef, selectionFallback, board.id, board.fontSize, bornFont, nudgeFont, resetFont]
+  )
   // Refit when devicePixelRatio changes (monitor move) — the host doesn't resize, so the RO
   // never fires, but the cell height changed (the TerminalBoard dpr effect, verbatim).
   useEffect(() => {
@@ -207,6 +299,16 @@ function DockedPane({
           e.stopPropagation()
           termRef.current?.focus()
         }}
+        onContextMenu={(e) => {
+          // TerminalBoard's mouse-mode guard verbatim: a TUI in mouse-tracking mode keeps its
+          // right-click unless Shift is held.
+          const term = termRef.current
+          if (!term) return
+          if (term.modes.mouseTrackingMode !== 'none' && !e.shiftKey) return
+          e.preventDefault()
+          e.stopPropagation()
+          openMenuAt(e.clientX, e.clientY)
+        }}
       >
         <div ref={screenRef} style={screenStyle} />
         {findOpen && <TerminalFindBar api={findApi} />}
@@ -217,6 +319,14 @@ function DockedPane({
           identity={identity}
           onStart={() => startLaunchRef.current?.()}
         />
+        {menu && (
+          <ElementContextMenu
+            x={menu.x}
+            y={menu.y}
+            entries={menu.entries}
+            onClose={() => setMenu(null)}
+          />
+        )}
       </div>
     </section>
   )

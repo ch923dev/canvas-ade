@@ -140,7 +140,18 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // identical whitespace-collapse + C0/DEL/C1 strip + code-point clamp before it lands in the store.
       // `undefined` (empty/whitespace-only/non-string) ⇒ the per-type default title.
       const cleanTitle = sanitizeBoardTitle(title)
-      store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
+      // Docked-terminals: live-store host check (see the shape validation above) — dock only
+      // into a swarm board that exists RIGHT NOW; anything else lands as a canvas terminal.
+      // Computed BEFORE the add so the add itself can skip auto-select (`select:false`): a
+      // docked worker has no RF node, so a spawn-time selection would be an invisible ghost
+      // RF can never deselect (the group-fab miscount / inspector-never-opens bug).
+      const dockHostLive =
+        dockedIn !== undefined && store.boards.some((b) => b.id === dockedIn && b.type === 'swarm')
+      store.addBoard(type, SPAWN_ANCHOR, {
+        id,
+        ...(cleanTitle ? { title: cleanTitle } : {}),
+        ...(dockHostLive ? { select: false } : {})
+      })
       // Land the spawn-time launchCommand/cwd IN the same synchronous applier tick, BEFORE React
       // mounts the terminal — the mount-time spawn effect runs after this returns, so
       // `useTerminalSpawn.launch()` sees them at first spawn (no race). `updateBoard` filters to
@@ -149,10 +160,6 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // whole configured board (the fields never split the history). Kept out of `canvasStore.
       // addBoard` on purpose — MCP-only behavior stays in the MCP applier (file-size doctrine:
       // canvasStore is pinned).
-      // Docked-terminals: live-store host check (see the shape validation above) — dock only
-      // into a swarm board that exists RIGHT NOW; anything else lands as a canvas terminal.
-      const dockHostLive =
-        dockedIn !== undefined && store.boards.some((b) => b.id === dockedIn && b.type === 'swarm')
       if (
         launchCommand !== undefined ||
         cwd !== undefined ||

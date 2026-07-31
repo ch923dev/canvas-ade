@@ -2112,6 +2112,58 @@ describe('removeBoard dock sweep (swarm docked-terminals)', () => {
   })
 })
 
+describe('docked terminals leave the canvas — selection + layout invariants', () => {
+  // A docked worker has no React Flow node, so RF can never emit a deselect intent for it: any
+  // docked id that enters selectedIds haunts the selection (the "Group 2" fab with one visible
+  // board selected; the Board Inspector's single-selection gate never opening).
+  const seed = (): void => {
+    const sw = createBoard('swarm', { id: 'sw-1', x: 0, y: 0 })
+    const t = createBoard('terminal', { id: 't-1', x: 600, y: 600 })
+    const w = {
+      ...(createBoard('terminal', { id: 'w-1', x: 0, y: 0 }) as TerminalBoard),
+      dockedIn: 'sw-1'
+    }
+    useCanvasStore.setState({
+      boards: [sw, t, w],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+  }
+
+  it('setSelection silently drops a docked worker id (ghost eviction)', () => {
+    seed()
+    useCanvasStore.getState().setSelection(['w-1', 't-1'])
+    expect(useCanvasStore.getState().selectedIds).toEqual(['t-1'])
+    expect(useCanvasStore.getState().selectedId).toBe('t-1')
+  })
+
+  it('selectBoard no-ops on a docked worker id (keeps the current selection)', () => {
+    seed()
+    useCanvasStore.getState().selectBoard('t-1')
+    useCanvasStore.getState().selectBoard('w-1')
+    expect(useCanvasStore.getState().selectedIds).toEqual(['t-1'])
+  })
+
+  it('addBoard select:false leaves the current selection untouched (docked-worker spawn)', () => {
+    seed()
+    useCanvasStore.getState().selectBoard('sw-1')
+    useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 }, { id: 'w-2', select: false })
+    expect(useCanvasStore.getState().selectedIds).toEqual(['sw-1'])
+    expect(useCanvasStore.getState().selectedId).toBe('sw-1')
+  })
+
+  it('tidyBoards neither moves a docked worker nor reserves a cell for it', () => {
+    seed()
+    useCanvasStore.getState().tidyBoards('grid')
+    const w = useCanvasStore.getState().boards.find((b) => b.id === 'w-1') as TerminalBoard
+    expect({ x: w.x, y: w.y }).toEqual({ x: 0, y: 0 }) // parking coordinates untouched
+  })
+})
+
 describe('terminal theming patch (Lane B)', () => {
   it('updateBoard persists themeId + fontFamilyId on a terminal (PATCHABLE_KEYS.terminal)', () => {
     const t = createBoard('terminal', { id: 't1', x: 0, y: 0 }) as TerminalBoard

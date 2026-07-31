@@ -348,7 +348,10 @@ export default tseslint.config(
     // slot ref, its unmount cancel, and the verifyAfterFit wire, whose getters must close over the
     // spawn closure's term identity + termRef/screenRef/resizeBackstopRef/csTransitionRef and
     // cannot leave the hook.
-    rules: { 'max-lines': ['error', { max: 706, skipBlankLines: true, skipComments: true }] }
+    // 706→708 (swarm dock full-view font blow-up): TWO choke-point lines — the `dockPane` deps
+    // field and its guard on the counterScale computation (which closes over isFullView +
+    // fvWinSize + board dims and cannot leave the hook). Ratchet DOWN on the next split.
+    rules: { 'max-lines': ['error', { max: 708, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

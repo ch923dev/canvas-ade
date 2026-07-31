@@ -64,6 +64,10 @@ export const swarmApi = {
   /** S2: stamp "seen up to now" so read results stop appearing as unreviewed triage rows. */
   markSeen: (runId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('swarm:markSeen', { runId }),
+  /** Acknowledge-on-focus: focusing a worker snoozes its triage row (Wait semantics, MAIN
+   *  re-derives which tasks; a persisting condition resurfaces after the stall threshold). */
+  ackWorker: (runId: string, workerId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('swarm:ackWorker', { runId, workerId }),
   /** S2: the swarm board was deleted — drop its durable run too. */
   destroyRun: (runId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('swarm:destroyRun', { runId }),

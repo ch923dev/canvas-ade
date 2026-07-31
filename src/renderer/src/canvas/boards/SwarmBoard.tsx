@@ -18,18 +18,29 @@
  * over `window.api.swarm` (absent in test/smoke renders — every access optional-chains).
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   SwarmBoard as SwarmBoardData,
   TerminalBoard as TerminalBoardData
 } from '../../lib/boardSchema'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
+import { useInspectorSlot } from '../inspector/inspectorSlotStore'
+import {
+  clampTerminalFont,
+  DEFAULT_TERMINAL_FONT,
+  MAX_TERMINAL_FONT,
+  MIN_TERMINAL_FONT,
+  readStickyFont,
+  writeStickyFont
+} from './terminal/terminalFont'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useSwarmStore, runFor, type SwarmRun } from '../../store/swarmStore'
 import { useAttentionStore } from '../../store/attentionStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { useDockStore } from '../../store/dockStore'
 import { SwarmWorkerCards } from './swarm/SwarmWorkerCards'
+import { SwarmInspector } from './swarm/SwarmInspector'
 import { SwarmDock } from './swarm/SwarmDock'
 import { SwarmPlanStrip } from './swarm/SwarmPlanStrip'
 import { SwarmPlanKanban } from './swarm/SwarmPlanKanban'
@@ -158,6 +169,37 @@ export function SwarmBoard({
   )
   const dockedIds = useMemo(() => dockedBoards.map((b) => b.id), [dockedBoards])
   const activeDockId = useDockStore((s) => s.active[board.id])
+  // Terminal config in the Board Inspector FLYOUT (user feedback 2026-08-01 "I meant here" —
+  // the reveal-on-select popover, not the ⋯ menu, not pane-header chrome): font controls acting
+  // on the ACTIVE docked worker. Writes ride the ordinary persist path — updateBoard(fontSize)
+  // pin + sticky default — and the pane's reraster seam re-syncs from the pin like any external
+  // change (undo / project load), so no handler registry is needed. Undo collapses a click
+  // burst into one step (TerminalBoard's leading-edge beginChange + trailing timer).
+  const inspectorSlot = useInspectorSlot(board.id)
+  const dockBoard = dockedBoards.find((b) => b.id === activeDockId) ?? dockedBoards[0] ?? null
+  const dockFont = dockBoard ? clampTerminalFont(dockBoard.fontSize ?? readStickyFont()) : null
+  const fontBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+    },
+    []
+  )
+  const setDockFont = useCallback(
+    (boardId: string, current: number, next: number, sticky: boolean): void => {
+      const clamped = clampTerminalFont(next)
+      if (clamped === current) return
+      const store = useCanvasStore.getState()
+      if (fontBurstRef.current === null) store.beginChange()
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+      fontBurstRef.current = setTimeout(() => {
+        fontBurstRef.current = null
+      }, 500)
+      store.updateBoard(boardId, { fontSize: clamped })
+      if (sticky) writeStickyFont(clamped) // new-terminal default; skipped on reset
+    },
+    []
+  )
   // Region layout (eyeball feedback): divider-driven chat/rail widths + triage height,
   // persisted on the board (`dockLayout`); the viewport takes the rest.
   const { sizes, handlersFor } = useDockLayout(board)
@@ -166,6 +208,11 @@ export function SwarmBoard({
   const flip = useTerminalFlip()
   const openWorker = useCallback(
     (id: string): void => {
+      // Acknowledge-on-focus: focusing a worker snoozes its triage row (Wait semantics — MAIN
+      // re-derives which tasks; a persisting condition resurfaces). Fire-and-forget: the jump
+      // must never wait on the ledger write. Covers all three focus paths through this handler —
+      // a triage row's Open, a rail worker-card click, and a dock activation.
+      void window.api?.swarm?.ackWorker?.(board.id, id)
       const b = useCanvasStore.getState().boards.find((x) => x.id === id)
       if (b && b.type === 'terminal' && b.dockedIn === board.id) {
         useDockStore.getState().setActive(board.id, id)
@@ -240,6 +287,36 @@ export function SwarmBoard({
       onRemoveFromAllGroups={onRemoveFromAllGroups}
       onStartConnect={onStartConnect}
     >
+      {/* Board Inspector content — portaled into the flyout's slot while this swarm board is the
+          single eligible selection (TerminalBoard's P0.5 pattern). Handlers act on the ACTIVE
+          docked worker; nothing docked → the section says so. */}
+      {inspectorSlot &&
+        createPortal(
+          <SwarmInspector
+            workerTitle={dockBoard ? dockBoard.title : null}
+            font={dockFont ?? DEFAULT_TERMINAL_FONT}
+            defaultFont={DEFAULT_TERMINAL_FONT}
+            onDecFont={() =>
+              dockBoard &&
+              dockFont !== null &&
+              setDockFont(dockBoard.id, dockFont, dockFont - 1, true)
+            }
+            onIncFont={() =>
+              dockBoard &&
+              dockFont !== null &&
+              setDockFont(dockBoard.id, dockFont, dockFont + 1, true)
+            }
+            decFontDisabled={dockFont !== null && dockFont <= MIN_TERMINAL_FONT}
+            incFontDisabled={dockFont !== null && dockFont >= MAX_TERMINAL_FONT}
+            onResetFont={() =>
+              dockBoard &&
+              dockFont !== null &&
+              setDockFont(dockBoard.id, dockFont, DEFAULT_TERMINAL_FONT, false)
+            }
+            resetFontDisabled={dockFont === DEFAULT_TERMINAL_FONT}
+          />,
+          inspectorSlot
+        )}
       {/* Task #12 flip stage (T15's shape): perspective only mid-fold, flat at rest. The FRONT
           face (chat/dock/triage — incl. every docked worker terminal) stays MOUNTED across the
           flip so no PTY ever tears down; when flipped it just loses pointer events under the

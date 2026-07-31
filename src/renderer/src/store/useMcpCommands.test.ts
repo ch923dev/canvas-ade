@@ -177,6 +177,16 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     })
   })
 
+  it('a docked worker spawn never enters the selection (no RF node ⇒ an unevictable ghost otherwise)', () => {
+    useCanvasStore.getState().addBoard('swarm', { x: 0, y: 0 }, { id: 'sw-1' }) // selects sw-1
+    applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-1', type: 'terminal', dockedIn: 'sw-1' }
+    })
+    expect(useCanvasStore.getState().selectedIds).toEqual(['sw-1'])
+    expect(useCanvasStore.getState().selectedId).toBe('sw-1')
+  })
+
   it('addBoard degrades a dangling/non-swarm dockedIn to a canvas spawn (board lands, flag dropped)', () => {
     // The board is the deliverable — a dock host that closed between mint and apply must not
     // strand the worker invisible or fail the spawn.

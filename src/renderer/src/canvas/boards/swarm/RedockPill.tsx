@@ -33,6 +33,10 @@ export function RedockPill({ boardId }: { boardId: string }): ReactElement | nul
       .catch(() => {})
       .then(() => {
         patchBoardUntracked(boardId, { dockedIn: hostId })
+        // A just-docked board must leave the selection (it has no RF node to deselect it) —
+        // setSelection's docked filter drops it; re-passing the current ids applies it.
+        const st = useCanvasStore.getState()
+        if (st.selectedIds.includes(boardId)) st.setSelection(st.selectedIds)
         useDockStore.getState().setActive(hostId, boardId)
       })
   }, [boardId, hostId])

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSnapshot,
+  dedupeTriage,
   discloseFor,
   fmtDur,
   isStalled,
@@ -222,6 +223,43 @@ describe('worker states', () => {
   it('leaves `state` absent for a healthy worker so S1s derivation still stands', () => {
     const l = ledger({ tasks: [task({ assignment: assign({ lastActivityAt: 17 * MIN }) })] })
     expect(workerStates(l, 18 * MIN)[0].state).toBeUndefined()
+  })
+})
+
+describe('triage dedupe — one row per worker (2026-07-31 user rule)', () => {
+  it('a worker with several concurrent conditions keeps only its highest-risk row', () => {
+    // t1 stalled (silent past threshold) + t2 an unseen unreviewed result, BOTH on w1.
+    const now = SWARM_STALL_THRESHOLD_MS + MIN
+    const l = ledger({
+      tasks: [
+        task({ taskId: 't1' }),
+        task({ taskId: 't2', state: 'done', assignment: assign(), result: result({ at: 5 }) })
+      ]
+    })
+    const rows = triageRows(l, now)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ tag: 'stalled', boardId: 'w1' }) // stalled outranks unreviewed
+  })
+
+  it('dedupeTriage keeps distinct workers apart and exempts every work-product row', () => {
+    const row = (id: string, tag: SwarmTriageRow['tag'], boardId: string): SwarmTriageRow => ({
+      id,
+      tag,
+      boardId,
+      text: '',
+      actions: []
+    })
+    const out = dedupeTriage([
+      row('a', 'stalled', 'w1'),
+      row('b', 'unreviewed', 'w2'),
+      row('ov', 'overlap', 'w1'), // a branch-pair warning — an artifact, not attention noise
+      row('dw', 'dirty_worktree', 'w1'), // a preserved tree — the only path to Resolve…
+      row('merge-sequence', 'merge_ready', 'w1'), // run-level: boardId is just the sequence head
+      row('c', 'lost', 'w1')
+    ])
+    // w1's ATTENTION rows collapse to `lost` (highest rank); w2 keeps its own; every
+    // work-product row survives untouched even though all three share w1's boardId.
+    expect(out.map((r) => r.id).sort()).toEqual(['b', 'c', 'dw', 'merge-sequence', 'ov'])
   })
 })
 

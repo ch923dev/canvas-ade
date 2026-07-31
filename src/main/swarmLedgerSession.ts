@@ -89,6 +89,14 @@ export interface SwarmLedgerSession {
   /** Stamp "the human has seen the run up to now" — bounds the unreviewed-result rows. */
   markSeen(): void
   /**
+   * Acknowledge-on-focus (user rule, 2026-07-31): the human focused this WORKER board, so its
+   * task-derived triage rows snooze with Wait semantics — one more stall threshold of patience,
+   * stall clock restarted — NEVER a permanent dismiss: a condition that persists resurfaces.
+   * Work-product rows (`overlap` / `dirty_worktree` / `merge_ready`) are exempt and keep their
+   * explicit actions. Returns true when anything actually changed (the caller's re-push signal).
+   */
+  ackBoard(workerBoardId: string): boolean
+  /**
    * Apply a triage action to one task, re-validating MAIN-side. Returns `{ok:false}` for an
    * unknown task or an inapplicable action; a `reassign` also returns the PROMPT the renderer
    * should send as the next orchestrator turn (it never dispatches by itself).
@@ -284,6 +292,34 @@ export function createSwarmLedgerSession(
       store.update(boardId, (l) => {
         l.lastSeenAt = now()
       })
+    },
+
+    /**
+     * Focus = acknowledge. Everything is re-derived here (which tasks belong to the worker,
+     * which currently produce a row) — the renderer only names the board it focused. The
+     * row-producing predicate mirrors `triageRows`' task loop: a blocked tag, a live stall, or
+     * an unseen unreviewed result; `dismissed` and already-snoozed tasks are left alone. Snooze
+     * shape is `applyAction('wait')` verbatim: one threshold of patience + a restarted stall
+     * clock, so a persisting condition resurfaces instead of dying silently.
+     */
+    ackBoard(workerBoardId) {
+      const at = now()
+      let changed = false
+      store.update(boardId, (l) => {
+        for (const t of l.tasks) {
+          if (t.assignment?.boardId !== workerBoardId || t.dismissed === true) continue
+          if (t.snoozedUntil !== undefined && at < t.snoozedUntil) continue
+          const unreviewed =
+            t.state === 'done' && t.result !== undefined && !t.result.acceptedByHuman
+              ? t.result.at > l.lastSeenAt
+              : false
+          if (t.blockedTag === undefined && !isStalled(t, at) && !unreviewed) continue
+          t.snoozedUntil = at + SWARM_STALL_THRESHOLD_MS
+          if (t.assignment) t.assignment.lastActivityAt = at
+          changed = true
+        }
+      })
+      return changed
     },
 
     /**
