@@ -12,7 +12,6 @@
 import { useCallback, useEffect, type DragEvent } from 'react'
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
-import { useDockStore } from '../../store/dockStore'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
 import { FILEREF_MIME } from '../fileTreeData'
 
@@ -29,17 +28,12 @@ export function useCanvasFileGlue(
 
   useEffect(() => {
     if (!pendingFocusId) return
-    // Swarm docked-terminals: a focus intent aimed at a DOCKED worker (notifications, triage,
-    // Inspector) has no canvas node to fit — and its stored x/y are stale parking coordinates.
-    // Redirect: activate its tab in the host's dock, then focus the HOST swarm board instead.
-    const target = useCanvasStore.getState().boards.find((b) => b.id === pendingFocusId)
-    const hostId = target?.type === 'terminal' ? target.dockedIn : undefined
-    if (hostId) useDockStore.getState().setActive(hostId, pendingFocusId)
-    const focusId = hostId ?? pendingFocusId
+    // A focus intent aimed at a DOCKED worker redirects to its host swarm board inside
+    // focusBoardById itself (the shared resolveFocusTarget rule) — no per-consumer logic here.
     // Defer one frame: a board opened this tick is in the store, but RF may not have registered
     // its node yet — an immediate fitView would find nothing. rAF lets the node mount first.
     const raf = requestAnimationFrame(() => {
-      focusBoardById(focusId)
+      focusBoardById(pendingFocusId)
       useCanvasStore.setState({ pendingFocusId: null })
     })
     return () => cancelAnimationFrame(raf)

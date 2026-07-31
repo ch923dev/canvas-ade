@@ -19,6 +19,7 @@ import { showToast } from '../../store/toastStore'
 import { cameraAnim } from '../../lib/motion'
 import { FIT_FRAME, RESET_FRAME, Z_MAX } from '../../lib/canvasView'
 import { runBoardExport } from '../boards/planning/runExport'
+import { resolveFocusTarget } from '../dockFocus'
 import type { BoardActions } from '../boardActions'
 import { useAuditLogStore } from '../auditLogStore'
 import type { PaletteVerbs } from './commandRegistry'
@@ -111,12 +112,17 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
   // (terminal/browser bitmaps blur past 100%) at zoom 1; vector planning may fill.
   const goToBoard = useCallback(
     (id: string) => {
-      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      // Docked worker → activate its dock tab and frame the HOST swarm board instead
+      // (shared redirect, see resolveFocusTarget — a docked board has no RF node to fit).
+      const focusId = resolveFocusTarget(id)
+      const board = useCanvasStore.getState().boards.find((b) => b.id === focusId)
       if (!board) return
-      setFocusedId(id)
-      selectBoard(id)
+      setFocusedId(focusId)
+      selectBoard(focusId)
       const raster = board.type === 'terminal' || board.type === 'browser'
-      void rf.fitView(cameraAnim({ padding: 0.3, maxZoom: raster ? 1 : Z_MAX, nodes: [{ id }] }))
+      void rf.fitView(
+        cameraAnim({ padding: 0.3, maxZoom: raster ? 1 : Z_MAX, nodes: [{ id: focusId }] })
+      )
     },
     [rf, selectBoard, setFocusedId]
   )
