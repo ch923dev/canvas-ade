@@ -9,7 +9,8 @@ import {
   isWriteRolePack,
   launchLooksReadOnly,
   rolePackById,
-  WRITE_ROLE_CONCURRENCY_CAP_SHARED
+  WRITE_ROLE_CONCURRENCY_CAP_SHARED,
+  type RolePack
 } from './rolePacks'
 
 export type { Composition, TaskGroup } from '../store/commandStore'
@@ -28,18 +29,40 @@ export interface EngineeredDispatch {
 /**
  * System prompt that turns the Command board into the orchestrator's PROMPT ENGINEER. From a terse
  * task it returns BOTH a short intent label (the zone name — a raw verbose task is a poor group name)
- * AND a clear, self-contained instruction for the worker agent. Sent to the in-app LLM
- * (`window.api.llm.summarize`); the instruction is shown in the confirm modal for review. The
- * `TITLE:` line is a forgiving, parseable contract (see `parseEngineeredDispatch`).
+ * AND a self-contained task spec in the same four-field grammar the swarm path enforces at schema
+ * level (objective / context / boundaries / output — the 2026-07-31 prompt-overhaul report's V5 fix:
+ * one dispatch grammar, not two). Sent to the in-app LLM (`window.api.llm.summarize`); the spec is
+ * shown in the confirm modal for review. The `TITLE:` line is a forgiving, parseable contract
+ * (see `parseEngineeredDispatch`); the four labels structure the instruction — no parser change.
+ *
+ * Posture-aware capability claim (`pack`): the Command board engineers BEFORE the config dialog
+ * commits a role, so the default (no pack) states the conditional truth — read/search always, edit/
+ * run only if the eventual role writes — instead of the old unconditional "assume it can edit"
+ * (false for every plan-posture role). Callers that DO know the pack get the specific claim.
  */
-export const DISPATCH_ENGINEER_SYSTEM =
-  'You are an orchestrator prompt engineer for an autonomous coding agent (Claude Code) working in ' +
-  "the user's project repository. From the user's short task, output EXACTLY:\n" +
-  'TITLE: <a 2-4 word Title Case label naming the task\'s intent, e.g. "Project Analysis", "Auth ' +
-  'Flow", "Bug Triage">\n' +
-  'then a blank line, then a SINGLE clear, self-contained instruction the agent can act on directly ' +
-  '(state the goal, implied steps, and what "done" looks like; assume it can read/run/edit files). ' +
-  'Output only that — no preamble, no surrounding quotes, no markdown headings, no commentary.'
+export function dispatchEngineerSystem(pack?: Pick<RolePack, 'permissionMode'>): string {
+  const capability = !pack
+    ? 'Assume the agent can read and search the repository; it can edit files and run commands ' +
+      'only if the role it is dispatched to writes, so state the goal rather than prescribing ' +
+      'write steps.'
+    : isWriteRolePack(pack)
+      ? 'Assume the agent can read, search, and edit files and run commands.'
+      : 'Assume the agent can read and search the repository but NOT edit files or run write ' +
+        'commands — frame the work as investigation and reporting.'
+  return (
+    'You are an orchestrator prompt engineer for an autonomous coding agent (Claude Code) working in ' +
+    "the user's project repository. From the user's short task, output EXACTLY:\n" +
+    'TITLE: <a 2-4 word Title Case label naming the task\'s intent, e.g. "Project Analysis", "Auth ' +
+    'Flow", "Bug Triage">\n' +
+    'then a blank line, then the task as four labeled lines the agent can act on directly:\n' +
+    'OBJECTIVE: the goal and what "done" looks like.\n' +
+    'CONTEXT: what the agent must know — background, key questions, suggested starting points.\n' +
+    'BOUNDARIES: what it must not touch or expand into.\n' +
+    'OUTPUT: what to produce and how to report it.\n' +
+    capability +
+    ' Output only that — no preamble, no surrounding quotes, no markdown headings, no commentary.'
+  )
+}
 
 /**
  * Collapse the engineered prompt to a SINGLE line for the gated REPL write (C2f). Moved to

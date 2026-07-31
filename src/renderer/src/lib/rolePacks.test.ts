@@ -25,8 +25,14 @@ const pack = (id: string): RolePack => {
 }
 
 describe('ROLE_PACKS catalog', () => {
-  it('ships the four Phase-0 packs with unique ids', () => {
-    expect(ROLE_PACKS.map((p) => p.id)).toEqual(['builder', 'code-reviewer', 'explorer', 'planner'])
+  it('ships the five catalog packs with unique ids', () => {
+    expect(ROLE_PACKS.map((p) => p.id)).toEqual([
+      'builder',
+      'code-reviewer',
+      'explorer',
+      'researcher',
+      'planner'
+    ])
     expect(new Set(ROLE_PACKS.map((p) => p.id)).size).toBe(ROLE_PACKS.length)
   })
 
@@ -34,12 +40,16 @@ describe('ROLE_PACKS catalog', () => {
     for (const p of ROLE_PACKS) expect(validateRolePack(p)).toEqual([])
   })
 
-  it('builder is the only write-posture pack; the three read packs are plan-mode', () => {
+  it('builder is the only write-posture pack; the four read packs are plan-mode', () => {
     expect(isWriteRolePack(pack('builder'))).toBe(true)
-    for (const id of ['code-reviewer', 'explorer', 'planner']) {
+    for (const id of ['code-reviewer', 'explorer', 'researcher', 'planner']) {
       expect(isWriteRolePack(pack(id))).toBe(false)
       expect(pack(id).permissionMode).toBe('plan')
     }
+  })
+
+  it('every pack carries an entryCondition — the catalog routes by purpose, not by id-guessing', () => {
+    for (const p of ROLE_PACKS) expect(p.entryCondition?.trim()).toBeTruthy()
   })
 
   it('explorer proves the cheap-read axis (cheap tier → haiku alias, read-only)', () => {
@@ -133,6 +143,12 @@ describe('packOptionValues → composeCommand (the launch is DATA through the ex
     )
   })
 
+  it('researcher: mid tier + read posture (external-source work needs a mid model, not a cheap one)', () => {
+    expect(composeCommand(claudePreset, packOptionValues(pack('researcher')))).toBe(
+      'claude --model sonnet --permission-mode plan'
+    )
+  })
+
   it('model.pin wins over the tier alias', () => {
     const pinned: RolePack = {
       ...pack('explorer'),
@@ -157,7 +173,7 @@ describe('launchLooksReadOnly (the gate reads the ACTUAL command — PR #381 rev
     expect(launchLooksReadOnly('claude --permission-mode=plan')).toBe(true)
     expect(launchLooksReadOnly('claude --permission-mode plan --add-dir ../docs')).toBe(true)
     // Every read pack's own composed launch proves its posture.
-    for (const id of ['code-reviewer', 'explorer', 'planner']) {
+    for (const id of ['code-reviewer', 'explorer', 'researcher', 'planner']) {
       expect(launchLooksReadOnly(composeCommand(claudePreset, packOptionValues(pack(id))))).toBe(
         true
       )
@@ -208,5 +224,56 @@ describe('packDispatchPrompt', () => {
     expect(line).not.toMatch(/[\r\n]/)
     expect(line).toContain('You are a Builder')
     expect(line).toContain('Add the toggle.')
+  })
+})
+
+/**
+ * Brief contract pins — the six-section template from the 2026-07-31 prompt-overhaul report
+ * (docs/research/2026-07-31-swarm-prompt-overhaul.md §3.1). These keep the two incident fixes
+ * (V1 subject-over-scoping, missing routing hints) from silently regressing in a reword.
+ */
+describe('role briefs — six-section template (2026-07-31 overhaul)', () => {
+  it('every brief names write_result (the report contract) and stays inside the ride-along budget', () => {
+    for (const p of ROLE_PACKS) {
+      expect(p.systemPrompt).toContain('write_result')
+      // The brief rides EVERY dispatch (packDispatchPrompt) — keep it collapsed-short (~120-word
+      // target, hard ceiling here so growth is a deliberate decision, not drift).
+      expect(singleLinePrompt(p.systemPrompt).split(' ').length).toBeLessThanOrEqual(180)
+    }
+  })
+
+  it('every escape lane ends in a routing hint — a failed verdict must be orchestrator-actionable', () => {
+    for (const p of ROLE_PACKS) {
+      expect(p.systemPrompt).toMatch(/capability|researcher/i)
+    }
+  })
+
+  it('explorer is capability-scoped to the workspace, not "this codebase" (V1 fix)', () => {
+    const brief = pack('explorer').systemPrompt
+    expect(brief).not.toMatch(/about this codebase/i)
+    expect(brief).toMatch(/workspace/i)
+    // Empty-project floor: a workspace lacking what the question assumes is a DONE finding.
+    expect(brief).toMatch(/new or empty project/i)
+    expect(brief).toMatch(/that is itself the finding/i)
+    // The scope-mismatch verdict routes: web/library questions name the researcher.
+    expect(brief).toMatch(/researcher/i)
+  })
+
+  it('researcher fills the catalog hole: external sources, read-only, sources-cited reports', () => {
+    const p = pack('researcher')
+    expect(p.systemPrompt).toMatch(/web search/i)
+    expect(p.systemPrompt).toMatch(/never edit files/i)
+    expect(p.confirmPolicy).toBe('session-consented') // Q4-legal: plan posture
+    const props = p.reportSchema.properties as Record<string, unknown>
+    expect(props.sources).toBeDefined() // explorer's shape with sources replacing refs
+    expect(props.refs).toBeUndefined()
+    expect(props.open_questions).toBeDefined()
+    expect(props.confidence).toBeDefined()
+  })
+
+  it('code-reviewer keeps no-speculation but must not omit real findings (literal-conservatism guard)', () => {
+    const brief = pack('code-reviewer').systemPrompt
+    expect(brief).toMatch(/prefer no finding over a speculative one/i)
+    expect(brief).toMatch(/every real problem you find at every severity/i)
   })
 })

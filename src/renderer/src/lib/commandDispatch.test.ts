@@ -13,11 +13,13 @@ import {
   isWorkerNotReady,
   nextStatusForBoardChange,
   parseEngineeredDispatch,
+  dispatchEngineerSystem,
   fallbackTitle,
   singleLinePrompt,
   groupRollup,
   DEFAULT_COMPOSITION
 } from './commandDispatch'
+import { rolePackById } from './rolePacks'
 import type { CommandTask, Composition, TaskStatus } from '../store/commandStore'
 
 const task = (
@@ -273,6 +275,30 @@ describe('parseEngineeredDispatch', () => {
       title: 'login',
       prompt: 'login'
     })
+  })
+})
+
+describe('dispatchEngineerSystem — the four-field grammar, unified with the swarm path (V5)', () => {
+  it('emits the TITLE contract + all four labeled sections', () => {
+    const s = dispatchEngineerSystem()
+    expect(s).toContain('TITLE:')
+    for (const label of ['OBJECTIVE:', 'CONTEXT:', 'BOUNDARIES:', 'OUTPUT:']) {
+      expect(s).toContain(label)
+    }
+    // Outcome over procedure: "done" framing survives, the old "implied steps" nudge is gone.
+    expect(s).toContain('"done"')
+    expect(s).not.toMatch(/implied steps/i)
+  })
+
+  it('capability claim follows posture: unconditional write-assumption is gone', () => {
+    // No pack (the Command board engineers before the config dialog commits a role) — conditional.
+    expect(dispatchEngineerSystem()).toMatch(/only if the role it is dispatched to writes/i)
+    // Write pack — the specific claim.
+    expect(dispatchEngineerSystem(rolePackById('builder'))).toMatch(/edit files and run commands/i)
+    // Read pack — never claims edit capability.
+    expect(dispatchEngineerSystem(rolePackById('explorer'))).toMatch(
+      /NOT edit files or run write commands/i
+    )
   })
 })
 
