@@ -60,7 +60,10 @@ const h = vi.hoisted(() => ({
   writeFileSync: vi.fn(),
   notificationShow: vi.fn(),
   notificationCtor: vi.fn(),
-  notificationSupported: true
+  notificationSupported: true,
+  // Audit P2-6: the OS layer honors the notifications master switch (renderer push stays ungated).
+  notifEnabled: true,
+  notifConfigThrow: false
 }))
 
 vi.mock('electron', () => ({
@@ -116,6 +119,12 @@ vi.mock('./previewOsrBackground', () => ({
 vi.mock('./previewOsr', () => ({ GLOBAL_OSR_MAX: 8 }))
 vi.mock('./projectStore', () => ({ getCurrentDir: () => h.getCurrentDir() }))
 vi.mock('./lowRamConfig', () => ({ isLowRam: () => h.lowRam }))
+vi.mock('./notificationsConfig', () => ({
+  readNotificationsConfig: () => {
+    if (h.notifConfigThrow) throw new Error('unreadable config')
+    return { enabled: h.notifEnabled }
+  }
+}))
 
 import { startBackgroundIdleSweep, stopBackgroundIdleSweep } from './backgroundSessions'
 
@@ -149,6 +158,8 @@ function fakeWin(over?: { winDestroyed?: boolean; wcDestroyed?: boolean }) {
 beforeEach(() => {
   h.lowRam = false
   h.notificationSupported = true
+  h.notifEnabled = true
+  h.notifConfigThrow = false
   h.listBackgroundProjects.mockReset().mockReturnValue([])
   h.reapIdle.mockReset().mockResolvedValue({ closed: [], warned: [], capEvicted: [] })
   h.foregroundProjectOsr.mockReset().mockReturnValue(2)
@@ -420,6 +431,23 @@ describe('lifecycle fan-out (project:bgLifecycle + the OS notification)', () => 
     expect(h.notificationCtor).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Background project closed' })
     )
+  })
+
+  it('master switch OFF ⇒ NO OS notification, but the renderer consequence push still fires (audit P2-6)', async () => {
+    h.notifEnabled = false
+    const w = fakeWin()
+    await sweepWith({ closed: ['C:/proj/gone'], warned: [], capEvicted: [] }, w)
+    expect(h.notificationCtor).not.toHaveBeenCalled()
+    expect(w.send).toHaveBeenCalledWith(
+      'project:bgLifecycle',
+      expect.objectContaining({ kind: 'closed' })
+    )
+  })
+
+  it('an unreadable notifications config default-NOTIFIES (a broken prefs file must not mute the close report)', async () => {
+    h.notifConfigThrow = true
+    await sweepWith({ closed: ['C:/proj/gone'], warned: [], capEvicted: [] })
+    expect(h.notificationCtor).toHaveBeenCalledTimes(1)
   })
 
   it('an idle WARNING tells the user how to keep the project alive', async () => {

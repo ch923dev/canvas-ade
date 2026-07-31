@@ -55,6 +55,35 @@ describe('ToastIsland — render + queue', () => {
     })
     expect(items()[0].dataset.kind).toBe('error')
   })
+
+  it('a transient toast is visible past 3 queued sticky toasts (audit P1-2 starvation fix)', () => {
+    render(<ToastIsland />)
+    act(() => {
+      showToast({ id: 's1', message: 'stuck one', sticky: true })
+      showToast({ id: 's2', message: 'stuck two', sticky: true })
+      showToast({ id: 's3', message: 'stuck three', sticky: true })
+      showToast({ message: 'save failed — retry?' })
+    })
+    const texts = items().map((el) => el.textContent)
+    expect(items()).toHaveLength(3)
+    expect(texts.join(' ')).toContain('save failed')
+    expect(texts.join(' ')).not.toContain('stuck three')
+  })
+
+  it('the transient slot still auto-dismisses while sticky neighbours stay', () => {
+    render(<ToastIsland />)
+    act(() => {
+      showToast({ id: 's1', message: 'stuck one', sticky: true })
+      showToast({ id: 's2', message: 'stuck two', sticky: true })
+      showToast({ message: 'transient' })
+    })
+    act(() => {
+      vi.advanceTimersByTime(TOAST_AUTO_DISMISS_MS + 1)
+    })
+    const texts = items().map((el) => el.textContent)
+    expect(texts.join(' ')).not.toContain('transient')
+    expect(items()).toHaveLength(2)
+  })
 })
 
 describe('ToastIsland — dismissal', () => {

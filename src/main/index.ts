@@ -527,7 +527,7 @@ app.whenReady().then(async () => {
   bootTiming.mark('localServer', { localServer: local.status })
   registerPtyHandlers(ipcMain, () => mainWindow)
   // PTY-host boot (DESIGN.md 2026-07-12): failure notifier (muted headless) + reattach warm-up.
-  bootPtyHost({ muted: process.env.CANVAS_E2E === '1' || Boolean(SMOKE) })
+  bootPtyHost()
   // T-B2 safeStorage encryptor (Electron-free llmKeyStore); Phase 2 voice cloud STT reads the same MAIN-side `openai` slot + the file-tree symbols via getCurrentDir.
   const llmEncryptor: Encryptor = {
     isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),

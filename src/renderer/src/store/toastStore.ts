@@ -42,6 +42,60 @@ interface ToastState {
 
 let autoId = 0
 
+/**
+ * Retention backstop (audit P1-2c): sticky toasts never expire, so an unkeyed producer could grow
+ * the queue without bound. Every repeat-prone sticky producer is keyed (replace-in-place), so this
+ * cap should never engage in practice — which is exactly why it is safe to be blind about WHICH
+ * sticky it drops (the oldest).
+ */
+export const MAX_STICKY = 6
+
+/** Drop the oldest sticky toasts until at most `max` remain. Pure (returns the same array when
+ *  nothing is over the cap). */
+export function evictExcessSticky(list: Toast[], max: number): Toast[] {
+  let over = list.filter((t) => t.sticky).length - max
+  if (over <= 0) return list
+  return list.filter((t) => {
+    if (t.sticky && over > 0) {
+      over--
+      return false
+    }
+    return true
+  })
+}
+
+/**
+ * Visible-slot fairness (audit P1-2b): the island shows the OLDEST `max` — but sticky toasts never
+ * expire, so `max` unattended sticky toasts used to wedge the whole channel (a later save-failure
+ * Retry could never surface). At most `maxSticky` visible slots go to sticky toasts; the rest go to
+ * the oldest non-sticky. Sticky toasts beyond `maxSticky` fill leftover slots ONLY when no
+ * non-sticky toast is waiting — a transient can always reach a slot. Output preserves queue order
+ * (oldest first), so the existing render contract is unchanged.
+ */
+export function selectVisibleToasts(
+  toasts: Toast[],
+  opts: { max: number; maxSticky: number }
+): Toast[] {
+  if (toasts.length <= opts.max) return toasts
+  const chosen: number[] = []
+  let sticky = 0
+  for (let i = 0; i < toasts.length && chosen.length < opts.max; i++) {
+    if (toasts[i].sticky) {
+      if (sticky < opts.maxSticky) {
+        sticky++
+        chosen.push(i)
+      }
+    } else {
+      chosen.push(i)
+    }
+  }
+  // Leftover slots (fewer transients than reserved) → oldest remaining sticky.
+  for (let i = 0; i < toasts.length && chosen.length < opts.max; i++) {
+    if (toasts[i].sticky && !chosen.includes(i)) chosen.push(i)
+  }
+  return chosen.sort((a, b) => a - b).map((i) => toasts[i])
+}
+
 export const useToastStore = create<ToastState>((set) => ({
   toasts: [],
   showToast: (t) => {
@@ -57,7 +111,7 @@ export const useToastStore = create<ToastState>((set) => ({
       const i = s.toasts.findIndex((x) => x.id === id)
       // Replace in place so a repeated keyed toast (save-failure) doesn't jump the queue.
       if (i >= 0) return { toasts: s.toasts.map((x, j) => (j === i ? toast : x)) }
-      return { toasts: [...s.toasts, toast] }
+      return { toasts: evictExcessSticky([...s.toasts, toast], MAX_STICKY) }
     })
     return id
   },

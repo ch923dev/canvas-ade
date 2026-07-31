@@ -17,6 +17,8 @@
 import { app, Notification, type BrowserWindow } from 'electron'
 import { basename, join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { isHeadlessHarness } from './headlessHarness'
+import { readNotificationsConfig } from './notificationsConfig'
 import { createProjectSessions, type ProjectSessions } from './projectSessions'
 import {
   parkProjectSessions,
@@ -127,8 +129,14 @@ const BG_NOTIFY_COPY: Record<BgLifecycleKind, (name: string) => { title: string;
 }
 
 // Surface one sweep outcome: renderer toast push + OS notification. OS layer muted under the
-// headless harnesses (mirrors lifecycleNotifications.isHeadlessHarness) so e2e/smoke never pops
-// a real desktop notification; the renderer push still fires (asserted by specs via the toast).
+// headless harnesses (shared isHeadlessHarness) so e2e/smoke never pops a real desktop
+// notification; the renderer push still fires (asserted by specs via the toast).
+//
+// The RENDERER push stays ungated by the notifications master switch on purpose: "your project was
+// closed to free memory" is a consequence report the user needs to see in-app, not a notification
+// preference. Only the OS layer honors the master switch (audit P2-6). Per-event switches
+// (onDone/onInput/onError) do not map to project-lifecycle kinds, and `onlyWhenUnfocused` is moot
+// (a background-project event fires by construction while the user is elsewhere) — master only.
 function notifyBg(
   getWin: (() => BrowserWindow | null) | undefined,
   kind: BgLifecycleKind,
@@ -139,7 +147,18 @@ function notifyBg(
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send('project:bgLifecycle', { kind, dir, name })
   }
-  if (process.env.CANVAS_E2E || process.env.CANVAS_SMOKE) return
+  if (isHeadlessHarness()) return
+  // Master switch gate (audit P2-6). Read failure ⇒ default-NOTIFY (a corrupt prefs file must not
+  // silently mute the one surface telling the user their project was closed) — the trayResidency
+  // notifyBackgroundExit pattern. readNotificationsConfig already repairs corrupt JSON internally,
+  // so this catch only guards truly exceptional reads.
+  let enabled = true
+  try {
+    enabled = readNotificationsConfig(app.getPath('userData')).enabled
+  } catch {
+    /* unreadable config → default-notify */
+  }
+  if (!enabled) return
   try {
     if (Notification.isSupported()) {
       const { title, body } = BG_NOTIFY_COPY[kind](name)

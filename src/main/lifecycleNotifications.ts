@@ -26,6 +26,9 @@ import {
 } from './notificationsConfig'
 import { setPtyLifecycleEmitter } from './pty'
 import { listBoardMirror } from './boardRegistry'
+import { isHeadlessHarness } from './headlessHarness'
+import { createDeliverDedupe, dedupeKey } from './notifyDedupe'
+import { enqueuePendingNotify } from './notifyQueue'
 
 /** The board facts the gate + copy need — projected from the MAIN board mirror by id. */
 export interface LifecycleBoard {
@@ -44,27 +47,23 @@ export interface LifecycleNotificationsDeps {
   getBoard: (boardId: string) => LifecycleBoard | undefined
   /** Test seam: default raises a real Electron Notification. */
   notify?: (opts: { title: string; body: string; onClick: () => void }) => void
+  /** Bring a window back on a dead-window OS-notification click (see LifecycleDeliverDeps). */
+  ensureWindow?: () => void
 }
 
 function defaultOsNotify(opts: { title: string; body: string; onClick: () => void }): void {
-  if (!Notification.isSupported()) return
-  const n = new Notification({ title: opts.title, body: opts.body })
-  n.on('click', opts.onClick)
-  n.show()
-}
-
-/**
- * A real native OS notification is pure noise during an automated headless run. The e2e harness
- * (`CANVAS_E2E`) spawns real terminal boards whose idle-scan lifecycle events — plus any recap-map
- * appends — funnel through the SAME production `deliver` as at runtime, so WITHOUT this every e2e run
- * pops real Windows/macOS notifications onto the dev's desktop (the distraction this suppresses).
- * Under any headless harness (e2e, or the `CANVAS_SMOKE` self-test) the OS layer becomes a no-op; the
- * in-app toast + on-canvas attention still push to the renderer, and the dedicated notifications.e2e.ts
- * asserts the OS decision through its OWN recording spy (e2eMain's `createNotifyProbe`) — so muting the
- * REAL Notification here costs zero coverage. Dev (`pnpm dev`) sets neither var, so it is unaffected.
- */
-function isHeadlessHarness(): boolean {
-  return !!process.env.CANVAS_E2E || !!process.env.CANVAS_SMOKE
+  // Best-effort — an OS-layer failure (no notification daemon, toast-registration error) must
+  // never suppress the in-app toast + ring that `deliver` pushes AFTER this returns. This runs on
+  // timer callbacks (fs.watch debounce / idle scan), so an uncaught throw here is an unhandled
+  // MAIN exception. Mirrors the guards in backgroundSessions.notifyBg / ptyHost bridge.
+  try {
+    if (!Notification.isSupported()) return
+    const n = new Notification({ title: opts.title, body: opts.body })
+    n.on('click', opts.onClick)
+    n.show()
+  } catch {
+    /* in-app surfaces still deliver */
+  }
 }
 
 /**
@@ -113,6 +112,16 @@ export interface LifecycleDeliverDeps {
   /** Test seam: override the window-focused read (default reads the real `win.isFocused()`), so the
    *  `onlyWhenUnfocused` branch is drivable deterministically (real OS focus is flaky under xvfb). */
   isWindowFocused?: (win: BrowserWindow) => boolean
+  /**
+   * Bring a window back when an OS-notification click lands while the window is gone (tray
+   * residency, or macOS all-windows-closed). Absent ⇒ the click stays a no-op (the e2e probe).
+   * Production composes this in backgroundSessionsBoot (reopenFromTray when resident, else
+   * createWindow) — the focus intent itself rides the pending queue and replays on mount.
+   */
+  ensureWindow?: () => void
+  /** Test seams for the delivery dedupe (audit P2-2). Defaults: DELIVER_DEDUPE_MS / Date.now. */
+  dedupeMs?: number
+  now?: () => number
 }
 
 /**
@@ -125,6 +134,7 @@ export interface LifecycleDeliverDeps {
 export function createLifecycleDeliver(
   deps: LifecycleDeliverDeps
 ): (sig: DeliverableSignal) => void {
+  const dedupe = createDeliverDedupe({ windowMs: deps.dedupeMs, now: deps.now })
   return ({ boardId, event, cwd, attention, detail }: DeliverableSignal): void => {
     // Gate first: board opt-out → master → per-event → onlyWhenUnfocused (the ONE decision point).
     const board = deps.getBoard(boardId)
@@ -142,6 +152,11 @@ export function createLifecycleDeliver(
     })
     if (!decision.deliver) return
 
+    // Dedupe second — AFTER the gate, so a fully-silenced event never poisons the window for the
+    // next real one. Kills the hook-vs-idle double `needs-input` (audit P2-2); a re-block with a
+    // NEW detail is a distinct key and still fires (see notifyDedupe.ts).
+    if (!dedupe.admit(dedupeKey({ boardId, event, attention, detail }))) return
+
     // OS layer — suppressed only when `onlyWhenUnfocused` is on and the window is focused.
     if (decision.os) {
       const where = cwd ? basename(cwd) : ''
@@ -150,7 +165,15 @@ export function createLifecycleDeliver(
         body: lifecycleBody(board?.title, where),
         onClick: () => {
           const win = deps.getWin()
-          if (!win || win.isDestroyed()) return
+          if (!win || win.isDestroyed()) {
+            // Tray-resident / all-windows-closed: the click used to be a silent no-op (audit P1-1).
+            // Queue the focus intent (replayed by the renderer's drain on mount), then bring a
+            // window back. Order matters: enqueue BEFORE ensureWindow so a fast mount can't drain
+            // an empty queue.
+            enqueuePendingNotify({ t: 'focus', at: Date.now(), boardId })
+            deps.ensureWindow?.()
+            return
+          }
           if (win.isMinimized()) win.restore()
           win.show()
           win.focus()
@@ -164,17 +187,20 @@ export function createLifecycleDeliver(
     // OS layer is suppressed while focused: on-canvas is what disambiguates WHICH board). Guarded
     // window deref: this can fire from a debounced fs.watch timer (Claude path) or the idle-scan
     // interval (PTY path), so the window can be destroyed by then (mirror recap:learned, BUG-001).
+    // Dead window ⇒ QUEUE instead of drop (audit P2-3) — the renderer drains on its next mount.
     const win = deps.getWin()
-    if (!win || win.isDestroyed()) return
-    const wc = win.webContents
-    if (!wc.isDestroyed()) {
-      wc.send('notify:lifecycle', {
-        boardId,
-        event,
-        // P4: ride out only when present, so every pre-P4 signal produces a byte-identical payload.
-        ...(attention !== undefined ? { attention } : {}),
-        ...(detail !== undefined ? { detail } : {})
-      })
+    const wc = win && !win.isDestroyed() && !win.webContents.isDestroyed() ? win.webContents : null
+    const payload = {
+      boardId,
+      event,
+      // P4: ride out only when present, so every pre-P4 signal produces a byte-identical payload.
+      ...(attention !== undefined ? { attention } : {}),
+      ...(detail !== undefined ? { detail } : {})
+    }
+    if (wc) {
+      wc.send('notify:lifecycle', payload)
+    } else {
+      enqueuePendingNotify({ t: 'lifecycle', at: Date.now(), payload })
     }
   }
 }
@@ -193,7 +219,8 @@ export function registerLifecycleNotifications(
     getWin: deps.getWin,
     getConfig: deps.getConfig,
     getBoard: deps.getBoard,
-    raise: deps.notify ?? defaultOsNotify
+    raise: deps.notify ?? defaultOsNotify,
+    ensureWindow: deps.ensureWindow
   })
   const dispose = createLifecycleNotifier({ mapPath: deps.mapPath, onEvent: deliver })
   app.once('before-quit', dispose)
@@ -212,7 +239,8 @@ export function registerLifecycleNotifications(
 export function wireLifecycleNotifications(
   getWin: () => BrowserWindow | null,
   mapPath: string,
-  userDataDir: string
+  userDataDir: string,
+  ensureWindow?: () => void
 ): LifecycleNotificationsHandle {
   registerNotificationsHandlers(ipcMain, getWin, userDataDir)
   const handle = registerLifecycleNotifications({
@@ -224,7 +252,8 @@ export function wireLifecycleNotifications(
     getBoard: (id) => listBoardMirror().find((b) => b.id === id),
     // Mute the REAL OS Notification under any headless harness so e2e/smoke runs never pop a desktop
     // notification (see isHeadlessHarness). `undefined` keeps the production default (defaultOsNotify).
-    notify: isHeadlessHarness() ? () => {} : undefined
+    notify: isHeadlessHarness() ? () => {} : undefined,
+    ensureWindow
   })
   setPtyLifecycleEmitter(handle.deliver)
   return handle

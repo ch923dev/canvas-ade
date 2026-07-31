@@ -178,4 +178,46 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
       []
     )
   })
+
+  test('deliver dedupe: an identical re-fire collapses to one delivery, then re-admits after the window (audit P2-2)', async ({
+    page,
+    electronApp
+  }) => {
+    // The production regression: a Claude permission prompt fires needs-input from the hook path
+    // AND from the generic idle monitor — two OS notifications ~10s apart for one prompt. The
+    // deliver-level dedupe collapses the second; the OS-spy count is the strong signal (the toast
+    // is keyed per (board, mark), so its count alone can't distinguish dedupe from replace).
+    const id = await seed(page, 'terminal')
+    await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
+    await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
+    expect(
+      (await mainCall<Array<{ title: string }>>(electronApp, 'notifyOsCalls')).length,
+      'second identical signal collapsed inside the production window'
+    ).toBe(1)
+    // The single delivery still surfaced normally.
+    expect(
+      await pollKind(
+        () => attention(page, id),
+        (v) => v === 'needs-input',
+        5000
+      ),
+      'the one admitted delivery reached the canvas'
+    ).toBe(true)
+
+    // Shrink the window (rebuilds the probe deliver with a clean map) and prove re-admission is
+    // TIME-driven: inside 100ms the repeat suppresses, past it the same signal fires again.
+    await mainCall(electronApp, 'notifySetDedupeMs', 100)
+    await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
+    await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
+    expect(
+      (await mainCall<Array<{ title: string }>>(electronApp, 'notifyOsCalls')).length,
+      'repeat inside the shrunk window still collapses'
+    ).toBe(2)
+    await page.waitForTimeout(250)
+    await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
+    expect(
+      (await mainCall<Array<{ title: string }>>(electronApp, 'notifyOsCalls')).length,
+      'the same signal re-admits after the window expires'
+    ).toBe(3)
+  })
 })

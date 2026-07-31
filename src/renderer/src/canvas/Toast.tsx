@@ -7,11 +7,14 @@
  * read time. Sticky toasts (data-loss class, e.g. save failure) never expire.
  */
 import { useEffect, type ReactElement } from 'react'
-import { useToastStore, type Toast } from '../store/toastStore'
+import { selectVisibleToasts, useToastStore, type Toast } from '../store/toastStore'
 import { useWayfindingStore } from '../store/wayfindingStore'
 
 /** Visible stack cap — older toasts hold the slots; newer ones queue behind. */
 const MAX_VISIBLE = 3
+/** Sticky slots within the visible stack (fairness — audit P1-2b): sticky toasts never expire, so
+ *  without this cap 3 unattended blocked/error toasts held every slot and the channel was dead. */
+const MAX_VISIBLE_STICKY = 2
 export const TOAST_AUTO_DISMISS_MS = 5000
 
 export function ToastIsland(): ReactElement | null {
@@ -20,7 +23,7 @@ export function ToastIsland(): ReactElement | null {
   // minimap so neither covers the other (CSS modifier; rect changes feed the
   // exclusion zones automatically via the live getBoundingClientRect read).
   const lifted = useWayfindingStore((s) => s.minimapVisible)
-  const visible = toasts.slice(0, MAX_VISIBLE)
+  const visible = selectVisibleToasts(toasts, { max: MAX_VISIBLE, maxSticky: MAX_VISIBLE_STICKY })
   if (visible.length === 0) return null
   return (
     <div
