@@ -5103,3 +5103,34 @@ title-stamped (`PR#phase4 R12 dev check` confirmed in window title) — spec dia
 ELK off-thread, icon seam live on a cold seeded project. Idle-CPU harness + sampler in the
 session scratchpad. The final force-push ran by the user (`--no-verify`) after the
 permission classifier repeatedly blocked it.
+
+## PR #416 — dock swarm worker terminals inside the swarm board (v0.45.0) · squash `1a31f7e6` · 2026-07-31
+
+Swarm worker terminals now dock INSIDE the swarm board by default (worker rail + embedded
+terminal viewport) instead of scattering as free canvas boards. Additive-optional schema:
+`dockedIn` (terminal) / `dockLayout` (swarm) — no `SCHEMA_VERSION` bump, shape-checked +
+round-trip/reject-tested. New render path `SwarmDock`/`DockedPaneGate`/`RedockPill`/
+`DockDivider`/`useDockLayout` + ephemeral `dockStore` (scene/session split honored); docked
+boards filtered from RF via `isCanvasVisibleBoard`; `useTerminalLiveness` gains the
+dock-host visibility branch. Pop-out / re-dock handoff (park → flag flip → adopt) keeps the
+PTY session alive across the surface switch — `DockedPaneGate` serializes the canvas-node
+teardown vs. pane-adopt race, e2e-pinned (`terminalMounted` poll). Host-swarm delete pops
+docked workers back onto the canvas in the SAME tracked step (undo restores both). Polish
+commit added resizable dock regions, terminal reraster parity, and worker remove (✕ reuses
+`BoardActions.remove`). Dangling/non-swarm `dockedIn` degrades to an ordinary canvas board
+at every layer (MCP adapter, applier, `fromObject` reconcile). Reviewer round 1: single
+[warning] — docked-worker focus dead-ended at 3 unguarded entry points (Tab-cycle pan to
+stale parked x/y; Enter/double-click/MCP `focusCamera` set a `focusedId` with no node ⇒
+every board dimmed until Esc; palette `goToBoard`) → fixed in `54aa3a4a` with the shared
+`resolveFocusTarget` (`canvas/dockFocus.ts`): docked worker resolves to its HOST + activates
+its dock tab, wired through `focusBoardById` + palette; Tab-cycle skips non-canvas-visible
+boards. Round 2 FULL read: zero findings ("the PR is clean"); one unfiled timing note
+accepted (first-spawn one-frame liveness read before `SwarmDock` defaults the active tab —
+self-corrects next tick). Rebased twice mid-flight (over #412+#414, then #415); version held
+0.45.0 over 0.44.2/0.44.3; post-rebase the new dock e2e specs used the exact
+evalIn-interpolation pattern #412 had just swept — converted to `callE2E`/`pollCall` batches.
+Gates: CI 4/4 on every head; `make check` units at the documented ambient floor (CI units
+green on the same head); `@core` smoke 61/61 pre-push on the final head; manual dev check
+title-stamped + user-eyeballed. Force-push and the merge command itself were both
+classifier-blocked → user ran them (`--force-with-lease --no-verify`, `gh pr merge`). MCP
+plan board deferred — app down all session.
