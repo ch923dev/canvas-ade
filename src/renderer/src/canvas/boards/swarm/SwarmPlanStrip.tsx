@@ -56,12 +56,15 @@ function readChecklist(
 export function SwarmPlanStrip({
   planBoardId,
   owners,
-  onOpen
+  onOpen,
+  onFlip
 }: {
   planBoardId: string | null
   /** Plan-item id → the holding worker's state, from MAIN's ledger projection. */
   owners: Record<string, 'working' | 'stalled'>
   onOpen: (boardId: string) => void
+  /** Flip the strip to its kanban back-face (task #12). Absent ⇒ no flip affordance renders. */
+  onFlip?: () => void
 }): ReactElement {
   // Subscribe narrowly: a primitive FINGERPRINT of the first checklist (its element id + one
   // encoded row per item), never the board. A whole-board subscription would re-render the strip
@@ -166,7 +169,18 @@ export function SwarmPlanStrip({
   )
 
   return (
-    <div className="sw-plan" data-test="swarm-plan-strip">
+    <div
+      className="sw-plan"
+      data-test="swarm-plan-strip"
+      // Task #12: double-click on the strip SURFACE flips to the kanban face — never on a
+      // control (chips/inputs act on click), and never board-wide (chat/composer/dock live there).
+      onDoubleClick={(e) => {
+        if (!onFlip) return
+        if ((e.target as HTMLElement).closest('button, input')) return
+        e.stopPropagation() // stop RF's node-double-click focus from also firing
+        onFlip()
+      }}
+    >
       <span className="sw-plan-lbl">Plan</span>
       {items.length === 0 && editing === null ? (
         <span className="sw-plan-empty">
@@ -242,6 +256,18 @@ export function SwarmPlanStrip({
               </button>
             ))}
         </>
+      )}
+      {onFlip && (
+        <button
+          type="button"
+          className="sw-plan-flip"
+          aria-label="View the plan as a kanban"
+          title="Flip the plan to a kanban (or double-click the strip)"
+          onClick={onFlip}
+          data-test="swarm-plan-flip"
+        >
+          ⊞ kanban
+        </button>
       )}
     </div>
   )
