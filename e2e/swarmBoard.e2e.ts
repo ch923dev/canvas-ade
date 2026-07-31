@@ -119,6 +119,100 @@ test('@core LEAD badge rides the real leadChanged push: grant shows it, revoke c
   await expect(page.locator('[data-test="terminal-lead-badge"]')).toHaveCount(0)
 })
 
+test('@core docked worker renders INSIDE the swarm board (no canvas node); pop-out and re-dock hand the live surface across', async ({
+  page
+}) => {
+  const swarmId = await seed(page, 'swarm')
+  const workerId = await seed(page, 'terminal', { title: 'w-dock', dockedIn: swarmId })
+  // Run membership through the same store action the real workerSpawned push drives — the
+  // rail card and the popped-out board's re-dock pill key off it.
+  await callE2E(
+    page,
+    { m: 'swarmAddWorker', a: [swarmId, workerId, 'reviewer'] },
+    { m: 'fitView', a: [swarmId] }
+  )
+  const board = page.locator('[data-test="swarm-board"]')
+  // The worker renders as a dock pane + a rail tab — and NOT as a React Flow canvas node.
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toBeVisible()
+  await expect(board.locator(`[data-test="swarm-card-${workerId}"]`)).toBeVisible()
+  await expect(board.locator('[data-test="swarm-workers"]')).toContainText('Workers · 1')
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(0)
+  // Pop out → a real canvas TerminalBoard node appears and the pane is gone; the rail card
+  // stays (marked ↗ — it now jumps to the canvas board).
+  await board.locator(`[data-test="swarm-dock-popout-${workerId}"]`).click()
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(1)
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toHaveCount(0)
+  await expect(board.locator(`[data-test="swarm-card-${workerId}"] .sw-popped`)).toBeVisible()
+  // Re-dock from the popped-out board's title-bar pill → back inside the dock, node gone.
+  await callE2E(page, { m: 'fitView', a: [workerId] })
+  await page.locator(`[data-test="swarm-redock-${workerId}"]`).click()
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(0)
+  await callE2E(page, { m: 'fitView', a: [swarmId] })
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toBeVisible()
+  // Re-dock corpse regression: the pane must hold a LIVE xterm (a fresh registry entry), not
+  // the previous mount's dead DOM. Without the DockedPaneGate handoff serializer, the dying
+  // canvas surface killed the freshly re-adopted session one commit later — pane visible,
+  // terminal frozen at the pop-out width, registry empty.
+  await expect
+    .poll(() => callE2E<boolean>(page, { m: 'terminalMounted', a: [workerId] }), {
+      timeout: 8000
+    })
+    .toBe(true)
+})
+
+test('@core dock ✕ removes the docked worker board (the only delete path — no canvas node to select)', async ({
+  page
+}) => {
+  const swarmId = await seed(page, 'swarm')
+  const workerId = await seed(page, 'terminal', { title: 'w-close', dockedIn: swarmId })
+  await callE2E(page, { m: 'fitView', a: [swarmId] })
+  const board = page.locator('[data-test="swarm-board"]')
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toBeVisible()
+  await board.locator(`[data-test="swarm-dock-close-${workerId}"]`).click()
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toHaveCount(0)
+  const boards = await callE2E<Array<{ id: string }>>(page, { m: 'getBoards' })
+  expect(boards.some((b) => b.id === workerId)).toBe(false)
+  // Undo restores the board INTO the dock (dockedIn survives the snapshot round-trip).
+  await callE2E(page, { m: 'undo' })
+  await expect(board.locator(`[data-test="swarm-dock-pane-${workerId}"]`)).toBeVisible()
+})
+
+test('@core dock regions resize: dragging the rail divider widens the rail and persists dockLayout', async ({
+  page
+}) => {
+  const swarmId = await seed(page, 'swarm')
+  await seed(page, 'terminal', { title: 'w-1', dockedIn: swarmId })
+  await callE2E(page, { m: 'fitView', a: [swarmId] })
+  const board = page.locator('[data-test="swarm-board"]')
+  const rail = board.locator('.sw-rail')
+  const before = (await rail.boundingBox())!.width
+  const div = board.locator('[data-test="swarm-div-rail"]')
+  const box = (await div.boundingBox())!
+  // A real pointer drag on the divider (pointer-captured) — +60 screen px to the right.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 6 })
+  await page.mouse.up()
+  const after = (await rail.boundingBox())!.width
+  expect(after).toBeGreaterThan(before + 10)
+  // The commit landed on the board doc (PATCHABLE_KEYS.swarm carries dockLayout).
+  const docs = await callE2E<Array<{ id: string; dockLayout?: { rail?: number } }>>(page, {
+    m: 'getBoards'
+  })
+  expect(docs.find((b) => b.id === swarmId)?.dockLayout?.rail).toBeGreaterThan(200)
+})
+
+test('@core deleting the host swarm board pops its docked workers back onto the canvas', async ({
+  page
+}) => {
+  const swarmId = await seed(page, 'swarm')
+  const workerId = await seed(page, 'terminal', { title: 'w-orphan', dockedIn: swarmId })
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(0)
+  await callE2E(page, { m: 'deleteBoard', a: [swarmId] })
+  // The worker must not be stranded invisible — it lands as an ordinary canvas terminal.
+  await expect(page.locator(`.react-flow__node[data-id="${workerId}"]`)).toHaveCount(1)
+})
+
 test('@core Settings › Orchestration no longer renders the deleted Lead terminal picker', async ({
   page
 }) => {

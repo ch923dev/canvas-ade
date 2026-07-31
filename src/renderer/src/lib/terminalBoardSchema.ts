@@ -45,6 +45,11 @@ export function assertTerminalContent(
   if (b.fontFamilyId !== undefined && typeof b.fontFamilyId !== 'string') {
     fail('terminal fontFamilyId is not a string')
   }
+  // Swarm docked-terminals: shape-check only — the dangling/non-swarm reconcile lives in
+  // fromObject (mirrors previewSourceId), so this never rejects an unknown board id.
+  if (b.dockedIn !== undefined && typeof b.dockedIn !== 'string') {
+    fail('terminal dockedIn is not a string')
+  }
   // v20 openRouter: shape-check only — `enabled` must be a boolean when the object is
   // present; `model` is a free slug string (never an enum — OpenRouter's catalog drifts).
   if (b.openRouter !== undefined) {

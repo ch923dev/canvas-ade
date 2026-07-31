@@ -111,7 +111,10 @@ export function SwarmWorkerCards({
   running,
   now,
   titleOf,
-  onOpen
+  onOpen,
+  dockedIds,
+  activeDockId,
+  width
 }: {
   run: SwarmRun
   attention: Record<string, AttentionKind>
@@ -120,9 +123,24 @@ export function SwarmWorkerCards({
   now: number
   titleOf: (id: string) => string
   onOpen: (boardId: string) => void
+  /**
+   * Docked-terminals: the worker boards currently docked in this swarm board. The rail is the
+   * dock's TAB strip, so it must list every docked board even one the run does not know (a
+   * restored project with no ledger) — an unlisted docked board would be an unreachable tab.
+   * Absent ⇒ the pre-dock rendering (glance cards only), for the test/story callers.
+   */
+  dockedIds?: readonly string[]
+  /** The active dock tab (highlighted); a popped-out worker card gets the ↗ canvas marker. */
+  activeDockId?: string | null
+  /** Docked-terminals: divider-driven rail width (px); absent ⇒ the CSS default. */
+  width?: number
 }): ReactElement {
   const byBoard = new Map((run.ledger?.workers ?? []).map((w) => [w.boardId, w]))
-  const cards = run.workerIds
+  const docked = new Set(dockedIds ?? [])
+  // Rail membership = the run's workers ∪ the docked boards (order: run first — the attention
+  // sort below owns the final order anyway; a docked-only orphan lands as `idle`).
+  const ids = [...new Set([...run.workerIds, ...(dockedIds ?? [])])]
+  const cards = ids
     .map((id) => {
       const led = byBoard.get(id)
       return {
@@ -139,7 +157,7 @@ export function SwarmWorkerCards({
   )
 
   return (
-    <main className="sw-canvas" data-test="swarm-workers">
+    <div className="sw-rail" style={width !== undefined ? { width } : undefined}>
       <div className="sw-canvas-head">
         <span className="sw-canvas-lbl">Workers · {cards.length}</span>
         <span className="sw-canvas-counts">
@@ -168,7 +186,7 @@ export function SwarmWorkerCards({
           <button
             key={id}
             type="button"
-            className={`sw-card${state === 'needs-input' ? ' attn' : ''}${state === 'blocked' ? ' blocked' : ''}${state === 'done' ? ' done' : ''}${state === 'lost' ? ' lost' : ''}`}
+            className={`sw-card${state === 'needs-input' ? ' attn' : ''}${state === 'blocked' ? ' blocked' : ''}${state === 'done' ? ' done' : ''}${state === 'lost' ? ' lost' : ''}${id === activeDockId ? ' active' : ''}`}
             onClick={() => onOpen(id)}
             data-test={`swarm-card-${id}`}
             data-state={state}
@@ -176,6 +194,14 @@ export function SwarmWorkerCards({
             <span className="sw-card-top">
               <span className={`sw-st ${state}`} aria-hidden="true" />
               <span className="sw-card-name">{titleOf(id)}</span>
+              {/* Docked-terminals: a rail-listed worker that is NOT docked lives on the canvas
+                  (popped out) — the ↗ marker says "this tab opens the canvas board". Rendered
+                  only when the dock is active at all (dockedIds present). */}
+              {dockedIds !== undefined && !docked.has(id) && (
+                <span className="sw-popped" title="on the canvas" aria-hidden="true">
+                  ↗
+                </span>
+              )}
               {meta.role && <span className="sw-role">{meta.role}</span>}
               <span className={`sw-card-t${state === 'stalled' ? ' stale' : ''}`}>
                 {/* A lost worker has no live clock — an incrementing timer would imply it is
@@ -214,6 +240,6 @@ export function SwarmWorkerCards({
           ask the orchestrator to spawn workers
         </div>
       </div>
-    </main>
+    </div>
   )
 }

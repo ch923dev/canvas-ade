@@ -163,6 +163,54 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     })
   })
 
+  it('addBoard lands dockedIn on a terminal when the host swarm board is live (docked worker spawn)', () => {
+    // Seed the host through the store — 'swarm' is user-creatable but NOT MCP-spawnable, so an
+    // applier addBoard could never create it (and rejecting that is its own covered behavior).
+    useCanvasStore.getState().addBoard('swarm', { x: 0, y: 0 }, { id: 'sw-1' })
+    const ack = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-1', type: 'terminal', dockedIn: 'sw-1' }
+    })
+    expect(ack).toEqual({ ok: true, type: 'addBoard' })
+    expect(useCanvasStore.getState().boards.find((b) => b.id === 'w-1')).toMatchObject({
+      dockedIn: 'sw-1'
+    })
+  })
+
+  it('addBoard degrades a dangling/non-swarm dockedIn to a canvas spawn (board lands, flag dropped)', () => {
+    // The board is the deliverable — a dock host that closed between mint and apply must not
+    // strand the worker invisible or fail the spawn.
+    const dangling = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-1', type: 'terminal', dockedIn: 'ghost' }
+    })
+    expect(dangling).toEqual({ ok: true, type: 'addBoard' })
+    const w1 = useCanvasStore.getState().boards.find((b) => b.id === 'w-1')
+    expect(w1 && 'dockedIn' in w1 && w1.dockedIn !== undefined).toBe(false)
+    // A non-swarm host is equally degraded (the fromObject reconcile discipline).
+    applyMcpCommand({ type: 'addBoard', board: { id: 'b-1', type: 'browser' } })
+    applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-2', type: 'terminal', dockedIn: 'b-1' }
+    })
+    const w2 = useCanvasStore.getState().boards.find((b) => b.id === 'w-2')
+    expect(w2 && 'dockedIn' in w2 && w2.dockedIn !== undefined).toBe(false)
+  })
+
+  it('addBoard rejects an off-type / malformed dockedIn WITHOUT adding a board (terminal-only, shape-checked)', () => {
+    const offType = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'p-1', type: 'planning', dockedIn: 'sw-1' }
+    })
+    const badShape = applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'w-1', type: 'terminal', dockedIn: 7 as unknown as string }
+    })
+    expect(offType.ok).toBe(false)
+    expect(badShape.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
   it('addBoard rejects an off-type / malformed openRouter WITHOUT adding a board (terminal-only, shape-checked)', () => {
     const offType = applyMcpCommand({
       type: 'addBoard',

@@ -40,7 +40,7 @@ import type { JarvisToolDef } from './jarvisTools'
 import { sanitizeDispatchText } from './dispatchSanitize'
 import { describeEnvScrub, type SwarmEnvPolicySeam } from './spawnEnvPolicy'
 import type { SwarmConsentSeam } from './sessionConsent'
-import type { SwarmLedgerSnapshot, SwarmTaskSpec } from '../shared/swarmLedgerTypes'
+import type { SwarmTaskSpec } from '../shared/swarmLedgerTypes'
 import { MAX_DISPATCH_BATCH } from './mcpDispatchBatch'
 
 /**
@@ -97,6 +97,9 @@ export interface SwarmCanvasFacet {
     title?: string
     /** v20: the human-committed OpenRouter routing intent (validated again in mcpLifecycle). */
     openRouter?: { enabled: boolean; model?: string }
+    /** Docked-terminals: the hosting swarm board id (re-validated against the live mirror in
+     *  mcpLifecycle; a dangling/non-swarm host degrades to an ordinary canvas spawn). */
+    dockedIn?: string
   }): Promise<{ id: string }>
   dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   awaitSettled(boardId: string): Promise<{
@@ -149,36 +152,10 @@ export interface SwarmCanvasFacet {
   >
 }
 
-/** Run events the executor emits so the renderer's swarm board mirrors the run live. */
-export type SwarmRunEvent =
-  | { kind: 'workerSpawned'; workerId: string; role?: string; title: string }
-  | { kind: 'planDrawn'; planBoardId: string }
-  | { kind: 'activity'; workerId: string; text: string }
-  | {
-      kind: 'workerSettled'
-      workerId: string
-      provenance: 'claimed' | 'synthesized'
-      status: string
-    }
-  /**
-   * S2: the durable projection. Rides the EXISTING run-event channel rather than a second sync
-   * path (the kickoff's rule), so the renderer has ONE subscription and MAIN has ONE push.
-   */
-  | { kind: 'ledger'; snapshot: SwarmLedgerSnapshot }
-  /**
-   * S2: something happened to the run BETWEEN turns (a worker died, a worker stalled) and the
-   * orchestrator says so in its own voice. `text` is the sentence TAIL — the renderer prefixes the
-   * worker's title, because MAIN carries board ids and never titles (the `SwarmTriageRow` rule).
-   * Composed deterministically in MAIN: no LLM call, no budget spend, and it can only state facts
-   * the ledger actually holds.
-   */
-  | { kind: 'narrate'; boardId?: string; status?: string; text: string }
-  /**
-   * base P5: the run's ACTIVE session-consent snapshot (full state, idempotent — pushed on any
-   * grant/revoke and on board re-hydrate). The renderer renders one revocable chip per entry;
-   * an empty list clears the row. MAIN carries role ids + display names only.
-   */
-  | { kind: 'consent'; consents: Array<{ roleId: string; roleName: string }> }
+// The run-event vocabulary lives in swarmRunEvent.ts (max-lines ratchet extraction);
+// re-exported so every existing `from './swarmTools'` import keeps working.
+import type { SwarmRunEvent } from './swarmRunEvent'
+export type { SwarmRunEvent } from './swarmRunEvent'
 
 /**
  * S2: the DURABLE side-effects of a tool call. Supplied by the swarm session when a project (and
@@ -255,6 +232,12 @@ export interface SwarmRunCtx {
    * (no project) — exactly the S1 degradation everything else in S2 keeps.
    */
   planBoard: { current: string | null }
+  /**
+   * Docked-terminals: the SWARM board hosting this run — spawn_worker passes it as the new
+   * worker's `dockedIn` (dock-by-default). Absent ⇒ canvas spawn. Placement only — every
+   * gate (spawn/dispatch confirm, consent, env policy) is unchanged by where it renders.
+   */
+  dockHostId?: string
   emit: (ev: SwarmRunEvent) => void
   /** The shared fail-closed confirm; `workerConfig` routes to the full worker-config dialog
    *  (the swarm spawn gate), `choices` to the P5 chooser. */
@@ -618,7 +601,8 @@ export async function executeSwarmTool(
             title: workerName,
             prompt: launch,
             ...(spawnCwd ? { cwd: spawnCwd } : {}),
-            ...(openRouter ? { openRouter } : {})
+            ...(openRouter ? { openRouter } : {}),
+            ...(ctx.dockHostId ? { dockedIn: ctx.dockHostId } : {})
           })
         } catch (err) {
           // No board exists, so nothing will ever use this tree — take it back rather than

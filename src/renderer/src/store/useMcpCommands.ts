@@ -64,7 +64,7 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type, title, launchCommand, cwd, url, openRouter } = command.board
+      const { id, type, title, launchCommand, cwd, url, openRouter, dockedIn } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
@@ -109,6 +109,17 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       if (url !== undefined && !/^https?:\/\//.test(url)) {
         return { ok: false, error: 'addBoard: url must be http(s)' }
       }
+      // Docked-terminals: dockedIn is terminal-only (the launchCommand/cwd discipline). MAIN
+      // validated it against the live board mirror; re-validate shape + type here, and resolve
+      // the host against the LIVE store below (the renderer is the truth) — a dangling or
+      // non-swarm host DEGRADES to an ordinary canvas spawn rather than failing the board
+      // (the board is the deliverable; a hidden board with no host would be unreachable).
+      if (dockedIn !== undefined && typeof dockedIn !== 'string') {
+        return { ok: false, error: 'invalid addBoard dockedIn' }
+      }
+      if (dockedIn !== undefined && type !== 'terminal') {
+        return { ok: false, error: 'addBoard: dockedIn is terminal-only' }
+      }
       // Auto-cable request (rc.6): shape + terminal-only re-validation BEFORE any side effect
       // (a malformed request must not leave a cable-less board behind an { ok: false } ack).
       if (
@@ -138,11 +149,16 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // whole configured board (the fields never split the history). Kept out of `canvasStore.
       // addBoard` on purpose — MCP-only behavior stays in the MCP applier (file-size doctrine:
       // canvasStore is pinned).
+      // Docked-terminals: live-store host check (see the shape validation above) — dock only
+      // into a swarm board that exists RIGHT NOW; anything else lands as a canvas terminal.
+      const dockHostLive =
+        dockedIn !== undefined && store.boards.some((b) => b.id === dockedIn && b.type === 'swarm')
       if (
         launchCommand !== undefined ||
         cwd !== undefined ||
         url !== undefined ||
-        openRouter !== undefined
+        openRouter !== undefined ||
+        dockHostLive
       ) {
         store.updateBoard(id, {
           ...(launchCommand ? { launchCommand } : {}),
@@ -151,7 +167,10 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
           ...(url ? { url } : {}),
           // PATCHABLE_KEYS.terminal carries 'openRouter' (v20) — useTerminalSpawn forwards it at
           // first spawn for MAIN-side env injection.
-          ...(openRouter ? { openRouter } : {})
+          ...(openRouter ? { openRouter } : {}),
+          // PATCHABLE_KEYS.terminal carries 'dockedIn' — landed in the same synchronous tick as
+          // the add, so the board NEVER renders as a canvas node first (no flash-then-dock).
+          ...(dockHostLive ? { dockedIn } : {})
         })
       }
       // 🔒 Auto-cable (rc.6): MAIN asks for a directed ORCHESTRATION connector spawner → spawned

@@ -25,6 +25,22 @@ describe('buildBoardNodes', () => {
     })
   })
 
+  it('skips a docked worker terminal (no canvas node) and prunes its stale cache entry', () => {
+    const t = createBoard('terminal', { id: 't', x: 0, y: 0 })
+    const cache: NodeCache = new Map()
+    // On the canvas first — a node exists and is cached.
+    expect(buildBoardNodes([t], NO_FLAGS, cache)).toHaveLength(1)
+    expect(cache.has('t')).toBe(true)
+    // Docked → filtered from the node build AND evicted from the cache (the prune sees only
+    // the visible set); the board itself is untouched.
+    const docked = { ...t, dockedIn: 'sw-1' } as Board
+    expect(buildBoardNodes([docked], NO_FLAGS, cache)).toHaveLength(0)
+    expect(cache.has('t')).toBe(false)
+    // Popped back out → the node re-mints.
+    const popped = { ...t } as Board
+    expect(buildBoardNodes([popped], NO_FLAGS, cache)).toHaveLength(1)
+  })
+
   it('reuses the SAME node + data object when a board and its flags are unchanged', () => {
     const boards = [board('a'), board('b')]
     const cache: NodeCache = new Map()

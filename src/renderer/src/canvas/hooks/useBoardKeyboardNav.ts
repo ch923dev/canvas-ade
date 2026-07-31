@@ -38,6 +38,8 @@ import { useCanvasStore } from '../../store/canvasStore'
 import type { Board } from '../../lib/boardSchema'
 import { cameraAnim } from '../../lib/motion'
 import { Z_MAX, focusMaxZoom } from '../../lib/canvasView'
+import { isCanvasVisibleBoard } from '../boardNodes'
+import { resolveFocusTarget } from '../dockFocus'
 
 /** Single-board focus framing (DESIGN.md §5/§9: ~70px pad), shared by Enter and
  *  double-click. Animated via `cameraAnim`. (Moved verbatim from Canvas.tsx.) */
@@ -145,7 +147,10 @@ export function useBoardKeyboardNav(deps: BoardKeyboardNavDeps): BoardKeyboardNa
   const cycleBoard = useCallback(
     (dir: 1 | -1): boolean => {
       const s = useCanvasStore.getState()
-      const nextId = nextBoardId(s.boards, s.selectedId, dir)
+      // Docked workers have no canvas node — no ring to land on, stale parked x/y to pan to —
+      // so Tab traverses only canvas-visible boards; docked terminals are reached through
+      // their host's dock tabs (or any focus verb, which redirects to the host).
+      const nextId = nextBoardId(s.boards.filter(isCanvasVisibleBoard), s.selectedId, dir)
       if (nextId === null) return false
       // Exit focus mode: Tab moves the selection, so a camera-fit + dim still keyed on
       // the PREVIOUS board would show a stale visual (ring on B, dim centred on A).
@@ -195,17 +200,25 @@ export function useBoardKeyboardNav(deps: BoardKeyboardNavDeps): BoardKeyboardNa
 
   const focusBoardById = useCallback(
     (id: string): void => {
-      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      // Docked worker → activate its dock tab and aim the camera at the HOST swarm board
+      // (shared redirect, see resolveFocusTarget) — a docked board has no RF node to fit,
+      // and a focusedId with no node would dim every visible board with nothing un-dimmed.
+      const focusId = resolveFocusTarget(id)
+      const board = useCanvasStore.getState().boards.find((b) => b.id === focusId)
       if (!board) return
-      setFocusedId(id)
-      useCanvasStore.getState().selectBoard(id)
+      setFocusedId(focusId)
+      useCanvasStore.getState().selectBoard(focusId)
       // Terminal/browser content is a raster bitmap (xterm WebGL/canvas, OSR snapshot) that the
       // camera transform UPSCALES past 100% → blurry text, so their focus zoom caps at 1; vector
       // boards (planning notes/pen/diagram) re-rasterize sharp at any zoom and may fill the
       // viewport (Z_MAX). The raster-vs-vector rule lives in focusMaxZoom (CANVAS-04), shared
       // with useFullView's camera full view so the two can't drift.
       void rf.fitView(
-        cameraAnim({ ...FOCUS_OPTIONS, maxZoom: focusMaxZoom(board.type), nodes: [{ id }] })
+        cameraAnim({
+          ...FOCUS_OPTIONS,
+          maxZoom: focusMaxZoom(board.type),
+          nodes: [{ id: focusId }]
+        })
       )
     },
     [rf, setFocusedId]

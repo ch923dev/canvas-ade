@@ -30,6 +30,14 @@ interface CacheEntry {
 /** Caller-owned per-id node cache (hold it in a useRef). */
 export type NodeCache = Map<string, CacheEntry>
 
+/**
+ * Boards that render as CANVAS NODES. A docked worker terminal (`dockedIn` set) renders inside
+ * its host swarm board's dock viewport instead — it stays a full board in the store/persistence,
+ * it just has no React Flow node (and no edges — the edge builders resolve endpoints against
+ * the filtered list). Pop-out clears the flag and puts it straight back.
+ */
+export const isCanvasVisibleBoard = (b: Board): boolean => !(b.type === 'terminal' && b.dockedIn)
+
 export function buildBoardNodes(
   boards: Board[],
   flags: NodeFlags,
@@ -38,7 +46,9 @@ export function buildBoardNodes(
   const { selectedIds, focusedId, fullViewId, cameraFullViewId } = flags
   const selectedSet = new Set(selectedIds)
   const live = new Set<string>()
-  const nodes = boards.map((b) => {
+  // Docked boards get no node (and their cache entry is pruned below — `live` only sees the
+  // visible set); popping out re-mints the node from the unchanged board object.
+  const nodes = boards.filter(isCanvasVisibleBoard).map((b) => {
     live.add(b.id)
     const dimmed =
       (focusedId !== null && focusedId !== b.id) ||

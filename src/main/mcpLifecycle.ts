@@ -180,6 +180,14 @@ export interface McpLifecycle {
      * discipline). Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
      */
     openRouter?: { enabled: boolean; model?: string }
+    /**
+     * TERMINAL-ONLY (swarm docked-terminals): the hosting SWARM board's id — the spawned worker
+     * terminal is born docked inside that board's viewport. Rejected on a non-terminal type (the
+     * prompt/cwd discipline); a dangling/non-swarm host silently degrades to an ordinary canvas
+     * spawn (the auto-cable precedent — the board is the deliverable, the dock is placement).
+     * Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
+     */
+    dockedIn?: string
   }): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
@@ -221,6 +229,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     url?: string
     sourceBoardId?: string
     openRouter?: { enabled: boolean; model?: string }
+    dockedIn?: string
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
@@ -261,6 +270,20 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       throw new Error('spawn_board: url is only valid for a browser board')
     }
     const url = hasUrl ? validateSpawnUrl(input.url!) : undefined
+    // Swarm docked-terminals: dockedIn is TERMINAL-ONLY (the prompt/cwd discipline) and must
+    // resolve to a LIVE SWARM board in the mirror. Reject a mismatched type BEFORE any side
+    // effect; DROP (not reject) a dangling/non-swarm host — the swarm spawn path passes its own
+    // board id so a mismatch here means the board closed between mint and call, and the worker
+    // (the deliverable) should still spawn, as an ordinary canvas terminal (the wantCable
+    // silently-degrade precedent above).
+    const hasDock = typeof input.dockedIn === 'string' && input.dockedIn.length > 0
+    if (hasDock && input.type !== 'terminal') {
+      throw new Error('spawn_board: dockedIn is only valid for a terminal board')
+    }
+    const dockHost = hasDock
+      ? registry.listBoards().find((b) => b.id === input.dockedIn)
+      : undefined
+    const dockedIn = dockHost !== undefined && dockHost.type === 'swarm' ? dockHost.id : undefined
     // Sanitize the prompt with the SAME spawn-time launchCommand rule as spawnGroup (one line,
     // control-char-free, ≤400); DispatchPayloadError (embedded CR/LF) propagates — reject, never
     // flatten. This also runs BEFORE the cap reservation, so a rejected prompt burns no slot.
@@ -301,7 +324,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           ...(launchCommand ? { launchCommand } : {}),
           ...(cwd ? { cwd } : {}),
           ...(url ? { url } : {}),
-          ...(openRouter ? { openRouter } : {})
+          ...(openRouter ? { openRouter } : {}),
+          ...(dockedIn ? { dockedIn } : {})
         },
         ...(wantCable ? { connector: { sourceId: input.sourceBoardId! } } : {})
       })

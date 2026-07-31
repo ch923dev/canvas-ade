@@ -17,17 +17,24 @@
  * The brain is app-resident (Stage 1): the composer drives MAIN's per-board orchestrator loop
  * over `window.api.swarm` (absent in test/smoke renders — every access optional-chains).
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import type { SwarmBoard as SwarmBoardData } from '../../lib/boardSchema'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import type {
+  SwarmBoard as SwarmBoardData,
+  TerminalBoard as TerminalBoardData
+} from '../../lib/boardSchema'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useSwarmStore, runFor, type SwarmRun } from '../../store/swarmStore'
 import { useAttentionStore } from '../../store/attentionStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
+import { useDockStore } from '../../store/dockStore'
 import { SwarmWorkerCards } from './swarm/SwarmWorkerCards'
+import { SwarmDock } from './swarm/SwarmDock'
 import { SwarmPlanStrip } from './swarm/SwarmPlanStrip'
 import { SwarmTriage } from './swarm/SwarmTriage'
+import { DockDivider } from './swarm/DockDivider'
+import { useDockLayout } from './swarm/useDockLayout'
 import type { SwarmTriageAction, SwarmTriageRow } from '../../../../shared/swarmLedgerTypes'
 
 /** Reference-stable empty owner map — a fresh `{}` per render would re-render the strip forever. */
@@ -129,6 +136,34 @@ export function SwarmBoard({
 
   const boards = useCanvasStore((s) => s.boards)
   const titleOf = (id: string): string => boards.find((b) => b.id === id)?.title ?? id
+
+  // Docked-terminals: this board's docked workers (rendered in the dock viewport, hidden from
+  // the canvas by Canvas.tsx's visibleBoards filter) + the active tab. Opening a worker routes
+  // by WHERE it lives: docked here → switch the dock tab; anywhere else (popped out / another
+  // board's dock / the plan board) → the ordinary canvas jump.
+  const dockedBoards = useMemo(
+    () =>
+      boards.filter(
+        (b): b is TerminalBoardData => b.type === 'terminal' && b.dockedIn === board.id
+      ),
+    [boards, board.id]
+  )
+  const dockedIds = useMemo(() => dockedBoards.map((b) => b.id), [dockedBoards])
+  const activeDockId = useDockStore((s) => s.active[board.id])
+  // Region layout (eyeball feedback): divider-driven chat/rail widths + triage height,
+  // persisted on the board (`dockLayout`); the viewport takes the rest.
+  const { sizes, handlersFor } = useDockLayout(board)
+  const openWorker = useCallback(
+    (id: string): void => {
+      const b = useCanvasStore.getState().boards.find((x) => x.id === id)
+      if (b && b.type === 'terminal' && b.dockedIn === board.id) {
+        useDockStore.getState().setActive(board.id, id)
+      } else {
+        jumpToBoard(id)
+      }
+    },
+    [board.id]
+  )
 
   /**
    * S2: a triage row's non-`open` action. The button PROPOSES — MAIN re-validates the row against
@@ -253,7 +288,13 @@ export function SwarmBoard({
           />
         </div>
 
-        <div className="sw-body">
+        <div
+          className="sw-body"
+          style={{
+            gridTemplateColumns: `${sizes.chat}px 6px 1fr`,
+            gridTemplateRows: '1fr 6px auto'
+          }}
+        >
           {/* ── region 1 · chat spine ── */}
           <aside className="sw-chat" data-test="swarm-chat">
             <div className="sw-chat-head">
@@ -317,14 +358,47 @@ export function SwarmBoard({
             </div>
           </aside>
 
-          {/* ── region 3 · worker canvas ── */}
-          <SwarmWorkerCards
-            run={run}
-            attention={attention}
-            running={running}
-            now={now}
-            titleOf={titleOf}
-            onOpen={jumpToBoard}
+          {/* chat ↔ body divider (grid col 2, spans every row). */}
+          <DockDivider
+            axis="x"
+            {...handlersFor('chat')}
+            testId="swarm-div-chat"
+            style={{ gridColumn: 2, gridRow: '1 / 4' }}
+          />
+
+          {/* ── region 3 · worker dock: rail (tabs) + divider + embedded terminal viewport ── */}
+          <main
+            className="sw-canvas"
+            data-test="swarm-workers"
+            style={{ gridColumn: 3, gridRow: 1 }}
+          >
+            <SwarmWorkerCards
+              run={run}
+              attention={attention}
+              running={running}
+              now={now}
+              titleOf={titleOf}
+              onOpen={openWorker}
+              dockedIds={dockedIds}
+              activeDockId={activeDockId ?? null}
+              width={sizes.rail}
+            />
+            <DockDivider axis="x" {...handlersFor('rail')} testId="swarm-div-rail" />
+            <SwarmDock
+              swarmId={board.id}
+              docked={dockedBoards}
+              run={run}
+              attention={attention}
+              running={running}
+            />
+          </main>
+
+          {/* viewport ↔ triage divider (drag DOWN shrinks the strip → dir −1). */}
+          <DockDivider
+            axis="y"
+            {...handlersFor('triage', -1)}
+            testId="swarm-div-triage"
+            style={{ gridColumn: 3, gridRow: 2 }}
           />
 
           {/* ── region 4 · triage queue ── */}
@@ -332,8 +406,9 @@ export function SwarmBoard({
             run={run}
             attention={attention}
             titleOf={titleOf}
-            onOpen={jumpToBoard}
+            onOpen={openWorker}
             onAction={onTriageAction}
+            height={sizes.triage}
           />
         </div>
       </div>

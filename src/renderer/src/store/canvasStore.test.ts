@@ -17,6 +17,7 @@ import {
   createBoard,
   fromObject,
   type TerminalBoard,
+  type SwarmBoard,
   type PlanningBoard,
   type PlanningElement
 } from '../lib/boardSchema'
@@ -2001,6 +2002,113 @@ describe('terminal scrollback patch', () => {
     expect(
       (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).scrollback
     ).toBeUndefined()
+  })
+})
+
+describe('terminal dockedIn patch (swarm docked-terminals)', () => {
+  it('updateBoard persists dockedIn on a terminal, and clearing it pops the board back out', () => {
+    const t = createBoard('terminal', { id: 't1', x: 0, y: 0 }) as TerminalBoard
+    useCanvasStore.setState({
+      boards: [t],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().updateBoard('t1', { dockedIn: 'sw1' } as Partial<TerminalBoard>)
+    expect((useCanvasStore.getState().boards[0] as TerminalBoard).dockedIn).toBe('sw1')
+    // Pop-out clears the flag via the same patch path (undefined must not be silently dropped).
+    useCanvasStore.getState().updateBoard('t1', { dockedIn: undefined } as Partial<TerminalBoard>)
+    expect((useCanvasStore.getState().boards[0] as TerminalBoard).dockedIn).toBeUndefined()
+  })
+  it('drops a dockedIn patched onto a browser (cross-type guard)', () => {
+    const b = createBoard('browser', { id: 'b1', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [b],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().updateBoard('b1', { dockedIn: 'sw1' } as Partial<TerminalBoard>)
+    expect(
+      (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).dockedIn
+    ).toBeUndefined()
+  })
+})
+
+describe('swarm dockLayout patch (docked-terminals dividers)', () => {
+  it('updateBoard persists dockLayout on a swarm board (PATCHABLE_KEYS.swarm)', () => {
+    const sw = createBoard('swarm', { id: 'sw-1', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [sw],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore
+      .getState()
+      .updateBoard('sw-1', { dockLayout: { rail: 260 } } as Partial<SwarmBoard>)
+    expect(
+      (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).dockLayout
+    ).toEqual({ rail: 260 })
+  })
+})
+
+describe('removeBoard dock sweep (swarm docked-terminals)', () => {
+  it('removing the HOST swarm board pops its docked workers back onto the canvas, and undo restores both', () => {
+    const sw = createBoard('swarm', { id: 'sw-1', x: 0, y: 0 })
+    const w = {
+      ...(createBoard('terminal', { id: 'w-1', x: 0, y: 0 }) as TerminalBoard),
+      dockedIn: 'sw-1'
+    }
+    useCanvasStore.setState({
+      boards: [sw, w],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().removeBoard('sw-1')
+    const after = useCanvasStore.getState().boards
+    expect(after).toHaveLength(1)
+    expect((after[0] as TerminalBoard).dockedIn).toBeUndefined() // popped out, not stranded
+    // One undo restores the host AND the dock placement together (same tracked step).
+    useCanvasStore.getState().undo()
+    const restored = useCanvasStore.getState().boards
+    expect(restored).toHaveLength(2)
+    expect((restored.find((b) => b.id === 'w-1') as TerminalBoard).dockedIn).toBe('sw-1')
+  })
+
+  it('removing an unrelated board leaves a docked worker docked', () => {
+    const sw = createBoard('swarm', { id: 'sw-1', x: 0, y: 0 })
+    const other = createBoard('terminal', { id: 't-9', x: 0, y: 0 })
+    const w = {
+      ...(createBoard('terminal', { id: 'w-1', x: 0, y: 0 }) as TerminalBoard),
+      dockedIn: 'sw-1'
+    }
+    useCanvasStore.setState({
+      boards: [sw, other, w],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().removeBoard('t-9')
+    expect(
+      (useCanvasStore.getState().boards.find((b) => b.id === 'w-1') as TerminalBoard).dockedIn
+    ).toBe('sw-1')
   })
 })
 

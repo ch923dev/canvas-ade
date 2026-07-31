@@ -47,6 +47,7 @@ import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
 import { usePaletteRestart } from './terminal/usePaletteRestart'
 import { useLeadRole, LeadBadge } from './terminal/useLeadRole'
+import { RedockPill } from './swarm/RedockPill'
 import { notifyResumeFellBack } from './terminal/resumeFallbackToast'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
@@ -602,7 +603,14 @@ export function TerminalBoard({
         running={running}
         spawning={state === 'spawning'}
         status={status}
-        titleBadge={isLead ? <LeadBadge /> : undefined}
+        titleBadge={
+          // Docked-terminals: a popped-out swarm worker carries the ⇤ Re-dock pill (renders
+          // null for every non-worker terminal — see RedockPill's host checks).
+          <>
+            {isLead ? <LeadBadge /> : null}
+            <RedockPill boardId={board.id} />
+          </>
+        }
         lead={isLead}
         contentBg={themeBg}
         onFull={onFull}

@@ -129,6 +129,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     swarmSetPlanBoard(runId, planBoardId) {
       useSwarmStore.getState().setPlanBoard(runId, planBoardId)
     },
+    swarmAddWorker(runId, workerBoardId, role) {
+      // Docked-terminals e2e: register a seeded board as a run's worker through the SAME store
+      // action the real `workerSpawned` push uses (the swarmSetPlanBoard discipline) — the
+      // re-dock pill and rail membership key off run membership, not off how it was created.
+      useSwarmStore.getState().addWorker(runId, workerBoardId, role ? { role } : undefined)
+    },
     setSelection(ids) {
       useCanvasStore.getState().setSelection(ids)
     },

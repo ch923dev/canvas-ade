@@ -28,6 +28,8 @@ export function useCanvasFileGlue(
 
   useEffect(() => {
     if (!pendingFocusId) return
+    // A focus intent aimed at a DOCKED worker redirects to its host swarm board inside
+    // focusBoardById itself (the shared resolveFocusTarget rule) — no per-consumer logic here.
     // Defer one frame: a board opened this tick is in the store, but RF may not have registered
     // its node yet — an immediate fitView would find nothing. rAF lets the node mount first.
     const raf = requestAnimationFrame(() => {

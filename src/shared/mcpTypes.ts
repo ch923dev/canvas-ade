@@ -408,6 +408,13 @@ export type McpCommand =
         // PATCHABLE_KEYS.terminal so `useTerminalSpawn` forwards it for MAIN-side env injection.
         // The key itself NEVER rides here — presence-only intent, resolved at spawn in MAIN.
         openRouter?: { enabled: boolean; model?: string }
+        // TERMINAL-ONLY (swarm docked-terminals): the hosting SWARM board's id — the spawned
+        // worker terminal is born docked inside that board's viewport instead of landing as a
+        // canvas node (no flash-then-dock). MAIN validated it against the live board mirror
+        // (exists + type swarm); the applier re-validates both (defense in depth) and lands it
+        // via PATCHABLE_KEYS.terminal. A dangling reference degrades to an ordinary canvas
+        // terminal (the fromObject reconcile), never a hidden board.
+        dockedIn?: string
       }
       connector?: { sourceId: string }
     }
