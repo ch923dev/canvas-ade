@@ -13,7 +13,7 @@ import { isFlickerFree } from './terminalDisplayConfig'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
-import { maybeEnsureClaudeHook } from './claudeBootDetect'
+import { maybeEnsureClaudeHook, forgetBootDirs, clearBootDirs } from './claudeBootDetect'
 import {
   MAX_OUTPUT_PAGE,
   pageOutput,
@@ -229,6 +229,17 @@ const parked = new Map<string, ParkedLike>()
  */
 const boardCwds = new Map<string, string>()
 
+/**
+ * FIND-009 discipline, one funnel (audit R13/P-8): forget ALL of a board id's keyed side-state
+ * on teardown/reap — gitDiff cwd (PR-2), claudeBootDetect ensured-dirs, pending idle check.
+ * Each forget no-ops on absence; a respawn re-derives all three from its own output.
+ */
+function forgetBoardSideState(id: string): void {
+  boardCwds.delete(id)
+  forgetBootDirs(id)
+  idleMonitor?.drop(id)
+}
+
 // Injectable env-policy seam (CANVAS_RECAP_BOARD etc.) — type + merge semantics + the
 // never-break-a-spawn try/catch live in ptySpawnEnv.ts (buildSpawnEnv).
 let recapEnvProvider: RecapEnvProvider | undefined
@@ -268,19 +279,19 @@ export function setOrchestrationSyncProvider(fn: OrchestrationSyncProvider | und
  * the idle monitor's scan entirely.
  */
 let lifecycleEmitter: PtyLifecycleEmitter | undefined
-let stopIdleMonitor: (() => void) | null = null
+let idleMonitor: ptyLC.IdleMonitor | null = null
 /**
- * Wire the generic-PTY lifecycle sink (desktop-notifications P3). Wiring an emitter ALSO starts the
- * idle-at-prompt monitor over the live `sessions` (via ptyLifecycleMonitor, session access injected
- * so that module never touches these private maps); passing `undefined` unwires + stops it. The
- * onExit / spawn-failed sites read `lifecycleEmitter` directly. index.ts routes this to the single
- * MAIN notifier so the generic path shares the Claude hook path's delivery.
+ * Wire the generic-PTY lifecycle sink (desktop-notifications P3). Wiring an emitter ALSO starts
+ * the idle-at-prompt monitor (ptyLifecycleMonitor, session access injected); `undefined` unwires
+ * + stops it. EVENT-DRIVEN since audit R13: the onData pump pokes it per output — no polling
+ * interval, zero timers while no session is live. index.ts routes this to the single MAIN notifier.
  */
 export function setPtyLifecycleEmitter(fn: PtyLifecycleEmitter | undefined): void {
   lifecycleEmitter = fn
-  stopIdleMonitor?.()
-  stopIdleMonitor = fn
+  idleMonitor?.dispose()
+  idleMonitor = fn
     ? ptyLC.startIdleMonitor(
+        (id) => sessions.get(id),
         () => sessions,
         (id) => boardCwds.get(id),
         fn
@@ -489,9 +500,9 @@ export function setFlushWatermark(id: string, written: number): void {
 
 /** Reap a parked session: stop its TTL timer and kill its process tree. */
 function reapParked(id: string): Promise<void> {
-  // FIND-009: a parked session never routed through cleanupCore, so its boardCwds entry would
-  // otherwise leak until the next project switch. Forget it as part of the reap.
-  return reapParkedCore(id, parked, sessionDeps, (rid) => boardCwds.delete(rid))
+  // FIND-009: a parked session never routed through cleanupCore, so its id-keyed side-state
+  // would otherwise leak until the next project switch. Forget it as part of the reap.
+  return reapParkedCore(id, parked, sessionDeps, forgetBoardSideState)
 }
 
 /**
@@ -636,6 +647,7 @@ function bindProcPump(id: string, proc: pty.IPty, buf: OutputRing): () => void {
     }
     live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
     ptyLC.clearAwaitingInput(live) // P3: fresh output re-arms the idle heuristic (→ running)
+    idleMonitor?.poke(id) // R13: arm/refresh this session's quiescence check (O(1), no timer churn)
     // Relay cut-off fix: observe DECSET 2004 toggles so the MCP dispatch gate knows whether
     // the foreground app currently accepts bracketed paste (isBracketedPasteEnabled below).
     // Inside the identity guard — a dying old proc's flush bytes must not skew the new state.
@@ -693,8 +705,8 @@ function bindProcPump(id: string, proc: pty.IPty, buf: OutputRing): () => void {
           exitedAt: Date.now()
         })
       }
-      // FIND-009: this parked exit bypasses cleanupCore too, so drop the gitDiff cwd here as well.
-      boardCwds.delete(id)
+      // FIND-009: this parked exit bypasses cleanupCore too, so forget the side-state here as well.
+      forgetBoardSideState(id)
     }
   })
   return () => dataBatch.flushNow()
@@ -924,11 +936,9 @@ export function cleanupCore(
   // open — otherwise output buffered this tick is dropped on kill/restart/reap.
   drainBatch(s)
   sessionsMap.delete(id)
-  // PR-2: drop this board's gitDiff cwd when its session is torn down, so the map doesn't
-  // accrete entries for the session lifetime (it otherwise only drained on project switch).
-  // Kept across park/adopt (parkCore doesn't route here); a respawn re-sets it AFTER this
-  // synchronous delete (the Bug #13 restart reaps the old session before the new spawn).
-  boardCwds.delete(id)
+  // PR-2 (widened by R13/P-8 into the shared side-state forget). Kept across park/adopt
+  // (parkCore doesn't route here); a respawn re-seeds AFTER this delete (Bug #13 ordering).
+  forgetBoardSideState(id)
   // BUG-022: when the shell/agent exited naturally (state === 'exited') AND this
   // is the process's own onExit callback (proc !== undefined), the root PID is
   // already dead and the OS may recycle it before taskkill resolves — a force-kill
@@ -1051,6 +1061,7 @@ function killTree(proc: pty.IPty): Promise<void> {
  */
 export function disposeAllPtys(): Promise<void> {
   boardCwds.clear() // PR-2: drop all gitDiff cwd entries on project switch
+  clearBootDirs() // R13/P-8: the parked-reap path below runs with no per-id forget
   residue.clearAllExitResidue() // quit/e2e-reset: nothing will ever consume them
   return disposeAllPtysCore(sessions, parked, sessionDeps)
 }
@@ -1105,7 +1116,7 @@ export function reapUndoParksCore(
 
 /** Reap `dir`'s undo-parked sessions (background-switch preamble — see the core's doc). */
 export function reapUndoParks(dir: string | null): Promise<void> {
-  return reapUndoParksCore(dir, parked, sessionDeps, (id) => boardCwds.delete(id))
+  return reapUndoParksCore(dir, parked, sessionDeps, forgetBoardSideState)
 }
 
 /**
@@ -1132,9 +1143,9 @@ export function disposeProjectPtysCore(
 /** Kill every session (live + parked) owned by `dir` — the "Close project" path. */
 export function disposeProjectPtys(dir: string | null): Promise<void> {
   residue.clearExitResidueForProject(dir) // a closed project's residue is unreachable — drop it
-  // FIND-009 discipline: parked reaps forget their gitDiff cwd per-id (cleanupCore already
-  // deletes the live ones) — no wholesale boardCwds.clear() here, other projects keep theirs.
-  return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, (id) => boardCwds.delete(id))
+  // FIND-009 discipline: parked reaps forget their id-keyed side-state per-id (cleanupCore
+  // already routes the live ones) — no wholesale clear here, other projects keep theirs.
+  return disposeProjectPtysCore(dir, sessions, parked, sessionDeps, forgetBoardSideState)
 }
 
 // countProjectSessionsCore moved to ptyProjectStats.ts (busy-aware eviction split — pty.ts is

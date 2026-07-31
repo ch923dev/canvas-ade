@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
-import { BoardFrame } from '../BoardFrame'
+import { BoardFrame, type BoardStatus } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, isRunning, statusFor } from './terminalState'
 import { useAttentionStore } from '../../store/attentionStore'
@@ -62,7 +62,7 @@ import { useTerminalAppearance } from './terminal/useTerminalAppearance'
 import { useTerminalReraster } from './terminal/useTerminalReraster'
 import { useTerminalFullViewFill } from './terminal/useTerminalFullViewFill'
 import { resolveInitialThemeId, terminalThemeColors } from './terminal/terminalThemes'
-import { useRunTimer } from './terminal/useRunTimer'
+import { RunTimer } from './terminal/RunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
 import { TerminalIdleAffordance } from './terminal/TerminalIdleAffordance'
@@ -408,9 +408,10 @@ export function TerminalBoard({
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
-  // TERM-01: an elapsed run timer (mm:ss) appended to the running pill — statusFor
-  // already renders the optional `timer` arg as a ` · ${timer}` suffix.
-  const runTimer = useRunTimer(running)
+  // TERM-01 (reworked in audit R13): the mm:ss pill suffix is the `RunTimer` LEAF (see
+  // status below) — mounted for the run's lifetime inside BoardFrame's always-mounted label
+  // span — so the 1s tick re-renders only that fragment. This board no longer re-renders per
+  // second (the churn class #397's root memo work fenced at App).
   // Desktop-notifications P2 (#314): unseen attention re-tints the pill DOT to warn/err (the
   // DESIGN.md Surface-1 dot column) — the label stays the runtime truth (running/idle/exited); the
   // node-level ring/badge overlay carries the wording. The warn/err dot also disarms BoardFrame's
@@ -418,12 +419,18 @@ export function TerminalBoard({
   const attention = useAttentionStore((s) => s.byId[board.id])
   const attnDot =
     attention === 'needs-input' ? 'var(--warn)' : attention === 'error' ? 'var(--err)' : null
-  const baseStatus = statusFor(state, identity, runTimer)
+  const baseStatus = statusFor(state, identity)
   // C2: the §7.1 "working" braille spinner is a pure-CSS ::before in BoardFrame (gated on `running`)
   // — it no longer bumps component state on this node every 80ms (12.5×/sec). So there is NO JS
   // spinner-glyph label prefix here (that reintroduced exactly the churn C2 removed); the attention
   // dot is the only status override, and the CSS ::before renders the spinner.
-  const status = attnDot ? { ...baseStatus, dot: attnDot } : baseStatus
+  // R13: while running, the visible pill carries the ticking `RunTimer` leaf as a suffix and
+  // the SR live region announces the stable `identity · running` instead (BoardFrame D0-6).
+  const status: BoardStatus = {
+    ...baseStatus,
+    ...(attnDot ? { dot: attnDot } : null),
+    ...(running ? { labelSuffix: <RunTimer />, srLabel: `${identity} · running` } : null)
+  }
 
   // TERM-06: send Ctrl-C + a brief confirmation (⏹ button pulse + "interrupt sent" chip).
   const { interruptSent, interrupt } = useInterruptFeedback(portRef)

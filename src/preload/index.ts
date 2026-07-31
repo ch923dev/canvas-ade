@@ -762,9 +762,10 @@ const api = {
       return () => ipcRenderer.removeListener('project:flush', listener)
     },
     /**
-     * Global project-switch hotkey (globalHotkey.ts): MAIN foregrounds the window then sends the
-     * cycle DIRECTION (1 = next / -1 = prev). The renderer owns the ordered recents ring + the
-     * performProjectSwitch pipeline. Returns an unsubscribe fn.
+     * Project-switch hotkey (globalHotkey.ts): a WINDOW-SCOPED `before-input-event` binding
+     * (PR #342 — not `globalShortcut`; fires only while Expanse is focused, never foregrounds
+     * the window). MAIN sends the cycle DIRECTION (1 = next / -1 = prev). The renderer owns the
+     * ordered recents ring + the performProjectSwitch pipeline. Returns an unsubscribe fn.
      *
      * R16: the second argument is the modifier the user is HOLDING (`'Control' | 'Meta' | 'Alt'`,
      * or null for a modifier-free rebind). MAIN derives it from the chord that actually fired —
@@ -778,16 +779,13 @@ const api = {
       return () => ipcRenderer.removeListener('project:cycleHotkey', listener)
     }
   },
-  // ── Global project-switch hotkey settings (Settings › Shortcuts) ──
+  // ── Project-switch hotkey settings (Settings › Shortcuts) ──
   hotkey: {
     /** Read the persisted accelerators. Null only from a foreign frame (guarded in MAIN). */
     get: (): Promise<HotkeyConfig | null> => ipcRenderer.invoke('hotkey:get'),
-    /** Persist + re-register. `failed` lists accelerators that couldn't bind (already in use). */
-    set: (cfg: HotkeyConfig): Promise<{ ok: boolean; failed: string[] }> =>
-      ipcRenderer.invoke('hotkey:set', cfg),
-    /** Accelerators from the last registration (incl. the pre-window startup one) that couldn't
-     *  bind. Pulled on mount to surface a cold-start conflict the push path can't reach. */
-    failures: (): Promise<string[]> => ipcRenderer.invoke('hotkey:failures')
+    /** Persist + re-apply the window binding (which cannot fail to register — the old
+     *  `failed`/`hotkey:failures` surface was deleted in the R15 sweep, PS-5). */
+    set: (cfg: HotkeyConfig): Promise<{ ok: boolean }> => ipcRenderer.invoke('hotkey:set', cfg)
   },
   // ── Desktop-notification preferences (Settings › Notifications) ──
   notifications: {

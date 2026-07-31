@@ -1,9 +1,11 @@
 /**
- * Shortcuts detail pane — the `shortcuts` section. Rebinds the GLOBAL project-switch hotkey (the
- * OS-wide accelerators MAIN registers via globalShortcut). Immediate-apply, like the recap/voice
- * panes: every change writes through `hotkey.set`, which re-registers and reports which
- * accelerators couldn't bind (already claimed by another app) — surfaced as a warning rather than
- * a silent no-op. "Record" captures the next real chord; Escape cancels a recording.
+ * Shortcuts detail pane — the `shortcuts` section. Rebinds the project-switch hotkey: a
+ * WINDOW-SCOPED `before-input-event` binding in MAIN (PR #342 — not `globalShortcut`), so it
+ * fires only while Expanse is focused and can never collide with another app's chord.
+ * Immediate-apply, like the recap/voice panes: every change writes through `hotkey.set`, which
+ * re-applies the binding (a window binding cannot fail to register — the old bind-failure
+ * warning surface was deleted in the R15 sweep, PS-5). "Record" captures the next real chord;
+ * Escape cancels a recording.
  */
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import type { HotkeyConfig } from '../../../../../preload'
@@ -22,7 +24,6 @@ export function ShortcutsPane(): ReactElement | null {
   const [cfg, setCfg] = useState<HotkeyConfig>(DEFAULTS)
   const [recording, setRecording] = useState<'next' | 'prev' | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [failed, setFailed] = useState<string[]>([])
 
   // Non-electron test runtimes have no hotkey bridge — render nothing (SettingsVoiceSection precedent).
   const hasApi = typeof window !== 'undefined' && !!window.api?.hotkey
@@ -50,9 +51,7 @@ export function ShortcutsPane(): ReactElement | null {
       if (!r.ok) {
         setCfg(prev)
         setError('Could not save the shortcut — please try again.')
-        return
       }
-      setFailed(r.failed)
     } catch {
       setCfg(prev)
       setError('Could not save the shortcut — please try again.')
@@ -149,12 +148,6 @@ export function ShortcutsPane(): ReactElement | null {
         Reset to defaults
       </button>
 
-      {failed.length > 0 && (
-        <div role="alert" style={pane.error}>
-          {failed.map(pretty).join(', ')} {failed.length === 1 ? 'is' : 'are'} already in use by
-          another app and couldn’t be bound. Pick a different combo.
-        </div>
-      )}
       {error && (
         <div role="alert" style={pane.error}>
           {error}
@@ -162,8 +155,8 @@ export function ShortcutsPane(): ReactElement | null {
       )}
 
       <div style={pane.hint}>
-        Use a combo with Ctrl, Alt, or ⌘. A global shortcut is captured system-wide while Expanse is
-        running, so avoid chords another app relies on.
+        Use a combo with Ctrl, Alt, or ⌘. The shortcut works while Expanse is focused — it never
+        captures keys from other apps.
       </div>
     </div>
   )

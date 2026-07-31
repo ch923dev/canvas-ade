@@ -8,11 +8,11 @@
 /**
  * Lifecycle states the board can be in (superset of the main `PtyState`).
  *
- * `awaiting-input` is RESERVED forward-wiring: the chrome (warn dot + label) and
- * the `{ t: 'state' }` port channel fully support it, but `pty.ts` does not emit it
- * today — reliably detecting "an agent is waiting for input" from raw PTY bytes is
- * out of scope. A future agent integration pushes it over the existing channel; no
- * UI change needed then. (Reviewed 2026-05-29.)
+ * `awaiting-input` IS emitted by MAIN since desktop-notifications P3: the idle-at-prompt
+ * monitor (ptyLifecycleMonitor.ts) posts it over the `{ t: 'state' }` port channel when a
+ * running, monitored session goes output-silent at a soliciting prompt, and the next output
+ * flips it back to `running`. (This comment previously called the state "reserved
+ * forward-wiring" — stale since #314, fixed in the R15 sweep.)
  */
 export type TerminalState =
   | 'idle'
@@ -43,15 +43,16 @@ export function isLive(state: TerminalState): boolean {
  * Identity pill for a state. `name` is the agent identity derived from the
  * launchCommand (or the shell label when no agent is launched). Dot colour
  * follows §7.1: running/spawning `--ok`, awaiting input `--warn`, failure
- * `--err`, otherwise neutral `--text-3`.
+ * `--err`, otherwise neutral `--text-3`. The elapsed run timer is NOT part of the
+ * label any more (audit R13): it renders as a `labelSuffix` leaf (`RunTimer`) so
+ * its 1s tick re-renders only that leaf, never the board.
  */
-export function statusFor(state: TerminalState, name: string, timer?: string): TerminalStatus {
-  const suffix = timer ? ` · ${timer}` : ''
+export function statusFor(state: TerminalState, name: string): TerminalStatus {
   switch (state) {
     case 'spawning':
       return { dot: 'var(--ok)', label: `${name} · starting` }
     case 'running':
-      return { dot: 'var(--ok)', label: `${name}${suffix}` }
+      return { dot: 'var(--ok)', label: name }
     case 'awaiting-input':
       return { dot: 'var(--warn)', label: `${name} · awaiting input` }
     case 'spawn-failed':

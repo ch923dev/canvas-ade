@@ -11,6 +11,9 @@
  * are body-free; schema/lineage are opt-in (the source board's "infer shapes" gate); the only value
  * read (id-lineage) is MAIN-side + value-less over IPC. Page strings are React-escaped (no innerHTML).
  */
+// Side-effect FIRST (audit R12): the @expanse-ade/diagram host seams — same wiring note as
+// PlanningBoard; either lazy root loading first wires them (the bridge is idempotent).
+import './planning/diagramPackageBridge'
 import { useEffect, useMemo, useCallback, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'

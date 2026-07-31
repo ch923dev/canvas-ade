@@ -1,9 +1,9 @@
 /**
  * Global hotkey settings plane — the renderer-facing control for the project-switch accelerators
  * (Settings › Shortcuts). `hotkey:get` reads the persisted config; `hotkey:set` validates + writes
- * it, then RE-REGISTERS the global shortcuts and reports which accelerators failed to bind (already
- * claimed / invalid) so the pane can warn. Both handlers are `isForeignSender` frame-guarded, like
- * every other IPC surface in MAIN.
+ * it, then re-applies the window-scoped `before-input-event` binding (PR #342 — NOT
+ * `globalShortcut`; a window binding cannot fail to register, so there is no failure list to
+ * report). Both handlers are `isForeignSender` frame-guarded, like every other IPC surface in MAIN.
  */
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
@@ -16,11 +16,8 @@ import {
 
 export interface HotkeyIpcDeps {
   userDataDir: string
-  /** Re-register from the freshly written config; returns the accelerators that failed to bind. */
-  reapply(): { failed: string[] }
-  /** Accelerators from the LAST registration (incl. the pre-window startup one) that failed to
-   *  bind — pulled by the renderer on mount to surface a cold-start conflict the push path can't. */
-  lastFailures(): string[]
+  /** Re-apply the window binding from the freshly written config. */
+  reapply(): void
 }
 
 /** Coerce a renderer-supplied payload into a valid config (never trust the wire shape). */
@@ -47,18 +44,11 @@ export function registerHotkeyHandlers(
     return readHotkeyConfig(deps.userDataDir)
   })
 
-  // Pulled by the renderer on mount: the last registration's bind failures (the startup apply runs
-  // before any window, so those can't be pushed — the renderer asks once it is listening).
-  ipc.handle('hotkey:failures', (e): string[] => {
-    if (guard(e)) return []
-    return deps.lastFailures()
-  })
-
-  ipc.handle('hotkey:set', (e, raw: unknown): { ok: boolean; failed: string[] } => {
-    if (guard(e)) return { ok: false, failed: [] }
+  ipc.handle('hotkey:set', (e, raw: unknown): { ok: boolean } => {
+    if (guard(e)) return { ok: false }
     const cfg = sanitize(raw)
     writeHotkeyConfig(deps.userDataDir, cfg)
-    const { failed } = deps.reapply()
-    return { ok: true, failed }
+    deps.reapply()
+    return { ok: true }
   })
 }

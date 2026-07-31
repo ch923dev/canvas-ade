@@ -14,10 +14,12 @@ function isSmoke(): boolean {
 
 /**
  * Renderer-side dependency smoke, kept from the Phase 0 harness. On mount it
- * instantiates xterm + the WebGL addon offscreen and logs `RENDERER_SMOKE` so the
- * headless `CANVAS_SMOKE` run can assert the renderer toolchain is healthy. Runs
- * once; the offscreen terminal is disposed immediately. Load-bearing for the smoke
- * gate — do not remove without moving the probe.
+ * instantiates xterm offscreen and logs `RENDERER_SMOKE` so the headless
+ * `CANVAS_SMOKE` run can assert the renderer toolchain is healthy. Runs once; the
+ * offscreen terminal is disposed immediately. Load-bearing for the smoke gate — do
+ * not remove without moving the probe. (The WebGL-addon probe was dropped in audit
+ * R12 with the dep itself: the DOM renderer is a locked decision, so the probe
+ * exercised a path no product code has.)
  *
  * BUG-056: no-ops outside the smoke harness — this used to run on every real launch.
  *
@@ -30,7 +32,7 @@ export function useRendererSmoke(): void {
     if (!isSmoke()) return
 
     void (async () => {
-      const r = { reactflow: true, xterm: false, webgl: false }
+      const r = { reactflow: true, xterm: false }
       const host = document.createElement('div')
       host.style.cssText = 'position:absolute;left:-9999px;width:240px;height:120px'
       document.body.appendChild(host)
@@ -39,15 +41,6 @@ export function useRendererSmoke(): void {
         const term = new Terminal({ cols: 20, rows: 4 })
         term.open(host)
         r.xterm = true
-        try {
-          const { WebglAddon } = await import('@xterm/addon-webgl')
-          const gl = new WebglAddon()
-          term.loadAddon(gl)
-          r.webgl = true
-          gl.dispose()
-        } catch {
-          r.webgl = false
-        }
         term.dispose()
       } catch {
         r.xterm = false

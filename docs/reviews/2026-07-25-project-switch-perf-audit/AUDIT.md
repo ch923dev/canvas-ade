@@ -405,6 +405,57 @@ behind it.
      numbers would be cherry-picking. Raw JSONL preserved in the session scratchpad; the marks
      ship (`bootTiming.ts`, `CANVAS_BOOT_TIMING=1`), so anyone can re-run both arms.
 
+9. ✅ **DONE 2026-07-30 — Phase 4 (v0.44.0): R12 measured, and the entry-chunk win is REAL but
+   an order smaller than P-5's framing implied.** Baseline (this branch, pre-change build):
+   entry `index-*.js` **2,020,674 B raw / 427,657 B gzip**; eager CSS 282,351 B / 61,479 B gzip.
+   The audit's "whole subsystem it does not need" was verified in the chunk (`DiagramSpecView`,
+   `configureSpecElkWorker`, `pl-spec-*` all present, zero in lazy chunks) — but the HEAVY parts
+   (elkjs, the ELK worker, CodeMirror) were already their own lazy chunks; only the package
+   root + styles.css + seam wiring rode the entry. Post-R12 (bridge imported from the
+   PlanningBoard/DataFlowBoard lazy roots, not `main.tsx`): entry **1,992,886 B raw /
+   419,973 B gzip** (−27.8 KB raw / **−7.7 KB gzip**), eager CSS 277,439 B (−4.9 KB), and the
+   three markers are **zero in entry, present in both board chunks**. (An interim `?worker&url`
+   ELK-import variant measured 418,800 B gzip but was reverted: vitest 4's module runner
+   denies `?worker&url` ids outright, suite-level-crashing every spec that imports the
+   PlanningBoard graph — the classic `?worker` wrapper is the test-compatible form and emits
+   the identical worker asset.) The structural win — the
+   diagram package's module eval + seam registration off the boot path — stands regardless of
+   the byte count. The other half of P-5, "drop `addon-webgl` (139,518 B) — bundled but never
+   loaded", is a **measured negative for the bundle** (the DL-1 pattern): `TerminalSmoke.tsx`
+   (its only static importer) was orphaned — zero importers, tree-shaken, already absent from
+   every chunk — and the smoke probe's dynamic import was already a lazy chunk fetched only
+   under `CANVAS_SMOKE`. Entry cost ≈ a few hundred bytes of import glue. The dep + the
+   orphaned file + the probe were removed anyway as node_modules/supply-chain hygiene
+   (RENDERER_SMOKE now reports `{reactflow, xterm}`; nothing asserted on the `webgl` field).
+   The §7 gate's CI half is `scripts/bundle-budget.mjs` in `pr.yml`'s `check` job: entry gzip
+   budget **425,000 B** (~6 KB headroom — under the ~9 KB regression class it guards, above
+   hash-churn noise, raise-deliberately policy documented in the script).
+
+10. ✅ **DONE 2026-07-31 — Phase 4: R13 idle CPU measured with zero boards open; the delta is
+    real-direction but inside clock-quantum noise, and the binding evidence is mechanical.**
+    Method: both arms built unpackaged (`pnpm build` + `electron.exe .`), isolated
+    `CANVAS_USERDATA` profiles, each auto-opening its per-checkout devcheck sandbox project —
+    verified **zero boards** in the opened `canvas.json` (the §7 "idle, zero boards" scenario;
+    canvas mounted, not the picker). 30 s warm-up, then two consecutive 60 s windows summing
+    `TotalProcessorTime` deltas across the WHOLE process tree (main + gpu + renderer + utility):
+
+    | arm | window 1 | window 2 | mean (% of one core) |
+    |---|---|---|---|
+    | BEFORE — `main` @ `fbf50df` (v0.44.1, pre-R13) | 0.312 % | 0.234 % | 0.273 % |
+    | AFTER — this branch (R13 shipped) | 0.260 % | 0.130 % | 0.195 % |
+
+    Every raw sample is a multiple of the 15.6 ms Windows scheduler quantum — the whole
+    measurement is 5–12 quanta per window — so the −0.08 pp mean delta is *directionally*
+    consistent with R13 but **not resolvable above timer granularity**, and idle CPU was
+    already <0.35 % of one core before the change. Claiming the delta as proof would be the
+    §9-item-8 cherry-pick. The §7 gate half "idle CPU measured with zero boards open" is met —
+    it WAS measured, both arms, honestly recorded. The load-bearing proof that the four
+    always-on timers are gone is mechanical, per the #397 precedent: the R13 unit tests assert
+    **timer counts are load-independent** — zero PTY sessions ⇒ zero pending idle-monitor
+    timers (`ptyLifecycleMonitor.test.ts`), zero browser boards ⇒ no auto-connect interval
+    (`useBrowserAutoConnect.gate.test.tsx`), and the run-timer interval exists only while a
+    RunTimer leaf is mounted for a running terminal (`useRunTimer.test.ts`).
+
 ---
 
 ## Appendix A — Measurements taken (2026-07-25, this machine)

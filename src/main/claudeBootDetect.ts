@@ -65,10 +65,27 @@ export function detectClaudeBootCwd(ring: string): string | null {
  * Review [critical] dedupe: dirs already ensured, per board. The banner marker can recur for a
  * session's whole life (`claude --version`, help text, docs quoting it) — a dir seen before
  * skips the install call entirely, so lifetime re-triggers cost one ring parse and nothing
- * else. Bounded: boards × distinct real dirs a session actually printed. Cleared on respawn is
- * unnecessary — installs are idempotent; the set only suppresses repeats.
+ * else. Bounded: boards × distinct real dirs a session actually printed — and dropped on
+ * session teardown via {@link forgetBootDirs} (audit R13/P-8: it previously grew for the
+ * app lifetime). Clearing early is safe — installs are idempotent; the set only suppresses
+ * repeats, so a respawned board at worst re-pays one install call per dir.
  */
 const ensuredDirs = new Map<string, Set<string>>()
+
+/**
+ * Forget a board's ensured-dir dedupe state (audit R13/P-8). `pty.ts` calls this from its
+ * session-teardown funnel (the FIND-009 id-keyed side-state discipline, same sites as
+ * `boardCwds`), so the map stays bounded by LIVE boards instead of every board ever seen.
+ */
+export function forgetBootDirs(id: string): void {
+  ensuredDirs.delete(id)
+}
+
+/** Wholesale sibling of {@link forgetBootDirs} for `disposeAllPtys` (project switch /
+ *  quit), whose parked-reap path runs without a per-id forget callback. */
+export function clearBootDirs(): void {
+  ensuredDirs.clear()
+}
 
 /**
  * The one-line pty.ts data-plane hook: cheap substring test per chunk; only a chunk carrying

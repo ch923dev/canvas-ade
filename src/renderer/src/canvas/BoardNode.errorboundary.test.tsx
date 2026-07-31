@@ -124,39 +124,54 @@ function makeNodeProps(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+// Explicit timeouts (audit Phase 4): each test body pays `await import('./BoardNode')` — the
+// FULL static transform of BoardNode's graph (stores, BoardFrame, xyflow via importOriginal) —
+// inside its own budget. The 5s default was always marginal (passing runs measure 3–9s on this
+// box) and flakes ~50% under sibling-lane load / shared-junction cache re-keys. Not a product
+// path: real chunks are pre-built; only the in-test dynamic import pays transform at run time.
+const IMPORT_HEAVY_TIMEOUT = 30_000
+
 describe('BoardNode — per-board ErrorBoundary', () => {
-  it('shows a fallback card when the content slot throws, and keeps the node container mounted', async () => {
-    const { BoardNode } = await import('./BoardNode')
+  it(
+    'shows a fallback card when the content slot throws, and keeps the node container mounted',
+    { timeout: IMPORT_HEAVY_TIMEOUT },
+    async () => {
+      const { BoardNode } = await import('./BoardNode')
 
-    // Suppress React error boundary console.error noise in test output.
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // Suppress React error boundary console.error noise in test output.
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    let container!: HTMLElement
-    await act(async () => {
-      ;({ container } = render(<BoardNode {...makeNodeProps(TERMINAL_BOARD)} />))
-    })
+      let container!: HTMLElement
+      await act(async () => {
+        ;({ container } = render(<BoardNode {...makeNodeProps(TERMINAL_BOARD)} />))
+      })
 
-    consoleError.mockRestore()
+      consoleError.mockRestore()
 
-    // 1. The ErrorBoundary fallback text is in the document.
-    expect(screen.getByText(/this board failed to render/i)).toBeTruthy()
+      // 1. The ErrorBoundary fallback text is in the document.
+      expect(screen.getByText(/this board failed to render/i)).toBeTruthy()
 
-    // 2. The surrounding node container (anchorRef div, outside the portal) is still
-    //    mounted — the board's frame is alive even though its content slot threw.
-    //    This is the "rest of the canvas survives" witness at the BoardNode level.
-    const anchorDiv = container.querySelector('div[style*="position: absolute; inset: 0px"]')
-    expect(anchorDiv).toBeTruthy()
-  })
+      // 2. The surrounding node container (anchorRef div, outside the portal) is still
+      //    mounted — the board's frame is alive even though its content slot threw.
+      //    This is the "rest of the canvas survives" witness at the BoardNode level.
+      const anchorDiv = container.querySelector('div[style*="position: absolute; inset: 0px"]')
+      expect(anchorDiv).toBeTruthy()
+    }
+  )
 
-  it('renders the content normally when the content slot does not throw', async () => {
-    const { BoardNode } = await import('./BoardNode')
+  it(
+    'renders the content normally when the content slot does not throw',
+    { timeout: IMPORT_HEAVY_TIMEOUT },
+    async () => {
+      const { BoardNode } = await import('./BoardNode')
 
-    await act(async () => {
-      render(<BoardNode {...makeNodeProps(BROWSER_BOARD)} />)
-    })
+      await act(async () => {
+        render(<BoardNode {...makeNodeProps(BROWSER_BOARD)} />)
+      })
 
-    // The browser stub renders its content inside the boundary (no throw).
-    expect(screen.getByTestId('browser-content')).toBeTruthy()
-    expect(screen.getByText('browser-ok')).toBeTruthy()
-  })
+      // The browser stub renders its content inside the boundary (no throw).
+      expect(screen.getByTestId('browser-content')).toBeTruthy()
+      expect(screen.getByText('browser-ok')).toBeTruthy()
+    }
+  )
 })

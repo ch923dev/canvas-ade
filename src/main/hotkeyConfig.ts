@@ -4,9 +4,10 @@
  * by an explicit userDataDir so it is testable without Electron's `app`. Mirrors llmConfig.ts /
  * recentProjects.ts (atomic write, defaults-on-parse-fail).
  *
- * The values are Electron Accelerator strings (globalShortcut.register). Defaults use the
- * `]`/`[` bracket keys under CommandOrControl+Alt — valid accelerators unlikely to collide with
- * a common OS chord; any collision is surfaced (register returns false) and the user rebinds.
+ * The values are Electron Accelerator strings, matched by globalHotkey.ts's WINDOW-SCOPED
+ * `before-input-event` binding (PR #342 — not `globalShortcut`, so there is no OS-wide
+ * registration and no bind-collision to surface). Defaults use the `]`/`[` bracket keys under
+ * CommandOrControl+Alt.
  */
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
