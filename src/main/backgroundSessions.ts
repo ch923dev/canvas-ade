@@ -17,6 +17,8 @@
 import { app, Notification, type BrowserWindow } from 'electron'
 import { basename, join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { isHeadlessHarness } from './headlessHarness'
+import { readNotificationsConfig } from './notificationsConfig'
 import { createProjectSessions, type ProjectSessions } from './projectSessions'
 import {
   parkProjectSessions,
@@ -127,8 +129,14 @@ const BG_NOTIFY_COPY: Record<BgLifecycleKind, (name: string) => { title: string;
 }
 
 // Surface one sweep outcome: renderer toast push + OS notification. OS layer muted under the
-// headless harnesses (mirrors lifecycleNotifications.isHeadlessHarness) so e2e/smoke never pops
-// a real desktop notification; the renderer push still fires (asserted by specs via the toast).
+// headless harnesses (shared isHeadlessHarness) so e2e/smoke never pops a real desktop
+// notification; the renderer push still fires (asserted by specs via the toast).
+//
+// The RENDERER push stays ungated by the notifications master switch on purpose: "your project was
+// closed to free memory" is a consequence report the user needs to see in-app, not a notification
+// preference. Only the OS layer honors the master switch (audit P2-6). Per-event switches
+// (onDone/onInput/onError) do not map to project-lifecycle kinds, and `onlyWhenUnfocused` is moot
+// (a background-project event fires by construction while the user is elsewhere) — master only.
 function notifyBg(
   getWin: (() => BrowserWindow | null) | undefined,
   kind: BgLifecycleKind,
@@ -139,8 +147,11 @@ function notifyBg(
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send('project:bgLifecycle', { kind, dir, name })
   }
-  if (process.env.CANVAS_E2E || process.env.CANVAS_SMOKE) return
+  if (isHeadlessHarness()) return
   try {
+    // Master switch gate; an unreadable config already repairs to defaults (enabled) inside
+    // readNotificationsConfig, so a corrupt file default-notifies — mirrors trayResidency.
+    if (!readNotificationsConfig(app.getPath('userData')).enabled) return
     if (Notification.isSupported()) {
       const { title, body } = BG_NOTIFY_COPY[kind](name)
       new Notification({ title, body }).show()

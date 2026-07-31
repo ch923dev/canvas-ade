@@ -9,6 +9,7 @@ import * as pty from 'node-pty'
 import type { CloseSessionRow } from '../../shared/closeGuardTypes'
 import { buildKeepableRows } from './closeGuardCore'
 import { getCurrentDir } from '../projectStore'
+import { isHeadlessHarness } from '../headlessHarness'
 import { createRing, pushRing, type OutputRing } from '../ptyOutput'
 import type { SpawnOpts } from '../pty'
 import {
@@ -75,12 +76,16 @@ export function configurePtyHostBridge(d: BridgeDeps): void {
 
 /**
  * Boot wiring (index.ts, one call): surface daemon failures as an OS notification (D2 — the
- * in-proc fallback must never be silent; muted under headless e2e/smoke like the lifecycle
- * notifier), then warm the reattach survivor list.
+ * in-proc fallback must never be silent; muted under headless e2e/smoke via the SHARED
+ * isHeadlessHarness — audit C5 killed the third inline copy), then warm the reattach survivor
+ * list. Deliberately NOT gated by the notifications master switch: a daemon failure is an
+ * infrastructure fault, not a lifecycle notification — it must stay audible (audit decision,
+ * recorded in the 2026-07-31 notifications audit doc).
  */
-export function bootPtyHost(opts: { muted: boolean }): void {
+export function bootPtyHost(opts?: { muted?: boolean }): void {
+  const muted = opts?.muted ?? isHeadlessHarness()
   setPtyHostNotifier((message) => {
-    if (opts.muted) return
+    if (muted) return
     try {
       new Notification({ title: 'Expanse — terminals', body: message }).show()
     } catch {

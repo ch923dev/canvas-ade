@@ -30,6 +30,11 @@ export interface LifecyclePayload {
   detail?: string
 }
 
+/** One backlog entry from `notify:drain`. MIRRORS src/main/notifyQueue.ts (process boundary). */
+export type PendingNotify =
+  | { t: 'lifecycle'; at: number; payload: LifecyclePayload }
+  | { t: 'focus'; at: number; boardId: string }
+
 export const notifyApi = {
   /** main → renderer: a board's agent fired a lifecycle event → show the in-app toast. */
   onLifecycle: (cb: (payload: LifecyclePayload) => void): (() => void) => {
@@ -42,5 +47,8 @@ export const notifyApi = {
     const h = (_e: IpcRendererEvent, p: { boardId: string }): void => cb(p)
     ipcRenderer.on('notify:focusBoard', h)
     return () => ipcRenderer.removeListener('notify:focusBoard', h)
-  }
+  },
+  /** Pull the events/focus intents that fired while no window existed (tray residency). MAIN
+   *  clears the backlog on read — call once, in the same effect that installs the listeners. */
+  drain: (): Promise<PendingNotify[]> => ipcRenderer.invoke('notify:drain')
 }
