@@ -5189,3 +5189,32 @@ Version 0.45.1 → 0.46.0 (minor — new subsystem). Gates: push smoke 62/62; CI
 fully clean (0 critical / 0 warning / 0 inline; 2 no-reply nits); manual dev check title-stamped +
 user-eyeballed. Rebased over the #418 squash pre-push; post-rebase tree verified byte-identical to
 the verified pre-rebase tree (docs-only delta).
+
+## PR #419 — swarm plan strip flips to a per-worker kanban face (v0.46.1) · squash `56bb1bcb` · 2026-07-31
+
+Task #12. The swarm board's plan strip gains a back face: the terminal recap flip mechanism
+(`useTerminalFlip`, reused verbatim — two 150ms folds, flat at rest) folds the whole board face
+to a kanban of "who is doing what" — Queue (unassigned) · one column per worker (state dot +
+role + live activity verb, ledger order) · Done. Trigger: `⊞ kanban` trailing the strip or
+double-click on the strip surface (never board-wide — chat/composer/dock live there); `⟲ strip`
+or double-click the kanban header flips back. Flip state is ephemeral session state, never
+serialized. A LENS, not a second kanban: columns are DERIVED (done → Done, ledger holder → that
+worker's column, else Queue), cards travel only when the run's facts change — no drag, no column
+authoring. Human edits are the strip's exact three (tick · rename · ＋ add → Queue) through the
+same Planning-board write-through helpers: one undo step each, plan board stays the source of
+truth. New ledger fact `planHolders` (plan-item id → holding worker's board id) in
+`swarmLedgerProject.ts` — `planOwners`' twin, same walk + liveness rules so dot and column can
+never disagree; additive-optional snapshot field, no schema bump, no persistence change. Dock
+safety (#416): the front face (incl. docked worker terminals) stays MOUNTED under the opaque
+back face (`pointerEvents:none` + `isolation:isolate`) — no PTY ever tears down. New
+`swarm/SwarmPlanKanban.tsx` + strip/SwarmBoard wiring + swarm-scoped `sw-kb-*` styles (kb-*
+look). Tests: kanban derivation/edits/nav (13) · strip flip affordance (+3) · `planHolders`
+projection (+3); 78 green across the touched files. Gates: push smoke 61/61; merge-gate trio +
+units at the documented ambient floor (5) + smoke 62/62; CI 4/4 on both heads; claude-review
+FULL round 1 + incremental round 2 both zero inline. Manual dev check: harness-driven probe on
+this worktree's build (real `writeSwarmRun` → restore IPC), screenshot-verified both faces, the
+stalled tag, kanban tick → Done glide + strip mirroring, dock intact. Design gate: animated
+wireframe artifact (worker-column layout), user-signed; plan-viz board `3b18d597` kept live.
+Version 0.46.0 → 0.46.1 (patch — recomputed after rebase off `da883b75`; 0.45.1 was taken by
+#418). Rebased once (version-line-only conflict); PR title/body synced via REST after
+`gh pr edit` silent-failed on the projectCards GraphQL deprecation.
