@@ -190,10 +190,11 @@ function DockedPane({
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
-  // Terminal-config FLYOUT (user feedback 2026-08-01: config lives in a flyout, not header
-  // chrome): the SAME menu the canvas terminal opens on right-click (Copy / Paste / Select all /
-  // Clear / Save / font ±·reset), reachable from the header ⋯ AND by right-click on the well
-  // (with TerminalBoard's mouse-mode guard — a TUI keeps its right-click unless Shift is held).
+  // Right-click terminal menu (canvas-terminal parity): the SAME menu the canvas terminal opens
+  // on right-click (Copy / Paste / Select all / Clear / Save / font ±·reset), with TerminalBoard's
+  // mouse-mode guard — a TUI keeps its right-click unless Shift is held. The DISCOVERABLE config
+  // surface is the swarm BOARD's ⋯ flyout (SwarmBoard menuExtraItems — user feedback 2026-08-01);
+  // this stays as the in-place idiom every terminal user reaches for.
   const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
   const openMenuAt = useCallback(
     (x: number, y: number): void => {
@@ -276,15 +277,6 @@ function DockedPane({
           data-test={`swarm-dock-popout-${board.id}`}
         >
           Pop out ↗
-        </button>
-        <button
-          type="button"
-          className="sw-btn sm"
-          onClick={(e) => openMenuAt(e.clientX, e.clientY)}
-          title="Terminal options — copy/paste, font size (also right-click the terminal)"
-          data-test={`swarm-dock-menu-${board.id}`}
-        >
-          ⋯
         </button>
         <button
           type="button"

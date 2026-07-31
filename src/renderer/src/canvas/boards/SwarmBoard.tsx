@@ -22,8 +22,16 @@ import type {
   SwarmBoard as SwarmBoardData,
   TerminalBoard as TerminalBoardData
 } from '../../lib/boardSchema'
-import { BoardFrame } from '../BoardFrame'
+import { BoardFrame, type BoardMenuExtraItem } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
+import {
+  clampTerminalFont,
+  DEFAULT_TERMINAL_FONT,
+  MAX_TERMINAL_FONT,
+  MIN_TERMINAL_FONT,
+  readStickyFont,
+  writeStickyFont
+} from './terminal/terminalFont'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useSwarmStore, runFor, type SwarmRun } from '../../store/swarmStore'
 import { useAttentionStore } from '../../store/attentionStore'
@@ -158,6 +166,44 @@ export function SwarmBoard({
   )
   const dockedIds = useMemo(() => dockedBoards.map((b) => b.id), [dockedBoards])
   const activeDockId = useDockStore((s) => s.active[board.id])
+  // Terminal config in the BOARD flyout (user feedback 2026-08-01: the ⋯ menu, not pane header
+  // chrome): font rows acting on the ACTIVE docked worker. Writes ride the ordinary persist
+  // path — updateBoard(fontSize) + sticky default — and the pane's reraster seam re-syncs from
+  // the pin like any external change (undo / project load), so no handler registry is needed.
+  // One undo step per click (beginChange), reset skips the sticky default (TerminalBoard rule).
+  const menuExtraItems = useMemo<BoardMenuExtraItem[]>(() => {
+    const dockBoard = dockedBoards.find((b) => b.id === activeDockId) ?? dockedBoards[0]
+    if (!dockBoard) return []
+    const current = clampTerminalFont(dockBoard.fontSize ?? readStickyFont())
+    const setFont = (next: number, sticky: boolean): void => {
+      const clamped = clampTerminalFont(next)
+      if (clamped === current) return
+      const store = useCanvasStore.getState()
+      store.beginChange()
+      store.updateBoard(dockBoard.id, { fontSize: clamped })
+      if (sticky) writeStickyFont(clamped)
+    }
+    return [
+      {
+        id: 'dock-font-inc',
+        label: `Terminal font bigger (${current}px)`,
+        disabled: current >= MAX_TERMINAL_FONT,
+        onSelect: () => setFont(current + 1, true)
+      },
+      {
+        id: 'dock-font-dec',
+        label: 'Terminal font smaller',
+        disabled: current <= MIN_TERMINAL_FONT,
+        onSelect: () => setFont(current - 1, true)
+      },
+      {
+        id: 'dock-font-reset',
+        label: `Terminal font reset (${DEFAULT_TERMINAL_FONT}px)`,
+        disabled: current === DEFAULT_TERMINAL_FONT,
+        onSelect: () => setFont(DEFAULT_TERMINAL_FONT, false)
+      }
+    ]
+  }, [dockedBoards, activeDockId])
   // Region layout (eyeball feedback): divider-driven chat/rail widths + triage height,
   // persisted on the board (`dockLayout`); the viewport takes the rest.
   const { sizes, handlersFor } = useDockLayout(board)
@@ -243,6 +289,7 @@ export function SwarmBoard({
       onAddToGroup={onAddToGroup}
       onRemoveFromGroup={onRemoveFromGroup}
       onRemoveFromAllGroups={onRemoveFromAllGroups}
+      menuExtraItems={menuExtraItems}
       onStartConnect={onStartConnect}
     >
       {/* Task #12 flip stage (T15's shape): perspective only mid-fold, flat at rest. The FRONT
