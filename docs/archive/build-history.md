@@ -5162,3 +5162,30 @@ claude-review fully clean (0 critical / 0 warning / 0 inline; 2 no-reply nits); 
 title-stamped + user-eyeballed. `make check` at merge: units at the documented ambient floor
 (pathSafe ×2 8.3-TEMP; one DiagramCard waitFor load-flake, 3× green isolated) + `@core` smoke
 62/62 green.
+
+## PR #421 — camera-cluster notification bell: history panel, unread badge, unified mark-all-read (v0.46.0) · squash `287f701e` · 2026-07-31
+
+The audit lane's feature half (PR1 = #418). A bell in the top-right camera cluster with an
+unread-count badge (clamps 99+; tier: any unread error → red, needs-input/blocked → amber, else
+accent) opening a Menu-shell panel: rows newest-first with kind dot · message · board · relative
+age, per-row Focus, footer **Mark all as read**, empty state. Unread state — previously split
+across canvas attention rings and the Jarvis badge with no history or count — is unified behind
+the ONE unread model, four sync rules all owned by `useNotifications`: (1) ingest dual-writes an
+attention mark + an unread row into the new session-only `notificationCenterStore` (cap 100,
+insert by MAIN's clock so backlog replays date correctly, no-op state-identity discipline on every
+action); (2) selection means "seen" — selecting a board clears its ring AND reads its rows;
+(3) mark-all clears the bell AND every attention mark (`attentionStore.clearAll` — rings + Jarvis
+badge drop in one click; re-publishing `canvas://attention` as settled is the intended side
+effect); (4) project switch empties the bell (project-scoped ids). Row Focus routes through PR1's
+stale-target-guarded `focusBoardFromNotification` — one guard, every surface. Enablers:
+`ToolBtn` extracted from AppChrome (verbatim + additive `dataTest`/`ariaLabel`; breaks the
+AppChrome→Bell→AppChrome cycle) and `chromeOverlayGate` → multi-registrant Set (single slot would
+have clobbered AppChrome's closer — the settings-scrim e2e leak class). e2e seam: `notifyDeliver`
+opts, `notifyHistory`/`notifyUnread`, `reset()` clears the store. Tests: store (10) · bell jsdom
+(8, real stores) · `useNotifications` +4 · attentionStore +2 · `@chrome` e2e spec (4, real deliver
+path, green at `--retries=0` — spec finding: `seedBoard` selects the newest board and selection
+means "seen", so delivering tests park selection on a sink board; designed rule 2, not flake).
+Version 0.45.1 → 0.46.0 (minor — new subsystem). Gates: push smoke 62/62; CI 4/4; claude-review
+fully clean (0 critical / 0 warning / 0 inline; 2 no-reply nits); manual dev check title-stamped +
+user-eyeballed. Rebased over the #418 squash pre-push; post-rebase tree verified byte-identical to
+the verified pre-rebase tree (docs-only delta).
