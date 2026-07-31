@@ -5218,3 +5218,38 @@ wireframe artifact (worker-column layout), user-signed; plan-viz board `3b18d597
 Version 0.46.0 → 0.46.1 (patch — recomputed after rebase off `da883b75`; 0.45.1 was taken by
 #418). Rebased once (version-line-only conflict); PR title/body synced via REST after
 `gh pr edit` silent-failed on the projectCards GraphQL deprecation.
+
+## PR #417 — swarm prompt overhaul: capability-scoped briefs, researcher role, worker-lifecycle rules, per-turn roster (v0.47.0) · squash `e69312c5` · 2026-07-31
+
+Task #14 (swallows the #13 orphan-spawn fix): the swarm's three prompt surfaces rebuilt to
+current agentic-prompting practice per the commissioned research report (checked in at
+`docs/research/2026-07-31-swarm-prompt-overhaul.md` — principles P1–P15, critique V1–V6, 12
+sources). Fixes two user-reported incidents: an explorer refusing a web-research task
+(subject-scoped brief + catalog hole) and orphan spawns (spawn → idle forever → duplicate
+spawn). `rolePacks.ts`: every brief now follows the six-section template (identity+posture →
+capability-scoped mission → method → scope limits → report contract → graduated escape lane
+ending in a ROUTING HINT); explorer is workspace-capability-scoped with "new/empty project is
+a valid done finding"; NEW `researcher` pack (worker/plan/mid/session-consented, `sources`
+report schema) fills the external-sources hole; every pack carries an `entryCondition` so the
+catalog routes by purpose. `swarmPrompt.ts`: WORKERS-ARE-REUSABLE + SPAWN-COMMITS-YOU-TO-
+DISPATCH (reuse-before-spawn; re-check `list_workers` after confirm gates — the tool is named
+in a prompt for the first time), DISTINCT TASKS, KNOW WHEN TO STOP, NO ROLE FITS (a routed
+"failed — needs X" is routing information); four-field context enriched + aggregate test.
+`swarmChatIpc.ts`: the load-bearing fix — a live `[worker roster]` block (worker · role ·
+busy/idle · activity · plan item + plan n/m) rides every orchestrator USER turn, request-only
+(cached system block untouched, history stores the plain prompt — no cache bust, no stale
+accumulation). `swarmTools.ts`: dispatch `context`/`list_workers` descriptions enriched.
+`commandDispatch.ts`: `DISPATCH_ENGINEER_SYSTEM` → `dispatchEngineerSystem(pack?)` on the same
+four-field grammar (TITLE + OBJECTIVE/CONTEXT/BOUNDARIES/OUTPUT), posture-aware capability
+claims. Review: 1 inline [warning] (a stale never-revisited `blocked` ledger entry shadowed a
+later finish → idle worker rendered stuck) — fixed with newest-entry-per-board resolution
+(deliberately NOT `taskForBoard`'s prefer-open, which would keep the stale entry current;
+`TERMINAL_TASK_STATES` exported as the single source of truth) + inline-dispositioned; zero
+nits. Gates: units at the documented ambient floor (5); push smoke 61/61 + 62/62; CI 4/4 on
+all three heads. Manual dev check (title-stamped, sandbox): research task → researcher, no
+orphan spawn on a 2-task run, user-verified. Version 0.45.0 → 0.47.0 (minor — recomputed twice
+off the moving tip; 0.46.0 taken by #421, 0.46.1 by #419; NOTE: the first rebase silently ate
+the bump as "already applied" — re-verify `package.json` after any rebase across a version
+bump). PR title/body synced via REST PATCH (`gh pr edit` projectCards GraphQL silent-fail).
+Plan-viz board `5325a09a` kept live 11/11 + write_result. Follow-up queued (own PR): triage
+dedupe (one row per worker, highest severity) + acknowledge-on-focus as snooze.
