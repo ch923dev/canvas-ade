@@ -40,6 +40,11 @@ jobs:
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
+      # Audit R12 (§7 Phase-4 gate): the renderer entry chunk stays under a gzip budget so an
+      # accidental eager import of a lazy subsystem fails the PR loudly. Budget + rationale
+      # live in the script.
+      - name: Bundle budget (entry chunk gzip)
+        run: node scripts/bundle-budget.mjs
 
   # NOTE: e2e (Playwright _electron) is NOT a GitHub Actions job. It runs LOCALLY as a
   # pre-commit gate (the full Windows + Linux matrix via `.githooks/pre-commit` →

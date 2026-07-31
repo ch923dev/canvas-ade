@@ -16,6 +16,9 @@
  * Owns this file + everything under `boards/planning/`; the shared surface
  * (`BoardFrame`, schema, store) is consumed, never modified.
  */
+// Side-effect FIRST (audit R12): the @expanse-ade/diagram host seams, wired from this lazy
+// root — not main.tsx — so the package stays out of the entry chunk (eval precedes any mount).
+import './planning/diagramPackageBridge'
 import {
   useCallback,
   useEffect,

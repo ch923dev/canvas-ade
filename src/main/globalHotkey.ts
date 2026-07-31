@@ -9,8 +9,9 @@
  * renderer owns the running-projects switcher + the `performProjectSwitch` pipeline (single source
  * of switch logic — see store/projectSwitch.ts). The accelerators live in userData (hotkeyConfig)
  * and are user-rebindable in Settings › Shortcuts; a rebind is picked up live (the matcher is read
- * per keystroke). A window-scoped binding cannot fail to register, so there are no bind failures to
- * surface (the `hotkey:failures` IPC now always answers []).
+ * per keystroke). A window-scoped binding cannot fail to register, so there are no bind failures
+ * to surface — the whole failures surface (`hotkey:failures` IPC, `set`'s `failed` list, the
+ * Settings warning row) was deleted in the R15 sweep (PS-5).
  */
 import { app, type BrowserWindow, type IpcMain, type Input, type WebContents } from 'electron'
 import { readHotkeyConfig, type HotkeyConfig } from './hotkeyConfig'
@@ -40,9 +41,10 @@ export interface GlobalHotkeyController {
   /**
    * (Re)load the accelerators from config and ensure the window binding is attached. Idempotent —
    * the live matcher is swapped in place, so a Settings rebind takes effect with no re-attach.
-   * Returns the accelerators that failed to bind — always [] now (a window binding can't fail).
+   * (A window binding cannot fail, so there is nothing to return — PS-5 deleted the old
+   * always-empty `failed` list.)
    */
-  apply(): { failed: string[] }
+  apply(): void
   /** Detach the window binding + focus listener (app teardown / disable). */
   dispose(): void
 }
@@ -197,7 +199,6 @@ export function createGlobalHotkey(deps: GlobalHotkeyDeps): GlobalHotkeyControll
       // A window already up (a runtime Settings rebind) gets bound now; onInput reads the matchers
       // live, so swapping them above is all a rebind needs.
       attach(deps.getWin()?.webContents)
-      return { failed: [] }
     },
     dispose() {
       app.removeListener('browser-window-focus', onFocus)
@@ -216,8 +217,6 @@ export function createGlobalHotkey(deps: GlobalHotkeyDeps): GlobalHotkeyControll
  * `dispose()` it on shutdown. Keeps index.ts under the max-lines ratchet — the whole hotkey
  * concern lives here.
  *
- * `hotkey:failures` is retained for the preload/renderer contract but now always answers [] — a
- * window-scoped binding never collides with another app the way the old OS-global one could.
  */
 export function wireGlobalHotkey(
   ipc: IpcMain,
@@ -228,8 +227,7 @@ export function wireGlobalHotkey(
   controller.apply()
   registerHotkeyHandlers(ipc, getWin, {
     userDataDir,
-    reapply: () => controller.apply(),
-    lastFailures: () => []
+    reapply: () => controller.apply()
   })
   return controller
 }

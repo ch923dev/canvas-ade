@@ -8,8 +8,11 @@ import { formatTimer } from '../terminalState'
  * advanced only by the 1s interval callback (off the wall clock, so a throttled tab
  * catches up rather than drifts) and reset in the effect cleanup when running flips
  * false — so a restart counts from `00:00` again with no synchronous setState in the
- * effect body. Tiny and isolated — the host just passes the result into
- * `statusFor(state, identity, timer)`.
+ * effect body.
+ *
+ * Audit R13: this hook now lives in the `RunTimer` LEAF (mounted for the whole run
+ * inside BoardFrame's always-mounted label span), not in `TerminalBoard` — so the 1s
+ * tick re-renders only that leaf, never the 800-line board.
  */
 export function useRunTimer(running: boolean): string | undefined {
   const [elapsed, setElapsed] = useState(0)

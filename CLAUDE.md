@@ -215,7 +215,8 @@ check on every PR*: a hook can't block it, the discipline guarantees it.
   the ids) · `add_card`/`move_card`/`update_card`/`remove_card` (kanban) · `configure_board` (rejects a
   RUNNING terminal) · `write_result` · `relay_prompt` (drive a Terminal board's agent) · `ping`. Read
   resources: `canvas://boards` · `canvas://board/{id}/planning` · `canvas://board/{id}/cards`. Package:
-  `@expanse-ade/mcp` (app pin `0.18.0-rc.7` — the planning-edit tools ship in rc.7).
+  `@expanse-ade/mcp` (app pin `0.23.0` — see `package.json` for the current exact pin; this line
+  drifted five versions once (H-4), so trust the manifest over this prose).
 
 ### Design artifact before code (spec/plan-driven UI work)
 Any spec or plan that adds or changes **UI/UX** MUST produce a *visible* design artifact for sign-off

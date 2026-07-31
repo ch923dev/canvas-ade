@@ -37,11 +37,11 @@ describe('statusFor', () => {
     expect(statusFor('idle', 'claude').dot).toBe('var(--text-3)')
   })
 
-  it('appends the timer only when running and a timer is supplied', () => {
-    expect(statusFor('running', 'claude', '02:14').label).toBe('claude · 02:14')
+  it('keeps the label timer-free — the run timer is a labelSuffix leaf (R13)', () => {
+    // The running label is the bare identity; RunTimer renders the ` · mm:ss`
+    // suffix as BoardStatus.labelSuffix so its tick never re-renders the board.
     expect(statusFor('running', 'claude').label).toBe('claude')
-    // Non-running states ignore the timer suffix.
-    expect(statusFor('awaiting-input', 'claude', '02:14').label).toBe('claude · awaiting input')
+    expect(statusFor('awaiting-input', 'claude').label).toBe('claude · awaiting input')
   })
 
   it('embeds the agent name in every label', () => {

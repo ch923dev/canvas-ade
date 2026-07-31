@@ -32,16 +32,22 @@ export interface BoardStatus {
   /** A CSS colour token string, e.g. `'var(--ok)'`. */
   dot: string
   label?: string
+  /** Visible-only adjunct rendered right after `label` in the label span (mounted for its
+   *  whole life, CSS-hidden at rest) — NEVER announced (audit R13: the terminal's 1s run
+   *  timer lives here as a leaf, so its tick re-renders neither the board nor the live
+   *  region, and staying mounted anchors it to the run's rising edge). */
+  labelSuffix?: ReactNode
+  /** Live-region override: announced INSTEAD of `label` when set. Lets a churning
+   *  visible status keep a stable spoken form (`claude · running`). */
+  srLabel?: string
 }
 
-/** D0-6: stable live-region text. The terminal's visible label churns — a braille
- *  spinner glyph re-renders every 80ms and the elapsed timer every second — so the
- *  polite region would otherwise announce continuously. Drop the glyph and map the
- *  timer suffix to a constant word; the text then changes only on real transitions
- *  (`claude · starting` → `claude · running` → `claude · exited`).
- *  The `MM:SS → running` rewrite is safe because statusFor (terminalState.ts) appends
- *  the timer suffix ONLY in its `running` arm — `exited`/`idle`/`spawn-failed` labels
- *  never carry a trailing timestamp. */
+/** D0-6: stable live-region text. Historically the terminal's visible label churned
+ *  (braille glyph per 80ms frame, elapsed timer per second), so this strips glyphs
+ *  and maps a trailing `MM:SS` to a constant word. Since audit R13 the timer is a
+ *  visible-only `labelSuffix` and running boards announce via `srLabel`, so neither
+ *  churn source reaches this function any more — both rewrites are KEPT as defence
+ *  in depth for any future caller that embeds churning text in `label` itself. */
 function srStatusText(label: string): string {
   return label
     .replace(/[⠀-⣿]\s*/g, '')
@@ -662,21 +668,24 @@ export function BoardFrame({
           <BoardTitle boardId={boardId} title={title} selected={selected} italic={titleItalic} />
           {titleBadge}
           {/* D0-6 (A5): persistent polite live region so status TRANSITIONS are announced
-              (the visible label is hover-only, so it can't serve as the live region). The
-              text strips the per-frame spinner glyph and maps the per-second elapsed timer
-              to a stable word — announcements fire only on real state changes. Always
-              mounted + starts empty so project load never mass-announces. */}
-          <SrBoardStatus label={status?.label} />
-          {/* Status label is on-demand: only while hovered or selected, kept calm at
-              rest (the glyph colour carries the at-a-glance signal). */}
-          {status?.label && (hovered || selected) && (
+              (the visible label is hover-only, so it can't serve as the live region).
+              `srLabel` wins when set (a running terminal announces the stable
+              `name · running` while the visible pill carries the ticking suffix leaf).
+              Always mounted + starts empty so project load never mass-announces. */}
+          <SrBoardStatus label={status?.srLabel ?? status?.label} />
+          {/* Status label is VISIBLE on demand (hovered/selected — calm at rest, the glyph
+              colour carries the at-a-glance signal) but stays MOUNTED via display:none (R13):
+              unmounting would tear down `labelSuffix` leaves like the terminal's RunTimer,
+              whose elapsed count is anchored to its mount on the run's rising edge. */}
+          {status?.label && (
             <span
               style={{
                 fontFamily: 'var(--mono)',
                 fontSize: 11,
                 color: 'var(--text-3)',
                 whiteSpace: 'nowrap',
-                flex: 'none'
+                flex: 'none',
+                display: hovered || selected ? undefined : 'none'
               }}
             >
               {/* C2: the §7.1 "working" braille spinner is a pure-CSS ::before now (see
@@ -686,6 +695,7 @@ export function BoardFrame({
                 <span className="ca-spinner-glyph" aria-hidden="true" style={{ marginRight: 4 }} />
               )}
               {status.label}
+              {status.labelSuffix}
             </span>
           )}
         </div>

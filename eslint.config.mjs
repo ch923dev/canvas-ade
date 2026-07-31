@@ -297,8 +297,12 @@ export default tseslint.config(
     // 702→706 (T2 terminal defects): D1 routes adoptCore's replay through the line-boundary–guarded
     // readRingReplay/readRingSinceReplay (+2 import lines, +1 for the guarded ternary), and D2 posts
     // the one-line `{ t: 'sync', written }` boundary seed inside adoptCore — all choke-point lines in
-    // the session-lifecycle core (the pure readers/helpers live in ptyOutput.ts). Ratchet DOWN on next split.
-    rules: { 'max-lines': ['error', { max: 706, skipBlankLines: true, skipComments: true }] }
+    // the session-lifecycle core (the pure readers/helpers live in ptyOutput.ts).
+    // 706→714 (audit R13, P-7/P-8): 8 choke-point lines that can only live beside the private
+    // maps — the forgetBoardSideState funnel (boardCwds + bootDirs + idle-check, FIND-009),
+    // idleMonitor.poke on the hot onData pump, clearBootDirs before disposeAll's parked reap,
+    // and the event-driven monitor's getSession accessor. Ratchet DOWN on next split.
+    rules: { 'max-lines': ['error', { max: 714, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/main/index.ts'],
@@ -365,7 +369,10 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],
-    rules: { 'max-lines': ['error', { max: 668, skipBlankLines: true, skipComments: true }] }
+    // 668→669 (audit R12, lazy diagram bridge): ONE choke-point line — the diagramPackageBridge
+    // side-effect import moved here from main.tsx so @expanse-ade/diagram leaves the entry chunk;
+    // it must ride a lazy diagram ROOT, and this is one of the two. Ratchet DOWN on next split.
+    rules: { 'max-lines': ['error', { max: 669, skipBlankLines: true, skipComments: true }] }
   },
   {
     // Diagram Phase 4 (ADR 0013): the focus-mode entry (✎ toggle + hit-tested double-click seeding)

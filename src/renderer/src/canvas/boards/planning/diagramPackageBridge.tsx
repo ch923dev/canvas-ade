@@ -9,6 +9,10 @@
  *    mark chrome), restoring the pre-extraction `<Icon>` render for the closed SPEC_ICON_NAMES set.
  */
 import '@expanse-ade/diagram/styles.css'
+// `?worker` (NOT `?worker&url`): vitest 4's module runner denies `?worker&url` ids outright
+// ("Denied ID"), which suite-level-crashed every spec importing the PlanningBoard graph once
+// this bridge moved into the lazy board roots (audit R12). The classic wrapper form is the
+// one vitest supports; Vite emits the identical worker asset either way.
 import ElkWorker from 'elkjs/lib/elk-worker.min.js?worker'
 import { configureSpecElkWorker, registerSpecIconRenderer } from '@expanse-ade/diagram'
 import { Icon, type IconName } from '../../Icon'

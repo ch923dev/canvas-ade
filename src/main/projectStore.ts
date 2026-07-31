@@ -49,7 +49,8 @@ const legacyBak = (dir: string): string => join(dir, CANVAS_BAK)
 const legacyAssets = (dir: string): string => join(dir, ASSETS)
 
 /**
- * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (18). MAIN cannot import the
+ * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION — the value below IS the mirror;
+ * no number in this prose (H-5: an inline "(18)" here sat three bumps stale). MAIN cannot import the
  * renderer module in shipped code, so this constant is duplicated here. It is tested (see
  * projectStore.test.ts, which cross-imports the renderer constant and asserts equality)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
@@ -453,9 +454,9 @@ export async function createProject(
   // created via the one envelope-guarded + atomic path (the same guard project:save uses)
   // — a future change to the fresh-doc shape can't silently bypass it. There is no prior
   // file here (reuse-if-exists returned above), so the .bak rotation is a no-op.
-  // BUG-024/BUG-013: use SCHEMA_VERSION (10) so fresh docs match the current schema
-  // contract; include connectors:[] (added at v4->v5) so external tooling never sees a
-  // stale marker.
+  // BUG-024/BUG-013: use SCHEMA_VERSION so fresh docs match the current schema contract
+  // (no inline number — H-5); include connectors:[] (added at v4->v5) so external tooling
+  // never sees a stale marker.
   const fresh = {
     schemaVersion: SCHEMA_VERSION,
     minReaderVersion: MIN_READER_VERSION,

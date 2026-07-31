@@ -108,9 +108,9 @@ describe('globalHotkey — window-scoped binding (fix #1)', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it('apply reports no bind failures — a window binding cannot fail to register', () => {
+  it('apply returns nothing — a window binding cannot fail to register (PS-5)', () => {
     const { controller } = makeController(DEFAULT)
-    expect(controller.apply()).toEqual({ failed: [] })
+    expect(controller.apply()).toBeUndefined()
   })
 
   it('CommandOrControl resolves to Cmd (meta) on mac, not Ctrl', () => {

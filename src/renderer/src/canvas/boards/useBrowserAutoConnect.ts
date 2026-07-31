@@ -1,7 +1,7 @@
 /**
- * Browser-board auto-connect engine (renderer). One always-on 1s interval drives
- * BOTH reconnect-on-refused and auto-push-detected-port via the pure `planAutoConnect`
- * policy. It reuses existing IPC/store: a 'reload' reloads the offscreen preview window
+ * Browser-board auto-connect engine (renderer). One 1s interval — alive only while at
+ * least one Browser board exists (audit R13) — drives BOTH reconnect-on-refused and
+ * auto-push-detected-port via the pure `planAutoConnect` policy. It reuses existing IPC/store: a 'reload' reloads the offscreen preview window
  * (the previewStore reloadNonce path is NOT used here -- reconcile only re-navigates on a
  * canvasStore.boards change, so a lone nonce bump would never be consumed); a 'detect'
  * polls detectPorts on the linked terminal and (only while NOT connected) sets the board
@@ -33,8 +33,18 @@ interface Attempt {
 
 export function useBrowserAutoConnect(): void {
   const attemptsRef = useRef<Map<string, Attempt>>(new Map())
+  // Audit R13 (P-7): the interval exists only while a Browser board does. A boolean selector —
+  // re-render only when the count crosses 0 ↔ >0 — restarts the effect; with zero Browser boards
+  // there is no timer at all (idle app = zero ticks). The tick body still reads via getState().
+  const hasBrowserBoards = useCanvasStore((s) => s.boards.some((b) => b.type === 'browser'))
 
   useEffect(() => {
+    if (!hasBrowserBoards) {
+      // No Browser boards ⇒ nothing to track; drop stale backoff state so a future
+      // board starts a fresh ramp (the in-interval GC can no longer run to do it).
+      attemptsRef.current.clear()
+      return
+    }
     const handle = setInterval(() => {
       const cs = useCanvasStore.getState()
       const pv = usePreviewStore.getState()
@@ -116,5 +126,5 @@ export function useBrowserAutoConnect(): void {
     }, TICK_MS)
 
     return () => clearInterval(handle)
-  }, [])
+  }, [hasBrowserBoards])
 }
