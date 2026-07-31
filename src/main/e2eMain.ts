@@ -385,7 +385,15 @@ export interface E2EMain {
    * test-controlled and whose OS-notification layer is a recording SPY (never a real Notification).
    * The renderer then surfaces the toast + on-canvas attention exactly as in production.
    */
-  notifyDeliver(boardId: string, event: LifecycleEvent): void
+  notifyDeliver(
+    boardId: string,
+    event: LifecycleEvent,
+    opts?: {
+      attention?: 'done' | 'needs-input' | 'blocked' | 'error'
+      detail?: string
+      cwd?: string
+    }
+  ): void
   /** P5: patch the e2e notify prefs the gate reads (master + per-event + onlyWhenUnfocused). */
   notifyConfigure(patch: Partial<NotificationsConfig>): void
   /** P5: set a board's facts the gate + copy read (monitorActivity opt-out / title / agentKind). */
@@ -410,7 +418,15 @@ export interface E2EMain {
  * raised — deterministically, with no real OS notification and no 60s idle wait.
  */
 interface NotifyProbe {
-  deliver: (boardId: string, event: LifecycleEvent) => void
+  deliver: (
+    boardId: string,
+    event: LifecycleEvent,
+    opts?: {
+      attention?: 'done' | 'needs-input' | 'blocked' | 'error'
+      detail?: string
+      cwd?: string
+    }
+  ) => void
   configure: (patch: Partial<NotificationsConfig>) => void
   setBoard: (boardId: string, facts: LifecycleBoard) => void
   setFocused: (focused: boolean | null) => void
@@ -445,7 +461,7 @@ function createNotifyProbe(win: BrowserWindow): NotifyProbe {
     })
   let deliver = build()
   return {
-    deliver: (boardId, event) => deliver({ boardId, event }),
+    deliver: (boardId, event, opts) => deliver({ boardId, event, ...opts }),
     configure: (patch) => {
       state.config = { ...state.config, ...patch }
     },
@@ -867,8 +883,8 @@ export function installE2EMain(
     voiceStubWake(keyword) {
       return stubKwsWake(keyword)
     },
-    notifyDeliver(boardId, event) {
-      notifyProbe.deliver(boardId, event)
+    notifyDeliver(boardId, event, opts) {
+      notifyProbe.deliver(boardId, event, opts)
     },
     notifyConfigure(patch) {
       notifyProbe.configure(patch)

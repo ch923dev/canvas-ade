@@ -10,6 +10,7 @@ import { renderHook, cleanup, act } from '@testing-library/react'
 import { useNotifications } from './useNotifications'
 import { useAttentionStore } from './attentionStore'
 import { useCanvasStore } from './canvasStore'
+import { useNotificationCenterStore } from './notificationCenterStore'
 import { useToastStore } from './toastStore'
 import type { LifecyclePayload, PendingNotify } from '../../../preload/notifyApi'
 
@@ -56,6 +57,7 @@ beforeEach(() => {
   installApi()
   useToastStore.getState().clearToasts()
   useAttentionStore.setState({ byId: {} })
+  useNotificationCenterStore.setState({ items: [] })
   useCanvasStore.setState({ selectedId: null, selectedIds: [], pendingFocusId: null } as never)
   seedBoard('b1', 'Builder')
 })
@@ -218,5 +220,65 @@ describe('selection clears attention (pre-existing contract the fixes ride on)',
       useCanvasStore.setState({ selectedId: 'b1', selectedIds: ['b1'] } as never)
     })
     expect(useAttentionStore.getState().byId['b1']).toBeUndefined()
+  })
+})
+
+describe('notification-center wiring (bell PR — the ONE unread model)', () => {
+  const items = (): ReturnType<typeof useNotificationCenterStore.getState>['items'] =>
+    useNotificationCenterStore.getState().items
+
+  it('a lifecycle push lands an unread history row alongside the toast (sync rule 1)', async () => {
+    await mount()
+    act(() => h.lifecycle!({ boardId: 'b1', event: 'error', detail: 'exit 1' }))
+    expect(items()).toHaveLength(1)
+    expect(items()[0]).toMatchObject({
+      boardId: 'b1',
+      boardTitle: 'Builder',
+      kind: 'error',
+      message: 'Builder hit an error — exit 1',
+      read: false
+    })
+  })
+
+  it('selecting a board reads its rows AND clears its ring in one gesture (sync rule 2)', async () => {
+    await mount()
+    act(() => {
+      h.lifecycle!({ boardId: 'b1', event: 'done' })
+      h.lifecycle!({ boardId: 'b2', event: 'error' })
+    })
+    act(() => {
+      useCanvasStore.setState({ selectedId: 'b1', selectedIds: ['b1'] } as never)
+    })
+    expect(items().find((n) => n.boardId === 'b1')?.read).toBe(true)
+    expect(items().find((n) => n.boardId === 'b2')?.read).toBe(false)
+    expect(useAttentionStore.getState().byId['b1']).toBeUndefined()
+    expect(useAttentionStore.getState().byId['b2']).toBe('error')
+  })
+
+  it('the backlog replay populates history rows (quiet toast, full panel)', async () => {
+    h.drained = [
+      { t: 'lifecycle', at: 100, payload: { boardId: 'b1', event: 'done' } },
+      {
+        t: 'lifecycle',
+        at: 200,
+        payload: { boardId: 'b2', event: 'needs-input', attention: 'blocked', detail: 'silent 4m' }
+      }
+    ]
+    await mount()
+    expect(items().map((n) => n.at)).toEqual([200, 100])
+    expect(items()[0]).toMatchObject({ boardId: 'b2', kind: 'blocked', read: false })
+    // Toast channel stays aggregate-only (asserted in the replay suite above).
+  })
+
+  it('a project switch clears the history (sync rule 4 — project-scoped board ids)', async () => {
+    await mount()
+    act(() => h.lifecycle!({ boardId: 'b1', event: 'done' }))
+    expect(items()).toHaveLength(1)
+    act(() => {
+      useCanvasStore.setState({
+        project: { dir: 'D:/other', name: 'other', status: 'open' }
+      } as never)
+    })
+    expect(items()).toEqual([])
   })
 })

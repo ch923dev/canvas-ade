@@ -512,8 +512,20 @@ export interface CanvasE2E {
    *  node DOM (proves the BoardAttention overlay mounted on-canvas), or null. */
   attentionRingKind: (id: string) => E2EAttentionKind | null
   /** J5 BADGE-1 — test-only attention mark injector (production writers = agent lifecycle
-   *  events); drives the Jarvis edge-tab badge / event-chip specs deterministically. */
+   *  events); drives the Jarvis edge-tab badge / event-chip specs deterministically. NOTE: writes
+   *  attentionStore ONLY — it creates no notification-center row (documented drift; the bell spec
+   *  drives the real deliver via notifyDeliver instead). */
   setAttention: (id: string, kind: E2EAttentionKind) => void
+  /** Bell PR — the notification-center history rows (newest first) as the panel would list them. */
+  notifyHistory: () => Array<{
+    boardId: string
+    boardTitle: string
+    kind: E2EAttentionKind
+    message: string
+    read: boolean
+  }>
+  /** Bell PR — the badge's unread count (0 = badge hidden). */
+  notifyUnread: () => number
 }
 
 declare global {

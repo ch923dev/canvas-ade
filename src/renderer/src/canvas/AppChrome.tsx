@@ -18,6 +18,7 @@ import { SettingsPanel } from './settings/SettingsPanel'
 import { UpdateBadgeDot } from './UpdateBadgeDot'
 import type { SettingsSectionId } from './settings/settingsSections'
 import { BackdropPicker } from './BackdropPicker'
+import { NotificationBell } from './NotificationBell'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { RecapConsentModal } from './RecapConsentModal'
 import { isE2E } from '../smoke/e2eRegistry'
@@ -189,6 +190,9 @@ function CameraCluster({
         <TidyMenu onTidy={onTidy} />
         {/* Backdrop wallpaper picker (docs/canvas-backdrop spec §3) — Tidy's sibling. */}
         <BackdropPicker />
+        {/* Notification bell (audit PR2) — session history + unified unread. Subscribes for
+            itself (memo contract); account+settings stay the terminal group. */}
+        <NotificationBell />
         <span style={styles.divider} />
         {/* Phase 1 accounts: the account pill sits immediately before the Settings gear
             (DESIGN.md › Surface 1). Signed-out → SignInView; signed-in → Settings/Account.
