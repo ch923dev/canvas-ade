@@ -5253,3 +5253,38 @@ the bump as "already applied" — re-verify `package.json` after any rebase acro
 bump). PR title/body synced via REST PATCH (`gh pr edit` projectCards GraphQL silent-fail).
 Plan-viz board `5325a09a` kept live 11/11 + write_result. Follow-up queued (own PR): triage
 dedupe (one row per worker, highest severity) + acknowledge-on-focus as snooze.
+
+## PR #422 — swarm UX: triage dedupe + ack-on-focus, dock font config in the Inspector flyout, docked boards leave the canvas (v0.47.1) · squash `058291f3` · 2026-08-01
+
+Follow-up to #417 — four user-reported swarm UX defects (three feedback rounds with
+screenshots), fixed at the root. **Triage** (`swarmLedgerProject/Session`): one worker = at
+most ONE worker-attention row (highest `SWARM_BLOCKED_TAGS` rank wins; scoped to
+WORKER_ATTENTION_TAGS after the S3-bridge integration tests caught bare-boardId dedupe
+swallowing a `dirty_worktree` row + its only Resolve… path); focusing a worker (triage Open /
+rail card / dock tab — one `openWorker` chokepoint, fire-and-forget `swarm:ackWorker`) snoozes
+its row-producing tasks with Wait semantics (`snoozedUntil` + `lastActivityAt` reset — a
+persisting condition resurfaces, nothing is dismissed). **Dock font**: DockedPane un-stubs the
+font bridges (TerminalBoard's persist path verbatim: pin + sticky + burst undo; Ctrl+±/0,
+native Ctrl+wheel, right-click menu with the TUI mouse-mode guard). **Config surface**: the
+user's "flyout" was the Board Inspector popover — new `SwarmInspector` portaled into the shell
+slot (P0.5 pattern): "Dock terminal" section acting on the ACTIVE docked worker; the interim
+pane-header buttons and ⋯-menu rows removed. **Docked boards leave the canvas**: the MCP
+docked spawn auto-selected a worker with NO React Flow node, so RF could never evict it —
+the ghost inflated the group fab ("Ctrl+G Group 2" with one board selected) and permanently
+blocked the Inspector's single-selection gate; its stale parked rect also reserved placement
+space. `isDockedTerminal` + `dropDockedFromSelection` (boardSchema) shared by `setSelection`/
+`selectBoard`/`RedockPill`; `addBoard` grew `select?: false` (selection omitted from the
+tracked step — undo/redo can't resurrect the ghost); `freeSlot`/`overlapsAny` ignore docked
+boards; tidy skips them (body extracted pure → `tidyLayout.tidyApply`, canvasStore max-lines
+ratchet held) + tile skips. **Full-view font blow-up**: the pane inherits the HOST's full-view
+context, so `useTerminalSpawn` scaled the font by `fullViewScale(worker's stale 420×340,
+window)` — ×3–5; new `TerminalSpawnDeps.dockPane` forces counterScale 1 (pinned font, well
+refits to more columns; `useTerminalSpawn` max-lines pin 706→708, two hook-bound lines).
+**Bundle budget raised deliberately 425k→432k**: headroom had eroded to 136 B across
+#416–#421 (measured main 424,864 B); this PR's +539 B of eager store/lib code tripped the
+wire; 432k restores ~6.6 KB over the measured 425,403 B. Review: 0 critical / 0 warning /
+zero inline, both rounds. Gates: units at the documented ambient floor (5); smoke 62/62 ×3
+(two pushes + pre-merge); CI 4/4 on both heads. Dev check (title-stamped, sandbox, HMR):
+user-verified across all three rounds. Version 0.47.0 → 0.47.1 (patch). Plan-viz board
+`fd1f6937` (confirmed on the 5th `visualize_plan` attempt — 4 transport timeouts while the
+user was away from the canvas) kept live + write_result.
