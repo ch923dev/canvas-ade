@@ -6,6 +6,14 @@ collapsed into a dated summary here once every finding is fixed). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
+**OPEN BACKLOG: the 2026-07-31 notification-system audit** — full-pipeline audit (MAIN deliver
+gate · renderer toast/attention state · chrome dock · cross-cutting), 17 ranked findings. The 3
+P1s + 6 key P2s are FIXED in the `feat/notifications-audit` PR (dead tray-click recovery, deliver
+dedupe, dead-window queue+replay, sticky-toast fairness, `lifecycleNotifications` test matrix,
+master-switch gate on background-project OS notifications); the bell notification-center follows
+as its own PR. Open P3s + the deliberate non-fixes:
+[`2026-07-31-notifications-audit.md`](2026-07-31-notifications-audit.md).
+
 **CLOSED: the terminalScrollback NON-1-zoom e2e flake** (2026-07-30, the scrollback-flake lane) —
 root-caused as **TEST-SIDE, disjoint from the terminal-clip defect**: dataFlow's parting
 `fitView` on its second-seeded board violated the cross-spec camera contract, leaving the next

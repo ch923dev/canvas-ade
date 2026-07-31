@@ -148,10 +148,18 @@ function notifyBg(
     win.webContents.send('project:bgLifecycle', { kind, dir, name })
   }
   if (isHeadlessHarness()) return
+  // Master switch gate (audit P2-6). Read failure ⇒ default-NOTIFY (a corrupt prefs file must not
+  // silently mute the one surface telling the user their project was closed) — the trayResidency
+  // notifyBackgroundExit pattern. readNotificationsConfig already repairs corrupt JSON internally,
+  // so this catch only guards truly exceptional reads.
+  let enabled = true
   try {
-    // Master switch gate; an unreadable config already repairs to defaults (enabled) inside
-    // readNotificationsConfig, so a corrupt file default-notifies — mirrors trayResidency.
-    if (!readNotificationsConfig(app.getPath('userData')).enabled) return
+    enabled = readNotificationsConfig(app.getPath('userData')).enabled
+  } catch {
+    /* unreadable config → default-notify */
+  }
+  if (!enabled) return
+  try {
     if (Notification.isSupported()) {
       const { title, body } = BG_NOTIFY_COPY[kind](name)
       new Notification({ title, body }).show()

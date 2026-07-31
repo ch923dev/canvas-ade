@@ -392,6 +392,9 @@ export interface E2EMain {
   notifySetBoard(boardId: string, facts: LifecycleBoard): void
   /** P5: force the window-focused input to the gate (true/false), or null to read the real window. */
   notifySetFocused(focused: boolean | null): void
+  /** Audit P2-2: override the deliver-dedupe window (rebuilds the probe deliver). The default is
+   *  the PRODUCTION window; `notifyReset` restores it and clears the dedupe map. */
+  notifySetDedupeMs(ms: number): void
   /** P5: the OS-notification SPY's recorded calls — asserts whether the OS layer fired/was skipped. */
   notifyOsCalls(): Array<{ title: string; body: string }>
   /** P5: reset the e2e notify seam (config→defaults, clear board facts + OS-spy, focus→real). */
@@ -411,6 +414,7 @@ interface NotifyProbe {
   configure: (patch: Partial<NotificationsConfig>) => void
   setBoard: (boardId: string, facts: LifecycleBoard) => void
   setFocused: (focused: boolean | null) => void
+  setDedupeMs: (ms: number) => void
   osCalls: () => Array<{ title: string; body: string }>
   reset: () => void
 }
@@ -420,19 +424,26 @@ function createNotifyProbe(win: BrowserWindow): NotifyProbe {
     config: { ...DEFAULT_NOTIFICATIONS } as NotificationsConfig,
     boards: new Map<string, LifecycleBoard>(),
     forcedFocus: null as boolean | null,
-    osCalls: [] as Array<{ title: string; body: string }>
+    osCalls: [] as Array<{ title: string; body: string }>,
+    // undefined ⇒ the PRODUCTION dedupe window (fidelity by default). The deliver instance OWNS
+    // its dedupe map, so changing the window — and `reset()` — REBUILD the deliver for a clean
+    // slate per spec (one Electron app is reused across every spec file).
+    dedupeMs: undefined as number | undefined
   }
   // The SAME deliver production runs — only the deps are test-controlled. `raise` records instead
   // of raising a real Notification; `isWindowFocused` honours the forced override when set.
-  const deliver = createLifecycleDeliver({
-    getWin: () => win,
-    getConfig: () => state.config,
-    getBoard: (id) => state.boards.get(id),
-    raise: (opts) => {
-      state.osCalls.push({ title: opts.title, body: opts.body })
-    },
-    isWindowFocused: (w) => (state.forcedFocus === null ? w.isFocused() : state.forcedFocus)
-  })
+  const build = (): ReturnType<typeof createLifecycleDeliver> =>
+    createLifecycleDeliver({
+      getWin: () => win,
+      getConfig: () => state.config,
+      getBoard: (id) => state.boards.get(id),
+      raise: (opts) => {
+        state.osCalls.push({ title: opts.title, body: opts.body })
+      },
+      isWindowFocused: (w) => (state.forcedFocus === null ? w.isFocused() : state.forcedFocus),
+      dedupeMs: state.dedupeMs
+    })
+  let deliver = build()
   return {
     deliver: (boardId, event) => deliver({ boardId, event }),
     configure: (patch) => {
@@ -444,12 +455,18 @@ function createNotifyProbe(win: BrowserWindow): NotifyProbe {
     setFocused: (focused) => {
       state.forcedFocus = focused
     },
+    setDedupeMs: (ms) => {
+      state.dedupeMs = ms
+      deliver = build()
+    },
     osCalls: () => [...state.osCalls],
     reset: () => {
       state.config = { ...DEFAULT_NOTIFICATIONS }
       state.boards.clear()
       state.forcedFocus = null
       state.osCalls.length = 0
+      state.dedupeMs = undefined
+      deliver = build()
     }
   }
 }
@@ -861,6 +878,9 @@ export function installE2EMain(
     },
     notifySetFocused(focused) {
       notifyProbe.setFocused(focused)
+    },
+    notifySetDedupeMs(ms) {
+      notifyProbe.setDedupeMs(ms)
     },
     notifyOsCalls() {
       return notifyProbe.osCalls()
