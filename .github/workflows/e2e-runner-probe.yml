@@ -191,3 +191,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "_Probe complete — nothing was installed, built or executed from the repo._" >> "$GITHUB_STEP_SUMMARY"
+
+      # The whole report above is written to $GITHUB_STEP_SUMMARY, which renders in
+      # the web UI but is NOT in the job log and is NOT exposed by the REST API
+      # (`actions/jobs/{id}` has no summary field). Without this the report is
+      # unreadable from the CLI. Echo it into the log too, so `gh run view --log`
+      # carries the findings — the same way Phase 2's results will need to be read.
+      - name: Echo report to the job log
+        if: always()
+        run: cat "$GITHUB_STEP_SUMMARY"
