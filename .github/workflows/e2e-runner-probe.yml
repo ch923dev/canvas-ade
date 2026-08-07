@@ -10,6 +10,14 @@ name: e2e-runner-probe
 # outside. Everything here is introspection, and its OUTPUT is the provisioning list
 # for Phase 1.
 #
+# Every line is written with `| tee -a "$GITHUB_STEP_SUMMARY"` rather than a plain
+# `>>` redirect, so the report lands in BOTH the rendered run summary and the job
+# log. That matters because $GITHUB_STEP_SUMMARY is a SEPARATE FILE PER STEP — a
+# trailing `cat "$GITHUB_STEP_SUMMARY"` step reads its own empty file, not the
+# accumulated report (learned the hard way on run 31221059524) — and because the
+# REST API exposes no summary field at all, so the log is the only CLI-readable
+# channel. Phase 2's e2e results will need reading the same way.
+#
 # Deliberately `workflow_dispatch`-only: no push/pull_request trigger, so this can
 # never be reached by a contributor's branch and costs nothing until someone asks
 # for it. The repo went private on 2026-08-08 specifically so a self-hosted runner
@@ -33,8 +41,8 @@ jobs:
       # finding, not an error.
       - name: Machine report
         run: |
-          echo "## Machine" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Machine" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           {
             echo "runner name : ${RUNNER_NAME:-?}"
             echo "runner os   : ${RUNNER_OS:-?} / ${RUNNER_ARCH:-?}"
@@ -45,8 +53,8 @@ jobs:
             echo "distro      : $( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo '?')"
             echo "nproc       : $(nproc 2>/dev/null || echo '?')"
             echo "memory      : $(free -h 2>/dev/null | awk 'NR==2{print $2" total, "$7" available"}' || echo '?')"
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Is the runner itself a container? Decides whether `pnpm test:e2e:linux`
       # (which shells out to `docker build`/`docker run`) is even possible here, and
@@ -54,25 +62,25 @@ jobs:
       # load-bearing (e2e/fixtures.ts applies it on CI+linux already).
       - name: Containerization
         run: |
-          echo "## Containerization" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Containerization" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           {
             if [ -f /.dockerenv ]; then echo "/.dockerenv  : PRESENT (containerized)"; else echo "/.dockerenv  : absent"; fi
             echo "cgroup       : $(cat /proc/1/cgroup 2>/dev/null | head -3 || echo '?')"
             echo "pid1         : $(cat /proc/1/comm 2>/dev/null || echo '?')"
             echo "/dev/shm     : $(df -h /dev/shm 2>/dev/null | awk 'NR==2{print $2}' || echo '?')"
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The e2e suite historically orphaned ~0.7GB per GREEN run (Playwright cleanup
       # racing worker exit). A small VPS disk fills fast, so the free-space number
       # here sets the Phase 2 preflight floor.
       - name: Disk
         run: |
-          echo "## Disk" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          df -h 2>/dev/null | head -20 >> "$GITHUB_STEP_SUMMARY" || echo '?' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Disk" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
+          df -h 2>/dev/null | head -20 | tee -a "$GITHUB_STEP_SUMMARY" || echo '?' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # node-pty SOURCE-compiles against the Electron ABI in postinstall
       # (electron-builder install-app-deps), which is why Dockerfile.e2e is built on
@@ -87,8 +95,8 @@ jobs:
           # prints BLANK instead of ABSENT — which is the one answer this probe exists
           # to give unambiguously.
           v() { printf '%-12s: %s\n' "$1" "$(set -o pipefail; eval "$2" 2>/dev/null || echo 'ABSENT')"; }
-          echo "## Toolchain" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Toolchain" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           {
             v node     'node --version'
             v pnpm     'pnpm --version'
@@ -102,22 +110,22 @@ jobs:
             v docker   'docker --version'
             v xvfb-run 'command -v xvfb-run'
             v Xvfb     'command -v Xvfb'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Can this box talk to the Docker daemon, or only to the client binary? The
       # local matrix runs the Linux leg as a container; if the daemon is unreachable
       # the CI Linux leg must run Electron bare-metal under Xvfb instead.
       - name: Docker daemon reachability
         run: |
-          echo "## Docker daemon" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Docker daemon" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           if docker info >/dev/null 2>&1; then
-            echo "docker info : OK (daemon reachable)" >> "$GITHUB_STEP_SUMMARY"
+            echo "docker info : OK (daemon reachable)" | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "docker info : UNREACHABLE — the Linux leg must run bare-metal under Xvfb" >> "$GITHUB_STEP_SUMMARY"
+            echo "docker info : UNREACHABLE — the Linux leg must run bare-metal under Xvfb" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The exact library set Dockerfile.e2e installs. Any MISSING entry is a
       # provisioning item; without them Electron aborts or hangs at launch rather
@@ -127,19 +135,19 @@ jobs:
           libs="libnss3 libnspr4 libatk-1.0 libatk-bridge-2.0 libcups libdrm \
                 libxkbcommon libxcomposite libxdamage libxfixes libXrandr libgbm \
                 libasound libpango-1.0 libcairo libatspi libgtk-3"
-          echo "## Electron shared libs" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Electron shared libs" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           missing=0
           for l in $libs; do
             if ldconfig -p 2>/dev/null | grep -q -- "$l\.so"; then
-              printf '%-22s: present\n' "$l" >> "$GITHUB_STEP_SUMMARY"
+              printf '%-22s: present\n' "$l" | tee -a "$GITHUB_STEP_SUMMARY"
             else
-              printf '%-22s: MISSING\n' "$l" >> "$GITHUB_STEP_SUMMARY"
+              printf '%-22s: MISSING\n' "$l" | tee -a "$GITHUB_STEP_SUMMARY"
               missing=$((missing + 1))
             fi
           done
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "**$missing missing**" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "**$missing missing**" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # A poisoned environment is a documented failure class: CANVAS_RECAP_BOARD
       # aborts the unit gate, GIT_DIR/GIT_WORK_TREE made boardGitDiff report the HOST
@@ -155,23 +163,23 @@ jobs:
                 GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
                 E2E_WORKERS E2E_KEEP_TMP E2E_VIDEO E2E_FULL_MATRIX E2E_PRECOMMIT \
                 ANTHROPIC_API_KEY OPENAI_API_KEY GITHUB_TOKEN AWS_SECRET_ACCESS_KEY"
-          echo "## Inherited environment" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Inherited environment" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           found=0
           for v in $vars; do
             # Report presence only — never the value; several of these are secrets.
             if [ -n "${!v}" ]; then
-              printf '%-26s: SET\n' "$v" >> "$GITHUB_STEP_SUMMARY"
+              printf '%-26s: SET\n' "$v" | tee -a "$GITHUB_STEP_SUMMARY"
               found=$((found + 1))
             fi
           done
           # if/fi, not `[ … ] && echo` — the runner shell is `bash -e`, so a false
           # test as a bare command would abort the step instead of skipping the echo.
           if [ "$found" -eq 0 ]; then
-            echo "clean — none of the poison vars are set" >> "$GITHUB_STEP_SUMMARY"
+            echo "clean — none of the poison vars are set" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "TMPDIR=${TMPDIR:-<unset, defaults to /tmp>}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "TMPDIR=${TMPDIR:-<unset, defaults to /tmp>}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Last, because it is the only step that touches the repo. If checkout fails
       # the report above still lands. `fetch-depth: 1` — the probe needs no history.
@@ -181,22 +189,13 @@ jobs:
 
       - name: Checkout sanity
         run: |
-          echo "## Checkout" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## Checkout" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
           {
             echo "sha        : ${GITHUB_SHA:0:12}"
             echo "files      : $(ls -1 | wc -l) entries at the repo root"
             echo "manifest   : $(node -p "require('./package.json').version" 2>/dev/null || echo 'node could not read package.json')"
             echo "workspace  : $(du -sh . 2>/dev/null | cut -f1 || echo '?')"
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "_Probe complete — nothing was installed, built or executed from the repo._" >> "$GITHUB_STEP_SUMMARY"
-
-      # The whole report above is written to $GITHUB_STEP_SUMMARY, which renders in
-      # the web UI but is NOT in the job log and is NOT exposed by the REST API
-      # (`actions/jobs/{id}` has no summary field). Without this the report is
-      # unreadable from the CLI. Echo it into the log too, so `gh run view --log`
-      # carries the findings — the same way Phase 2's results will need to be read.
-      - name: Echo report to the job log
-        if: always()
-        run: cat "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "_Probe complete — nothing was installed, built or executed from the repo._" | tee -a "$GITHUB_STEP_SUMMARY"
