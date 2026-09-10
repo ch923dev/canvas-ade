@@ -25,7 +25,12 @@ import { Modal } from '../../Modal'
 import { Icon } from '../../Icon'
 import { AGENT_PRESETS, presetById } from '../terminal/agentPresets'
 import { CommandBuilder } from '../terminal/CommandBuilder'
-import { applyOpenRouterModel, composeCommand, type OptionValues } from '../terminal/composeCommand'
+import {
+  applyOpenRouterModel,
+  composeCommand,
+  OPENROUTER_CAPABLE_PRESETS,
+  type OptionValues
+} from '../terminal/composeCommand'
 import { OpenRouterSection, type OpenRouterValue } from '../terminal/OpenRouterSection'
 import {
   isWriteRolePack,
@@ -113,6 +118,9 @@ export function WorkerConfigDialog({
     setValues({})
     setRawOverride(null)
     setRolePackId(null) // packs are claude-hosted in Phase 0 — an agent switch is a Custom choice
+    // 🔒 Mirrors NewTerminalDialog: the OpenRouter section unmounts for an incapable agent, so the
+    // intent must go with the preset that justified it rather than ride the dispatch invisibly.
+    if (!OPENROUTER_CAPABLE_PRESETS.has(id)) setOpenRouter({ enabled: false, model: '' })
   }, [])
 
   /** Role row: a pack pre-fills the claude builder values from its data; null = Custom (as-is). */

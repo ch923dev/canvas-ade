@@ -80,4 +80,36 @@ test.describe('@terminal OpenRouter routing (compile-gated, self-skips ungated)'
     const board = await boardById(page, id)
     expect(board.openRouter).toEqual({ enabled: true, model: 'moonshotai/kimi-k2' })
   })
+
+  // 🔒 The routed-shell defect: the section UNMOUNTS for an incapable preset, so routing used to
+  // stay ON with no UI left to clear it and Create persisted `enabled: true` on a plain shell —
+  // where MAIN then put the decrypted key into an interactive shell's env. Switching away must
+  // take the intent with it. (MAIN refuses to route a non-agent launch line either way now; this
+  // asserts the persisted doc matches what the user can actually see.)
+  test('switching to an incapable preset clears the routing intent', async ({ page }) => {
+    const id = await openDialogAndProbeGate(page)
+    const section = page.locator('[data-test="new-terminal-openrouter"]')
+    test.skip((await section.count()) === 0, 'ungated build (__TERMINAL_OPENROUTER__ off)')
+
+    await section.click()
+    await page.locator('[data-test="openrouter-model"]').fill('anthropic/claude-sonnet-4.5')
+    await expect(page.locator('[data-test="openrouter-model"]')).toBeVisible()
+
+    // Shell cannot honour a route → the section goes away.
+    await page.locator('[data-test="preset-shell"]').click()
+    await expect(section).toHaveCount(0)
+
+    // Back on claude the checkbox must read OFF again (the intent went with the preset), not
+    // silently-still-on with a hidden model slug.
+    await page.locator('[data-test="preset-claude"]').click()
+    await expect(section).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('[data-test="openrouter-model"]')).toHaveCount(0)
+
+    // Create from the shell preset persists NO routing field at all.
+    await page.locator('[data-test="preset-shell"]').click()
+    await page.locator('[data-test="new-terminal-create"]').click()
+    await expect(page.locator('[data-test="new-terminal-dialog"]')).toHaveCount(0)
+    const board = await boardById(page, id)
+    expect(board.openRouter).toBeUndefined()
+  })
 })

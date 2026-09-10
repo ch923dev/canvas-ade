@@ -1,5 +1,6 @@
 // src/main/ptySpawnEnv.ts
 import { filterSpawnEnvBase, type SpawnEnvPolicy } from './spawnEnvPolicy'
+import { resolveOpenRouterRoute, sanitizeOpenRouterModel } from '../shared/openRouterRouting'
 
 /**
  * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
@@ -81,15 +82,29 @@ export function setOpenRouterKeyProvider(fn: OpenRouterKeyProvider | undefined):
 }
 
 /**
- * OpenRouter env for one spawn: OPENROUTER_API_KEY (opencode + anything OpenAI-compatible)
- * plus the Anthropic-skin trio Claude Code reads — ANTHROPIC_BASE_URL → OpenRouter's
- * Anthropic-compatible endpoint, AUTH_TOKEN → the key, and ANTHROPIC_API_KEY explicitly
- * BLANK (the endpoint contract; also stops a routed board from silently billing an
- * inherited direct-API key). Injected only when the board opted in AND a key resolves;
- * enabled-but-no-key spawns UNROUTED (the dialog's key-status row is the pre-spawn warning).
+ * OpenRouter env for one spawn, SCOPED to the CLI actually being launched
+ * (`shared/openRouterRouting` owns the per-route env — claude gets the Anthropic-skin trio,
+ * opencode gets `OPENROUTER_API_KEY`).
+ *
+ * 🔒 The LAUNCH LINE decides the route, not the board's intent field. `openRouter.enabled` is
+ * only an intent: the dialog hides its checkbox for an incapable preset but does NOT clear the
+ * field, so a board switched claude → shell keeps `enabled: true` — and under the old
+ * preset-blind injection that put the decrypted key into a plain interactive shell's env, where
+ * `env` prints it and every child inherits it. MCP/swarm-spawned terminals also carry no
+ * `agentKind`, so the board field could not be the gate either way. Resolving from what actually
+ * runs is fail-closed (no launch line ⇒ a bare shell ⇒ never the key) and honest (a board
+ * claiming claude while launching pwsh does not route).
+ *
+ * Injected only when the board opted in AND a route resolves AND a key resolves; every other
+ * state spawns UNROUTED (the dialog's key-status row is the pre-spawn warning for the no-key case).
  */
-function openRouterEnv(intent: OpenRouterSpawnIntent | undefined): Record<string, string> {
+function openRouterEnv(
+  intent: OpenRouterSpawnIntent | undefined,
+  launchCommand: string | undefined
+): Record<string, string> {
   if (!intent?.enabled) return {}
+  const route = resolveOpenRouterRoute(launchCommand)
+  if (!route) return {}
   let key: string | undefined
   try {
     key = openRouterKeyProvider?.()
@@ -97,13 +112,10 @@ function openRouterEnv(intent: OpenRouterSpawnIntent | undefined): Record<string
     key = undefined // key resolution must never break a spawn
   }
   if (!key) return {}
-  return {
-    OPENROUTER_API_KEY: key,
-    ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
-    ANTHROPIC_AUTH_TOKEN: key,
-    ANTHROPIC_API_KEY: '',
-    ...(intent.model ? { ANTHROPIC_MODEL: intent.model } : {})
-  }
+  // Re-clamp the slug MAIN-side: it arrives over IPC from the renderer, and MAIN is the trust
+  // boundary (the same discipline as every other seam in this file).
+  const model = intent.model ? sanitizeOpenRouterModel(intent.model) : ''
+  return route.env(key, model || undefined)
 }
 
 /**
@@ -150,7 +162,7 @@ export function buildSpawnEnv(
     ...inherited,
     FORCE_HYPERLINK: '1',
     // OpenRouter routing before the recap seam; the two key-sets are disjoint anyway.
-    ...openRouterEnv(opts.openRouter)
+    ...openRouterEnv(opts.openRouter, opts.launchCommand)
   } as Record<string, string>
   // Disclosure to the worker itself: a silently-scrubbed env reads as "broken shell" — the
   // names live in the env so the agent can SAY a credential was withheld instead of guessing.
