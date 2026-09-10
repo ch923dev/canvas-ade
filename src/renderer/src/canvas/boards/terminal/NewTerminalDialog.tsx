@@ -74,7 +74,12 @@ import {
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import { AGENT_PRESETS, presetById } from './agentPresets'
 import { CommandBuilder } from './CommandBuilder'
-import { applyOpenRouterModel, composeCommand, type OptionValues } from './composeCommand'
+import {
+  applyOpenRouterModel,
+  composeCommand,
+  OPENROUTER_CAPABLE_PRESETS,
+  type OptionValues
+} from './composeCommand'
 import { OpenRouterSection, type OpenRouterValue } from './OpenRouterSection'
 import {
   MIN_TERMINAL_FONT,
@@ -203,6 +208,11 @@ export function NewTerminalDialog({
     setPresetId(id)
     setValues({})
     setRawOverride(null)
+    // 🔒 The OpenRouter section UNMOUNTS for a preset that cannot honour a route, so without this
+    // a board switched claude → shell keeps `enabled: true` with no UI left to clear it, and
+    // applyPatch persists it. MAIN now refuses to route a non-agent launch line either way — this
+    // is the other half, so the persisted doc matches what the user can see.
+    if (!OPENROUTER_CAPABLE_PRESETS.has(id)) setOpenRouter({ enabled: false, model: '' })
   }, [])
 
   // A builder control change recomposes from values — it takes back control from a manual edit.

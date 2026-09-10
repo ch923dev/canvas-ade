@@ -10,6 +10,10 @@
  * Options compose in registry order; the base `bin` leads (empty for the plain shell ⇒ '').
  */
 import type { AgentPreset } from './agentPresets'
+import {
+  OPENROUTER_CAPABLE_PRESETS,
+  sanitizeOpenRouterModel
+} from '../../../../../shared/openRouterRouting'
 
 export type OptionValue = string | boolean
 export type OptionValues = Record<string, OptionValue>
@@ -41,13 +45,13 @@ export function composeCommand(preset: AgentPreset, values: OptionValues): strin
 
 /**
  * v20 OpenRouter routing (compile-gated feature): presets whose CLI actually honours the
- * injected OpenRouter env. claude reads the Anthropic-skin trio (ANTHROPIC_BASE_URL /
- * AUTH_TOKEN); opencode reads OPENROUTER_API_KEY natively. codex needs a config.toml
- * provider block (deferred — the cliProvisioners upsert pattern when wanted) and gemini has
- * no OpenRouter path, so neither is listed: the dialog HIDES the section for them rather
- * than offer a checkbox that would not route.
+ * injected OpenRouter env. Re-exported from `src/shared/openRouterRouting.ts` — the ONE table
+ * MAIN's spawn-env branch resolves its per-CLI env from — so the dialog can never offer a
+ * checkbox for a preset MAIN would refuse to route (nor hide one it would). codex needs a
+ * `config.toml` provider block or `-c` launch-line overrides (deferred to its own lane) and
+ * gemini has no OpenRouter path, so neither is listed.
  */
-export const OPENROUTER_CAPABLE_PRESETS: ReadonlySet<string> = new Set(['claude', 'opencode'])
+export { OPENROUTER_CAPABLE_PRESETS } from '../../../../../shared/openRouterRouting'
 
 /**
  * Overlay the OpenRouter model slug onto the builder values so the composed command's model
@@ -61,7 +65,9 @@ export function applyOpenRouterModel(
   values: OptionValues,
   model: string | undefined
 ): OptionValues {
-  const slug = model?.trim()
+  // Sanitize, not just trim: the slug reaches the composed launch line, where a raw newline
+  // would split the PTY write into two commands (the same clamp MAIN re-applies to the env).
+  const slug = model ? sanitizeOpenRouterModel(model) : ''
   if (!slug || !OPENROUTER_CAPABLE_PRESETS.has(presetId)) return values
   if (presetId === 'opencode') {
     return { ...values, model: slug.startsWith('openrouter/') ? slug : `openrouter/${slug}` }

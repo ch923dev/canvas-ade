@@ -11,6 +11,10 @@ import { useEffect, useState, type CSSProperties, type ReactElement } from 'reac
 import { Icon } from '../../Icon'
 import { isTerminalOpenRouterEnabled } from '../../../lib/featureFlags'
 import { OPENROUTER_CAPABLE_PRESETS } from './composeCommand'
+import {
+  OPENROUTER_MODEL_MAX,
+  sanitizeOpenRouterModel
+} from '../../../../../shared/openRouterRouting'
 
 const OPENROUTER_UI = isTerminalOpenRouterEnabled()
 
@@ -72,8 +76,14 @@ export function OpenRouterSection({
                   : 'e.g. anthropic/claude-sonnet-4.5'
               }
               spellCheck={false}
+              maxLength={OPENROUTER_MODEL_MAX}
               value={value.model}
-              onChange={(e) => onChange({ ...value, model: e.target.value })}
+              // Clamp on the way IN, not at commit: a slug reaches an env value AND the composed
+              // launch line, where a pasted newline would split the PTY write into two commands.
+              // A slug never contains whitespace, so collapsing it costs the user nothing.
+              onChange={(e) =>
+                onChange({ ...value, model: sanitizeOpenRouterModel(e.target.value) })
+              }
               data-test="openrouter-model"
             />
           </label>

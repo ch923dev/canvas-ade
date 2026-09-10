@@ -1,9 +1,16 @@
 /**
  * buildSpawnEnv — baseline vars, the nested-session scrub, and the v20 OpenRouter routing
- * branch (key provider seam + env set + never-break-a-spawn guards). The OpenRouter matrix is
- * the load-bearing part: a routed board must inject the full provider set; every other state
- * (disabled / no provider wired / provider throws / no key) must inject NOTHING — an ungated
- * build never wires a provider, so "no provider ⇒ no vars" IS the compile-gate contract here.
+ * branch (key provider seam + per-route env + never-break-a-spawn guards). The OpenRouter matrix
+ * is the load-bearing part, on TWO axes:
+ *
+ *  - **state:** a routed board injects its route's env; every other state (disabled / no provider
+ *    wired / provider throws / no key) injects NOTHING — an ungated build never wires a provider,
+ *    so "no provider ⇒ no vars" IS the compile-gate contract here.
+ *  - **route:** the env is SCOPED to the CLI on the launch line, and a launch line no route claims
+ *    (a bare shell, gemini, a wrapper) injects nothing even with `enabled: true` and a live key.
+ *    That second axis is the security boundary — `openRouter.enabled` is a board field the dialog
+ *    does not clear when its section unmounts, and MCP-spawned boards carry no `agentKind`, so the
+ *    launch line is the only trustworthy signal MAIN has.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildSpawnEnv, setOpenRouterKeyProvider, setSpawnEnvPolicyProvider } from './ptySpawnEnv'
@@ -87,53 +94,128 @@ describe('buildSpawnEnv — OpenRouter routing (v20)', () => {
     }
   })
 
-  it('enabled + wired key injects the full provider set', () => {
+  it('a routed claude launch line injects the Anthropic-skin trio and NOTHING else', () => {
     setOpenRouterKeyProvider(() => 'sk-or-secret')
-    const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
-    expect(env.OPENROUTER_API_KEY).toBe('sk-or-secret')
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'claude',
+      openRouter: { enabled: true }
+    })
     expect(env.ANTHROPIC_BASE_URL).toBe('https://openrouter.ai/api')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-secret')
     // Explicitly BLANK (endpoint contract) — and it must OVERRIDE an inherited direct key.
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.ANTHROPIC_MODEL).toBeUndefined() // no model in the intent
+    // Scoped env: claude does not read OPENROUTER_API_KEY, so a nested CLI the board's agent
+    // shells out to must NOT find the maintainer's key sitting in its environment.
+    expect(env.OPENROUTER_API_KEY).toBeUndefined()
   })
 
-  it('enabled + model also backs ANTHROPIC_MODEL with the slug', () => {
+  it('a routed opencode launch line injects OPENROUTER_API_KEY and NO ANTHROPIC_* vars', () => {
     setOpenRouterKeyProvider(() => 'sk-or-secret')
     const env = buildSpawnEnv(undefined, {
       id: 'b1',
+      launchCommand: 'opencode --model openrouter/moonshotai/kimi-k2',
+      openRouter: { enabled: true, model: 'moonshotai/kimi-k2' }
+    })
+    expect(env.OPENROUTER_API_KEY).toBe('sk-or-secret')
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(env.ANTHROPIC_MODEL).toBeUndefined() // opencode takes the model on its flag
+  })
+
+  it('enabled + model also backs ANTHROPIC_MODEL with the slug (claude)', () => {
+    setOpenRouterKeyProvider(() => 'sk-or-secret')
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'claude --model anthropic/claude-sonnet-4.5',
       openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
     })
     expect(env.ANTHROPIC_MODEL).toBe('anthropic/claude-sonnet-4.5')
+  })
+
+  it('MAIN re-clamps the slug it is handed (trust boundary)', () => {
+    setOpenRouterKeyProvider(() => 'sk-or-secret')
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'claude',
+      openRouter: { enabled: true, model: '  anthropic/claude\nsonnet  ' }
+    })
+    expect(env.ANTHROPIC_MODEL).toBe('anthropic/claude sonnet')
   })
 
   it('an inherited ANTHROPIC_API_KEY is overridden to blank on a routed spawn', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-direct'
     try {
       setOpenRouterKeyProvider(() => 'sk-or-secret')
-      const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
+      const env = buildSpawnEnv(undefined, {
+        id: 'b1',
+        launchCommand: 'claude',
+        openRouter: { enabled: true }
+      })
       expect(env.ANTHROPIC_API_KEY).toBe('')
     } finally {
       delete process.env.ANTHROPIC_API_KEY
     }
   })
 
-  it('disabled / absent intent injects nothing', () => {
+  it('disabled / absent intent injects nothing even on a routable launch line', () => {
     setOpenRouterKeyProvider(() => 'sk-or-secret')
     for (const openRouter of [undefined, { enabled: false }]) {
-      const env = buildSpawnEnv(undefined, { id: 'b1', openRouter })
+      const env = buildSpawnEnv(undefined, { id: 'b1', launchCommand: 'claude', openRouter })
       for (const k of OR_KEYS) expect(env[k]).toBeUndefined()
     }
   })
 
+  // 🔒 The security axis (the defect this suite previously could not see): a live key + an
+  // `enabled: true` board field must still inject NOTHING when what actually runs cannot honour a
+  // route. A bare shell is the worst case — `env` prints the key and every child inherits it.
+  it.each([
+    ['no launch line at all (a bare interactive shell)', undefined],
+    ['an empty launch line', '   '],
+    ['a non-agent shell command', 'pwsh'],
+    ['gemini (no OpenRouter path)', 'gemini -m gemini-2.5-pro'],
+    ['a wrapper around a routable bin', 'npx claude'],
+    ['a shell -c wrapper around a routable bin', 'pwsh -c claude'],
+    ['an env-assignment prefix', 'FOO=1 claude']
+  ])('an unroutable launch line injects nothing: %s', (_label, launchCommand) => {
+    setOpenRouterKeyProvider(() => 'sk-or-secret')
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      ...(launchCommand !== undefined ? { launchCommand } : {}),
+      openRouter: { enabled: true, model: 'anthropic/claude-sonnet-4.5' }
+    })
+    for (const k of OR_KEYS) expect(env[k]).toBeUndefined()
+    expect(env.FORCE_HYPERLINK).toBe('1') // ...and the spawn is otherwise intact
+  })
+
+  it('resolves the route through a quoted absolute path and a .cmd shim', () => {
+    setOpenRouterKeyProvider(() => 'sk-or-secret')
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: '"C:\\Program Files\\nodejs\\Claude.CMD" -c',
+      openRouter: { enabled: true }
+    })
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-secret')
+  })
+
   it('enabled with NO provider wired injects nothing (the ungated-build contract)', () => {
-    const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'claude',
+      openRouter: { enabled: true }
+    })
     for (const k of OR_KEYS) expect(env[k]).toBeUndefined()
   })
 
   it('enabled with no stored key spawns unrouted', () => {
     setOpenRouterKeyProvider(() => undefined)
-    const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'claude',
+      openRouter: { enabled: true }
+    })
     for (const k of OR_KEYS) expect(env[k]).toBeUndefined()
   })
 
@@ -141,7 +223,11 @@ describe('buildSpawnEnv — OpenRouter routing (v20)', () => {
     setOpenRouterKeyProvider(() => {
       throw new Error('keyring exploded')
     })
-    const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'claude',
+      openRouter: { enabled: true }
+    })
     for (const k of OR_KEYS) expect(env[k]).toBeUndefined()
     expect(env.FORCE_HYPERLINK).toBe('1')
   })
@@ -150,10 +236,11 @@ describe('buildSpawnEnv — OpenRouter routing (v20)', () => {
     setOpenRouterKeyProvider(() => 'sk-or-secret')
     const env = buildSpawnEnv(() => ({ ANTHROPIC_BASE_URL: 'http://recap-override' }), {
       id: 'b1',
+      launchCommand: 'claude',
       openRouter: { enabled: true }
     })
     expect(env.ANTHROPIC_BASE_URL).toBe('http://recap-override')
-    expect(env.OPENROUTER_API_KEY).toBe('sk-or-secret')
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-secret')
   })
 })
 
@@ -188,7 +275,12 @@ describe('buildSpawnEnv — P5 per-board env policy (A8-F3 secrets hygiene)', ()
   it('deliberate OpenRouter injection survives a scrub that denies OPENROUTER_API_KEY', () => {
     setSpawnEnvPolicyProvider(() => ({ scrub: 'secrets' }))
     setOpenRouterKeyProvider(() => 'sk-or-deliberate')
-    const env = buildSpawnEnv(undefined, { id: 'b1', openRouter: { enabled: true } })
+    // opencode is the route that emits OPENROUTER_API_KEY (claude's route emits the Anthropic trio).
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      launchCommand: 'opencode',
+      openRouter: { enabled: true }
+    })
     expect(env.OPENROUTER_API_KEY).toBe('sk-or-deliberate')
   })
 
