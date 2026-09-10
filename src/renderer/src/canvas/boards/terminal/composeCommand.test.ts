@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { applyOpenRouterModel, composeCommand, OPENROUTER_CAPABLE_PRESETS } from './composeCommand'
-import { presetById } from './agentPresets'
+import {
+  applyOpenRouterModel,
+  composeCommand,
+  OPENROUTER_CAPABLE_PRESETS,
+  openRouterArgs
+} from './composeCommand'
+import { AGENT_PRESETS, presetById } from './agentPresets'
 
 const claude = presetById('claude')!
 const shell = presetById('shell')!
@@ -49,8 +54,8 @@ describe('composeCommand', () => {
 describe('applyOpenRouterModel', () => {
   const opencode = presetById('opencode')!
 
-  it('capability set is claude + opencode only (codex config-gated, gemini has no path)', () => {
-    expect([...OPENROUTER_CAPABLE_PRESETS].sort()).toEqual(['claude', 'opencode'])
+  it('capability set is claude + codex + opencode (gemini has no path, shell is no agent)', () => {
+    expect([...OPENROUTER_CAPABLE_PRESETS].sort()).toEqual(['claude', 'codex', 'opencode'])
   })
 
   it('claude composes --model with the raw slug', () => {
@@ -83,5 +88,49 @@ describe('applyOpenRouterModel', () => {
     const out = applyOpenRouterModel('claude', vals, 'z-ai/glm-4.7')
     expect(out.model).toBe('z-ai/glm-4.7')
     expect(vals.model).toBe('sonnet')
+  })
+})
+
+// v20 codex routing: the route's -c overrides ride the composed line between bin and options.
+describe('composeCommand - OpenRouter routing argv', () => {
+  it('is a pure no-op when no routing argv is passed (every pre-codex call site)', () => {
+    const claude = presetById('claude')!
+    expect(composeCommand(claude, { model: 'opus' })).toBe(
+      composeCommand(claude, { model: 'opus' }, [])
+    )
+  })
+
+  it('composes the real codex routed line: bin, then -c overrides, then -m', () => {
+    const line = composeCommand(
+      presetById('codex')!,
+      applyOpenRouterModel('codex', {}, 'openai/gpt-5-codex'),
+      openRouterArgs('codex')
+    )
+    expect(line).toBe(
+      'codex -c model_provider=openrouter -c model_providers.openrouter.name=OpenRouter ' +
+        '-c model_providers.openrouter.base_url=https://openrouter.ai/api/v1 ' +
+        '-c model_providers.openrouter.env_key=OPENROUTER_API_KEY -m openai/gpt-5-codex'
+    )
+  })
+
+  it('leaves the user options after the routing argv (a toggle still composes)', () => {
+    const line = composeCommand(
+      presetById('codex')!,
+      { model: 'a/b', search: true },
+      openRouterArgs('codex')
+    )
+    expect(line.startsWith('codex -c model_provider=openrouter')).toBe(true)
+    expect(line.endsWith('-m a/b --search')).toBe(true)
+  })
+
+  it('does NOT quote the overrides - an inner = must survive verbatim', () => {
+    const line = composeCommand(presetById('codex')!, {}, openRouterArgs('codex'))
+    expect(line).not.toContain('"')
+    expect(line).toContain('-c model_provider=openrouter')
+  })
+
+  it('every capable preset actually exists in the preset registry', () => {
+    const ids = new Set(AGENT_PRESETS.map((p) => p.id))
+    for (const id of OPENROUTER_CAPABLE_PRESETS) expect(ids.has(id)).toBe(true)
   })
 })

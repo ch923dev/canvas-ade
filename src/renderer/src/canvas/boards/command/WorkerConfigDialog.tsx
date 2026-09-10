@@ -29,6 +29,7 @@ import {
   applyOpenRouterModel,
   composeCommand,
   OPENROUTER_CAPABLE_PRESETS,
+  openRouterArgs,
   type OptionValues
 } from '../terminal/composeCommand'
 import { OpenRouterSection, type OpenRouterValue } from '../terminal/OpenRouterSection'
@@ -103,7 +104,10 @@ export function WorkerConfigDialog({
   // no-op when disabled/blank/incapable — mirrors NewTerminalDialog).
   const composed = useMemo(() => {
     const orModel = openRouter.enabled ? openRouter.model : undefined
-    return composeCommand(preset, applyOpenRouterModel(presetId, values, orModel))
+    // Routing argv only when routing is ON: a CLI steered by env alone contributes none, so this
+    // is a no-op for claude/opencode and the four -c overrides for codex.
+    const routingArgs = openRouter.enabled ? openRouterArgs(presetId, orModel) : []
+    return composeCommand(preset, applyOpenRouterModel(presetId, values, orModel), routingArgs)
   }, [preset, presetId, values, openRouter])
   const command = rawOverride ?? composed
   const rolePack = rolePackById(rolePackId)

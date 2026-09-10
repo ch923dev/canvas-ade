@@ -73,7 +73,9 @@ export function OpenRouterSection({
               placeholder={
                 presetId === 'opencode'
                   ? 'e.g. moonshotai/kimi-k2'
-                  : 'e.g. anthropic/claude-sonnet-4.5'
+                  : presetId === 'codex'
+                    ? 'e.g. openai/gpt-5-codex'
+                    : 'e.g. anthropic/claude-sonnet-4.5'
               }
               spellCheck={false}
               maxLength={OPENROUTER_MODEL_MAX}
