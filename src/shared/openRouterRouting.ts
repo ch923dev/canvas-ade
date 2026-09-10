@@ -26,6 +26,13 @@ export const OPENROUTER_ANTHROPIC_BASE_URL = 'https://openrouter.ai/api'
 /** OpenRouter's OpenAI-compatible endpoint, for CLIs addressed that way. */
 export const OPENROUTER_OPENAI_BASE_URL = 'https://openrouter.ai/api/v1'
 
+/** The env var CLIs read the OpenRouter key from. Named in codex's `env_key` override, so it must
+ *  match the key `codexRoute.env` actually injects. */
+export const OPENROUTER_KEY_ENV = 'OPENROUTER_API_KEY'
+
+/** Display name codex requires on a `[model_providers.*]` table (`name` is not optional). */
+const CODEX_PROVIDER_NAME = 'OpenRouter'
+
 /** Slug clamp — the rule the MCP spawn paths already enforce (`mcpLifecycle.sanitizeOpenRouter`). */
 export const OPENROUTER_MODEL_MAX = 200
 
@@ -47,7 +54,8 @@ export function sanitizeOpenRouterModel(raw: string): string {
   )
 }
 
-/** One CLI's OpenRouter route: how to recognise its launch line, and the env it needs. */
+/** One CLI's OpenRouter route: how to recognise its launch line, the env it needs, and any
+ *  launch-line arguments that env alone cannot express. */
 export interface OpenRouterRoute {
   /** The `AgentPreset.id` this route belongs to (also the persisted `TerminalBoard.agentKind`). */
   readonly id: string
@@ -55,6 +63,13 @@ export interface OpenRouterRoute {
   readonly bin: string
   /** Env for one spawn, given the decrypted key and the sanitized slug (absent ⇒ CLI default). */
   env(key: string, model?: string): Record<string, string>
+  /**
+   * Extra argv the composed launch line needs, inserted straight after the bin (see
+   * `composeCommand`). Only for a CLI that cannot be pointed at OpenRouter by env alone — codex
+   * needs config overrides. NEVER carries the key: these tokens are persisted in the board doc and
+   * echo in the PTY, so a route may only name the env var the CLI should read.
+   */
+  args?(model?: string): readonly string[]
 }
 
 /**
@@ -83,11 +98,63 @@ const opencodeRoute: OpenRouterRoute = {
 }
 
 /**
+ * codex — reads `OPENROUTER_API_KEY`, but only once its config names OpenRouter as the active
+ * provider. Rather than mutate the user's `~/.codex/config.toml` (which would risk clobbering a
+ * hand-tuned `model`/`wire_api` and leave routing switched on for every codex run on the machine,
+ * inside Expanse or not), the provider is declared per-spawn with `-c` overrides. Their blast
+ * radius is exactly this one process.
+ *
+ * PROBE-VERIFIED against codex-cli 0.153.4 on an isolated `CODEX_HOME` (`codex doctor` reports
+ * `config loaded` · provider `openrouter` · wire API `responses`; the full line plus `-m` parses):
+ *  - `name` is REQUIRED — omit it and config loading FAILS outright.
+ *  - `wire_api` is deliberately NOT set. `chat` and `chat_completions` are both REJECTED on this
+ *    version (they break config loading); `responses` is the only accepted value AND the default,
+ *    so omitting the key is both the working and the least-brittle choice.
+ *  - the model rides `-m <slug>` (CODEX_OPTIONS' free-text model flag), so there is no model env.
+ */
+const codexRoute: OpenRouterRoute = {
+  id: 'codex',
+  bin: 'codex',
+  env: (key) => ({ OPENROUTER_API_KEY: key }),
+  args: () => [
+    '-c',
+    'model_provider=openrouter',
+    '-c',
+    `model_providers.openrouter.name=${CODEX_PROVIDER_NAME}`,
+    '-c',
+    `model_providers.openrouter.base_url=${OPENROUTER_OPENAI_BASE_URL}`,
+    '-c',
+    `model_providers.openrouter.env_key=${OPENROUTER_KEY_ENV}`
+  ]
+}
+
+/**
  * The routes, in dialog order. gemini has no OpenRouter path and shell is not an agent, so neither
  * is listed — the dialog HIDES its section for them rather than offer a checkbox that would not
  * route, and MAIN injects nothing for them even if a board field says otherwise.
  */
-export const OPENROUTER_ROUTES: readonly OpenRouterRoute[] = [claudeRoute, opencodeRoute]
+export const OPENROUTER_ROUTES: readonly OpenRouterRoute[] = [
+  claudeRoute,
+  codexRoute,
+  opencodeRoute
+]
+
+/**
+ * Look a route up by PRESET id — the renderer's question ("what does the dialog compose for the
+ * preset the user picked?"). MAIN asks the other question, by launch-line bin
+ * ({@link resolveOpenRouterRoute}), because a board field is not evidence of what will run.
+ */
+export function routeByPresetId(presetId: string | undefined): OpenRouterRoute | undefined {
+  return presetId ? OPENROUTER_ROUTES.find((r) => r.id === presetId) : undefined
+}
+
+/**
+ * The routing argv the composed launch line needs for a preset, or `[]` when that CLI is steered by
+ * env alone (claude, opencode). Pure — the dialogs feed the result to `composeCommand`.
+ */
+export function openRouterArgs(presetId: string | undefined, model?: string): readonly string[] {
+  return routeByPresetId(presetId)?.args?.(model) ?? []
+}
 
 /** Presets that can honour a route — the set the dialog gates its section on. */
 export const OPENROUTER_CAPABLE_PRESETS: ReadonlySet<string> = new Set(

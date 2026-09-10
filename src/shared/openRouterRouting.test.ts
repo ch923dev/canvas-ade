@@ -8,9 +8,12 @@ import { describe, expect, it } from 'vitest'
 import {
   launchBin,
   OPENROUTER_CAPABLE_PRESETS,
+  OPENROUTER_KEY_ENV,
   OPENROUTER_MODEL_MAX,
   OPENROUTER_ROUTES,
+  openRouterArgs,
   resolveOpenRouterRoute,
+  routeByPresetId,
   sanitizeOpenRouterModel
 } from './openRouterRouting'
 
@@ -46,6 +49,7 @@ describe('resolveOpenRouterRoute', () => {
   it('resolves the routes that exist', () => {
     expect(resolveOpenRouterRoute('claude --effort high')?.id).toBe('claude')
     expect(resolveOpenRouterRoute('opencode')?.id).toBe('opencode')
+    expect(resolveOpenRouterRoute('codex -c model_provider=openrouter')?.id).toBe('codex')
   })
 
   it('resolves NOTHING for a CLI with no OpenRouter path, a bare shell, or a wrapper', () => {
@@ -55,7 +59,7 @@ describe('resolveOpenRouterRoute', () => {
   })
 
   it('the capable-preset set is exactly the routes (dialog and MAIN cannot drift)', () => {
-    expect([...OPENROUTER_CAPABLE_PRESETS].sort()).toEqual(['claude', 'opencode'])
+    expect([...OPENROUTER_CAPABLE_PRESETS].sort()).toEqual(['claude', 'codex', 'opencode'])
     expect(OPENROUTER_CAPABLE_PRESETS.size).toBe(OPENROUTER_ROUTES.length)
     for (const r of OPENROUTER_ROUTES) expect(OPENROUTER_CAPABLE_PRESETS.has(r.id)).toBe(true)
   })
@@ -77,6 +81,61 @@ describe('route env is scoped to the CLI that reads it', () => {
 
   it('opencode gets only OPENROUTER_API_KEY (the model rides its --model flag)', () => {
     expect(route('opencode').env('k', 'a/b')).toEqual({ OPENROUTER_API_KEY: 'k' })
+  })
+
+  it('codex gets only OPENROUTER_API_KEY (the model rides -m, the provider rides -c)', () => {
+    expect(route('codex').env('k', 'a/b')).toEqual({ OPENROUTER_API_KEY: 'k' })
+  })
+})
+
+// The codex provider override is PROBE-VERIFIED against codex-cli 0.153.4 (see the route's
+// comment): `name` is required, and `wire_api` must be ABSENT because chat / chat_completions
+// break config loading on that version while responses is already the default. These assertions
+// are the regression fence around both facts -- tidying this argv would silently kill routing.
+describe('codex routing argv', () => {
+  it('emits exactly the four verified -c overrides, in order', () => {
+    expect(openRouterArgs('codex')).toEqual([
+      '-c',
+      'model_provider=openrouter',
+      '-c',
+      'model_providers.openrouter.name=OpenRouter',
+      '-c',
+      'model_providers.openrouter.base_url=https://openrouter.ai/api/v1',
+      '-c',
+      'model_providers.openrouter.env_key=OPENROUTER_API_KEY'
+    ])
+  })
+
+  it('names the SAME env var the route actually injects', () => {
+    expect(openRouterArgs('codex')).toContain(
+      'model_providers.openrouter.env_key=' + OPENROUTER_KEY_ENV
+    )
+    expect(Object.keys(routeByPresetId('codex')!.env('k'))).toEqual([OPENROUTER_KEY_ENV])
+  })
+
+  it('sets no wire_api (chat / chat_completions are rejected by codex 0.153.4)', () => {
+    expect(openRouterArgs('codex').join(' ')).not.toContain('wire_api')
+  })
+
+  it('never puts the key on the launch line -- these tokens persist in the board doc', () => {
+    for (const model of [undefined, 'openai/gpt-5-codex']) {
+      const line = openRouterArgs('codex', model).join(' ')
+      expect(line).not.toMatch(/sk-|Bearer/)
+      // Names the env var; never assigns a value to it.
+      expect(line).not.toMatch(/OPENROUTER_API_KEY=./)
+    }
+  })
+
+  it('is empty for CLIs steered by env alone, and for unknown presets', () => {
+    for (const id of ['claude', 'opencode', 'gemini', 'shell', undefined]) {
+      expect(openRouterArgs(id)).toEqual([])
+    }
+  })
+
+  it('every route that emits argv also resolves from its own bin (no orphan argv)', () => {
+    for (const r of OPENROUTER_ROUTES) {
+      if (r.args) expect(resolveOpenRouterRoute(r.bin)?.id).toBe(r.id)
+    }
   })
 })
 

@@ -81,6 +81,32 @@ test.describe('@terminal OpenRouter routing (compile-gated, self-skips ungated)'
     expect(board.openRouter).toEqual({ enabled: true, model: 'moonshotai/kimi-k2' })
   })
 
+  test('codex composes the four probe-verified provider overrides plus -m', async ({ page }) => {
+    const id = await openDialogAndProbeGate(page)
+    const section = page.locator('[data-test="new-terminal-openrouter"]')
+    test.skip((await section.count()) === 0, 'ungated build (__TERMINAL_OPENROUTER__ off)')
+
+    await page.locator('[data-test="preset-codex"]').click()
+    await expect(section).toBeVisible()
+    await section.click()
+    await page.locator('[data-test="openrouter-model"]').fill('openai/gpt-5-codex')
+
+    // The argv is probe-verified against codex-cli 0.153.4: `name` is required, and NO wire_api
+    // (chat/chat_completions break config loading there; responses is the default).
+    const expected =
+      'codex -c model_provider=openrouter -c model_providers.openrouter.name=OpenRouter ' +
+      '-c model_providers.openrouter.base_url=https://openrouter.ai/api/v1 ' +
+      '-c model_providers.openrouter.env_key=OPENROUTER_API_KEY -m openai/gpt-5-codex'
+    await expect(page.locator('[data-test="new-terminal-command"]')).toHaveValue(expected)
+
+    await page.locator('[data-test="new-terminal-create"]').click()
+    const board = await boardById(page, id)
+    expect(board.openRouter).toEqual({ enabled: true, model: 'openai/gpt-5-codex' })
+    expect(board.launchCommand).toBe(expected)
+    // The key is NEVER on the launch line — the overrides only NAME the env var to read.
+    expect(board.launchCommand).not.toMatch(/sk-|OPENROUTER_API_KEY=./)
+  })
+
   // 🔒 The routed-shell defect: the section UNMOUNTS for an incapable preset, so routing used to
   // stay ON with no UI left to clear it and Create persisted `enabled: true` on a plain shell —
   // where MAIN then put the decrypted key into an interactive shell's env. Switching away must

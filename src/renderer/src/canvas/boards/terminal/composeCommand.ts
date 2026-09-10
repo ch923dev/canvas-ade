@@ -29,9 +29,18 @@ function quoteArg(v: string): string {
   return /\s/.test(v) ? `"${v.replace(/[\\"]/g, '\\$&')}"` : v
 }
 
-export function composeCommand(preset: AgentPreset, values: OptionValues): string {
+export function composeCommand(
+  preset: AgentPreset,
+  values: OptionValues,
+  routingArgs: readonly string[] = []
+): string {
   const parts: string[] = []
   if (preset.bin) parts.push(preset.bin)
+  // Routing argv (v20 OpenRouter, codex) leads the option flags: a provider override reads as part
+  // of the invocation, not as one more user option, and the position stays stable as options change.
+  // Already shell-safe by construction (the route emits quote-free, space-free tokens), so these do
+  // NOT go through quoteArg -- an inner `=` must survive verbatim.
+  parts.push(...routingArgs)
   for (const opt of preset.options ?? []) {
     const v = values[opt.id]
     if (opt.kind === 'toggle') {
@@ -51,14 +60,15 @@ export function composeCommand(preset: AgentPreset, values: OptionValues): strin
  * `config.toml` provider block or `-c` launch-line overrides (deferred to its own lane) and
  * gemini has no OpenRouter path, so neither is listed.
  */
-export { OPENROUTER_CAPABLE_PRESETS } from '../../../../../shared/openRouterRouting'
+export { OPENROUTER_CAPABLE_PRESETS, openRouterArgs } from '../../../../../shared/openRouterRouting'
 
 /**
  * Overlay the OpenRouter model slug onto the builder values so the composed command's model
  * flag matches the routed provider — `claude --model <slug>` (Claude Code hands it to the
- * Anthropic-compatible endpoint verbatim) and `opencode --model openrouter/<slug>` (opencode
- * addresses providers by prefix; an already-prefixed slug is kept as-is). Pure; a blank slug
- * or a non-capable preset returns `values` unchanged (compose is untouched).
+ * Anthropic-compatible endpoint verbatim), `codex -m <slug>` (same, against the provider its
+ * routing argv declares) and `opencode --model openrouter/<slug>` (opencode addresses providers
+ * by prefix; an already-prefixed slug is kept as-is). Pure; a blank slug or a non-capable preset
+ * returns `values` unchanged (compose is untouched).
  */
 export function applyOpenRouterModel(
   presetId: string,
