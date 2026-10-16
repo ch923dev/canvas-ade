@@ -119,8 +119,8 @@ stays un-gated as today.
 
 ## W6 — Tidy picker gains "Arrange by role" (roles mode; its position depends on D8)
 
-D8 (a): "By role" goes first and takes `T`, and "Fit to screen" moves to second. D8 (b): "Fit to
-screen" stays first and "By role" is second. The thumbnail is drawn from `zones` like every
+**D8 (a) decided 2026-10-16:** "By role" goes first and takes `T`, and "Fit to screen" moves to
+second (so W2's "Fit first" is superseded). The thumbnail is drawn from `zones` like every
 other preset: one large hero zone plus a stacked rail.
 
 ```
@@ -154,6 +154,8 @@ other preset: one large hero zone plus a stacked rail.
 The scenario wireframes S1–S15, which show where boards land, are in [`ROLE-LAYOUT.md`](./ROLE-LAYOUT.md) §7.
 
 ---
+
+**W6 + W7 + ROLE-LAYOUT S1–S15 signed off by the user 2026-10-16.**
 
 **Sign-off checklist:** W1 copy + low-confidence default · W2 Fit first + `T` rebound · W3 toast
 actions · W5 confirm for terminal agents · **W6 By-role preset position (D8) · W7 toast copy · ROLE-LAYOUT S1–S15

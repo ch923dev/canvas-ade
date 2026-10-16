@@ -7,6 +7,7 @@ This is the **design artifact** for contracts C9 (role model) and C10 (`roleLayo
 [`SPEC.md`](./SPEC.md). The wireframes below are the expected output for each scenario. Each one
 becomes a **golden fixture test** in L10, and the same scenarios are the dev-check script for I2.
 Sign-off on this file gates L10's template numbers and I2's UI. L9 (role derivation) does not need it.
+**Signed off by the user 2026-10-16** (§7 S1–S15 as written; D7–D10 decided, see SPEC §2).
 
 Every wireframe assumes a **16:9 pane** unless it says otherwise. Percentages are shares of the
 pane after `FIT_PADDING_PX`.
@@ -258,7 +259,10 @@ The hero is that board. It is rigid, so the hero slot wraps its current size, an
 the rail or strip around it.
 
 ### S15 · 5 plain shells, no roles
-`peers` → `grid` 3+2. Under D8 option (b) this falls back to `fit` (position only).
+Two goldens (D8 a, decided):
+- explicit `mode:'roles'` → `peers` → `grid` 3+2 (flexible, resized per D7);
+- implicit default (`implicit:true`: an agent omitted `mode`, or the `t` key) → the unit is all
+  `shell`, so it falls back to `fit` behaviour: position only, sizes kept.
 
 ---
 

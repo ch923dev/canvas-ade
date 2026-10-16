@@ -46,22 +46,23 @@ persisted (scene/session split).
 ## 2. Decisions
 
 D1–D4 **decided by the user 2026-10-16** (all four recommendations accepted). D5–D6 are
-coordinator calls recorded here; change them only through this file. **D7–D10 (role-aware tidy,
-added 2026-10-16) are OPEN. Ask the user before L10 freezes template numbers or L11 builds the
-D10 observer.**
+coordinator calls recorded here; change them only through this file. **D7–D10 (role-aware tidy)
+decided by the user 2026-10-16 (all four recommendations accepted), together with sign-off on
+ROLE-LAYOUT.md §7 (S1–S15) and DESIGN.md W6/W7.** L10 may freeze its goldens; L11 builds the D10
+observer. D8 (a) supersedes D3's *default* only: `fit` stays, as the fallback and the 2nd preset.
 
 | ID | Question | Recommendation | Status |
 |---|---|---|---|
 | D1 | Which tiers get spatial tools? (G10) | `canvas://layout` + `canvas://contexts` → **orchestrator + lead + connected** (read-only). `tidy_canvas` + `focus_viewport` + `group_boards` + `edit_groups` → orchestrator **un-gated** for tidy/focus (today's behaviour); **lead + connected** get them **human-confirmed** (one approve/deny for tidy/focus; batch confirm for groups). Worker: none. | **DECIDED** 2026-10-16 |
 | D2 | Are group writes confirm-gated? | **Yes, always** (all tiers): groups are the user's own persisted structure. One `BatchConfirmModal`, one row per proposed group, approved rows apply as **one undo step**. | **DECIDED** 2026-10-16 |
-| D3 | Default tidy mode. | Agents: `tidy_canvas` default becomes **`fit`**. UI: add **"Fit to screen"** as the FIRST preset and bind `t` to it; Smart stays one click away. | **DECIDED** 2026-10-16 |
+| D3 | Default tidy mode. | Agents: `tidy_canvas` default becomes **`fit`**. UI: add **"Fit to screen"** as the FIRST preset and bind `t` to it; Smart stays one click away. | **DECIDED** 2026-10-16 · default **superseded by D8 (a)**: "By role" is first + `t`, Fit to screen is 2nd |
 | D4 | When everything can't be readable on one screen. | Default overflow **`report`** (arrange, refit, return `readable:false` + a hint to focus a group). `pages` / `shrink` are opt-in per call. Fit never resizes boards unless `overflow:'shrink'`. | **DECIDED** 2026-10-16 |
 | D5 | Where context derivation runs. | **MAIN**, as a pure shared module over the extended mirror (the `buildLayoutDigest` pattern), so `canvas://contexts` needs no renderer round-trip. The renderer imports the same module for `fit` packing. | proposed |
 | D6 | Tool surface for group edits. | **Two** tools, not four: `group_boards` (create, batch) + `edit_groups` (rename / add / remove / ungroup ops, batch). Fewer tools = clearer agent choice. | proposed (changes the plan board's "4 tools") |
-| D7 | May `roles` resize boards? | **Yes, by class** (ROLE-LAYOUT §5). Flexible boards (terminal, swarm, command, dataflow) take the slot size, ≥ their role minimum. Previews keep their device aspect. Planning, kanban and file boards are **rigid and never resized**. `resize:false` keeps the role ORDER only, with positions from C4. `fit` stays position-only (D4 unchanged). | **OPEN** |
-| D8 | What does "tidy up" (the agents' default and the `t` key) mean once `roles` exists? | Either (a) **`roles` becomes the default**, falling back to `fit` (position-only) when a unit has no role signal beyond plain shells; or (b) keep `fit` as the default (D3) and offer "Arrange by role" as the 2nd preset plus an explicit agent mode. Recommend **(a)**, because it is what the user asked for. | **OPEN** |
-| D9 | What role data reaches MAIN? | **Classifications only**: `agent:boolean`, port numbers and `lastFocusedAt`. Never the raw launch line, which can carry env-prefixed secrets. | **OPEN** (recommend yes) |
-| D10 | How does an api terminal link to the browser that calls it? | Add a **loopback origin-port observer** on each preview's OSR session. It records ONLY the port of requests to `localhost`/`127.0.0.1`/`[::1]`: no paths, no bodies, no headers. It is ephemeral, never persisted, and independent of the Data-Flow capture opt-in. When it is absent, the fallbacks are Named Group > same cwd > sibling-folder heuristic (`apps/api` ↔ `apps/web`). | **OPEN** (recommend yes) |
+| D7 | May `roles` resize boards? | **Yes, by class** (ROLE-LAYOUT §5). Flexible boards (terminal, swarm, command, dataflow) take the slot size, ≥ their role minimum. Previews keep their device aspect. Planning, kanban and file boards are **rigid and never resized**. `resize:false` keeps the role ORDER only, with positions from C4. `fit` stays position-only (D4 unchanged). | **DECIDED** 2026-10-16 (yes, by class) |
+| D8 | What does "tidy up" (the agents' default and the `t` key) mean once `roles` exists? | Either (a) **`roles` becomes the default**, falling back to `fit` (position-only) when a unit has no role signal beyond plain shells; or (b) keep `fit` as the default (D3) and offer "Arrange by role" as the 2nd preset plus an explicit agent mode. Recommend **(a)**, because it is what the user asked for. | **DECIDED** 2026-10-16: **(a)**. Mechanics: an omitted `mode` (agent) or the `t` key is an **implicit** `roles` (`implicit:true`, C5/C10). Under it, a unit whose boards are all `shell` keeps its sizes (position-only, C4 in-unit packing) instead of the `peers` grid. An explicit `mode:'roles'` never falls back. The package must NOT fill a default `mode` (C6), or the host could not tell implicit from explicit |
+| D9 | What role data reaches MAIN? | **Classifications only**: `agent:boolean`, port numbers and `lastFocusedAt`. Never the raw launch line, which can carry env-prefixed secrets. | **DECIDED** 2026-10-16 (yes) |
+| D10 | How does an api terminal link to the browser that calls it? | Add a **loopback origin-port observer** on each preview's OSR session. It records ONLY the port of requests to `localhost`/`127.0.0.1`/`[::1]`: no paths, no bodies, no headers. It is ephemeral, never persisted, and independent of the Data-Flow capture opt-in. When it is absent, the fallbacks are Named Group > same cwd > sibling-folder heuristic (`apps/api` ↔ `apps/web`). | **DECIDED** 2026-10-16 (yes, always on) |
 
 ---
 
@@ -277,7 +278,7 @@ Docked terminals are filtered by the caller (`tidyApply` precedent), never passe
 ### C5 — `McpCommand` additions (`src/shared/mcpTypes.ts`)  · owners I1 / I2
 
 ```ts
-export type TidyMode = 'fit' | 'smart' | 'by-type' | 'grid' | 'tile'
+export type TidyMode = 'fit' | 'roles' | 'smart' | 'by-type' | 'grid' | 'tile'
 export type TidyScope = 'all' | 'visible' | { groupId: string }
 export type GroupEditOp =
   | { op: 'rename'; groupId: string; name: string }
@@ -287,7 +288,9 @@ export type GroupEditOp =
 
 // WIDENED (I2): existing variant, new optional fields — old MAIN builds send a subset.
 | { type: 'tidyBoards'; mode?: TidyMode; template?: TileTemplate; scope?: TidyScope;
-    overflow?: FitOverflow; fit?: boolean }
+    overflow?: FitOverflow; fit?: boolean;
+    primary?: string; resize?: boolean;   // roles only (D7)
+    implicit?: boolean }                  // D8 (a): MAIN sets it when the agent omitted `mode`
 // NEW (I1): applied AFTER MAIN's batch confirm — only the approved rows arrive here.
 | { type: 'applyGroups'; create: Array<{ name: string; boardIds: string[] }>; edits: GroupEditOp[] }
 
@@ -324,7 +327,7 @@ export const MAX_CONTEXTS = 50
 
 | Surface | Input | Output | Gate (per D1/D2) |
 |---|---|---|---|
-| `tidy_canvas` (widened) | `{ mode?: TidyMode (default per D8), template? (required iff mode 'tile'), scope?: 'all'\|'visible'\|{groupId}, overflow?, fit?: boolean (default true), primary?: boardId (roles only; forces the hero), resize?: boolean (roles only, default true, D7) }` | `{ moved, fitZoom, readable, pages?, units?: [{ scene, heroIds, why }] }` (`units` for roles) | orchestrator un-gated; lead/connected confirm |
+| `tidy_canvas` (widened) | `{ mode?: TidyMode (omitted ⇒ host resolves an implicit `roles`, D8 a — the schema must NOT `.default()` it; say the default in the description), template? (required iff mode 'tile'), scope?: 'all'\|'visible'\|{groupId}, overflow?, fit?: boolean (default true), primary?: boardId (roles only; forces the hero), resize?: boolean (roles only, default true, D7) }` | `{ moved, fitZoom, readable, pages?, units?: [{ scene, heroIds, why }] }` (`units` for roles) | orchestrator un-gated; lead/connected confirm |
 | `group_boards` (new) | `{ groups: [{ name, boardIds }] }` (1..MAX_GROUP_BATCH) | per row `{ status: 'created'\|'denied'\|'rejected', groupId?, detail? }` | batch confirm, all tiers except worker |
 | `edit_groups` (new) | `{ ops: GroupEditOp[] }` (1..MAX_GROUP_BATCH) | per row `{ status: 'applied'\|'denied'\|'rejected', detail? }` | batch confirm |
 | `canvas://contexts` (new resource) | — | `{ version: 1, contexts: DerivedContext[], ungrouped: string[] }` | read-only, orchestrator/lead/connected |
@@ -362,12 +365,16 @@ undo, the return shape, and *when to call* (`canvas://layout` → `fit.readable`
   + bidi/zero-width strip + clamp `GROUP_NAME_MAX`. **`spawn_group` adopts it too** (G11).
 - **`src/main/mcpTidy.ts`** (widened): forwards the new args; for lead/connected callers raises a
   single `ConfirmRequest` first (D1).
-- **Jarvis:** `jarvisTools.ts:429` passes `{ mode: 'fit' }` so "tidy up" is screen-aware.
+- **Jarvis:** `jarvisTools.ts:429` omits `mode` so "tidy up" is the implicit `roles` default (D8 a)
+  and screen-aware.
 
 ### C8 — UI  · owner I2 (after DESIGN.md sign-off)
 
-- `LAYOUT_PRESETS`: new first preset `{ id: 'fit', kind: 'tidy', tidyMode: 'fit', label: 'Fit to
-  screen', hint: 'Keep groups together, fit the window' }` (D3).
+- `LAYOUT_PRESETS` (D8 a, DESIGN W6): new first preset `{ id: 'roles', kind: 'tidy', tidyMode:
+  'roles', label: 'By role', hint: 'Lead / browser gets the big slot; linked boards sit beside it' }`
+  bound to `t` (an implicit `roles`), then `{ id: 'fit', kind: 'tidy', tidyMode: 'fit', label: 'Fit
+  to screen', hint: 'Keep groups together, fit the window' }`, then Smart.
+- After a `roles` tidy with units off-stage, the W7 `info` toast (Show all · Undo).
 - After any `fit` tidy that ends `readable:false`, one `info` toast with a **Focus group** action
   (the existing toast-action pattern).
 
@@ -433,6 +440,10 @@ export interface RoleLayoutOptions {
   overflow?: FitOverflow                  // D4 semantics
   resize?: boolean                        // default true (D7); false ⇒ role ORDER only, positions via C4
   readableZoom?: number                   // READABLE_ZOOM
+  /** D8 (a): true when `roles` was chosen implicitly (agent omitted `mode`, or the `t` key). A unit
+   *  whose boards are all `shell` then keeps its sizes (position-only, C4 in-unit packing) instead
+   *  of the `peers` grid. Explicit `mode:'roles'` leaves it false. Default false. */
+  implicit?: boolean
 }
 export interface RoleLayoutResult {
   placements: Array<{ id: string; x: number; y: number; w?: number; h?: number }> // w/h only flexible/aspect-locked
