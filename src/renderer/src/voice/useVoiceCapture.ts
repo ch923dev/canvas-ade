@@ -18,21 +18,12 @@ import workletUrl from './captureWorklet?worker&url'
 import { createSilenceWatchdog, micConstraints, type WorkletFrameMsg } from './captureMath'
 import { useVoiceStore } from '../store/voiceStore'
 import { suppressMicForward } from '../store/ttsStore'
-import { consumeFinal } from './finalConsumer'
+// Segment routing (local final → converse consumer or draft; cloud final → draft; the stop's
+// provisional tail → like a local final) lives in transcriptRouting.ts — see the rules there.
+import { applyCloudFinal, applyFinal, solidifyTail } from './transcriptRouting'
 
 interface ActiveCapture {
   dispose: () => void
-}
-
-/**
- * Route a finalized transcript segment into the dictation composer. Shared by BOTH delivery
- * paths: the local engine posts {t:'final'} over the session port (streamed while held), and
- * the cloud engine emits it out-of-band on voice:transcript (batch, after the port closed).
- * An armed converse consumer (Jarvis) takes the final instead of the draft (J3 seam).
- */
-function applyFinal(text: string): void {
-  if (!consumeFinal(text)) useVoiceStore.getState().finalReceived(text)
-  else useVoiceStore.getState().partialReceived('')
 }
 
 /** Renderer → MAIN frame message over the voice port (the stub/engine end counts these). */
@@ -67,7 +58,9 @@ function createCapture(port: MessagePort): ActiveCapture {
       /* port already neutered */
     }
     port.close()
-    useVoiceStore.getState().captureStopped()
+    // The provisional tail solidifies — routed like a final, so a Jarvis utterance cut off by the
+    // stop reaches the converse consumer (or its teardown drain), never the dictation draft (B0).
+    solidifyTail()
   }
 
   // MAIN's engine end signals teardown over the data plane (voice:session:stop → {t:'stop'}),
@@ -177,7 +170,8 @@ export function useVoiceCapture(): void {
     })
     // Phase 2 cloud STT: batch result/status delivered out-of-band (the session port is closed
     // right after {t:'eos'}). 'transcribing' drives the gap affordance; 'final' folds into the
-    // draft via the same applyFinal routing; 'error' is fail-visible (draft kept, flyout opens).
+    // draft (always dictation — B0, see transcriptRouting); 'error' is fail-visible (draft kept,
+    // flyout opens).
     const offTranscript = window.api.voice.onTranscript?.((ev) => {
       const s = useVoiceStore.getState()
       if (ev.kind === 'transcribing') {
@@ -185,7 +179,7 @@ export function useVoiceCapture(): void {
         s.setFlyoutOpen(true)
       } else if (ev.kind === 'final') {
         s.setTranscribing(false)
-        applyFinal(ev.text)
+        applyCloudFinal(ev.text)
       } else if (ev.kind === 'error') {
         s.setTranscribing(false)
         s.setCloudError(ev.reason)

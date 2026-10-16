@@ -27,7 +27,20 @@ import { CloudTranscribeError, type CloudTranscribe } from './openaiTranscribe'
 export type CloudSttEvent =
   | { kind: 'transcribing' } // eos received, OpenAI round-trip in flight
   | { kind: 'final'; text: string } // formatRestore-corrected transcript
-  | { kind: 'error'; reason: string } // network / quota / timeout — fail-visible, draft kept
+  | { kind: 'error'; reason: string } // network / quota / timeout / too-long — fail-visible, draft kept
+
+/**
+ * B0.3 — hard ceiling on one session's buffered PCM (16 kHz s16le mono = 32 000 B/s, so 20 MiB ≈
+ * 10.9 min). Bound by the vendor, not a guess: OpenAI's transcription endpoint rejects uploads over
+ * 25 MB, and the WAV header + multipart envelope must fit under that too. Legitimate dictation never
+ * gets near it — the renderer's babysitter hard-caps a dictation session at 120 s (VoicePill
+ * MAX_SESSION_MS, ≈3.8 MB) — so a buffer reaching it is a runaway by definition (a renderer bug, or
+ * the pre-B0.1 converse-on-cloud path that stood the babysitter down). It is defence in depth, not a
+ * product limit, so on a trip the session ENDS and the audio is DROPPED rather than uploaded: an
+ * unattended ten-minute recording is exactly the audio that should not leave the machine (cost and
+ * privacy both), and the fail-visible error tells the user nothing was sent.
+ */
+export const MAX_CLOUD_BUFFER_BYTES = 20 * 1024 * 1024
 
 /** The repo symbol sets, read fresh per transcription (task C provider). */
 export interface CloudSymbolSets {
@@ -48,6 +61,8 @@ export interface CloudSttDeps {
   getSymbols: () => CloudSymbolSets
   /** Safety-net drain timeout if {t:'eos'} never arrives (renderer died). Mirrors the stub. */
   eosTimeoutMs?: number
+  /** Buffer ceiling override (tests); default MAX_CLOUD_BUFFER_BYTES. */
+  maxBufferBytes?: number
 }
 
 interface CloudSession {
@@ -55,6 +70,8 @@ interface CloudSession {
   seq: number
   frames: number
   chunks: Buffer[]
+  /** Running byte total of `chunks` (the B0.3 cap input — summing on every frame would be O(n²)). */
+  bytes: number
   eos: boolean
   finished: boolean
   onEos: (() => void) | null
@@ -63,8 +80,24 @@ interface CloudSession {
 export function createCloudSttEngine(deps: CloudSttDeps): VoiceEngineHandle {
   const { local, transcribe, emit, getSymbols } = deps
   const eosTimeoutMs = deps.eosTimeoutMs ?? 1000
+  const maxBufferBytes = deps.maxBufferBytes ?? MAX_CLOUD_BUFFER_BYTES
   let session: CloudSession | null = null
   let latestSeq = 0
+
+  /** B0.3 trip: drop the audio, tell the renderer to release the mic, surface the error. The
+   *  session stays registered (frames still count; a later stop drains it normally) — but
+   *  `finished` makes every further frame and the eventual eos a no-op, so nothing is uploaded. */
+  const tripBufferCap = (s: CloudSession): void => {
+    s.finished = true
+    s.chunks = []
+    s.bytes = 0
+    try {
+      s.port.postMessage({ t: 'stop' })
+    } catch {
+      /* port already gone */
+    }
+    if (s.seq === latestSeq) emit({ kind: 'error', reason: 'too-long' })
+  }
 
   /** Assemble + transcribe once per session, on {t:'eos'} (or the drain timeout). */
   const finishCapture = async (s: CloudSession): Promise<void> => {
@@ -123,6 +156,7 @@ export function createCloudSttEngine(deps: CloudSttDeps): VoiceEngineHandle {
         seq: ++latestSeq,
         frames: 0,
         chunks: [],
+        bytes: 0,
         eos: false,
         finished: false,
         onEos: null
@@ -132,7 +166,11 @@ export function createCloudSttEngine(deps: CloudSttDeps): VoiceEngineHandle {
         const m = e.data as { t?: string; d?: ArrayBuffer } | null
         if (m?.t === 'frame') {
           s.frames++
-          if (m.d instanceof ArrayBuffer) s.chunks.push(Buffer.from(m.d))
+          // A finished session (capped, or already transcribing) buffers nothing more.
+          if (s.finished || !(m.d instanceof ArrayBuffer)) return
+          s.chunks.push(Buffer.from(m.d))
+          s.bytes += m.d.byteLength
+          if (s.bytes > maxBufferBytes) tripBufferCap(s)
         } else if (m?.t === 'eos') {
           s.eos = true
           s.onEos?.()
