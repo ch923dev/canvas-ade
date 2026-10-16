@@ -74,7 +74,8 @@ New single-source module **`src/shared/spatialTypes.ts`** (imported by MAIN, pre
 the `src/shared/mcpTypes.ts` precedent):
 
 ```ts
-export interface Rect { x: number; y: number; w: number; h: number }
+// Rect is DEFINED in spatialGeometry.ts (L7, which merges first) and re-exported here.
+export type { Rect } from './spatialGeometry'
 
 /** The user's live view of the canvas. Session state — NEVER persisted. */
 export interface CanvasView {
@@ -147,6 +148,7 @@ Shared geometry (**`src/shared/spatialGeometry.ts`**, new — used by MAIN diges
 packer so both agree on "fits"):
 
 ```ts
+export interface Rect { x: number; y: number; w: number; h: number }
 export const READABLE_ZOOM = 0.4          // must equal canvasView.LOD_ZOOM (parity unit test)
 export const FIT_PADDING_PX = 64          // must equal FIT_FRAME.padding (parity unit test)
 export const FIT_MAX_ZOOM = 2             // must equal FIT_FRAME.maxZoom (parity unit test)
@@ -218,7 +220,8 @@ Rules (each one gets a unit test):
 5. **Singletons are never emitted.**
 6. **confidence** = high if any group/preview/orchestration edge; else medium if cwd/fileRef; else low.
 7. **suggestedName** priority: planning board title in the cluster → terminal title → common cwd
-   basename → `Context N`. Sanitized with `sanitizeGroupName` (C7).
+   basename → `Context N`. Sanitized with `sanitizeGroupName` (C7; it lives in the shared
+   `src/shared/groupName.ts`, which L6 creates, so this shared module can call it).
 8. **Deterministic:** sorted ids, sorted output (by first boardId), no randomness. Cap `MAX_CONTEXTS`.
 
 ### C4 — `fitLayout()`  · owner L7 (pure, new file, zero shared files)
@@ -361,8 +364,9 @@ undo, the return shape, and *when to call* (`canvas://layout` → `fit.readable`
 - **`ConfirmBatchItem.preselected?: boolean`** (new, optional, default `true` — `mcpConfirm.ts:84`,
   honoured at `BatchConfirmModal.tsx:81`): low-confidence group rows start unchecked (DESIGN W1).
   Additive — existing batch callers are unchanged.
-- **`sanitizeGroupName(raw)`** (new, `src/main/dispatchSanitize.ts`): whitespace collapse + C0/C1/DEL
-  + bidi/zero-width strip + clamp `GROUP_NAME_MAX`. **`spawn_group` adopts it too** (G11).
+- **`sanitizeGroupName(raw)`** (new, pure, **`src/shared/groupName.ts`**, built by L6 because C3
+  needs it and a shared module cannot import from `src/main`; it also exports `GROUP_NAME_MAX = 80`):
+  whitespace collapse + C0/C1/DEL + bidi/zero-width strip + clamp `GROUP_NAME_MAX`. I1 calls it from MAIN. **`spawn_group` adopts it too** (G11).
 - **`src/main/mcpTidy.ts`** (widened): forwards the new args; for lead/connected callers raises a
   single `ConfirmRequest` first (D1).
 - **Jarvis:** `jarvisTools.ts:429` omits `mode` so "tidy up" is the implicit `roles` default (D8 a)
@@ -418,7 +422,8 @@ export function buildRoleUnits(
 `BoardContextFields` gains `agent?: boolean` · `ports?: number[]` (≤ 8, 1..65535) ·
 `callsPorts?: number[]` (≤ 8) · `lastFocusedAt?: number` · `sourceBoardId?: string`. All of them are
 ephemeral and never persisted (D9). MAIN reads the lead from `leadAuthority`, which is its own source of
-truth, and does not take it from the renderer. Boards in `canvas://layout` (C2) gain `role: BoardRole`.
+truth, and does not take it from the renderer. Boards in `canvas://layout` (C2) gain `role: BoardRole`
+(added by **L11**, the first lane that has both L5's digest and L9's `boardRoles.ts` on main).
 
 The producers (L11):
 - `agentClassify.ts` turns `agentKind`, or a launch line that matches a known agent CLI, into a boolean.
@@ -490,14 +495,14 @@ geometry).
 
 | Lane | Contract pieces | Files it owns |
 |---|---|---|
-| L5 | S0 (G1 aspect, G4 refit, G8 all groups) → C5 pre-split → C1 + C2 | `useMcpCommands.ts`, new `spatialMcpApply.ts`, `layoutModel.ts`, `preload/mcpApi.ts`, `useMcpPublish.ts`, `boardRegistry.ts` (mcp:boards), new `screenInfo.ts`, new `src/shared/spatialTypes.ts`, new `src/shared/spatialGeometry.ts` |
-| L6 | C3 | new `src/shared/deriveContexts.ts` (+ test) |
-| L7 | C4 | new `src/renderer/src/lib/fitLayout.ts` (+ test) — imports C2 geometry; stub the import until L5 lands it |
+| L5 | S0 (G1 aspect, G4 refit, G8 all groups) → C5 pre-split → C1 + C2 | `useMcpCommands.ts`, new `spatialMcpApply.ts`, `layoutModel.ts`, `preload/mcpApi.ts`, `useMcpPublish.ts`, `boardRegistry.ts` (mcp:boards), new `screenInfo.ts`, new `src/shared/spatialTypes.ts` (imports C2 geometry from L7; until L7 merges, a temp verbatim copy the coordinator drops at rebase) |
+| L6 | C3 | new `src/shared/deriveContexts.ts` + new `src/shared/groupName.ts` (`sanitizeGroupName`, C7) (+ tests) |
+| L7 | C4 + C2 geometry | new `src/renderer/src/lib/fitLayout.ts` + new `src/shared/spatialGeometry.ts` (owns `Rect` + the parity tests) (+ tests) — ownership moved from L5 2026-10-16 because L7 merges first |
 | L8 | C6 | `canvas-ade-mcp`: `constants.ts`, `index.ts`, `factory.ts`, `Orchestrator.ts`, `mock.ts`, new tool + resource files, contract tests |
-| I1 | C5 `applyGroups`, C7 groups | new `mcpGroups.ts`, `groupSlice.ts`, `spatialMcpApply.ts` (groups case), `dispatchSanitize.ts`, `mcpConfirm.ts` (`preselected`), `BatchConfirmModal.tsx` |
+| I1 | C5 `applyGroups`, C7 groups | new `mcpGroups.ts`, `groupSlice.ts`, `spatialMcpApply.ts` (groups case), `mcpLifecycle.ts` (`spawn_group` adopts the shared `sanitizeGroupName`), `mcpConfirm.ts` (`preselected`), `BatchConfirmModal.tsx` |
 | L9 | C9 (pure) | new `src/shared/boardRoles.ts` (+ test). Imports C3 types; stub them until L6 lands |
 | L10 | C10 | new `src/renderer/src/lib/roleLayout.ts` + `roleTemplates.ts` (+ golden S1–S15 + property tests). Stubs the C2/C4/C9 imports until they land |
-| L11 | C9 producers | new `src/renderer/src/lib/agentClassify.ts`, new `src/renderer/src/store/roleSignalsStore.ts`, new `src/main/previewOriginPorts.ts` (D10), plus ONE wiring line in `useMcpPublish.ts` **after L5 merges** |
+| L11 | C9 producers | new `src/renderer/src/lib/agentClassify.ts`, new `src/renderer/src/store/roleSignalsStore.ts`, new `src/main/previewOriginPorts.ts` (D10), plus ONE wiring line in `useMcpPublish.ts` **after L5 merges**, plus `role` on `canvas://layout` boards (C9, needs L5 + L9 on main) |
 | I2 | C5 `tidyBoards` widening, C7 tidy/Jarvis, C8, **`roles` wiring** | `fitLayout` + `roleLayout` wiring in `canvasStore.ts`/`tidyLayout.ts`, `spatialMcpApply.ts` (tidy case), `mcpTidy.ts`, `jarvisTools.ts` ("tidy up" per D8), `layoutPresets.ts` (DESIGN W6), new `e2e/spatial.e2e.ts` (scenarios S3/S4 at two window sizes) |
 
 Shared-but-tiny: both I1 and I2 add variants to `src/shared/mcpTypes.ts` — whichever merges second
