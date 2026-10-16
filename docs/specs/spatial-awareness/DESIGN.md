@@ -117,7 +117,44 @@ stays un-gated as today.
 └──────────────────────────────────────────────────────┘
 ```
 
+## W6 — Tidy picker gains "Arrange by role" (roles mode; its position depends on D8)
+
+D8 (a): "By role" goes first and takes `T`, and "Fit to screen" moves to second. D8 (b): "Fit to
+screen" stays first and "By role" is second. The thumbnail is drawn from `zones` like every
+other preset: one large hero zone plus a stacked rail.
+
+```
+ Tidy ▾  (T)
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐│
+│ │████ ▯│  │┌┐┌┐ ┌┐│  │▭ ▭ ▭ │  │▯ ▯   │  │▯▯▯   │  │▯▯▯▯  │  │█ ▯   │  │▦▦    ││
+│ │████ ▯│  │└┘└┘ └┘│  │ ▭ ▭  │  │      │  │      │  │      │  │  ▯   │  │▦▦    ││
+│ │████ ▯│  │┌┐┌┐   │  │      │  │      │  │      │  │      │  │      │  │      ││
+│ └──────┘  └──────┘  └──────┘  └──────┘  └──────┘  └──────┘  └──────┘  └──────┘│
+│ By role    Fit to    Smart     2 cols    3 cols    4 cols    Main+side  Grid  │
+│            screen                                                          │
+│ "Lead / browser gets the big slot; linked boards sit beside it"  ← hint     │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+## W7 — Roles result toast (explains what it did; one existing `info` toast)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ ⓘ  Arranged by role · hero: Browser "App" (preview of :5173)   │
+│     2 more contexts off-stage: Docs, API tests                 │
+│                              [ Show all ]   [ Undo ]           │
+└────────────────────────────────────────────────────────────────┘
+```
+
+- **Show all** frames every unit. If that is not readable, it follows W3's existing copy.
+- **Undo** is the existing one-step undo.
+- No toast appears for a single unit with nothing off-stage. Silence is the success state.
+
+The scenario wireframes S1–S15, which show where boards land, are in [`ROLE-LAYOUT.md`](./ROLE-LAYOUT.md) §7.
+
 ---
 
 **Sign-off checklist:** W1 copy + low-confidence default · W2 Fit first + `T` rebound · W3 toast
-actions · W5 confirm for terminal agents. Tokens: existing only.
+actions · W5 confirm for terminal agents · **W6 By-role preset position (D8) · W7 toast copy · ROLE-LAYOUT S1–S15
+landings**. Tokens: existing only.

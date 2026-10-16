@@ -4,13 +4,15 @@
 contexts they belong to, and know the user's screen size so "tidy up" arranges the boards to fit
 the screen.
 
-This file is the **Wave-0 contract**. Every lane (L5–L8, I1–I2) builds against the types and rules
+This file is the **Wave-0 contract**. Every lane (L5–L11, I1–I2) builds against the types and rules
 below, so the pure libraries and the package wire can be written **in parallel**. Change a contract
 here first (one commit on `feat/spatial-awareness`), then tell the affected lanes.
 
 - Plan board (Kanban, one column per wave): canvas id `b8b4c254-1a51-4709-87a1-e5e02220a8ca`
 - Design artifact (wireframes, sign-off required before UI code): [`./DESIGN.md`](./DESIGN.md)
+- Role-aware tidy (`mode:'roles'`) scenario catalog + wireframes (design artifact for C9/C10): [`./ROLE-LAYOUT.md`](./ROLE-LAYOUT.md)
 - Baseline: desktop `main` `6138cd7b` (v0.47.6) · `@expanse-ade/mcp` `origin/main` `0212fa5` (0.25.0)
+- **Wave 2 baseline** (after Wave 1 merged 2026-10-16): desktop `main` `0236048b` (v0.47.9) · `@expanse-ade/mcp` `main` `a42eac2d` (0.26.0, which adds structured error codes, exported caps and PR CI)
 
 ---
 
@@ -44,7 +46,9 @@ persisted (scene/session split).
 ## 2. Decisions
 
 D1–D4 **decided by the user 2026-10-16** (all four recommendations accepted). D5–D6 are
-coordinator calls recorded here; change them only through this file.
+coordinator calls recorded here; change them only through this file. **D7–D10 (role-aware tidy,
+added 2026-10-16) are OPEN. Ask the user before L10 freezes template numbers or L11 builds the
+D10 observer.**
 
 | ID | Question | Recommendation | Status |
 |---|---|---|---|
@@ -54,6 +58,10 @@ coordinator calls recorded here; change them only through this file.
 | D4 | When everything can't be readable on one screen. | Default overflow **`report`** (arrange, refit, return `readable:false` + a hint to focus a group). `pages` / `shrink` are opt-in per call. Fit never resizes boards unless `overflow:'shrink'`. | **DECIDED** 2026-10-16 |
 | D5 | Where context derivation runs. | **MAIN**, as a pure shared module over the extended mirror (the `buildLayoutDigest` pattern), so `canvas://contexts` needs no renderer round-trip. The renderer imports the same module for `fit` packing. | proposed |
 | D6 | Tool surface for group edits. | **Two** tools, not four: `group_boards` (create, batch) + `edit_groups` (rename / add / remove / ungroup ops, batch). Fewer tools = clearer agent choice. | proposed (changes the plan board's "4 tools") |
+| D7 | May `roles` resize boards? | **Yes, by class** (ROLE-LAYOUT §5). Flexible boards (terminal, swarm, command, dataflow) take the slot size, ≥ their role minimum. Previews keep their device aspect. Planning, kanban and file boards are **rigid and never resized**. `resize:false` keeps the role ORDER only, with positions from C4. `fit` stays position-only (D4 unchanged). | **OPEN** |
+| D8 | What does "tidy up" (the agents' default and the `t` key) mean once `roles` exists? | Either (a) **`roles` becomes the default**, falling back to `fit` (position-only) when a unit has no role signal beyond plain shells; or (b) keep `fit` as the default (D3) and offer "Arrange by role" as the 2nd preset plus an explicit agent mode. Recommend **(a)**, because it is what the user asked for. | **OPEN** |
+| D9 | What role data reaches MAIN? | **Classifications only**: `agent:boolean`, port numbers and `lastFocusedAt`. Never the raw launch line, which can carry env-prefixed secrets. | **OPEN** (recommend yes) |
+| D10 | How does an api terminal link to the browser that calls it? | Add a **loopback origin-port observer** on each preview's OSR session. It records ONLY the port of requests to `localhost`/`127.0.0.1`/`[::1]`: no paths, no bodies, no headers. It is ephemeral, never persisted, and independent of the Data-Flow capture opt-in. When it is absent, the fallbacks are Named Group > same cwd > sibling-folder heuristic (`apps/api` ↔ `apps/web`). | **OPEN** (recommend yes) |
 
 ---
 
@@ -157,10 +165,12 @@ export interface ContextBoardInput {
   cwd?: string; previewSourceId?: string; dockedIn?: string
   path?: string                          // file boards
   fileRefs?: Array<{ path: string }>     // planning boards
+  ports?: number[]                       // terminal: detected loopback listening ports (C9 signal, L11)
+  callsPorts?: number[]                  // browser: loopback ports its page requested (D10, L11)
 }
 export interface ContextConnectorInput { sourceId: string; targetId: string; kind: 'preview' | 'orchestration' }
 export interface ContextGroupInput { id: string; name: string; boardIds: string[] }
-export type ContextSignal = 'group' | 'preview' | 'orchestration' | 'cwd' | 'fileRef' | 'title'
+export type ContextSignal = 'group' | 'preview' | 'orchestration' | 'port' | 'cwd' | 'fileRef' | 'title'
 
 export interface DerivedContext {
   key: string                    // stable: hash of the sorted boardIds
@@ -198,6 +208,7 @@ Rules (each one gets a unit test):
    - **orchestration** — cable source→target, **except from a hub**: a source with ≥ 3 outgoing
      orchestration cables (a lead/command board) contributes no edges, so one lead never fuses all
      its workers into one blob · high
+   - **port** — a browser's `callsPorts` intersects a terminal's `ports` (D10) · high
    - **cwd** — same normalized cwd (case-insensitive on win32, separators normalized, trailing
      slash stripped). A cwd equal to `projectRoot` or empty carries **no** signal · medium
    - **fileRef** — a planning board's `fileRefs[].path` equals a file board's `path`, or two planning
@@ -300,7 +311,7 @@ export type GroupEditOp =
 New / widened constants (exported from the package root so the host parity test can pin them):
 
 ```ts
-export const TIDY_MODES = ['fit', 'smart', 'by-type', 'grid', 'tile'] as const   // 'fit' + 'tile' added
+export const TIDY_MODES = ['fit', 'roles', 'smart', 'by-type', 'grid', 'tile'] as const   // 'fit' + 'roles' + 'tile' added
 export const TILE_TEMPLATES = ['cols-2', 'cols-3', 'cols-4', 'main-sidebar', 'grid'] as const
 export const TIDY_OVERFLOW = ['report', 'pages', 'shrink'] as const
 export const TOOL_GROUP_BOARDS = 'group_boards'
@@ -313,7 +324,7 @@ export const MAX_CONTEXTS = 50
 
 | Surface | Input | Output | Gate (per D1/D2) |
 |---|---|---|---|
-| `tidy_canvas` (widened) | `{ mode?: TidyMode (default 'fit'), template? (required iff mode 'tile'), scope?: 'all'\|'visible'\|{groupId}, overflow?, fit?: boolean (default true) }` | `{ moved, fitZoom, readable, pages? }` | orchestrator un-gated; lead/connected confirm |
+| `tidy_canvas` (widened) | `{ mode?: TidyMode (default per D8), template? (required iff mode 'tile'), scope?: 'all'\|'visible'\|{groupId}, overflow?, fit?: boolean (default true), primary?: boardId (roles only; forces the hero), resize?: boolean (roles only, default true, D7) }` | `{ moved, fitZoom, readable, pages?, units?: [{ scene, heroIds, why }] }` (`units` for roles) | orchestrator un-gated; lead/connected confirm |
 | `group_boards` (new) | `{ groups: [{ name, boardIds }] }` (1..MAX_GROUP_BATCH) | per row `{ status: 'created'\|'denied'\|'rejected', groupId?, detail? }` | batch confirm, all tiers except worker |
 | `edit_groups` (new) | `{ ops: GroupEditOp[] }` (1..MAX_GROUP_BATCH) | per row `{ status: 'applied'\|'denied'\|'rejected', detail? }` | batch confirm |
 | `canvas://contexts` (new resource) | — | `{ version: 1, contexts: DerivedContext[], ungrouped: string[] }` | read-only, orchestrator/lead/connected |
@@ -360,17 +371,100 @@ undo, the return shape, and *when to call* (`canvas://layout` → `fit.readable`
 - After any `fit` tidy that ends `readable:false`, one `info` toast with a **Focus group** action
   (the existing toast-action pattern).
 
+### C9 — Role model (`roles` input)  · owner L9 (pure, new file) · signal producers L11
+
+**`src/shared/boardRoles.ts`** is pure. MAIN imports it for `canvas://layout` and the renderer imports
+it for C10. The rules are in [`ROLE-LAYOUT.md`](./ROLE-LAYOUT.md) §1–§3, and each rule gets a unit test.
+
+```ts
+export type BoardRole =
+  | 'lead' | 'swarm' | 'command' | 'agent' | 'preview'
+  | 'plan' | 'tracker' | 'dataflow' | 'file' | 'server' | 'shell'
+export const ROLE_WEIGHT: Readonly<Record<BoardRole, number>> // lead 100 … shell 10 (ROLE-LAYOUT §2)
+export type Scene = 'lead' | 'hub' | 'pair' | 'stack' | 'peers' | 'docs' | 'single'
+
+export interface RoleBoardInput {
+  id: string; type: string; x: number; y: number; w: number; h: number
+  previewSourceId?: string; dockedIn?: string; sourceBoardId?: string // dataflow → browser
+  agent?: boolean; ports?: number[]; callsPorts?: number[]; lastFocusedAt?: number
+}
+export interface BoardRoleInfo { id: string; role: BoardRole; weight: number; links: string[]; why: string }
+export interface RoleUnit {
+  key: string; boardIds: string[]; source: 'group' | 'context' | 'team' | 'single'
+  scene: Scene; heroIds: string[]
+}
+export function deriveRoles(
+  boards: readonly RoleBoardInput[], connectors: readonly ContextConnectorInput[],
+  opts: { leadBoardId?: string | null }
+): Map<string, BoardRoleInfo>
+/** Units = Named Groups ∪ C3 contexts ∪ TEAM units ∪ singles. A team unit is a lead/command/swarm
+ *  board plus its direct cable targets that are not already grouped (C3's hub rule drops those
+ *  edges on purpose). Deterministic. */
+export function buildRoleUnits(
+  boards: readonly RoleBoardInput[], connectors: readonly ContextConnectorInput[],
+  groups: readonly ContextGroupInput[], contexts: readonly DerivedContext[],
+  roles: ReadonlyMap<string, BoardRoleInfo>
+): RoleUnit[]
+```
+
+**Mirror additions to C1.** L5 owns the shape and the sanitizer; L11 owns the producers.
+`BoardContextFields` gains `agent?: boolean` · `ports?: number[]` (≤ 8, 1..65535) ·
+`callsPorts?: number[]` (≤ 8) · `lastFocusedAt?: number` · `sourceBoardId?: string`. All of them are
+ephemeral and never persisted (D9). MAIN reads the lead from `leadAuthority`, which is its own source of
+truth, and does not take it from the renderer. Boards in `canvas://layout` (C2) gain `role: BoardRole`.
+
+The producers (L11):
+- `agentClassify.ts` turns `agentKind`, or a launch line that matches a known agent CLI, into a boolean.
+- `roleSignalsStore.ts` holds each terminal's `ports` (fed by the existing detect poll) and
+  `lastFocusedAt`. Ephemeral.
+- `previewOriginPorts.ts` in MAIN is the D10 observer on each preview's OSR session. Loopback only.
+
+### C10 — `roleLayout()`  · owner L10 (pure, new files)
+
+**`src/renderer/src/lib/roleLayout.ts`** plus **`roleTemplates.ts`**, which holds the template constants
+and exports them for the golden tests. The algorithm, templates, sizing classes and overflow rules
+are in ROLE-LAYOUT §1 and §4–§6.
+
+```ts
+export interface RoleLayoutOptions {
+  pane: { w: number; h: number }          // screen px (C1 view)
+  primary?: string                        // force the hero (S14)
+  scope?: 'all' | { boardIds: string[] }  // selection scope (S12)
+  overflow?: FitOverflow                  // D4 semantics
+  resize?: boolean                        // default true (D7); false ⇒ role ORDER only, positions via C4
+  readableZoom?: number                   // READABLE_ZOOM
+}
+export interface RoleLayoutResult {
+  placements: Array<{ id: string; x: number; y: number; w?: number; h?: number }> // w/h only flexible/aspect-locked
+  stageKey: string; targetZoom: number; readable: boolean
+  camera: { x: number; y: number; zoom: number } // frames the stage unit
+  units: Array<{ key: string; scene: Scene; heroIds: string[]; template: string; why: string }>
+}
+export function roleLayout(
+  boards: readonly RoleBoardInput[], roles: ReadonlyMap<string, BoardRoleInfo>,
+  units: readonly RoleUnit[], opts: RoleLayoutOptions
+): RoleLayoutResult
+```
+
+Fixtures S1–S15 (ROLE-LAYOUT §7) are the golden tests, and ROLE-LAYOUT §8 gives the property tests.
+Multi-unit placement reuses C4's shelf packer: the stage fills the pane and the other units sit
+beside it.
+
 ---
 
 ## 4. Non-goals
 
 Auto-grouping without a confirm · persisting screen/camera data · multi-window layouts · LLM-based
 naming · resizing boards in `fit` (except `overflow:'shrink'`) · changing the persisted group
-shape.
+shape · resizing RIGID boards (planning/kanban/file) in `roles` · persisting any role signal ·
+LLM-chosen layouts (agents state the intent through mode, primary and scope; the engine does the
+geometry).
 
 ## 5. Test plan
 
-- **Unit (pure, L6/L7):** every C3 rule; C4 property tests; `spatialGeometry` parity with
+- **Unit (pure, L9/L10):** every C9 role, scene and unit rule; the C10 golden fixtures S1–S15; and the
+  ROLE-LAYOUT §8 property tests (rigid w/h untouched, preview aspect ±1px, minimums, determinism).
+- **Unit (pure, L6/L7):** every C3 rule (including the `port` edge); C4 property tests; `spatialGeometry` parity with
   `canvasView` (`READABLE_ZOOM`, `FIT_PADDING_PX`, `FIT_MAX_ZOOM`).
 - **Unit (host):** mirror sanitizer rejects bad `view`; digest v2 fields; `mcpGroups` row
   validation + one-confirm + one-command; tier membership (`tools/list`) per D1.
@@ -390,10 +484,17 @@ shape.
 | L7 | C4 | new `src/renderer/src/lib/fitLayout.ts` (+ test) — imports C2 geometry; stub the import until L5 lands it |
 | L8 | C6 | `canvas-ade-mcp`: `constants.ts`, `index.ts`, `factory.ts`, `Orchestrator.ts`, `mock.ts`, new tool + resource files, contract tests |
 | I1 | C5 `applyGroups`, C7 groups | new `mcpGroups.ts`, `groupSlice.ts`, `spatialMcpApply.ts` (groups case), `dispatchSanitize.ts`, `mcpConfirm.ts` (`preselected`), `BatchConfirmModal.tsx` |
-| I2 | C5 `tidyBoards` widening, C7 tidy/Jarvis, C8 | `fitLayout` wiring in `canvasStore.ts`/`tidyLayout.ts`, `spatialMcpApply.ts` (tidy case), `mcpTidy.ts`, `jarvisTools.ts`, `layoutPresets.ts`, new `e2e/spatial.e2e.ts` |
+| L9 | C9 (pure) | new `src/shared/boardRoles.ts` (+ test). Imports C3 types; stub them until L6 lands |
+| L10 | C10 | new `src/renderer/src/lib/roleLayout.ts` + `roleTemplates.ts` (+ golden S1–S15 + property tests). Stubs the C2/C4/C9 imports until they land |
+| L11 | C9 producers | new `src/renderer/src/lib/agentClassify.ts`, new `src/renderer/src/store/roleSignalsStore.ts`, new `src/main/previewOriginPorts.ts` (D10), plus ONE wiring line in `useMcpPublish.ts` **after L5 merges** |
+| I2 | C5 `tidyBoards` widening, C7 tidy/Jarvis, C8, **`roles` wiring** | `fitLayout` + `roleLayout` wiring in `canvasStore.ts`/`tidyLayout.ts`, `spatialMcpApply.ts` (tidy case), `mcpTidy.ts`, `jarvisTools.ts` ("tidy up" per D8), `layoutPresets.ts` (DESIGN W6), new `e2e/spatial.e2e.ts` (scenarios S3/S4 at two window sizes) |
 
 Shared-but-tiny: both I1 and I2 add variants to `src/shared/mcpTypes.ts` — whichever merges second
 rebases (union edits only).
 
-Serial edges: L4 → L8 in the package repo · package publish → app pin bump (one PR, lockfile in a
+**Waves:** Wave 2 = L5 · L6 · L7 · L8 · **L9 · L10 · L11**. The pure lanes run in parallel; the cap is
+~4 live worktrees. Wave 3 = pin bump → I1 ∥ I2.
+
+Serial edges: **L9 → L10** (types; stubbing them is fine) · **L5 → L11's wiring line** · **L10 freezes its
+goldens only after D7–D10 are answered and ROLE-LAYOUT.md is signed off** · L4 → L8 in the package repo · package publish → app pin bump (one PR, lockfile in a
 scratch dir) → I1 ∥ I2 · L1 (e2e gate) merges before anything touches `e2e/`.
