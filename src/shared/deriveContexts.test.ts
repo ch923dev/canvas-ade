@@ -1,12 +1,12 @@
 /**
- * C3 `deriveContexts` — one named block per contract rule (SPEC §3 C3, rules 1-8), plus the D10
- * `port` edge, the hub rule and a seeded shuffle that pins determinism.
+ * C3 `deriveContexts` — one named block per contract rule (SPEC §3 C3, rules 1-9), plus the D10
+ * `port` edge, the dataflow edge, the hub rule and a seeded shuffle that pins determinism. The
+ * `DEFAULT_TITLE` parity test lives in `src/renderer/src/lib/deriveContexts.parity.test.ts`.
  */
 import { describe, expect, it } from 'vitest'
 import {
   contextKey,
   deriveContexts,
-  GENERIC_BOARD_TITLES,
   HUB_MIN_CABLES,
   MAX_CONTEXTS,
   normalizeContextPath,
@@ -38,6 +38,12 @@ const plan = (id: string, extra: Partial<Board> = {}): Board => ({
   ...extra
 })
 const file = (id: string, path: string): Board => ({ id, type: 'file', title: 'File', path })
+const dataflow = (id: string, sourceBoardId: string): Board => ({
+  id,
+  type: 'dataflow',
+  title: 'Data Flow',
+  sourceBoardId
+})
 const orch = (sourceId: string, targetId: string): ContextConnectorInput => ({
   sourceId,
   targetId,
@@ -147,7 +153,7 @@ describe('rule 2 · Named Groups are authoritative', () => {
   })
 })
 
-describe('rule 3 · absorb into exactly one group', () => {
+describe('rule 3 · absorb whole stray components into exactly one group', () => {
   it('absorbs an ungrouped browser that previews a group member', () => {
     const ctx = only(
       deriveContexts(
@@ -171,6 +177,31 @@ describe('rule 3 · absorb into exactly one group', () => {
     expect(ctx.signals).toEqual(['group', 'orchestration'])
   })
 
+  it('an api terminal joins via port (D10)', () => {
+    const boards = [
+      term('web', { ports: [5173] }),
+      browser('b', { previewSourceId: 'web', callsPorts: [5173, 3000] }),
+      term('api', { ports: [3000] })
+    ]
+    const ctx = only(deriveContexts(boards, [], [group('g', ['web', 'b'])]))
+    expect(ctx.addBoardIds).toEqual(['api'])
+    expect(ctx.signals).toEqual(['group', 'port'])
+  })
+
+  it('a dataflow board joins via its browser', () => {
+    const boards = [term('t'), browser('b', { previewSourceId: 't' }), dataflow('df', 'b')]
+    const ctx = only(deriveContexts(boards, [], [group('g', ['t', 'b'])]))
+    expect(ctx.addBoardIds).toEqual(['df'])
+    expect(ctx.signals).toEqual(['group', 'dataflow'])
+  })
+
+  it('a browser previewing an absorbed worker is absorbed too (it rides along)', () => {
+    const boards = [term('lead'), term('w'), browser('b', { previewSourceId: 'w' })]
+    const ctx = only(deriveContexts(boards, [orch('lead', 'w')], [group('g', ['lead'])]))
+    expect(ctx.addBoardIds).toEqual(['b', 'w'])
+    expect(ctx.signals).toEqual(['group', 'preview', 'orchestration'])
+  })
+
   it('does not absorb over cables from a hub', () => {
     const boards = [term('lead'), term('w1'), term('w2'), term('w3')]
     const cables = [orch('lead', 'w1'), orch('lead', 'w2'), orch('lead', 'w3')]
@@ -178,7 +209,22 @@ describe('rule 3 · absorb into exactly one group', () => {
     expect(ctx.addBoardIds).toBeUndefined()
   })
 
-  it('linked to two groups is ambiguous: not absorbed, and it still clusters under rule 4', () => {
+  it('a component that touches two groups is not absorbed and still forms a rule-4 context', () => {
+    // w is cabled from g1's lead; its browser b also previews t2 in g2. The component {b, w}
+    // reaches two groups, so none of it is absorbed, and its own preview edge still clusters it.
+    const boards = [term('lead'), term('t2'), term('w'), browser('b', { previewSourceId: 'w' })]
+    const out = deriveContexts(
+      boards,
+      [orch('lead', 'w'), previewCable('t2', 'b')],
+      [group('g1', ['lead']), group('g2', ['t2'])]
+    )
+    expect(out.every((c) => c.addBoardIds === undefined)).toBe(true)
+    const derived = out.filter((c) => c.existingGroupId === undefined)
+    expect(sets(derived)).toEqual([['b', 'w']])
+    expect(derived[0].signals).toEqual(['preview'])
+  })
+
+  it('a single board linked to two groups is ambiguous too', () => {
     const boards = [
       term('t1'),
       term('t2'),
@@ -196,7 +242,7 @@ describe('rule 3 · absorb into exactly one group', () => {
     expect(derived?.signals).toEqual(['port'])
   })
 
-  it('a link to a member of two groups is ambiguous too', () => {
+  it('a link to a member of two groups is ambiguous', () => {
     const out = deriveContexts(
       [term('t1'), browser('b', { previewSourceId: 't1' })],
       [],
@@ -205,23 +251,16 @@ describe('rule 3 · absorb into exactly one group', () => {
     expect(out.every((c) => c.addBoardIds === undefined)).toBe(true)
   })
 
-  it('weak signals (cwd, port, fileRef) never absorb', () => {
+  it('weak signals (cwd, fileRef) never absorb', () => {
     const boards = [
-      term('t1', { cwd: '/r/web', ports: [5173] }),
+      term('t1', { cwd: '/r/web' }),
       term('t2', { cwd: '/r/web' }),
-      browser('b', { callsPorts: [5173] }),
       plan('p', { fileRefs: [{ path: 'a.ts' }] }),
       file('f', 'a.ts')
     ]
     const out = deriveContexts(boards, [], [group('g', ['t1', 'f'])])
     expect(out.every((c) => c.addBoardIds === undefined)).toBe(true)
     expect(sets(out)).toEqual([['f', 't1']])
-  })
-
-  it('links are direct only: a board linked to an absorbed board is not absorbed', () => {
-    const boards = [term('lead'), term('w'), browser('b', { previewSourceId: 'w' })]
-    const ctx = only(deriveContexts(boards, [orch('lead', 'w')], [group('g', ['lead'])]))
-    expect(ctx.addBoardIds).toEqual(['w'])
   })
 })
 
@@ -309,6 +348,13 @@ describe('rule 4 · union-find edges among the remaining boards', () => {
     expect(deriveContexts(boards, [], [])).toEqual([])
   })
 
+  it("dataflow: a data-flow board's sourceBoardId links it to that browser (high)", () => {
+    const ctx = only(deriveContexts([browser('b'), dataflow('df', 'b')], [], []))
+    expect(ctx.boardIds).toEqual(['b', 'df'])
+    expect(ctx.signals).toEqual(['dataflow'])
+    expect(ctx.confidence).toBe('high')
+  })
+
   it('cwd: the same cwd across case, separators and a trailing slash links (medium)', () => {
     const boards = [
       term('a', { cwd: 'C:\\Repo\\Apps\\Web\\' }),
@@ -394,11 +440,12 @@ describe('rule 5 · singletons are never emitted', () => {
 })
 
 describe('rule 6 · confidence', () => {
-  it('high on group / preview / orchestration / port, else medium on cwd / fileRef, else low', () => {
+  it('high on group / preview / orchestration / port / dataflow, else medium on cwd / fileRef, else low', () => {
     const conf = (boards: Board[], cables: ContextConnectorInput[] = []): string =>
       only(deriveContexts(boards, cables, [], { titleSignal: true })).confidence
     expect(conf([term('a'), term('b')], [orch('a', 'b')])).toBe('high')
     expect(conf([browser('a', { callsPorts: [1] }), term('b', { ports: [1] })])).toBe('high')
+    expect(conf([browser('a'), dataflow('b', 'a')])).toBe('high')
     expect(
       conf([term('a', { cwd: '/x', title: 'auth' }), term('b', { cwd: '/x', title: 'auth' })])
     ).toBe('medium')
@@ -459,19 +506,82 @@ describe('rule 7 · suggestedName', () => {
     expect(ctx.suggestedName).toBe(`Auth ${'x'.repeat(GROUP_NAME_MAX - 5)}`)
     expect(ctx.suggestedName).toHaveLength(GROUP_NAME_MAX)
   })
+})
 
-  it('the generic-title list mirrors DEFAULT_TITLE', async () => {
-    // A computed specifier on purpose: this file also compiles under tsconfig.node, and a static
-    // import would pull the renderer's DOM-typed board modules into that typecheck.
-    const spec = ['..', 'renderer', 'src', 'lib', 'boardDefaults'].join('/')
-    const { DEFAULT_TITLE } = (await import(/* @vite-ignore */ spec)) as {
-      DEFAULT_TITLE: Record<string, string>
-    }
-    expect([...GENERIC_BOARD_TITLES].sort()).toEqual(
-      Object.values(DEFAULT_TITLE)
-        .map((t) => t.toLowerCase())
-        .sort()
-    )
+describe('rule 9 · signals are read by board type only', () => {
+  it('cwd: only a terminal carries it', () => {
+    const boards = [
+      plan('p', { cwd: '/r/web' }),
+      browser('b', { cwd: '/r/web' }),
+      term('t', { cwd: '/r/web' })
+    ]
+    expect(deriveContexts(boards, [], [])).toEqual([])
+    expect(sets(deriveContexts([...boards, term('t2', { cwd: '/r/web' })], [], []))).toEqual([
+      ['t', 't2']
+    ])
+  })
+
+  it('ports: only a terminal carries them', () => {
+    const caller = browser('b', { callsPorts: [3000] })
+    const others = [plan('p', { ports: [3000] }), browser('b2', { ports: [3000] })]
+    expect(deriveContexts([caller, ...others], [], [])).toEqual([])
+    expect(sets(deriveContexts([caller, term('t', { ports: [3000] })], [], []))).toEqual([
+      ['b', 't']
+    ])
+  })
+
+  it('previewSourceId: only a browser carries it', () => {
+    const boards = [
+      term('t'),
+      term('t2', { previewSourceId: 't' }),
+      plan('p', { previewSourceId: 't' })
+    ]
+    expect(deriveContexts(boards, [], [])).toEqual([])
+    expect(
+      sets(deriveContexts([term('t'), browser('b', { previewSourceId: 't' })], [], []))
+    ).toEqual([['b', 't']])
+  })
+
+  it('callsPorts: only a browser carries them', () => {
+    const server = term('s', { ports: [3000] })
+    const others = [
+      term('t', { callsPorts: [3000] }),
+      { ...dataflow('df', ''), callsPorts: [3000] }
+    ]
+    expect(deriveContexts([server, ...others], [], [])).toEqual([])
+    expect(sets(deriveContexts([server, browser('b', { callsPorts: [3000] })], [], []))).toEqual([
+      ['b', 's']
+    ])
+  })
+
+  it('path: only a file board carries it', () => {
+    const ref = plan('p', { fileRefs: [{ path: 'a.ts' }] })
+    const others = [term('t', { path: 'a.ts' }), browser('b', { path: 'a.ts' })]
+    expect(deriveContexts([ref, ...others], [], [])).toEqual([])
+    expect(sets(deriveContexts([ref, file('f', 'a.ts')], [], []))).toEqual([['f', 'p']])
+  })
+
+  it('fileRefs: only a planning board carries them', () => {
+    const refs = [{ path: 'a.ts' }]
+    const others = [
+      { id: 'k', type: 'kanban', title: 'Kanban', fileRefs: refs },
+      term('t', { fileRefs: refs })
+    ]
+    expect(deriveContexts([file('f', 'a.ts'), ...others], [], [])).toEqual([])
+    expect(
+      sets(deriveContexts([file('f', 'a.ts'), plan('p', { fileRefs: refs })], [], []))
+    ).toEqual([['f', 'p']])
+  })
+
+  it('sourceBoardId: only a data-flow board carries it', () => {
+    const others = [term('t', { sourceBoardId: 'b' }), plan('p', { sourceBoardId: 'b' })]
+    expect(deriveContexts([browser('b'), ...others], [], [])).toEqual([])
+    expect(sets(deriveContexts([browser('b'), dataflow('df', 'b')], [], []))).toEqual([['b', 'df']])
+  })
+
+  it('dockedIn: only a terminal can be docked; a stray dockedIn on another type is ignored', () => {
+    const boards = [term('t'), browser('b', { previewSourceId: 't', dockedIn: 'sw' })]
+    expect(sets(deriveContexts(boards, [], []))).toEqual([['b', 't']])
   })
 })
 
@@ -496,11 +606,12 @@ function shuffle<T>(items: readonly T[], rnd: () => number): T[] {
   return out
 }
 
-/** Every rule at once: groups (multi-membership + absorb), a hub, port, cwd, fileRef, title, docked. */
+/** Every rule at once: groups (multi-membership + absorb), a hub, port, dataflow, cwd, fileRef, title, docked. */
 const RICH_BOARDS: Board[] = [
   plan('p1', { title: 'Auth plan', fileRefs: [{ path: 'src/auth.ts' }] }),
   term('t1', { title: 'claude — auth', cwd: 'C:/repo/apps/auth', ports: [3000] }),
   browser('b1', { previewSourceId: 't1' }),
+  browser('b4', { callsPorts: [3000] }),
   term('t2', { cwd: 'C:/repo/apps/billing' }),
   term('t3'),
   { id: 'L', type: 'command', title: 'Orchestrator' },
@@ -521,7 +632,8 @@ const RICH_BOARDS: Board[] = [
   term('o2'),
   term('o3'),
   browser('b3'),
-  term('t9')
+  term('t9'),
+  dataflow('df1', 'b3')
 ]
 const RICH_CABLES: ContextConnectorInput[] = [
   orch('L', 'w1'),
@@ -546,16 +658,16 @@ describe('rule 8 · deterministic', () => {
       base.map((c) => [c.boardIds.join(','), c.suggestedName, c.signals.join('+'), c.confidence])
     ).toEqual([
       ['b2,t4', 'web server', 'port', 'high'],
-      ['b3,t9', 'Context 1', 'preview', 'high'],
+      ['b3,df1,t9', 'Context 1', 'preview+dataflow', 'high'],
       ['f1,p2', 'Docs', 'fileRef', 'medium'],
       ['o1,o2,o3', 'Context 2', 'orchestration', 'high'],
-      ['p1,t1', 'Auth', 'group+preview', 'high'],
+      ['p1,t1', 'Auth', 'group+preview+port', 'high'],
       ['t2,t3', 'Billing', 'group', 'high'],
       ['t3', 'Billing core', 'group', 'high'],
       ['t5,t6', 'billing worker', 'title', 'low'],
       ['w1,w2,w3', 'shop', 'cwd', 'medium']
     ])
-    expect(base.find((c) => c.existingGroupId === 'g1')?.addBoardIds).toEqual(['b1'])
+    expect(base.find((c) => c.existingGroupId === 'g1')?.addBoardIds).toEqual(['b1', 'b4'])
   })
 
   it('board ids are sorted and the output is sorted by first board id', () => {
@@ -570,6 +682,7 @@ describe('rule 8 · deterministic', () => {
       'preview',
       'orchestration',
       'port',
+      'dataflow',
       'cwd',
       'fileRef',
       'title'

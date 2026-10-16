@@ -8,19 +8,22 @@
  *  1. Docked terminals are excluded. They live inside a swarm board and are not canvas geometry.
  *  2. Named Groups are authoritative. Each is emitted as-is (`existingGroupId`, `'group'`, high);
  *     signals never split or merge one.
- *  3. Absorb: an ungrouped board strongly linked (preview, or non-hub orchestration) to members of
- *     exactly ONE group is proposed via that group's `addBoardIds`. Two groups ⇒ ambiguous ⇒ not
- *     absorbed (it stays ungrouped and still clusters under rule 4).
- *  4. The remaining ungrouped boards cluster by union-find over preview / orchestration / port / cwd
- *     / fileRef / (opt-in) title edges. A HUB (a source with ≥ {@link HUB_MIN_CABLES} outgoing
+ *  3. Absorb: take the components of UNGROUPED boards joined by STRONG edges (preview, non-hub
+ *     orchestration, port, dataflow). A component whose strong edges reach members of exactly ONE
+ *     group is proposed whole via that group's `addBoardIds`, so a worker's browser rides along
+ *     with the worker. Two groups ⇒ ambiguous ⇒ none of it is absorbed (it still clusters under 4).
+ *  4. The remaining ungrouped boards cluster by union-find over the strong edges plus cwd /
+ *     fileRef / (opt-in) title. A HUB (a source with ≥ {@link HUB_MIN_CABLES} outgoing
  *     orchestration cables) contributes no edges on purpose: one lead must not fuse all its workers
  *     into one blob. C9's TEAM unit (L9) is what keeps a lead with its workers.
  *  5. Singleton clusters are never emitted.
- *  6. Confidence: high on any group / preview / orchestration / port edge, else medium on cwd /
- *     fileRef, else low.
+ *  6. Confidence: high on any group / preview / orchestration / port / dataflow edge, else medium
+ *     on cwd / fileRef, else low.
  *  7. Name: planning title → terminal title → common cwd basename → `Context N`, sanitized.
  *  8. Deterministic: sorted ids, output sorted by first board id, no randomness, capped at
  *     {@link MAX_CONTEXTS}.
+ *  9. Signals by board type only (defence in depth behind MAIN's sanitizer): see
+ *     {@link projectBoard}. A field on any other type is ignored.
  *
  * Pure TypeScript: no Node built-ins, no DOM, no `src/main` / `src/renderer` imports. It compiles
  * under tsconfig.node AND tsconfig.web, which is also why it never reads `process.platform` (MAIN
@@ -46,6 +49,8 @@ export interface ContextBoardInput {
   ports?: number[]
   /** Browser boards: loopback ports the page requested (D10, L11). */
   callsPorts?: number[]
+  /** Data-flow boards: the browser the board inspects. */
+  sourceBoardId?: string
 }
 
 export interface ContextConnectorInput {
@@ -65,6 +70,7 @@ export type ContextSignal =
   | 'preview'
   | 'orchestration'
   | 'port'
+  | 'dataflow'
   | 'cwd'
   | 'fileRef'
   | 'title'
@@ -112,6 +118,7 @@ const SIGNAL_ORDER: readonly ContextSignal[] = [
   'preview',
   'orchestration',
   'port',
+  'dataflow',
   'cwd',
   'fileRef',
   'title'
@@ -120,7 +127,8 @@ const HIGH_SIGNALS: ReadonlySet<ContextSignal> = new Set([
   'group',
   'preview',
   'orchestration',
-  'port'
+  'port',
+  'dataflow'
 ])
 const MEDIUM_SIGNALS: ReadonlySet<ContextSignal> = new Set(['cwd', 'fileRef'])
 
@@ -139,7 +147,8 @@ const TITLE_STOPWORDS: ReadonlySet<string> = new Set(
 
 /**
  * The per-type default board titles, lowercased (mirror of `DEFAULT_TITLE` in `boardDefaults.ts`,
- * pinned by a parity test). Such a title says nothing about the context, so naming skips it.
+ * pinned by `src/renderer/src/lib/deriveContexts.parity.test.ts`). Such a title says nothing about
+ * the context, so naming skips it.
  */
 export const GENERIC_BOARD_TITLES: ReadonlySet<string> = new Set([
   'terminal',
@@ -151,6 +160,23 @@ export const GENERIC_BOARD_TITLES: ReadonlySet<string> = new Set([
   'kanban',
   'swarm'
 ])
+
+/**
+ * A live board reduced to the signal fields its TYPE may carry (rule 9). Paths are cleaned but keep
+ * their case (naming needs it); `''` / `[]` means "no signal".
+ */
+interface LiveBoard {
+  id: string
+  type: string
+  title: string
+  cwd: string
+  ports: number[]
+  previewSourceId: string
+  callsPorts: number[]
+  path: string
+  fileRefs: string[]
+  sourceBoardId: string
+}
 
 interface Edge {
   a: string
@@ -227,6 +253,32 @@ function validPorts(raw: unknown): number[] {
   return [...out]
 }
 
+function idField(raw: unknown): string {
+  return typeof raw === 'string' ? raw : ''
+}
+
+/**
+ * Rule 9: read each signal field only from the board type that owns it. `cwd` / `ports` from
+ * terminals, `previewSourceId` / `callsPorts` from browsers, `path` from file boards, `fileRefs`
+ * from planning boards, `sourceBoardId` from data-flow boards.
+ */
+function projectBoard(board: ContextBoardInput): LiveBoard {
+  const is = (type: string): boolean => board.type === type
+  const refs = is('planning') && Array.isArray(board.fileRefs) ? board.fileRefs : []
+  return {
+    id: board.id,
+    type: board.type,
+    title: typeof board.title === 'string' ? board.title : '',
+    cwd: is('terminal') ? cleanPath(board.cwd) : '',
+    ports: is('terminal') ? validPorts(board.ports) : [],
+    previewSourceId: is('browser') ? idField(board.previewSourceId) : '',
+    callsPorts: is('browser') ? validPorts(board.callsPorts) : [],
+    path: is('file') ? cleanPath(board.path) : '',
+    fileRefs: refs.map((ref) => cleanPath(ref?.path)).filter((p) => p !== ''),
+    sourceBoardId: is('dataflow') ? idField(board.sourceBoardId) : ''
+  }
+}
+
 /**
  * Union-find with the smaller id as the root, so a set's representative never depends on the order
  * the edges arrive in.
@@ -280,19 +332,30 @@ function hubSources(
 }
 
 /**
- * The strong links among live boards: `previewSourceId`, `kind:'preview'` connectors and
- * orchestration cables from a non-hub source. Rule 3 absorbs over these; rule 4 clusters over them.
+ * The STRONG edges among live boards: preview (`previewSourceId` and `kind:'preview'` cables),
+ * orchestration cables from a non-hub source, port (a browser's `callsPorts` meeting a terminal's
+ * `ports`, D10) and dataflow (`sourceBoardId`). Rule 3 absorbs over these; rule 4 clusters over them.
  */
 function strongLinks(
-  live: ReadonlyMap<string, ContextBoardInput>,
+  live: ReadonlyMap<string, LiveBoard>,
   connectors: readonly ContextConnectorInput[],
   hubs: ReadonlySet<string>
 ): Edge[] {
   const edges: Edge[] = []
+  const linkField = (board: LiveBoard, target: string, signal: ContextSignal): void => {
+    if (target !== '' && target !== board.id && live.has(target)) {
+      edges.push({ a: board.id, b: target, signal })
+    }
+  }
+  const byPort = new Map<number, string[]>()
   for (const board of live.values()) {
-    const src = board.previewSourceId
-    if (typeof src === 'string' && src !== board.id && live.has(src)) {
-      edges.push({ a: board.id, b: src, signal: 'preview' })
+    linkField(board, board.previewSourceId, 'preview')
+    linkField(board, board.sourceBoardId, 'dataflow')
+    for (const port of board.ports) pushTo(byPort, port, board.id)
+  }
+  for (const board of live.values()) {
+    for (const port of board.callsPorts) {
+      for (const server of byPort.get(port) ?? []) linkField(board, server, 'port')
     }
   }
   for (const c of connectors) {
@@ -308,7 +371,7 @@ function strongLinks(
 /** Rule 2 input: each group's live members (sorted, deduped). Groups left empty are dropped. */
 function liveGroups(
   groups: readonly ContextGroupInput[],
-  live: ReadonlyMap<string, ContextBoardInput>
+  live: ReadonlyMap<string, LiveBoard>
 ): Array<{ group: ContextGroupInput; members: string[] }> {
   const out: Array<{ group: ContextGroupInput; members: string[] }> = []
   const seen = new Set<string>()
@@ -324,42 +387,53 @@ function liveGroups(
 }
 
 /**
- * Rule 3. Returns, per group id, the absorbed board ids and the link kinds that justified them.
- * An ungrouped board whose strong links reach members of two or more groups is ambiguous and stays
- * out. Links are direct only: a board linked to an absorbed board is not absorbed itself.
+ * Rule 3. Joins the ungrouped boards into components over the strong edges, then proposes each
+ * component whose strong edges reach members of exactly ONE group, whole, for that group. Returns,
+ * per group id, the absorbed ids (sorted) and the edge kinds that carried them: the edges that
+ * reach the group and the edges inside the component.
  */
 function absorb(
   ungrouped: readonly string[],
   strong: readonly Edge[],
   memberOf: ReadonlyMap<string, ReadonlySet<string>>
 ): Map<string, { ids: string[]; signals: Set<ContextSignal> }> {
-  const neighbours = new Map<string, Edge[]>()
+  const isStray = new Set(ungrouped)
+  const uf = makeUnionFind(ungrouped)
+  for (const e of strong) if (isStray.has(e.a) && isStray.has(e.b)) uf.union(e.a, e.b)
+  const reach = new Map<string, { groups: Set<string>; signals: Set<ContextSignal> }>()
+  const reachOf = (strayId: string): { groups: Set<string>; signals: Set<ContextSignal> } => {
+    const root = uf.find(strayId)
+    const entry = reach.get(root) ?? {
+      groups: new Set<string>(),
+      signals: new Set<ContextSignal>()
+    }
+    reach.set(root, entry)
+    return entry
+  }
   for (const e of strong) {
-    pushTo(neighbours, e.a, e)
-    pushTo(neighbours, e.b, e)
+    const strayA = isStray.has(e.a)
+    const strayB = isStray.has(e.b)
+    if (!strayA && !strayB) continue
+    const entry = reachOf(strayA ? e.a : e.b)
+    entry.signals.add(e.signal)
+    if (strayA && strayB) continue
+    for (const groupId of memberOf.get(strayA ? e.b : e.a) ?? []) entry.groups.add(groupId)
   }
   const out = new Map<string, { ids: string[]; signals: Set<ContextSignal> }>()
   for (const id of ungrouped) {
-    const hits = new Map<string, Set<ContextSignal>>()
-    for (const e of neighbours.get(id) ?? []) {
-      const other = e.a === id ? e.b : e.a
-      for (const groupId of memberOf.get(other) ?? []) {
-        hits.set(groupId, (hits.get(groupId) ?? new Set<ContextSignal>()).add(e.signal))
-      }
-    }
-    if (hits.size !== 1) continue
-    const [[groupId, signals]] = [...hits]
-    const entry = out.get(groupId) ?? { ids: [], signals: new Set<ContextSignal>() }
-    entry.ids.push(id)
-    for (const s of signals) entry.signals.add(s)
-    out.set(groupId, entry)
+    const entry = reach.get(uf.find(id))
+    if (!entry || entry.groups.size !== 1) continue
+    const [groupId] = entry.groups
+    const target = out.get(groupId) ?? { ids: [], signals: new Set<ContextSignal>() }
+    target.ids.push(id)
+    for (const s of entry.signals) target.signals.add(s)
+    out.set(groupId, target)
   }
   return out
 }
 
 /** Lowercased letter/digit runs of a title. */
-function titleTokens(title: unknown): Set<string> {
-  if (typeof title !== 'string') return new Set()
+function titleTokens(title: string): Set<string> {
   return new Set(
     title
       .toLowerCase()
@@ -385,41 +459,27 @@ function chain(ids: readonly string[], signal: ContextSignal, out: Edge[]): void
   for (let i = 1; i < ids.length; i++) out.push({ a: ids[i - 1], b: ids[i], signal })
 }
 
-/** Rule 4: the port / cwd / fileRef / title edges among the remaining boards. */
+/** Rule 4: the cwd / fileRef / title edges among the remaining boards. */
 function weakEdges(
   remaining: readonly string[],
-  live: ReadonlyMap<string, ContextBoardInput>,
+  live: ReadonlyMap<string, LiveBoard>,
   opts: { pathCase: PathCase; rootKey: string; titleSignal: boolean }
 ): Edge[] {
   const edges: Edge[] = []
-  const byPort = new Map<number, string[]>()
   const byCwd = new Map<string, string[]>()
   const byFile = new Map<string, { refs: Set<string>; files: Set<string> }>()
-  const fileEntry = (key: string): { refs: Set<string>; files: Set<string> } => {
+  const fileEntry = (path: string): { refs: Set<string>; files: Set<string> } => {
+    const key = foldPath(path, opts.pathCase)
     const entry = byFile.get(key) ?? { refs: new Set<string>(), files: new Set<string>() }
     byFile.set(key, entry)
     return entry
   }
   for (const id of remaining) {
     const board = live.get(id)!
-    for (const port of validPorts(board.ports)) pushTo(byPort, port, id)
-    const cwd = normalizeContextPath(board.cwd, opts.pathCase)
+    const cwd = foldPath(board.cwd, opts.pathCase)
     if (cwd !== '' && cwd !== opts.rootKey) pushTo(byCwd, cwd, id)
-    const path = normalizeContextPath(board.path, opts.pathCase)
-    if (path !== '') fileEntry(path).files.add(id)
-    if (Array.isArray(board.fileRefs)) {
-      for (const ref of board.fileRefs) {
-        const key = normalizeContextPath(ref?.path, opts.pathCase)
-        if (key !== '') fileEntry(key).refs.add(id)
-      }
-    }
-  }
-  for (const id of remaining) {
-    for (const port of validPorts(live.get(id)!.callsPorts)) {
-      for (const server of byPort.get(port) ?? []) {
-        if (server !== id) edges.push({ a: id, b: server, signal: 'port' })
-      }
-    }
+    if (board.path !== '') fileEntry(board.path).files.add(id)
+    for (const ref of board.fileRefs) fileEntry(ref).refs.add(id)
   }
   for (const ids of byCwd.values()) chain(ids, 'cwd', edges)
   for (const { refs, files } of byFile.values()) {
@@ -472,7 +532,7 @@ function commonCwdBasename(cwds: readonly string[], pathCase: PathCase, rootKey:
 /** Rule 7, minus the `Context N` fallback (assigned in output order by {@link finalize}). */
 function nameFromMembers(
   ids: readonly string[],
-  live: ReadonlyMap<string, ContextBoardInput>,
+  live: ReadonlyMap<string, LiveBoard>,
   pathCase: PathCase,
   rootKey: string
 ): string {
@@ -485,7 +545,7 @@ function nameFromMembers(
     }
   }
   const cwds = ids
-    .map((id) => cleanPath(live.get(id)!.cwd))
+    .map((id) => live.get(id)!.cwd)
     .filter((c) => c !== '' && foldPath(c, pathCase) !== rootKey)
   return sanitizeGroupName(commonCwdBasename(cwds, pathCase, rootKey))
 }
@@ -550,12 +610,14 @@ export function deriveContexts(
   const rootKey = normalizeContextPath(opts.projectRoot, pathCase)
 
   // Rule 1: every board that exists counts toward hub detection; only undocked ones are contexts.
+  // `dockedIn` is read from terminals only (rule 9): only a terminal can be docked.
   const allIds = new Set<string>()
-  const live = new Map<string, ContextBoardInput>()
+  const live = new Map<string, LiveBoard>()
   for (const board of boards) {
     if (typeof board?.id !== 'string' || board.id === '' || allIds.has(board.id)) continue
     allIds.add(board.id)
-    if (typeof board.dockedIn !== 'string' || board.dockedIn === '') live.set(board.id, board)
+    const docked = board.type === 'terminal' && idField(board.dockedIn) !== ''
+    if (!docked) live.set(board.id, projectBoard(board))
   }
   const strong = strongLinks(live, connectors, hubSources(connectors, allIds))
 
@@ -569,7 +631,7 @@ export function deriveContexts(
   }
   const ungrouped = [...live.keys()].filter((id) => !memberOf.has(id)).sort(compareStrings)
 
-  // Rule 3: absorb strongly linked strays into their one group.
+  // Rule 3: absorb strongly linked stray components into their one group.
   const absorbed = absorb(ungrouped, strong, memberOf)
   const drafts: Draft[] = named.map(({ group, members }) => {
     const add = absorbed.get(group.id)
