@@ -110,8 +110,18 @@ export const voiceApi = {
   /** V5: false on win-arm64 (no sherpa prebuilt — approved gate). The pill renders
    *  nothing and Settings shows an "unavailable on this platform" row instead. */
   supported: !(process.platform === 'win32' && process.arch === 'arm64'),
-  start: (): Promise<{ ok: boolean; micStatus: string; modelStatus: 'ready' | 'absent' }> =>
-    ipcRenderer.invoke('voice:session:start'),
+  // `converse` (B0.1): a Jarvis conversation owns this session — MAIN pins it to LOCAL STT (cloud
+  // is batch-on-release: zero turns). `cloud` = the session runs on cloud STT; `converseLocal` = a
+  // converse start overrode a cloud selection (with modelStatus 'absent': tell the user why).
+  start: (opts?: {
+    converse?: boolean
+  }): Promise<{
+    ok: boolean
+    micStatus: string
+    modelStatus: 'ready' | 'absent'
+    cloud?: boolean
+    converseLocal?: boolean
+  }> => ipcRenderer.invoke('voice:session:start', opts),
   stop: (): Promise<{ ok: boolean; frames: number }> => ipcRenderer.invoke('voice:session:stop'),
   onEngineEvent: (cb: (ev: VoiceEngineEvent) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, ev: VoiceEngineEvent): void => cb(ev)

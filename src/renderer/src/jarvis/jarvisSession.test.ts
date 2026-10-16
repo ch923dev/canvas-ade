@@ -237,3 +237,70 @@ describe('listen-hold consumer wiring', () => {
     expect(startTurn).not.toHaveBeenCalled()
   })
 })
+
+// ── B0: converse teardown drain + the cloud-session re-start (converse/cloud hotfix) ──
+describe('converse teardown drain (B0)', () => {
+  const pendingStop = (): ((v: unknown) => void) => {
+    let resolveStop: (v: unknown) => void = () => {}
+    voiceStop.mockReturnValueOnce(new Promise((r) => (resolveStop = r)))
+    return (v) => resolveStop(v)
+  }
+
+  it('speech still in the pipe while the disarm stop drains is swallowed — never the dictation draft', async () => {
+    useVoiceStore.setState({ draft: '' })
+    await setConverseMode(true)
+    const finishStop = pendingStop()
+    await setConverseMode(false) // returns at once; the stop drains behind it
+    // Pre-fix the consumer was unregistered FIRST, so this fell through into the draft.
+    expect(consumeFinal('half a sentence to jarvis')).toBe(true)
+    expect(useVoiceStore.getState().draft).toBe('')
+    expect(useJarvisStore.getState().composing).toBe('') // discarded, not buffered
+    expect(startTurn).not.toHaveBeenCalled()
+    finishStop({ ok: true, frames: 0 })
+    // Once the stop settled the drain lets go — later dictation routes normally again.
+    await vi.waitFor(() => expect(consumeFinal('later dictation')).toBe(false))
+  })
+
+  it('the composer stays suppressed until the drain settles (no flyout pop on close)', async () => {
+    await setConverseMode(true)
+    expect(useVoiceStore.getState().composerSuppressed).toBe(true)
+    const finishStop = pendingStop()
+    await setConverseMode(false)
+    expect(useVoiceStore.getState().composerSuppressed).toBe(true)
+    finishStop({ ok: true, frames: 0 })
+    await vi.waitFor(() => expect(useVoiceStore.getState().composerSuppressed).toBe(false))
+  })
+
+  it('a re-arm during the drain owns the consumer AND the suppression', async () => {
+    await setConverseMode(true)
+    const finishStop = pendingStop()
+    await setConverseMode(false)
+    await setConverseMode(true) // panel still open — the user re-armed before the stop settled
+    finishStop({ ok: true, frames: 0 })
+    await new Promise((r) => setTimeout(r, 0)) // let the stale drain's release + then() run
+    expect(useVoiceStore.getState().composerSuppressed).toBe(true)
+    expect(consumeFinal('next question')).toBe(true) // the LIVE consumer, not the dead drain
+    expect(useJarvisStore.getState().composing).toBe('next question')
+  })
+})
+
+describe('arming over a live dictation session (B0.1)', () => {
+  it('a live CLOUD session is re-started as a converse session (cloud cannot stream turns)', async () => {
+    useVoiceStore.setState({ capturing: true, sessionCloud: true })
+    await setConverseMode(true)
+    expect(voiceStart).toHaveBeenCalledExactlyOnceWith({ converse: true })
+  })
+
+  it('a live LOCAL session is piggybacked as before (it already streams per-pause finals)', async () => {
+    useVoiceStore.setState({ capturing: true, sessionCloud: false })
+    await setConverseMode(true)
+    expect(voiceStart).not.toHaveBeenCalled()
+    expect(useJarvisStore.getState().converseMode).toBe(true)
+  })
+
+  it('an idle arm is a converse start', async () => {
+    useVoiceStore.setState({ capturing: false, sessionCloud: false })
+    await setConverseMode(true)
+    expect(voiceStart).toHaveBeenCalledExactlyOnceWith({ converse: true })
+  })
+})

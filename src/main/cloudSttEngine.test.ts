@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { MessagePortMain } from 'electron'
-import { createCloudSttEngine, type CloudSttEvent, type CloudSymbolSets } from './cloudSttEngine'
+import {
+  createCloudSttEngine,
+  MAX_CLOUD_BUFFER_BYTES,
+  type CloudSttEvent,
+  type CloudSymbolSets
+} from './cloudSttEngine'
 import { CloudTranscribeError, type CloudTranscribeInput } from './openaiTranscribe'
 import type { VoiceEngineHandle } from './voiceEngine'
 import { decodeWav } from './voiceWav'
@@ -161,6 +166,60 @@ describe('createCloudSttEngine — batch transcribe on eos', () => {
     await tick()
     expect(transcribe).not.toHaveBeenCalled()
     expect(events).toEqual([])
+  })
+})
+
+describe('createCloudSttEngine — B0.3 buffer cap + the eos drain safety net', () => {
+  it('a buffer past the cap ends the session: mic released, audio DROPPED, fail-visible too-long', async () => {
+    const events: CloudSttEvent[] = []
+    const transcribe = vi.fn(async () => 'never')
+    const engine = createCloudSttEngine({
+      local: makeLocal(),
+      transcribe,
+      emit: (e) => events.push(e),
+      getSymbols: () => SYMBOLS,
+      maxBufferBytes: 8 // two 4-byte frames fit; the third trips it
+    })
+    const p = makePort()
+    engine.startSession(p.port, null)
+    p.send(frame([1, 2, 3, 4]))
+    p.send(frame([5, 6, 7, 8]))
+    expect(p.posted).toEqual([]) // at the cap, not past it — still recording
+    p.send(frame([9, 9, 9, 9]))
+    expect(p.posted).toEqual([{ t: 'stop' }]) // the renderer capture tears down (mic released)
+    expect(events).toEqual([{ kind: 'error', reason: 'too-long' }])
+    // Frames racing the renderer's teardown, its eos, and a later user stop upload NOTHING.
+    p.send(frame([1, 1, 1, 1]))
+    p.send({ t: 'eos' })
+    const { frames } = await engine.stopSession()
+    await tick()
+    expect(frames).toBe(4) // still counted (observability), never buffered
+    expect(transcribe).not.toHaveBeenCalled()
+    expect(events).toEqual([{ kind: 'error', reason: 'too-long' }]) // no transcribing, no final
+  })
+
+  it('the default cap sits under the vendor 25 MB upload limit and far above a 120 s dictation', () => {
+    expect(MAX_CLOUD_BUFFER_BYTES + 44).toBeLessThan(25 * 1000 * 1000) // + the WAV header
+    expect(MAX_CLOUD_BUFFER_BYTES).toBeGreaterThan(120 * 32_000 * 2) // ≥2× the dictation hard cap
+  })
+
+  it('a stop whose eos never arrives (renderer died) still transcribes the buffer after the drain timeout', async () => {
+    const events: CloudSttEvent[] = []
+    const engine = createCloudSttEngine({
+      local: makeLocal(),
+      transcribe: async () => 'late but kept',
+      emit: (e) => events.push(e),
+      getSymbols: () => SYMBOLS,
+      eosTimeoutMs: 5
+    })
+    const p = makePort()
+    engine.startSession(p.port, null)
+    p.send(frame([1, 2, 3, 4]))
+    const { frames } = await engine.stopSession() // no eos is ever sent
+    expect(frames).toBe(1)
+    await vi.waitFor(() =>
+      expect(events).toEqual([{ kind: 'transcribing' }, { kind: 'final', text: 'late but kept' }])
+    )
   })
 })
 

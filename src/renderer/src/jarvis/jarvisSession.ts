@@ -143,6 +143,22 @@ export function sendTurn(text: string): void {
  *  stale continuation runs. */
 let armGeneration = 0
 
+/**
+ * Stop the conversation's capture while SWALLOWING its in-flight speech (B0 teardown drain).
+ * Until the stop's eos drain completes, the pipe still carries what the user was saying TO Jarvis:
+ * a final that lands mid-stop, and the provisional tail the stop solidifies (transcriptRouting
+ * solidifyTail offers it to the consumer). The old teardown unregistered the consumer FIRST, so all
+ * of it fell through to the dictation draft — the "conversation dumped into the composer" leak.
+ * A swallow-all drain consumer bridges the stop instead; the conversation is over, so the speech is
+ * discarded exactly like the composing buffer (hold.clear). Released only once the stop settles
+ * (`await stopVoice()` is the "transcript settled" fence); a re-arm meanwhile simply replaces it
+ * (last writer wins) and the identity-guarded release then leaves the new consumer alone.
+ */
+function stopConverseCapture(): Promise<void> {
+  const releaseDrain = setFinalConsumer(() => true)
+  return stopVoice().finally(releaseDrain)
+}
+
 /** Arm/disarm converse mode. Arming loads persona config, probes TTS availability
  *  (absent model ⇒ text-only conversation), registers the final consumer and starts the
  *  mic; disarming unwinds all of it (an in-flight turn is cancelled).
@@ -157,7 +173,7 @@ export async function setConverseMode(on: boolean): Promise<void> {
   const jarvis = useJarvisStore.getState()
   if (on && !jarvis.panelOpen) return
   if (!on) {
-    armGeneration++ // any in-flight arm continuation is now stale (MIC-1)
+    const gen = ++armGeneration // any in-flight arm continuation is now stale (MIC-1)
     unregisterConsumer?.()
     unregisterConsumer = null
     currentTurnId = null
@@ -167,13 +183,17 @@ export async function setConverseMode(on: boolean): Promise<void> {
     // J4: a pending act-card dies with the conversation — DENIED (fail-closed; MAIN's
     // blocked tool call resolves instead of waiting out the 10-minute backstop).
     jarvis.answerPendingConfirm(false)
-    useVoiceStore.getState().setComposerSuppressed(false)
     jarvis.setConverseMode(false)
     void window.api.jarvis.cancelTurn().catch(() => {})
     // MIC-2: unconditional — `capturing` only flips true after the async arm chain, so a
     // close inside that window used to skip the stop and the port armed the mic anyway.
-    // An extra stop on a not-yet-open session is a cheap MAIN no-op.
-    void stopVoice()
+    // An extra stop on a not-yet-open session is a cheap MAIN no-op. B0: drained (the
+    // in-flight utterance is swallowed, never dumped into the dictation draft), and the
+    // composer stays suppressed until the drain settles — partials still streaming during the
+    // stop must not pop the dictation flyout open. A re-arm meanwhile owns the suppression.
+    void stopConverseCapture().then(() => {
+      if (gen === armGeneration) useVoiceStore.getState().setComposerSuppressed(false)
+    })
     return
   }
   const gen = ++armGeneration
@@ -229,7 +249,12 @@ export async function setConverseMode(on: boolean): Promise<void> {
   })
   useVoiceStore.getState().setComposerSuppressed(true)
   jarvis.setConverseMode(true)
-  if (!useVoiceStore.getState().capturing) {
+  // Piggyback a live LOCAL dictation session — it already streams a final per pause. A live
+  // CLOUD one can't serve the conversation (B0.1: one batch final when it ends = zero turns),
+  // so re-start it: startVoice is now a converse start, and MAIN replaces the cloud session
+  // with a local one (the cloud audio still transcribes — into the dictation draft).
+  const voice = useVoiceStore.getState()
+  if (!voice.capturing || voice.sessionCloud) {
     await startVoice()
     // A disarm racing the voice:start round-trip may have issued its stop BEFORE the
     // session finished starting — re-stop now that it has (the disarm already unwound

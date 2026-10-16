@@ -208,7 +208,9 @@ describe('voice:session:start / stop handlers', () => {
     await expect(t.handlers['voice:session:start'](t.ownEvent)).resolves.toEqual({
       ok: true,
       micStatus: 'granted',
-      modelStatus: 'absent'
+      modelStatus: 'absent',
+      cloud: false, // B0: the routing decision rides the result (local here)
+      converseLocal: false
     })
     expect(h.channels).toHaveLength(1)
     expect(t.engine.startSession).toHaveBeenCalledWith(h.channels[0].port1, null)

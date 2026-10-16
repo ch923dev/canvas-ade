@@ -69,6 +69,9 @@ interface VoiceState {
   micStatus: string
   /** Default model install state from the last voice.start() ('unknown' before any start). */
   modelStatus: 'ready' | 'absent' | 'unknown'
+  /** B0.1: the last voice.start() put the session on CLOUD STT (batch — no per-pause finals).
+   *  Converse arming re-starts a live cloud session instead of piggybacking it. */
+  sessionCloud: boolean
   /** V5 SPEC §3 `error` state: the engine crashed past its restart budget. The draft is
    *  untouched — the flyout shows the error row with Restart until a new start clears it. */
   engineError: boolean
@@ -92,8 +95,9 @@ interface VoiceState {
   frameSent: (rms: number) => void
   setMicSilent: (silent: boolean) => void
   setActiveBoard: (id: string | null) => void
-  /** start() resolved — record the session's mic/model statuses (attention rows). */
-  sessionInfo: (micStatus: string, modelStatus: 'ready' | 'absent') => void
+  /** start() resolved — record the session's mic/model statuses (attention rows) and whether
+   *  it runs on cloud STT. */
+  sessionInfo: (micStatus: string, modelStatus: 'ready' | 'absent', cloud?: boolean) => void
   /** `{t:'partial'}` from the engine host: replace the tail; open the flyout on first text. */
   partialReceived: (text: string) => void
   /** `{t:'final'}`: fold the segment into the draft (tail-only replacement, no reflow). */
@@ -129,6 +133,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   composerSuppressed: false,
   micStatus: 'unknown',
   modelStatus: 'unknown',
+  sessionCloud: false,
   engineError: false,
   transcribing: false,
   cloudError: null,
@@ -169,7 +174,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     })),
   setMicSilent: (silent) => set((s) => (s.micSilent === silent ? s : { micSilent: silent })),
   setActiveBoard: (id) => set((s) => (s.activeBoardId === id ? s : { activeBoardId: id })),
-  sessionInfo: (micStatus, modelStatus) => set({ micStatus, modelStatus }),
+  sessionInfo: (micStatus, modelStatus, cloud = false) =>
+    set({ micStatus, modelStatus, sessionCloud: cloud }),
   partialReceived: (text) =>
     set((s) => ({
       partial: text,

@@ -48,6 +48,9 @@ function cloudErrorMessage(reason: string): string {
       return 'Transcription timed out'
     case 'server':
       return 'OpenAI service error — try again'
+    case 'too-long':
+      // B0.3: cloudSttEngine's buffer cap tripped — the recording was dropped, never uploaded.
+      return 'Recording too long — stopped, nothing sent'
     default:
       return 'Transcription failed'
   }
