@@ -1,4 +1,4 @@
-# Spatial Awareness — Design artifact (DRAFT — awaiting sign-off)
+# Spatial Awareness — Design artifact (signed off 2026-10-16)
 
 Layout/flow wireframes per CLAUDE.md › *Design artifact before code*. Every surface reuses an
 existing component and the existing tokens (one accent `#4f8cff`, status dots only, no glow) — this
@@ -155,7 +155,8 @@ The scenario wireframes S1–S15, which show where boards land, are in [`ROLE-LA
 
 ---
 
-**W6 + W7 + ROLE-LAYOUT S1–S15 signed off by the user 2026-10-16.**
+**All wireframes signed off by the user 2026-10-16:** W1–W5 (W2's "Fit first" superseded by D8 a,
+see W6) · W6 + W7 · ROLE-LAYOUT S1–S15.
 
 **Sign-off checklist:** W1 copy + low-confidence default · W2 Fit first + `T` rebound · W3 toast
 actions · W5 confirm for terminal agents · **W6 By-role preset position (D8) · W7 toast copy · ROLE-LAYOUT S1–S15
