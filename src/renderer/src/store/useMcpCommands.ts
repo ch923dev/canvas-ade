@@ -20,6 +20,7 @@ import { applyKanbanOps } from './kanbanMcpApply'
 import { applyPlanningEditOp } from './planningUpdateMcpApply'
 import { buildVisualizedContent, isVisualization } from './visualizeMcpApply'
 import { requestCameraFocus } from './cameraRequestStore'
+import { useCanvasViewStore } from './canvasViewStore'
 import { useCommandStore } from './commandStore'
 import { isCommandFeedState } from '../../../shared/commandFeedTypes'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
@@ -455,17 +456,26 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // 'smart' for an absent/off-enum value rather than trusting the IPC-crossed string.
       const raw = command.mode
       const mode = raw === 'smart' || raw === 'by-type' || raw === 'grid' ? raw : 'smart'
+      // G1: pack toward the PANE aspect exactly like the UI's tidyAndFit (useTidyTile: w / max(1, h)),
+      // read off the session-only view bus the mounted Canvas feeds. No pane (no Canvas mounted) ⇒
+      // no aspect ⇒ the packer's own default, i.e. the pre-S0 behaviour.
+      const pane = useCanvasViewStore.getState().pane
+      const aspect = pane ? pane.w / Math.max(1, pane.h) : undefined
       // `tidyBoards` is ALREADY ONE undoable `trackedChange` step that no-ops when nothing moved — do
       // NOT wrap it in beginChange() (that's for the additive content writes). Snapshot positions
       // around the call so the ack can report how many boards actually moved (0 ⇒ already tidy).
       const store = useCanvasStore.getState()
       const before = new Map(store.boards.map((b) => [b.id, { x: b.x, y: b.y }]))
-      store.tidyBoards(mode)
+      store.tidyBoards(mode, aspect)
       let moved = 0
       for (const b of useCanvasStore.getState().boards) {
         const prev = before.get(b.id)
         if (prev && (prev.x !== b.x || prev.y !== b.y)) moved++
       }
+      // G4: frame the camera on the result, like tidyAndFit's fitToBoards — through the SAME camera
+      // path focusCamera uses (parked fit-all → useCameraFocusRequests → FIT_FRAME fit). Viewport-only:
+      // no undo involvement, so the tidy stays ONE undo step.
+      requestCameraFocus({ kind: 'all' })
       return { ok: true, type: 'tidyBoards', moved }
     }
     case 'focusCamera': {

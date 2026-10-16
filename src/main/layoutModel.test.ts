@@ -83,6 +83,23 @@ describe('buildLayoutDigest', () => {
     expect(byId.a.groupId).toBe('g1')
     expect(byId.b.groupId).toBe('g1')
     expect('groupId' in byId.lone).toBe(false)
+    expect(byId.lone.groupIds).toEqual([])
+  })
+
+  it('groupIds lists EVERY group a board belongs to; groupId stays the first (G8)', () => {
+    const d = buildLayoutDigest(
+      [b('a', 0, 0), b('b', 140, 0)],
+      [
+        { id: 'g1', name: 'Auth zone', boardIds: ['b'] },
+        { id: 'g2', name: 'API', boardIds: ['a', 'b'] },
+        { id: 'g3', name: 'Review', boardIds: ['b'] }
+      ]
+    )
+    const byId = Object.fromEntries(d.boards.map((bd) => [bd.id, bd]))
+    expect(byId.b.groupIds).toEqual(['g1', 'g2', 'g3']) // group input order
+    expect(byId.b.groupId).toBe('g1') // v1 back-compat: the FIRST group
+    expect(byId.a.groupIds).toEqual(['g2'])
+    expect(byId.a.groupId).toBe('g2')
   })
 
   it('staggered-but-chained boards are ONE row (interval overlap is not transitive)', () => {

@@ -21,7 +21,7 @@ export interface LayoutBoardInput {
   h?: number
 }
 
-/** A Named Group (feature zone) the digest joins onto each board as `groupId`. */
+/** A Named Group (feature zone) the digest joins onto each board as `groupIds` (+ v1 `groupId`). */
 export interface LayoutGroupInput {
   id: string
   name: string
@@ -36,8 +36,12 @@ export interface LayoutBoard {
   y: number
   w: number
   h: number
-  /** The FIRST Named Group this board belongs to (a board may be in several); absent when ungrouped. */
+  /** The FIRST Named Group this board belongs to (a board may be in several); absent when ungrouped.
+   *  Kept for v1 readers — {@link LayoutBoard.groupIds} is the complete membership. */
   groupId?: string
+  /** EVERY Named Group this board belongs to, in group input order (G8 — multi-membership is
+   *  allowed); `[]` when ungrouped. `groupIds[0]` is always `groupId`. */
+  groupIds: string[]
 }
 
 /**
@@ -134,14 +138,15 @@ export function buildLayoutDigest(
   boardsInput: readonly LayoutBoardInput[],
   groups: readonly LayoutGroupInput[] = []
 ): LayoutDigest {
-  // groupId = the FIRST group (input order) whose membership includes the board.
-  const groupOf = (id: string): string | undefined =>
-    groups.find((g) => g.boardIds.includes(id))?.id
+  // groupIds = EVERY group (input order) whose membership includes the board (G8); the v1
+  // `groupId` stays the FIRST of them so an older reader sees exactly what it saw before.
+  const groupsOf = (id: string): string[] =>
+    groups.filter((g) => g.boardIds.includes(id)).map((g) => g.id)
 
   const boards: LayoutBoard[] = []
   for (const b of boardsInput) {
     if (!isFiniteNum(b.x) || !isFiniteNum(b.y) || !isFiniteNum(b.w) || !isFiniteNum(b.h)) continue
-    const gid = groupOf(b.id)
+    const groupIds = groupsOf(b.id)
     boards.push({
       id: b.id,
       type: b.type,
@@ -149,7 +154,8 @@ export function buildLayoutDigest(
       y: b.y,
       w: b.w,
       h: b.h,
-      ...(gid ? { groupId: gid } : {})
+      ...(groupIds.length > 0 ? { groupId: groupIds[0] } : {}),
+      groupIds
     })
   }
 

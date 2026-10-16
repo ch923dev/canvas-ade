@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useCanvasStore } from './canvasStore'
 import { useCameraRequestStore } from './cameraRequestStore'
+import { useCanvasViewStore } from './canvasViewStore'
 import { applyMcpCommand } from './useMcpCommands'
 
 beforeEach(() => {
@@ -1064,6 +1065,40 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     const ack = applyMcpCommand({ type: 'tidyBoards' })
     expect(ack).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
+
+  describe('S0 — screen-aware agent tidy', () => {
+    afterEach(() => useCanvasViewStore.setState({ pane: null }))
+
+    it('G1: packs toward the mounted PANE aspect (wide pane ⇒ one row, tall pane ⇒ one column)', () => {
+      seedOverlapping()
+      useCanvasViewStore.setState({ pane: { w: 4000, h: 400 } })
+      applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+      expect(new Set(useCanvasStore.getState().boards.map((b) => b.y)).size).toBe(1)
+
+      seedOverlapping()
+      useCanvasViewStore.setState({ pane: { w: 400, h: 4000 } })
+      applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+      expect(new Set(useCanvasStore.getState().boards.map((b) => b.x)).size).toBe(1)
+    })
+
+    it('G1: no mounted pane ⇒ no aspect — identical to the packer default (pre-S0 behaviour)', () => {
+      seedOverlapping()
+      useCanvasStore.getState().tidyBoards('grid')
+      const expected = useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y])
+      seedOverlapping()
+      applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+      expect(useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y])).toEqual(expected)
+    })
+
+    it('G4: frames the camera on the result via the focusCamera path, still ONE undo step', () => {
+      seedOverlapping()
+      const before = useCameraRequestStore.getState().seq
+      applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+      expect(useCameraRequestStore.getState().seq).toBe(before + 1)
+      expect(useCameraRequestStore.getState().target).toEqual({ kind: 'all' })
+      expect(useCanvasStore.getState().past).toHaveLength(1)
+    })
   })
 })
 
