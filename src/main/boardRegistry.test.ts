@@ -15,6 +15,9 @@ import {
   diffStatus,
   subscribeBoardStatus,
   registerBoardRegistryHandler,
+  sanitizeView,
+  sanitizeContextFields,
+  getCanvasView,
   type BoardStatusChange
 } from './boardRegistry'
 
@@ -654,6 +657,164 @@ describe('registerBoardRegistryHandler BUG-033 sender guard', () => {
     ])
     expect(listGroups()).toEqual([])
     expect(listConnectors()).toEqual([])
+  })
+
+  it('C1: routes a valid view through sanitizeView; a view-less / legacy payload clears it', () => {
+    const { ipcMain, emit } = makeIpc()
+    const frame = { id: 'main-frame' }
+    registerBoardRegistryHandler(ipcMain, () => makeWin({ frame }))
+    const view = { pane: { w: 1600, h: 900 }, dpr: 2, camera: { x: -100, y: 50, zoom: 0.5 } }
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, {
+      boards: [{ id: 'a', type: 'terminal', title: 'A', cwd: '/repo/api' }],
+      connectors: [],
+      groups: [],
+      view
+    })
+    expect(getCanvasView()).toEqual({
+      ...view,
+      visibleWorld: { x: 200, y: -100, w: 3200, h: 1800 }
+    })
+    expect(listBoardMirror()).toEqual([{ id: 'a', type: 'terminal', title: 'A', cwd: '/repo/api' }])
+    // An object payload WITHOUT a view (a renderer with no Canvas mounted) -> no view.
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, { boards: [], connectors: [] })
+    expect(getCanvasView()).toBeNull()
+    // A bad view is dropped whole - the rest of the payload still lands.
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, {
+      boards: [{ id: 'a', type: 'terminal', title: 'A' }],
+      view: { ...view, dpr: NaN }
+    })
+    expect(getCanvasView()).toBeNull()
+    expect(listBoardMirror()).toHaveLength(1)
+    // The legacy bare-array payload is still accepted, view-less.
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, { boards: [], view })
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, [
+      { id: 'b', type: 'browser', title: 'B' }
+    ])
+    expect(getCanvasView()).toBeNull()
+    expect(listBoardMirror()).toEqual([{ id: 'b', type: 'browser', title: 'B' }])
+  })
+})
+
+describe('C1 spatial mirror - sanitizeView (a bad view is dropped WHOLE)', () => {
+  const good = { pane: { w: 1600, h: 900 }, dpr: 1.5, camera: { x: 10, y: -20, zoom: 1 } }
+  const withPane = (pane: object) => ({ ...good, pane })
+  const withCamera = (camera: object) => ({ ...good, camera })
+
+  it('keeps a good view and derives visibleWorld from pane + camera (ignores the sent one)', () => {
+    const v = sanitizeView({ ...good, visibleWorld: { x: 999, y: 999, w: 1, h: 1 } })
+    expect(v).toEqual({ ...good, visibleWorld: { x: -10, y: 20, w: 1600, h: 900 } })
+  })
+
+  it('clamps in-domain values: pane into [1, 16384], zoom into [0.1, 2.5]', () => {
+    expect(sanitizeView(withPane({ w: 20000, h: 0 }))?.pane).toEqual({ w: 16384, h: 1 })
+    expect(sanitizeView(withPane({ w: 0.5, h: 900 }))?.pane).toEqual({ w: 1, h: 900 })
+    expect(sanitizeView(withCamera({ x: 0, y: 0, zoom: 3 }))?.camera.zoom).toBe(2.5)
+    expect(sanitizeView(withCamera({ x: 0, y: 0, zoom: 0.01 }))?.camera.zoom).toBe(0.1)
+    // visibleWorld follows the CLAMPED values (zoom 5 -> 2.5).
+    const vw = sanitizeView(withCamera({ x: 0, y: 0, zoom: 5 }))?.visibleWorld
+    expect(vw?.w).toBe(640)
+    expect(vw?.h).toBe(360)
+  })
+
+  it('accepts dpr in (0, 8]', () => {
+    expect(sanitizeView({ ...good, dpr: 8 })?.dpr).toBe(8)
+    expect(sanitizeView({ ...good, dpr: 0.25 })?.dpr).toBe(0.25)
+  })
+
+  it.each([
+    ['NaN pane', withPane({ w: NaN, h: 900 })],
+    ['Infinity camera', withCamera({ x: Infinity, y: 0, zoom: 1 })],
+    ['-Infinity dpr', { ...good, dpr: -Infinity }],
+    ['negative pane', withPane({ w: -1, h: 900 })],
+    ['zero zoom', withCamera({ x: 0, y: 0, zoom: 0 })],
+    ['negative zoom', withCamera({ x: 0, y: 0, zoom: -1 })],
+    ['zero dpr', { ...good, dpr: 0 }],
+    ['dpr above 8', { ...good, dpr: 9 }],
+    ['huge pane', withPane({ w: 1e9, h: 900 })],
+    ['huge camera', withCamera({ x: 1e12, y: 0, zoom: 1 })],
+    ['string number', withPane({ w: '1600', h: 900 })],
+    ['missing camera', { pane: good.pane, dpr: 1 }],
+    ['missing pane.h', withPane({ w: 1600 })],
+    ['missing dpr', { pane: good.pane, camera: good.camera }],
+    ['array pane', withPane([1600, 900])],
+    ['null', null],
+    ['array', [good]],
+    ['string', 'view']
+  ])('drops a bad view whole: %s', (_label, input) => {
+    expect(sanitizeView(input)).toBeNull()
+  })
+})
+
+describe('C1 spatial mirror - per-board context fields', () => {
+  it('keeps every well-formed context field (C1 + the C9 additions)', () => {
+    const boards = [
+      {
+        id: 't1',
+        type: 'terminal',
+        title: 'API',
+        cwd: 'C:/work/app/apps/api',
+        dockedIn: 'sw1',
+        agent: true,
+        ports: [3000, 5173],
+        lastFocusedAt: 1760000000000
+      },
+      { id: 'b1', type: 'browser', title: 'Web', previewSourceId: 't1', callsPorts: [3000] },
+      { id: 'd1', type: 'dataflow', title: 'Flow', sourceBoardId: 'b1' }
+    ]
+    expect(sanitizeSnapshot(boards)).toEqual(boards)
+  })
+
+  it('bounds cwd at 1024 chars and id references at 200 (over-length DROPS, board kept)', () => {
+    const ok = sanitizeContextFields({ cwd: 'c'.repeat(1024), previewSourceId: 'i'.repeat(200) })
+    expect(ok.cwd).toHaveLength(1024)
+    expect(ok.previewSourceId).toHaveLength(200)
+    expect(
+      sanitizeContextFields({
+        cwd: 'c'.repeat(1025),
+        previewSourceId: 'i'.repeat(201),
+        dockedIn: 'd'.repeat(201),
+        sourceBoardId: 's'.repeat(201)
+      })
+    ).toEqual({})
+    expect(sanitizeContextFields({ cwd: '', dockedIn: 7, sourceBoardId: null })).toEqual({})
+  })
+
+  it('ports: integers 1..65535, de-duplicated, at most 8 - bad entries dropped', () => {
+    expect(
+      sanitizeContextFields({
+        ports: [0, 1, 65535, 65536, 3000, 3000, 1.5, '8080', NaN, -1, null],
+        callsPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      })
+    ).toEqual({ ports: [1, 65535, 3000], callsPorts: [1, 2, 3, 4, 5, 6, 7, 8] })
+    expect(sanitizeContextFields({ ports: [0, 70000], callsPorts: 'nope' })).toEqual({})
+  })
+
+  it('agent is a strict boolean; lastFocusedAt a finite non-negative epoch', () => {
+    expect(sanitizeContextFields({ agent: 'true', lastFocusedAt: -1 })).toEqual({})
+    expect(sanitizeContextFields({ agent: false, lastFocusedAt: Infinity })).toEqual({
+      agent: false
+    })
+  })
+
+  it('D9: a forged launch line / env on a board never reaches the mirror', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 't1',
+        type: 'terminal',
+        title: 'T',
+        launchCommand: 'OPENAI_API_KEY=sk-secret claude',
+        env: { OPENAI_API_KEY: 'sk-secret' }
+      }
+    ])
+    expect(out).toEqual([{ id: 't1', type: 'terminal', title: 'T' }])
+    expect(JSON.stringify(out)).not.toContain('sk-secret')
+  })
+
+  it('legacy boards without any context field snapshot byte-identically', () => {
+    const legacy = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'idle', x: 0, y: 0, w: 1, h: 1 }
+    ]
+    expect(sanitizeSnapshot(legacy)).toEqual(legacy)
   })
 })
 

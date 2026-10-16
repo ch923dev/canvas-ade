@@ -53,8 +53,9 @@ export function useTidyTile(deps: TidyTileDeps): { tidyAndFit: (preset?: LayoutP
   const { paneRef, rf, setActiveTile, setFocusedId, activeTileRef } = deps
   const tileBoards = useCanvasStore((s) => s.tileBoards)
   const tidyBoards = useCanvasStore((s) => s.tidyBoards)
-  // Spatial awareness (S0): park the SAME pane's size on the session-only view bus so the React-free
-  // MCP tidy applier passes the pane aspect exactly like tidyAndFit below does.
+  // Spatial awareness (S0/C1): park the SAME pane's size (+ the settled camera) on the session-only
+  // view bus so the React-free MCP tidy applier passes the pane aspect exactly like tidyAndFit below
+  // does, and the MCP publisher can mirror the user's view to MAIN.
   useCanvasViewTracker(paneRef)
 
   // Pane (visible canvas) dimensions in screen px, from the absolute-inset pane element.
