@@ -114,10 +114,16 @@ function isErrorResult(r: unknown): boolean {
 function okText(o: CallOutcome): string {
   return o.ok && !isErrorResult(o.result) ? resultText(o.result).trim() : ''
 }
-/** True iff the call resolved as the SPECIFIC tool-not-found denial — the SERVER-SIDE
- *  tier split (registration, not prompt). A generic transport miss must NOT pass here. */
+/** JSON-RPC InvalidParams — the code MCP SDK v2 uses for a call to an unregistered tool. */
+const JSONRPC_INVALID_PARAMS = -32602
+/** True iff the call failed as the SPECIFIC tool-not-found denial — the SERVER-SIDE
+ *  tier split (registration, not prompt). A generic transport miss must NOT pass here.
+ *  Since @expanse-ade/mcp 0.25.0 (MCP SDK v2) an unregistered tool is rejected at the
+ *  PROTOCOL layer — `ProtocolError(InvalidParams, "Tool <name> not found")`, thrown before
+ *  the handler's try/catch — so the client THROWS instead of resolving an `isError` result
+ *  (the v1 shape this helper used to require, which silently failed every tier assert). */
 function deniedToolNotFound(o: CallOutcome, tool: string): boolean {
-  return o.ok && isErrorResult(o.result) && resultText(o.result).includes(`Tool ${tool} not found`)
+  return !o.ok && o.code === JSONRPC_INVALID_PARAMS && o.threw.includes(`Tool ${tool} not found`)
 }
 /** True iff the call resolved as ANY isError result (a rejected-but-handled dispatch). */
 function rejected(o: CallOutcome): boolean {
@@ -1331,8 +1337,18 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
       .poll(() => (fs.existsSync(dump) ? fs.readFileSync(dump, 'utf8') : ''), { timeout: 10000 })
       .toContain(`\x1b[200~${prompt}\x1b[201~`)
     // The submit Enter arrives AFTER the paste frame (inside it, \r would be literal content).
-    const received = fs.readFileSync(dump, 'utf8')
-    expect(received.slice(received.indexOf('\x1b[201~'))).toContain('\r')
+    // POLLED, like the frame above: ConPTY delivers to the child's stdin asynchronously, so the
+    // relay's ack can resolve before the trailing \r reaches the REPL's dump (observed 2026-10-16:
+    // a one-shot read saw the frame end with nothing after it; the file finished `…201~\r` ms later).
+    await expect
+      .poll(
+        () => {
+          const received = fs.readFileSync(dump, 'utf8')
+          return received.slice(received.indexOf('\x1b[201~'))
+        },
+        { timeout: 5000 }
+      )
+      .toContain('\r')
     // The relay is audited (a dispatched* row exists for this target). The exact status
     // (`dispatched` vs `dispatched_unconfirmed`) depends on environmental readiness/echo timing —
     // the deterministic status↔signal mapping is unit-covered in dispatchGate.test.ts; here the
