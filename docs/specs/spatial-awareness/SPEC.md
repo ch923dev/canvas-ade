@@ -521,6 +521,13 @@ rebases (union edits only).
 **Waves:** Wave 2 = L5 · L6 · L7 · L8 · **L9 · L10 · L11**. The pure lanes run in parallel; the cap is
 ~4 live worktrees. Wave 3 = pin bump → I1 ∥ I2.
 
+🔒 **Pin-bump gate (found in L8 review, 2026-10-17):** 0.27.0 registers `tidy_canvas` + `focus_viewport` for
+lead/connected callers and binds `sourceBoardId`; today's host ignores that field, so a bare pin bump would
+let lead/connected terminals tidy/focus UN-GATED (a D1 violation) until I2 lands. So the **pin-bump PR also
+carries the host-side D1 confirm** in `mcpTidy.ts` + `mcpFocus.ts` (`sourceBoardId` present ⇒ one
+`ConfirmRequest` first; declined ⇒ nothing changes). Group tools/contexts are safe: the host has no methods
+yet, so the package skips them with a warning.
+
 Serial edges: **L9 → L10** (types; stubbing them is fine) · **L5 → L11's wiring line** · **L10 freezes its
 goldens only after D7–D10 are answered and ROLE-LAYOUT.md is signed off** · L4 → L8 in the package repo · package publish → app pin bump (one PR, lockfile in a
 scratch dir) → I1 ∥ I2 · L1 (e2e gate) merges before anything touches `e2e/`.
