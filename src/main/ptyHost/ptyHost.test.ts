@@ -16,7 +16,7 @@ import {
   verifyHello,
   type DaemonMsg
 } from './protocol'
-import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
+import { createDaemonRing, daemonRingReplay, daemonRingWrapped, pushDaemonRing } from './ring'
 import { quitDrainCore } from './quitDrain'
 import { pipeNameFor, repairState } from './state'
 import { ptyHostEnabled, readPtyHostConfig, repairPtyHostConfig } from './config'
@@ -106,20 +106,20 @@ describe('verifyHello (token + version gate)', () => {
 describe('daemon ring (line-boundary replay trim)', () => {
   const CAP = 32
   it('replays verbatim while under the cap', () => {
-    const r: DaemonRing = { chunks: [], len: 0 }
+    const r = createDaemonRing()
     pushDaemonRing(r, 'abc\n', CAP)
     pushDaemonRing(r, 'def', CAP)
     expect(daemonRingReplay(r, CAP)).toBe('abc\ndef')
   })
   it('trims whole chunks from the head once over the cap', () => {
-    const r: DaemonRing = { chunks: [], len: 0 }
+    const r = createDaemonRing()
     pushDaemonRing(r, 'x'.repeat(20) + '\n', CAP)
     pushDaemonRing(r, 'y'.repeat(20) + '\n', CAP)
     expect(r.len).toBeLessThanOrEqual(CAP)
     expect(r.chunks.join('')).not.toContain('x')
   })
   it('starts a wrapped replay after the first newline (no mid-escape head)', () => {
-    const r: DaemonRing = { chunks: [], len: 0 }
+    const r = createDaemonRing()
     pushDaemonRing(r, 'partial-esc', CAP)
     pushDaemonRing(r, 'seq\nCLEAN-LINE-AFTER-WRAP', CAP)
     // force the wrapped state: len == cap after a single-chunk trim
@@ -129,11 +129,48 @@ describe('daemon ring (line-boundary replay trim)', () => {
     expect(replay).toBe('z'.repeat(CAP)) // one giant line — replayed as-is, not dropped
   })
   it('wrapped multi-line replay drops the torn first line', () => {
-    const r: DaemonRing = { chunks: [], len: 0 }
+    const r = createDaemonRing()
     pushDaemonRing(r, 'A'.repeat(30) + '\n' + 'B'.repeat(10) + '\n' + 'C'.repeat(10), 40)
     const replay = daemonRingReplay(r, 40)
     expect(replay.startsWith('B')).toBe(true)
     expect(replay).toContain('C'.repeat(10))
+  })
+  it('🔒 EXACTLY at cap with nothing evicted keeps its intact first line (off-by-one)', () => {
+    // pushDaemonRing trims only on STRICT overflow (len > cap), so a ring that lands exactly on
+    // the cap still holds every byte ever written. The old `len >= cap` "wrapped" test read this
+    // as wrapped and dropped the complete first line on reattach — silent scrollback loss.
+    const r = createDaemonRing()
+    pushDaemonRing(r, 'first\n', 12)
+    pushDaemonRing(r, 'second', 12) // 12 chars === cap exactly, untouched
+    expect(r.len).toBe(12)
+    expect(r.written).toBe(12)
+    expect(daemonRingWrapped(r, 12)).toBe(false)
+    expect(daemonRingReplay(r, 12)).toBe('first\nsecond')
+  })
+  it('one char past cap IS wrapped — the head is trimmed and replay starts on a line boundary', () => {
+    const r = createDaemonRing()
+    pushDaemonRing(r, 'first\n', 12)
+    pushDaemonRing(r, 'second!', 12) // 13 written → the head chunk is evicted
+    expect(daemonRingWrapped(r, 12)).toBe(true)
+    expect(daemonRingReplay(r, 12)).toBe('second!')
+  })
+  it('🔒 whole-chunk eviction that leaves len BELOW cap still counts as wrapped (torn head trimmed)', () => {
+    // This ring drops WHOLE head chunks, so after an eviction len can sit well under the cap with a
+    // head that starts at an arbitrary PTY read boundary — here mid-line. `len >= cap` read that as
+    // unwrapped and replayed the torn head verbatim; `written > cap` sees the eviction.
+    const r = createDaemonRing()
+    pushDaemonRing(r, 'x'.repeat(20), CAP)
+    pushDaemonRing(r, 'torn-tail\nCLEAN-LINE', CAP) // 20 + 20 = 40 > 32 → first chunk dropped
+    expect(r.len).toBe(20)
+    expect(r.len).toBeLessThan(CAP)
+    expect(daemonRingWrapped(r, CAP)).toBe(true)
+    expect(daemonRingReplay(r, CAP)).toBe('CLEAN-LINE')
+  })
+  it('createDaemonRing starts empty and unwrapped', () => {
+    const r = createDaemonRing()
+    expect(r).toEqual({ chunks: [], len: 0, written: 0 })
+    expect(daemonRingWrapped(r, CAP)).toBe(false)
+    expect(daemonRingReplay(r, CAP)).toBe('')
   })
 })
 

@@ -78,14 +78,19 @@ export function registerFindingsHandlers(
     'findings:publish',
     async (e: IpcMainInvokeEvent, payload: unknown): Promise<FindingsPublishResult> => {
       if (isForeignSender(e, getWin)) {
-        return { ok: false, published: 0, summary: 'forbidden' }
+        return { ok: false, published: 0, summary: 'forbidden', outcome: 'refused' }
       }
       const boardId =
         payload !== null && typeof payload === 'object'
           ? (payload as { boardId?: unknown }).boardId
           : undefined
       if (typeof boardId !== 'string' || boardId.length === 0) {
-        return { ok: false, published: 0, summary: 'publish needs a kanban boardId' }
+        return {
+          ok: false,
+          published: 0,
+          summary: 'publish needs a kanban boardId',
+          outcome: 'refused'
+        }
       }
       return publishFindings(findingsPublishDeps(ipcMain, getWin), boardId)
     }

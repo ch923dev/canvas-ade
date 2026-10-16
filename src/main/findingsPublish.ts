@@ -51,12 +51,36 @@ export interface FindingsPublishDeps {
   newCardId(): string
 }
 
+/**
+ * Which branch a publish ended on — the MACHINE-readable twin of `summary`. `ok`/`published` alone
+ * cannot tell "the human declined every row" from "there was nothing to publish", or a refused
+ * destination from a write the renderer refused, and a caller that must RECORD the act (the MCP
+ * agent trigger audits every branch — `mcpFindings.ts`) must never parse the human-readable
+ * summary to find out. Exactly one per return path:
+ *   · `published`    ≥ 1 card written (some rows may still have been declined — see `summary`)
+ *   · `declined`     the human approved no row — nothing written
+ *   · `empty`        nothing to publish — no modal shown, nothing written
+ *   · `refused`      refused before any modal: destination missing / not a kanban (on the IPC
+ *                    trigger also a foreign sender or a missing board id)
+ *   · `target-gone`  the destination vanished while the modal was open (BUG-021) — nothing written
+ *   · `write-failed` the renderer refused the single `patchKanban` — nothing written
+ */
+export type FindingsPublishOutcome =
+  | 'published'
+  | 'declined'
+  | 'empty'
+  | 'refused'
+  | 'target-gone'
+  | 'write-failed'
+
 export interface FindingsPublishResult {
   ok: boolean
   /** Cards actually written. 0 with `ok:true` means the human approved nothing — a no-op, not a failure. */
   published: number
   /** Human-readable outcome, ALWAYS carrying the batch disclosure when there was one. */
   summary: string
+  /** The branch this publish ended on (see {@link FindingsPublishOutcome}). */
+  outcome: FindingsPublishOutcome
 }
 
 /** Build one kanban add-op from an approved finding. */
@@ -108,12 +132,15 @@ export async function publishFindings(
   opts?: { lane?: string }
 ): Promise<FindingsPublishResult> {
   const target = deps.lookupBoard(boardId)
-  if (!target) return { ok: false, published: 0, summary: `board not found: ${boardId}` }
+  if (!target) {
+    return { ok: false, published: 0, summary: `board not found: ${boardId}`, outcome: 'refused' }
+  }
   if (target.type !== 'kanban') {
     return {
       ok: false,
       published: 0,
-      summary: `board ${boardId} is a ${target.type}, not a kanban`
+      summary: `board ${boardId} is a ${target.type}, not a kanban`,
+      outcome: 'refused'
     }
   }
 
@@ -122,7 +149,12 @@ export async function publishFindings(
   if (batch.findings.length === 0) {
     // An empty batch is a legitimate outcome (a clean review IS a result), and it writes nothing —
     // so it must not be reported as a failure. The reason still travels in the summary.
-    return { ok: true, published: 0, summary: `nothing to publish — ${batch.disclose}` }
+    return {
+      ok: true,
+      published: 0,
+      summary: `nothing to publish — ${batch.disclose}`,
+      outcome: 'empty'
+    }
   }
 
   const titleOf = (id: string): string => deps.lookupBoard(id)?.title ?? id
@@ -146,7 +178,12 @@ export async function publishFindings(
   if (approved.length === 0) {
     // 🔒 Gate the WRITE, not the no-op (S3 round-2 `[warning]`): declining every row touches
     // nothing, so it is a successful "no thanks", never an error.
-    return { ok: true, published: 0, summary: `no findings approved — nothing written` }
+    return {
+      ok: true,
+      published: 0,
+      summary: `no findings approved — nothing written`,
+      outcome: 'declined'
+    }
   }
 
   // 🔒 Re-derive AFTER the human's decision, not before it. The modal may have been open for
@@ -156,7 +193,8 @@ export async function publishFindings(
     return {
       ok: false,
       published: 0,
-      summary: `board ${boardId} was removed while the confirmation was open — nothing written`
+      summary: `board ${boardId} was removed while the confirmation was open — nothing written`,
+      outcome: 'target-gone'
     }
   }
   const lanes = deps.lanesOf(boardId)
@@ -174,7 +212,12 @@ export async function publishFindings(
   const ops = approved.map((f) => cardFor(f, deps.newCardId(), laneFor(f), titleOf))
   const ack = await deps.send({ type: 'patchKanban', id: boardId, ops })
   if (!ack.ok) {
-    return { ok: false, published: 0, summary: `write refused: ${ack.error}` }
+    return {
+      ok: false,
+      published: 0,
+      summary: `write refused: ${ack.error}`,
+      outcome: 'write-failed'
+    }
   }
 
   const declined = batch.findings.length - approved.length
@@ -182,5 +225,10 @@ export async function publishFindings(
   if (declined > 0) notes.push(`${declined} declined`)
   if (rerouted > 0) notes.push(`${rerouted} routed to an existing lane instead`)
   notes.push(batch.disclose)
-  return { ok: true, published: approved.length, summary: notes.join(' · ') }
+  return {
+    ok: true,
+    published: approved.length,
+    summary: notes.join(' · '),
+    outcome: 'published'
+  }
 }

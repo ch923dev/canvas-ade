@@ -14,6 +14,7 @@ import type { BoardCards } from './mcpBoardCards'
 import type { BoardPlanning } from './mcpBoardPlanning'
 import type { PlanningEditPatch } from '../shared/mcpTypes'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
+import type { FindingsPublishResult } from './findingsPublish'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -142,6 +143,7 @@ export type LifecycleOrchestrator = Omit<
   | 'relayPrompt'
   | 'relayPrompts'
   | 'configureBoard'
+  | 'publishFindings'
 > & {
   /**
    * v19 WIDENING of the package's `configureBoard(boardId, BoardConfig)` (same Omit-and-redeclare
@@ -296,6 +298,17 @@ export type LifecycleOrchestrator = Omit<
     title?: string
     sourceBoardId?: string
   }): Promise<{ id: string; queuedFor?: string }>
+  /**
+   * 🔒 Publish the run's merged worker findings onto a KANBAN board as ONE human-confirmed batch
+   * (orchestration P4, `publish_findings`). NARROWS the package's `{ ok, published, summary }` to the
+   * host-owned {@link FindingsPublishResult} (adds the machine-readable `outcome` the MCP audit
+   * records) — same Omit-and-redeclare discipline as `tidyCanvas`; a wider result stays assignable to
+   * the package's at the ServerFactory boundary. OPTIONAL, and present on a built orchestrator ONLY
+   * when the registry wires {@link BoardRegistry.publishFindings} (`./mcpFindings`): the package
+   * registers the tool iff `typeof orchestrator.publishFindings === 'function'`, so an unwired host
+   * keeps it out of `tools/list` instead of advertising a call that would fail.
+   */
+  publishFindings?(boardId: string, opts?: { lane?: string }): Promise<FindingsPublishResult>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
@@ -510,12 +523,12 @@ export interface BoardRegistry {
    * confirm each, which at fan-out scale is the confirm storm the whole design forbids.
    *
    * Optional so existing registry stubs and older `@expanse-ade/mcp` pins keep compiling; the tool
-   * simply does not register when it is unwired.
+   * simply does not register when it is unwired. `buildOrchestrator` forwards it onto the
+   * orchestrator via `./mcpFindings` (which adds the agent-path audit) — the registry method itself
+   * MUST be the already human-confirmed path (`findingsPublish.publishFindings`): the forwarder adds
+   * no second confirm.
    */
-  publishFindings?(
-    boardId: string,
-    opts?: { lane?: string }
-  ): Promise<{ ok: boolean; published: number; summary: string }>
+  publishFindings?(boardId: string, opts?: { lane?: string }): Promise<FindingsPublishResult>
   /**
    * PR-2: read-only working-tree diff for a board. MAIN injects gitDiff.ts's `boardGitDiff`,
    * which resolves the board's resolved spawn cwd (pty.ts `getTerminalCwd`) and runs `simple-git`

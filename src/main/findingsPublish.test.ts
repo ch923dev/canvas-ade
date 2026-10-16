@@ -70,7 +70,7 @@ describe('publishFindings', () => {
   it('refuses a board that is not there', async () => {
     const h = harness({ boards: {} })
     const r = await publishFindings(h.deps, KANBAN)
-    expect(r).toMatchObject({ ok: false, published: 0 })
+    expect(r).toMatchObject({ ok: false, published: 0, outcome: 'refused' })
     expect(h.confirmed).toHaveLength(0)
   })
 
@@ -78,6 +78,7 @@ describe('publishFindings', () => {
     const h = harness({ boards: { [KANBAN]: { type: 'planning', title: 'Plan' } } })
     const r = await publishFindings(h.deps, KANBAN)
     expect(r.ok).toBe(false)
+    expect(r.outcome).toBe('refused')
     expect(r.summary).toContain('is a planning, not a kanban')
   })
 
@@ -90,7 +91,7 @@ describe('publishFindings', () => {
     expect(h.confirmed[0].items).toHaveLength(2)
     expect(h.sent).toHaveLength(1)
     expect(h.sent[0].ops).toHaveLength(2)
-    expect(r).toMatchObject({ ok: true, published: 2 })
+    expect(r).toMatchObject({ ok: true, published: 2, outcome: 'published' })
   })
 
   it('writes only the approved rows and reports the declines', async () => {
@@ -98,6 +99,8 @@ describe('publishFindings', () => {
     const r = await publishFindings(h.deps, KANBAN)
     expect(h.sent[0].ops).toHaveLength(1)
     expect(r.published).toBe(1)
+    // A PARTIAL decline still landed cards — it is a publish, not a decline.
+    expect(r.outcome).toBe('published')
     expect(r.summary).toContain('1 declined')
   })
 
@@ -106,7 +109,7 @@ describe('publishFindings', () => {
     // is a legitimate answer to the question the modal asked.
     const h = harness({ approve: () => false })
     const r = await publishFindings(h.deps, KANBAN)
-    expect(r).toMatchObject({ ok: true, published: 0 })
+    expect(r).toMatchObject({ ok: true, published: 0, outcome: 'declined' })
     expect(h.sent).toHaveLength(0)
   })
 
@@ -115,6 +118,9 @@ describe('publishFindings', () => {
     const r = await publishFindings(h.deps, KANBAN)
     expect(r.ok).toBe(true)
     expect(r.published).toBe(0)
+    // ok/published alone cannot tell this from a full decline — the outcome can (the MCP audit's
+    // input; see mcpFindings.ts).
+    expect(r.outcome).toBe('empty')
     expect(r.summary).toContain('nothing to publish')
     expect(r.summary).toContain('reported nothing')
     expect(h.confirmed).toHaveLength(0)
@@ -133,6 +139,7 @@ describe('publishFindings', () => {
     })
     const r = await publishFindings(h.deps, KANBAN)
     expect(r.ok).toBe(false)
+    expect(r.outcome).toBe('target-gone')
     expect(r.summary).toContain('was removed while the confirmation was open')
     expect(h.sent).toHaveLength(0)
   })
@@ -212,7 +219,7 @@ describe('publishFindings', () => {
   it('surfaces a refused write instead of claiming a publish', async () => {
     const h = harness({ sendAck: { ok: false, error: 'project-loading' } })
     const r = await publishFindings(h.deps, KANBAN)
-    expect(r).toMatchObject({ ok: false, published: 0 })
+    expect(r).toMatchObject({ ok: false, published: 0, outcome: 'write-failed' })
     expect(r.summary).toContain('project-loading')
   })
 
