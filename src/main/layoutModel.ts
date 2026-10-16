@@ -9,7 +9,14 @@
  * `Orchestrator.describeLayout()`, which wraps this builder over the injected board/group mirror —
  * exactly the `buildAppModel` pattern. PURE (no electron / @expanse-ade/mcp imports): it takes the
  * live data and returns a plain object, so it unit-tests in isolation and carries no runtime coupling.
+ *
+ * Version 2 (spatial awareness C2) is ADDITIVE — every v1 field stays: per-board `groupIds` (every
+ * group, G8) + `onScreen`, the Named Groups with their bboxes, the user's `screen` (the C1 view +
+ * the MAIN-side display) and `fit` (the zoom at which everything fits the pane, and whether that is
+ * still readable). Without a view, `screen` and `fit.zoomToFitAll` are null and nothing is on screen.
  */
+import { READABLE_ZOOM, fitZoom, rectsIntersect, type Rect } from '../shared/spatialGeometry'
+import type { CanvasView, DisplayInfo } from '../shared/spatialTypes'
 
 /** A board as the digest reads it — geometry is optional (a pre-P1 board / a non-placed stub omits it). */
 export interface LayoutBoardInput {
@@ -19,6 +26,15 @@ export interface LayoutBoardInput {
   y?: number
   w?: number
   h?: number
+  /** A worker terminal docked in a swarm board (C1 mirror) — NOT canvas geometry: its x/y are stale
+   *  parking coordinates, so it is never placed (the tidy / C3 / C4 rule). */
+  dockedIn?: string
+}
+
+/** The user's view the digest projects (C2): the sanitized C1 `view` + MAIN's display (both optional). */
+export interface LayoutViewInput {
+  view?: CanvasView | null
+  display?: DisplayInfo | null
 }
 
 /** A Named Group (feature zone) the digest joins onto each board as `groupIds` (+ v1 `groupId`). */
@@ -42,6 +58,30 @@ export interface LayoutBoard {
   /** EVERY Named Group this board belongs to, in group input order (G8 — multi-membership is
    *  allowed); `[]` when ungrouped. `groupIds[0]` is always `groupId`. */
   groupIds: string[]
+  /** Intersects `screen.visibleWorld` (false when `screen` is null). */
+  onScreen: boolean
+}
+
+/** A Named Group in the digest (v2): its membership as published + the bbox of its PLACED members. */
+export interface LayoutGroup {
+  id: string
+  name: string
+  boardIds: string[]
+  /** Union bbox of the group's placed members (world px); null when none of them is placed. */
+  bbox: Rect | null
+}
+
+/** The user's screen in the digest (v2): the C1 view + the display holding the window, when known. */
+export type LayoutScreen = CanvasView & { display?: DisplayInfo }
+
+/** Whether the whole canvas fits the user's pane readably (v2). */
+export interface LayoutFit {
+  /** Zoom at which ALL placed boards fit the pane (FIT_FRAME rules); null without a view (or boards). */
+  zoomToFitAll: number | null
+  /** zoomToFitAll >= READABLE_ZOOM (false when zoomToFitAll is null). */
+  readable: boolean
+  /** READABLE_ZOOM (= the renderer's LOD_ZOOM: below it boards render as placeholders). */
+  readableZoom: number
 }
 
 /**
@@ -51,22 +91,47 @@ export interface LayoutBoard {
  */
 export type LayoutArrangement = 'empty' | 'single' | 'row' | 'column' | 'grid' | 'scattered'
 
-/** The read-only spatial digest served as `canvas://layout`. */
-export interface LayoutDigest {
-  version: 1
-  /** Number of boards carrying finite geometry (the only ones the digest can place). */
+/** The read-only spatial digest served as `canvas://layout` (v2 — every v1 field kept). */
+export interface LayoutDigestV2 {
+  version: 2
+  /** Number of PLACED boards: finite geometry and not docked in a swarm. */
   count: number
   /** Union bounding box of all placed boards (world px); null when none are placed. */
-  bbox: { x: number; y: number; w: number; h: number } | null
-  /** Placed boards, in input order, each with finite geometry + optional group membership. */
+  bbox: Rect | null
+  /** Placed boards, in input order, each with finite geometry + group membership + on-screen flag. */
   boards: LayoutBoard[]
   /** Board-id pairs whose rectangles overlap (a tidy trigger). Each unordered pair once, `a`<`b`. */
   overlaps: Array<{ a: string; b: string }>
   /** How the placed boards currently sit — the orientation hint for a tidy/visualize proposal. */
   arrangement: LayoutArrangement
+  /** Every Named Group, in input order, with the bbox of its placed members. */
+  groups: LayoutGroup[]
+  /** The user's view (pane · dpr · camera · visible world + display); null without a view. */
+  screen: LayoutScreen | null
+  /** Does everything fit the pane at a readable zoom? */
+  fit: LayoutFit
 }
 
+/** The digest every consumer imports — currently {@link LayoutDigestV2}. */
+export type LayoutDigest = LayoutDigestV2
+
 const isFiniteNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** Union bounding box of `rects`; null when empty. */
+function unionBox(rects: readonly Rect[]): Rect | null {
+  if (rects.length === 0) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const r of rects) {
+    if (r.x < minX) minX = r.x
+    if (r.y < minY) minY = r.y
+    if (r.x + r.w > maxX) maxX = r.x + r.w
+    if (r.y + r.h > maxY) maxY = r.y + r.h
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
 
 /** Two rectangles overlap iff they intersect on BOTH axes (touching edges do NOT count). */
 function rectsOverlap(a: LayoutBoard, b: LayoutBoard): boolean {
@@ -130,14 +195,29 @@ function classify(boards: LayoutBoard[], hasOverlap: boolean): LayoutArrangement
 }
 
 /**
- * Build the {@link LayoutDigest} from the live board + group mirrors. Boards without finite geometry
- * are dropped (they can't be placed); everything else is derived deterministically. Pure — safe to
- * call on every `canvas://layout` read.
+ * Build the {@link LayoutDigest} from the live board + group mirrors and the user's view. Boards
+ * without finite geometry, and worker terminals docked in a swarm, are dropped (they can't be
+ * placed); everything else is derived deterministically. Pure — safe to call on every
+ * `canvas://layout` read.
  */
 export function buildLayoutDigest(
   boardsInput: readonly LayoutBoardInput[],
-  groups: readonly LayoutGroupInput[] = []
+  groups: readonly LayoutGroupInput[] = [],
+  viewInput: LayoutViewInput = {}
 ): LayoutDigest {
+  const view = viewInput.view ?? null
+  const display = viewInput.display ?? null
+  // The user's screen: the C1 view (+ the display holding the window, when MAIN could read it).
+  const screen: LayoutScreen | null = view
+    ? {
+        pane: { ...view.pane },
+        dpr: view.dpr,
+        camera: { ...view.camera },
+        visibleWorld: { ...view.visibleWorld },
+        ...(display ? { display } : {})
+      }
+    : null
+
   // groupIds = EVERY group (input order) whose membership includes the board (G8); the v1
   // `groupId` stays the FIRST of them so an older reader sees exactly what it saw before.
   const groupsOf = (id: string): string[] =>
@@ -146,34 +226,21 @@ export function buildLayoutDigest(
   const boards: LayoutBoard[] = []
   for (const b of boardsInput) {
     if (!isFiniteNum(b.x) || !isFiniteNum(b.y) || !isFiniteNum(b.w) || !isFiniteNum(b.h)) continue
+    if (typeof b.dockedIn === 'string' && b.dockedIn.length > 0) continue // docked: not geometry
     const groupIds = groupsOf(b.id)
+    const rect = { x: b.x, y: b.y, w: b.w, h: b.h }
     boards.push({
       id: b.id,
       type: b.type,
-      x: b.x,
-      y: b.y,
-      w: b.w,
-      h: b.h,
+      ...rect,
       ...(groupIds.length > 0 ? { groupId: groupIds[0] } : {}),
-      groupIds
+      groupIds,
+      onScreen: screen !== null && rectsIntersect(rect, screen.visibleWorld)
     })
   }
 
   // Union bounding box (null when nothing is placed).
-  let bbox: LayoutDigest['bbox'] = null
-  if (boards.length > 0) {
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const b of boards) {
-      if (b.x < minX) minX = b.x
-      if (b.y < minY) minY = b.y
-      if (b.x + b.w > maxX) maxX = b.x + b.w
-      if (b.y + b.h > maxY) maxY = b.y + b.h
-    }
-    bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
-  }
+  const bbox = unionBox(boards)
 
   // Overlapping pairs (each unordered pair once, `a` < `b` for a stable, dedup-friendly shape).
   const overlaps: Array<{ a: string; b: string }> = []
@@ -187,12 +254,31 @@ export function buildLayoutDigest(
     }
   }
 
+  // Each Named Group with the bbox of its PLACED members (an unplaced / docked member adds nothing).
+  const placedById = new Map(boards.map((b) => [b.id, b]))
+  const layoutGroups: LayoutGroup[] = groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    boardIds: [...g.boardIds],
+    bbox: unionBox(g.boardIds.flatMap((id) => placedById.get(id) ?? []))
+  }))
+
+  // Fit: the FIT_FRAME zoom that frames everything in the user's pane, and whether it stays readable.
+  const zoomToFitAll = view && bbox ? fitZoom(bbox, view.pane) : null
+
   return {
-    version: 1,
+    version: 2,
     count: boards.length,
     bbox,
     boards,
     overlaps,
-    arrangement: classify(boards, overlaps.length > 0)
+    arrangement: classify(boards, overlaps.length > 0),
+    groups: layoutGroups,
+    screen,
+    fit: {
+      zoomToFitAll,
+      readable: zoomToFitAll !== null && zoomToFitAll >= READABLE_ZOOM,
+      readableZoom: READABLE_ZOOM
+    }
   }
 }

@@ -34,7 +34,14 @@ import { createReadinessWaiter } from './terminalReadiness'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
 import { readOrchestrationConfig } from './orchestrationConfig'
-import { listBoardMirror, listConnectors, listGroups, subscribeBoardStatus } from './boardRegistry'
+import {
+  getCanvasView,
+  listBoardMirror,
+  listConnectors,
+  listGroups,
+  subscribeBoardStatus
+} from './boardRegistry'
+import { readDisplayInfo } from './screenInfo'
 import { sendMcpCommand } from './mcpCommand'
 import { appendAuditEntry } from './auditIpc'
 import { requestConfirm, requestConfirmBatch } from './mcpConfirm'
@@ -71,6 +78,8 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     listConnectors,
     // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
     listGroups,
+    // C2: the user's live view (renderer mirror) + the display holding the window (read lazily).
+    readView: () => ({ view: getCanvasView(), display: readDisplayInfo(getWin()) }),
     listSessions: listPtySessions,
     // BUG-007: ms-since-last-PTY-output per board — the output-silence dormancy signal awaitSettled
     // (C2e) polls, since a live agent shell's status never flips off 'running'.

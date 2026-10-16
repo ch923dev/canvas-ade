@@ -9,7 +9,7 @@ import type {
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
-import type { LayoutDigest } from './layoutModel'
+import type { LayoutDigest, LayoutViewInput } from './layoutModel'
 import type { BoardCards } from './mcpBoardCards'
 import type { BoardPlanning } from './mcpBoardPlanning'
 import type { PlanningEditPatch } from '../shared/mcpTypes'
@@ -347,6 +347,9 @@ export interface BoardRegistry {
     y?: number
     w?: number
     h?: number
+    /** C1: a worker terminal docked in a swarm board (mirror-sanitized) — `canvas://layout` drops it
+     *  (stale parking coordinates, not canvas geometry). */
+    dockedIn?: string
     /** P3b: a kanban board's bounded lanes + cards (mirror-sanitized), grouped + served as
      *  `canvas://board/{id}/cards`. Absent on every non-kanban board. */
     kanban?: {
@@ -388,6 +391,13 @@ export interface BoardRegistry {
    * empty-groups behaviour (read-only — groups are metadata, no action surface).
    */
   listGroups?(): GroupMirrorEntry[]
+  /**
+   * Spatial awareness C2: the user's view for `canvas://layout` v2 — the sanitized `view` the
+   * renderer mirrors (`boardRegistry.getCanvasView`) + the display holding the main window
+   * (`screenInfo.readDisplayInfo`, read lazily). Session state, read-only. Optional so a
+   * registry/test that does not wire it gets a view-less digest (`screen: null`).
+   */
+  readView?(): LayoutViewInput
   listSessions(): Array<{ id: string; status: string }>
   /**
    * BUG-007: ms since terminal board `id` last produced PTY output (its output-silence dormancy

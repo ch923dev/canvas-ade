@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildLayoutDigest } from './layoutModel'
+import { READABLE_ZOOM, visibleWorld } from '../shared/spatialGeometry'
+import type { CanvasView } from '../shared/spatialTypes'
 
 /** A placed board at (x,y) sized w×h. */
 const b = (id: string, x: number, y: number, w = 100, h = 80, type = 'terminal') => ({
@@ -15,12 +17,15 @@ describe('buildLayoutDigest', () => {
   it('empty canvas → empty digest', () => {
     const d = buildLayoutDigest([])
     expect(d).toEqual({
-      version: 1,
+      version: 2,
       count: 0,
       bbox: null,
       boards: [],
       overlaps: [],
-      arrangement: 'empty'
+      arrangement: 'empty',
+      groups: [],
+      screen: null,
+      fit: { zoomToFitAll: null, readable: false, readableZoom: READABLE_ZOOM }
     })
   })
 
@@ -110,5 +115,125 @@ describe('buildLayoutDigest', () => {
       b('c', 280, 60, 100, 40)
     ])
     expect(d.arrangement).toBe('row')
+  })
+})
+
+/** A sanitized C1 view: pane w×h, camera at (x, y) zoom z, visibleWorld derived. */
+const view = (w: number, h: number, x = 0, y = 0, zoom = 1): CanvasView => {
+  const pane = { w, h }
+  const camera = { x, y, zoom }
+  return { pane, dpr: 1, camera, visibleWorld: visibleWorld(pane, camera) }
+}
+
+describe('buildLayoutDigest v2 (spatial awareness C2)', () => {
+  it('keeps every v1 field and reports version 2', () => {
+    const d = buildLayoutDigest([b('a', 0, 0), b('b', 140, 0)])
+    expect(d.version).toBe(2)
+    expect(d.count).toBe(2)
+    expect(d.bbox).toEqual({ x: 0, y: 0, w: 240, h: 80 })
+    expect(d.overlaps).toEqual([])
+    expect(d.arrangement).toBe('row')
+    expect(d.boards[0]).toEqual({
+      id: 'a',
+      type: 'terminal',
+      x: 0,
+      y: 0,
+      w: 100,
+      h: 80,
+      groupIds: [],
+      onScreen: false
+    })
+  })
+
+  it('without a view: screen null, zoomToFitAll null, readable false, nothing on screen', () => {
+    const d = buildLayoutDigest([b('a', 0, 0)])
+    expect(d.screen).toBeNull()
+    expect(d.fit).toEqual({ zoomToFitAll: null, readable: false, readableZoom: 0.4 })
+    expect(d.boards.every((bd) => bd.onScreen === false)).toBe(true)
+    // An explicit null view/display reads the same.
+    expect(buildLayoutDigest([b('a', 0, 0)], [], { view: null, display: null }).screen).toBeNull()
+  })
+
+  it('onScreen = intersects the visible world rect', () => {
+    // Pane 1000×500 at zoom 1, camera at (0,0) → visible world x∈[0,1000), y∈[0,500).
+    const d = buildLayoutDigest(
+      [b('in', 100, 100), b('edge', 950, 450), b('right', 1200, 0), b('above', 0, -300)],
+      [],
+      { view: view(1000, 500) }
+    )
+    const on = Object.fromEntries(d.boards.map((bd) => [bd.id, bd.onScreen]))
+    expect(on).toEqual({ in: true, edge: true, right: false, above: false })
+    // Pan the camera left by 1200 screen px → the right-hand board comes on screen.
+    const panned = buildLayoutDigest([b('right', 1200, 0)], [], { view: view(1000, 500, -1200) })
+    expect(panned.boards[0].onScreen).toBe(true)
+  })
+
+  it('screen = the view + the display when MAIN read one', () => {
+    const display = {
+      workArea: { x: 0, y: 0, w: 2560, h: 1400 },
+      scaleFactor: 1.5,
+      maximized: true,
+      fullscreen: false
+    }
+    const v = view(1000, 500, -10, 20, 0.5)
+    expect(buildLayoutDigest([], [], { view: v, display }).screen).toEqual({ ...v, display })
+    expect(buildLayoutDigest([], [], { view: v }).screen).toEqual(v) // no display key at all
+  })
+
+  it('groups: every group with the bbox of its PLACED members; multi-membership in groupIds', () => {
+    const d = buildLayoutDigest(
+      [b('a', 0, 0), b('b', 200, 100), b('c', 500, 0), { id: 'noGeo', type: 'planning' }],
+      [
+        { id: 'g1', name: 'API', boardIds: ['a', 'b'] },
+        { id: 'g2', name: 'Review', boardIds: ['b', 'c', 'noGeo'] },
+        { id: 'g3', name: 'Ghosts', boardIds: ['noGeo', 'gone'] }
+      ]
+    )
+    expect(d.groups).toEqual([
+      { id: 'g1', name: 'API', boardIds: ['a', 'b'], bbox: { x: 0, y: 0, w: 300, h: 180 } },
+      {
+        id: 'g2',
+        name: 'Review',
+        boardIds: ['b', 'c', 'noGeo'],
+        bbox: { x: 200, y: 0, w: 400, h: 180 }
+      },
+      { id: 'g3', name: 'Ghosts', boardIds: ['noGeo', 'gone'], bbox: null }
+    ])
+    const bById = Object.fromEntries(d.boards.map((bd) => [bd.id, bd]))
+    expect(bById.b.groupIds).toEqual(['g1', 'g2'])
+    expect(bById.b.groupId).toBe('g1') // v1 field: still the FIRST group
+  })
+
+  it('fit.readable flips exactly at READABLE_ZOOM (0.4)', () => {
+    // fitZoom = min((pane.w − 128) / bbox.w, (pane.h − 128) / bbox.h) → 400 / 1000 = 0.4 exactly.
+    const at = buildLayoutDigest([b('a', 0, 0, 1000, 1000)], [], { view: view(528, 528) })
+    expect(at.fit.zoomToFitAll).toBeCloseTo(0.4, 10)
+    expect(at.fit.readable).toBe(true)
+    const below = buildLayoutDigest([b('a', 0, 0, 1001, 1000)], [], { view: view(528, 528) })
+    expect(below.fit.zoomToFitAll).toBeLessThan(0.4)
+    expect(below.fit.readable).toBe(false)
+  })
+
+  it('fit.zoomToFitAll is clamped to the FIT_FRAME max zoom for a tiny canvas', () => {
+    const d = buildLayoutDigest([b('a', 0, 0, 100, 80)], [], { view: view(1920, 1080) })
+    expect(d.fit).toEqual({ zoomToFitAll: 2, readable: true, readableZoom: 0.4 })
+  })
+
+  it('a view with no placed boards: screen present, nothing to fit', () => {
+    const d = buildLayoutDigest([], [], { view: view(1000, 500) })
+    expect(d.screen).not.toBeNull()
+    expect(d.fit.zoomToFitAll).toBeNull()
+    expect(d.fit.readable).toBe(false)
+  })
+
+  it('a worker docked in a swarm is not geometry — dropped from boards, bbox, overlaps, fit', () => {
+    const d = buildLayoutDigest(
+      [b('swarm', 0, 0, 600, 400, 'swarm'), { ...b('worker', 100, 100), dockedIn: 'swarm' }],
+      [{ id: 'g', name: 'Team', boardIds: ['swarm', 'worker'] }]
+    )
+    expect(d.count).toBe(1)
+    expect(d.boards.map((bd) => bd.id)).toEqual(['swarm'])
+    expect(d.overlaps).toEqual([]) // its stale parking rect no longer reads as an overlap
+    expect(d.groups[0].bbox).toEqual({ x: 0, y: 0, w: 600, h: 400 })
   })
 })
