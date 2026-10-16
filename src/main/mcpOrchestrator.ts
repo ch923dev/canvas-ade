@@ -34,6 +34,7 @@ import { createBoardPlanningMethod } from './mcpBoardPlanning'
 import { createPlanningEditMethods } from './mcpPlanningEditGate'
 import { createTidyMethod } from './mcpTidy'
 import { createFocusMethod } from './mcpFocus'
+import { createFindingsMethod } from './mcpFindings'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -417,6 +418,14 @@ export function buildOrchestrator(
     // ./mcpFocus + spread here (the tidy extract-on-touch pattern). UN-GATED + viewport-only (the
     // camera is ephemeral session state; reversible by scrolling): no cap/mint/confirm/audit.
     ...createFocusMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
+    // 🔒 P4 publish_findings — forward the registry's already-confirm-gated batch publish (+ an audit
+    // line per outcome). Built in ./mcpFindings. Absent registry method ⇒ NO key ⇒ the package skips
+    // the tool, which is the whole point: PR #400 wired the registry but never this forward, so the
+    // tool silently vanished from every tier's tools/list.
+    ...createFindingsMethod({
+      publishFindings: registry.publishFindings?.bind(registry),
+      audit: writeAudit
+    }),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.
