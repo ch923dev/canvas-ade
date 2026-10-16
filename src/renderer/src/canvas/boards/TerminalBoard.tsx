@@ -22,6 +22,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, isRunning, statusFor } from './terminalState'
 import { useAttentionStore } from '../../store/attentionStore'
 import { useCanvasStore } from '../../store/canvasStore'
+import { detectTerminalPorts } from '../../store/roleSignalsStore'
 import {
   classifyPushTargets,
   resolveLinkBoardTarget,
@@ -477,7 +478,7 @@ export function TerminalBoard({
   const onPreview = useCallback(
     (gesture: Gesture) =>
       runDetectPorts(
-        () => window.api.detectPorts(board.id),
+        () => detectTerminalPorts(board.id),
         previewNote,
         routeUrl,
         setPortChoices,

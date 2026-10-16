@@ -15,6 +15,7 @@
 import { useEffect, useRef } from 'react'
 import { useCanvasStore, patchBoardUntracked } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { detectTerminalPorts } from '../../store/roleSignalsStore'
 import type { BrowserBoard } from '../../lib/boardSchema'
 import {
   planAutoConnect,
@@ -100,7 +101,7 @@ export function useBrowserAutoConnect(): void {
           void (async () => {
             let urls: Awaited<ReturnType<typeof window.api.detectPorts>>
             try {
-              urls = await window.api.detectPorts(sourceId)
+              urls = await detectTerminalPorts(sourceId) // records the terminal's ports (C9)
             } catch {
               return
             }
