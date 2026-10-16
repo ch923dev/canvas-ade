@@ -43,15 +43,15 @@ persisted (scene/session split).
 
 ## 2. Decisions
 
-Marked **OPEN** until the user picks; the recommendation is what lanes build if no answer arrives
-before their integration step.
+D1–D4 **decided by the user 2026-10-16** (all four recommendations accepted). D5–D6 are
+coordinator calls recorded here; change them only through this file.
 
 | ID | Question | Recommendation | Status |
 |---|---|---|---|
-| D1 | Which tiers get spatial tools? (G10) | `canvas://layout` + `canvas://contexts` → **orchestrator + lead + connected** (read-only). `tidy_canvas` + `focus_viewport` + `group_boards` + `edit_groups` → orchestrator **un-gated** for tidy/focus (today's behaviour); **lead + connected** get them **human-confirmed** (one approve/deny for tidy/focus; batch confirm for groups). Worker: none. | **OPEN** |
-| D2 | Are group writes confirm-gated? | **Yes, always** (all tiers): groups are the user's own persisted structure. One `BatchConfirmModal`, one row per proposed group, approved rows apply as **one undo step**. | **OPEN** |
-| D3 | Default tidy mode. | Agents: `tidy_canvas` default becomes **`fit`**. UI: add **"Fit to screen"** as the FIRST preset and bind `t` to it; Smart stays one click away. | **OPEN** |
-| D4 | When everything can't be readable on one screen. | Default overflow **`report`** (arrange, refit, return `readable:false` + a hint to focus a group). `pages` / `shrink` are opt-in per call. Fit never resizes boards unless `overflow:'shrink'`. | **OPEN** |
+| D1 | Which tiers get spatial tools? (G10) | `canvas://layout` + `canvas://contexts` → **orchestrator + lead + connected** (read-only). `tidy_canvas` + `focus_viewport` + `group_boards` + `edit_groups` → orchestrator **un-gated** for tidy/focus (today's behaviour); **lead + connected** get them **human-confirmed** (one approve/deny for tidy/focus; batch confirm for groups). Worker: none. | **DECIDED** 2026-10-16 |
+| D2 | Are group writes confirm-gated? | **Yes, always** (all tiers): groups are the user's own persisted structure. One `BatchConfirmModal`, one row per proposed group, approved rows apply as **one undo step**. | **DECIDED** 2026-10-16 |
+| D3 | Default tidy mode. | Agents: `tidy_canvas` default becomes **`fit`**. UI: add **"Fit to screen"** as the FIRST preset and bind `t` to it; Smart stays one click away. | **DECIDED** 2026-10-16 |
+| D4 | When everything can't be readable on one screen. | Default overflow **`report`** (arrange, refit, return `readable:false` + a hint to focus a group). `pages` / `shrink` are opt-in per call. Fit never resizes boards unless `overflow:'shrink'`. | **DECIDED** 2026-10-16 |
 | D5 | Where context derivation runs. | **MAIN**, as a pure shared module over the extended mirror (the `buildLayoutDigest` pattern), so `canvas://contexts` needs no renderer round-trip. The renderer imports the same module for `fit` packing. | proposed |
 | D6 | Tool surface for group edits. | **Two** tools, not four: `group_boards` (create, batch) + `edit_groups` (rename / add / remove / ungroup ops, batch). Fewer tools = clearer agent choice. | proposed (changes the plan board's "4 tools") |
 
