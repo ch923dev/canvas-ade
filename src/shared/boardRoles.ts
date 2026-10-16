@@ -24,9 +24,12 @@
  *    spirit — with no hero, so `primary` (L10) still decides.
  *  - Hubs head their own TEAM; a hub is never another hub's worker. A hub with no claimable
  *    target is not a team (it falls through to its context, else a single).
- *  - Riders: an unclaimed board joined to a TEAM member by a PREVIEW link (a browser's source
- *    terminal, or a terminal serving a port it calls) rides with that team — a worker's browser
- *    sits with its worker. One hop only (riders do not pull further riders).
+ *  - Riders: an unclaimed non-hub board joined to a TEAM member by a PREVIEW link (a browser's
+ *    source terminal, or a terminal serving a port it calls) or a DATAFLOW link (a data-flow
+ *    board's browser) rides with that team. Riders resolve to a fixed point, in rounds: a
+ *    worker's browser joins in round 1, that browser's data-flow board in round 2. Within a round
+ *    a board reachable from two teams takes the heavier hub (id tie-break), so the nearer team
+ *    wins first and weight breaks ties at equal distance.
  *  - C3 contexts that ARE an existing Named Group (`existingGroupId`) are skipped: the group unit
  *    already holds the members, and their `addBoardIds` are only PROPOSALS — laying a non-member
  *    inside a group's packed rect would draw it under the group's outline.
@@ -47,7 +50,15 @@ interface ContextGroupInput {
   name: string
   boardIds: string[]
 }
-type ContextSignal = 'group' | 'preview' | 'orchestration' | 'port' | 'cwd' | 'fileRef' | 'title'
+type ContextSignal =
+  | 'group'
+  | 'preview'
+  | 'orchestration'
+  | 'port'
+  | 'dataflow'
+  | 'cwd'
+  | 'fileRef'
+  | 'title'
 interface DerivedContext {
   key: string // stable: hash of the sorted boardIds
   suggestedName: string // ≤ GROUP_NAME_MAX (80), sanitized
@@ -411,7 +422,8 @@ export function classifyScene(
  *     orchestration-cable targets that are not grouped, not docked and not hubs themselves. C3
  *     deliberately drops a ≥ 3-cable hub's edges, so without this a lead and its workers would
  *     never share a unit. A target of two hubs goes to the heavier hub (id tie-break).
- *     **Riders** then join: an unclaimed non-hub board preview-linked to a team member.
+ *     **Riders** then join, to a fixed point: an unclaimed non-hub board preview- or
+ *     dataflow-linked to a team member.
  *  3. **context** — each C3 context (smallest first, then key) minus every claimed board: a
  *     remainder of ≥ 2 stays a `context` unit under the C3 key; a remainder of 1 falls through to
  *     a single. Group contexts (`existingGroupId`) are skipped — see the header.
@@ -472,32 +484,38 @@ export function buildRoleUnits(
     teamOf.set(worker, hub)
     teamOf.set(hub, hub)
   }
-  // 2b · Riders, over the undirected preview links (a preview's source + port-served terminals).
-  // One hop: a rider is matched against the team as built above, never against other riders.
-  const previewNeighbours = new Map<string, Set<string>>()
+  // 2b · Riders, over the UNDIRECTED rider links: a preview's links (its source + port-served
+  // terminals) and a data-flow board's link (its browser). Fixed point in rounds: each round reads
+  // only the teams as they stood when it began and assigns all of its picks together, so the
+  // result never depends on input order. Every round claims ≥ 1 board, so it ends in ≤ n rounds.
+  const riderLinks = new Map<string, Set<string>>()
   const touch = (a: string, b: string): void => {
-    const set = previewNeighbours.get(a) ?? new Set<string>()
+    const set = riderLinks.get(a) ?? new Set<string>()
     set.add(b)
-    previewNeighbours.set(a, set)
+    riderLinks.set(a, set)
   }
   for (const [id, info] of roles) {
-    if (info.role !== 'preview' || !index.has(id)) continue
+    if ((info.role !== 'preview' && info.role !== 'dataflow') || !index.has(id)) continue
     for (const other of info.links) {
       touch(id, other)
       touch(other, id)
     }
   }
-  const riders = new Map<string, string>()
-  for (const id of index.keys()) {
-    if (owner.has(id) || teamOf.has(id) || isHub(id)) continue
-    let best: string | undefined
-    for (const n of previewNeighbours.get(id) ?? []) {
-      const hub = teamOf.get(n)
-      if (hub !== undefined && (best === undefined || outranks(hub, best))) best = hub
+  for (;;) {
+    const picks = new Map<string, string>()
+    for (const id of index.keys()) {
+      if (owner.has(id) || teamOf.has(id) || isHub(id)) continue
+      let best: string | undefined
+      for (const n of riderLinks.get(id) ?? []) {
+        const hub = teamOf.get(n)
+        if (hub !== undefined && (best === undefined || outranks(hub, best))) best = hub
+      }
+      if (best !== undefined) picks.set(id, best)
     }
-    if (best !== undefined) riders.set(id, best)
+    if (picks.size === 0) break
+    for (const [id, hub] of picks) teamOf.set(id, hub)
   }
-  for (const [member, hub] of [...teamOf, ...riders]) claim(`team:${hub}`, 'team', member)
+  for (const [member, hub] of teamOf) claim(`team:${hub}`, 'team', member)
 
   // 3 · C3 contexts, minus everything already claimed.
   const derived = contexts

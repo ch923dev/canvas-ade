@@ -591,6 +591,46 @@ describe('buildRoleUnits — Named Group > TEAM > context > single', () => {
     expect(unitOf(units, 'L')?.boardIds).toEqual(['L', 'w1', 'w2'])
   })
 
+  it("riders resolve to a fixed point: worker → its browser → that browser's data-flow board", () => {
+    const boards = [
+      term('L'),
+      agent('w1'),
+      agent('w2'),
+      browser('b1', { previewSourceId: 'w1' }), // round 1: preview link to w1
+      board('df', 'dataflow', { sourceBoardId: 'b1' }), // round 2: dataflow link to b1
+      board('stray', 'dataflow', { sourceBoardId: 'b9' }), // bound to a browser in no team
+      browser('b9')
+    ]
+    const connectors = [cable('L', 'w1'), cable('L', 'w2')]
+    // With C3's dataflow-aware context, and with no contexts at all.
+    for (const contexts of [[ctx('ctx-w1', ['w1', 'b1', 'df'])], []]) {
+      const units = unitsFor(boards, { connectors, contexts, lead: 'L' })
+      expect(unitOf(units, 'L')?.boardIds).toEqual(['L', 'b1', 'df', 'w1', 'w2'])
+      expect(unitOf(units, 'stray')?.source).not.toBe('team')
+    }
+  })
+
+  it('a server called by browsers of two teams goes to the heavier hub (id tie-break)', () => {
+    const team = (hub: RoleBoardInput): RoleBoardInput[] => [
+      hub,
+      agent(`${hub.id}-w`),
+      browser(`${hub.id}-b`, { previewSourceId: `${hub.id}-w`, callsPorts: [3000] })
+    ]
+    // Round 1 claims each team's browser; round 2 finds the shared api server linked to both.
+    const mixed = [...team(term('L')), ...team(board('cm', 'command'))]
+    const units = unitsFor([...mixed, server('api', 3000)], {
+      connectors: [cable('L', 'L-w'), cable('cm', 'cm-w')],
+      lead: 'L'
+    })
+    expect(unitOf(units, 'api')?.key).toBe('team:L') // lead 100 > command 70
+    expect(unitOf(units, 'cm-b')?.key).toBe('team:cm')
+    const twins = [...team(board('swB', 'swarm')), ...team(board('swA', 'swarm'))]
+    const tie = unitsFor([...twins, server('api', 3000)], {
+      connectors: [cable('swB', 'swB-w'), cable('swA', 'swA-w')]
+    })
+    expect(unitOf(tie, 'api')?.key).toBe('team:swA')
+  })
+
   it('a C3 group context (existingGroupId) is skipped: its addBoardIds are proposals, not a unit', () => {
     const boards = [
       browser('br', { callsPorts: [3000, 5432] }),
@@ -654,8 +694,8 @@ describe('buildRoleUnits — Named Group > TEAM > context > single', () => {
 
 /**
  * S10 kitchen sink (ROLE-LAYOUT §7) plus a swarm with a docked worker and a named group:
- * lead + 3 workers (one with its own browser), an app (browser + web + api), docs (2 plans +
- * kanban), the C3 contexts that canvas would produce (hub edges dropped).
+ * lead + 3 workers (one with its own browser + data-flow board), an app (browser + web + api),
+ * docs (2 plans + kanban), and the C3 contexts that canvas would produce (hub edges dropped).
  */
 function kitchenSink(): {
   boards: RoleBoardInput[]
@@ -670,6 +710,7 @@ function kitchenSink(): {
       agent('w2', { x: 2000, y: 400 }),
       agent('w3', { x: 2000, y: 800 }),
       browser('b2', { x: 2600, previewSourceId: 'w1' }),
+      board('df2', 'dataflow', { x: 3200, sourceBoardId: 'b2' }), // a round-2 rider
       browser('b1', { y: 2000, previewSourceId: 'web', callsPorts: [3000] }),
       server('web', 5173, { x: 900, y: 2000 }),
       server('api', 3000, { x: 900, y: 2400 }),
@@ -705,7 +746,7 @@ describe('S10 kitchen sink + determinism', () => {
     expect(buildRoleUnits(boards, connectors, groups, contexts, roles)).toEqual([
       {
         key: 'team:L',
-        boardIds: ['L', 'b2', 'w1', 'w2', 'w3'],
+        boardIds: ['L', 'b2', 'df2', 'w1', 'w2', 'w3'],
         source: 'team',
         scene: 'lead',
         heroIds: ['L']
