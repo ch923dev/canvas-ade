@@ -29,7 +29,7 @@ import {
   type SessionInfo,
   type SessionMeta
 } from './protocol'
-import { daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
+import { createDaemonRing, daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
 import { createSessionFlow, type SessionFlow } from './flowControl'
 
 // node-pty resolves relative to the daemon's own on-disk location: the stage dir carries a
@@ -187,7 +187,7 @@ function handleMessage(sock: net.Socket, msg: ClientMsg): void {
       }
       const s: Session = {
         proc,
-        ring: { chunks: [], len: 0 },
+        ring: createDaemonRing(),
         cols: msg.cols,
         rows: msg.rows,
         meta: msg.meta,
