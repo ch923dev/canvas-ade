@@ -5288,3 +5288,51 @@ zero inline, both rounds. Gates: units at the documented ambient floor (5); smok
 user-verified across all three rounds. Version 0.47.0 → 0.47.1 (patch). Plan-viz board
 `fd1f6937` (confirmed on the 5th `visualize_plan` attempt — 4 transport timeouts while the
 user was away from the canvas) kept live + write_result.
+
+## PR #428 — e2e: match the SDK v2 tool-not-found denial shape (v0.47.7) · squash `0274fee4` · 2026-10-16
+
+Wave 1 / L1 of the 2026-10-16 full review. The MCP security e2e had been RED since #414 (the SDK
+v2 migration) and nobody had rerun it: `deniedToolNotFound` (`e2e/mcp.e2e.ts`,
+`e2e/mcpPlanning.e2e.ts`) still expected the v1 `isError` result. SDK v2 instead THROWS
+`ProtocolError(InvalidParams -32602, "Tool <name> not found")` before the handler's try/catch,
+so 11+1 @mcp tier-enforcement tests failed on shape, not on a real tier leak. The helper now
+asserts the JSON-RPC code plus the message. The relay-integrity Enter check is polled, because an
+unpolled read raced ConPTY's async stdin delivery. Gates: touched specs 35/35 at
+`--retries=0`, relay 3/3. GitHub CI is red on BOTH known repo-wide causes (SCA step blocking
+since 2026-08-07, which skips typecheck/lint/test/build; claude-review erroring at 268 ms with $0,
+suspected expired token). Neither failure comes from this diff.
+
+## PR #429 — MCP: register publish_findings for agents + daemon ring exact-cap parity (v0.47.8) · squash `f0365ee8` · 2026-10-16
+
+Wave 1 / L2. **publish_findings was never registered**: the package skips the tool when the
+host `Orchestrator` lacks `publishFindings`, and `buildOrchestrator` (`mcpOrchestrator.ts`) never
+spread it in, although `mcpBoot.ts` wires the registry method. The new `mcpFindings.ts`
+`createFindingsMethod` returns `{}` when the registry has no method, and otherwise forwards and
+audits every outcome (published→applied, declined→denied, empty/refused/target-gone→rejected,
+write-failed→failed); a failed audit write is logged, never thrown. `FindingsPublishResult` gains
+a required `outcome`. **Ring parity**: `ptyHost/ring.ts` used `len < cap` while `ptyOutput.ts`
+uses `written > cap`, so an exact-cap ring dropped its first line on reattach. Fix: a `written`
+counter plus `createDaemonRing()`. New reusable `mcpToolsHarness.ts` (the real server per tier
+plus tools/list), which the spatial-awareness lanes reuse. Gates: unit 6610 (the only 2 failures
+are the ambient `pathSafe` ones), integration 418, smoke 62/62 then 35/35 after the rebase. Dev
+check: user-verified (lead lists the tool, non-lead does not, one confirm, `applied` audit, ring
+replay below and above cap). The first attempt hit a stale `~/.mcp.json` (port 51897, July),
+which Claude Code inherits in every dev sandbox under `%APPDATA%`. That is environmental and in
+the backlog.
+
+## PR #430 — voice: pin sessions to their engine; converse runs local STT (v0.47.9) · squash `c8a536db` · 2026-10-16
+
+Wave 1 / L3. Two verified P1s from the cloud-voice epic. (1) The per-call `routerEngine` re-read
+the live config on every method, so a mid-session engine toggle (or the OpenAI key vanishing) sent
+`stop` to the other engine: the mic stayed hot and the pill stuck on "listening". Routing is now
+decided once per session, before any await, and pinned (`liveStt`/`liveTts`); a start that
+switches engines releases the old session. TTS had the same silent-mute bug, so
+`retireTtsOnEngineChange` ends the pinned session and the renderer reopens on the new engine at
+the next speak. (2) Jarvis converse on cloud STT gave zero turns (batch-on-release): `voice:session:start`
+takes `{converse}`, which `voiceSession.startVoice` derives, and MAIN forces local STT. A keyed
+toast explains when the local model is missing. Plus a 20 MiB cloud buffer cap (drop, never
+upload; `too-long` error, one copy line in `VoiceFlyout`) and a Jarvis disarm drain (the in-flight
+tail no longer leaks into the dictation draft). Gates: unit 6615 (the 2 ambient failures), 14
+new pin tests (13 fail on the old code), smoke 62/62 twice. Dev check: user-verified with a live
+mic. Follow-ups: `voice:tts:status` only checks for local Kokoro; a cloud spend cap is designed
+but needs an artifact.
