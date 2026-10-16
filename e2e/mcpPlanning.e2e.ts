@@ -22,7 +22,7 @@ type McpInfo = {
   workerToken: string
   workerBoardId: string
 }
-type CallOutcome = { ok: true; result: unknown } | { ok: false; threw: string }
+type CallOutcome = { ok: true; result: unknown } | { ok: false; threw: string; code?: number }
 
 interface McpClient {
   tools: string[]
@@ -47,7 +47,7 @@ async function connect(url: string, token: string): Promise<McpClient> {
       try {
         return { ok: true, result: await client.callTool({ name, arguments: args }) }
       } catch (e: unknown) {
-        return { ok: false, threw: String(e) }
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
       }
     },
     async readJson<T>(uri: string): Promise<T> {
@@ -61,10 +61,6 @@ async function connect(url: string, token: string): Promise<McpClient> {
   }
 }
 
-function resultText(r: unknown): string {
-  const content = (r as { content?: Array<{ text?: string }> })?.content
-  return Array.isArray(content) ? content.map((c) => c?.text ?? '').join(' ') : ''
-}
 function isErrorResult(r: unknown): boolean {
   return (r as { isError?: boolean })?.isError === true
 }
@@ -74,8 +70,13 @@ function acked(o: CallOutcome): boolean {
 function rejected(o: CallOutcome): boolean {
   return o.ok && isErrorResult(o.result)
 }
+/** JSON-RPC InvalidParams — the code MCP SDK v2 uses for a call to an unregistered tool. */
+const JSONRPC_INVALID_PARAMS = -32602
+/** The SPECIFIC tool-not-found denial (server-side tier split). Since @expanse-ade/mcp 0.25.0
+ *  (MCP SDK v2) it is a protocol-layer `ProtocolError(InvalidParams)` the client THROWS — not
+ *  the v1 `isError` result — see the matching helper in mcp.e2e.ts. */
 function deniedToolNotFound(o: CallOutcome, tool: string): boolean {
-  return o.ok && isErrorResult(o.result) && resultText(o.result).includes(`Tool ${tool} not found`)
+  return !o.ok && o.code === JSONRPC_INVALID_PARAMS && o.threw.includes(`Tool ${tool} not found`)
 }
 
 /** Planning-board element kinds (read through the renderer hook; structured-arg eval, #82). */
