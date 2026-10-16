@@ -22,6 +22,12 @@ pane after `FIT_PADDING_PX`.
      targets form one unit, as long as those targets are not already in a Named Group. C3
      deliberately drops edges from a hub with ≥3 cables, so without this rule a lead and its
      workers would never share a unit.
+   - **Riders** (amended 2026-10-16): an unclaimed board linked to a team member by a preview link
+     (a browser's source terminal, or a terminal serving a port it calls) or a dataflow link joins
+     that team. Riders resolve to a fixed point, so a worker's browser brings its data-flow board.
+     A board reachable from two teams goes to the heavier hub (id tie-break).
+   - Precedence: Named Group > TEAM (+ riders) > C3 context > single. A board in several Named
+     Groups goes to the smallest (fewest members, id tie-break), the same rule as C4.
    - Any board left over becomes a unit of one.
 2. **Scene.** Classify each unit from its boards' roles (C9). The scene picks the hero (the board
    that gets the big slot) and the template.
@@ -65,7 +71,9 @@ packer, and named in the ack hint ("2 more contexts off-stage: App, Docs").
 
 ## 3. Scenes (per unit)
 
-Rules are checked top to bottom; the first match wins.
+Rules are checked top to bottom; the first match wins. A **1-board unit is always `single`**
+(even a lone lead or plan). A multi-board unit that matches no row (e.g. a preview + a port-less
+shell) falls back to `docs`: no hero, sizes kept (amended 2026-10-16).
 
 | Scene | Matches when the unit has… | Hero | Template |
 |---|---|---|---|
@@ -131,7 +139,7 @@ Fall back in this order, stopping at the first that stays readable:
 │                          │ worker B      │
 └──────────────────────────┴───────────────┘
 ```
-Team unit. The rail follows cable order, then reading order.
+Team unit. The rail follows reading order (cable order is not recoverable deterministically).
 
 ### S2 · lead + 6 workers
 ```

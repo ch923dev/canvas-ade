@@ -170,10 +170,11 @@ export interface ContextBoardInput {
   fileRefs?: Array<{ path: string }>     // planning boards
   ports?: number[]                       // terminal: detected loopback listening ports (C9 signal, L11)
   callsPorts?: number[]                  // browser: loopback ports its page requested (D10, L11)
+  sourceBoardId?: string                 // dataflow: the browser it inspects (amended 2026-10-16)
 }
 export interface ContextConnectorInput { sourceId: string; targetId: string; kind: 'preview' | 'orchestration' }
 export interface ContextGroupInput { id: string; name: string; boardIds: string[] }
-export type ContextSignal = 'group' | 'preview' | 'orchestration' | 'port' | 'cwd' | 'fileRef' | 'title'
+export type ContextSignal = 'group' | 'preview' | 'orchestration' | 'port' | 'dataflow' | 'cwd' | 'fileRef' | 'title'
 
 export interface DerivedContext {
   key: string                    // stable: hash of the sorted boardIds
@@ -188,6 +189,7 @@ export interface DerivedContext {
 export interface DeriveOptions {
   projectRoot?: string           // cwd equal to this carries NO signal (it's the default)
   titleSignal?: boolean          // default false (opt-in, low confidence)
+  pathCase?: 'insensitive' | 'sensitive' // default 'insensitive'; MAIN sets it from the platform
 }
 
 export const MAX_CONTEXTS = 50
@@ -203,26 +205,34 @@ Rules (each one gets a unit test):
 1. **Docked terminals are excluded** (`dockedIn` set) — they are not canvas geometry.
 2. **Existing Named Groups are authoritative.** Each is emitted as a context with `existingGroupId`,
    `signals:['group']`, `confidence:'high'`. Signals never split or merge an existing group.
-3. **Absorb:** an UNGROUPED board strongly linked (preview, or non-hub orchestration) to members of
-   exactly ONE group is proposed via that group's `addBoardIds`. Linked to two groups ⇒ ambiguous ⇒
-   left out.
+3. **Absorb** (amended 2026-10-16): the **strong** edges are preview, non-hub orchestration, port
+   and dataflow. Take the components of UNGROUPED boards joined by strong edges. A component whose
+   strong edges reach members of exactly ONE group is proposed **whole** via that group's
+   `addBoardIds` (a worker's browser rides along with the worker). Reaching two groups ⇒ ambiguous ⇒
+   left out (it still clusters under rule 4).
 4. Remaining ungrouped boards cluster by union-find over edges:
    - **preview** — `previewSourceId` browser→terminal (also any `kind:'preview'` connector) · high
    - **orchestration** — cable source→target, **except from a hub**: a source with ≥ 3 outgoing
      orchestration cables (a lead/command board) contributes no edges, so one lead never fuses all
      its workers into one blob · high
    - **port** — a browser's `callsPorts` intersects a terminal's `ports` (D10) · high
+   - **dataflow** — a data-flow board's `sourceBoardId` browser · high (amended 2026-10-16)
    - **cwd** — same normalized cwd (case-insensitive on win32, separators normalized, trailing
      slash stripped). A cwd equal to `projectRoot` or empty carries **no** signal · medium
    - **fileRef** — a planning board's `fileRefs[].path` equals a file board's `path`, or two planning
      boards share a ref · medium
    - **title** — only when `titleSignal`; token Jaccard ≥ 0.5 with ≥ 1 non-stopword · low
 5. **Singletons are never emitted.**
-6. **confidence** = high if any group/preview/orchestration edge; else medium if cwd/fileRef; else low.
+6. **confidence** = high if any group/preview/orchestration/port/dataflow edge; else medium if
+   cwd/fileRef; else low.
 7. **suggestedName** priority: planning board title in the cluster → terminal title → common cwd
    basename → `Context N`. Sanitized with `sanitizeGroupName` (C7; it lives in the shared
    `src/shared/groupName.ts`, which L6 creates, so this shared module can call it).
 8. **Deterministic:** sorted ids, sorted output (by first boardId), no randomness. Cap `MAX_CONTEXTS`.
+9. **Signals by board type only** (amended 2026-10-16, defence in depth behind MAIN's sanitizer):
+   `cwd`/`ports` from terminals, `previewSourceId`/`callsPorts` from browsers, `path` from file
+   boards, `fileRefs` from planning boards, `sourceBoardId` from data-flow boards. A field on any
+   other type is ignored.
 
 ### C4 — `fitLayout()`  · owner L7 (pure, new file, zero shared files)
 
