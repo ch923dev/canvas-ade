@@ -5,6 +5,12 @@ import { usePreviewStore } from './previewStore'
 import { useAttentionStore } from './attentionStore'
 import { useCanvasViewStore, type PaneSize } from './canvasViewStore'
 import { buildBoardSnapshot } from './boardStatus'
+import {
+  installRoleSignalFeeds,
+  useRoleSignalsStore,
+  type RoleSignalsState
+} from './roleSignalsStore'
+import { isAgentTerminal } from '../lib/agentClassify'
 import { visibleWorld } from '../../../shared/spatialGeometry'
 import type { BoardContextFields, CanvasView } from '../../../shared/spatialTypes'
 import type { CanvasViewport } from '../lib/boardSchema'
@@ -14,33 +20,53 @@ let warnedMissingBridge = false
 
 /** The board fields {@link boardContextFields} reads — every live `Board` satisfies it structurally. */
 export interface BoardContextSource {
+  id?: string
   type: string
   cwd?: string
   previewSourceId?: string
   dockedIn?: string
   sourceBoardId?: string
+  /** Read ONLY by `isAgentTerminal`, which returns a boolean (D9) — never copied anywhere. */
+  agentKind?: string
+  launchCommand?: string
 }
+
+/** The ephemeral C9 signal maps {@link boardContextFields} reads (`roleSignalsStore`). */
+export type RoleSignalsSnapshot = Pick<RoleSignalsState, 'ports' | 'callsPorts' | 'lastFocusedAt'>
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 
 /**
- * The C1 context signals one board carries on the mirror — ONLY the classified fields that exist
- * today, each on its own board type: a terminal's configured `cwd` + its swarm dock (`dockedIn`), a
- * browser's driving terminal (`previewSourceId`), a data-flow board's bound browser (`sourceBoardId`).
- * Pure. 🔒 D9: picked field by field — never the launch line, `launchCommand` or env. MAIN re-validates
- * and clamps every field (`boardRegistry.sanitizeContextFields`); the C9 role signals (agent / ports /
- * callsPorts / lastFocusedAt) join here when their producers land.
+ * The C1 context signals one board carries on the mirror — ONLY classified fields, each on its own
+ * board type: a terminal's configured `cwd` + its swarm dock (`dockedIn`), a browser's driving
+ * terminal (`previewSourceId`), a data-flow board's bound browser (`sourceBoardId`) — plus the C9
+ * role signals (L11): a terminal's `agent` (set only when true) and detected `ports`, a browser's
+ * `callsPorts` (D10), and any board's `lastFocusedAt`, read from `signals` (`roleSignalsStore`).
+ * Pure. 🔒 D9: picked field by field — the launch line only ever reaches `isAgentTerminal`, which
+ * returns a boolean; never `launchCommand`, `agentKind` or env. MAIN re-validates and clamps every
+ * field (`boardRegistry.sanitizeContextFields`).
  */
-export function boardContextFields(b: BoardContextSource): BoardContextFields {
+export function boardContextFields(
+  b: BoardContextSource,
+  signals?: RoleSignalsSnapshot
+): BoardContextFields {
   const out: BoardContextFields = {}
+  const id = b.id
   if (b.type === 'terminal') {
     if (nonEmpty(b.cwd)) out.cwd = b.cwd
     if (nonEmpty(b.dockedIn)) out.dockedIn = b.dockedIn
+    if (isAgentTerminal(b)) out.agent = true
+    const ports = id !== undefined ? signals?.ports[id] : undefined
+    if (ports && ports.length > 0) out.ports = [...ports]
   } else if (b.type === 'browser') {
     if (nonEmpty(b.previewSourceId)) out.previewSourceId = b.previewSourceId
+    const calls = id !== undefined ? signals?.callsPorts[id] : undefined
+    if (calls && calls.length > 0) out.callsPorts = [...calls]
   } else if (b.type === 'dataflow') {
     if (nonEmpty(b.sourceBoardId)) out.sourceBoardId = b.sourceBoardId
   }
+  const focusedAt = id !== undefined ? signals?.lastFocusedAt[id] : undefined
+  if (focusedAt !== undefined) out.lastFocusedAt = focusedAt
   return out
 }
 
@@ -104,6 +130,12 @@ export function useMcpPublish(): void {
   // C1: the SETTLED view (pane resize · camera settle) — both change at settle cadence only.
   const pane = useCanvasViewStore((s) => s.pane)
   const camera = useCanvasViewStore((s) => s.camera)
+  // C9 (L11): the ephemeral role signals — a change re-publishes through the same debounce. The
+  // feeds (selection · board delete · terminal exit · the D10 preview event) are wired once here.
+  const ports = useRoleSignalsStore((s) => s.ports)
+  const callsPorts = useRoleSignalsStore((s) => s.callsPorts)
+  const lastFocusedAt = useRoleSignalsStore((s) => s.lastFocusedAt)
+  useEffect(() => installRoleSignalFeeds(), [])
   useEffect(() => {
     const publish = window.api?.mcp?.publishBoards
     if (!publish) {
@@ -120,13 +152,29 @@ export function useMcpPublish(): void {
       // buildBoardSnapshot maps 1:1 and in order, so entry i IS boards[i].
       const snapshot = buildBoardSnapshot(boards, { running, preview: previewById, attention })
       const view = buildCanvasView(pane, camera, window.devicePixelRatio || 1)
+      const signals = { ports, callsPorts, lastFocusedAt }
       publish({
-        boards: snapshot.map((entry, i) => ({ ...entry, ...boardContextFields(boards[i]) })),
+        boards: snapshot.map((entry, i) => ({
+          ...entry,
+          ...boardContextFields(boards[i], signals)
+        })),
         connectors,
         groups,
         ...(view ? { view } : {})
       })
     }, 150)
     return () => clearTimeout(t)
-  }, [boards, connectors, groups, running, previewById, attention, pane, camera])
+  }, [
+    boards,
+    connectors,
+    groups,
+    running,
+    previewById,
+    attention,
+    pane,
+    camera,
+    ports,
+    callsPorts,
+    lastFocusedAt
+  ])
 }
