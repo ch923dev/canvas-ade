@@ -380,7 +380,12 @@ undo, the return shape, and *when to call* (`canvas://layout` → `fit.readable`
 - **`src/main/mcpTidy.ts`** (widened): forwards the new args; for lead/connected callers raises a
   single `ConfirmRequest` first (D1).
 - **Jarvis:** `jarvisTools.ts:429` omits `mode` so "tidy up" is the implicit `roles` default (D8 a)
-  and screen-aware.
+  and screen-aware. **Amended 2026-10-17 (L5/L11 dev check):** Jarvis's `tidy_canvas` tool schema
+  gains two optional args (still no `mode`): `primary` (a board id from `list_boards` — "make the
+  browser the main one" ⇒ that board is the hero, S14) and `boardIds` (scope — "tidy up the
+  terminals" ⇒ only those boards move, S12). The Jarvis facet's `tidyCanvas` input widens to match
+  and forwards them as C5 `primary` / `scope: { boardIds }`; unknown or docked ids are dropped, an
+  empty scope is a no-op. Tier unchanged (READ, auto-allow). Owner I2.
 
 ### C8 — UI  · owner I2 (after DESIGN.md sign-off)
 
