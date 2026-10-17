@@ -14,12 +14,22 @@
  * group, G8) + `onScreen`, the Named Groups with their bboxes, the user's `screen` (the C1 view +
  * the MAIN-side display) and `fit` (the zoom at which everything fits the pane, and whether that is
  * still readable). Without a view, `screen` and `fit.zoomToFitAll` are null and nothing is on screen.
+ * C9 (L11) adds each placed board's `role` (`boardRoles.deriveRoles`) — lead, agent, preview, server,
+ * … — from the mirror's classified signals, the preview/orchestration connectors and MAIN's own lead
+ * designation (`leadAuthority`; never the renderer's).
  */
 import { READABLE_ZOOM, fitZoom, rectsIntersect, type Rect } from '../shared/spatialGeometry'
-import type { CanvasView, DisplayInfo } from '../shared/spatialTypes'
+import type { BoardContextFields, CanvasView, DisplayInfo } from '../shared/spatialTypes'
+import { deriveRoles, type BoardRole, type RoleBoardInput } from '../shared/boardRoles'
 
-/** A board as the digest reads it — geometry is optional (a pre-P1 board / a non-placed stub omits it). */
-export interface LayoutBoardInput {
+/**
+ * A board as the digest reads it — geometry is optional (a pre-P1 board / a non-placed stub omits it).
+ * The C9 role signals (mirror-sanitized classifications, D9) are optional: absent ⇒ no signal.
+ */
+export interface LayoutBoardInput extends Pick<
+  BoardContextFields,
+  'previewSourceId' | 'sourceBoardId' | 'agent' | 'ports' | 'callsPorts' | 'lastFocusedAt'
+> {
   id: string
   type: string
   x?: number
@@ -29,6 +39,20 @@ export interface LayoutBoardInput {
   /** A worker terminal docked in a swarm board (C1 mirror) — NOT canvas geometry: its x/y are stale
    *  parking coordinates, so it is never placed (the tidy / C3 / C4 rule). */
   dockedIn?: string
+}
+
+/** A mirrored connector (C9 input). Only `preview` / `orchestration` edges carry role links. */
+export interface LayoutConnectorInput {
+  sourceId: string
+  targetId: string
+  kind: string
+}
+
+/** The role inputs beyond the boards (C9): the connector graph + MAIN's designated lead board. */
+export interface LayoutRoleInput {
+  connectors?: readonly LayoutConnectorInput[]
+  /** MAIN's lead authority (`leadAuthority.designated()`) — never taken from the renderer. */
+  leadBoardId?: string | null
 }
 
 /** The user's view the digest projects (C2): the sanitized C1 `view` + MAIN's display (both optional). */
@@ -60,6 +84,8 @@ export interface LayoutBoard {
   groupIds: string[]
   /** Intersects `screen.visibleWorld` (false when `screen` is null). */
   onScreen: boolean
+  /** C9: what this board IS on the canvas (ROLE-LAYOUT §2), derived over the placed boards. */
+  role: BoardRole
 }
 
 /** A Named Group in the digest (v2): its membership as published + the bbox of its PLACED members. */
@@ -194,16 +220,35 @@ function classify(boards: LayoutBoard[], hasOverlap: boolean): LayoutArrangement
   return 'scattered'
 }
 
+type Placed = RoleBoardInput & { type: string }
+
+/** The C9 role of every placed board: `deriveRoles` over them + the preview/orchestration edges. */
+function placedRoles(
+  placed: readonly Placed[],
+  roleInput: LayoutRoleInput
+): Map<string, BoardRole> {
+  type RoleConnector = { sourceId: string; targetId: string; kind: 'preview' | 'orchestration' }
+  const connectors = (roleInput.connectors ?? []).flatMap((c): RoleConnector[] =>
+    c.kind === 'preview' || c.kind === 'orchestration'
+      ? [{ sourceId: c.sourceId, targetId: c.targetId, kind: c.kind }]
+      : []
+  )
+  const roles = deriveRoles(placed, connectors, { leadBoardId: roleInput.leadBoardId ?? null })
+  return new Map([...roles].map(([id, info]) => [id, info.role]))
+}
+
 /**
- * Build the {@link LayoutDigest} from the live board + group mirrors and the user's view. Boards
- * without finite geometry, and worker terminals docked in a swarm, are dropped (they can't be
- * placed); everything else is derived deterministically. Pure — safe to call on every
- * `canvas://layout` read.
+ * Build the {@link LayoutDigest} from the live board + group mirrors, the user's view and the C9
+ * role inputs. Boards without finite geometry, and worker terminals docked in a swarm, are dropped
+ * (they can't be placed); everything else is derived deterministically. Pure — safe to call on
+ * every `canvas://layout` read. `roleInput` is optional: without it roles still derive from the
+ * boards' own signals, with no connector links and no lead.
  */
 export function buildLayoutDigest(
   boardsInput: readonly LayoutBoardInput[],
   groups: readonly LayoutGroupInput[] = [],
-  viewInput: LayoutViewInput = {}
+  viewInput: LayoutViewInput = {},
+  roleInput: LayoutRoleInput = {}
 ): LayoutDigest {
   const view = viewInput.view ?? null
   const display = viewInput.display ?? null
@@ -223,21 +268,28 @@ export function buildLayoutDigest(
   const groupsOf = (id: string): string[] =>
     groups.filter((g) => g.boardIds.includes(id)).map((g) => g.id)
 
-  const boards: LayoutBoard[] = []
+  const placed: Placed[] = []
   for (const b of boardsInput) {
     if (!isFiniteNum(b.x) || !isFiniteNum(b.y) || !isFiniteNum(b.w) || !isFiniteNum(b.h)) continue
     if (typeof b.dockedIn === 'string' && b.dockedIn.length > 0) continue // docked: not geometry
+    placed.push({ ...b, x: b.x, y: b.y, w: b.w, h: b.h })
+  }
+  const roleOf = placedRoles(placed, roleInput)
+
+  const boards: LayoutBoard[] = placed.map((b) => {
     const groupIds = groupsOf(b.id)
     const rect = { x: b.x, y: b.y, w: b.w, h: b.h }
-    boards.push({
+    return {
       id: b.id,
       type: b.type,
       ...rect,
       ...(groupIds.length > 0 ? { groupId: groupIds[0] } : {}),
       groupIds,
-      onScreen: screen !== null && rectsIntersect(rect, screen.visibleWorld)
-    })
-  }
+      onScreen: screen !== null && rectsIntersect(rect, screen.visibleWorld),
+      // deriveRoles classifies every placed (non-docked) board; `file` is its own unknown fallback.
+      role: roleOf.get(b.id) ?? 'file'
+    }
+  })
 
   // Union bounding box (null when nothing is placed).
   const bbox = unionBox(boards)

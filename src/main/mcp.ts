@@ -300,6 +300,8 @@ export async function startMcpServer(
     let liveHttp: RunningMcpServer | null = null
     const orchestrator = buildOrchestrator(registry, {
       cap: opts.cap,
+      // C9: `canvas://layout` marks the designated lead board's role from MAIN's own authority.
+      leadBoardId: () => lead.designated(),
       onBoardClosed: (boardId) => {
         connected.revoke(boardId)
         // Audit Phase A follow-up (pkg 0.24.0): revoking the token only 401s FUTURE requests —
