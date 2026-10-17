@@ -40,6 +40,7 @@ import {
   availOf,
   gridColumns,
   memberOf,
+  quantizeZoom,
   shelfLayout,
   sizeOf,
   solveGrid,
@@ -191,6 +192,13 @@ function makeContext(
   const scope = opts.scope
   const wanted = scope && scope !== 'all' ? new Set(scope.boardIds) : null
   const pane = { w: finitePos(opts.pane?.w, 1), h: finitePos(opts.pane?.h, 1) }
+  // Docked workers are never placed; they only explain a swarm hero (`why`).
+  const dockedIds = new Map<string, Set<string>>()
+  for (const b of boards) {
+    if (!b.dockedIn) continue
+    dockedIds.set(b.dockedIn, (dockedIds.get(b.dockedIn) ?? new Set()).add(b.id))
+  }
+  const docked = new Map([...dockedIds].map(([host, ids]) => [host, ids.size]))
   return {
     boards: map,
     list,
@@ -201,7 +209,7 @@ function makeContext(
     aspect: pane.w / pane.h,
     readable: finitePos(opts.readableZoom, READABLE_ZOOM),
     opts,
-    why: { boards: map, roles, titles: opts.titles }
+    why: { boards: map, roles, titles: opts.titles, docked }
   }
 }
 
@@ -454,8 +462,11 @@ function layoutUnit(u: PlanUnit, ctx: Ctx, stage: boolean): Laid {
 /** The camera zoom that frames a laid-out unit as the stage. */
 function stageZoom(l: Laid, ctx: Ctx): number {
   const fit = fitZoom({ x: 0, y: 0, w: l.w, h: l.h }, ctx.pane)
-  if (l.sizing === 'single') return fit
-  return Math.min(l.sizing === 'sized' ? l.z : 1, fit)
+  // A lone board is framed like "zoom to fit" (S11, capped at FIT_MAX_ZOOM); everything else
+  // never zooms past 100 % (§5: boards look like 100 % scale whenever they fit). Floored to
+  // ZOOM_STEP so it never exceeds the fit.
+  if (l.sizing === 'single') return quantizeZoom(fit)
+  return quantizeZoom(Math.min(l.sizing === 'sized' ? l.z : 1, fit))
 }
 
 const EMPTY: RoleLayoutResult = {

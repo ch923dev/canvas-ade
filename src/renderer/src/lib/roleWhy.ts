@@ -34,9 +34,12 @@ export interface WhyContext {
   boards: ReadonlyMap<string, RoleBoardInput>
   roles: ReadonlyMap<string, BoardRoleInfo>
   titles?: Readonly<Record<string, string>>
+  /** Docked workers per host board (they are not canvas geometry, but explain a swarm hero). */
+  docked?: ReadonlyMap<string, number>
 }
 
 const roleOf = (ctx: WhyContext, id: string): BoardRole => ctx.roles.get(id)?.role ?? 'file'
+const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`
 
 function cleanTitle(raw: unknown): string {
   if (typeof raw !== 'string') return ''
@@ -71,15 +74,23 @@ export function heroDetail(ctx: WhyContext, id: string): string {
   const links = info?.links.length ?? 0
   switch (role) {
     case 'preview': {
+      // The source terminal's port names the app; the ports the page CALLS (D10) come second.
       const source = b?.previewSourceId ? ctx.boards.get(b.previewSourceId) : undefined
-      const served = ports([...ports(source?.ports), ...ports(b?.callsPorts)])
-      if (served.length > 0) return `preview of ${portList(served)}`
+      const own = ports(source?.ports)
+      const calls = ports(b?.callsPorts).filter((p) => !own.includes(p))
+      if (own.length > 0) {
+        return `preview of ${portList(own)}${calls.length > 0 ? `, calls ${portList(calls)}` : ''}`
+      }
+      if (calls.length > 0) return `preview calling ${portList(calls)}`
       return source ? `preview of ${nameOf(ctx, source.id)}` : 'browser preview'
     }
     case 'lead':
     case 'swarm':
-    case 'command':
-      return links > 0 ? `cabled to ${links} board${links === 1 ? '' : 's'}` : 'no cables yet'
+    case 'command': {
+      if (links > 0) return `cabled to ${plural(links, 'board')}`
+      const docked = ctx.docked?.get(id) ?? 0
+      return docked > 0 ? `${plural(docked, 'docked worker')} inside` : 'no cables yet'
+    }
     case 'agent':
       return 'runs an agent CLI'
     case 'server':
