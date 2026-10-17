@@ -136,14 +136,45 @@ export async function detectTerminalPorts(id: string): Promise<DetectedUrl[]> {
   return urls
 }
 
+/** Re-detect the ports of every running, undocked terminal (fire-and-forget; failures ignored). */
+function refreshServingPorts(): void {
+  const { running } = useTerminalRuntimeStore.getState()
+  for (const b of useCanvasStore.getState().boards) {
+    if (b.type !== 'terminal' || running[b.id] !== true || b.dockedIn) continue
+    detectTerminalPorts(b.id).catch(() => {})
+  }
+}
+
+/**
+ * D10 → `callsPorts`: MAIN's origin-port observer (`previewOriginPorts`) reports a Browser board's
+ * loopback port set on the shared `preview:event` channel. When the page starts calling a NEW port,
+ * the running terminals' ports are re-read through the same detect path — event-driven, not a
+ * poll — so a server that no browser auto-connects to (S3's "api :3000") is known by the time the
+ * page calls it. An id that is not a live Browser board is ignored (a late event after a delete).
+ */
+export function ingestOriginPorts(id: string, ports: unknown): void {
+  const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+  if (!board || board.type !== 'browser') return
+  const before = useRoleSignalsStore.getState().callsPorts[id] ?? []
+  useRoleSignalsStore.getState().setCallsPorts(id, ports)
+  const after = useRoleSignalsStore.getState().callsPorts[id] ?? []
+  if (after.some((p) => !before.includes(p))) refreshServingPorts()
+}
+
 /**
  * Wire the in-renderer feeds (call once; returns the unsubscribe). `now` is the clock seam.
  *  - selection → `lastFocusedAt` for every board newly added to `selectedIds` (click, marquee,
  *    focus action, OS-notification click — they all land there);
  *  - a board deleted (or a project switched away) → its signals are dropped;
- *  - a terminal that stops running (exit, restart, spawn failure) → its ports are cleared.
+ *  - a terminal that stops running (exit, restart, spawn failure) → its ports are cleared;
+ *  - `preview:event` `origin-ports` (D10) → `callsPorts` ({@link ingestOriginPorts}).
  */
 export function installRoleSignalFeeds(now: () => number = Date.now): () => void {
+  const api = typeof window === 'undefined' ? undefined : window.api
+  const offPreview =
+    api?.onPreviewEvent?.((ev) => {
+      if (ev.type === 'origin-ports') ingestOriginPorts(ev.id, ev.ports)
+    }) ?? ((): void => {})
   const offSelect = useCanvasStore.subscribe((s, prev) => {
     if (s.selectedIds === prev.selectedIds) return
     const added = s.selectedIds.filter((id) => !prev.selectedIds.includes(id))
@@ -167,6 +198,7 @@ export function installRoleSignalFeeds(now: () => number = Date.now): () => void
     }
   })
   return () => {
+    offPreview()
     offSelect()
     offBoards()
     offRuntime()

@@ -86,6 +86,8 @@ export type PreviewEvent =
   // The preview's renderer process died (D2-C) — the board shows a crashed state
   // with a Reload CTA. Kept in sync with the main-process union.
   | { id: string; type: 'render-process-gone'; reason: string }
+  // D10: the loopback ports the page requested changed — port numbers only. Kept in sync.
+  | { id: string; type: 'origin-ports'; ports: number[] }
 
 // ── OSR: offscreen preview → <canvas> ──
 // One offscreen-rendered frame pushed main → renderer (OS-3 Phase 2 / 2C — dirty-rect aware).

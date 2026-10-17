@@ -1,10 +1,12 @@
 /**
  * roleSignalsStore — the C9 ephemeral signal store (L11): set / clear / board-delete cleanup, the
- * existing-detect-path feed (`detectTerminalPorts`), and the selection → `lastFocusedAt` feed.
+ * existing-detect-path feed (`detectTerminalPorts`), the selection → `lastFocusedAt` feed, and the
+ * D10 `preview:event` `origin-ports` → `callsPorts` feed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   detectTerminalPorts,
+  ingestOriginPorts,
   installRoleSignalFeeds,
   loopbackPorts,
   normalizePorts,
@@ -164,5 +166,67 @@ describe('installRoleSignalFeeds', () => {
     const a = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
     useCanvasStore.getState().setSelection([a])
     expect(sig().lastFocusedAt).toEqual({})
+  })
+})
+
+describe('D10 → callsPorts (preview:event origin-ports)', () => {
+  type PreviewListener = (ev: { id: string; type: string; ports?: number[] }) => void
+  const detectPorts = vi.fn()
+  let previewListener: PreviewListener | null = null
+  const unsubscribe = vi.fn()
+  let off: () => void = () => {}
+
+  beforeEach(() => {
+    detectPorts.mockReset().mockResolvedValue([])
+    unsubscribe.mockReset()
+    previewListener = null
+    ;(globalThis as unknown as { window: unknown }).window = {
+      api: {
+        detectPorts,
+        onPreviewEvent: (fn: PreviewListener) => {
+          previewListener = fn
+          return unsubscribe
+        }
+      }
+    }
+  })
+  afterEach(() => {
+    off()
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it('an origin-ports event lands as the browser board callsPorts; other kinds are ignored', () => {
+    off = installRoleSignalFeeds()
+    const b = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
+    previewListener?.({ id: b, type: 'did-finish-load' })
+    expect(sig().callsPorts).toEqual({})
+    previewListener?.({ id: b, type: 'origin-ports', ports: [3000, 5173] })
+    expect(sig().callsPorts).toEqual({ [b]: [3000, 5173] })
+    off()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('a NEW called port re-reads the running, undocked terminals through the detect path', async () => {
+    const b = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
+    const api = useCanvasStore.getState().addBoard('terminal', { x: 600, y: 0 })
+    const idle = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 600 })
+    useTerminalRuntimeStore.getState().setRunning(api, 'running')
+    detectPorts.mockResolvedValue([{ url: 'http://localhost:3000', host: 'localhost', port: 3000 }])
+    ingestOriginPorts(b, [3000])
+    expect(detectPorts).toHaveBeenCalledTimes(1)
+    expect(detectPorts).toHaveBeenCalledWith(api) // not the idle terminal
+    expect(detectPorts).not.toHaveBeenCalledWith(idle)
+    await vi.waitFor(() => expect(sig().ports[api]).toEqual([3000]))
+    // The same set again (or a shrink) triggers no re-read.
+    ingestOriginPorts(b, [3000])
+    ingestOriginPorts(b, [])
+    expect(detectPorts).toHaveBeenCalledTimes(1)
+  })
+
+  it('an event for an id that is not a live Browser board is dropped', () => {
+    const t = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    ingestOriginPorts('gone', [3000])
+    ingestOriginPorts(t, [3000])
+    expect(sig().callsPorts).toEqual({})
   })
 })
