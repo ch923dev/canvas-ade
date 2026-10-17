@@ -5384,3 +5384,21 @@ boolean, plus ports and `lastFocusedAt`; the launch line never reaches it. Devel
 with L6 against a stub of the C3 types; at rebase the stub was replaced by `import type` from
 `deriveContexts` (the shapes matched). Gates: 41 new tests (one per rule), unit green except the 2
 ambient `pathSafe` failures, smoke 62/62. Dev check: none (pure library).
+
+## PR #434 — spatial: agents see the screen — view mirror + canvas://layout v2 (v0.47.13) · squash `1fd431ef` · 2026-10-17
+
+Spatial awareness, Wave 2 / L5 (SPEC S0 + C1 + C2): the first lane that reaches the running app.
+**S0:** the MCP tidy applier passes the pane aspect and reframes the camera on all boards
+afterwards. Before this an agent tidy moved boards and left the camera where it was. Every Named
+Group now appears in the layout digest. **C5 pre-split:** the spatial MCP command cases move from
+`useMcpCommands.ts` into `spatialMcpApply.ts` (no behaviour change) to leave room under the
+700-line cap. **C1:** the session-only `canvasViewStore` holds the pane size and the settled
+camera (`VIEW_SETTLE_MS` 150, fed by `useCanvasViewTracker`). `useMcpPublish` mirrors it and the
+per-board context fields to MAIN. `boardRegistry.sanitizeView` is all-or-nothing and re-derives
+`visibleWorld` with the shared geometry; `screenInfo.readDisplayInfo` reads the display.
+**C2:** `canvas://layout` is now `version: 2`, with groups, screen, fit and per-board `onScreen`.
+Docked workers are left out, because they have no canvas geometry. Developed against a TEMP copy of
+L7's geometry, which was dropped at rebase; L7 normalizes `-0` to `+0`, so one expectation
+changed. Gates: unit green except the 2 ambient `pathSafe` failures (plus `pty.recapenv` when the
+caller's `CANVAS_RECAP_BOARD` is set), smoke 62/62. Dev check: user-verified, combined with L11
+(agent tidy reframes the camera, `t` / tile / resize, spawn group as one undo, focus, layout v2 read).
