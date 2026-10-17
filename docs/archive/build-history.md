@@ -5352,3 +5352,21 @@ the tie-break would pick the one-row strip that `fit` exists to fix. `FIT_UNIT_G
 to exceed 2 × `GROUP_BOX_PAD`. Gates: 56 new tests (5 seeded property tests × 200 cases), unit
 green except the 2 ambient `pathSafe` failures, smoke 62/62. Dev check: none (pure library, no
 caller yet).
+
+## PR #432 — spatial: deriveContexts + shared sanitizeGroupName (v0.47.11) · squash `f33faedd` · 2026-10-17
+
+Spatial awareness, Wave 2 / L6 (SPEC C3). A pure library that nothing calls until Wave 3 (I1).
+`src/shared/deriveContexts.ts` derives "contexts": clusters of boards that belong together. Strong
+links are a preview and its source terminal, a non-hub orchestration cable, a shared port, and a
+data-flow edge (`sourceBoardId`). Weaker signals are type-gated. Components are absorbed whole
+(union-find). A hub with `HUB_MIN_CABLES` = 3 or more cables is not used as glue. A context's key
+is a stable FNV-1a hash (`ctx-xxxxxxx`). `src/shared/groupName.ts` holds `sanitizeGroupName` and
+`GROUP_NAME_MAX` = 80 (whitespace collapse, C0/C1/DEL and bidi/zero-width strip, clamp). It lives
+in shared code because a shared module cannot import from `src/main`; MAIN's group tools and
+`spawn_group` adopt it in Wave 3. A parity test sits under `src/renderer/src/lib/` because
+`src/shared/**` is compiled by both tsconfigs. Also fixes a pre-existing e2e race in
+`notifications.e2e.ts`: `seedBoard` selects, and a selected board's attention clears on any later
+canvas change, so the ring vanished whenever that change landed after the delivery. The test
+failed 2 of 3 runs on an unchanged main build. Fix: park the selection on a planning sink (12/12).
+Gates: 71 new tests, unit green except the 2 ambient `pathSafe` failures, smoke 62/62. Dev check:
+none (pure library).
