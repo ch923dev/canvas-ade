@@ -5336,3 +5336,19 @@ tail no longer leaks into the dictation draft). Gates: unit 6615 (the 2 ambient 
 new pin tests (13 fail on the old code), smoke 62/62 twice. Dev check: user-verified with a live
 mic. Follow-ups: `voice:tts:status` only checks for local Kokoro; a cloud spend cap is designed
 but needs an artifact.
+
+## PR #431 — spatial: fitLayout screen-fit packer + shared spatialGeometry (v0.47.10) · squash `47c8ad27` · 2026-10-17
+
+Spatial awareness, Wave 2 / L7 (SPEC C2 geometry + C4). Two pure libraries; nothing calls them
+until Wave 3 (I2). `src/shared/spatialGeometry.ts` is the single definition of "fits" and "on
+screen", shared by MAIN's `canvas://layout` digest and the renderer packer: `Rect`,
+`READABLE_ZOOM` 0.4, `FIT_PADDING_PX` 64, `FIT_MAX_ZOOM` 2, `FIT_MIN_ZOOM` 0.1, `fitZoom`,
+`visibleWorld`, `rectsIntersect`. A parity test pins the mirrored constants to `canvasView.ts`.
+`fitLayout.ts` packs each Named Group or context as a unit with the existing `smart` layout, then
+shelf-packs the units toward the pane aspect, anchored at the cluster's top-left. Overflow is
+`report` (default, D4), `pages` or `shrink`; it only repositions unless `shrink`. Step 4 ranks
+row widths on the UNCLAMPED fit ratio, because on a huge canvas every candidate clamps to 0.1 and
+the tie-break would pick the one-row strip that `fit` exists to fix. `FIT_UNIT_GAP` 96 is asserted
+to exceed 2 × `GROUP_BOX_PAD`. Gates: 56 new tests (5 seeded property tests × 200 cases), unit
+green except the 2 ambient `pathSafe` failures, smoke 62/62. Dev check: none (pure library, no
+caller yet).
