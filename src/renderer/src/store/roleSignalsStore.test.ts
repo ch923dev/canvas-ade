@@ -10,6 +10,7 @@ import {
   installRoleSignalFeeds,
   loopbackPorts,
   normalizePorts,
+  PORT_REFRESH_THROTTLE_MS,
   recordDetectedPorts,
   useRoleSignalsStore
 } from './roleSignalsStore'
@@ -189,20 +190,33 @@ describe('D10 → callsPorts (preview:event origin-ports)', () => {
         }
       }
     }
+    off = installRoleSignalFeeds()
   })
   afterEach(() => {
-    off()
+    off() // also resets the serving-port refresh throttle between tests
+    off = () => {}
+    vi.useRealTimers()
     delete (globalThis as unknown as { window?: unknown }).window
   })
 
+  /** Two running, undocked terminals + one browser; returns the browser id. */
+  const twoServersAndABrowser = (): string => {
+    const b = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
+    for (const x of [600, 1200]) {
+      const t = useCanvasStore.getState().addBoard('terminal', { x, y: 0 })
+      useTerminalRuntimeStore.getState().setRunning(t, 'running')
+    }
+    return b
+  }
+
   it('an origin-ports event lands as the browser board callsPorts; other kinds are ignored', () => {
-    off = installRoleSignalFeeds()
     const b = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
     previewListener?.({ id: b, type: 'did-finish-load' })
     expect(sig().callsPorts).toEqual({})
     previewListener?.({ id: b, type: 'origin-ports', ports: [3000, 5173] })
     expect(sig().callsPorts).toEqual({ [b]: [3000, 5173] })
     off()
+    off = () => {}
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
@@ -221,6 +235,46 @@ describe('D10 → callsPorts (preview:event origin-ports)', () => {
     ingestOriginPorts(b, [3000])
     ingestOriginPorts(b, [])
     expect(detectPorts).toHaveBeenCalledTimes(1)
+  })
+
+  it('🔒 a burst of 20 distinct new ports within 5 s produces at most 2 refresh rounds', async () => {
+    vi.useFakeTimers()
+    const b = twoServersAndABrowser() // 2 running terminals ⇒ 2 detectPorts calls per round
+    for (let i = 0; i < 20; i++) {
+      ingestOriginPorts(b, [4000 + i]) // a page cycling loopback ports (a port scan)
+      await vi.advanceTimersByTimeAsync(200) // 20 × 200 ms = 4 s, inside one throttle window
+    }
+    expect(detectPorts).toHaveBeenCalledTimes(2) // the leading round only, so far
+    await vi.advanceTimersByTimeAsync(PORT_REFRESH_THROTTLE_MS)
+    expect(detectPorts).toHaveBeenCalledTimes(4) // + exactly one trailing round
+    await vi.advanceTimersByTimeAsync(3 * PORT_REFRESH_THROTTLE_MS)
+    expect(detectPorts).toHaveBeenCalledTimes(4) // nothing else queued
+  })
+
+  it('a new port already attributed to a terminal triggers no refresh', () => {
+    const b = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
+    const api = useCanvasStore.getState().addBoard('terminal', { x: 600, y: 0 })
+    useTerminalRuntimeStore.getState().setRunning(api, 'running')
+    sig().setPorts(api, [3000])
+    ingestOriginPorts(b, [3000])
+    expect(sig().callsPorts[b]).toEqual([3000])
+    expect(detectPorts).not.toHaveBeenCalled()
+    ingestOriginPorts(b, [3000, 9000]) // 9000 is served by no known terminal → re-read
+    expect(detectPorts).toHaveBeenCalledTimes(1)
+  })
+
+  it('unsubscribe clears the pending trailing refresh timer', async () => {
+    vi.useFakeTimers()
+    const b = twoServersAndABrowser()
+    ingestOriginPorts(b, [4000]) // leading round
+    ingestOriginPorts(b, [4001]) // queues the trailing round
+    expect(detectPorts).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(1)
+    off()
+    off = () => {}
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(3 * PORT_REFRESH_THROTTLE_MS)
+    expect(detectPorts).toHaveBeenCalledTimes(2)
   })
 
   it('an event for an id that is not a live Browser board is dropped', () => {

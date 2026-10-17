@@ -146,19 +146,55 @@ function refreshServingPorts(): void {
 }
 
 /**
+ * 🔒 At most ONE serving-port re-read per this window: a leading round, then at most one trailing
+ * round. The trigger is page-driven (an untrusted preview can cycle loopback ports — a port scan),
+ * so the MAIN work it causes (one `terminal:detectPorts` per running terminal) must stay bounded.
+ */
+export const PORT_REFRESH_THROTTLE_MS = 5000
+let lastRefreshAt = -Infinity
+let trailingRefresh: ReturnType<typeof setTimeout> | null = null
+
+function requestServingRefresh(): void {
+  if (trailingRefresh !== null) return // a trailing round is already queued — it covers this one
+  const wait = lastRefreshAt + PORT_REFRESH_THROTTLE_MS - Date.now()
+  if (wait <= 0) {
+    lastRefreshAt = Date.now()
+    refreshServingPorts()
+    return
+  }
+  trailingRefresh = setTimeout(() => {
+    trailingRefresh = null
+    lastRefreshAt = Date.now()
+    refreshServingPorts()
+  }, wait)
+}
+
+/** Drop a pending trailing re-read and the throttle window (teardown / tests leave nothing behind). */
+function cancelServingRefresh(): void {
+  if (trailingRefresh !== null) clearTimeout(trailingRefresh)
+  trailingRefresh = null
+  lastRefreshAt = -Infinity
+}
+
+/**
  * D10 → `callsPorts`: MAIN's origin-port observer (`previewOriginPorts`) reports a Browser board's
- * loopback port set on the shared `preview:event` channel. When the page starts calling a NEW port,
- * the running terminals' ports are re-read through the same detect path — event-driven, not a
- * poll — so a server that no browser auto-connects to (S3's "api :3000") is known by the time the
- * page calls it. An id that is not a live Browser board is ignored (a late event after a delete).
+ * loopback port set on the shared `preview:event` channel. When the page starts calling a NEW port
+ * that no terminal is already known to serve, the running terminals' ports are re-read through the
+ * same detect path — event-driven, not a poll, and throttled ({@link PORT_REFRESH_THROTTLE_MS}) —
+ * so a server that no browser auto-connects to (S3's "api :3000") is known by the time the page
+ * calls it. An id that is not a live Browser board is ignored (a late event after a delete).
  */
 export function ingestOriginPorts(id: string, ports: unknown): void {
   const board = useCanvasStore.getState().boards.find((b) => b.id === id)
   if (!board || board.type !== 'browser') return
   const before = useRoleSignalsStore.getState().callsPorts[id] ?? []
   useRoleSignalsStore.getState().setCallsPorts(id, ports)
-  const after = useRoleSignalsStore.getState().callsPorts[id] ?? []
-  if (after.some((p) => !before.includes(p))) refreshServingPorts()
+  const sig = useRoleSignalsStore.getState()
+  const added = (sig.callsPorts[id] ?? []).filter((p) => !before.includes(p))
+  if (added.length === 0) return
+  // A port already attributed to a terminal needs no re-detect.
+  const attributed = new Set(Object.values(sig.ports).flat())
+  if (added.some((p) => !attributed.has(p))) requestServingRefresh()
 }
 
 /**
@@ -168,6 +204,7 @@ export function ingestOriginPorts(id: string, ports: unknown): void {
  *  - a board deleted (or a project switched away) → its signals are dropped;
  *  - a terminal that stops running (exit, restart, spawn failure) → its ports are cleared;
  *  - `preview:event` `origin-ports` (D10) → `callsPorts` ({@link ingestOriginPorts}).
+ * The unsubscribe also cancels a pending throttled serving-port re-read.
  */
 export function installRoleSignalFeeds(now: () => number = Date.now): () => void {
   const api = typeof window === 'undefined' ? undefined : window.api
@@ -198,6 +235,7 @@ export function installRoleSignalFeeds(now: () => number = Date.now): () => void
     }
   })
   return () => {
+    cancelServingRefresh()
     offPreview()
     offSelect()
     offBoards()
