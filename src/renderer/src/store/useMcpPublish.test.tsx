@@ -116,7 +116,7 @@ describe('useMcpPublish payload (C1)', () => {
       pane: { w: 1000, h: 500 },
       dpr: window.devicePixelRatio || 1,
       camera: { x: 0, y: 0, zoom: 1 },
-      visibleWorld: { x: -0, y: -0, w: 1000, h: 500 }
+      visibleWorld: { x: 0, y: 0, w: 1000, h: 500 }
     })
     unmount()
   })
