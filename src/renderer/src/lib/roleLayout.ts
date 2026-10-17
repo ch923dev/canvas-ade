@@ -54,6 +54,7 @@ import {
   HERO_RAIL_MIN_ASPECT,
   ROLE_GAP,
   ULTRAWIDE_MIN_ASPECT,
+  ZOOM_STEP,
   duoRailVariants,
   duoStripVariants,
   heroRailVariants,
@@ -207,7 +208,12 @@ function makeContext(
     pane,
     avail: availOf(pane),
     aspect: pane.w / pane.h,
-    readable: finitePos(opts.readableZoom, READABLE_ZOOM),
+    // Rounded UP to the zoom step, so a (floored) solved zoom can equal it exactly.
+    readable: Number(
+      (
+        Math.ceil(finitePos(opts.readableZoom, READABLE_ZOOM) / ZOOM_STEP - 1e-9) * ZOOM_STEP
+      ).toFixed(4)
+    ),
     opts,
     why: { boards: map, roles, titles: opts.titles, docked }
   }
@@ -443,7 +449,7 @@ function layoutUnit(u: PlanUnit, ctx: Ctx, stage: boolean): Laid {
       return { cols, s: solveGrid(ms, cols, ctx.avail, cap) }
     }
     let g = run('role', zMax)
-    if (shrink && g.s.z < ctx.readable) g = run('board', ctx.readable)
+    if (shrink && g.s.z < ctx.readable) g = run('board', Math.min(zMax, ctx.readable))
     const grid = { cols: g.cols, rows: Math.ceil(ids.length / g.cols) }
     return done('grid', `grid/${grid.cols}x${grid.rows}`, g.s.cells, 'sized', [], g.s.z, grid)
   }
@@ -455,7 +461,7 @@ function layoutUnit(u: PlanUnit, ctx: Ctx, stage: boolean): Laid {
       cap
     )
   let best = run('role', zMax)
-  if (shrink && best.s.z < ctx.readable) best = run('board', ctx.readable)
+  if (shrink && best.s.z < ctx.readable) best = run('board', Math.min(zMax, ctx.readable))
   return done('hero', best.v.name, best.s.cells, 'sized', heroes, best.s.z)
 }
 

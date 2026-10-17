@@ -157,7 +157,7 @@ function genCase(seed: number): Case {
   if (rnd() < 0.15) opts.resize = false
   if (rnd() < 0.3) opts.implicit = true
   if (rnd() < 0.3) opts.selectedIds = subset(ids, 0.2)
-  if (rnd() < 0.1) opts.readableZoom = int(2, 8) / 10
+  if (rnd() < 0.1) opts.readableZoom = Math.round((0.2 + rnd() * 0.6) * 1e6) / 1e6
   return { boards, roles, units, opts }
 }
 
