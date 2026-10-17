@@ -1064,12 +1064,10 @@ export function buildOrchestrator(
       // the live board geometry (P1 canvas awareness) + the Named-Group mirror through
       // buildLayoutDigest, which derives bbox / overlaps / row·column·grid·scattered arrangement.
       // Same injected-mirror discipline as describeApp; a registry that doesn't wire listGroups reads
-      // [] (an ungrouped digest). Boards without geometry are dropped by the digest, not here.
-      const summaries = await listBoardSummaries()
-      return buildLayoutDigest(
-        summaries.map((b) => ({ id: b.id, type: b.type, x: b.x, y: b.y, w: b.w, h: b.h })),
-        listGroupsProjection()
-      )
+      // [] (an ungrouped digest). Boards without geometry (and docked workers) are dropped by the
+      // digest, not here. C2 (v2): the RAW mirror (it carries `dockedIn`) + the user's view/display;
+      // a registry without readView reads a view-less digest (screen: null).
+      return buildLayoutDigest(registry.listBoards(), listGroupsProjection(), registry.readView?.())
     }
   }
 }

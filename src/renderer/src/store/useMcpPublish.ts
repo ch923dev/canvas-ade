@@ -3,10 +3,67 @@ import { useCanvasStore } from './canvasStore'
 import { useTerminalRuntimeStore } from './terminalRuntimeStore'
 import { usePreviewStore } from './previewStore'
 import { useAttentionStore } from './attentionStore'
+import { useCanvasViewStore, type PaneSize } from './canvasViewStore'
 import { buildBoardSnapshot } from './boardStatus'
+import { visibleWorld } from '../../../shared/spatialGeometry'
+import type { BoardContextFields, CanvasView } from '../../../shared/spatialTypes'
+import type { CanvasViewport } from '../lib/boardSchema'
 
 /** Warn once if the preload bridge is missing in Electron (vs silently in tests). */
 let warnedMissingBridge = false
+
+/** The board fields {@link boardContextFields} reads — every live `Board` satisfies it structurally. */
+export interface BoardContextSource {
+  type: string
+  cwd?: string
+  previewSourceId?: string
+  dockedIn?: string
+  sourceBoardId?: string
+}
+
+const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+
+/**
+ * The C1 context signals one board carries on the mirror — ONLY the classified fields that exist
+ * today, each on its own board type: a terminal's configured `cwd` + its swarm dock (`dockedIn`), a
+ * browser's driving terminal (`previewSourceId`), a data-flow board's bound browser (`sourceBoardId`).
+ * Pure. 🔒 D9: picked field by field — never the launch line, `launchCommand` or env. MAIN re-validates
+ * and clamps every field (`boardRegistry.sanitizeContextFields`); the C9 role signals (agent / ports /
+ * callsPorts / lastFocusedAt) join here when their producers land.
+ */
+export function boardContextFields(b: BoardContextSource): BoardContextFields {
+  const out: BoardContextFields = {}
+  if (b.type === 'terminal') {
+    if (nonEmpty(b.cwd)) out.cwd = b.cwd
+    if (nonEmpty(b.dockedIn)) out.dockedIn = b.dockedIn
+  } else if (b.type === 'browser') {
+    if (nonEmpty(b.previewSourceId)) out.previewSourceId = b.previewSourceId
+  } else if (b.type === 'dataflow') {
+    if (nonEmpty(b.sourceBoardId)) out.sourceBoardId = b.sourceBoardId
+  }
+  return out
+}
+
+/**
+ * Assemble the C1 `view` from the settled pane + camera (+ the device pixel ratio), or null while
+ * either is unknown (no Canvas mounted / no camera frame yet) — the payload then omits `view` and
+ * MAIN reports no screen. `visibleWorld` is derived from pane + camera (MAIN re-derives it after
+ * sanitizing). Pure.
+ */
+export function buildCanvasView(
+  pane: PaneSize | null,
+  camera: CanvasViewport | null,
+  dpr: number
+): CanvasView | null {
+  if (!pane || !camera) return null
+  const cam = { x: camera.x, y: camera.y, zoom: camera.zoom }
+  return {
+    pane: { w: pane.w, h: pane.h },
+    dpr,
+    camera: cam,
+    visibleWorld: visibleWorld(pane, cam)
+  }
+}
 
 /**
  * Publish a board snapshot (id/type/title + derived status bucket, T1.1) to MAIN's
@@ -14,6 +71,11 @@ let warnedMissingBridge = false
  * status bucket is derived in the renderer (the only place that holds the live
  * `terminalRuntimeStore` + `previewStore` state) so the agent-facing
  * `canvas://boards` view and the on-canvas pill share one source of truth.
+ *
+ * Spatial awareness C1: each board also carries its context signals ({@link boardContextFields}),
+ * and the payload carries the user's `view` (pane · dpr · settled camera · visible world) — session
+ * state that rides this same debounce and is re-published when the camera SETTLES or the pane
+ * resizes (`canvasViewStore`), never per frame.
  *
  * Debounced; control-plane metadata only (no board content — `previewStore` snapshots
  * etc. never leave the renderer). A no-op if the bridge is absent (e.g. a non-Electron
@@ -39,6 +101,9 @@ export function useMcpPublish(): void {
   // awaiting-review, error → failed), so a set/clear must re-publish — MAIN's status differ
   // is what raises/settles the `canvas://attention` queue entry.
   const attention = useAttentionStore((s) => s.byId)
+  // C1: the SETTLED view (pane resize · camera settle) — both change at settle cadence only.
+  const pane = useCanvasViewStore((s) => s.pane)
+  const camera = useCanvasViewStore((s) => s.camera)
   useEffect(() => {
     const publish = window.api?.mcp?.publishBoards
     if (!publish) {
@@ -52,12 +117,16 @@ export function useMcpPublish(): void {
       return
     }
     const t = setTimeout(() => {
+      // buildBoardSnapshot maps 1:1 and in order, so entry i IS boards[i].
+      const snapshot = buildBoardSnapshot(boards, { running, preview: previewById, attention })
+      const view = buildCanvasView(pane, camera, window.devicePixelRatio || 1)
       publish({
-        boards: buildBoardSnapshot(boards, { running, preview: previewById, attention }),
+        boards: snapshot.map((entry, i) => ({ ...entry, ...boardContextFields(boards[i]) })),
         connectors,
-        groups
+        groups,
+        ...(view ? { view } : {})
       })
     }, 150)
     return () => clearTimeout(t)
-  }, [boards, connectors, groups, running, previewById, attention])
+  }, [boards, connectors, groups, running, previewById, attention, pane, camera])
 }

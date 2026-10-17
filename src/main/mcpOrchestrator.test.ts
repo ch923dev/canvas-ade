@@ -168,6 +168,46 @@ describe('buildOrchestrator', () => {
     expect(digest.bbox).toEqual({ x: 0, y: 0, w: 240, h: 80 })
     expect(digest.boards.find((bd) => bd.id === 'a')?.groupId).toBe('g1')
     expect('groupId' in (digest.boards.find((bd) => bd.id === 'b') ?? {})).toBe(false)
+    // C2: a registry without readView serves a view-less v2 digest.
+    expect(digest.version).toBe(2)
+    expect(digest.screen).toBeNull()
+  })
+
+  it('describeLayout (C2) threads the registry view + display and drops docked workers', async () => {
+    const pane = { w: 1000, h: 500 }
+    const camera = { x: 0, y: 0, zoom: 1 }
+    const display = {
+      workArea: { x: 0, y: 0, w: 1920, h: 1040 },
+      scaleFactor: 1,
+      maximized: false,
+      fullscreen: false
+    }
+    const orch = buildOrchestrator({
+      ...reg([]),
+      listBoards: () => [
+        { id: 'a', type: 'terminal', title: 'A', status: 'idle', x: 0, y: 0, w: 100, h: 80 },
+        {
+          id: 'w',
+          type: 'terminal',
+          title: 'W',
+          status: 'idle',
+          x: 0,
+          y: 0,
+          w: 100,
+          h: 80,
+          dockedIn: 's1'
+        }
+      ],
+      readView: () => ({
+        view: { pane, dpr: 1, camera, visibleWorld: { x: 0, y: 0, w: 1000, h: 500 } },
+        display
+      })
+    })
+    const digest = await orch.describeLayout()
+    expect(digest.boards.map((bd) => bd.id)).toEqual(['a'])
+    expect(digest.boards[0].onScreen).toBe(true)
+    expect(digest.screen?.display).toEqual(display)
+    expect(digest.fit.readable).toBe(true)
   })
 
   it('falls back to a PTY/presence-derived bucket when the mirror carries no status', async () => {

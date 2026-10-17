@@ -2,9 +2,27 @@ import type { IpcMain, BrowserWindow, IpcMainEvent } from 'electron'
 import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import { assertDiagramSpec } from '@expanse-ade/diagram/spec'
 import { isForeignSender } from './ipcGuard'
+import { visibleWorld } from '../shared/spatialGeometry'
+import {
+  MAX_CONTEXT_CWD,
+  MAX_CONTEXT_ID,
+  MAX_CONTEXT_PORTS,
+  VIEW_DPR_MAX,
+  VIEW_PANE_MAX,
+  VIEW_PANE_MIN,
+  VIEW_ZOOM_MAX,
+  VIEW_ZOOM_MIN,
+  type BoardContextFields,
+  type CanvasView
+} from '../shared/spatialTypes'
 
-/** Minimal board projection the renderer pushes to MAIN (control plane; no content). */
-export interface BoardMirror {
+/**
+ * Minimal board projection the renderer pushes to MAIN (control plane; no content). Spatial awareness
+ * C1 adds the optional {@link BoardContextFields} (cwd / previewSourceId / dockedIn / sourceBoardId +
+ * the C9 role signals) — classifications only (D9), each validated + clamped on ingest
+ * ({@link sanitizeContextFields}); session state, never persisted.
+ */
+export interface BoardMirror extends BoardContextFields {
   id: string
   type: string
   title: string
@@ -256,6 +274,8 @@ export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatu
 let mirror: BoardMirror[] = []
 let connectorMirror: ConnectorMirror[] = []
 let groupMirror: GroupMirror[] = []
+/** C1: the user's last sanitized canvas view (null until a renderer with a mounted Canvas publishes one). */
+let viewMirror: CanvasView | null = null
 
 /** Listeners notified on each per-board status change (M5 event-driven attention). */
 const statusListeners = new Set<(change: BoardStatusChange) => void>()
@@ -274,17 +294,19 @@ function emitStatus(change: BoardStatusChange): void {
   }
 }
 
-/** Replace the stored snapshot and emit the per-board status diffs (M5). Groups (PR-5) are
- *  metadata-only — stored, never diffed (no status transition rides on group membership). */
+/** Replace the stored snapshot and emit the per-board status diffs (M5). Groups (PR-5) and the view
+ *  (C1) are metadata-only — stored, never diffed (no status transition rides on them). */
 function applySnapshot(
   nextBoards: BoardMirror[],
   nextConnectors: ConnectorMirror[],
-  nextGroups: GroupMirror[] = []
+  nextGroups: GroupMirror[] = [],
+  nextView: CanvasView | null = null
 ): void {
   const changes = diffStatus(mirror, nextBoards)
   mirror = nextBoards
   connectorMirror = nextConnectors
   groupMirror = nextGroups
+  viewMirror = nextView
   for (const c of changes) emitStatus(c)
   for (const cb of snapshotListeners) {
     try {
@@ -324,9 +346,10 @@ export function subscribeBoardStatus(listener: (change: BoardStatusChange) => vo
 export function __applySnapshotForTest(
   boards: BoardMirror[],
   connectors: ConnectorMirror[] = [],
-  groups: GroupMirror[] = []
+  groups: GroupMirror[] = [],
+  view: CanvasView | null = null
 ): void {
-  applySnapshot(boards, connectors, groups)
+  applySnapshot(boards, connectors, groups, view)
 }
 
 /** Test seam — clear all status listeners between tests (unit tests only). */
@@ -720,6 +743,8 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       // S6: a planning board's bounded elements+ids (validated/capped; absent otherwise).
       const sanitizedPlanning = sanitizePlanning(planning)
       if (sanitizedPlanning !== undefined) entry.planning = sanitizedPlanning
+      // C1: the classified context signals (each validated/clamped; a bad one drops, board kept).
+      Object.assign(entry, sanitizeContextFields(b as Record<string, unknown>))
       out.push(entry)
     }
   }
@@ -791,6 +816,90 @@ export function sanitizeGroups(input: unknown): GroupMirror[] {
   return out
 }
 
+// ── C1 spatial awareness: view + per-board context signals (session state, never persisted) ──
+
+// The pane / zoom / dpr / context bounds are the shared C1 contract (`src/shared/spatialTypes.ts`).
+/** A view number past this magnitude is not a measurement (forged/garbage) — the view drops whole. */
+const VIEW_MAX_MAGNITUDE = 1e7
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
+
+/**
+ * Validate the renderer's `view` (C1) — `mcp:boards` is an IPC channel, so trust nothing. ALL-OR-
+ * NOTHING: a missing key, a wrong type, a non-finite or huge number ({@link VIEW_MAX_MAGNITUDE}), a
+ * negative pane, a non-positive zoom or a dpr outside (0, 8] drops the WHOLE view (null) — a view is
+ * never partially trusted. In-domain values are clamped: pane w/h into [1, 16384], zoom into the
+ * camera range [0.1, 2.5]. `visibleWorld` is RE-DERIVED here from the clamped pane + camera (the
+ * renderer's copy is ignored), so it can never disagree with them.
+ */
+export function sanitizeView(input: unknown): CanvasView | null {
+  if (!isRecord(input) || !isRecord(input.pane) || !isRecord(input.camera)) return null
+  const nums = [
+    input.pane.w,
+    input.pane.h,
+    input.camera.x,
+    input.camera.y,
+    input.camera.zoom,
+    input.dpr
+  ]
+  const ok = (n: unknown): n is number =>
+    typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= VIEW_MAX_MAGNITUDE
+  if (!nums.every(ok)) return null
+  const [w, h, x, y, zoom, dpr] = nums as number[]
+  if (w < 0 || h < 0 || zoom <= 0 || dpr <= 0 || dpr > VIEW_DPR_MAX) return null
+  const pane = {
+    w: clamp(w, VIEW_PANE_MIN, VIEW_PANE_MAX),
+    h: clamp(h, VIEW_PANE_MIN, VIEW_PANE_MAX)
+  }
+  const camera = { x, y, zoom: clamp(zoom, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX) }
+  return { pane, dpr, camera, visibleWorld: visibleWorld(pane, camera) }
+}
+
+/** A bounded port list: integers 1..65535, de-duplicated, at most {@link MAX_CONTEXT_PORTS}; else undefined. */
+function sanitizePorts(input: unknown): number[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: number[] = []
+  for (const p of input) {
+    if (out.length >= MAX_CONTEXT_PORTS) break
+    if (typeof p !== 'number' || !Number.isInteger(p) || p < 1 || p > 65535) continue
+    if (!out.includes(p)) out.push(p)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * Keep only well-formed {@link BoardContextFields} on one board entry (C1 + the C9 additions). Each
+ * field is independent — a bad one is dropped, the rest (and the board) kept: `cwd` ≤ 1024 chars, the
+ * id references ≤ 200, `agent` a strict boolean, `ports`/`callsPorts` via {@link sanitizePorts},
+ * `lastFocusedAt` a finite non-negative epoch. Over-length strings DROP (never truncate — a truncated
+ * path or id is a wrong reference, the {@link boundedStr} rule). 🔒 D9: nothing beyond these fields is
+ * read — a forged launch line / env on the payload never reaches the mirror.
+ */
+export function sanitizeContextFields(rec: Record<string, unknown>): BoardContextFields {
+  const out: BoardContextFields = {}
+  const cwd = boundedStr(rec.cwd, MAX_CONTEXT_CWD)
+  if (cwd !== undefined) out.cwd = cwd
+  for (const key of ['previewSourceId', 'dockedIn', 'sourceBoardId'] as const) {
+    const ref = boundedStr(rec[key], MAX_CONTEXT_ID)
+    if (ref !== undefined) out[key] = ref
+  }
+  if (typeof rec.agent === 'boolean') out.agent = rec.agent
+  const ports = sanitizePorts(rec.ports)
+  if (ports !== undefined) out.ports = ports
+  const callsPorts = sanitizePorts(rec.callsPorts)
+  if (callsPorts !== undefined) out.callsPorts = callsPorts
+  const at = rec.lastFocusedAt
+  if (typeof at === 'number' && Number.isFinite(at) && at >= 0) out.lastFocusedAt = at
+  return out
+}
+
+/** Last sanitized canvas view the renderer pushed (C1) — null when none (no Canvas / legacy payload). */
+export function getCanvasView(): CanvasView | null {
+  return viewMirror
+}
+
 /** Last snapshot the renderer pushed (empty until the renderer mounts + publishes). */
 export function listBoardMirror(): BoardMirror[] {
   return mirror
@@ -826,8 +935,9 @@ export function __setGroupsForTest(next: GroupMirror[]): void {
  * main window's main frame can publish (mirrors pty.ts's isForeignSender). The
  * snapshot is control-plane metadata only — never board content.
  *
- * Accepts either the legacy boards-only array OR the `{ boards, connectors, groups }` payload
- * (T4.6 added connectors; PR-5 added groups). An array → connectors + groups stay [].
+ * Accepts either the legacy boards-only array OR the `{ boards, connectors, groups, view? }` payload
+ * (T4.6 added connectors; PR-5 added groups; C1 added the optional view). An array → connectors +
+ * groups stay [] and the view null; an object without a (valid) view → view null.
  */
 export function registerBoardRegistryHandler(
   ipcMain: IpcMain,
@@ -842,15 +952,17 @@ export function registerBoardRegistryHandler(
       // Legacy / version-skew only: a renderer predating T4.6 sends a bare boards array.
       applySnapshot(sanitizeSnapshot(payload), [], [])
     } else if (payload && typeof payload === 'object') {
-      const { boards, connectors, groups } = payload as {
+      const { boards, connectors, groups, view } = payload as {
         boards?: unknown
         connectors?: unknown
         groups?: unknown
+        view?: unknown
       }
       applySnapshot(
         sanitizeSnapshot(boards),
         sanitizeConnectors(connectors),
-        sanitizeGroups(groups)
+        sanitizeGroups(groups),
+        sanitizeView(view)
       )
     }
   })
