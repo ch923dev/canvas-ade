@@ -25,6 +25,18 @@ const ring = (page: Page, id: string): Promise<string | null> =>
 const bucketOf = (page: Page, id: string): Promise<string | null> =>
   callE2E<string | null>(page, { m: 'boardBucket', a: [id] })
 
+/** Seed a terminal that stays UNSELECTED. `seedBoard` selects the newest board, and selection
+ *  means "seen": on ANY later canvas-store change, useNotifications clears a selected board's
+ *  attention mark. Whenever such a change lands after the delivery (a slower PTY spawn on a
+ *  loaded machine is enough), it wipes the ring the test is polling for: 2/3 isolated failures
+ *  on an unchanged main build, 2026-10-17. Park the selection on a planning sink, the same
+ *  pattern notificationBell.e2e.ts uses. */
+async function seedUnselected(page: Page): Promise<string> {
+  const id = await seed(page, 'terminal')
+  await seed(page, 'planning')
+  return id
+}
+
 /** Poll a predicate over one of the readers above — the comparison runs HERE in Node (the
  *  terminalScrollback.e2e.ts `pollScale` shape). Same boolean contract as `pollEval`. */
 async function pollKind(
@@ -71,7 +83,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     ]
 
     for (const c of cases) {
-      const id = await seed(page, 'terminal')
+      const id = await seedUnselected(page)
       await mainCall(electronApp, 'notifyDeliver', id, c.event)
 
       // (1) In-app toast surfaced through the REAL deliver → notify:lifecycle IPC → useNotifications.
@@ -120,7 +132,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     page,
     electronApp
   }) => {
-    const id = await seed(page, 'terminal')
+    const id = await seedUnselected(page)
     // The board opted out (schema v10 monitorActivity:false) → the gate silences every surface.
     await mainCall(electronApp, 'notifySetBoard', id, { monitorActivity: false })
     await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
@@ -138,7 +150,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     electronApp
   }) => {
     // (a) Master switch OFF → the whole feature is silent (no toast, no attention, no OS layer).
-    const idOff = await seed(page, 'terminal')
+    const idOff = await seedUnselected(page)
     await mainCall(electronApp, 'notifyConfigure', { enabled: false })
     await mainCall(electronApp, 'notifyDeliver', idOff, 'error')
     await page.waitForTimeout(300)
@@ -153,7 +165,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     await mainCall(electronApp, 'notifyReset')
     await mainCall(electronApp, 'notifyConfigure', { enabled: true, onlyWhenUnfocused: true })
     await mainCall(electronApp, 'notifySetFocused', true)
-    const idOn = await seed(page, 'terminal')
+    const idOn = await seedUnselected(page)
     await mainCall(electronApp, 'notifyDeliver', idOn, 'needs-input')
 
     expect(
@@ -187,7 +199,7 @@ test.describe('@terminal @core desktop notifications (lifecycle → toast + on-c
     // AND from the generic idle monitor — two OS notifications ~10s apart for one prompt. The
     // deliver-level dedupe collapses the second; the OS-spy count is the strong signal (the toast
     // is keyed per (board, mark), so its count alone can't distinguish dedupe from replace).
-    const id = await seed(page, 'terminal')
+    const id = await seedUnselected(page)
     await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
     await mainCall(electronApp, 'notifyDeliver', id, 'needs-input')
     expect(
