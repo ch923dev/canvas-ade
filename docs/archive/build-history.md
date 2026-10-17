@@ -5370,3 +5370,17 @@ canvas change, so the ring vanished whenever that change landed after the delive
 failed 2 of 3 runs on an unchanged main build. Fix: park the selection on a planning sink (12/12).
 Gates: 71 new tests, unit green except the 2 ambient `pathSafe` failures, smoke 62/62. Dev check:
 none (pure library).
+
+## PR #433 — spatial: board role model (C9) (v0.47.12) · squash `10696a60` · 2026-10-17
+
+Spatial awareness, Wave 2 / L9 (SPEC C9 + ROLE-LAYOUT.md §1–§3). A pure library that nothing calls
+until Wave 3 (I2). `src/shared/boardRoles.ts` gives every board one role, each with a weight: lead,
+swarm, command, agent, preview, plan, tracker, dataflow, file, server, shell. It also classifies
+the scene (lead, hub, pair, stack, peers, docs, single). `buildRoleUnits` groups boards into units
+by precedence: Named Group > TEAM (a lead or hub plus its direct cable targets, which C3's hub rule
+would otherwise drop) together with riders resolved to a fixed point > C3 context > single.
+`rankBoards` orders the boards inside a unit. Inputs are classifications only (D9): `agent` is a
+boolean, plus ports and `lastFocusedAt`; the launch line never reaches it. Developed in parallel
+with L6 against a stub of the C3 types; at rebase the stub was replaced by `import type` from
+`deriveContexts` (the shapes matched). Gates: 41 new tests (one per rule), unit green except the 2
+ambient `pathSafe` failures, smoke 62/62. Dev check: none (pure library).
