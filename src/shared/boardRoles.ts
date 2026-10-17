@@ -35,40 +35,7 @@
  *    inside a group's packed rect would draw it under the group's outline.
  */
 
-// ── C3 stub (owned by L6) — coordinator swaps this for `import type … from './deriveContexts'` at rebase ──
-// Copied verbatim from SPEC C3 (types only). L6 writes `src/shared/deriveContexts.ts` in parallel;
-// once it lands this block becomes
-// `import type { ContextConnectorInput, ContextGroupInput, DerivedContext } from
-// './deriveContexts'`.
-interface ContextConnectorInput {
-  sourceId: string
-  targetId: string
-  kind: 'preview' | 'orchestration'
-}
-interface ContextGroupInput {
-  id: string
-  name: string
-  boardIds: string[]
-}
-type ContextSignal =
-  | 'group'
-  | 'preview'
-  | 'orchestration'
-  | 'port'
-  | 'dataflow'
-  | 'cwd'
-  | 'fileRef'
-  | 'title'
-interface DerivedContext {
-  key: string // stable: hash of the sorted boardIds
-  suggestedName: string // ≤ GROUP_NAME_MAX (80), sanitized
-  boardIds: string[] // sorted
-  signals: ContextSignal[] // why these belong together (no raw paths)
-  confidence: 'high' | 'medium' | 'low'
-  existingGroupId?: string // set when this context IS / extends an existing Named Group
-  addBoardIds?: string[] // ungrouped boards proposed to join `existingGroupId`
-}
-// ── end C3 stub ──
+import type { ContextConnectorInput, ContextGroupInput, DerivedContext } from './deriveContexts'
 
 export type BoardRole =
   | 'lead'
