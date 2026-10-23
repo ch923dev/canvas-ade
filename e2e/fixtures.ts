@@ -6,6 +6,7 @@ import {
   type Page
 } from '@playwright/test'
 import { join } from 'node:path'
+import { closeElectronApp } from './closeApp'
 
 type TestFixtures = { page: Page }
 type WorkerFixtures = { electronApp: ElectronApplication }
@@ -100,7 +101,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         /* tracing unavailable on this context — continue without it */
       }
       await use(app)
-      await app.close()
+      await closeElectronApp(app)
     },
     { scope: 'worker' }
   ],
