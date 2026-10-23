@@ -43,6 +43,9 @@ export type PreviewEvent =
   // The preview's renderer process died (D2-C). The board freezes silently without
   // this — the renderer shows a "Preview crashed" state with a Reload CTA.
   | { id: string; type: 'render-process-gone'; reason: string }
+  // D10 (spatial C9): the loopback ports the page requested changed (previewOriginPorts). Port
+  // numbers only — never a URL, host, path or header.
+  | { id: string; type: 'origin-ports'; ports: number[] }
 
 /**
  * Secondary failure signal from `did-navigate`'s `httpResponseCode` (Bug #5). A

@@ -81,6 +81,12 @@ export interface OrchestratorOpts {
    * a full consent-revoke fires — a real bearer-token leak for a dead board. Optional; tests omit it.
    */
   onBoardClosed?: (boardId: string) => void
+  /**
+   * Spatial C9: the currently-designated lead board (`leadAuthority.designated()`), read fresh on each
+   * `canvas://layout` read so that board's `role` is `lead`. MAIN's own authority — never taken from
+   * the renderer. Optional; absent ⇒ no board is the lead.
+   */
+  leadBoardId?: () => string | null
 }
 
 /** One dispatch in a `relay_prompts` batch — the same {source, target, text} triple as a single relay. */
@@ -350,6 +356,14 @@ export interface BoardRegistry {
     /** C1: a worker terminal docked in a swarm board (mirror-sanitized) — `canvas://layout` drops it
      *  (stale parking coordinates, not canvas geometry). */
     dockedIn?: string
+    /** C1/C9: the classified context + role signals (mirror-sanitized, D9) `canvas://layout` derives
+     *  each board's `role` from. Never surfaced verbatim on `canvas://boards`. */
+    previewSourceId?: string
+    sourceBoardId?: string
+    agent?: boolean
+    ports?: number[]
+    callsPorts?: number[]
+    lastFocusedAt?: number
     /** P3b: a kanban board's bounded lanes + cards (mirror-sanitized), grouped + served as
      *  `canvas://board/{id}/cards`. Absent on every non-kanban board. */
     kanban?: {

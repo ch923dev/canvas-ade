@@ -38,6 +38,7 @@ import {
   type OsrSizeRequest
 } from './previewOsrSizing'
 import { scaleOsrInputEvent, type OsrInputEvent } from './previewOsrInput'
+import { observeOriginPorts, type OriginPortsObserver } from './previewOriginPorts'
 import { getCurrentDir } from './projectStore'
 
 /**
@@ -99,6 +100,9 @@ export interface OsrEntry {
   // (`preview-osr-${id}`) OUTLIVES the destroyed window, so a discarded listener would leak + double-
   // fire if the board id is ever reused (project restore / migration).
   teardownDownloads?: () => void
+  // D10 (spatial C9): the loopback origin-port observer — OWNS this session's `webRequest.onCompleted`
+  // (previewOriginPorts). Disposed with the window; like the downloads listener it is per-session.
+  originPorts?: OriginPortsObserver
   // Per-board DevTools Network/WS capture (MAIN ring buffer + subscription state). See previewOsrNetwork.
   net: OsrNetState
   // Background sessions: the project dir that OWNS this preview, captured from
@@ -626,6 +630,12 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     allow: () => !e.backgrounded && allowDownload(),
     emit: (info) => emitWidget('preview:osrDownload', { id, ...info })
   })
+  // D10: which loopback ports this page calls (port numbers only — never a URL/path/header), so the
+  // role model can link this preview to the terminal serving them. Silent while backgrounded: board
+  // ids collide across cloned projects, and the switch-back remount re-emits the current set.
+  e.originPorts = observeOriginPorts(sess, (ports) => {
+    if (!e.backgrounded) emitEvent({ id, type: 'origin-ports', ports })
+  })
   // Audio (4A): surface a mute toggle while the page plays media. media-started/paused fire
   // regardless of mute, so muting keeps the button visible; the emit is diff-skipped.
   wc.on('media-started-playing', () => emitAudible(e, id, true))
@@ -805,6 +815,7 @@ export function disposeOsr(id: string): void {
   if (!e) return
   stopNetFlush(e.net) // cancel a pending Network delta flush before the window dies
   e.teardownDownloads?.() // 4D — remove the session will-download listener (the session outlives the window)
+  e.originPorts?.dispose() // D10 — drop the observer's ports + its session onCompleted listener
   try {
     e.osrWin.destroy() // hidden offscreen window — destroy to free the renderer
   } catch {
@@ -891,6 +902,8 @@ export function registerPreviewOsrHandlers(
       if ((existing.projectDir ?? null) === getCurrentDir()) {
         armOwner(win)
         emitOsrRemountState(args.id, existing, existing.osrWin.webContents, emitEvent)
+        const ports = existing.originPorts?.ports() ?? [] // D10: the set it went quiet on
+        if (ports.length > 0) emitEvent({ id: args.id, type: 'origin-ports', ports })
         return true
       }
       // Foreign owner: the visible board must never show another project's page — the

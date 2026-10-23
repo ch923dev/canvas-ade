@@ -1066,8 +1066,11 @@ export function buildOrchestrator(
       // Same injected-mirror discipline as describeApp; a registry that doesn't wire listGroups reads
       // [] (an ungrouped digest). Boards without geometry (and docked workers) are dropped by the
       // digest, not here. C2 (v2): the RAW mirror (it carries `dockedIn`) + the user's view/display;
-      // a registry without readView reads a view-less digest (screen: null).
-      return buildLayoutDigest(registry.listBoards(), listGroupsProjection(), registry.readView?.())
+      // a registry without readView reads a view-less digest (screen: null). C9: each board's `role`
+      // derives from the mirror's signals + the connector graph + MAIN's lead designation.
+      const roles = { connectors: registry.listConnectors(), leadBoardId: opts.leadBoardId?.() }
+      const view = registry.readView?.()
+      return buildLayoutDigest(registry.listBoards(), listGroupsProjection(), view, roles)
     }
   }
 }

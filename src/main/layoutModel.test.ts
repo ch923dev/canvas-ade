@@ -141,7 +141,8 @@ describe('buildLayoutDigest v2 (spatial awareness C2)', () => {
       w: 100,
       h: 80,
       groupIds: [],
-      onScreen: false
+      onScreen: false,
+      role: 'shell' // C9 (L11): a terminal with no agent / port signal
     })
   })
 
@@ -235,5 +236,116 @@ describe('buildLayoutDigest v2 (spatial awareness C2)', () => {
     expect(d.boards.map((bd) => bd.id)).toEqual(['swarm'])
     expect(d.overlaps).toEqual([]) // its stale parking rect no longer reads as an overlap
     expect(d.groups[0].bbox).toEqual({ x: 0, y: 0, w: 600, h: 400 })
+  })
+})
+
+describe('buildLayoutDigest — C9 `role` on placed boards (L11)', () => {
+  const at = (
+    id: string,
+    x: number,
+    y: number,
+    type: string,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    ...b(id, x, y, 200, 150, type),
+    ...extra
+  })
+  const roleById = (d: ReturnType<typeof buildLayoutDigest>): Record<string, string> =>
+    Object.fromEntries(d.boards.map((bd) => [bd.id, bd.role]))
+
+  it('lead · agent · server · shell · preview · plan', () => {
+    const d = buildLayoutDigest(
+      [
+        at('lead', 0, 0, 'terminal', { agent: true }),
+        at('agent', 300, 0, 'terminal', { agent: true }),
+        at('server', 600, 0, 'terminal', { ports: [3000] }),
+        at('shell', 900, 0, 'terminal'),
+        at('preview', 0, 300, 'browser', { previewSourceId: 'server', callsPorts: [3000] }),
+        at('plan', 300, 300, 'planning')
+      ],
+      [],
+      {},
+      { leadBoardId: 'lead' }
+    )
+    expect(roleById(d)).toEqual({
+      lead: 'lead',
+      agent: 'agent',
+      server: 'server',
+      shell: 'shell',
+      preview: 'preview',
+      plan: 'plan'
+    })
+  })
+
+  it('the lead comes ONLY from the MAIN lead input — no lead ⇒ the board keeps its own role', () => {
+    const boards = [at('t', 0, 0, 'terminal', { agent: true })]
+    expect(buildLayoutDigest(boards).boards[0].role).toBe('agent')
+    expect(buildLayoutDigest(boards, [], {}, { leadBoardId: null }).boards[0].role).toBe('agent')
+    expect(buildLayoutDigest(boards, [], {}, { leadBoardId: 't' }).boards[0].role).toBe('lead')
+  })
+
+  it('every other board type maps to its role; signals on the wrong type are ignored', () => {
+    const d = buildLayoutDigest([
+      at('k', 0, 0, 'kanban'),
+      at('df', 300, 0, 'dataflow', { sourceBoardId: 'br' }),
+      at('f', 600, 0, 'file'),
+      at('sw', 900, 0, 'swarm'),
+      at('cmd', 1200, 0, 'command'),
+      at('br', 0, 300, 'browser', { agent: true, ports: [80] }) // terminal-only signals
+    ])
+    expect(roleById(d)).toEqual({
+      k: 'tracker',
+      df: 'dataflow',
+      f: 'file',
+      sw: 'swarm',
+      cmd: 'command',
+      br: 'preview'
+    })
+  })
+
+  it('absent when there is no geometry (unplaced) or the board is docked — even the lead', () => {
+    const d = buildLayoutDigest(
+      [
+        { id: 'noGeo', type: 'terminal', agent: true },
+        at('docked', 0, 0, 'terminal', { dockedIn: 'sw' }),
+        at('placed', 300, 0, 'terminal')
+      ],
+      [],
+      {},
+      { leadBoardId: 'noGeo' }
+    )
+    expect(d.boards.map((bd) => [bd.id, bd.role])).toEqual([['placed', 'shell']])
+  })
+
+  it('connectors: only preview / orchestration edges are read; anything else is dropped', () => {
+    const boards = [at('lead', 0, 0, 'terminal'), at('w', 300, 0, 'terminal', { agent: true })]
+    const d = buildLayoutDigest(
+      boards,
+      [],
+      {},
+      {
+        leadBoardId: 'lead',
+        connectors: [
+          { sourceId: 'lead', targetId: 'w', kind: 'orchestration' },
+          { sourceId: 'w', targetId: 'lead', kind: 'bogus' }
+        ]
+      }
+    )
+    expect(roleById(d)).toEqual({ lead: 'lead', w: 'agent' })
+  })
+
+  it('🔒 D9: the digest carries the role only — no signal, title or launch line is echoed', () => {
+    const d = buildLayoutDigest([
+      at('t', 0, 0, 'terminal', {
+        agent: true,
+        ports: [3000],
+        title: 'secret-title',
+        launchCommand: 'KEY=sk-secret claude'
+      })
+    ])
+    expect(Object.keys(d.boards[0]).sort()).toEqual(
+      ['groupIds', 'h', 'id', 'onScreen', 'role', 'type', 'w', 'x', 'y'].sort()
+    )
+    expect(JSON.stringify(d)).not.toMatch(/sk-secret|secret-title|3000/)
   })
 })

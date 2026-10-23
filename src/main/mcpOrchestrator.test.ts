@@ -210,6 +210,28 @@ describe('buildOrchestrator', () => {
     expect(digest.fit.readable).toBe(true)
   })
 
+  it('describeLayout (C9) marks roles from the mirror signals, the connectors and the MAIN lead', async () => {
+    let lead: string | null = 'L'
+    const orch = buildOrchestrator(
+      {
+        ...reg([]),
+        listBoards: () => [
+          { id: 'L', type: 'terminal', title: 'Lead', x: 0, y: 0, w: 100, h: 80 },
+          { id: 'w', type: 'terminal', title: 'W', x: 200, y: 0, w: 100, h: 80, agent: true },
+          { id: 'api', type: 'terminal', title: 'Api', x: 400, y: 0, w: 100, h: 80, ports: [3000] },
+          { id: 'br', type: 'browser', title: 'B', x: 0, y: 200, w: 100, h: 80, callsPorts: [3000] }
+        ],
+        listConnectors: () => [{ id: 'c1', sourceId: 'L', targetId: 'w', kind: 'orchestration' }]
+      },
+      { leadBoardId: () => lead }
+    )
+    const roles = async (): Promise<Record<string, string>> =>
+      Object.fromEntries((await orch.describeLayout()).boards.map((bd) => [bd.id, bd.role]))
+    expect(await roles()).toEqual({ L: 'lead', w: 'agent', api: 'server', br: 'preview' })
+    lead = null // revoked — read fresh on every canvas://layout read
+    expect((await roles()).L).toBe('shell')
+  })
+
   it('falls back to a PTY/presence-derived bucket when the mirror carries no status', async () => {
     const orch = buildOrchestrator(
       reg(
