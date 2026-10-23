@@ -5402,3 +5402,20 @@ L7's geometry, which was dropped at rebase; L7 normalizes `-0` to `+0`, so one e
 changed. Gates: unit green except the 2 ambient `pathSafe` failures (plus `pty.recapenv` when the
 caller's `CANVAS_RECAP_BOARD` is set), smoke 62/62. Dev check: user-verified, combined with L11
 (agent tidy reframes the camera, `t` / tile / resize, spawn group as one undo, focus, layout v2 read).
+
+## PR #435 — spatial: role-aware tidy engine roleLayout (C10) (v0.47.14) · squash `b2ed42c3` · 2026-10-23
+
+Spatial awareness, Wave 2 / L10 (SPEC C10 + ROLE-LAYOUT.md §4–§8). The pure engine behind
+`tidy_canvas mode:'roles'`; nothing calls it until Wave 3 (I2). `roleLayout()` takes the boards,
+the C9 roles and units, and returns placements, the camera that frames the stage unit, and a
+`units[]` ack with one `why` sentence each. The stage is chosen by primary > lead > selection >
+last focus > largest. Templates are hero-rail / hero-strip, duo-strip / duo-rail, grid and shelf,
+with ultrawide variants and denser fallbacks. D7 sizing: flexible boards take their slot,
+previews keep their w:h, rigid planning / kanban / file boards are never resized. D8 (a): an
+implicit `roles` tidy only repositions a unit of plain shells. Off-stage units are packed
+compactly through C4 `fitLayout`, so units never interleave. The terminal readable minimum was
+MEASURED at 490×312 (60 × 14 cells at the default font plus chrome), not the proposed 480×300;
+parity tests pin it to the live font and title-bar constants. `why` text is built from roles,
+ports, ids and sanitized, clamped titles only (D9). Gates: 47 new tests (S1–S15 goldens with 24
+frozen placement sets plus 8 seeded §8 properties × 200 cases), unit green except the 2 ambient
+`pathSafe` failures, smoke 62/62. Dev check: none (pure library).
