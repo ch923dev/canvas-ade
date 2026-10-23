@@ -5419,3 +5419,22 @@ parity tests pin it to the live font and title-bar constants. `why` text is buil
 ports, ids and sanitized, clamped titles only (D9). Gates: 47 new tests (S1–S15 goldens with 24
 frozen placement sets plus 8 seeded §8 properties × 200 cases), unit green except the 2 ambient
 `pathSafe` failures, smoke 62/62. Dev check: none (pure library).
+
+## PR #436 — spatial: role signals + D10 origin-port observer (v0.47.15) · squash `fd286608` · 2026-10-23
+
+Spatial awareness, Wave 2 / L11: the live inputs the C9 role model needs, and the last lane of
+Wave 2. `agentClassify.ts` turns `agentKind` or a known agent-CLI launch line into
+`agent: boolean`; only the boolean leaves the renderer, never the launch line (D9).
+`roleSignalsStore.ts` is ephemeral and never persisted: serving ports per terminal, `callsPorts`
+per browser board, `lastFocusedAt` per board. **D10:** `previewOriginPorts.ts` installs one
+loopback-only `session.webRequest.onCompleted` observer per preview session. It keeps only the
+port of loopback requests (no path, query, body or headers), so an API terminal links to the
+browser that calls it. A WeakMap owner check respects Electron's one-listener-per-event rule.
+The page-driven serving-port re-read is bounded: one leading and one trailing run per 5 s
+(`PORT_REFRESH_THROTTLE_MS`), ports already attributed to a terminal are skipped, and it is
+cancelled on unsubscribe. The signals ride the existing MCP mirror, and every `canvas://layout`
+board now carries its C9 `role`; the lead comes from `leadAuthority.designated()`. Gates: unit
+6937 (the 2 ambient `pathSafe` failures), integration 418, smoke 62/62. Dev check: user-verified
+together with L5. Agents A/B read `agent`; WEB became `server` and the browser `preview`; API
+became `server` only through the page's calls (D10 proof); `exit` cleared it; lead grant and
+revoke round-tripped.
