@@ -5438,3 +5438,21 @@ board now carries its C9 `role`; the lead comes from `leadAuthority.designated()
 together with L5. Agents A/B read `agent`; WEB became `server` and the browser `preview`; API
 became `server` only through the page's calls (D10 proof); `exit` cleared it; lead grant and
 revoke round-tripped.
+
+## PR #437 — e2e: app.close() no longer hangs when the app cold-started the ptyHost daemon (v0.47.16) · squash `f6ab0230` · 2026-10-23
+
+Fixes the e2e teardown hang ("Fixture electronApp timeout of 60000ms exceeded during teardown")
+that was failing `@core` pushes. It was bisected to #434, but that was a cold-vs-warm daemon
+confound: fad8ad8a (pre-#434) hangs the same way when the daemon starts cold. Root cause: on
+Windows the detached ptyHost daemon inherits every inheritable handle of the app that spawns it
+(libuv `CreateProcess` bInheritHandles), including Playwright's stdio pipes and the DevTools /
+inspector sockets. The app exits about 10 ms after `before-quit` with code 0, but Playwright's
+`close()` waits on those handles, which now live as long as the daemon, so only the worker that
+cold-starts the daemon stalls. Killing the daemon tree mid-stall releases them at once. Fix
+(test-side): `e2e/closeApp.ts` `closeElectronApp()` waits for the process to exit, then, if
+`close()` has not settled within 2 s, kills that profile's daemon tree (`daemonPid` from
+`ptyhost-state.json`). A real quit hang still fails the teardown. Used by the `electronApp`
+fixture and four self-launching specs. Gates: notifications × 3 cold 12/12 exit 0 (15.4 s, was
+2.2 min exit 1), the 4 other specs 6/6, smoke 62/62. Dev check: user-verified (cold daemon, the
+window closes at once and `pnpm dev` returns). Follow-ups: app-side daemon spawn without handle
+inheritance; shells left alive in the daemon after a cold-daemon quit.
