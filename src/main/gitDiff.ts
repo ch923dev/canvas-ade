@@ -1,5 +1,5 @@
-import simpleGit, { type SimpleGit } from 'simple-git'
-import { repoScopedEnv } from './gitEnv'
+import type { SimpleGit } from 'simple-git'
+import { repoScopedGit } from './gitEnv'
 
 /**
  * 🔒 PR-2: read-only working-tree diff for a board, run via `simple-git` in MAIN.
@@ -111,13 +111,13 @@ export async function boardGitDiff(
   // child that stalls. Both surface as `isBoundError` rejections we swallow (best-effort).
   const controller = new AbortController()
   const sink = new CappedSink(GITDIFF_MAX_READ_BYTES, () => controller.abort())
-  // `.env(repoScopedEnv())` pins resolution to `cwd` by stripping inherited GIT_DIR/GIT_WORK_TREE/…
+  // `repoScopedGit` pins resolution to `cwd` by stripping inherited GIT_DIR/GIT_WORK_TREE/…
   // (see ./gitEnv) — without it, a gitDiff run under a git hook (pre-push) or any shell that
   // exported those vars escapes into the host repo instead of the board's repo.
-  const git: SimpleGit = simpleGit(cwd, {
+  const git: SimpleGit = repoScopedGit(cwd, {
     abort: controller.signal,
     timeout: { block: GITDIFF_TIMEOUT_MS }
-  }).env(repoScopedEnv())
+  })
 
   if (!(await git.checkIsRepo())) return ''
 

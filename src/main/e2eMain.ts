@@ -43,8 +43,7 @@ import { assetsDirOf, createProject, getCurrentDir, setCurrentDir } from './proj
 import { createCanvasMemory } from './canvasMemory'
 // Orchestration S3: the e2e worktree helpers drive the REAL allocator (and the same repo-scoped
 // git env every MAIN git seam uses), so the spec proves the shipped path rather than a fixture.
-import simpleGit from 'simple-git'
-import { repoScopedEnv } from './gitEnv'
+import { repoScopedGit } from './gitEnv'
 import { createSwarmWorktreeStore } from './swarmWorktree'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
@@ -644,7 +643,7 @@ export function installE2EMain(
     async gitInitProject() {
       const dir = getCurrentDir()
       if (!dir) return false
-      const git = simpleGit(dir).env(repoScopedEnv())
+      const git = repoScopedGit(dir)
       await git.init()
       // An identity + one commit, so `worktree add … HEAD` has something to branch from. Passed
       // per-command rather than written to config: the box's global identity may be absent, and
