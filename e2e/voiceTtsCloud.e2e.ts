@@ -3,6 +3,7 @@ import http from 'node:http'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { closeElectronApp } from './closeApp'
 
 /**
  * Phase 3 — cloud TTS end to end against the REAL built app + a FAKE OpenAI speech vendor. Proves
@@ -101,7 +102,7 @@ test.describe.serial('@voice cloud TTS (fake OpenAI speech vendor)', () => {
   })
 
   test.afterAll(async () => {
-    await app?.close()
+    if (app) await closeElectronApp(app)
     await new Promise<void>((r) => (server ? server.close(() => r()) : r()))
   })
 

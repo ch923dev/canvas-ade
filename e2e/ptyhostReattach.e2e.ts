@@ -2,6 +2,7 @@ import { _electron, test, expect, type ElectronApplication, type Page } from '@p
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { closeElectronApp } from './closeApp'
 
 /**
  * @terminal PTY-host reattach across an app relaunch (DESIGN.md PR 1, lane gate 6).
@@ -200,7 +201,7 @@ test.describe('@terminal @ptyhost daemon reattach across app relaunch', () => {
     const state = JSON.parse(
       fs.readFileSync(path.join(userData, 'ptyhost-state.json'), 'utf8')
     ) as { daemonPid: number }
-    await b.app.close()
+    await closeElectronApp(b.app)
     await expect
       .poll(() => alive(shellPid), { timeout: 15_000, message: 'shell reaped on normal close' })
       .toBe(false)

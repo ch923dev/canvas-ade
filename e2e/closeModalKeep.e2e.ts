@@ -2,6 +2,7 @@ import { _electron, test, expect, type ElectronApplication, type Page } from '@p
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { closeElectronApp } from './closeApp'
 
 /**
  * @terminal PR-2 background sessions: the close modal's KEEP path (mock 1 → mock 2 → mock 3).
@@ -239,6 +240,6 @@ test.describe('@terminal @ptyhost close modal keep → tray residency → reatta
       })
       .toBe(false)
     shellPid = 0
-    await app.close()
+    await closeElectronApp(app)
   })
 })
