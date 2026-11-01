@@ -4,7 +4,7 @@ import BatchConfirmModal from './BatchConfirmModal'
 
 interface BatchRequest {
   title: string
-  items: Array<{ label: string; body: string }>
+  items: Array<{ label: string; body: string; preselected?: boolean }>
 }
 type Reply = (decision: { decisions: Array<{ approved: boolean }> }) => void
 type Cb = (request: BatchRequest, reply: Reply) => void
@@ -80,6 +80,42 @@ describe('BatchConfirmModal (integration)', () => {
     expect(screen.getByTestId('batch-confirm-approve').textContent).toContain('2')
     fireEvent.click(screen.getByTestId('batch-confirm-approve'))
     expect(reply).toHaveBeenCalledWith({ decisions: [yes, yes, no] })
+  })
+
+  it('preselected:false starts a row UNCHECKED (spatial W1 low confidence); absent stays checked', () => {
+    stub()
+    render(<BatchConfirmModal />)
+    const reply = push({
+      title: 'Group 3 sets of boards',
+      items: [
+        { label: 'Auth flow · 3 boards', body: 'linked by: preview', preselected: true },
+        { label: 'Billing · 2 boards', body: 'linked by: same folder' },
+        { label: 'Misc · 4 boards', body: 'linked by: similar titles', preselected: false }
+      ]
+    })
+    expect(screen.getByTestId('batch-confirm-row-0').getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByTestId('batch-confirm-row-1').getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByTestId('batch-confirm-row-2').getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByTestId('batch-confirm-approve').textContent).toBe('Approve 2')
+    fireEvent.click(screen.getByTestId('batch-confirm-approve'))
+    expect(reply).toHaveBeenCalledWith({ decisions: [yes, yes, no] })
+  })
+
+  it('a preselected:false row can be opted in, and only an explicit false unchecks', () => {
+    stub()
+    render(<BatchConfirmModal />)
+    const reply = push({
+      title: 'Group 2 sets of boards',
+      items: [
+        { label: 'Misc', body: 'b', preselected: false },
+        // A non-boolean flag (a malformed request) keeps the default: checked.
+        { label: 'Other', body: 'c', preselected: 0 as unknown as boolean }
+      ]
+    })
+    expect(screen.getByTestId('batch-confirm-approve').textContent).toBe('Approve 1')
+    fireEvent.click(screen.getByTestId('batch-confirm-row-0'))
+    fireEvent.click(screen.getByTestId('batch-confirm-approve'))
+    expect(reply).toHaveBeenCalledWith({ decisions: [yes, yes] })
   })
 
   it('Deny all denies every row', () => {

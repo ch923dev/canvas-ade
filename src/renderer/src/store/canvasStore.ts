@@ -43,7 +43,7 @@ import { applyBoardPatch, clearRefsToRemoved } from './boardPatch'
 import { makeTransferElements, type TransferElements } from './planningTransfer'
 import { createConnectorSlice } from './slices/connectorSlice'
 import { createFileBoardSlice } from './slices/fileBoardSlice'
-import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
+import { createGroupSlice, pruneBoardFromGroups, type ApplyGroupOps } from './slices/groupSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
 
 // selectOtherPlanningBoards lives in ./planningTransfer with the rest of the transfer concern;
@@ -280,6 +280,8 @@ export interface CanvasState {
   /** Remove a board from EVERY group it belongs to in ONE tracked step (mirrors removeBoard's
    *  membership sweep). One undo restores all memberships. No-op if it's in no group. */
   removeBoardFromAllGroups: (boardId: string) => void
+  /** Create groups + apply edit ops as ONE tracked step (MCP `applyGroups`); returns the new ids. */
+  applyGroupOps: ApplyGroupOps
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Cross-board element transfer (planning ↔ planning, same canvas) — see {@link TransferElements}. */

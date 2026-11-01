@@ -86,6 +86,12 @@ export interface ConfirmBatchItem {
   label: string
   /** The exact sanitized command the human is authorizing for this row. */
   body: string
+  /**
+   * Whether the row starts CHECKED. Absent ⇒ `true` (every existing caller). `false` makes the human
+   * opt the row in — spatial W1's low-confidence group proposals. The decision is still the human's
+   * per-row reply; this only sets the starting state.
+   */
+  preselected?: boolean
 }
 
 /**

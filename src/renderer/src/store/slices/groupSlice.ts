@@ -1,5 +1,5 @@
 /**
- * Group slice — the 7 named-group actions extracted from canvasStore via DI seam.
+ * Group slice — the 8 named-group actions extracted from canvasStore via DI seam.
  *
  * HISTORY INVARIANT (read before touching):
  *   Every action here passes `reflectPresent: false` → NONE of them touch `lastRecorded`.
@@ -10,6 +10,7 @@
  *   edge (#BUG M3).
  */
 import type { NamedGroup } from '../../lib/boardSchema'
+import type { GroupEditOp } from '../../../../shared/mcpTypes'
 import type { CanvasState } from '../canvasStore'
 import type { SetCanvasState, GetCanvasState, SliceDeps } from './sliceTypes'
 
@@ -30,6 +31,58 @@ export function pruneBoardFromGroups(groups: NamedGroup[], boardId: string): Nam
     .filter((g) => g.boardIds.length > 0)
 }
 
+/**
+ * The batch group write behind the MCP `applyGroups` command (spatial C5): create new groups, then
+ * apply edit ops IN ORDER, as ONE tracked step. Returns the new group ids, 1:1 with `create`.
+ */
+export type ApplyGroupOps = (
+  create: ReadonlyArray<{ name: string; boardIds: readonly string[] }>,
+  edits: readonly GroupEditOp[]
+) => string[]
+
+/**
+ * Pure fold behind {@link ApplyGroupOps}: append `created`, then apply each edit op in order. An op
+ * on a group that no longer exists (an earlier op removed it) is skipped; `remove` that empties a
+ * group drops it (empty groups never persist). Returns the INPUT ref when nothing changed, so the
+ * caller's trackedChange no-op path holds. Callers validate ids and names first (the MCP applier).
+ */
+export function foldGroupOps(
+  groups: NamedGroup[],
+  created: NamedGroup[],
+  edits: readonly GroupEditOp[]
+): NamedGroup[] {
+  let next = created.length > 0 ? [...groups, ...created] : groups
+  const patch = (id: string, change: Partial<NamedGroup>): void => {
+    next = next.map((g) => (g.id === id ? { ...g, ...change } : g))
+  }
+  for (const op of edits) {
+    const g = next.find((x) => x.id === op.groupId)
+    if (!g) continue
+    switch (op.op) {
+      case 'rename':
+        if (g.name !== op.name) patch(g.id, { name: op.name })
+        break
+      case 'add': {
+        const merged = [...new Set([...g.boardIds, ...op.boardIds])]
+        if (merged.length !== g.boardIds.length) patch(g.id, { boardIds: merged })
+        break
+      }
+      case 'remove': {
+        const drop = new Set(op.boardIds)
+        const kept = g.boardIds.filter((b) => !drop.has(b))
+        if (kept.length === g.boardIds.length) break
+        if (kept.length === 0) next = next.filter((x) => x.id !== g.id)
+        else patch(g.id, { boardIds: kept })
+        break
+      }
+      case 'ungroup':
+        next = next.filter((x) => x.id !== g.id)
+        break
+    }
+  }
+  return next
+}
+
 export function createGroupSlice(
   set: SetCanvasState,
   _get: GetCanvasState,
@@ -43,6 +96,7 @@ export function createGroupSlice(
   | 'addBoardsToGroupReflowed'
   | 'removeBoardFromGroup'
   | 'removeBoardFromAllGroups'
+  | 'applyGroupOps'
 > {
   const { trackedChange, newId } = deps
 
@@ -139,6 +193,22 @@ export function createGroupSlice(
         const next = pruneBoardFromGroups(s.groups, boardId)
         if (next === null) return s
         return trackedChange(s, { groups: next }, { reflectPresent: false })
+      }),
+    applyGroupOps: (create, edits) => {
+      // Mint outside `set` (like addGroup) so the ids can be returned to the caller.
+      const ids = create.map(() => newId())
+      const created = create.map((c, i) => ({
+        id: ids[i],
+        name: c.name,
+        boardIds: [...new Set(c.boardIds)]
+      }))
+      set((s) => {
+        const groups = foldGroupOps(s.groups, created, edits)
+        if (groups === s.groups) return s
+        // ONE tracked step for every approved row, so one undo reverts the whole batch.
+        return trackedChange(s, { groups }, { reflectPresent: false })
       })
+      return ids
+    }
   }
 }

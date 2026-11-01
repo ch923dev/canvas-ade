@@ -31,7 +31,8 @@ type ConfirmDecisionMsg = { approved: boolean; choice?: string }
 /** A per-row BATCH confirm request surfaced to the modal (mirrors main `ConfirmBatchRequest`). */
 export interface ConfirmBatchRequest {
   title: string
-  items: Array<{ label: string; body: string }>
+  /** `preselected: false` ⇒ the row starts unchecked (spatial W1 low-confidence rows); absent ⇒ checked. */
+  items: Array<{ label: string; body: string; preselected?: boolean }>
   /** 🔒 What the human is authorizing. Absent ⇒ the modal's `relay_prompts` default (the rows RUN),
    *  which any non-dispatch caller MUST override — P4's findings batch runs nothing. */
   blurb?: string

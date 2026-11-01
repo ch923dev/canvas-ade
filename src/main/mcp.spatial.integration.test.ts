@@ -26,6 +26,12 @@ const GROUP_TOOLS = ['group_boards', 'edit_groups']
 const LAYOUT_URI = 'canvas://layout'
 /** Registered only when the host implements describeContexts (I1). */
 const CONTEXTS_URI = 'canvas://contexts'
+/** The package's one-shot warning when a host method is missing (C6 lock) — must never fire now. */
+const SKIPPED_WARN = /is NOT registered: the host Orchestrator does not implement/
+// The package dedups that warning in MODULE scope (once per surface per process), so it fires on the
+// FIRST server build in this file. Spy from file load, before any harness exists, or it is missed.
+const warnSpy = vi.spyOn(console, 'warn')
+afterAll(() => warnSpy.mockRestore())
 
 /** The structured error code the package's tool boundary puts on a failed result. */
 function errorCode(r: unknown): string | undefined {
@@ -45,10 +51,10 @@ describe('spatial tools/list + resources membership per tier (real host orchestr
   })
 
   for (const planningWrite of [false, true]) {
-    it(`🔒 tidy/focus: orchestrator + lead + connected have them, worker never (planningWrite ${planningWrite})`, async () => {
+    it(`🔒 tidy/focus + group tools: orchestrator + lead + connected have them, worker never (planningWrite ${planningWrite})`, async () => {
       const byTier = await h.toolsByTier({ planningWrite })
       for (const tier of ['orchestrator', 'lead', 'connected'] as McpTier[]) {
-        expectTools(byTier[tier], { present: SPATIAL_TOOLS, absent: GROUP_TOOLS }, tier)
+        expectTools(byTier[tier], { present: [...SPATIAL_TOOLS, ...GROUP_TOOLS] }, tier)
       }
       expectTools(
         byTier.worker,
@@ -58,17 +64,23 @@ describe('spatial tools/list + resources membership per tier (real host orchestr
     })
   }
 
-  it('🔒 canvas://layout reaches orchestrator + lead + connected; canvas://contexts is absent until I1', async () => {
+  it('🔒 canvas://layout + canvas://contexts reach orchestrator + lead + connected, never a worker', async () => {
     for (const tier of ['orchestrator', 'lead', 'connected', 'worker'] as McpTier[]) {
       const s = await h.connect(tier)
       try {
         const uris = (await s.client.listResources()).resources.map((r) => r.uri)
         expect(uris.includes(LAYOUT_URI), `${tier} ${LAYOUT_URI}`).toBe(tier !== 'worker')
-        expect(uris, `${tier} ${CONTEXTS_URI}`).not.toContain(CONTEXTS_URI)
+        expect(uris.includes(CONTEXTS_URI), `${tier} ${CONTEXTS_URI}`).toBe(tier !== 'worker')
       } finally {
         await s.close()
       }
     }
+  })
+
+  it('🔒 the package "is NOT registered" warning never fired for this host', () => {
+    // Every tier above has built a server by now (the membership tests run first).
+    const skipped = warnSpy.mock.calls.map((c) => String(c[0])).filter((m) => SKIPPED_WARN.test(m))
+    expect(skipped).toEqual([])
   })
 })
 

@@ -199,6 +199,18 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     tier: 'orchestrator'
   },
   {
+    name: 'group_boards',
+    purpose:
+      'Group existing boards into Named Groups (outlines only; nothing moves). Every tier: ONE per-row batch confirm, approved rows = one undo.',
+    tier: 'orchestrator'
+  },
+  {
+    name: 'edit_groups',
+    purpose:
+      'Rename / add to / remove from / ungroup Named Groups. Every tier: ONE per-row batch confirm, approved ops = one undo.',
+    tier: 'orchestrator'
+  },
+  {
     name: 'visualize_plan',
     purpose:
       'Propose a plan visualization; the human picks the layout and a new board is created (gated).',
