@@ -1,3 +1,5 @@
+import { isInvisibleCodePoint } from '../shared/invisibleChars'
+
 /**
  * 🔒 Dispatch payload sanitizer (M4 hardening, HIGH).
  *
@@ -37,22 +39,18 @@ export function sanitizeDispatchText(text: string): string {
   // Strip C0 controls (0x00-0x1F) + DEL (0x7F) + C1 controls (0x80-0x9F).
   // C1 are the 8-bit encodings of CSI/OSC/DCS/NEL etc. — same injection surface as C0.
   // CR/LF are already rejected above.
-  // BUG-001: also strip Unicode bidi override/isolate + zero-width characters (Trojan Source
-  // class — same ranges as summaryLoop.ts's BUG-041 fix): U+200B-U+200F (zero-width/LRM/RLM),
-  // U+202A-U+202E (LRE/RLE/PDF/LRO/RLO), U+2066-U+2069 (isolates). Without this, the confirm
-  // dialog (which renders through Chromium's Unicode Bidi Algorithm) can visually reorder the
-  // text differently from the logical/PTY-executed byte sequence — defeating "what the human
-  // approves is exactly what runs".
+  // BUG-001: also strip every INVISIBLE code point (`shared/invisibleChars.ts`): the Unicode bidi
+  // override/isolate + zero-width characters (Trojan Source class — the confirm dialog renders
+  // through Chromium's Unicode Bidi Algorithm, so it can visually reorder the text differently from
+  // the logical/PTY-executed byte sequence) AND the code points that render as nothing — variation
+  // selectors, tag characters (ASCII smuggling: U+E0041 is an invisible "A" the PTY still receives),
+  // soft hyphen, invisible operators, … Either kind defeats "what the human approves is exactly
+  // what runs". Visible text is never touched.
   let out = ''
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
     if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
-    if (
-      (code >= 0x200b && code <= 0x200f) ||
-      (code >= 0x202a && code <= 0x202e) ||
-      (code >= 0x2066 && code <= 0x2069)
-    )
-      continue
+    if (isInvisibleCodePoint(ch)) continue
     out += ch
   }
   return out

@@ -72,6 +72,27 @@ describe('sanitizeDispatchText (🔒 one dispatch = one command line, HIGH)', ()
     expect(sanitizeDispatchText('rm ' + rlo + 'cte.txt')).toBe('rm cte.txt')
   })
 
+  it('strips the other invisible code points too (tag characters, variation selectors, ...)', () => {
+    // Tag characters smuggle ASCII the confirm modal never shows but the PTY would still receive:
+    // U+E0072 U+E006D is an invisible "rm".
+    expect(sanitizeDispatchText('echo hi\u{E0072}\u{E006D}')).toBe('echo hi')
+    const invisible = [
+      0xfe00, 0xfe0f, 0xe0100, 0xe01ef, 0xe0000, 0xe007f, 0x00ad, 0x034f, 0x180e, 0x2061, 0x2064,
+      0x206a, 0x206f, 0xfff9, 0xfffb, 0x061c, 0x2060, 0xfeff
+    ]
+    for (const cp of invisible) {
+      expect(sanitizeDispatchText(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe('ab')
+    }
+  })
+
+  it('leaves visible text, emoji and combining marks untouched (only invisibles go)', () => {
+    for (const input of ['git commit -m "fix 🚀"', 'echo café', 'echo e\u0301', 'echo 中文 ❤']) {
+      expect(sanitizeDispatchText(input)).toBe(input)
+    }
+    // A ZWJ was already stripped in every position (U+200B-U+200F); that is unchanged.
+    expect(sanitizeDispatchText('echo 👨\u200D💻')).toBe('echo 👨💻')
+  })
+
   it('throws DispatchPayloadError (an Error subclass) so callers can audit + rethrow', () => {
     let caught: unknown
     try {

@@ -476,6 +476,15 @@ describe('rule 7 · suggestedName', () => {
     expect(only(deriveContexts(boards, [], [])).suggestedName).toBe('claude — auth')
   })
 
+  it('a group name that sanitizes to nothing falls through to the member-derived name', () => {
+    // "️" and hidden tag characters render blank, so they must not become the context's name.
+    const boards = [term('t', { title: 'claude — auth' }), plan('p', { title: 'Auth plan' })]
+    for (const blank of ['️', '\u{E0041}\u{E0042}']) {
+      const out = deriveContexts(boards, [], [group('g', ['t', 'p'], blank)])
+      expect(only(out).suggestedName).toBe('Auth plan')
+    }
+  })
+
   it('skips the per-type default titles, then names by the common cwd basename', () => {
     const shared = [
       term('a', { cwd: 'C:\\Code\\Shop\\Web' }),
