@@ -29,8 +29,8 @@
  */
 import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import simpleGit, { type SimpleGit } from 'simple-git'
-import { repoScopedEnv } from './gitEnv'
+import type { SimpleGit } from 'simple-git'
+import { repoScopedGit } from './gitEnv'
 import type { SwarmWorktreeDisposition, SwarmWorktreeStatus } from '../shared/swarmLedgerTypes'
 
 /** Block-timeout for any single git sub-process, matching `gitDiff`'s bound. */
@@ -164,10 +164,10 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
   const gitFor =
     deps.gitFor ??
     ((cwd: string): SimpleGit =>
-      // `.env(repoScopedEnv())` is not optional: a MAIN launched from a git hook inherits GIT_DIR
+      // `repoScopedGit` is not optional: a MAIN launched from a git hook inherits GIT_DIR
       // pointing at the HOST repo, and every command below would then operate on the wrong
       // repository — creating a worktree of, and committing into, somebody else's checkout.
-      simpleGit(cwd, { timeout: { block: WORKTREE_TIMEOUT_MS } }).env(repoScopedEnv()))
+      repoScopedGit(cwd, { timeout: { block: WORKTREE_TIMEOUT_MS } }))
 
   /** The project's worktree root — the containment boundary for every destructive operation. */
   const rootFor = (projectDir: string): string => join(projectDir, WORKTREE_SUBDIR)

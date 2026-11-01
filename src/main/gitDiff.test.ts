@@ -19,14 +19,16 @@ vi.mock('simple-git', () => ({
   // The instance mirrors the surface boardGitDiff drives: checkIsRepo / diff / raw, plus the
   // no-op `outputHandler` setter (stream tap covered by the real-git integration test) and the
   // fluent `env` setter — which returns the instance so the `.env(...)` chain keeps the surface.
-  default: vi.fn(() => {
+  // simple-git ≥4 has NO default export — the factory is the named `simpleGit` (reached via
+  // ./gitEnv › repoScopedGit, which gitDiff.ts builds every instance through).
+  simpleGit: vi.fn(() => {
     const instance = { checkIsRepo, diff, raw, outputHandler, env }
     env.mockReturnValue(instance)
     return instance
   })
 }))
 
-import simpleGit from 'simple-git'
+import { simpleGit } from 'simple-git'
 import { boardGitDiff } from './gitDiff'
 
 const simpleGitFactory = simpleGit as unknown as ReturnType<typeof vi.fn>
@@ -125,9 +127,14 @@ describe('boardGitDiff (PR-2)', () => {
     const opts = simpleGitFactory.mock.calls[0][1] as {
       abort?: AbortSignal
       timeout?: { block: number }
+      allowEnvironment?: readonly string[]
     }
     expect(opts.abort).toBeInstanceOf(AbortSignal)
     expect(typeof opts.timeout?.block).toBe('number')
     expect(opts.timeout?.block).toBeGreaterThan(0)
+    // simple-git ≥4 throws on an explicit GIT_* env var it was not told to allow — the one var
+    // repoScopedEnv re-adds must ride along, or every real diff refuses to spawn.
+    expect(opts.allowEnvironment).toContain('GIT_TERMINAL_PROMPT')
+    expect(env).toHaveBeenCalledTimes(1)
   })
 })

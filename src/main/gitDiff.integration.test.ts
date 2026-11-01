@@ -218,4 +218,27 @@ describe('boardGitDiff (integration — real git)', () => {
       else process.env.GIT_WORK_TREE = saved.work
     }
   })
+
+  it('REGRESSION (simple-git 4): spawns despite ambient VISUAL/EDITOR/PAGER + the GIT_TERMINAL_PROMPT re-add', async () => {
+    // simple-git ≥4 THROWS on any explicitly passed GIT_* var missing from `allowEnvironment`, and
+    // on the unprefixed editor/pager family (VISUAL joined it in 4.0.2). repoScopedGit must strip
+    // the latter and allow-list the former, or every real board diff refuses to spawn.
+    const { repo, git } = newRepo()
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'initial')
+    writeFileSync(join(repo, 'a.txt'), 'one\nGUARD-CANARY\n')
+
+    const keys = ['VISUAL', 'EDITOR', 'PAGER'] as const
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+    for (const k of keys) process.env[k] = 'vim'
+    try {
+      expect(await boardGitDiff('board-1', getCwd(repo))).toContain('GUARD-CANARY')
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k]
+        else process.env[k] = saved[k]
+      }
+    }
+  })
 })

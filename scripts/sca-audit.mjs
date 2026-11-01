@@ -56,28 +56,12 @@ const CHUNK_SIZE = 100
  *
  * Unused waivers are reported and FAIL the run, so a waiver cannot silently outlive its reason.
  */
-const WAIVERS = [
-  {
-    ghsa: 'GHSA-mh99-v99m-4gvg',
-    name: 'brace-expansion',
-    // The 1.x and 2.x lines ONLY. 5.x has a real fix (5.0.8) and is pinned in pnpm.overrides —
-    // it must keep blocking if it ever regresses, so it is deliberately outside this range.
-    versions: '<3',
-    added: '2026-07-25',
-    reason:
-      'DoS via unbounded brace expansion. Published 2026-07-24, and the ONLY patched release is ' +
-      '5.0.8 — upstream shipped no 1.1.17 / 2.1.3, so there is nothing for these lines to move to. ' +
-      'Overriding them to 5.x is not an option: 5.x CJS exports an OBJECT ({expand, ...}) where 1.x/2.x ' +
-      'export a bare callable, so minimatch@3/5/9 would throw "expand is not a function" at glob time. ' +
-      'Reachability: every affected copy is dev/build-time only (`pnpm why minimatch --prod` is empty) — ' +
-      'they arrive via glob@7 / filelist / dir-compare inside the electron-builder + eslint trees, and ' +
-      'none of them ship in the packaged app. The attack requires feeding a hostile glob pattern to our ' +
-      'own build tooling.',
-    revisit:
-      'Drop this the moment glob@7 / filelist / dir-compare move to a patched minimatch, or upstream ' +
-      'backports a 1.1.17 / 2.1.3. Re-check when electron-builder or eslint is next bumped.'
-  }
-]
+// Currently EMPTY. History: the brace-expansion GHSA-mh99-v99m-4gvg waiver (1.x/2.x, added
+// 2026-07-25) was dropped 2026-10-16 once upstream backported fixes (1.1.21 / 2.1.7) — those lines
+// are now floored in pnpm.overrides like every other finding. Entry shape, for the next one:
+//   { ghsa, name, versions: '<semver range>', added: 'YYYY-MM-DD', reason: '<why there is no fixed
+//     version + why it is unreachable>', revisit: '<the condition that retires the waiver>' }
+const WAIVERS = []
 
 /** Does a waiver cover this finding? Matches the advisory by GHSA id, not by package alone. */
 function waiverFor(finding) {

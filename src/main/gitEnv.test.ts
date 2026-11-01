@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { repoScopedEnv } from './gitEnv'
+import { REPO_SCOPED_ALLOW_ENV, repoScopedEnv } from './gitEnv'
 
 /**
  * The shared MAIN git-env scrubber. It is the security primitive behind every read-only git seam
@@ -68,6 +68,33 @@ describe('repoScopedEnv (shared MAIN read-only git env)', () => {
     expect(env.EDITOR).toBeUndefined()
     expect(env.PAGER).toBeUndefined()
     expect(env.PREFIX).toBeUndefined()
+  })
+
+  it('clears VISUAL — on the block-list since @simple-git/argv-parser 2.0.1 (GHSA-v5rq-49vh-5v5c)', () => {
+    // simple-git 4.0.2 added VISUAL to the unsafe-editor vars; leaving it in an explicit env would
+    // now make every git seam throw "Use of VISUAL is not permitted" on a box that exports it.
+    process.env.VISUAL = 'code --wait'
+    expect(repoScopedEnv().VISUAL).toBeUndefined()
+  })
+
+  it('matches the unprefixed block-list case-insensitively (simple-git ≥4 lower-cases env keys)', () => {
+    const lower: Record<string, string> = { editor: 'vim', visual: 'vim', pager: 'less' }
+    const fakeEnv = { ...process.env, ...lower }
+    const saved = process.env
+    process.env = fakeEnv
+    try {
+      const env = repoScopedEnv() as Record<string, string | undefined>
+      for (const k of Object.keys(lower)) expect(env[k]).toBeUndefined()
+    } finally {
+      process.env = saved
+    }
+  })
+
+  it('every GIT_* var it emits is in REPO_SCOPED_ALLOW_ENV (else simple-git ≥4 refuses to spawn)', () => {
+    process.env.GIT_DIR = '/host/.git'
+    const emitted = Object.keys(repoScopedEnv()).filter((k) => /^GIT_/i.test(k))
+    expect(emitted.length).toBeGreaterThan(0)
+    for (const k of emitted) expect(REPO_SCOPED_ALLOW_ENV).toContain(k)
   })
 
   it('sets GIT_TERMINAL_PROMPT=0 (never block on a credential prompt) — overriding any inherited value', () => {
