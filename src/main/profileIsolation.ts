@@ -12,7 +12,8 @@
  * the checkout folder name (the same identity the dev window-title stamp uses) plus a short hash
  * of the full path (same-named checkouts in different places stay distinct). The e2e harness
  * (CANVAS_E2E) and the CANVAS_SMOKE harness get `-e2e` / `-smoke` suffixed profiles so they can
- * run while a dev window of the same checkout is open.
+ * run while a dev window of the same checkout is open. Each extra Playwright worker
+ * (CANVAS_E2E_WORKER, set by e2e/fixtures.ts) gets its own `-e2e-w<n>` profile.
  *
  * Escape hatches:
  *   - CANVAS_USERDATA=<dir> → explicit profile dir (wins over everything below).
@@ -80,8 +81,24 @@ export function resolveDevProfile(input: ResolveProfileInput): ProfileDecision {
     const mk = input.mkdtemp ?? ((prefix: string): string => mkdtempSync(prefix))
     return { dir: mk(join(tmpdir(), 'expanse-fresh-')), slug, fresh: true }
   }
-  const suffix = env.CANVAS_E2E ? '-e2e' : env.CANVAS_SMOKE ? '-smoke' : ''
+  const suffix = env.CANVAS_E2E
+    ? e2eProfileSuffix(env.CANVAS_E2E_WORKER)
+    : env.CANVAS_SMOKE
+      ? '-smoke'
+      : ''
   return { dir: join(baseUserData, 'profiles', slug + suffix), slug, fresh: false }
+}
+
+/**
+ * One e2e profile per Playwright worker slot. Two workers sharing `-e2e` share ONE ptyHost daemon
+ * (via its ptyhost-state.json) and one Chromium profile, so tearing one worker's app down could
+ * kill the other's live terminals. Slot 0 keeps the plain `-e2e` profile (workers:1 runs are
+ * unchanged); slot n gets `-e2e-w<n>`. Anything but a small integer falls back to `-e2e`.
+ */
+function e2eProfileSuffix(worker: string | undefined): string {
+  if (!worker || !/^\d{1,2}$/.test(worker)) return '-e2e'
+  const n = Number(worker)
+  return n === 0 ? '-e2e' : `-e2e-w${n}`
 }
 
 /**
