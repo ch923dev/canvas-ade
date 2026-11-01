@@ -411,13 +411,23 @@ export function buildOrchestrator(
     // under the max-lines gate. Read-only (no PTY / nonce / confirm) — element TEXT the human already sees.
     ...createBoardPlanningMethod(registry.listBoards),
     // 🔒 P2 tidy_canvas — reposition the whole canvas via the renderer's deterministic packer. Built
-    // in ./mcpTidy + spread here to keep this file under the max-lines gate. UN-GATED + content-less
-    // (reposition-only, one host-undo reversible — the spawn_group precedent): no cap/mint/confirm/audit.
-    ...createTidyMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
+    // in ./mcpTidy + spread here to keep this file under the max-lines gate. Content-less, one
+    // host-undo step: orchestrator tier un-gated; a lead/connected caller (sourceBoardId) pays ONE
+    // human confirm first (D1).
+    ...createTidyMethod({
+      sendCommand: (cmd) => registry.sendCommand(cmd),
+      confirm: (req) => registry.confirm(req),
+      listBoards: () => registry.listBoards()
+    }),
     // 🔒 H1 focus_viewport — fit the USER'S CAMERA to a board / group / the whole canvas. Built in
-    // ./mcpFocus + spread here (the tidy extract-on-touch pattern). UN-GATED + viewport-only (the
-    // camera is ephemeral session state; reversible by scrolling): no cap/mint/confirm/audit.
-    ...createFocusMethod({ sendCommand: (cmd) => registry.sendCommand(cmd) }),
+    // ./mcpFocus + spread here (the tidy extract-on-touch pattern). Viewport-only, with tidy's D1
+    // gate: orchestrator tier un-gated; a lead/connected caller pays ONE human confirm first.
+    ...createFocusMethod({
+      sendCommand: (cmd) => registry.sendCommand(cmd),
+      confirm: (req) => registry.confirm(req),
+      listBoards: () => registry.listBoards(),
+      listGroups: listGroupsProjection
+    }),
     // 🔒 P4 publish_findings — forward the registry's already-confirm-gated batch publish (+ an audit
     // line per outcome). Built in ./mcpFindings. Absent registry method ⇒ NO key ⇒ the package skips
     // the tool, which is the whole point: PR #400 wired the registry but never this forward, so the

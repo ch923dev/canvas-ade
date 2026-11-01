@@ -39,13 +39,26 @@ async function connect(tier: Tier, planningWrite = true): Promise<Client> {
  */
 const PENDING_TOOLS = new Set(['update_planning_element', 'remove_planning_element'])
 
+/**
+ * Spatial Wave 3 (`@expanse-ade/mcp` 0.27.0): the inverse case — tools the PACKAGE registers (its
+ * `MockOrchestrator` implements every optional method) but the HOST does not implement yet, so the real
+ * app never serves them and `APP_TOOLS` must not advertise them. I1 adds `groupBoards` / `editGroups`
+ * and catalogs them, at which point this set empties. The real host's surface is pinned in
+ * `mcp.spatial.integration.test.ts` (tools/list against `buildOrchestrator`), which asserts they are
+ * ABSENT there, so this tolerance cannot hide a host that serves an un-cataloged tool.
+ */
+const HOST_PENDING_TOOLS = new Set(['group_boards', 'edit_groups'])
+
 describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp registration', () => {
   it('every registered tool is cataloged, and the only catalog extras are the pending rc.7 tools', async () => {
     const client = await connect('orchestrator')
     const registered = new Set((await client.listTools()).tools.map((t) => t.name))
     const cataloged = new Set(APP_TOOLS.map((t) => t.name))
-    // (a) No registered tool is missing from the catalog (a silent drop is real drift).
-    const missingFromCatalog = [...registered].filter((t) => !cataloged.has(t))
+    // (a) No registered tool is missing from the catalog (a silent drop is real drift), except the
+    //     enumerated tools the host does not implement yet.
+    const missingFromCatalog = [...registered].filter(
+      (t) => !cataloged.has(t) && !HOST_PENDING_TOOLS.has(t)
+    )
     expect(missingFromCatalog).toEqual([])
     // (b) Every catalog entry not (yet) registered is one of the enumerated pending rc.7 tools —
     //     never an unexpected stale/typo'd extra.
@@ -103,7 +116,14 @@ describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp regist
       // 0.23.0 (P4): the end-of-run findings batch — registered for orchestrator AND lead, behind
       // the same planningWrite flag as the other content writes.
       'publish_findings',
-      'visualize_plan'
+      'visualize_plan',
+      // 0.27.0 (spatial C6 / D1): tidy + camera focus reach lead/connected (the host raises ONE
+      // human confirm for them), and the Named Group tools (HOST_PENDING_TOOLS — registered here
+      // only because MockOrchestrator implements them).
+      'tidy_canvas',
+      'focus_viewport',
+      'group_boards',
+      'edit_groups'
     ]
 
     it('a lead session registers EXACTLY the orchestration core (own-board dispatch + spawn + barriers)', async () => {
@@ -115,7 +135,7 @@ describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp regist
 
     it('every lead tool is a cataloged tool name (no un-cataloged surface reaches a lead)', async () => {
       const cataloged = new Set(APP_TOOLS.map((t) => t.name))
-      for (const name of LEAD_TOOLS) {
+      for (const name of LEAD_TOOLS.filter((t) => !HOST_PENDING_TOOLS.has(t))) {
         expect(cataloged.has(name), `${name} missing from APP_TOOLS`).toBe(true)
       }
     })

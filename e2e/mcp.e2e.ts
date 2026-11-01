@@ -38,9 +38,10 @@ type McpInfo = {
   workerBoardId: string
 }
 
-/** A returned tool RESULT, or a thrown transport/protocol error. A tier denial comes
- *  back as an isError RESULT (the call resolves); a broken session REJECTS — keep them
- *  distinct so a thrown 'Session not found' reads as a FAILURE, never as a denial. */
+/** A returned tool RESULT, or a thrown transport/protocol error. A refused call (bad input, a
+ *  declined gate) comes back as an isError RESULT (the call resolves); a tier denial (unregistered
+ *  tool, MCP SDK v2) and a broken session both REJECT — `code` tells them apart, so a thrown
+ *  'Session not found' reads as a FAILURE, never as a denial (see `deniedToolNotFound`). */
 type CallOutcome = { ok: true; result: unknown } | { ok: false; threw: string; code?: number }
 
 interface McpClient {
@@ -128,6 +129,12 @@ function deniedToolNotFound(o: CallOutcome, tool: string): boolean {
 /** True iff the call resolved as ANY isError result (a rejected-but-handled dispatch). */
 function rejected(o: CallOutcome): boolean {
   return o.ok && isErrorResult(o.result)
+}
+/** The structured error code on an isError result (`@expanse-ade/mcp` ≥ 0.26.0), else undefined. */
+function errorCode(o: CallOutcome): string | undefined {
+  if (!o.ok || !isErrorResult(o.result)) return undefined
+  return (o.result as { structuredContent?: { error?: { code?: string } } }).structuredContent
+    ?.error?.code
 }
 /** True iff the call returned a non-error result (an accepted/acked dispatch). */
 function acked(o: CallOutcome): boolean {
@@ -510,7 +517,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(spawnedId).not.toBe('')
     // The command round-tripped to the renderer: the board is on the canvas.
     await expect.poll(() => boardOnCanvas(page, spawnedId), { timeout: 6000 }).toBe(true)
-    // The worker is DENIED server-side (the specific tool-not-found isError).
+    // The worker is DENIED server-side (the specific tool-not-found protocol error).
     const workerSpawn = await mcp.worker.call('spawn_board', { type: 'terminal' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_board')).toBe(true)
     await closeBoardGated(page, mcp, spawnedId) // restore the baseline
@@ -587,7 +594,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await expect
       .poll(() => boardOnCanvas(page, ids.planningId as string), { timeout: 6000 })
       .toBe(true)
-    // The worker is DENIED server-side (the specific tool-not-found isError — orchestrator-only).
+    // The worker is DENIED server-side (the specific tool-not-found protocol error).
     const workerSpawn = await mcp.worker.call('spawn_group', { name: 'nope' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_group')).toBe(true)
     // Restore the baseline (close both members; closing the LAST one auto-deletes the empty group).
@@ -600,10 +607,10 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     page,
     mcp
   }) => {
-    // focus_viewport is orchestrator-only (D5 — a worker must not yank the camera out from under
-    // the user) and content-less, so — like tidy/spawn_group — it drives the camera WITHOUT a
+    // focus_viewport is content-less, and at the ORCHESTRATOR tier it drives the camera WITHOUT a
     // human confirm: every accepted call below resolves with no modal driving (a gated call would
-    // hang on the modal until the SDK timeout and fail the spec).
+    // hang on the modal until the SDK timeout and fail the spec). Lead/connected terminals pay ONE
+    // confirm (D1 — the connected-tier test below); a worker never gets the tool.
     expect(mcp.orch.tools).toContain('focus_viewport')
     expect(mcp.worker.tools).not.toContain('focus_viewport')
 
@@ -666,7 +673,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     })
     expect(rejected(missing)).toBe(true)
 
-    // (6) worker: DENIED server-side (the specific tool-not-found isError — orchestrator-only).
+    // (6) worker: DENIED server-side (the specific tool-not-found protocol error).
     const workerFocus = await mcp.worker.call('focus_viewport', { boardId })
     expect(deniedToolNotFound(workerFocus, 'focus_viewport')).toBe(true)
 
@@ -1485,6 +1492,93 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     }
     await closeBoardGated(page, mcp, aId)
     await closeBoardGated(page, mcp, bId)
+  })
+
+  // ── Spatial D1 (@expanse-ade/mcp 0.27): tidy + camera focus reach lead/connected terminals ──
+  // The package binds the caller's token-derived sourceBoardId; the HOST turns it into ONE human
+  // confirm. Without that gate any consented terminal could repack the canvas or move the user's
+  // camera unasked (the orchestrator tier stays un-gated — the H1 test above).
+  test('D1: a connected-tier terminal tidies / focuses only through ONE human confirm; deny moves nothing, approve applies', async ({
+    page,
+    electronApp,
+    mcp
+  }) => {
+    test.slow() // four real confirm-modal round-trips
+    const aId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    const pId = okText(await mcp.orch.call('spawn_board', { type: 'planning', title: 'd1 target' }))
+    expect(aId).not.toBe('')
+    expect(pId).not.toBe('')
+    await expect.poll(() => boardOnCanvas(page, pId), { timeout: 6000 }).toBe(true)
+    // Shove the planning board far off the pack so an approved tidy MUST move it.
+    await callE2E(page, { m: 'patchBoard', a: [pId, { x: 20000, y: 20000 }] })
+
+    const minted = await mainCall<{ token: string; port: number } | null>(
+      electronApp,
+      'mcpMintConnectedToken',
+      aId
+    )
+    expect(minted).not.toBeNull()
+    const connected = await connect(`http://127.0.0.1:${mcp.info.port}/mcp`, minted!.token)
+    const positions = (): Promise<string> =>
+      page.evaluate(() => {
+        const hook = (
+          globalThis as unknown as {
+            __canvasE2E: { getBoards(): Array<{ id: string; x: number; y: number }> }
+          }
+        ).__canvasE2E
+        return JSON.stringify(hook.getBoards().map((b) => [b.id, b.x, b.y]))
+      })
+    const readVp = () =>
+      evalIn<{ x: number; y: number; zoom: number }>(page, `window.__canvasE2E.getViewport()`)
+    try {
+      expect(connected.tools).toContain('tidy_canvas')
+      expect(connected.tools).toContain('focus_viewport')
+
+      // (1) tidy DENIED: the call blocks on the modal; Deny ⇒ a `declined` error, nothing moved.
+      const before = await positions()
+      const denyTidy = connected.call('tidy_canvas', {})
+      expect(await pollEval(page, MODAL, 8000)).toBe(true)
+      await evalIn(page, DENY)
+      expect(errorCode(await denyTidy)).toBe('declined')
+      expect(await positions()).toBe(before)
+
+      // (2) tidy APPROVED: the same call, approved ⇒ the canvas is repacked.
+      const okTidy = connected.call('tidy_canvas', {})
+      expect(await pollEval(page, MODAL, 8000)).toBe(true)
+      await evalIn(page, APPROVE)
+      const tidied = await okTidy
+      expect(acked(tidied)).toBe(true)
+      expect((JSON.parse(okText(tidied)) as { moved: number }).moved).toBeGreaterThan(0)
+      expect(await positions()).not.toBe(before)
+
+      // (3) focus DENIED: the camera stays exactly where the user left it.
+      await evalIn(page, `window.__canvasE2E.panBy(4000, 4000)`)
+      const away = await readVp()
+      const denyFocus = connected.call('focus_viewport', { boardId: pId })
+      expect(await pollEval(page, MODAL, 8000)).toBe(true)
+      await evalIn(page, DENY)
+      expect(errorCode(await denyFocus)).toBe('declined')
+      expect(await readVp()).toEqual(away)
+
+      // (4) focus APPROVED: the camera moves to the board.
+      const okFocus = connected.call('focus_viewport', { boardId: pId })
+      expect(await pollEval(page, MODAL, 8000)).toBe(true)
+      await evalIn(page, APPROVE)
+      expect(JSON.parse(okText(await okFocus))).toMatchObject({ focused: 'board', id: pId })
+      await expect
+        .poll(
+          async () => {
+            const vp = await readVp()
+            return vp.x !== away.x || vp.y !== away.y
+          },
+          { timeout: 6000 }
+        )
+        .toBe(true)
+    } finally {
+      await connected.close().catch(() => {})
+    }
+    await closeBoardGated(page, mcp, pId)
+    await closeBoardGated(page, mcp, aId)
   })
 
   test('rc.6 auto-cable: a spawn carrying sourceBoardId mints the spawner→spawned cable; the spawner relays along it with NO hand-drawn connector', async ({
