@@ -20,7 +20,13 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
-import { HISTORY_PROMPT_WINDOW, type JarvisTurn } from './jarvisPersona'
+import {
+  HISTORY_PROMPT_WINDOW,
+  MAX_ACT_SUMMARY_LEN,
+  MAX_TURN_ACTS,
+  type JarvisTurn,
+  type JarvisTurnAct
+} from './jarvisPersona'
 
 export interface JarvisHistoryFile {
   turns: JarvisTurn[]
@@ -48,6 +54,22 @@ export function emptyJarvisHistory(): JarvisHistoryFile {
   return { turns: [], summary: '' }
 }
 
+/** An assistant turn's act record, repaired: malformed entries drop, the rest are bounded. */
+function repairActs(v: unknown): JarvisTurnAct[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const acts = v
+    .filter(
+      (a): a is JarvisTurnAct =>
+        typeof a === 'object' &&
+        a !== null &&
+        typeof (a as { summary?: unknown }).summary === 'string' &&
+        ['ok', 'denied', 'error'].includes((a as { outcome?: unknown }).outcome as string)
+    )
+    .map((a) => ({ summary: a.summary.slice(0, MAX_ACT_SUMMARY_LEN), outcome: a.outcome }))
+    .slice(-MAX_TURN_ACTS)
+  return acts.length > 0 ? acts : undefined
+}
+
 /** Coerce an unknown parsed value into a valid history file (read/write both funnel here). */
 export function repairJarvisHistory(p: unknown): JarvisHistoryFile {
   if (typeof p !== 'object' || p === null) return emptyJarvisHistory()
@@ -55,17 +77,21 @@ export function repairJarvisHistory(p: unknown): JarvisHistoryFile {
   const turns: JarvisTurn[] = Array.isArray(o.turns)
     ? o.turns
         .filter(
-          (t): t is { role: string; text: string } =>
+          (t): t is { role: string; text: string; acts?: unknown } =>
             typeof t === 'object' &&
             t !== null &&
             ((t as { role?: unknown }).role === 'user' ||
               (t as { role?: unknown }).role === 'assistant') &&
             typeof (t as { text?: unknown }).text === 'string'
         )
-        .map((t) => ({
-          role: t.role as JarvisTurn['role'],
-          text: t.text.slice(0, MAX_TURN_TEXT_LEN)
-        }))
+        .map((t) => {
+          const turn: JarvisTurn = {
+            role: t.role as JarvisTurn['role'],
+            text: t.text.slice(0, MAX_TURN_TEXT_LEN)
+          }
+          const acts = turn.role === 'assistant' ? repairActs(t.acts) : undefined
+          return acts ? { ...turn, acts } : turn
+        })
         .slice(-MAX_STORED_TURNS)
     : []
   const summary = typeof o.summary === 'string' ? o.summary.slice(-MAX_SUMMARY_LEN) : ''
@@ -97,10 +123,15 @@ export function clearJarvisHistory(projectDir: string): void {
   }
 }
 
-/** One folded turn, for the ear of the model, one line. */
+/** One folded turn, for the ear of the model, one line. A turn's tool calls lead the line so
+ *  they survive the length cap — folding them away would bring back the false retractions. */
 function summaryLine(t: JarvisTurn): string {
   const who = t.role === 'user' ? 'User' : 'Assistant'
-  const text = t.text.replace(/\s+/g, ' ').trim()
+  const ran =
+    t.acts && t.acts.length > 0
+      ? `(ran ${t.acts.map((a) => `${a.summary}: ${a.outcome}`).join('; ')}) `
+      : ''
+  const text = (ran + t.text).replace(/\s+/g, ' ').trim()
   return `${who}: ${text.slice(0, SUMMARY_LINE_LEN)}${text.length > SUMMARY_LINE_LEN ? '…' : ''}`
 }
 

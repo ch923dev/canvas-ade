@@ -216,10 +216,11 @@ export async function setConverseMode(on: boolean): Promise<void> {
     jarvis.turnFailed('start-failed')
     return
   }
-  // TTS probe: a missing speech model degrades to a text-only conversation, never blocks.
+  // TTS probe: no usable speech engine degrades to a text-only conversation, never blocks.
+  // `speechReady` covers cloud TTS, which speaks without the local Kokoro model.
   try {
     const tts = await window.api.voice.tts.status()
-    jarvis.setSpeechReady(tts.modelStatus === 'ready')
+    jarvis.setSpeechReady(tts.speechReady)
   } catch {
     jarvis.setSpeechReady(false)
   }

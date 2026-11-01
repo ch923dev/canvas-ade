@@ -201,3 +201,60 @@ describe('voiceIpc cloud-TTS selection gate', () => {
     )
   })
 })
+
+// Jarvis decides voice vs text-only from voice:tts:status alone (jarvisSession's converse-enable
+// probe). It used to report only the LOCAL Kokoro model, so a cloud-TTS user without Kokoro got a
+// silent, text-only Jarvis even though voice:tts:start would have opened a cloud session.
+describe('voice:tts:status reports the engine a new session would get', () => {
+  it('cloud TTS + key, no local model → cloud, speech ready', async () => {
+    writeVoiceConfig(userData, repairVoiceConfig({ ttsEngine: 'cloud' }))
+    const t = harness({ userData, hasKey: true, ttsStatus: 'absent' })
+    await expect(t.handlers['voice:tts:status'](t.ownEvent)).resolves.toMatchObject({
+      modelStatus: 'absent',
+      engine: 'cloud',
+      speechReady: true
+    })
+  })
+
+  it('cloud selected but NO key → local fallback: ready only when Kokoro is installed', async () => {
+    writeVoiceConfig(userData, repairVoiceConfig({ ttsEngine: 'cloud' }))
+    const ready = harness({ userData, hasKey: false, ttsStatus: 'ready' })
+    await expect(ready.handlers['voice:tts:status'](ready.ownEvent)).resolves.toMatchObject({
+      engine: 'local',
+      speechReady: true
+    })
+    const absent = harness({ userData, hasKey: false, ttsStatus: 'absent' })
+    await expect(absent.handlers['voice:tts:status'](absent.ownEvent)).resolves.toMatchObject({
+      engine: 'local',
+      speechReady: false
+    })
+  })
+
+  it('kokoro selected → local, regardless of key presence', async () => {
+    writeVoiceConfig(userData, repairVoiceConfig({ ttsEngine: 'kokoro' }))
+    const t = harness({ userData, hasKey: true, ttsStatus: 'absent' })
+    await expect(t.handlers['voice:tts:status'](t.ownEvent)).resolves.toMatchObject({
+      engine: 'local',
+      speechReady: false
+    })
+  })
+
+  it('speechReady always agrees with whether voice:tts:start opens a session', async () => {
+    const cases = [
+      { ttsEngine: 'cloud', hasKey: true, ttsStatus: 'absent' },
+      { ttsEngine: 'cloud', hasKey: true, ttsStatus: 'ready' },
+      { ttsEngine: 'cloud', hasKey: false, ttsStatus: 'absent' },
+      { ttsEngine: 'cloud', hasKey: false, ttsStatus: 'ready' },
+      { ttsEngine: 'kokoro', hasKey: true, ttsStatus: 'absent' },
+      { ttsEngine: 'kokoro', hasKey: false, ttsStatus: 'ready' }
+    ] as const
+    for (const c of cases) {
+      writeVoiceConfig(userData, repairVoiceConfig({ ttsEngine: c.ttsEngine }))
+      const t = harness({ userData, hasKey: c.hasKey, ttsStatus: c.ttsStatus })
+      const status = (await t.handlers['voice:tts:status'](t.ownEvent)) as { speechReady: boolean }
+      const start = (await t.handlers['voice:tts:start'](t.ownEvent)) as { ok: boolean }
+      expect({ ...c, speechReady: status.speechReady }).toEqual({ ...c, speechReady: start.ok })
+      disposeVoiceSession()
+    }
+  })
+})

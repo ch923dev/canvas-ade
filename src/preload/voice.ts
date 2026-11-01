@@ -149,8 +149,15 @@ export const voiceApi = {
       ipcRenderer.invoke('voice:tts:speak', { text, ...opts }),
     cancel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('voice:tts:cancel'),
     stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('voice:tts:stop'),
-    status: (): Promise<{ modelId: string; modelStatus: 'ready' | 'absent'; active: boolean }> =>
-      ipcRenderer.invoke('voice:tts:status'),
+    // `speechReady` / `engine` describe what a new session would get (cloud TTS needs no local
+    // model); `modelStatus` is the local Kokoro install state either way.
+    status: (): Promise<{
+      modelId: string
+      modelStatus: 'ready' | 'absent'
+      active: boolean
+      engine: 'cloud' | 'local'
+      speechReady: boolean
+    }> => ipcRenderer.invoke('voice:tts:status'),
     onEvent: (cb: (ev: VoiceTtsEvent) => void): (() => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: VoiceTtsEvent): void => cb(ev)
       ipcRenderer.on('voice:tts:event', listener)

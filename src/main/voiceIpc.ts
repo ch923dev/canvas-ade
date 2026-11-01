@@ -200,6 +200,18 @@ export interface VoiceTtsStartResult {
   modelStatus: TtsModelStatus
 }
 
+/** voice:tts:status — what a NEW TTS session would get, from the same routing voice:tts:start uses. */
+export interface VoiceTtsStatus {
+  modelId: string
+  /** Install state of the LOCAL (Kokoro) model, whichever engine is selected. */
+  modelStatus: TtsModelStatus
+  active: boolean
+  /** The engine a new session runs on. Cloud selected without an OpenAI key is 'local'. */
+  engine: 'cloud' | 'local'
+  /** Whether voice:tts:start would open a session right now (cloud needs no model on disk). */
+  speechReady: boolean
+}
+
 /** J2: renderer push for TTS-side failures (worker death / host death — the playback
  *  queue flushes and the next speak lazily re-opens the session). */
 export type VoiceTtsEvent = { kind: 'error'; reason?: string }
@@ -325,6 +337,19 @@ export function registerVoiceHandlers(
   /** The engine a NEW TTS session runs on: cloud when chosen, else the local host. */
   const ttsEngineFor = (cloud: boolean): VoiceEngineHandle =>
     deps.engine ?? currentVoiceStubEngine() ?? (cloud ? cloudTts() : defaultEngine())
+  /**
+   * The routing decision for a NEW TTS session. voice:tts:start acts on it and voice:tts:status
+   * reports it, so Jarvis's speech probe can't disagree with what start will do. `cloud` follows
+   * useCloudTts: cloud selected WITHOUT a key is not cloud — it falls back to local Kokoro and so
+   * speaks only when that model is installed. Cloud synthesizes over the network, so it bypasses
+   * the model-ready gate (mirrors the cloud STT `cloudActive` bypass); the e2e stub keeps the real
+   * disk check, and so does unit-test injection (deps.engine).
+   */
+  const ttsRoute = (): { cloud: boolean; cloudBypass: boolean } => {
+    const cloud = useCloudTts()
+    const stubActive = !deps.engine && currentVoiceStubEngine() !== null
+    return { cloud, cloudBypass: !deps.engine && !stubActive && cloud }
+  }
 
   // Crash-mid-download leftovers (fire-and-forget; the dir may not exist yet).
   void ops.sweep(getUserData()).catch(() => {})
@@ -623,12 +648,8 @@ export function registerVoiceHandlers(
     if (!win) return { ok: false, modelStatus: 'absent' }
     const userData = getUserData()
     // ONE routing decision per TTS session, before the await below, pinned for its life (B0.2).
-    const cloud = useCloudTts()
-    // Cloud TTS synthesizes over the network — it needs NO on-disk model, so bypass the model-ready
-    // gate (mirrors the cloud STT `cloudActive` bypass) and pass null paths (the cloud engine drops
-    // them). The e2e stub keeps the real disk check; unit-test injection (deps.engine) does too.
-    const stubActive = !deps.engine && currentVoiceStubEngine() !== null
-    const cloudBypass = !deps.engine && !stubActive && cloud
+    // A cloud bypass passes null paths (the cloud engine drops them).
+    const { cloud, cloudBypass } = ttsRoute()
     const modelId = configuredTtsModelId()
     const status = cloudBypass ? 'ready' : await ttsOps.status(userData, modelId)
     const paths = !cloudBypass && status === 'ready' ? ttsOps.paths(userData, modelId) : null
@@ -696,18 +717,27 @@ export function registerVoiceHandlers(
     return { ok: true }
   })
 
-  ipcMain.handle(
-    'voice:tts:status',
-    async (e): Promise<{ modelId: string; modelStatus: TtsModelStatus; active: boolean }> => {
-      if (isForeignSender(e, getWin)) return { modelId: '', modelStatus: 'absent', active: false }
-      const modelId = configuredTtsModelId()
+  ipcMain.handle('voice:tts:status', async (e): Promise<VoiceTtsStatus> => {
+    if (isForeignSender(e, getWin)) {
       return {
-        modelId,
-        modelStatus: await ttsOps.status(getUserData(), modelId),
-        active: ttsActive
+        modelId: '',
+        modelStatus: 'absent',
+        active: false,
+        engine: 'local',
+        speechReady: false
       }
     }
-  )
+    const { cloud, cloudBypass } = ttsRoute()
+    const modelId = configuredTtsModelId()
+    const modelStatus = await ttsOps.status(getUserData(), modelId)
+    return {
+      modelId,
+      modelStatus,
+      active: ttsActive,
+      engine: cloud ? 'cloud' : 'local',
+      speechReady: isVoicePlatformSupported() && (cloudBypass || modelStatus === 'ready')
+    }
+  })
 }
 
 /** Everything the shared catalog registration needs from a model spec (STT and TTS

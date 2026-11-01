@@ -28,10 +28,12 @@ import {
   type JarvisConfig
 } from './jarvisConfig'
 import {
+  MAX_TURN_ACTS,
   composeMessages,
   composeSystem,
   type JarvisMessage,
   type JarvisTurn,
+  type JarvisTurnAct,
   type JarvisTurnBlock
 } from './jarvisPersona'
 import { buildWorkspaceManifest } from './jarvisManifest'
@@ -304,13 +306,15 @@ export function registerJarvisHandlers(
   })
 
   /** J4: run one tool round — execute each call sequentially, pushing act lifecycle
-   *  events, and return the tool_result blocks for the next hop. */
+   *  events, and return the tool_result blocks for the next hop. Every call that actually
+   *  executed is appended to `ran` for the turn's history record. */
   const runToolRound = async (
     turnId: number,
     toolUses: JarvisToolUse[],
     facet: JarvisCanvasFacet,
     signal: AbortSignal,
-    nextActId: () => number
+    nextActId: () => number,
+    ran: JarvisTurnAct[]
   ): Promise<JarvisTurnBlock[]> => {
     const results: JarvisTurnBlock[] = []
     for (const tu of toolUses) {
@@ -361,6 +365,12 @@ export function registerJarvisHandlers(
         tool_use_id: tu.id,
         content: outcome.content,
         ...(outcome.isError ? { is_error: true } : {})
+      })
+      // The history record keeps what really happened, not the chip phase: an ok call that
+      // resolved into a cancelled turn still changed the canvas.
+      ran.push({
+        summary: outcome.summary,
+        outcome: outcome.denied ? 'denied' : outcome.isError ? 'error' : 'ok'
       })
       push({
         id: turnId,
@@ -435,6 +445,7 @@ export function registerJarvisHandlers(
         let actSeq = 0
         const nextActId = (): number => ++actSeq
         const spokenParts: string[] = []
+        const ran: JarvisTurnAct[] = []
         let cancelled = false
         let hops = 0
         let toollessRetry = false
@@ -511,7 +522,8 @@ export function registerJarvisHandlers(
             result.toolUses,
             facet,
             abort.signal,
-            nextActId
+            nextActId,
+            ran
           )
           messages.push({ role: 'user', content: resultBlocks })
           if (abort.signal.aborted) {
@@ -521,11 +533,15 @@ export function registerJarvisHandlers(
         }
         if (activeAbort === abort) activeAbort = null
         const spoken = spokenParts.join(' ')
-        if (cfg.historyMode !== 'off' && spoken.trim().length > 0) {
+        // A turn that only acted (no words — e.g. interrupted after its tools ran) is still
+        // recorded: the canvas changed, and the next turn must know it.
+        const recorded = spoken.trim().length > 0 || ran.length > 0
+        if (cfg.historyMode !== 'off' && recorded) {
           history.push({ role: 'user', text })
           history.push({
             role: 'assistant',
-            text: cancelled ? `${spoken} — (interrupted)` : spoken
+            text: cancelled ? `${spoken} — (interrupted)` : spoken,
+            ...(ran.length > 0 ? { acts: ran.slice(-MAX_TURN_ACTS) } : {})
           })
           if (history.length > MAX_HISTORY_TURNS)
             history.splice(0, history.length - MAX_HISTORY_TURNS)
@@ -533,7 +549,7 @@ export function registerJarvisHandlers(
         push({ id, kind: 'done', text: spoken, cancelled })
         // D4′ 'project' mode: persist AFTER the done push — the one-time consent ask
         // blocks on the human, and the settled reply must never wait behind a modal.
-        if (cfg.historyMode === 'project' && spoken.trim().length > 0) await persistHistory()
+        if (cfg.historyMode === 'project' && recorded) await persistHistory()
       })().catch(() => {
         // BRAIN-2: the turn body is void'd — without this catch any unexpected throw
         // (push used to throw on a destroyed window) became an unhandledRejection →

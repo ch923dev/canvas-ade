@@ -46,7 +46,13 @@ const voiceStop = vi.fn().mockResolvedValue({ ok: true, frames: 0 })
 
 beforeEach(() => {
   status.mockResolvedValue(STATUS_OK)
-  ttsStatus.mockResolvedValue({ modelId: 'kokoro-en-v0_19', modelStatus: 'ready', active: false })
+  ttsStatus.mockResolvedValue({
+    modelId: 'kokoro-en-v0_19',
+    modelStatus: 'ready',
+    active: false,
+    engine: 'local',
+    speechReady: true
+  })
   ;(window as never as { api: unknown }).api = {
     jarvis: { status, startTurn, cancelTurn },
     voice: { start: voiceStart, stop: voiceStop, tts: { status: ttsStatus } }
@@ -88,6 +94,31 @@ describe('setConverseMode arm/close races (MIC-1)', () => {
     expect(useJarvisStore.getState().converseMode).toBe(false)
     expect(voiceStart).not.toHaveBeenCalled()
     expect(consumeFinal('anything')).toBe(false)
+  })
+
+  it('speech readiness follows the engine that will speak, not the local model', async () => {
+    // Cloud TTS without Kokoro installed: voice:tts:start opens a cloud session, so Jarvis speaks.
+    ttsStatus.mockResolvedValueOnce({
+      modelId: 'kokoro-en-v0_19',
+      modelStatus: 'absent',
+      active: false,
+      engine: 'cloud',
+      speechReady: true
+    })
+    await setConverseMode(true)
+    expect(useJarvisStore.getState().speechReady).toBe(true)
+    await setConverseMode(false)
+    // No usable engine → text-only, never a block.
+    ttsStatus.mockResolvedValueOnce({
+      modelId: 'kokoro-en-v0_19',
+      modelStatus: 'absent',
+      active: false,
+      engine: 'local',
+      speechReady: false
+    })
+    await setConverseMode(true)
+    expect(useJarvisStore.getState().speechReady).toBe(false)
+    expect(useJarvisStore.getState().converseMode).toBe(true)
   })
 
   it('a rapid re-arm supersedes the first arm (single consumer, converse ends up on)', async () => {

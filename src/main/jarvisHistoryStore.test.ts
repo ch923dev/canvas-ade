@@ -21,7 +21,12 @@ import {
   writeJarvisHistoryConsent,
   type JarvisHistoryFile
 } from './jarvisHistoryStore'
-import { HISTORY_PROMPT_WINDOW, type JarvisTurn } from './jarvisPersona'
+import {
+  HISTORY_PROMPT_WINDOW,
+  MAX_ACT_SUMMARY_LEN,
+  MAX_TURN_ACTS,
+  type JarvisTurn
+} from './jarvisPersona'
 
 let dir: string
 beforeEach(() => {
@@ -152,5 +157,85 @@ describe('per-project consent store', () => {
     writeFileSync(join(dir, 'jarvis-history-consent.json'), 'not json', 'utf8')
     expect(readJarvisHistoryConsent(dir, 'M:/proj')).toBeUndefined()
     expect(readFileSync(join(dir, 'jarvis-history-consent.json'), 'utf8')).toBe('not json')
+  })
+})
+
+describe('assistant turn act records (tool memory)', () => {
+  it('round-trips acts through history.json', () => {
+    const h: JarvisHistoryFile = {
+      turns: [
+        { role: 'user', text: 'tidy up' },
+        {
+          role: 'assistant',
+          text: 'Done.',
+          acts: [
+            { summary: 'tidy_canvas · 5 board(s) moved', outcome: 'ok' },
+            { summary: 'spawn_board · terminal', outcome: 'denied' }
+          ]
+        }
+      ],
+      summary: ''
+    }
+    writeJarvisHistory(dir, h)
+    expect(readJarvisHistory(dir)).toEqual(h)
+  })
+
+  it('a history file written before acts existed loads unchanged', () => {
+    mkdirSync(dirname(jarvisHistoryFileFor(dir)), { recursive: true })
+    const legacy = {
+      turns: [
+        { role: 'user', text: 'hi' },
+        { role: 'assistant', text: 'hello' }
+      ],
+      summary: 'User: older'
+    }
+    writeFileSync(jarvisHistoryFileFor(dir), JSON.stringify(legacy), 'utf8')
+    const read = readJarvisHistory(dir)
+    expect(read).toEqual(legacy)
+    expect('acts' in read.turns[1]).toBe(false)
+  })
+
+  it('repair drops malformed acts, bounds the rest, and keeps acts on assistant turns only', () => {
+    const r = repairJarvisHistory({
+      turns: [
+        { role: 'user', text: 'u', acts: [{ summary: 'nope', outcome: 'ok' }] },
+        {
+          role: 'assistant',
+          text: 'a',
+          acts: [
+            { summary: 'bad outcome', outcome: 'maybe' },
+            { outcome: 'ok' },
+            'garbage',
+            ...Array.from({ length: MAX_TURN_ACTS + 3 }, (_, i) => ({
+              summary: `${i}`.padEnd(MAX_ACT_SUMMARY_LEN + 50, 'x'),
+              outcome: 'ok'
+            }))
+          ]
+        },
+        { role: 'assistant', text: 'b', acts: 'not an array' },
+        { role: 'assistant', text: 'c', acts: [{ summary: 1, outcome: 'ok' }] }
+      ],
+      summary: ''
+    })
+    expect(r.turns[0]).toEqual({ role: 'user', text: 'u' })
+    const acts = r.turns[1].acts ?? []
+    expect(acts).toHaveLength(MAX_TURN_ACTS)
+    expect(acts.every((a) => a.summary.length === MAX_ACT_SUMMARY_LEN)).toBe(true)
+    expect(acts[0].summary.startsWith('3')).toBe(true) // the newest MAX_TURN_ACTS survive
+    expect(r.turns[2]).toEqual({ role: 'assistant', text: 'b' })
+    expect(r.turns[3]).toEqual({ role: 'assistant', text: 'c' })
+  })
+
+  it('a folded turn keeps its tool calls at the front of its summary line', () => {
+    const turns: JarvisTurn[] = Array.from({ length: COMPRESS_TRIGGER + 2 }, (_, i) => turn(i))
+    turns[1] = {
+      role: 'assistant',
+      text: 'I tidied the canvas. '.repeat(20),
+      acts: [{ summary: 'tidy_canvas · 5 board(s) moved', outcome: 'ok' }]
+    }
+    const c = compressJarvisHistory({ turns, summary: '' })
+    expect(c.summary.split('\n')[1]).toMatch(
+      /^Assistant: \(ran tidy_canvas · 5 board\(s\) moved: ok\) I tidied the canvas\./
+    )
   })
 })

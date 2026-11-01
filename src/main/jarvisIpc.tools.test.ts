@@ -16,6 +16,7 @@ import { requestConfirm } from './mcpConfirm'
 import { writeLlmConfig } from './llmConfig'
 import type { JarvisCanvasFacet } from './jarvisTools'
 import type { AppModel } from './appModel'
+import type { JarvisTurn } from './jarvisPersona'
 
 type Handler = (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown
 
@@ -134,9 +135,14 @@ describe('jarvisIpc J4 turn loop', () => {
       // The second hop's spoken text quotes the tool result (card-42), never invention.
       const done = evs.find((ev) => ev.kind === 'done')
       expect(done && done.kind === 'done' ? done.text : '').toContain('card-42')
-      // History records the full spoken text (both hops joined).
-      const hist = h.invoke('jarvis:history:get') as Array<{ role: string; text: string }>
-      expect(hist[hist.length - 1].text).toContain('card-42')
+      // History records the full spoken text (both hops joined) AND the tool call it ran, so
+      // the next turn's model sees evidence of its own action (no false "I never did that").
+      const hist = h.invoke('jarvis:history:get') as JarvisTurn[]
+      const last = hist[hist.length - 1]
+      expect(last.text).toContain('card-42')
+      expect(last.acts).toHaveLength(1)
+      expect(last.acts?.[0]).toMatchObject({ outcome: 'ok' })
+      expect(last.acts?.[0].summary).toContain('smoke test')
     } finally {
       rmSync(h.dir, { recursive: true, force: true })
     }
@@ -161,6 +167,9 @@ describe('jarvisIpc J4 turn loop', () => {
       expect(acts.map((a) => (a.kind === 'act' ? a.phase : ''))).toEqual(['confirm', 'denied'])
       const done = evs.find((ev) => ev.kind === 'done')
       expect(done && done.kind === 'done' ? done.text : '').toContain('Nothing was changed')
+      // The record says DECLINED — the next turn can't mistake it for a done action.
+      const hist = h.invoke('jarvis:history:get') as JarvisTurn[]
+      expect(hist[hist.length - 1].acts).toEqual([expect.objectContaining({ outcome: 'denied' })])
     } finally {
       rmSync(h.dir, { recursive: true, force: true })
     }
@@ -177,6 +186,8 @@ describe('jarvisIpc J4 turn loop', () => {
       expect(evs.filter((ev) => ev.kind === 'act')).toEqual([])
       const done = evs.find((ev) => ev.kind === 'done')
       expect(done && done.kind === 'done' ? done.text : '').not.toContain('card-42')
+      const hist = h.invoke('jarvis:history:get') as JarvisTurn[]
+      expect(hist.every((t) => t.acts === undefined)).toBe(true)
     } finally {
       rmSync(h.dir, { recursive: true, force: true })
     }
