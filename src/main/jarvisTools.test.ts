@@ -56,6 +56,9 @@ function makeFacet(over: Partial<JarvisCanvasFacet> = {}): JarvisCanvasFacet {
     visualizePlan: vi.fn(async () => ({ id: 'viz-board-id-123456' })),
     focusViewport: vi.fn(async () => ({ focused: 'board' as const, id: TERM_ID })),
     tidyCanvas: vi.fn(async () => ({ moved: 3 })),
+    describeContexts: vi.fn(async () => ({ version: 1 as const, contexts: [], ungrouped: [] })),
+    groupBoards: vi.fn(async () => []),
+    editGroups: vi.fn(async () => []),
     boardCards: vi.fn(async () => ({
       isKanban: true,
       columns: [
@@ -82,14 +85,17 @@ describe('catalog + risk tiers', () => {
       'add_card',
       'update_card',
       'move_card',
-      'visualize_plan'
+      'visualize_plan',
+      'list_groups',
+      'group_boards',
+      'edit_groups'
     ])
     for (const banned of ['close_board', 'remove_card', 'remove_planning_element']) {
       expect(names).not.toContain(banned)
     }
   })
 
-  it('read/focus/tidy auto-allow; everything else gates', () => {
+  it('read/focus/tidy/list_groups auto-allow; everything else gates', () => {
     for (const name of JARVIS_AUTO_ALLOW) expect(isJarvisToolGated(name)).toBe(false)
     for (const name of [
       'spawn_board',
@@ -97,7 +103,9 @@ describe('catalog + risk tiers', () => {
       'add_card',
       'update_card',
       'move_card',
-      'visualize_plan'
+      'visualize_plan',
+      'group_boards',
+      'edit_groups'
     ]) {
       expect(isJarvisToolGated(name)).toBe(true)
     }

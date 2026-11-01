@@ -4,6 +4,8 @@ import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
 import type { BoardPlanning } from './mcpBoardPlanning'
+import type { ContextsDigest, GroupRowResult } from './mcpGroups'
+import type { GroupEditOp } from '../shared/mcpTypes'
 import { getCurrentDir } from './projectStore'
 import { recordBoardProject } from './mcpBoardProjects'
 import { makeLeadAuthority } from './leadAuthority'
@@ -201,6 +203,16 @@ export interface RunningMcp {
   tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
   boardCards(boardId: string): Promise<unknown>
   /**
+   * Spatial I1: Jarvis's Named-Group slice (jarvisGroupTools.ts) — the SAME orchestrator methods
+   * `canvas://contexts` / `group_boards` / `edit_groups` route to, so the ONE batch confirm, the
+   * renderer re-validation and the per-row audit are paid identically.
+   */
+  describeContexts(): Promise<ContextsDigest>
+  groupBoards(input: {
+    groups: Array<{ name: string; boardIds: string[] }>
+  }): Promise<GroupRowResult[]>
+  editGroups(input: { ops: GroupEditOp[] }): Promise<GroupRowResult[]>
+  /**
    * S2 (swarm run ledger): one Planning board's elements + their REAL ids — the same projection
    * served as `canvas://board/{id}/planning`. In-process seam alongside `boardCards`, so the
    * swarm ledger can join a task to the checklist item it fulfils without minting plan-item ids
@@ -389,6 +401,9 @@ export async function startMcpServer(
       focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
       tidyCanvas: (input) => orchestrator.tidyCanvas(input),
       boardCards: (boardId) => orchestrator.boardCards(boardId),
+      describeContexts: () => orchestrator.describeContexts(),
+      groupBoards: (input) => orchestrator.groupBoards(input),
+      editGroups: (input) => orchestrator.editGroups(input),
       boardPlanning: (boardId) => orchestrator.boardPlanning(boardId),
       dispatchPrompts: (items) => orchestrator.dispatchPrompts(items),
       updatePlanningElement: (boardId, elementId, patch) =>

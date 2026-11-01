@@ -297,7 +297,7 @@ export function requestConfirmBatch(
   bus: Pick<IpcMain, 'on' | 'removeListener'>,
   getWin: () => BrowserWindow | null,
   request: ConfirmBatchRequest,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {}
 ): Promise<ConfirmBatchDecision> {
   const n = request.items.length
   const win = getWin()
@@ -305,6 +305,10 @@ export function requestConfirmBatch(
   if (!win || win.isDestroyed() || !wc || wc.isDestroyed()) {
     return Promise.resolve(allDenied(n)) // no UI to confirm against → deny every row
   }
+  // 🔒 Jarvis P1-A, same as requestConfirm: Jarvis's group tools raise THIS modal, so a batch
+  // raised for a turn that is later cancelled settles all-denied then, not at the backstop.
+  const signal = opts.signal ?? jarvisToolCallSignal()
+  if (signal?.aborted) return Promise.resolve(allDenied(n)) // turn already dead → never ask
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   return new Promise<ConfirmBatchDecision>((resolve) => {
     const replyChannel = `mcp:confirm:batch:reply:${randomUUID()}`
@@ -315,10 +319,12 @@ export function requestConfirmBatch(
       bus.removeListener(replyChannel, onReply)
       wc.removeListener('destroyed', onGone)
       wc.removeListener('render-process-gone', onGone)
+      signal?.removeEventListener('abort', onAbort)
       if (timer) clearTimeout(timer)
       resolve(decision)
     }
     const onGone = (): void => finish(allDenied(n))
+    const onAbort = (): void => finish(allDenied(n)) // turn cancelled → every row dies with it
     const onReply = (e: IpcMainEvent, decision: unknown): void => {
       if (isForeignSender(e, getWin)) return // a foreign frame can't decide — ignore
       finish(normalizeBatch(decision, n))
@@ -330,6 +336,7 @@ export function requestConfirmBatch(
     bus.on(replyChannel, onReply)
     wc.once('destroyed', onGone)
     wc.once('render-process-gone', onGone)
+    signal?.addEventListener('abort', onAbort, { once: true })
     try {
       wc.send('mcp:confirm:batch', { request, replyChannel })
     } catch {

@@ -234,6 +234,7 @@ export interface MockTurn {
  * the real confirm gate and the real orchestrator — with zero egress.
  *   "add a card <title> to board <id>"  → add_card (confirm-gated end to end)
  *   "focus board <id>"                  → focus_viewport (the auto-allow read tier)
+ *   "group boards <id> <id>… as <name>" → group_boards (spatial I1: the batch-modal gate)
  * A turn whose last message carries tool_result blocks answers GROUNDED in that result
  * (echoes its content), so the spec can assert the spoken confirmation quotes the tool
  * outcome and never a fabricated status.
@@ -260,6 +261,17 @@ export function mockJarvisTurn(req: JarvisRequest): MockTurn {
         id: 'mock-tool-1',
         name: 'add_card',
         input: { board: addCard[2], title: addCard[1] }
+      }
+    }
+  }
+  const group = /^group (?:the )?boards (.+?) as "?(.+?)"?$/i.exec(text)
+  if (group) {
+    return {
+      text: 'Grouping.',
+      toolUse: {
+        id: 'mock-tool-1',
+        name: 'group_boards',
+        input: { groups: [{ name: group[2], boards: group[1].split(/[\s,]+(?:and\s+)?/) }] }
       }
     }
   }

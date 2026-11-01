@@ -3,6 +3,12 @@ import type { GatedWriteInput, GatedWriteResult } from './dispatchGate'
 import type { ConfirmBatchDecision, ConfirmBatchRequest } from './mcpConfirm'
 import type { AuditInput } from './auditLog'
 import type { DispatchStatus, LifecycleOrchestrator } from './mcpRegistry'
+import type {
+  ContextsDigest,
+  EditGroupsHostInput,
+  GroupBoardsHostInput,
+  GroupRowResult
+} from './mcpGroups'
 
 /**
  * The orchestrator this HOST builds: the package's `LifecycleOrchestrator` plus the in-process
@@ -11,6 +17,11 @@ import type { DispatchStatus, LifecycleOrchestrator } from './mcpRegistry'
  */
 export interface HostOrchestrator extends LifecycleOrchestrator {
   dispatchPrompts(items: DispatchBatchItem[]): Promise<DispatchBatchResult[]>
+  // Spatial I1 (mcpGroups): optional + `unknown` in the package, always built by this host — typed
+  // here so the in-process Jarvis facet reads the real row results.
+  describeContexts(): Promise<ContextsDigest>
+  groupBoards(input: GroupBoardsHostInput): Promise<GroupRowResult[]>
+  editGroups(input: EditGroupsHostInput): Promise<GroupRowResult[]>
 }
 
 /**
