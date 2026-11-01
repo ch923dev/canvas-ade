@@ -5528,3 +5528,32 @@ Gates: unit + integration 7445 pass (2 known `pathSafe`); SCA exit 0; `@mcp` e2e
 `--retries=0`; smoke 62/62; CI `check` green; `claude-review` clean (0 inline). Dev check:
 user-verified (tidy + focus confirm, deny/approve, `/mcp` listing). Lockfile moved. Hand-off
 notes for I1 (group tools) and I2 (tidy wiring) are in the PR body.
+
+## PR #440 — jarvis: speak via cloud TTS without Kokoro + remember tool actions (v0.47.21) · squash `bea230fd` · 2026-11-02
+
+Two Jarvis fixes. The version was recomputed 0.47.19 → 0.47.21 because #441 took 0.47.20.
+- **(a) Cloud-TTS readiness.** `voice:tts:status` reported only the LOCAL Kokoro model, and
+  Jarvis's converse-enable probe used it as speech readiness. A cloud-TTS user without Kokoro
+  therefore got a text-only Jarvis, even though `voice:tts:start` would have opened a cloud session.
+  - `voiceIpc.ts`: start and status now share one routing decision, `ttsRoute()`. Status gains
+    `engine` (`cloud`/`local`) and `speechReady`; `modelStatus` stays the local install state.
+  - `jarvisSession.ts` reads `speechReady`.
+  - Cloud selected without an OpenAI key stays the local fallback (`useCloudTts`), so Jarvis
+    speaks only when Kokoro is installed.
+- **(b) Tool memory.** Plan card `1784d96b`; the bug dates from #355. History kept only spoken
+  text, so on the next turn the model retracted its own tool actions ("I never ran that").
+  - `JarvisTurn` gains an optional `acts` field: chip text plus the real outcome
+    (ok/denied/error), bounded to 8 acts × 140 characters.
+  - `composeMessages` renders the acts as an `[App record — tools you ran this turn: …]` line
+    before the spoken text. The acting contract tells the model it is evidence that it must not
+    deny or imitate.
+  - Compression keeps the acts first in folded summary lines.
+  - `history.json` is compatible both ways: old files load unchanged, and older apps drop the
+    field.
+
+Gates: unit + integration 7418 pass (2 known `pathSafe`). `jarvis` / `jarvisTools` /
+`voiceTtsCloud` e2e 16/16. Smoke 62/62 on every head. CI `check` green; `claude-review` clean
+(0 inline). Dev check: user-verified with a cloud-TTS profile without Kokoro. The header read
+"voice"; the reply was spoken by the cloud voice; tidy produced its ✓ chip; the follow-up
+confirmed the tidy with no false retraction.
+Follow-up candidate: `swarmChatIpc` has the same "history drops tool calls" pattern.
