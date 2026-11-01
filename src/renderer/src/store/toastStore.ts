@@ -9,6 +9,12 @@ import { create } from 'zustand'
 
 export type ToastKind = 'error' | 'ok' | 'info'
 
+/** One toast button. */
+export interface ToastAction {
+  label: string
+  run: () => void
+}
+
 export interface Toast {
   id: string
   message: string
@@ -16,14 +22,17 @@ export interface Toast {
   /** Sticky toasts never auto-dismiss (data-loss class, e.g. save failure). */
   sticky: boolean
   /** Optional action button (e.g. the save-failure Retry). */
-  action?: { label: string; run: () => void }
+  action?: ToastAction
+  /** Further buttons, after `action` (the tidy toasts' "Show all · Undo", spatial W3 / W7). */
+  actions?: ToastAction[]
 }
 
 export interface ToastInput {
   message: string
   kind?: ToastKind
   sticky?: boolean
-  action?: { label: string; run: () => void }
+  action?: ToastAction
+  actions?: ToastAction[]
   /**
    * Stable identity for replace/clear semantics (e.g. the save-failure toast is
    * keyed so a repeat failure updates in place and the next successful save can
@@ -105,7 +114,8 @@ export const useToastStore = create<ToastState>((set) => ({
       message: t.message,
       kind: t.kind ?? 'info',
       sticky: t.sticky ?? false,
-      action: t.action
+      action: t.action,
+      ...(t.actions && t.actions.length > 0 ? { actions: t.actions } : {})
     }
     set((s) => {
       const i = s.toasts.findIndex((x) => x.id === id)

@@ -1,8 +1,13 @@
 /**
  * Tidy / tile layout actions, extracted from Canvas.tsx (Wave-5 B5 #2). Owns the camera
  * framing (`fitToBoards`), the window-manager tiling (`applyTile`), the preset entry point
- * (`tidyAndFit`), and the responsive-retile ResizeObserver loop. Behavior-preserving — only
- * `tidyAndFit` is surfaced (the keymap's `t` and AppChrome's Tidy button); the rest is internal.
+ * (`tidyAndFit`), and the responsive-retile ResizeObserver loop. Only `tidyAndFit` is surfaced
+ * (the keymap's `t`, the palette and AppChrome's Tidy picker).
+ *
+ * Spatial I2: every `tidy` preset runs the SHARED engine (`store/spatialTidy.runTidy` — the
+ * same one an agent's `tidy_canvas` runs), which applies ONE undo step and frames the camera;
+ * the user then gets the W3 / W7 feedback toast (`store/tidyFeedback`). No preset (the `t` key /
+ * palette) = the IMPLICIT `roles` default (D8 a); a picked preset is explicit.
  */
 import {
   useCallback,
@@ -15,31 +20,17 @@ import {
 import { getViewportForBounds, type ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useCanvasViewTracker } from '../../store/canvasViewStore'
-import { boardsBounds, type BoardRect } from '../../lib/boardGeometry'
+import { runTidy, tileArea } from '../../store/spatialTidy'
+import { showTidyFeedback } from '../../store/tidyFeedback'
+import { boardsBounds } from '../../lib/boardGeometry'
 import { FIT_FRAME, Z_MAX, Z_MIN } from '../../lib/canvasView'
 import { cameraAnim } from '../../lib/motion'
-import { LAYOUT_PRESETS, type LayoutPreset } from '../../lib/layoutPresets'
+import { type LayoutPreset } from '../../lib/layoutPresets'
 import type { TileTemplate } from '../../lib/tileLayout'
 
-/** Default preset for the `t` key / direct Tidy click — the semantic "smart" auto-tidy. */
-export const SMART_PRESET = LAYOUT_PRESETS[0]
-/** Base width (world px) of the pane-aspect block a tile preset fills before the camera fits
- *  to it — absolute size is irrelevant (the fit normalizes it); only the aspect + zones matter. */
-export const TILE_AREA_BASE_W = 2400
-
-/**
- * The world-space block a tile layout fills: anchored at the boards' top-left corner, sized to
- * the pane `aspect` (w = baseW, h = baseW / aspect). Null when there are no boards. Pure.
- */
-export function tileArea(
-  boards: BoardRect[],
-  aspect: number,
-  baseW = TILE_AREA_BASE_W
-): { x: number; y: number; w: number; h: number } | null {
-  const bb = boardsBounds(boards)
-  if (!bb) return null
-  return { x: bb.minX, y: bb.minY, w: baseW, h: baseW / aspect }
-}
+// The tile area moved into the engine module (the MCP `tile` mode shares it); re-exported so the
+// existing imports keep working.
+export { TILE_AREA_BASE_W, tileArea } from '../../store/spatialTidy'
 
 export interface TidyTileDeps {
   paneRef: RefObject<HTMLDivElement | null>
@@ -52,7 +43,6 @@ export interface TidyTileDeps {
 export function useTidyTile(deps: TidyTileDeps): { tidyAndFit: (preset?: LayoutPreset) => void } {
   const { paneRef, rf, setActiveTile, setFocusedId, activeTileRef } = deps
   const tileBoards = useCanvasStore((s) => s.tileBoards)
-  const tidyBoards = useCanvasStore((s) => s.tidyBoards)
   // Spatial awareness (S0/C1): park the SAME pane's size (+ the settled camera) on the session-only
   // view bus so the React-free MCP tidy applier passes the pane aspect exactly like tidyAndFit below
   // does, and the MCP publisher can mirror the user's view to MAIN.
@@ -105,21 +95,23 @@ export function useTidyTile(deps: TidyTileDeps): { tidyAndFit: (preset?: LayoutP
   )
 
   // Apply a layout preset then frame it ("auto-fit"). Tile presets ALSO enter live "tiled mode"
-  // (re-tile on window resize until released); Smart is a one-shot that releases tiling.
+  // (re-tile on window resize until released); tidy presets are one-shots that release tiling.
   const tidyAndFit = useCallback(
-    (preset: LayoutPreset = SMART_PRESET) => {
+    (preset?: LayoutPreset) => {
       // Arranging must not leave others dimmed behind a stale focus (mirrors addCentered, #14).
       setFocusedId(null)
-      if (preset.kind === 'tile') {
+      if (preset?.kind === 'tile') {
         setActiveTile(preset.template)
         applyTile(preset.template, true, true)
-      } else {
-        setActiveTile(null) // Smart releases any live tiling
-        tidyBoards(preset.tidyMode, paneSize().w / Math.max(1, paneSize().h))
-        fitToBoards(true)
+        return
       }
+      setActiveTile(null) // a tidy releases any live tiling
+      // The engine reads the SAME pane (the view bus `useCanvasViewTracker` feeds from paneRef),
+      // applies ONE undo step and frames the camera itself.
+      const run = runTidy(preset ? { mode: preset.tidyMode } : {})
+      if (run.ok) showTidyFeedback(run)
     },
-    [applyTile, tidyBoards, fitToBoards, paneSize, setActiveTile, setFocusedId]
+    [applyTile, setActiveTile, setFocusedId]
   )
 
   // Responsive tiling: while a tile preset owns the layout, re-tile to the new window aspect on

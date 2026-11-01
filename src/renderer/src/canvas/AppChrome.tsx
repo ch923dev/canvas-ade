@@ -263,6 +263,9 @@ function PresetThumb({ preset }: { preset: LayoutPreset }): ReactElement {
 // since OS-3, so this popover z-orders over them — no detach-while-open dance needed.)
 function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): ReactElement {
   const [open, setOpen] = useState(false)
+  // The hovered / focused preset's hint, shown under the grid (DESIGN W2 / W6); the first
+  // preset's — By role, the `T` default — until the pointer or focus moves.
+  const [hint, setHint] = useState(LAYOUT_PRESETS[0].hint)
   const triggerRef = useRef<HTMLDivElement>(null)
 
   return (
@@ -291,6 +294,8 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
                 className="ca-tidy-preset"
                 role="menuitem"
                 title={p.hint}
+                onMouseEnter={() => setHint(p.hint)}
+                onFocus={() => setHint(p.hint)}
                 onClick={() => {
                   setOpen(false)
                   onTidy(p)
@@ -301,6 +306,7 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
               </button>
             ))}
           </div>
+          <div style={styles.tidyHint}>{hint}</div>
         </Menu>
       )}
     </div>
@@ -615,7 +621,8 @@ const styles: Record<string, CSSProperties> = {
     padding: '0 2px 6px'
   },
   tidyGrid: { display: 'flex', flexWrap: 'wrap', gap: 4 },
-  tidyLabel: { fontSize: 10.5, lineHeight: '12px', textAlign: 'center' }
+  tidyLabel: { fontSize: 10.5, lineHeight: '12px', textAlign: 'center' },
+  tidyHint: { fontSize: 11, lineHeight: '14px', color: 'var(--text-3)', padding: '6px 2px 0' }
 }
 
 // H8: memoized. CanvasInner subscribes to the whole `boards` array, so it re-renders on every
