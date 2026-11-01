@@ -90,7 +90,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.2",
-    "electron": "^42.11.15",
+    "electron": "^42.11.18",
     "electron-builder": "^26.15.5",
     "electron-builder-squirrel-windows": "^26.15.5",
     "electron-vite": "^5.0.0",
@@ -149,7 +149,9 @@
       "ip-address": ">=10.7.1 <11",
       "js-yaml@>=4.0.0 <5.0.0": ">=4.3.2 <5",
       "nanoid@>=3.0.0 <4.0.0": ">=3.3.18 <4",
-      "source-map-js": ">=1.2.2 <2"
+      "source-map-js": ">=1.2.2 <2",
+      "body-parser": ">=2.4.0 <3",
+      "zod": ">=4.6.6 <5"
     }
   }
 }
