@@ -66,12 +66,13 @@ describe('applySpatialMcpCommand tidyBoards (S0 — screen-aware agent tidy)', (
     expect(positions()).toEqual(expected)
   })
 
-  it('G4: frames the camera on the result via the focusCamera path, still ONE undo step', () => {
+  it('G4: frames the camera on the ARRANGED bbox via the focusCamera bus, still ONE undo step', () => {
     seedOverlapping()
     const ack = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(ack).toMatchObject({ ok: true, type: 'tidyBoards' })
     expect(useCameraRequestStore.getState().seq).toBe(1)
-    expect(useCameraRequestStore.getState().target).toEqual({ kind: 'all' })
+    // A rect computed from the post-tidy geometry (rf.fitView would read RF's stale nodes).
+    expect(useCameraRequestStore.getState().target).toMatchObject({ kind: 'rect' })
     expect(useCanvasStore.getState().past).toHaveLength(1)
   })
 
@@ -79,8 +80,55 @@ describe('applySpatialMcpCommand tidyBoards (S0 — screen-aware agent tidy)', (
     seedOverlapping()
     applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     const again = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
-    expect(again).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
+    expect(again).toMatchObject({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCameraRequestStore.getState().seq).toBe(2)
+  })
+
+  it('fit:false leaves the camera alone', () => {
+    seedOverlapping()
+    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid', fit: false })
+    expect(useCameraRequestStore.getState().seq).toBe(0)
+  })
+})
+
+describe('applySpatialMcpCommand tidyBoards — I2 routing + the widened C6 ack', () => {
+  it('fit acks { moved, fitZoom, readable } and no units', () => {
+    seedOverlapping()
+    useCanvasViewStore.setState({ pane: { w: 1600, h: 900 } })
+    const ack = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'fit' })
+    if (!ack.ok) throw new Error(ack.error)
+    expect(ack.moved).toBeGreaterThan(0)
+    expect(ack.fitZoom).toBeGreaterThan(0)
+    expect(ack.readable).toBe(true)
+    expect(ack.units).toBeUndefined()
+  })
+
+  it('roles (MAIN sends mode roles + implicit:true for an omitted mode) acks units[] {scene, heroIds, why}', () => {
+    seedOverlapping()
+    const ack = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'roles', implicit: true })
+    if (!ack.ok) throw new Error(ack.error)
+    expect(ack.units?.length).toBeGreaterThan(0)
+    for (const u of ack.units ?? []) {
+      expect(Object.keys(u).sort()).toEqual(['heroIds', 'scene', 'why'])
+      expect(typeof u.why).toBe('string')
+    }
+  })
+
+  it('re-validates the IPC-crossed command: implicit with a non-roles mode / bad scope ⇒ {ok:false}', () => {
+    seedOverlapping()
+    const before = useCanvasStore.getState().boards
+    expect(applySpatialMcpCommand({ type: 'tidyBoards', mode: 'fit', implicit: true }).ok).toBe(
+      false
+    )
+    expect(
+      applySpatialMcpCommand({
+        type: 'tidyBoards',
+        mode: 'fit',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        scope: { groupId: 'g', boardIds: ['b1'] } as any
+      }).ok
+    ).toBe(false)
+    expect(useCanvasStore.getState().boards).toBe(before)
   })
 })
 
@@ -115,6 +163,20 @@ describe('applySpatialMcpCommand focusCamera / spawnGroup (moved unchanged — C
     const st = useCanvasStore.getState()
     expect(st.groups).toEqual([{ id: 'grp-1', name: 'Auth zone', boardIds: ['t-1', 'b-1'] }])
     expect(st.past).toHaveLength(1)
+  })
+
+  it('spawnGroup centres the zone on the canvas PANE (not the window) — I2 P3', () => {
+    useCanvasStore.setState({ viewport: { x: 0, y: 0, zoom: 1 } })
+    useCanvasViewStore.setState({ pane: { w: 1000, h: 600 } })
+    applySpatialMcpCommand({
+      type: 'spawnGroup',
+      group: { id: 'grp-c', name: 'Centred' },
+      members: { terminal: { id: 't-c' } }
+    })
+    const t = useCanvasStore.getState().boards.find((b) => b.id === 't-c')!
+    // Anchored around the pane centre (500, 300) — the free-slot search only nudges off collisions.
+    expect(Math.abs(t.x - 500)).toBeLessThan(t.w + 100)
+    expect(Math.abs(t.y - 300)).toBeLessThan(t.h + 100)
   })
 
   it('spawnGroup rejects a malformed envelope without mutating the canvas', () => {

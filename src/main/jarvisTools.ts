@@ -36,6 +36,7 @@ import {
   executeJarvisGroupTool,
   type JarvisGroupFacet
 } from './jarvisGroupTools'
+import type { TidyCanvasResult } from './mcpTidy'
 
 /** A Claude Messages-API tool definition (name + JSON-Schema input). */
 export interface JarvisToolDef {
@@ -78,7 +79,8 @@ export interface JarvisCanvasFacet extends JarvisGroupFacet {
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
-  tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
+  /** No `mode` — always the implicit `roles` default (D8 a). Unknown / docked ids are dropped. */
+  tidyCanvas(input: { primary?: string; boardIds?: string[] }): Promise<TidyCanvasResult>
   boardCards(boardId: string): Promise<unknown>
 }
 
@@ -134,8 +136,20 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
     {
       name: 'tidy_canvas',
       description:
-        'Reposition every board into a clean non-overlapping arrangement (one undoable step). Runs without confirmation.',
-      input_schema: { type: 'object', properties: {}, additionalProperties: false }
+        'Arrange the canvas BY ROLE to fit the user\'s screen: the lead or browser gets the big slot and linked boards sit beside it (terminals may be resized; planning/kanban/file boards keep their size). One undoable step; runs without confirmation. Optional: primary = the board to make the hero ("make the browser the main one"); boards = arrange ONLY these boards ("tidy up the terminals"), everything else stays put. Omit both to tidy the whole canvas.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          primary: { type: 'string', description: `The hero board. ${BOARD_ARG}` },
+          boards: {
+            type: 'array',
+            items: { type: 'string', description: BOARD_ARG },
+            maxItems: MAX_ITEMS,
+            description: 'Arrange only these boards (each a board reference).'
+          }
+        },
+        additionalProperties: false
+      }
     },
     {
       name: 'spawn_board',
@@ -278,6 +292,26 @@ function reqStr(input: Record<string, unknown>, key: string, max: number): strin
   return v.trim()
 }
 
+/** An optional list of non-empty strings (each ≤ `max`), at most `maxItems` long. */
+function optStrList(
+  input: Record<string, unknown>,
+  key: string,
+  maxItems: number,
+  max: number
+): string[] | undefined {
+  const v = input[key]
+  if (v === undefined || v === null) return undefined
+  if (!Array.isArray(v) || v.length > maxItems) {
+    throw new ToolArgError(`"${key}" must be a list of at most ${maxItems} strings`)
+  }
+  return v.map((item) => {
+    if (typeof item !== 'string' || item.length > max) {
+      throw new ToolArgError(`"${key}" items must be strings of at most ${max} chars`)
+    }
+    return item.trim()
+  })
+}
+
 function optStr(input: Record<string, unknown>, key: string, max: number): string | undefined {
   const v = input[key]
   if (v === undefined || v === null) return undefined
@@ -296,6 +330,16 @@ function clip(s: string, max: number): string {
  * against the live model. Ambiguity throws with the candidates — the model is prompted to
  * ask the user a one-line disambiguation question rather than guess.
  */
+/** {@link resolveBoardRef} that yields `undefined` instead of throwing (unknown / ambiguous). */
+function tryBoardRef(model: AppModel, ref: string): string | undefined {
+  try {
+    return resolveBoardRef(model, ref).id
+  } catch (e) {
+    if (e instanceof ToolArgError) return undefined
+    throw e
+  }
+}
+
 export function resolveBoardRef(
   model: AppModel,
   ref: string,
@@ -435,7 +479,20 @@ export async function executeJarvisTool(
         return ok(summarizeJarvisTool(name, detail), outcome)
       }
       case 'tidy_canvas': {
-        const outcome = await deps.facet.tidyCanvas({})
+        // C7 amendment: no mode (implicit roles). References resolve leniently — an unknown or
+        // ambiguous one is DROPPED, not fatal (MAIN also drops docked ids); an emptied scope no-ops.
+        const model = await deps.facet.describeApp()
+        const primaryRef = optStr(input, 'primary', 200)
+        const primary = primaryRef !== undefined ? tryBoardRef(model, primaryRef) : undefined
+        const refs = optStrList(input, 'boards', MAX_ITEMS, 200)
+        const boardIds = refs?.flatMap((r) => tryBoardRef(model, r) ?? [])
+        if (boardIds !== undefined && boardIds.length === 0) {
+          return ok(summarizeJarvisTool(name, 'no matching boards — nothing moved'), { moved: 0 })
+        }
+        const outcome = await deps.facet.tidyCanvas({
+          ...(primary !== undefined ? { primary } : {}),
+          ...(boardIds !== undefined ? { boardIds } : {})
+        })
         return ok(summarizeJarvisTool(name, `${outcome.moved} board(s) moved`), outcome)
       }
       case 'spawn_board': {

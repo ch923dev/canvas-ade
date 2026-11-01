@@ -366,6 +366,21 @@ export function __clearSnapshotListenersForTest(): void {
 const MAX_BOARDS = 500
 const MAX_CONNECTORS = 1000
 const MAX_GROUPS = 200
+
+/** How many raw entries a sanitizer may SCAN per output slot it can keep (malformed entries are
+ *  skipped, so a cap-sized window alone could starve a payload with a few bad rows). */
+const SCAN_FACTOR = 4
+
+/**
+ * Bound a sanitizer's scan BEFORE it iterates (I2 P3). `for…of` walks every index of a sparse
+ * array — holes included — so a forged `mcp:boards` array with `length` 2^32-1 and no elements
+ * never fills `out` and spins MAIN for minutes. Every loop over IPC data scans at most
+ * `cap × SCAN_FACTOR` entries; `slice` copies only that window. A legit payload is never longer.
+ */
+function scanOf(input: readonly unknown[], cap: number): readonly unknown[] {
+  const limit = cap * SCAN_FACTOR
+  return input.length > limit ? input.slice(0, limit) : input
+}
 /** Cap a single group's membership so one forged group can't grow MAIN memory unbounded. */
 const MAX_GROUP_MEMBERS = 500
 /** Cap a single planning board's mirrored file references (file-tree S5) so a forged push can't grow MAIN memory. */
@@ -407,7 +422,7 @@ const MAX_PLANNING_PREVIEW = 500
 function sanitizeFileRefs(input: unknown): FileRefMirror[] | undefined {
   if (!Array.isArray(input)) return undefined
   const out: FileRefMirror[] = []
-  for (const r of input) {
+  for (const r of scanOf(input, MAX_FILEREFS)) {
     if (out.length >= MAX_FILEREFS) break
     if (
       r &&
@@ -457,7 +472,7 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
   const { elements } = input as { elements?: unknown }
   if (!Array.isArray(elements)) return undefined
   const out: PlanningElementMirror[] = []
-  for (const e of elements) {
+  for (const e of scanOf(elements, MAX_PLANNING_ELEMENTS)) {
     if (out.length >= MAX_PLANNING_ELEMENTS) break
     if (!e || typeof e !== 'object') continue
     const rec = e as Record<string, unknown>
@@ -499,7 +514,7 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
     }
     if (kind === 'checklist' && Array.isArray(rec.items)) {
       const items: PlanningItemMirror[] = []
-      for (const it of rec.items) {
+      for (const it of scanOf(rec.items, MAX_PLANNING_ITEMS)) {
         if (items.length >= MAX_PLANNING_ITEMS) break
         if (!it || typeof it !== 'object') continue
         const iid = boundedStr((it as Record<string, unknown>).id)
@@ -521,7 +536,7 @@ function sanitizePlanning(input: unknown): PlanningMirror | undefined {
 function sanitizeCardTags(input: unknown): string[] | undefined {
   if (!Array.isArray(input)) return undefined
   const out: string[] = []
-  for (const t of input) {
+  for (const t of scanOf(input, MAX_KANBAN_CARD_TAGS)) {
     if (out.length >= MAX_KANBAN_CARD_TAGS) break
     const v = boundedStr(t)
     if (v !== undefined) out.push(v)
@@ -537,7 +552,7 @@ function sanitizeCardTags(input: unknown): string[] | undefined {
 function sanitizeCardFileRefs(input: unknown): KanbanCardFileRefMirror[] | undefined {
   if (!Array.isArray(input)) return undefined
   const out: KanbanCardFileRefMirror[] = []
-  for (const r of input) {
+  for (const r of scanOf(input, MAX_KANBAN_CARD_FILE_REFS)) {
     if (out.length >= MAX_KANBAN_CARD_FILE_REFS) break
     if (!r || typeof r !== 'object') continue
     const path = boundedStr((r as KanbanCardFileRefMirror).path, MAX_KANBAN_FILE_REF_PATH)
@@ -569,7 +584,7 @@ function sanitizeCardFileRefs(input: unknown): KanbanCardFileRefMirror[] | undef
 function sanitizeCardAttachments(input: unknown): KanbanAttachmentMirror[] | undefined {
   if (!Array.isArray(input)) return undefined
   const out: KanbanAttachmentMirror[] = []
-  for (const a of input) {
+  for (const a of scanOf(input, MAX_KANBAN_CARD_ATTACHMENTS)) {
     if (out.length >= MAX_KANBAN_CARD_ATTACHMENTS) break
     if (!a || typeof a !== 'object') continue
     const rec = a as Record<string, unknown>
@@ -606,7 +621,7 @@ function sanitizeKanban(input: unknown): KanbanMirror | undefined {
   } = input as { columns?: unknown; cards?: unknown; columnAxis?: unknown; axisLabel?: unknown }
   const cols: KanbanColumnMirror[] = []
   if (Array.isArray(columns)) {
-    for (const c of columns) {
+    for (const c of scanOf(columns, MAX_KANBAN_COLUMNS)) {
       if (cols.length >= MAX_KANBAN_COLUMNS) break
       if (!c || typeof c !== 'object') continue
       const id = boundedStr((c as KanbanColumnMirror).id)
@@ -620,7 +635,7 @@ function sanitizeKanban(input: unknown): KanbanMirror | undefined {
   }
   const out: KanbanCardMirror[] = []
   if (Array.isArray(cards)) {
-    for (const c of cards) {
+    for (const c of scanOf(cards, MAX_KANBAN_CARDS)) {
       if (out.length >= MAX_KANBAN_CARDS) break
       if (!c || typeof c !== 'object') continue
       const id = boundedStr((c as KanbanCardMirror).id)
@@ -679,7 +694,7 @@ function sanitizeKanban(input: unknown): KanbanMirror | undefined {
 export function sanitizeSnapshot(input: unknown): BoardMirror[] {
   if (!Array.isArray(input)) return []
   const out: BoardMirror[] = []
-  for (const b of input) {
+  for (const b of scanOf(input, MAX_BOARDS)) {
     if (out.length >= MAX_BOARDS) break
     if (
       b &&
@@ -759,7 +774,7 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
 export function sanitizeConnectors(input: unknown): ConnectorMirror[] {
   if (!Array.isArray(input)) return []
   const out: ConnectorMirror[] = []
-  for (const c of input) {
+  for (const c of scanOf(input, MAX_CONNECTORS)) {
     if (out.length >= MAX_CONNECTORS) break
     if (
       c &&
@@ -794,7 +809,7 @@ export function sanitizeConnectors(input: unknown): ConnectorMirror[] {
 export function sanitizeGroups(input: unknown): GroupMirror[] {
   if (!Array.isArray(input)) return []
   const out: GroupMirror[] = []
-  for (const g of input) {
+  for (const g of scanOf(input, MAX_GROUPS)) {
     if (out.length >= MAX_GROUPS) break
     if (
       g &&
@@ -806,7 +821,7 @@ export function sanitizeGroups(input: unknown): GroupMirror[] {
       const { id, name, boardIds } = g as GroupMirror
       if (id.length > MAX_FIELD_LEN || name.length > MAX_FIELD_LEN) continue
       const members: string[] = []
-      for (const bid of boardIds) {
+      for (const bid of scanOf(boardIds, MAX_GROUP_MEMBERS)) {
         if (members.length >= MAX_GROUP_MEMBERS) break
         if (typeof bid === 'string' && bid.length <= MAX_FIELD_LEN) members.push(bid)
       }
@@ -861,7 +876,7 @@ export function sanitizeView(input: unknown): CanvasView | null {
 function sanitizePorts(input: unknown): number[] | undefined {
   if (!Array.isArray(input)) return undefined
   const out: number[] = []
-  for (const p of input) {
+  for (const p of scanOf(input, MAX_CONTEXT_PORTS)) {
     if (out.length >= MAX_CONTEXT_PORTS) break
     if (typeof p !== 'number' || !Number.isInteger(p) || p < 1 || p > 65535) continue
     if (!out.includes(p)) out.push(p)

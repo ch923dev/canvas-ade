@@ -15,7 +15,7 @@ import type { BoardPlanning } from './mcpBoardPlanning'
 import type { PlanningEditPatch } from '../shared/mcpTypes'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FindingsPublishResult } from './findingsPublish'
-import type { TidyCanvasHostInput } from './mcpTidy'
+import type { TidyCanvasHostInput, TidyCanvasResult } from './mcpTidy'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -236,16 +236,16 @@ export type LifecycleOrchestrator = Omit<
   updatePlanningElement(boardId: string, elementId: string, patch: PlanningEditPatch): Promise<void>
   removePlanningElement(boardId: string, elementId: string): Promise<void>
   /**
-   * 🔒 Tidy the whole canvas (P2) — reposition every board into a clean, non-overlapping arrangement
-   * via the renderer's deterministic packer (`canvasStore.tidyBoards`). NARROWS the package's
-   * `tidyCanvas(): Promise<unknown>` to the concrete host-owned `{ moved }` (the package does not own
-   * that type — same discipline as `describeLayout`). Content-less (reposition-only, one host-undo
-   * reversible). The input is the 0.27 wire shape — incl. the lead/connected caller's
+   * 🔒 Tidy the canvas (P2; spatial I2) — arrange the boards (fit / roles / tile / legacy packers)
+   * via the renderer applier. NARROWS the package's `tidyCanvas(): Promise<unknown>` to the concrete
+   * host-owned {@link TidyCanvasResult} (`{ moved, fitZoom, readable, pages?, units? }` — the package
+   * does not own that type, same discipline as `describeLayout`). Content-less, one host-undo
+   * reversible step. The input is the 0.27 wire shape — incl. the lead/connected caller's
    * `sourceBoardId`, which raises the D1 human confirm (`./mcpTidy`). Keep it the full wire shape:
    * method params are checked bivariantly, so tsc accepts a narrower one that silently ignores a
    * field (how the 0.27 `sourceBoardId` nearly went un-gated).
    */
-  tidyCanvas(input: TidyCanvasHostInput): Promise<{ moved: number }>
+  tidyCanvas(input: TidyCanvasHostInput): Promise<TidyCanvasResult>
   /**
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally

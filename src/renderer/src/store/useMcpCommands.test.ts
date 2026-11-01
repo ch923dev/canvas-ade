@@ -1046,23 +1046,24 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     expect(useCanvasStore.getState().past).toHaveLength(1)
   })
 
-  it('falls back to smart for an off-enum mode (defense in depth) and still tidies', () => {
+  it('REJECTS an off-enum mode (defense in depth, shared parseTidyArgs) and moves nothing', () => {
     seedOverlapping()
+    const before = useCanvasStore.getState().boards
     const ack = applyMcpCommand({
       type: 'tidyBoards',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       mode: 'diagonal' as any
     })
-    expect(ack.ok).toBe(true)
-    if (!ack.ok) throw new Error('expected ok')
-    expect(ack.moved).toBeGreaterThan(0)
+    expect(ack.ok).toBe(false)
+    expect(useCanvasStore.getState().boards).toBe(before)
+    expect(useCanvasStore.getState().past).toHaveLength(0)
   })
 
   it('no-ops with < 2 boards — acks moved:0 and pushes no undo step', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'solo', type: 'terminal' } })
     useCanvasStore.setState({ past: [], future: [] })
     const ack = applyMcpCommand({ type: 'tidyBoards' })
-    expect(ack).toEqual({ ok: true, type: 'tidyBoards', moved: 0 })
+    expect(ack).toMatchObject({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCanvasStore.getState().past).toHaveLength(0)
   })
 })

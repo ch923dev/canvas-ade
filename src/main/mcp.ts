@@ -3,6 +3,7 @@ import type { BoardResult, RunningMcpServer, TokenStore } from '@expanse-ade/mcp
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
+import { jarvisTidyInput, type TidyCanvasResult } from './mcpTidy'
 import type { BoardPlanning } from './mcpBoardPlanning'
 import type { ContextsDigest, GroupRowResult } from './mcpGroups'
 import type { GroupEditOp } from '../shared/mcpTypes'
@@ -200,7 +201,8 @@ export interface RunningMcp {
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
-  tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
+  /** Jarvis's tidy (C7 amendment): no `mode` (implicit roles), optional hero + board scope. */
+  tidyCanvas(input: { primary?: string; boardIds?: string[] }): Promise<TidyCanvasResult>
   boardCards(boardId: string): Promise<unknown>
   /**
    * Spatial I1: Jarvis's Named-Group slice (jarvisGroupTools.ts) — the SAME orchestrator methods
@@ -399,7 +401,11 @@ export async function startMcpServer(
       moveCard: (boardId, cardId, to) => orchestrator.moveCard(boardId, cardId, to),
       visualizePlan: (spec) => orchestrator.visualizePlan(spec),
       focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
-      tidyCanvas: (input) => orchestrator.tidyCanvas(input),
+      // C7 amendment: unknown / docked ids drop against the live mirror; an emptied scope is a no-op.
+      tidyCanvas: async (input) => {
+        const live = jarvisTidyInput(input, registry.listBoards())
+        return live ? orchestrator.tidyCanvas(live) : { moved: 0 }
+      },
       boardCards: (boardId) => orchestrator.boardCards(boardId),
       describeContexts: () => orchestrator.describeContexts(),
       groupBoards: (input) => orchestrator.groupBoards(input),

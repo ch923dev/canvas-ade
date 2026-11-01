@@ -38,12 +38,11 @@ import { READABLE_ZOOM, fitZoom, type Rect } from '../../../shared/spatialGeomet
 import { FIT_UNIT_GAP, fitLayout, type FitOverflow } from './fitLayout'
 import {
   availOf,
-  gridColumns,
   memberOf,
   quantizeZoom,
   shelfLayout,
   sizeOf,
-  solveGrid,
+  solvePeers,
   solveTree,
   type Cell,
   type Solved
@@ -443,14 +442,12 @@ function layoutUnit(u: PlanUnit, ctx: Ctx, stage: boolean): Laid {
   }
   if (primary === undefined && (u.scene === 'peers' || heroes.length === 0)) {
     const order = rankBoards(ids, ctx.list, ctx.roles)
-    const run = (floor: 'role' | 'board', cap: number): { cols: number; s: Solved } => {
-      const ms = order.map(member(floor))
-      const cols = gridColumns(ms, ctx.avail)
-      return { cols, s: solveGrid(ms, cols, ctx.avail, cap) }
-    }
+    // Rigid members (plan / kanban / file) shelve under the grid instead of sizing its cells.
+    const run = (floor: 'role' | 'board', cap: number): ReturnType<typeof solvePeers> =>
+      solvePeers(order.map(member(floor)), ctx.avail, cap)
     let g = run('role', zMax)
     if (shrink && g.s.z < ctx.readable) g = run('board', Math.min(zMax, ctx.readable))
-    const grid = { cols: g.cols, rows: Math.ceil(ids.length / g.cols) }
+    const grid = { cols: g.cols, rows: g.rows }
     return done('grid', `grid/${grid.cols}x${grid.rows}`, g.s.cells, 'sized', [], g.s.z, grid)
   }
   const others = orderOthers(heroes, ids, ctx)

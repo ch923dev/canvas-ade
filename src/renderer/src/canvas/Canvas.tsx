@@ -553,7 +553,7 @@ function CanvasInner(): ReactElement {
 
   // H1 (Lane H): consume MCP focus_viewport requests parked by the applier — executes the SAME
   // focusBoardById / fitGroup verbs wired above, so agent-driven focus can't drift from user focus.
-  useCameraFocusRequests({ rf, focusBoardById, fitGroup })
+  useCameraFocusRequests({ rf, focusBoardById, fitGroup, focusGroup })
 
   // Drag start: checkpoint for undo. (Browser previews paint into a clipping DOM <canvas>
   // since OS-3, so a dragged board z-orders normally over them — no live-view detach needed.)

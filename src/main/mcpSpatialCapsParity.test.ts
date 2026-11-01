@@ -4,7 +4,7 @@ import { GROUP_NAME_MAX } from '../shared/groupName'
 import { MAX_CONTEXTS } from '../shared/deriveContexts'
 import { SPAWN_GROUP_MAX_NAME } from './mcpLifecycle'
 import { MAX_GROUP_BATCH, MAX_GROUP_MEMBERS } from './mcpGroups'
-import { PENDING_TIDY_MODES, SUPPORTED_TIDY_MODES } from './mcpTidy'
+import { TIDY_ID_MAX, TIDY_MODES, TIDY_OVERFLOW, TILE_TEMPLATES } from '../shared/tidyContract'
 
 /**
  * Cross-repo parity for the spatial wire (`@expanse-ade/mcp` 0.27.0, SPEC C6) — the
@@ -14,8 +14,10 @@ import { PENDING_TIDY_MODES, SUPPORTED_TIDY_MODES } from './mcpTidy'
  * never heard of. An export missing from the installed package SKIPS with a visible reason.
  *
  * The per-row `MAX_GROUP_MEMBERS` (50) is not `boardRegistry`'s 500, which bounds the MIRROR.
- * `TILE_TEMPLATES` ↔ `layoutPresets.ts` pairs when I2 wires `mode:'tile'` (MAIN rejects it until
- * then, and a renderer module cannot be imported under this file's node tsconfig).
+ * The tidy vocabularies pair with the SHARED `tidyContract.ts` (the one rule set MAIN and the
+ * renderer applier both parse with, I2); its `TILE_TEMPLATES` ↔ the renderer's tile presets is
+ * pinned on the renderer side (`layoutPresets.test.ts` — a renderer module cannot be imported
+ * under this file's node tsconfig).
  */
 describe('spatial caps ↔ @expanse-ade/mcp parity', () => {
   const pkg = mcpPkg as unknown as Record<string, unknown>
@@ -28,7 +30,9 @@ describe('spatial caps ↔ @expanse-ade/mcp parity', () => {
     ['MAX_CONTEXTS', MAX_CONTEXTS, 'shared/deriveContexts MAX_CONTEXTS'],
     // group_boards / edit_groups: the wire's batch + member caps, re-checked host-side by mcpGroups.
     ['MAX_GROUP_BATCH', MAX_GROUP_BATCH, 'mcpGroups MAX_GROUP_BATCH'],
-    ['MAX_GROUP_MEMBERS', MAX_GROUP_MEMBERS, 'mcpGroups MAX_GROUP_MEMBERS']
+    ['MAX_GROUP_MEMBERS', MAX_GROUP_MEMBERS, 'mcpGroups MAX_GROUP_MEMBERS'],
+    // tidy_canvas `primary` / `scope.groupId`: the wire's id cap = the shared contract's.
+    ['MAX_FOCUS_TARGET_ID', TIDY_ID_MAX, 'shared/tidyContract TIDY_ID_MAX']
   ]
   for (const [name, hostValue, hostName] of pairs) {
     it(`${name} matches ${hostName}`, ({ skip }) => {
@@ -41,10 +45,16 @@ describe('spatial caps ↔ @expanse-ade/mcp parity', () => {
     })
   }
 
-  it('every TIDY_MODES value is one the host either runs or rejects as "not supported yet"', () => {
-    // A new wire mode must be a deliberate host decision, never an "unknown mode" surprise. Once I2
-    // wires fit/roles/tile, PENDING empties into SUPPORTED and this stays green unchanged.
-    const host = new Set<string>([...SUPPORTED_TIDY_MODES, ...PENDING_TIDY_MODES])
-    expect(new Set(mcpPkg.TIDY_MODES)).toEqual(host)
-  })
+  // A wire vocabulary must equal the shared contract's exactly: wider lets an agent pick a value
+  // the host rejects as unknown; narrower means a host mode no agent can reach.
+  const vocabularies: Array<[string, readonly string[]]> = [
+    ['TIDY_MODES', TIDY_MODES],
+    ['TILE_TEMPLATES', TILE_TEMPLATES],
+    ['TIDY_OVERFLOW', TIDY_OVERFLOW]
+  ]
+  for (const [name, host] of vocabularies) {
+    it(`${name} matches shared/tidyContract ${name}`, () => {
+      expect(new Set(pkg[name] as readonly string[])).toEqual(new Set(host))
+    })
+  }
 })

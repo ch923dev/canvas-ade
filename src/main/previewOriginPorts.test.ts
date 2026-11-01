@@ -179,6 +179,38 @@ describe('observeOriginPorts', () => {
     expect(emit).toHaveBeenCalledWith([3000])
   })
 
+  it('reset() (a new page) drops the old ports and re-emits — empty, or the new page’s set (I2 P3)', () => {
+    const fake = fakeSession()
+    const emit = vi.fn()
+    const obs = observeOriginPorts(fake.session, emit)
+    fake.fire('http://localhost:3000/api')
+    settle()
+    expect(emit).toHaveBeenLastCalledWith([3000])
+    // Navigated to a page that calls nothing on loopback: the stale :3000 must not linger.
+    obs.reset()
+    expect(obs.ports()).toEqual([])
+    settle()
+    expect(emit).toHaveBeenLastCalledWith([])
+    // Navigated again; the new page's requests inside the window ARE the emitted set.
+    fake.fire('http://localhost:4000/')
+    settle()
+    obs.reset()
+    fake.fire('http://localhost:5173/')
+    settle()
+    expect(emit).toHaveBeenLastCalledWith([5173])
+    expect(emit).toHaveBeenCalledTimes(4)
+  })
+
+  it('reset() on a disposed observer is a no-op', () => {
+    const fake = fakeSession()
+    const emit = vi.fn()
+    const obs = observeOriginPorts(fake.session, emit)
+    obs.dispose()
+    obs.reset()
+    settle()
+    expect(emit).not.toHaveBeenCalled()
+  })
+
   it('a rejected filter yields an inert observer — the preview still opens', () => {
     const fake = fakeSession({ throwOnRegister: true })
     const emit = vi.fn()

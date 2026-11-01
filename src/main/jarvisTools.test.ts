@@ -304,6 +304,63 @@ describe('executeJarvisTool', () => {
     expect(confirm).not.toHaveBeenCalled()
   })
 
+  it('tidy_canvas has NO mode (implicit roles) and takes optional primary + boards (C7 amendment)', () => {
+    const def = buildJarvisToolDefs().find((d) => d.name === 'tidy_canvas')!
+    const props = (def.input_schema as { properties: Record<string, unknown> }).properties
+    expect(Object.keys(props).sort()).toEqual(['boards', 'primary'])
+    expect(def.input_schema).toMatchObject({ additionalProperties: false })
+    expect(isJarvisToolGated('tidy_canvas')).toBe(false) // tier unchanged: READ, auto-allow
+  })
+
+  it('tidy_canvas with no args forwards {} — the whole-canvas implicit roles', async () => {
+    const facet = makeFacet()
+    await executeJarvisTool('tidy_canvas', {}, { facet, confirm: vi.fn(approve) })
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({})
+  })
+
+  it('tidy_canvas resolves primary + boards (id prefix or exact title) to full ids (S14 / S12)', async () => {
+    const facet = makeFacet()
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { primary: 'Sprint board', boards: [TERM_ID.slice(0, 8), 'Sprint board'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(r.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({
+      primary: KANBAN_ID,
+      boardIds: [TERM_ID, KANBAN_ID]
+    })
+  })
+
+  it('tidy_canvas DROPS unknown references; all-unknown boards is a no-op (facet never called)', async () => {
+    const facet = makeFacet()
+    const one = await executeJarvisTool(
+      'tidy_canvas',
+      { primary: 'no such board', boards: ['auth api', 'ghost'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(one.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({ boardIds: [TERM_ID] })
+    const none = await executeJarvisTool(
+      'tidy_canvas',
+      { boards: ['ghost', 'phantom'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(none.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledTimes(1)
+  })
+
+  it('tidy_canvas rejects a malformed boards list (model output is untrusted)', async () => {
+    const facet = makeFacet()
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { boards: 'auth api' },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(r.isError).toBe(true)
+    expect(facet.tidyCanvas).not.toHaveBeenCalled()
+  })
+
   it('list_boards projects id8 + title + status (never page content fields)', async () => {
     const facet = makeFacet()
     const r = await executeJarvisTool('list_boards', {}, { facet, confirm: approve })

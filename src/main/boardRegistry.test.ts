@@ -860,3 +860,42 @@ describe('subscribeBoardStatus', () => {
     unsubGood()
   })
 })
+
+describe('boardRegistry — sparse-array scan bound (I2 P3)', () => {
+  // `new Array(2**32 - 1)` is a hole-only array of maximal length: an unbounded `for…of` walks every
+  // index and never fills its output, so each sanitizer must cap the SCAN, not just the kept rows.
+  const huge = (): unknown[] => new Array(2 ** 32 - 1)
+
+  it('sanitizeSnapshot / sanitizeConnectors / sanitizeGroups return promptly on a forged length', () => {
+    const t0 = Date.now()
+    expect(sanitizeSnapshot(huge())).toEqual([])
+    expect(sanitizeConnectors(huge())).toEqual([])
+    expect(sanitizeGroups(huge())).toEqual([])
+    expect(Date.now() - t0).toBeLessThan(1000)
+  })
+
+  it('nested arrays (group members, context ports, planning elements) are bounded too', () => {
+    const t0 = Date.now()
+    expect(sanitizeGroups([{ id: 'g', name: 'G', boardIds: huge() }])).toEqual([
+      { id: 'g', name: 'G', boardIds: [] }
+    ])
+    expect(sanitizeContextFields({ ports: huge(), callsPorts: huge() })).toEqual({})
+    const out = sanitizeSnapshot([
+      {
+        id: 'p',
+        type: 'planning',
+        title: 'Plan',
+        status: 'idle',
+        elements: huge(),
+        fileRefs: huge()
+      }
+    ])
+    expect(out).toHaveLength(1)
+    expect(Date.now() - t0).toBeLessThan(1000)
+  })
+
+  it('a legit payload with a few malformed rows still keeps its good rows', () => {
+    const ports = [0, -1, 'x', 3000, 3000, 5173]
+    expect(sanitizeContextFields({ ports })).toEqual({ ports: [3000, 5173] })
+  })
+})
