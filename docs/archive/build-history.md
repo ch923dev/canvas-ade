@@ -5484,3 +5484,47 @@ Gates:
 
 Follow-up: `@expanse-ade/mcp` 0.27.1 moves its own pins to the patched v2 family and moves
 `client` to devDeps. After that, the Wave 3 pin bump can drop the MCP-family overrides.
+
+## PR #439 — e2e: per-worker profile + guarded daemon kill on close (v0.47.18) · squash `a43c5ae9` · 2026-11-01
+
+E2E infra fix. With `E2E_WORKERS=2` both workers' apps shared `profiles/<slug>-e2e` and so ONE
+ptyHost daemon; the #437 close fallback (`/T /F`) then killed the other worker's live terminals
+mid-test (the "ConPTY" flake class). It also honoured an inherited `CANVAS_USERDATA` and never
+checked what the pid was.
+- `profileIsolation.ts`: under `CANVAS_E2E`, `CANVAS_E2E_WORKER` picks the profile (slot 0 keeps
+  `-e2e`; slot n>0 gets `-e2e-w<n>`; anything but a 1–2 digit integer falls back to `-e2e`).
+- `e2e/fixtures.ts`: `workerAppEnv()` sets it from `TEST_PARALLEL_INDEX` and drops inherited
+  `CANVAS_USERDATA` / `CANVAS_FRESH`.
+- `e2e/closeApp.ts`: `isPtyHostDaemon(pid)` (alive + command line runs `ptyHostDaemon`; CIM on
+  Windows, `/proc`/`ps` elsewhere) gates the kill; any probe failure skips it.
+
+Gates: cold + warm `@core` smoke at workers:2 62/62; `terminal` + `terminalIO`
+`--repeat-each=3 --retries=0` at workers:2 36/36; vitest 7403 pass (2 known `pathSafe`);
+`profileIsolation` 18/18. No dev check (e2e-only; the app-side line is read only under
+`CANVAS_E2E`). One extra profile per checkout (`-e2e-w1`, ~0.5 GB first boot); profiles are not
+reaped on worktree teardown (out of scope).
+
+## PR #441 — mcp: pin `@expanse-ade/mcp` 0.27.1 + host D1 confirm for tidy/focus (v0.47.20) · squash `0faf8fb0` · 2026-11-02
+
+Spatial Wave 3 pin bump (0.25.0 → 0.27.1: 0.26 structured error codes, 0.27 spatial tools,
+0.27.1 patched deps + fail-closed caller binding). 0.27+ registers `tidy_canvas` /
+`focus_viewport` for the lead and connected tiers and binds `sourceBoardId`; the host ignored it
+(bivariant method params, invisible to tsc), so the pin and the D1 gate shipped together.
+- `mcpTidy.ts` / `mcpFocus.ts`: `sourceBoardId` present (empty string included, fail closed) ⇒
+  ONE `registry.confirm` first; declined ⇒ structured `declined`, nothing sent. Orchestrator tier
+  and Jarvis stay un-gated.
+- New `mcpToolError.ts`: host twin of `CanvasToolError` (type-only import keeps the lazy ESM load;
+  round-trip pinned against `toolErrorCodeOf`).
+- No silent tidy degrade: explicit `mode` fit/roles/tile, scope/template/overflow/primary/resize
+  and `fit:false` ⇒ `invalid_input` ("not supported by this app version yet") before the
+  confirm. Omitted `mode` stays `smart`; D8(a)'s implicit `roles` lands with I2.
+- Deps: MCP-family `pnpm.overrides` from #438 dropped (single `@modelcontextprotocol/core`
+  2.4.0); `zod` + `body-parser` kept (non-MCP consumers via sdk 1.x / express 5.2.1).
+- Tests: per-tier `tools/list` + resources membership against the real `buildOrchestrator`
+  (`mcp.spatial.integration.test.ts`), spatial caps parity, D1 unit + wire tests, `APP_TOOLS`
+  drift update, e2e connected-tier D1 case (deny moves nothing, approve applies).
+
+Gates: unit + integration 7445 pass (2 known `pathSafe`); SCA exit 0; `@mcp` e2e 38/38
+`--retries=0`; smoke 62/62; CI `check` green; `claude-review` clean (0 inline). Dev check:
+user-verified (tidy + focus confirm, deny/approve, `/mcp` listing). Lockfile moved. Hand-off
+notes for I1 (group tools) and I2 (tidy wiring) are in the PR body.
