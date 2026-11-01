@@ -5456,3 +5456,31 @@ fixture and four self-launching specs. Gates: notifications × 3 cold 12/12 exit
 2.2 min exit 1), the 4 other specs 6/6, smoke 62/62. Dev check: user-verified (cold daemon, the
 window closes at once and `pnpm dev` returns). Follow-ups: app-side daemon spawn without handle
 inheritance; shells left alive in the daemon after a cold-daemon quit.
+
+## PR #438 — deps: clear the SCA gate — simple-git 4 + electron 42.11 + MCP v2 family (v0.47.17) · squash `436a0e26` · 2026-11-01
+
+Clears the CI SCA gate, which had blocked every PR's `check` job since 2026-08-07: SCA runs first,
+so typecheck, lint, test and build were skipped for about two months. Advisories fixed, from
+67 blocking to 0, with `WAIVERS` now empty:
+- **simple-git 3.36 → 4.0.2** (critical GHSA-x6jw). v4 throws on any explicit `GIT_*` var that is
+  not allow-listed, so the new `repoScopedGit()` in `gitEnv.ts` is now the only factory for all
+  4 MAIN call sites. No `unsafe.*` flag is enabled.
+- **electron 42.3.3 → 42.11.18**.
+- **MCP v2 family** overridden as one family: server, core and client 2.3.1, node 2.1.1,
+  express 2.0.2 (fixes GHSA-jm63 and GHSA-46jr).
+- **2026-11-01 refresh** (`a38b34b3`), for advisories published 2026-10-23: body-parser ≥2.4.0
+  (GHSA-27r3, on the MCP express path), zod ≥4.6.6 (GHSA-mrhx, MCP tool-input validation), and
+  electron ≥42.11.16 (GHSA-jr5w, compromised eMudhra certificates).
+- Dev/build-only overrides: next, sharp, tar, undici, fast-uri, @xmldom, brace-expansion,
+  vite 7.3.7, and others.
+- `@modelcontextprotocol/sdk` → ^1.32.1, which is also bundled into `mcpClientProbe`.
+
+Gates:
+- SCA exit 0; unit + integration 7406 pass (the 2 known environmental `pathSafe` fails also fail
+  on main).
+- Live `@mcp` e2e 37/37 with `--retries=0`; smoke 62/62.
+- CI `check` green (the first full gate since August); `claude-review` is alive again (0 inline).
+- Dev check: user-verified on both the 42.11.15 and the 42.11.18 builds.
+
+Follow-up: `@expanse-ade/mcp` 0.27.1 moves its own pins to the patched v2 family and moves
+`client` to devDeps. After that, the Wave 3 pin bump can drop the MCP-family overrides.
