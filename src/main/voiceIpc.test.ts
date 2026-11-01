@@ -437,13 +437,17 @@ describe('J2 voice:tts session + speak handlers', () => {
     await expect(t.handlers['voice:tts:status'](t.ownEvent)).resolves.toEqual({
       modelId: DEFAULT_TTS_MODEL_ID,
       modelStatus: 'ready',
-      active: false
+      active: false,
+      engine: 'local',
+      speechReady: true
     })
     const foreign = { senderFrame: {} } as IpcMainInvokeEvent
     await expect(t.handlers['voice:tts:status'](foreign)).resolves.toEqual({
       modelId: '',
       modelStatus: 'absent',
-      active: false
+      active: false,
+      engine: 'local',
+      speechReady: false
     })
     await expect(t.handlers['voice:tts:start'](foreign)).resolves.toEqual({
       ok: false,

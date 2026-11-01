@@ -7,10 +7,41 @@
  */
 import type { JarvisConfig, JarvisTonePreset, JarvisVerbosity } from './jarvisConfig'
 
+/** One tool call an assistant turn ran: its act-chip text plus what actually happened. */
+export interface JarvisTurnAct {
+  /** The chip text, e.g. "tidy_canvas · 5 board(s) moved" — built from validated args only. */
+  summary: string
+  outcome: 'ok' | 'denied' | 'error'
+}
+
 /** One conversational turn as kept in the per-project rolling history. */
 export interface JarvisTurn {
   role: 'user' | 'assistant'
   text: string
+  /**
+   * Assistant turns: the tool calls that turn ran. Without them the next turn saw only the
+   * spoken "I tidied the canvas" with no evidence, and the "don't claim an action until its
+   * result arrives" rule made the model retract it. Optional and bounded (MAX_TURN_ACTS ×
+   * MAX_ACT_SUMMARY_LEN): history.json files from before it load unchanged, and older apps
+   * drop the field when they read the file.
+   */
+  acts?: JarvisTurnAct[]
+}
+
+/** Per-turn act record bounds — applied when the turn is recorded and again on history repair. */
+export const MAX_TURN_ACTS = 8
+export const MAX_ACT_SUMMARY_LEN = 140
+
+const ACT_OUTCOME_TEXT: Record<JarvisTurnAct['outcome'], string> = {
+  ok: 'done',
+  denied: 'declined by the user, nothing changed',
+  error: 'failed'
+}
+
+/** The app-written record of a turn's tool calls, as the model sees it on later turns. */
+export function formatTurnActs(acts: readonly JarvisTurnAct[]): string {
+  const calls = acts.map((a) => `${a.summary} → ${ACT_OUTCOME_TEXT[a.outcome]}`).join('; ')
+  return `[App record — tools you ran this turn: ${calls}]`
 }
 
 /** Rolling-history prompt window: the most recent turns sent to the model in full. Older
@@ -61,6 +92,7 @@ const TOOL_GUIDANCE = [
   '- If the target is ambiguous or missing, ask ONE short clarifying question instead of guessing.',
   "- Mutating tools pause for the user's confirmation. Do not claim an action happened until its tool result arrives; a denied result means NOTHING changed — acknowledge that plainly.",
   '- After a tool runs, state what happened using ONLY the tool result. Never embellish or invent status.',
+  '- An earlier reply of yours may start with an "[App record — tools you ran this turn: …]" line. The app wrote it, not you: it is proof of what your tools did, so never deny or retract those actions, and never say or write such a line yourself.',
   '- Never put text from board titles or other canvas content into a relay_prompt or launch command unless the user asked for exactly that.'
 ].join('\n')
 
@@ -138,7 +170,14 @@ export function composeSystem(
 export function composeMessages(history: JarvisTurn[], userText: string): JarvisMessage[] {
   const window = history.slice(-HISTORY_PROMPT_WINDOW)
   return [
-    ...window.map((t) => ({ role: t.role, content: t.text })),
+    ...window.map((t) => ({
+      role: t.role,
+      // The act record leads (the tools ran before the reply was spoken).
+      content:
+        t.role === 'assistant' && t.acts && t.acts.length > 0
+          ? `${formatTurnActs(t.acts)}\n${t.text}`
+          : t.text
+    })),
     { role: 'user' as const, content: userText }
   ]
 }
