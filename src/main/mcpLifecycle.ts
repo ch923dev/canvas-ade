@@ -19,7 +19,7 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  * an unbounded name can't bloat the canvas/mirror. Whitespace is collapsed (a multi-line name
  * would break the group-tab layout) before the clamp.
  */
-const SPAWN_GROUP_MAX_NAME = 80
+export const SPAWN_GROUP_MAX_NAME = 80
 
 /**
  * Cap on a spawn-time launchCommand (spawnBoard's `prompt` AND spawnGroup's `launchCommand` — one

@@ -1,0 +1,156 @@
+/**
+ * Spatial surface over the real wire, per tier (`@expanse-ade/mcp` 0.27.0, SPEC C6 / D1).
+ *
+ * Two classes this pins, both invisible to tsc and to the package's own MockOrchestrator drift guard:
+ *
+ * 1. MEMBERSHIP (the C6 🔒 `publish_findings` lesson): the package registers a spatial surface only
+ *    when the HOST orchestrator implements its method, so a forgotten forward makes a tool vanish
+ *    silently. tools/list + resources/list against `buildOrchestrator` is the only place that shows.
+ * 2. THE D1 GATE: 0.27 hands `tidy_canvas` / `focus_viewport` to lead + connected terminals and binds
+ *    their `sourceBoardId`; the host must turn that into ONE human confirm. A host that ignored the
+ *    field would type-check (method params are bivariant) and let any consented terminal repack the
+ *    canvas or move the camera unasked.
+ */
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { McpCommand, McpCommandAck } from './mcpCommand'
+import {
+  expectTools,
+  startMcpToolsHarness,
+  type McpTier,
+  type McpToolsHarness
+} from './mcpToolsHarness'
+
+const SPATIAL_TOOLS = ['tidy_canvas', 'focus_viewport']
+/** Registered by the package only when the host implements groupBoards / editGroups (I1). */
+const GROUP_TOOLS = ['group_boards', 'edit_groups']
+const LAYOUT_URI = 'canvas://layout'
+/** Registered only when the host implements describeContexts (I1). */
+const CONTEXTS_URI = 'canvas://contexts'
+
+/** The structured error code the package's tool boundary puts on a failed result. */
+function errorCode(r: unknown): string | undefined {
+  return (r as { structuredContent?: { error?: { code?: string } } })?.structuredContent?.error
+    ?.code
+}
+
+describe('spatial tools/list + resources membership per tier (real host orchestrator)', () => {
+  let h: McpToolsHarness
+
+  beforeAll(async () => {
+    h = await startMcpToolsHarness()
+  })
+
+  afterAll(async () => {
+    await h?.close()
+  })
+
+  for (const planningWrite of [false, true]) {
+    it(`🔒 tidy/focus: orchestrator + lead + connected have them, worker never (planningWrite ${planningWrite})`, async () => {
+      const byTier = await h.toolsByTier({ planningWrite })
+      for (const tier of ['orchestrator', 'lead', 'connected'] as McpTier[]) {
+        expectTools(byTier[tier], { present: SPATIAL_TOOLS, absent: GROUP_TOOLS }, tier)
+      }
+      expectTools(
+        byTier.worker,
+        { present: ['ping'], absent: [...SPATIAL_TOOLS, ...GROUP_TOOLS] },
+        'worker'
+      )
+    })
+  }
+
+  it('🔒 canvas://layout reaches orchestrator + lead + connected; canvas://contexts is absent until I1', async () => {
+    for (const tier of ['orchestrator', 'lead', 'connected', 'worker'] as McpTier[]) {
+      const s = await h.connect(tier)
+      try {
+        const uris = (await s.client.listResources()).resources.map((r) => r.uri)
+        expect(uris.includes(LAYOUT_URI), `${tier} ${LAYOUT_URI}`).toBe(tier !== 'worker')
+        expect(uris, `${tier} ${CONTEXTS_URI}`).not.toContain(CONTEXTS_URI)
+      } finally {
+        await s.close()
+      }
+    }
+  })
+})
+
+describe('tidy_canvas / focus_viewport D1 gate over the wire', () => {
+  const sent: McpCommand[] = []
+  let approve = true
+  const confirm = vi.fn(async () => ({ approved: approve }))
+  const sendCommand = async (cmd: McpCommand): Promise<McpCommandAck> => {
+    sent.push(cmd)
+    return { ok: true, type: cmd.type, ...(cmd.type === 'tidyBoards' ? { moved: 2 } : {}) }
+  }
+  let h: McpToolsHarness
+
+  beforeAll(async () => {
+    h = await startMcpToolsHarness({ registry: { confirm, sendCommand } })
+  })
+
+  afterAll(async () => {
+    await h?.close()
+  })
+
+  beforeEach(() => {
+    sent.length = 0
+    confirm.mockClear()
+    approve = true
+  })
+
+  async function call(tier: McpTier, name: string, args: Record<string, unknown>) {
+    const s = await h.connect(tier)
+    try {
+      return await s.client.callTool({ name, arguments: args })
+    } finally {
+      await s.close()
+    }
+  }
+
+  it('orchestrator tier: tidy + focus apply with NO confirm', async () => {
+    const tidy = await call('orchestrator', 'tidy_canvas', { mode: 'grid' })
+    expect(tidy.isError).toBeFalsy()
+    const focus = await call('orchestrator', 'focus_viewport', { boardId: 't2' })
+    expect(focus.isError).toBeFalsy()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(sent).toEqual([
+      { type: 'tidyBoards', mode: 'grid' },
+      { type: 'focusCamera', boardId: 't2' }
+    ])
+  })
+
+  for (const tier of ['lead', 'connected'] as McpTier[]) {
+    it(`${tier} tier APPROVED: one confirm per call, naming the caller's board, then it applies`, async () => {
+      const tidy = await call(tier, 'tidy_canvas', {})
+      expect(tidy.isError).toBeFalsy()
+      expect(tidy.content).toEqual([{ type: 'text', text: JSON.stringify({ moved: 2 }) }])
+      const focus = await call(tier, 'focus_viewport', { boardId: 't2' })
+      expect(focus.isError).toBeFalsy()
+      expect(confirm).toHaveBeenCalledTimes(2)
+      // The bound board (t1, "Worker 1") is named — the binding is the token's, not client input.
+      for (const [req] of confirm.mock.calls as unknown as Array<[{ body: string }]>) {
+        expect(req.body).toContain('"Worker 1"')
+      }
+      expect(sent).toEqual([{ type: 'tidyBoards' }, { type: 'focusCamera', boardId: 't2' }])
+    })
+
+    it(`🔒 ${tier} tier DENIED: a "declined" error and nothing reaches the renderer`, async () => {
+      approve = false
+      const tidy = await call(tier, 'tidy_canvas', { mode: 'smart' })
+      const focus = await call(tier, 'focus_viewport', {})
+      for (const r of [tidy, focus]) {
+        expect(r.isError).toBe(true)
+        expect(errorCode(r)).toBe('declined')
+      }
+      expect(confirm).toHaveBeenCalledTimes(2)
+      expect(sent).toEqual([])
+    })
+  }
+
+  it('an unsupported tidy mode is invalid_input over the wire — before any confirm', async () => {
+    const r = await call('connected', 'tidy_canvas', { mode: 'roles' })
+    expect(r.isError).toBe(true)
+    expect(errorCode(r)).toBe('invalid_input')
+    expect(JSON.stringify(r.content)).toMatch(/not supported by this app version yet/)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+  })
+})

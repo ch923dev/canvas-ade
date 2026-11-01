@@ -112,10 +112,16 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     purpose: 'Spawn a feature-zone cluster (terminal + optional planning/browser + Named Group).',
     tier: 'orchestrator'
   },
-  { name: 'tidy_canvas', purpose: 'Reposition-pack all boards; un-gated.', tier: 'orchestrator' },
+  {
+    name: 'tidy_canvas',
+    purpose:
+      'Reposition-pack all boards (smart / by-type / grid; one undo). Un-gated for the orchestrator; a lead/connected terminal needs a human confirm.',
+    tier: 'orchestrator'
+  },
   {
     name: 'focus_viewport',
-    purpose: "Move the user's camera to a board / a Named Group / fit-all; un-gated.",
+    purpose:
+      "Move the user's camera to a board / a Named Group / fit-all. Un-gated for the orchestrator; a lead/connected terminal needs a human confirm.",
     tier: 'orchestrator'
   },
   {

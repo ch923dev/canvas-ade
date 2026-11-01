@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import type { BoardOutput, BoardResult, MemoryDoc } from '@expanse-ade/mcp'
+import {
+  toolErrorCodeOf,
+  type BoardOutput,
+  type BoardResult,
+  type MemoryDoc
+} from '@expanse-ade/mcp'
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 
@@ -10,18 +15,20 @@ const EMPTY_MEMORY: MemoryDoc = { present: false, text: '' }
 interface Harness {
   registry: BoardRegistry
   sent: McpCommand[]
+  confirms: Array<{ title: string; body: string }>
 }
 
 /**
  * A registry whose `sendCommand` records the command and returns a `tidyBoards` ack carrying a
  * configurable `moved` count — so the test proves tidyCanvas forwards the right command AND surfaces
- * the applier's moved count. `tidy_canvas` is un-gated (no confirm/audit), so those seams stay no-op.
+ * the applier's moved count. `confirm` records every request and answers `approve` (the D1 gate).
  */
-function harness(opts: { moved?: number; ackOk?: boolean } = {}): Harness {
+function harness(opts: { moved?: number; ackOk?: boolean; approve?: boolean } = {}): Harness {
   const sent: McpCommand[] = []
+  const confirms: Array<{ title: string; body: string }> = []
   const ackOk = opts.ackOk ?? true
   const registry: BoardRegistry = {
-    listBoards: () => [],
+    listBoards: () => [{ id: 'lead-1', type: 'terminal', title: 'Lead agent', status: 'idle' }],
     listSessions: () => [],
     listConnectors: () => [],
     readOutput: () => EMPTY_OUTPUT,
@@ -38,10 +45,13 @@ function harness(opts: { moved?: number; ackOk?: boolean } = {}): Harness {
         ? { ok: true, type: cmd.type, ...(opts.moved !== undefined ? { moved: opts.moved } : {}) }
         : { ok: false, error: 'renderer rejected' }
     },
-    confirm: async () => ({ approved: true }),
+    confirm: async (req) => {
+      confirms.push(req)
+      return { approved: opts.approve ?? true }
+    },
     audit: async () => {}
   }
-  return { registry, sent }
+  return { registry, sent, confirms }
 }
 
 describe('orchestrator tidyCanvas (P2)', () => {
@@ -53,7 +63,7 @@ describe('orchestrator tidyCanvas (P2)', () => {
     expect(h.sent).toEqual([{ type: 'tidyBoards', mode: 'grid' }])
   })
 
-  it('omits mode when none is supplied (renderer applier defaults to smart)', async () => {
+  it('omits mode when none is supplied (renderer applier defaults to smart; D8 a lands with I2)', async () => {
     const h = harness({ moved: 0 })
     const orch = buildOrchestrator(h.registry)
     const result = await orch.tidyCanvas({})
@@ -71,5 +81,87 @@ describe('orchestrator tidyCanvas (P2)', () => {
     const h = harness({ ackOk: false })
     const orch = buildOrchestrator(h.registry)
     await expect(orch.tidyCanvas({ mode: 'by-type' })).rejects.toThrow(/tidy_canvas failed/)
+  })
+})
+
+describe('tidy_canvas D1 gate (lead / connected ⇒ one human confirm)', () => {
+  it('orchestrator tier (no sourceBoardId) stays UN-GATED — no confirm, the tidy applies', async () => {
+    const h = harness({ moved: 2 })
+    const orch = buildOrchestrator(h.registry)
+    expect(await orch.tidyCanvas({ mode: 'smart' })).toEqual({ moved: 2 })
+    expect(h.confirms).toHaveLength(0)
+    expect(h.sent).toEqual([{ type: 'tidyBoards', mode: 'smart' }])
+  })
+
+  it('a lead/connected caller APPROVED: ONE confirm naming the caller, then ONE tidyBoards', async () => {
+    const h = harness({ moved: 4, approve: true })
+    const orch = buildOrchestrator(h.registry)
+    expect(await orch.tidyCanvas({ mode: 'grid', sourceBoardId: 'lead-1' })).toEqual({ moved: 4 })
+    expect(h.confirms).toHaveLength(1)
+    expect(h.confirms[0].title).toMatch(/tidy/i)
+    expect(h.confirms[0].body).toContain('"Lead agent"')
+    expect(h.sent).toEqual([{ type: 'tidyBoards', mode: 'grid' }])
+  })
+
+  it('🔒 DENIED: a `declined` tool error and NOTHING is sent to the renderer', async () => {
+    const h = harness({ approve: false })
+    const orch = buildOrchestrator(h.registry)
+    const err = await orch.tidyCanvas({ sourceBoardId: 'lead-1' }).catch((e: unknown) => e)
+    expect(toolErrorCodeOf(err)).toBe('declined')
+    expect(h.confirms).toHaveLength(1)
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('🔒 an EMPTY sourceBoardId still gates (fail closed), with a generic caller label', async () => {
+    const h = harness({ approve: false })
+    const orch = buildOrchestrator(h.registry)
+    const err = await orch.tidyCanvas({ sourceBoardId: '' }).catch((e: unknown) => e)
+    expect(toolErrorCodeOf(err)).toBe('declined')
+    expect(h.confirms).toHaveLength(1)
+    expect(h.confirms[0].body).toContain('A terminal agent')
+    expect(h.sent).toHaveLength(0)
+  })
+})
+
+describe('tidy_canvas rejects input this app version cannot apply (no silent degrade)', () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['mode fit', { mode: 'fit' }],
+    ['mode roles', { mode: 'roles' }],
+    ['mode tile', { mode: 'tile', template: 'cols-2' }],
+    ['scope', { scope: 'visible' }],
+    ['scope group', { scope: { groupId: 'g-1' } }],
+    ['template', { template: 'cols-3' }],
+    ['overflow', { overflow: 'pages' }],
+    ['primary', { primary: 'lead-1' }],
+    ['resize', { resize: false }],
+    ['fit:false', { fit: false }]
+  ]
+  for (const [label, input] of cases) {
+    it(`${label} ⇒ invalid_input "not supported by this app version yet", no confirm, no command`, async () => {
+      const h = harness()
+      const orch = buildOrchestrator(h.registry)
+      const err = await orch
+        .tidyCanvas({ ...input, sourceBoardId: 'lead-1' })
+        .catch((e: unknown) => e)
+      expect(toolErrorCodeOf(err)).toBe('invalid_input')
+      expect((err as Error).message).toMatch(/not supported by this app version yet/)
+      expect(h.confirms).toHaveLength(0) // rejected BEFORE the human is asked
+      expect(h.sent).toHaveLength(0)
+    })
+  }
+
+  it('an off-enum mode is invalid_input too (no longer coerced to smart downstream)', async () => {
+    const h = harness()
+    const orch = buildOrchestrator(h.registry)
+    const err = await orch.tidyCanvas({ mode: 'spiral' }).catch((e: unknown) => e)
+    expect(toolErrorCodeOf(err)).toBe('invalid_input')
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('fit:true matches today (the applier always reframes), so it is accepted', async () => {
+    const h = harness({ moved: 1 })
+    const orch = buildOrchestrator(h.registry)
+    expect(await orch.tidyCanvas({ fit: true })).toEqual({ moved: 1 })
+    expect(h.sent).toEqual([{ type: 'tidyBoards' }])
   })
 })
