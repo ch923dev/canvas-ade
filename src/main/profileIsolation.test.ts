@@ -72,6 +72,23 @@ describe('resolveDevProfile', () => {
     expect(smoke.dir?.endsWith(`${devProfileSlug(CWD)}-smoke`)).toBe(true)
   })
 
+  it('gives each extra e2e worker slot its own profile; slot 0 keeps -e2e', () => {
+    const slug = devProfileSlug(CWD)
+    const dirFor = (worker: string): string | null =>
+      resolveDevProfile(baseInput({ env: { CANVAS_E2E: '1', CANVAS_E2E_WORKER: worker } })).dir
+    expect(dirFor('0')?.endsWith(`${slug}-e2e`)).toBe(true)
+    expect(dirFor('1')?.endsWith(`${slug}-e2e-w1`)).toBe(true)
+    expect(dirFor('12')?.endsWith(`${slug}-e2e-w12`)).toBe(true)
+    // Not a small integer → the shared -e2e profile, never a path built from raw env text.
+    for (const junk of ['', '-1', '1.5', '../x', '123']) {
+      expect(dirFor(junk)?.endsWith(`${slug}-e2e`)).toBe(true)
+    }
+    // Only the e2e harness reads it.
+    expect(resolveDevProfile(baseInput({ env: { CANVAS_E2E_WORKER: '1' } })).dir).toBe(
+      join('C:', 'appdata', 'canvas-ade', 'profiles', slug)
+    )
+  })
+
   it('CANVAS_USERDATA overrides everything else (resolved absolute)', () => {
     const out = resolveDevProfile(
       baseInput({ env: { CANVAS_USERDATA: join('X:', 'custom'), CANVAS_E2E: '1' } })

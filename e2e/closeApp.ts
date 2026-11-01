@@ -21,8 +21,10 @@ const CLOSE_GRACE_MS = 2_000
  *
  * Once the process has exited and `close()` still has not settled, kill that daemon tree: the
  * app is gone, so its sessions are already orphaned, and the next app simply starts a fresh
- * daemon. A genuine quit hang (the process never exits) still waits — and still fails the
- * teardown — exactly as before.
+ * daemon. That is only safe because the daemon is this worker's alone — each worker slot runs
+ * in its own profile (fixtures.ts `workerAppEnv`), so no other app is attached to it. A genuine
+ * quit hang (the process never exits) still waits — and still fails the teardown — exactly as
+ * before.
  */
 export async function closeElectronApp(app: ElectronApplication): Promise<void> {
   const proc = app.process()
@@ -68,6 +70,10 @@ function killPtyHostDaemon(userData: string | null): void {
     return // no daemon was ever started for this profile
   }
   if (!Number.isInteger(pid) || pid <= 0) return
+  // The state file can outlive its daemon, and Windows recycles pids fast: never /T /F a pid
+  // unless it is still a ptyHost daemon. The image name alone is not enough — the in-place
+  // daemon is a plain electron.exe, same as any dev app the user has open.
+  if (!isPtyHostDaemon(pid)) return
   try {
     if (process.platform === 'win32') {
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
@@ -76,5 +82,38 @@ function killPtyHostDaemon(userData: string | null): void {
     }
   } catch {
     /* already gone */
+  }
+}
+
+/**
+ * True only when `pid` is alive and its command line runs `ptyHostDaemon.js` — both the in-place
+ * daemon (electron.exe) and the staged one (expanse-ptyhost.exe) do. Any probe failure = false:
+ * skipping the kill only costs the pre-#437 hang, killing the wrong process costs far more.
+ */
+function isPtyHostDaemon(pid: number): boolean {
+  try {
+    let cmdline: string
+    if (process.platform === 'win32') {
+      cmdline = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 }
+      )
+    } else if (process.platform === 'linux') {
+      cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+    } else {
+      cmdline = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    }
+    return cmdline.includes('ptyHostDaemon')
+  } catch {
+    return false
   }
 }

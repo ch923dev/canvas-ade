@@ -17,6 +17,27 @@ type WorkerFixtures = { electronApp: ElectronApplication }
 let tracingStarted = false
 
 /**
+ * The worker app's env. CANVAS_E2E_WORKER gives each worker slot its own profile
+ * (profileIsolation.ts: slot 0 = `<slug>-e2e`, slot n = `<slug>-e2e-w<n>`), so at workers:2 the
+ * two apps no longer share one ptyhost-state.json — i.e. one ptyHost daemon — and one Chromium
+ * profile. That matters because closeElectronApp may kill its app's daemon tree: on a shared
+ * daemon it took the OTHER worker's live terminals down mid-test. Inherited profile overrides
+ * from the caller's shell are dropped: a stray CANVAS_USERDATA would point the harness at a real
+ * dev profile (and its daemon), and CANVAS_FRESH would bypass the per-worker profile.
+ */
+function workerAppEnv(): Record<string, string> {
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    CANVAS_E2E: '1',
+    CANVAS_E2E_WORKER: process.env.TEST_PARALLEL_INDEX ?? '0',
+    CANVAS_FAKE_MEDIA: '1'
+  }
+  delete env.CANVAS_USERDATA
+  delete env.CANVAS_FRESH
+  return env
+}
+
+/**
  * Worker-scoped Electron instance. With workers:1 Playwright runs ALL spec files in ONE
  * worker and REUSES this app across them (it discards + relaunches the worker only after
  * a test FAILS). So state can leak between specs within a worker — the per-test `reset()`
@@ -73,7 +94,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         // switch (voiceIpc.applyFakeMediaSwitches — env-gated in MAIN, not a launch arg:
         // playwright#16621). Only getUserMedia consumers see it (the @voice spec); it
         // replaces any real mic with a deterministic generated tone on every leg.
-        env: { ...process.env, CANVAS_E2E: '1', CANVAS_FAKE_MEDIA: '1' },
+        env: workerAppEnv(),
         // Opt-in full-session video (one .webm per spec). Off by default so green runs
         // stay fast; turn on for a repro session with `E2E_VIDEO=1`.
         ...(process.env.E2E_VIDEO ? { recordVideo: { dir: 'test-results/videos' } } : {})

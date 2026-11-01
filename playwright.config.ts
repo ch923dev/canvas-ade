@@ -21,9 +21,12 @@ export default defineConfig({
   // Windows push leg opts in via .githooks/pre-push.
   //
   // Measured 2026-07-28 on this box, 342 specs: workers:1 = 10.1m; workers:2 = 6.8/5.4/6.5m
-  // across three runs (~39% faster). Cross-worker state leakage is a non-issue — each
-  // worker gets its OWN Electron process, so stores are already isolated. What DOES
-  // contend is OS-level: window focus, ConPTY, GPU. That surfaced as 4 hard failures in
+  // across three runs (~39% faster). Each worker slot runs its OWN Electron process in its
+  // OWN profile (e2e/fixtures.ts `workerAppEnv` → `<slug>-e2e` / `<slug>-e2e-w<n>`), so
+  // stores, Chromium profile and ptyHost daemon are not shared. (Both apps used to share
+  // `-e2e` and one daemon, so a teardown's daemon kill could take the other worker's
+  // terminals down.) What DOES contend is OS-level: window focus, ConPTY, GPU. That
+  // surfaced as 4 hard failures in
   // one of three retries:0 runs (boardKeyboard:58, terminal:62, terminalCrisp:155/:200),
   // and zero in another — probabilistic, not a fixed incompatible set. Under the real
   // gate config (retries:2) the suite is green with those absorbed as flaky-retried.
