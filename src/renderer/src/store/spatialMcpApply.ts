@@ -3,7 +3,8 @@
  * (whole-canvas reposition) and `focusCamera` (user viewport) — against `canvasStore`, returning the
  * ack. Split out of `useMcpCommands` (spatial awareness C5 pre-split, the `kanbanMcpApply` pattern) so
  * the Wave-3 lanes widen the spatial commands here without colliding in the general applier, which
- * routes these three types to {@link applySpatialMcpCommand} and nothing else.
+ * routes these types (plus I1's `applyGroups`, delegated to `groupsMcpApply`) to
+ * {@link applySpatialMcpCommand} and nothing else.
  *
  * Same contract as every applier case: React-free (unit-testable directly), MAIN is the trust
  * boundary (frame-guarded control plane), and each command is RE-VALIDATED here as defense in depth
@@ -13,12 +14,16 @@ import { useCanvasStore } from './canvasStore'
 import { useCanvasViewStore } from './canvasViewStore'
 import { requestCameraFocus } from './cameraRequestStore'
 import { viewportCenterWorld } from '../lib/freeSlot'
+import { applyGroupsCommand } from './groupsMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /** The MCP commands this module applies (the C5 spatial set). */
 export type SpatialMcpCommand = Extract<
   McpCommand,
-  { type: 'spawnGroup' } | { type: 'tidyBoards' } | { type: 'focusCamera' }
+  | { type: 'spawnGroup' }
+  | { type: 'tidyBoards' }
+  | { type: 'focusCamera' }
+  | { type: 'applyGroups' }
 >
 
 /** Default anchor for an MCP-spawned board; `addBoard`'s free-slot search spreads collisions. */
@@ -33,6 +38,8 @@ export function applySpatialMcpCommand(command: SpatialMcpCommand): McpCommandAc
       return applyTidyBoards(command)
     case 'focusCamera':
       return applyFocusCamera(command)
+    case 'applyGroups':
+      return applyGroupsCommand(command)
   }
 }
 

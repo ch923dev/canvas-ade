@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { CanvasState } from '../canvasStore'
 import type { Board, NamedGroup } from '../../lib/boardSchema'
 import type { TrackedChange } from './sliceTypes'
-import { createGroupSlice, pruneBoardFromGroups } from './groupSlice'
+import { createGroupSlice, foldGroupOps, pruneBoardFromGroups } from './groupSlice'
 
 // ---------------------------------------------------------------------------
 // Minimal harness
@@ -54,6 +54,7 @@ function makeState(boards: Board[] = [], groups: NamedGroup[] = []): CanvasState
     addBoardsToGroupReflowed: vi.fn() as never,
     removeBoardFromGroup: vi.fn() as never,
     removeBoardFromAllGroups: vi.fn() as never,
+    applyGroupOps: vi.fn() as never,
     updateBoard: vi.fn() as never,
     transferElements: vi.fn() as never,
     resizeBoard: vi.fn() as never,
@@ -573,5 +574,96 @@ describe('pruneBoardFromGroups', () => {
     // g1 emptied → culled; g2 keeps b3.
     expect(result!.map((g) => g.id)).toEqual(['g2'])
     expect(result!.find((g) => g.id === 'g2')?.boardIds).toEqual(['b3'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// applyGroupOps / foldGroupOps (spatial C5 — MCP applyGroups)
+// ---------------------------------------------------------------------------
+
+describe('createGroupSlice — applyGroupOps', () => {
+  it('creates every group + applies the edits in ONE trackedChange; returns the new ids in order', () => {
+    state = makeState([], [group('g0', 'Old', ['b0', 'b9'])])
+    const slice = makeSlice()
+    const ids = slice.applyGroupOps(
+      [
+        { name: 'Auth', boardIds: ['b1', 'b2', 'b1'] },
+        { name: 'API', boardIds: ['b3'] }
+      ],
+      [
+        { op: 'rename', groupId: 'g0', name: 'Older' },
+        { op: 'remove', groupId: 'g0', boardIds: ['b9'] }
+      ]
+    )
+    expect(ids).toEqual(['g1', 'g2'])
+    expect(trackedChangeSpy).toHaveBeenCalledTimes(1)
+    const [, next, opts] = trackedChangeSpy.mock.calls[0] as [
+      CanvasState,
+      { groups: NamedGroup[] },
+      { reflectPresent: boolean }
+    ]
+    expect(opts.reflectPresent).toBe(false)
+    expect(next.groups).toEqual([
+      { id: 'g0', name: 'Older', boardIds: ['b0'] },
+      { id: 'g1', name: 'Auth', boardIds: ['b1', 'b2'] },
+      { id: 'g2', name: 'API', boardIds: ['b3'] }
+    ])
+  })
+
+  it('a batch that changes nothing pushes no step and keeps the groups ref', () => {
+    const groups = [group('g0', 'Same', ['b1'])]
+    state = makeState([], groups)
+    const slice = makeSlice()
+    expect(
+      slice.applyGroupOps(
+        [],
+        [
+          { op: 'rename', groupId: 'g0', name: 'Same' },
+          { op: 'add', groupId: 'g0', boardIds: ['b1'] },
+          { op: 'remove', groupId: 'g0', boardIds: ['zz'] }
+        ]
+      )
+    ).toEqual([])
+    expect(trackedChangeSpy).not.toHaveBeenCalled()
+    expect(state.groups).toBe(groups)
+  })
+})
+
+describe('foldGroupOps', () => {
+  const base = [group('a', 'A', ['b1', 'b2']), group('b', 'B', ['b3'])]
+
+  it('applies ops in order; an op on a group an earlier op removed is skipped', () => {
+    const out = foldGroupOps(
+      base,
+      [],
+      [
+        { op: 'ungroup', groupId: 'a' },
+        { op: 'rename', groupId: 'a', name: 'ghost' },
+        { op: 'add', groupId: 'b', boardIds: ['b4', 'b3'] }
+      ]
+    )
+    expect(out).toEqual([group('b', 'B', ['b3', 'b4'])])
+  })
+
+  it('a remove that empties a group drops it (empty groups never persist)', () => {
+    expect(foldGroupOps(base, [], [{ op: 'remove', groupId: 'b', boardIds: ['b3'] }])).toEqual([
+      base[0]
+    ])
+  })
+
+  it('edits may target a group created in the same batch', () => {
+    const out = foldGroupOps(
+      [],
+      [group('n', 'New', ['b1'])],
+      [{ op: 'add', groupId: 'n', boardIds: ['b2'] }]
+    )
+    expect(out).toEqual([group('n', 'New', ['b1', 'b2'])])
+  })
+
+  it('never mutates its input and returns the input ref when nothing changed', () => {
+    const snapshot = JSON.stringify(base)
+    foldGroupOps(base, [], [{ op: 'remove', groupId: 'a', boardIds: ['b1'] }])
+    expect(JSON.stringify(base)).toBe(snapshot)
+    expect(foldGroupOps(base, [], [{ op: 'ungroup', groupId: 'zz' }])).toBe(base)
   })
 })

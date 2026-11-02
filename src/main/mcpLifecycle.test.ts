@@ -365,6 +365,17 @@ describe('createMcpLifecycle.spawnGroup (PR-5b — feature-zone cluster)', () =>
     expect((sent[0].group as { name: string }).name).toHaveLength(80)
   })
 
+  it('🔒 G11: runs the shared sanitizeGroupName — bidi, invisible and tag characters never land', async () => {
+    const { registry, sent } = recordingReg()
+    const life = makeLife(registry)
+    await life.spawnGroup({ name: 'Auth‮ flow\u{E0041}\u{E0042}️' })
+    expect((sent[0].group as { name: string }).name).toBe('Auth flow')
+    // A name that is ONLY invisible is empty once sanitized: rejected, nothing spawned.
+    sent.length = 0
+    await expect(life.spawnGroup({ name: '️​\u{E0041}' })).rejects.toThrow(/name/i)
+    expect(sent).toHaveLength(0)
+  })
+
   describe('🔒 F5: launchCommand sanitizer (DEL + C1 escape-injection fix)', () => {
     // Re-use the recordingReg / makeLife helpers from the enclosing describe block.
     const launchOf = (cmd: Record<string, unknown>): string | undefined =>

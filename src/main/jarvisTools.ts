@@ -7,10 +7,12 @@
  * close_board, no remove_card, no planning-element removal (v1 fence).
  *
  * Risk tiers (the J4 gating contract):
- *   - READ tier (auto-allow): list_boards · board_cards · focus_viewport · tidy_canvas —
- *     state reads and reversible viewport/arrangement moves; no confirm.
+ *   - READ tier (auto-allow): list_boards · board_cards · focus_viewport · tidy_canvas ·
+ *     list_groups — state reads and reversible viewport/arrangement moves; no confirm.
  *   - GATED tier: spawn_board · relay_prompt · add_card · update_card · move_card ·
- *     visualize_plan — every one pauses on a human confirm before anything changes.
+ *     visualize_plan · group_boards · edit_groups — every one pauses on a human confirm before
+ *     anything changes. The group tools (jarvisGroupTools.ts) confirm in the orchestrator's ONE
+ *     batch modal.
  *     relay/cards/visualize confirm INSIDE the orchestrator gates they route through;
  *     spawn_board (cap-checked but un-gated for MCP agents) gets a Jarvis-side pre-confirm
  *     so the tier holds uniformly. jarvisIpc wraps execution in `runAsJarvisToolCall`, so
@@ -29,6 +31,11 @@
  */
 import type { AppModel } from './appModel'
 import type { FocusOutcome } from './mcpFocus'
+import {
+  buildJarvisGroupToolDefs,
+  executeJarvisGroupTool,
+  type JarvisGroupFacet
+} from './jarvisGroupTools'
 
 /** A Claude Messages-API tool definition (name + JSON-Schema input). */
 export interface JarvisToolDef {
@@ -45,7 +52,7 @@ const MAX_TAG = 40
 const MAX_ITEMS = 50
 
 /** The canvas facet the executor drives — the widened in-process RunningMcp slice. */
-export interface JarvisCanvasFacet {
+export interface JarvisCanvasFacet extends JarvisGroupFacet {
   describeApp(): Promise<AppModel>
   spawnBoard(input: {
     type: string
@@ -80,7 +87,8 @@ export const JARVIS_AUTO_ALLOW = new Set([
   'list_boards',
   'board_cards',
   'focus_viewport',
-  'tidy_canvas'
+  'tidy_canvas',
+  'list_groups'
 ])
 
 export function isJarvisToolGated(name: string): boolean {
@@ -236,7 +244,8 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
         required: ['items'],
         additionalProperties: false
       }
-    }
+    },
+    ...buildJarvisGroupToolDefs()
   ]
 }
 
@@ -571,7 +580,12 @@ export async function executeJarvisTool(
         })
       }
       default:
-        return fail(name, `unknown tool "${clip(name, 40)}"`)
+        return (
+          (await executeJarvisGroupTool(name, input, {
+            facet: deps.facet,
+            resolveBoard: resolveBoardRef
+          })) ?? fail(name, `unknown tool "${clip(name, 40)}"`)
+        )
     }
   } catch (err) {
     if (err instanceof ToolArgError) return fail(name, err.message)

@@ -42,12 +42,12 @@ const PENDING_TOOLS = new Set(['update_planning_element', 'remove_planning_eleme
 /**
  * Spatial Wave 3 (`@expanse-ade/mcp` 0.27.0): the inverse case — tools the PACKAGE registers (its
  * `MockOrchestrator` implements every optional method) but the HOST does not implement yet, so the real
- * app never serves them and `APP_TOOLS` must not advertise them. I1 adds `groupBoards` / `editGroups`
- * and catalogs them, at which point this set empties. The real host's surface is pinned in
- * `mcp.spatial.integration.test.ts` (tools/list against `buildOrchestrator`), which asserts they are
- * ABSENT there, so this tolerance cannot hide a host that serves an un-cataloged tool.
+ * app never serves them and `APP_TOOLS` must not advertise them. EMPTY since I1 (the host implements
+ * `groupBoards` / `editGroups` and catalogs them); kept as the slot for the next optional-method
+ * surface. The real host's surface is pinned in `mcp.spatial.integration.test.ts` (tools/list
+ * against `buildOrchestrator`), so this tolerance cannot hide a host that serves an un-cataloged tool.
  */
-const HOST_PENDING_TOOLS = new Set(['group_boards', 'edit_groups'])
+const HOST_PENDING_TOOLS = new Set<string>()
 
 describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp registration', () => {
   it('every registered tool is cataloged, and the only catalog extras are the pending rc.7 tools', async () => {

@@ -392,6 +392,7 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'spawnGroup':
     case 'tidyBoards':
     case 'focusCamera':
+    case 'applyGroups':
       // Spatial awareness C5 pre-split: the spatial commands (feature-zone spawn · whole-canvas tidy ·
       // camera focus) live in spatialMcpApply.ts — same re-validate-then-apply contract.
       return applySpatialMcpCommand(command)

@@ -35,6 +35,7 @@ import { createPlanningEditMethods } from './mcpPlanningEditGate'
 import { createTidyMethod } from './mcpTidy'
 import { createFocusMethod } from './mcpFocus'
 import { createFindingsMethod } from './mcpFindings'
+import { createGroupsMethods } from './mcpGroups'
 import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
@@ -436,6 +437,9 @@ export function buildOrchestrator(
       publishFindings: registry.publishFindings?.bind(registry),
       audit: writeAudit
     }),
+    // 🔒 I1 group_boards / edit_groups / canvas://contexts — built in ./mcpGroups. Every group write
+    // (every tier, D2) is ONE batch confirm → ONE applyGroups (one undo step); contexts is read-only.
+    ...createGroupsMethods(registry, { listGroups: listGroupsProjection, audit: writeAudit }),
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
       // accessor returns an empty page), not an error — output is observational.

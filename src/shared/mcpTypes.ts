@@ -286,6 +286,20 @@ export type KanbanOp =
     }
   | { op: 'remove'; cardId: string }
 
+// ── Named-Group edit ops (spatial-awareness C5 — edit_groups, MAIN → renderer) ──
+
+/**
+ * One `edit_groups` op on an EXISTING Named Group (C5). MAIN validated it against the live mirror,
+ * sanitized `name`, and the human approved its batch-confirm row before it rides an `applyGroups`
+ * command; the renderer re-validates and folds the ops IN ORDER. `remove` that empties a group drops
+ * it (empty groups never persist); `ungroup` drops the outline and leaves every board where it is.
+ */
+export type GroupEditOp =
+  | { op: 'rename'; groupId: string; name: string }
+  | { op: 'add'; groupId: string; boardIds: string[] }
+  | { op: 'remove'; groupId: string; boardIds: string[] }
+  | { op: 'ungroup'; groupId: string }
+
 // ── Plan-visualization types (P5 — visualize_plan, MAIN → renderer) ──
 
 /** The layout shapes `visualize_plan` renders a plan into (P5) — the confirm-gate chooser options. */
@@ -390,6 +404,12 @@ export interface PlanItem {
  *   closed state vocabulary and resolves the board TITLE itself (MAIN never becomes a title
  *   authority). Durable aggregation of the same data is a separate, batched, once-per-run
  *   `patchKanban` — never this channel.
+ * - `applyGroups` (spatial C5, I1) lands the APPROVED rows of ONE `group_boards` / `edit_groups`
+ *   batch confirm: `create` = new Named Groups over existing boards (the renderer mints their ids and
+ *   returns them as the ack's `groupIds`, positionally 1:1), `edits` = {@link GroupEditOp}s. Outlines
+ *   only — no board moves, resizes or runs. ONE undo step for the whole command
+ *   (`groupSlice.applyGroupOps`). The renderer re-validates every name and id against the live store
+ *   (unknown / docked board, unknown group ⇒ the whole command acks `{ok:false}`, nothing lands).
  */
 export type McpCommand =
   | { type: 'ping' }
@@ -436,6 +456,11 @@ export type McpCommand =
   | { type: 'patchPlanningEdit'; id: string; op: PlanningEditOp }
   | { type: 'patchKanban'; id: string; ops: KanbanOp[] }
   | {
+      type: 'applyGroups'
+      create: Array<{ name: string; boardIds: string[] }>
+      edits: GroupEditOp[]
+    }
+  | {
       type: 'visualizePlan'
       id: string
       visualization: Visualization
@@ -469,10 +494,12 @@ export type McpCommand =
  * tidy) — so the host can surface it to the agent; absent on every other command. The optional
  * `rendered` (P4) rides on a successful `commandFeed` ack: `false` means the push landed in the
  * store but there is no Command board on the canvas to show it, which the host DISCLOSES rather
- * than swallowing (an unshown feed reads to the human as "nothing happened").
+ * than swallowing (an unshown feed reads to the human as "nothing happened"). The optional `groupIds`
+ * (spatial C5) rides on a successful `applyGroups` ack: the ids of the groups it created, 1:1 with
+ * the command's `create`.
  */
 export type McpCommandAck =
-  | { ok: true; type: string; moved?: number; rendered?: boolean }
+  | { ok: true; type: string; moved?: number; rendered?: boolean; groupIds?: string[] }
   | { ok: false; error: string }
 
 // ── Audit entry types (formerly hand-mirrored in auditLog.ts + AuditLogViewer.tsx) ──

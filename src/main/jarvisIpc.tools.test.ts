@@ -47,6 +47,9 @@ function makeFacet(over: Partial<JarvisCanvasFacet> = {}): JarvisCanvasFacet {
     visualizePlan: vi.fn(async () => ({ id: 'viz-1' })),
     focusViewport: vi.fn(async () => ({ focused: 'all' as const })),
     tidyCanvas: vi.fn(async () => ({ moved: 0 })),
+    describeContexts: vi.fn(async () => ({ version: 1 as const, contexts: [], ungrouped: [] })),
+    groupBoards: vi.fn(async () => []),
+    editGroups: vi.fn(async () => []),
     boardCards: vi.fn(async () => ({
       isKanban: true,
       columns: [{ id: 'col-1', title: 'Backlog' }]

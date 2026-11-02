@@ -399,6 +399,26 @@ describe('J4 mock tool script (mockJarvisTurn via the mock stream)', () => {
     })
   })
 
+  it('"group boards … as …" scripts a group_boards tool call (spatial I1)', async () => {
+    const req = buildJarvisRequest(
+      cfg(),
+      'k',
+      [],
+      [{ role: 'user', content: 'group boards abcdef12, 12345678 and fedcba98 as API stack' }]
+    )
+    const r = await streamJarvisReply(req, mockDeps, new AbortController().signal, () => {})
+    expect(r).toMatchObject({
+      ok: true,
+      stopReason: 'tool_use',
+      toolUses: [
+        {
+          name: 'group_boards',
+          input: { groups: [{ name: 'API stack', boards: ['abcdef12', '12345678', 'fedcba98'] }] }
+        }
+      ]
+    })
+  })
+
   it('a tool_result hop answers GROUNDED in the result content', async () => {
     const req = buildJarvisRequest(
       cfg(),

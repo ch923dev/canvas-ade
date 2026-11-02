@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { BoardId } from '@expanse-ade/mcp'
 import { sanitizeDispatchText } from './dispatchSanitize'
 import { sanitizeBoardTitle } from '../shared/boardTitle'
+import { sanitizeGroupName } from '../shared/groupName'
 import type { BoardRegistry } from './mcpRegistry'
 
 /**
@@ -16,8 +17,8 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  * Cap on a spawned group's display name (PR-5b). The name is agent/user-provided text that
  * lands in a renderer `NamedGroup.name` (rendered, never executed) — clamp it here at the
  * agent-facing entry (belt-and-suspenders, mirroring the gitDiff/writeResult output clamps) so
- * an unbounded name can't bloat the canvas/mirror. Whitespace is collapsed (a multi-line name
- * would break the group-tab layout) before the clamp.
+ * an unbounded name can't bloat the canvas/mirror. The clamp itself is `sanitizeGroupName`'s
+ * (`GROUP_NAME_MAX`, which `mcpSpatialCapsParity.test.ts` pins equal to this and to the wire).
  */
 export const SPAWN_GROUP_MAX_NAME = 80
 
@@ -338,12 +339,11 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
   }
 
   const spawnGroup = async (input: SpawnGroupInput): Promise<SpawnGroupResult> => {
-    // Collapse whitespace (a multi-line name breaks the group-tab layout) → trim → clamp. The
-    // renderer re-validates a non-empty string before it lands (defense in depth).
-    const name = String(input?.name ?? '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, SPAWN_GROUP_MAX_NAME)
+    // G11: the shared group-name rule (`sanitizeGroupName`, also behind group_boards / edit_groups):
+    // whitespace collapse (a multi-line name breaks the group-tab layout), control / bidi / invisible
+    // strip, clamp to SPAWN_GROUP_MAX_NAME. The renderer re-validates a non-empty string before it
+    // lands (defense in depth).
+    const name = sanitizeGroupName(String(input?.name ?? ''))
     if (name.length === 0) {
       throw new Error('spawn_group: a non-empty group name is required')
     }

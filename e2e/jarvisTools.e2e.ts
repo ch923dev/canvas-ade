@@ -191,4 +191,48 @@ test.describe('@voice jarvis hands (voice → tool call → confirm gate → can
     expect(await page.locator('[data-testid="confirm-modal"]').count()).toBe(0)
     expect((await jarvisState(page)).pendingConfirm).toBeNull()
   })
+
+  test('group_boards (spatial I1) confirms in the ONE batch modal; approving lands the group', async ({
+    page,
+    electronApp
+  }) => {
+    const a = await seed(page, 'planning', { title: 'API notes' })
+    const b = await seed(page, 'planning', { title: 'Web notes' })
+    await mainCall(
+      electronApp,
+      'voiceStubSet',
+      true,
+      script(`group boards ${a.slice(0, 8)} ${b.slice(0, 8)} as API stack`)
+    )
+    await openPanel(page)
+
+    // The orchestrator's batch gate (DESIGN W1), not a Jarvis act-card: no double confirm.
+    const modal = page.locator('[data-testid="batch-confirm-modal"]')
+    await expect(modal).toBeVisible({ timeout: 15_000 })
+    await expect(modal).toContainText('API stack · 2 boards')
+    expect((await jarvisState(page)).pendingConfirm).toBeNull()
+    expect(await page.evaluate(() => (globalThis as any).__canvasE2E.getGroups().length)).toBe(0)
+
+    // Two unlinked boards ⇒ low confidence ⇒ the row starts unchecked: opt it in, approve.
+    await page.locator('[data-testid="batch-confirm-row-0"]').click()
+    await page.locator('[data-testid="batch-confirm-approve"]').click()
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            (globalThis as any).__canvasE2E
+              .getGroups()
+              .map((g: { name: string; boardIds: string[] }) => ({
+                name: g.name,
+                boardIds: g.boardIds
+              }))
+          ),
+        { timeout: 15_000 }
+      )
+      .toEqual([{ name: 'API stack', boardIds: [a, b] }])
+    await expect
+      .poll(async () => (await jarvisState(page)).lastAssistantText, { timeout: 15_000 })
+      .toContain('Done. The tool reported')
+    expect((await jarvisState(page)).lastError).toBeNull()
+  })
 })

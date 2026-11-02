@@ -458,6 +458,38 @@ describe('P1-A abort wiring', () => {
     ctrl.abort() // too late — the decision already settled
     await expect(p).resolves.toEqual({ approved: true })
   })
+
+  it('🔒 BATCH: a turn abort (via the tool-call ALS) denies every row and tears down every listener', async () => {
+    // Jarvis's group tools raise the batch modal from deep inside the orchestrator gate.
+    const { runAsJarvisToolCall } = await import('./jarvisToolContext')
+    const mainFrame = { name: 'main' }
+    const { win, listenerCount } = fakeWinWithLifecycle(mainFrame)
+    const { bus, reply, has } = fakeBus()
+    const ctrl = new AbortController()
+    const p = runAsJarvisToolCall(() => requestConfirmBatch(bus, () => win, BATCH), ctrl.signal)
+    await vi.waitFor(() => expect(has()).toBe(true))
+    ctrl.abort()
+    await expect(p).resolves.toEqual(DENY3)
+    expect(has()).toBe(false)
+    expect(listenerCount()).toBe(0)
+    reply(
+      { senderFrame: mainFrame },
+      { decisions: [{ approved: true }, { approved: true }, { approved: true }] }
+    )
+    await expect(p).resolves.toEqual(DENY3)
+  })
+
+  it('🔒 BATCH: a pre-aborted signal denies every row — the modal is never posted', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, sent } = fakeBatchWin(mainFrame)
+    const { bus } = fakeBus()
+    const ctrl = new AbortController()
+    ctrl.abort()
+    await expect(
+      requestConfirmBatch(bus, () => win, BATCH, { signal: ctrl.signal })
+    ).resolves.toEqual(DENY3)
+    expect(sent).toHaveLength(0)
+  })
 })
 
 // ── S1: the swarm spawn gate's workerConfig round trip over the REAL confirm channel ──

@@ -17,6 +17,8 @@ import { Modal } from './Modal'
 interface BatchItem {
   label: string
   body: string
+  /** Starting checkbox state; absent ⇒ checked. `false` = the human opts in (spatial W1 low confidence). */
+  preselected?: boolean
 }
 interface BatchRequest {
   title: string
@@ -36,8 +38,9 @@ interface BatchRequest {
 type BatchReply = (decision: { decisions: Array<{ approved: boolean }> }) => void
 interface Pending extends BatchRequest {
   reply: BatchReply
-  // Per-row selection, initialized all-checked on enqueue. Held ON the queue item (not a separate
-  // effect) so it can never leak across requests and rides back verbatim on the decision.
+  // Per-row selection, initialized on enqueue from each row's `preselected` (absent ⇒ checked). Held
+  // ON the queue item (not a separate effect) so it can never leak across requests and rides back
+  // verbatim on the decision.
   selected: boolean[]
 }
 
@@ -78,7 +81,11 @@ export default function BatchConfirmModal(): React.ReactElement | null {
     const onConfirmBatch = window.api?.mcp?.onConfirmBatch
     if (!onConfirmBatch) return
     return onConfirmBatch((request, reply) => {
-      setQueue((q) => [...q, { ...request, reply, selected: request.items.map(() => true) }])
+      setQueue((q) => [
+        ...q,
+        // Only an explicit `false` starts unchecked: a missing / garbage flag keeps today's checked row.
+        { ...request, reply, selected: request.items.map((item) => item.preselected !== false) }
+      ])
     })
   }, [])
 

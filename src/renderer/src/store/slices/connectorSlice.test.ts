@@ -54,6 +54,7 @@ function makeState(boards: Board[] = [], connectors: Connector[] = []): CanvasSt
     addBoardsToGroupReflowed: vi.fn() as never,
     removeBoardFromGroup: vi.fn() as never,
     removeBoardFromAllGroups: vi.fn() as never,
+    applyGroupOps: vi.fn() as never,
     updateBoard: vi.fn() as never,
     transferElements: vi.fn() as never,
     resizeBoard: vi.fn() as never,
