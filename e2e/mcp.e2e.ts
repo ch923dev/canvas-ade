@@ -1581,6 +1581,63 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await closeBoardGated(page, mcp, aId)
   })
 
+  // `@expanse-ade/mcp` 0.28 `arrange_main_board` (spatial I2): the package registers it only when
+  // the host implements arrangeMainBoard, so this is the live-app proof the forward is wired. The
+  // orchestrator tier is un-gated (the lead/connected D1 gate is pinned over the wire in
+  // mcp.spatial.integration.test.ts).
+  test('arrange_main_board: the chosen board takes the main slot, the rest its sidebar; a worker never gets the tool', async ({
+    page,
+    mcp
+  }) => {
+    expect(mcp.orch.tools).toContain('arrange_main_board')
+    expect(mcp.worker.tools).not.toContain('arrange_main_board')
+    const ids = [
+      okText(await mcp.orch.call('spawn_board', { type: 'terminal' })),
+      okText(await mcp.orch.call('spawn_board', { type: 'terminal' })),
+      okText(await mcp.orch.call('spawn_board', { type: 'planning', title: 'main target' }))
+    ]
+    const mainId = ids[2]
+    for (const id of ids) {
+      expect(id).not.toBe('')
+      await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
+    }
+    // The host validates the board against the renderer→MAIN mirror, which is async — wait for it
+    // to carry all three (else "not a board on the canvas", the add_card case above).
+    await expect
+      .poll(
+        async () => {
+          const boards = await mcp.orch.readJson<Array<{ id: string }>>('canvas://boards')
+          return ids.every((id) => boards.some((b) => b.id === id))
+        },
+        { timeout: 8000 }
+      )
+      .toBe(true)
+    const r = await mcp.orch.call('arrange_main_board', { boardId: mainId })
+    expect(acked(r), JSON.stringify(r)).toBe(true)
+    expect((JSON.parse(okText(r)) as { moved: number }).moved).toBeGreaterThan(0)
+
+    type B = { id: string; x: number; y: number; w: number; h: number }
+    const boards = await page.evaluate(
+      (want) =>
+        (globalThis as unknown as { __canvasE2E: { getBoards(): B[] } }).__canvasE2E
+          .getBoards()
+          .filter((b) => want.includes(b.id))
+          .map((b) => ({ id: b.id, x: b.x, y: b.y, w: b.w, h: b.h })),
+      ids
+    )
+    expect(boards).toHaveLength(3)
+    const main = boards.find((b) => b.id === mainId)!
+    // The main board is the biggest; nothing overlaps.
+    for (const b of boards) if (b.id !== mainId) expect(main.w * main.h).toBeGreaterThan(b.w * b.h)
+    for (const a of boards)
+      for (const b of boards) {
+        if (a.id >= b.id) continue
+        const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+        expect(overlap, `${a.id} overlaps ${b.id}`).toBe(false)
+      }
+    for (const id of ids) await closeBoardGated(page, mcp, id)
+  })
+
   test('rc.6 auto-cable: a spawn carrying sourceBoardId mints the spawner→spawned cable; the spawner relays along it with NO hand-drawn connector', async ({
     page,
     electronApp,

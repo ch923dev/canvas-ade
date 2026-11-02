@@ -1,5 +1,6 @@
 /**
- * Spatial surface over the real wire, per tier (`@expanse-ade/mcp` 0.27.0, SPEC C6 / D1).
+ * Spatial surface over the real wire, per tier (`@expanse-ade/mcp` 0.27.0+, SPEC C6 / D1; 0.28 adds
+ * `arrange_main_board`).
  *
  * Two classes this pins, both invisible to tsc and to the package's own MockOrchestrator drift guard:
  *
@@ -20,7 +21,8 @@ import {
   type McpToolsHarness
 } from './mcpToolsHarness'
 
-const SPATIAL_TOOLS = ['tidy_canvas', 'focus_viewport']
+/** `arrange_main_board` (0.28) is registered only when the host implements arrangeMainBoard (I2). */
+const SPATIAL_TOOLS = ['tidy_canvas', 'focus_viewport', 'arrange_main_board']
 /** Registered by the package only when the host implements groupBoards / editGroups (I1). */
 const GROUP_TOOLS = ['group_boards', 'edit_groups']
 const LAYOUT_URI = 'canvas://layout'
@@ -187,4 +189,67 @@ describe('tidy_canvas / focus_viewport D1 gate over the wire', () => {
       { type: 'tidyBoards', mode: 'tile', template: 'cols-3', scope: { groupId: 'g1' } }
     ])
   })
+})
+
+describe('arrange_main_board (0.28) over the wire — same D1 gate as tidy_canvas', () => {
+  const sent: McpCommand[] = []
+  let approve = true
+  const confirm = vi.fn(async () => ({ approved: approve }))
+  const sendCommand = async (cmd: McpCommand): Promise<McpCommandAck> => {
+    sent.push(cmd)
+    return { ok: true, type: cmd.type, ...(cmd.type === 'tidyBoards' ? { moved: 1 } : {}) }
+  }
+  let h: McpToolsHarness
+
+  beforeAll(async () => {
+    h = await startMcpToolsHarness({ registry: { confirm, sendCommand } })
+  })
+
+  afterAll(async () => {
+    await h?.close()
+  })
+
+  beforeEach(() => {
+    sent.length = 0
+    confirm.mockClear()
+    approve = true
+  })
+
+  async function arrange(tier: McpTier, args: Record<string, unknown>) {
+    const s = await h.connect(tier)
+    try {
+      return await s.client.callTool({ name: 'arrange_main_board', arguments: args })
+    } finally {
+      await s.close()
+    }
+  }
+
+  it('orchestrator: ONE implicit-roles tidy with primary (+ side), no confirm', async () => {
+    const r = await arrange('orchestrator', { boardId: 't2', side: 'left' })
+    expect(r.isError).toBeFalsy()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(sent).toEqual([
+      { type: 'tidyBoards', mode: 'roles', implicit: true, primary: 't2', side: 'left' }
+    ])
+  })
+
+  for (const tier of ['lead', 'connected'] as McpTier[]) {
+    it(`${tier}: ONE "Make it the main board?" confirm, then it applies`, async () => {
+      const r = await arrange(tier, { boardId: 't2' })
+      expect(r.isError).toBeFalsy()
+      expect(confirm).toHaveBeenCalledTimes(1)
+      const [req] = confirm.mock.calls[0] as unknown as [{ title: string; body: string }]
+      expect(req.title).toBe('Make it the main board?')
+      expect(req.body).toContain('"Worker 1"')
+      expect(sent).toEqual([{ type: 'tidyBoards', mode: 'roles', implicit: true, primary: 't2' }])
+    })
+
+    it(`🔒 ${tier} DENIED: "declined" and nothing reaches the renderer`, async () => {
+      approve = false
+      const r = await arrange(tier, { boardId: 't2' })
+      expect(r.isError).toBe(true)
+      expect(errorCode(r)).toBe('declined')
+      expect(sent).toEqual([])
+    })
+  }
 })
