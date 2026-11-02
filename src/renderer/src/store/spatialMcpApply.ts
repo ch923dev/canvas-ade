@@ -13,7 +13,6 @@
 import { useCanvasStore } from './canvasStore'
 import { useCanvasViewStore } from './canvasViewStore'
 import { requestCameraFocus } from './cameraRequestStore'
-import { runTidy } from './spatialTidy'
 import { viewportCenterWorld } from '../lib/freeSlot'
 import { applyGroupsCommand } from './groupsMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
@@ -30,8 +29,22 @@ export type SpatialMcpCommand = Extract<
 /** Default anchor for an MCP-spawned board; `addBoard`'s free-slot search spreads collisions. */
 export const SPAWN_ANCHOR = { x: 120, y: 120 } as const
 
-/** Apply ONE spatial command (see {@link SpatialMcpCommand}) and return its ack. */
-export function applySpatialMcpCommand(command: SpatialMcpCommand): McpCommandAck {
+type TidyBoardsCommand = Extract<McpCommand, { type: 'tidyBoards' }>
+
+/**
+ * Apply ONE spatial command (see {@link SpatialMcpCommand}) and return its ack. `tidyBoards` acks
+ * through a Promise: the tidy engine is a dynamic import (see {@link applyTidyBoards}).
+ */
+export function applySpatialMcpCommand(
+  command: Exclude<SpatialMcpCommand, TidyBoardsCommand>
+): McpCommandAck
+export function applySpatialMcpCommand(command: TidyBoardsCommand): Promise<McpCommandAck>
+export function applySpatialMcpCommand(
+  command: SpatialMcpCommand
+): McpCommandAck | Promise<McpCommandAck>
+export function applySpatialMcpCommand(
+  command: SpatialMcpCommand
+): McpCommandAck | Promise<McpCommandAck> {
   switch (command.type) {
     case 'spawnGroup':
       return applySpawnGroup(command)
@@ -98,13 +111,22 @@ function applySpawnGroup(command: Extract<McpCommand, { type: 'spawnGroup' }>): 
   return { ok: true, type: 'spawnGroup' }
 }
 
-function applyTidyBoards(command: Extract<McpCommand, { type: 'tidyBoards' }>): McpCommandAck {
+async function applyTidyBoards(command: TidyBoardsCommand): Promise<McpCommandAck> {
   // 🔒 Spatial I2 (C5): ONE tidy through the shared engine — the same `runTidy` the `t` key and
   // the Tidy picker call, so an agent's tidy is the user's tidy. The engine RE-VALIDATES every
   // field (the shared `parseTidyArgs`: mode enum, template iff tile, scope shape, roles-only
   // primary/resize) and every id against the LIVE store (unknown ⇒ {ok:false}, docked ⇒
   // {ok:false}) before anything lands; it applies ONE undo step (x/y always, w/h only where the
   // engine sized a board) and frames the camera unless `fit:false`. The ack carries the C6 facts.
+  // The engine is a dynamic import so it stays out of the entry chunk (bundle budget, audit R12);
+  // the first tidy pays one local chunk load, well inside MAIN's ack wait. Read → compute → write
+  // is still one synchronous tick once it resolves.
+  const { runTidy } = await import('./spatialTidy')
+  // The import is the one async gap: a project switch that started inside it must not have the
+  // tidy land on the doc being loaded (the same `project-loading` refusal applyMcpCommand gives).
+  if (useCanvasStore.getState().project.status === 'loading') {
+    return { ok: false, error: 'project-loading' }
+  }
   const { type: _type, ...args } = command
   const run = runTidy(args)
   if (!run.ok) return { ok: false, error: run.error }

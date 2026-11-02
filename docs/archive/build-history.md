@@ -5557,3 +5557,48 @@ Gates: unit + integration 7418 pass (2 known `pathSafe`). `jarvis` / `jarvisTool
 "voice"; the reply was spoken by the cloud voice; tidy produced its ✓ chip; the follow-up
 confirmed the tidy with no false retraction.
 Follow-up candidate: `swarmChatIpc` has the same "history drops tool calls" pattern.
+
+## PR #442 — mcp: agent group tools — `group_boards` / `edit_groups` / `canvas://contexts` + Jarvis grouping (I1, v0.47.22) · squash `46873865` · 2026-11-02
+
+Spatial-awareness Wave 3 lane I1 (SPEC C5–C7, D2, DESIGN W1). The pinned `@expanse-ade/mcp`
+0.27.1 registers these surfaces only when the host implements them; until now it skipped them.
+- Sanitizer hardening first: new `shared/invisibleChars.ts` (Default_Ignorable_Code_Point +
+  U+FFF9–FFFB), shared by `sanitizeGroupName` and `sanitizeDispatchText`; names clamp by whole
+  code points and return `''` when nothing visible remains.
+- `mcpGroups.ts`: `describeContexts` (C3 digest over the MAIN mirror), `groupBoards`,
+  `editGroups`. Rows are validated against the live mirror, ONE batch confirm (W1 rows;
+  low-confidence rows start unchecked via `ConfirmBatchItem.preselected`), a TOCTOU re-check
+  after the confirm, ONE `applyGroups` with only the approved rows, per-row audit. Every tier is
+  gated (D2), the orchestrator included; fail-closed without a confirm seam.
+- `groupSlice.applyGroupOps` + `groupsMcpApply.ts`: one undo step, all-or-nothing re-validation.
+- Jarvis (dev-check finding): `jarvisGroupTools.ts` — `list_groups` (auto-allow), `group_boards`,
+  `edit_groups` routed through the same orchestrator gate; `requestConfirmBatch` honours a
+  cancelled Jarvis turn.
+
+Gates: vitest 7553 (2 known `pathSafe`); SCA 0; e2e 35/35 + `spatialGroups` 6/6; smoke 61 + 1
+flaky (`swarmWorktree`, isolated 3× green). Dev check ×2 (user).
+
+## PR #443 — spatial: screen + role-aware tidy end to end + main + sidebar (I2, v0.47.23) · squash `a515fbce` · 2026-11-03
+
+Spatial-awareness Wave 3 lane I2. One tidy engine, `store/spatialTidy.runTidy`, behind the
+picker, the `t` key, the palette, Jarvis and MCP agents; each tidy is ONE undo step
+(`layoutSlice.applyLayout`, w/h only where sized) and frames the camera from the arranged
+geometry.
+- Picker (C8 / W6): By role (`t`, the implicit default) → Fit to screen → Smart → tiles.
+  Toasts W7 (contexts left off-stage: Show all · Undo) and W3 (unreadable: Focus a group ·
+  Pages); silence is success.
+- `tidy_canvas` drops its PENDING gate and forwards the C5 wire; an omitted mode is an implicit
+  roles tidy (D8 a). `shared/tidyContract.ts` validates on both sides, MAIN before the D1 confirm.
+- Main + sidebar (dev-check #1 finding): `primary` = the board takes the big slot, every other
+  in-scope board a sidebar beside it; optional `side`. Surfaces: the ⋯ "Make main board" row,
+  Jarvis `make_main_board`, host `arrangeMainBoard` (package 0.28.0). Dev-check #2 decision: main
+  mode overrides D7 — the main board stretches to fill, the sidebar is even, planning / kanban /
+  file included (`mainMemberOf`, `evenSidebar`); By role / Fit keep D7. S14 golden re-frozen.
+- The kickoff's 7 review P3s (peers grid with a rigid member, `fitLayout` pages / NaN, `roleWhy`
+  titles, preview `callsPorts` reset on navigation, bounded `boardRegistry` scans, `spawnGroup`
+  pane centre). `Canvas.tsx` max-lines 767 → 768.
+
+Gates: vitest 7671 (2 known `pathSafe`); SCA 0; e2e `spatial` 8/8 ×2, mcp/jarvis/menu 45/45;
+smoke 62/62. Dev check ×3 (user; the third passed). ⚠️ CI `check` failed on the bundle budget
+(entry 455,292 B gzip vs 432,000: the engine had gone eager); merged before it reported, fixed
+forward in the next PR.

@@ -14,12 +14,17 @@
 // (boardSchema docked predicates, tidyApply, selection filter — entry-chunk by nature, its
 // UI rides the lazy swarm chunk) tripped the wire. New budget restores ~6.6 KB headroom
 // over the measured 425,403 B.
+// 2026-11-03 (v0.47.24): 432,000 → 440,000. #443 (spatial I2) made the whole tidy engine eager
+// (455,292 B, +24 KB); the engine (spatialTidy + the role / fit layout libs) is now a lazy chunk
+// loaded on the first tidy. What stays eager is UI / store code by nature (layoutSlice undo
+// step, the picker presets, the ⋯ "Make main board" row, camera requests): measured 433,102 B
+// against a pre-I2 431,312 B that had only 688 B headroom left. New budget restores ~6.9 KB.
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 
-const BUDGET_GZIP_BYTES = 432_000
+const BUDGET_GZIP_BYTES = 440_000
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, 'out', 'renderer')

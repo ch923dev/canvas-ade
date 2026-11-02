@@ -17,6 +17,7 @@
  */
 import { TIDY_GAP } from './tidyLayout'
 import { MIN_BOARD_SIZE } from './boardSchema'
+import { boardsBounds, type BoardRect } from './boardGeometry'
 
 export type TileTemplate = 'cols-2' | 'cols-3' | 'cols-4' | 'main-sidebar' | 'grid'
 
@@ -44,6 +45,24 @@ export interface TileArea {
   y: number
   w: number
   h: number
+}
+
+/** Base width (world px) of the pane-aspect block a tile layout fills before the camera fits to
+ *  it — absolute size is irrelevant (the fit normalizes it); only the aspect + zones matter. */
+export const TILE_AREA_BASE_W = 2400
+
+/**
+ * The world-space block a tile layout fills: anchored at the boards' top-left corner, sized to
+ * the pane `aspect` (w = baseW, h = baseW / aspect). Null when there are no boards. Pure.
+ */
+export function tileArea(
+  boards: BoardRect[],
+  aspect: number,
+  baseW = TILE_AREA_BASE_W
+): TileArea | null {
+  const bb = boardsBounds(boards)
+  if (!bb) return null
+  return { x: bb.minX, y: bb.minY, w: baseW, h: baseW / aspect }
 }
 
 const byReading = (a: TileBoard, b: TileBoard): number =>
