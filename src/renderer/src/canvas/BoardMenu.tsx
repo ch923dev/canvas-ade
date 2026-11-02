@@ -1,15 +1,45 @@
 /**
  * The board ⋯ menu (extracted from BoardFrame.tsx at the S1 max-lines ratchet — the
  * boardDefaults precedent): the shared overflow menu every board's title bar mounts, with the
- * S6 group rows, the S1 caller-supplied extraItems (terminal lead grant/revoke), and the
- * standard Full view / Duplicate / Delete actions. BoardFrame re-exports BoardMenu +
- * BoardMenuExtraItem so existing import sites are unchanged.
+ * spatial-I2 "Make main board" row, the S6 group rows, the S1 caller-supplied extraItems
+ * (terminal lead grant/revoke), and the standard Full view / Duplicate / Delete actions.
+ * BoardFrame re-exports BoardMenu + BoardMenuExtraItem so existing import sites are unchanged.
  */
 import type { MouseEvent, ReactElement } from 'react'
-import { Fragment, useRef, useState } from 'react'
+import { Fragment, useContext, useRef, useState } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
+import { isDockedTerminal } from '../lib/boardSchema'
+import { BoardActionsContext } from './boardActions'
 import { IconBtn } from './BoardFrame'
 import { Menu } from './Menu'
+
+type RenderMenuItem = (
+  label: string,
+  danger: boolean,
+  fn?: (e: MouseEvent) => void,
+  disabled?: boolean,
+  hint?: string
+) => ReactElement
+
+/** Spatial I2 — "Make main board": this board takes the big slot and every other board on the
+ *  canvas moves into a sidebar beside it (BoardActions.makeMain — the shared tidy engine with
+ *  `primary`). Mounted only while the menu is open (the PERF-04 rule), and only for a board ON
+ *  the canvas: a terminal docked in a swarm board has no canvas rect to arrange. */
+function MakeMainMenuItem({
+  boardId,
+  renderItem
+}: {
+  boardId: string
+  renderItem: RenderMenuItem
+}): ReactElement | null {
+  const acts = useContext(BoardActionsContext)
+  const onCanvas = useCanvasStore((s) => {
+    const b = s.boards.find((x) => x.id === boardId)
+    return b !== undefined && !isDockedTerminal(b)
+  })
+  if (!acts || !onCanvas) return null
+  return renderItem('Make main board', false, () => acts.makeMain(boardId), false, 'sidebar = rest')
+}
 
 /** S6 group rows for the ⋯ menu, split out so the live `groups` subscription runs ONLY while
  *  the menu is open. Kept in BoardMenu's always-mounted trigger, the whole-array subscription
@@ -27,7 +57,7 @@ function BoardGroupMenuItems({
   onRemoveFromGroup?: (groupId: string) => void
   /** GROUP-06: remove from every group at once — earns a row only when in 2+ groups. */
   onRemoveFromAllGroups?: () => void
-  renderItem: (label: string, danger: boolean, fn?: (e: MouseEvent) => void) => ReactElement
+  renderItem: RenderMenuItem
 }): ReactElement | null {
   // Read groups live so the eligible-list / membership reflect the current state.
   const groups = useCanvasStore((s) => s.groups)
@@ -67,7 +97,8 @@ function BoardGroupMenuItems({
   )
 }
 
-/** ⋯ overflow popover: Full view · Duplicate · Add/Remove group · Delete (DESIGN §6.1; S6). */
+/** ⋯ overflow popover: Make main board · Full view · Duplicate · Add/Remove group · Delete
+ *  (DESIGN §6.1; S6; spatial I2). */
 /** One caller-supplied ⋯-menu row (S1: the terminal lead grant/revoke items). */
 export interface BoardMenuExtraItem {
   id: string
@@ -109,14 +140,9 @@ export function BoardMenu({
     setOpen((v) => !v)
   }
 
-  const item = (
-    label: string,
-    danger: boolean,
-    fn?: (e: MouseEvent) => void,
-    disabled?: boolean
-  ): ReactElement => (
+  const item: RenderMenuItem = (label, danger, fn, disabled, hint) => (
     <button
-      className="board-menu-item"
+      className={hint ? 'board-menu-item board-menu-item--hint' : 'board-menu-item'}
       role="menuitem"
       data-danger={danger || undefined}
       disabled={disabled || undefined}
@@ -127,6 +153,12 @@ export function BoardMenu({
       }}
     >
       {label}
+      {/* A quiet outcome hint (the artifact's "sidebar = rest") — decorative; the label reads alone. */}
+      {hint && (
+        <span className="board-menu-hint" aria-hidden="true">
+          {hint}
+        </span>
+      )}
     </button>
   )
 
@@ -163,6 +195,8 @@ export function BoardMenu({
           className="board-menu"
           onClose={() => setOpen(false)}
         >
+          {/* Spatial I2: first, as in the signed-off artifact — main + sidebar for THIS board. */}
+          {boardId && <MakeMainMenuItem boardId={boardId} renderItem={item} />}
           {onFull && item('Full view', false, onFull)}
           {onDuplicate && item('Duplicate', false, () => onDuplicate())}
           {/* S1: per-type rows (terminal lead grant/revoke) — caller-supplied, one fragment per

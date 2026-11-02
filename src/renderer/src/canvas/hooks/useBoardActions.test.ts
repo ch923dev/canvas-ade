@@ -52,6 +52,7 @@ function makeDeps(): BoardActionsDeps {
     // Real store action so the GROUP-06 "remove from all" path is exercised end-to-end.
     removeBoardFromAllGroups: useCanvasStore.getState().removeBoardFromAllGroups,
     focusBoardById: vi.fn(),
+    makeMain: vi.fn(),
     setFocusedId: vi.fn(),
     setSelectedConnectorId: vi.fn(),
     setConnectPointer: vi.fn(),
@@ -164,5 +165,25 @@ describe('GROUP-05/06 — group membership actions', () => {
     const after = useCanvasStore.getState()
     expect(after.groups.find((x) => x.id === g1)!.boardIds).not.toContain(a)
     expect(after.groups.find((x) => x.id === g2)!.boardIds).not.toContain(a)
+  })
+})
+
+describe('spatial I2 — makeMain (the ⋯ menu row "Make main board")', () => {
+  it('leaves the modal full view, then hands the id to the shared main + sidebar tidy', () => {
+    const deps = makeDeps()
+    const { result } = renderHook(() => useBoardActions(deps))
+    result.current.makeMain('web')
+    expect(deps.hardCloseFullView).toHaveBeenCalledTimes(1)
+    expect(deps.exitCameraFullView).not.toHaveBeenCalled() // no camera full view open
+    expect(deps.makeMain).toHaveBeenCalledWith('web')
+  })
+
+  it('exits ANY camera full view first (the tidy frames the camera; a stale id would linger)', () => {
+    const deps = makeDeps()
+    deps.cameraFullViewIdRef.current = 'plan'
+    const { result } = renderHook(() => useBoardActions(deps))
+    result.current.makeMain('web')
+    expect(deps.exitCameraFullView).toHaveBeenCalledTimes(1)
+    expect(deps.makeMain).toHaveBeenCalledWith('web')
   })
 })

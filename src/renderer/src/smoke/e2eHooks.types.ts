@@ -82,6 +82,11 @@ export interface CanvasE2E {
   addGroup: (name: string, ids: string[]) => string
   /** S6: add a board to a group via the real reflow path (membership + re-pack); for e2e. */
   addToGroupReflowed: (groupId: string, boardId: string) => void
+  /**
+   * Spatial I2: run the REAL terminal port detection (`detectTerminalPorts` → MAIN parses the
+   * PTY's output ring) and return the loopback ports it recorded as the board's role signal.
+   */
+  detectPorts: (id: string) => Promise<number[]>
   /** Browser preview runtime for a board id, or null if none yet. */
   getRuntime: (id: string) => RuntimeProbe | null
   /**

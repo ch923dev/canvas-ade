@@ -63,6 +63,7 @@ function makeFacet(over: Partial<JarvisCanvasFacet> = {}): JarvisCanvasFacet {
     visualizePlan: none,
     focusViewport: none,
     tidyCanvas: none,
+    makeMainBoard: none,
     boardCards: none,
     describeContexts: vi.fn(
       async (): Promise<ContextsDigest> => ({ version: 1, contexts: [], ungrouped: [] })

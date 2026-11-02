@@ -3,6 +3,8 @@ import type { BoardResult, RunningMcpServer, TokenStore } from '@expanse-ade/mcp
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FocusOutcome } from './mcpFocus'
+import { jarvisTidyInput, type TidyCanvasResult } from './mcpTidy'
+import type { TidyMainSide } from '../shared/tidyContract'
 import type { BoardPlanning } from './mcpBoardPlanning'
 import type { ContextsDigest, GroupRowResult } from './mcpGroups'
 import type { GroupEditOp } from '../shared/mcpTypes'
@@ -200,7 +202,14 @@ export interface RunningMcp {
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
-  tidyCanvas(input: { mode?: string }): Promise<{ moved: number }>
+  /** Jarvis's tidy (C7 amendment): no `mode` (implicit roles), optional board scope. */
+  tidyCanvas(input: { boardIds?: string[] }): Promise<TidyCanvasResult>
+  /**
+   * Jarvis's `make_main_board` (I2 dev-check amendment): the board becomes the MAIN board and every
+   * other board its sidebar (C5 `primary` + host-only `side`). Throws when the board is not on the
+   * canvas or is docked in a swarm board — never falls back to a plain tidy.
+   */
+  makeMainBoard(input: { boardId: string; side?: TidyMainSide }): Promise<TidyCanvasResult>
   boardCards(boardId: string): Promise<unknown>
   /**
    * Spatial I1: Jarvis's Named-Group slice (jarvisGroupTools.ts) — the SAME orchestrator methods
@@ -399,7 +408,21 @@ export async function startMcpServer(
       moveCard: (boardId, cardId, to) => orchestrator.moveCard(boardId, cardId, to),
       visualizePlan: (spec) => orchestrator.visualizePlan(spec),
       focusViewport: (input) => orchestrator.focusViewport(input) as Promise<FocusOutcome>,
-      tidyCanvas: (input) => orchestrator.tidyCanvas(input),
+      // C7 amendment: unknown / docked ids drop against the live mirror; an emptied scope is a no-op.
+      tidyCanvas: async (input) => {
+        const live = jarvisTidyInput(input, registry.listBoards())
+        return live ? orchestrator.tidyCanvas(live) : { moved: 0 }
+      },
+      makeMainBoard: async (input) => {
+        const live = jarvisTidyInput(
+          { primary: input.boardId, ...(input.side !== undefined ? { side: input.side } : {}) },
+          registry.listBoards()
+        )
+        if (live?.primary === undefined) {
+          throw new Error('that board is not on the canvas (or it is docked inside a swarm board)')
+        }
+        return orchestrator.tidyCanvas(live)
+      },
       boardCards: (boardId) => orchestrator.boardCards(boardId),
       describeContexts: () => orchestrator.describeContexts(),
       groupBoards: (input) => orchestrator.groupBoards(input),

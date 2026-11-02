@@ -18,6 +18,8 @@
  *    opt-in, which rides CDP `Network.*` in `previewOsrNetwork.ts`, not `webRequest`.
  *  - CHANGE-ONLY emission: the renderer hears `{ boardId, ports }` only when the port SET changes,
  *    coalesced over {@link ORIGIN_PORTS_EMIT_MS} so a page load's request burst is one message.
+ *  - PER-PAGE: a main-frame cross-document navigation `reset()`s the set (the old page's ports
+ *    no longer describe the board), so the next emission is the NEW page's set — empty included.
  *
  * ⚠️ OWNERSHIP: Electron keeps ONE listener per `webRequest` event per session — registering a
  * second `onCompleted` silently replaces the first. This module OWNS `webRequest.onCompleted` on
@@ -89,6 +91,12 @@ export interface OriginPortsSession {
 export interface OriginPortsObserver {
   /** The current port set, ascending — for a re-emit when a backgrounded board remounts. */
   ports(): number[]
+  /**
+   * The page was replaced (main-frame, cross-document navigation): forget the old page's ports and
+   * re-emit after the coalesce window — the new page's own requests refill the set first, and an
+   * emptied set is emitted too, so a stale port never keeps linking this preview to a terminal.
+   */
+  reset(): void
   /** Remove the listener (only if this observer still owns it), cancel a pending emit, drop state. */
   dispose(): void
 }
@@ -147,6 +155,14 @@ export function observeOriginPorts(
 
   const observer: OriginPortsObserver = {
     ports: () => (disposed ? [] : ascending(recent)),
+    reset() {
+      if (disposed) return
+      recent = []
+      if (timer === null) {
+        timer = setTimeout(flush, delay)
+        timer.unref?.()
+      }
+    },
     dispose() {
       if (disposed) return
       disposed = true

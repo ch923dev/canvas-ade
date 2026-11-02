@@ -115,7 +115,7 @@ export const APP_TOOLS: readonly AppModelTool[] = [
   {
     name: 'tidy_canvas',
     purpose:
-      'Reposition-pack all boards (smart / by-type / grid; one undo). Un-gated for the orchestrator; a lead/connected terminal needs a human confirm.',
+      'Arrange boards — by role by default (fit / smart / by-type / grid / tile on request); primary = that board becomes MAIN and every other board its sidebar. One undo; reports fitZoom / readable. Un-gated for the orchestrator; a lead/connected terminal needs a human confirm.',
     tier: 'orchestrator'
   },
   {

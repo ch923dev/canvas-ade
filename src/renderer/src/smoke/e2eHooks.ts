@@ -49,6 +49,7 @@ import {
 import { clearSwitchTransition } from '../store/switchTransitionStore'
 import { useAskOnSwitchStore } from '../store/askOnSwitchStore'
 import { useToastStore } from '../store/toastStore'
+import { detectTerminalPorts, useRoleSignalsStore } from '../store/roleSignalsStore'
 import { useAttentionStore } from '../store/attentionStore'
 import { selectUnreadCount, useNotificationCenterStore } from '../store/notificationCenterStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
@@ -182,6 +183,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     addToGroupReflowed(groupId, boardId) {
       host.addToGroupReflowed(groupId, boardId)
+    },
+    async detectPorts(id) {
+      await detectTerminalPorts(id)
+      return [...(useRoleSignalsStore.getState().ports[id] ?? [])]
     },
     getRuntime(id) {
       const r = usePreviewStore.getState().byId[id]

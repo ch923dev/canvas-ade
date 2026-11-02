@@ -74,7 +74,8 @@ function makeState(boards: Board[] = [], groups: NamedGroup[] = []): CanvasState
     toObject: vi.fn() as never,
     loadObject: vi.fn() as never,
     setProjectLoading: vi.fn() as never,
-    applyOpenResult: vi.fn() as never
+    applyOpenResult: vi.fn() as never,
+    applyLayout: vi.fn() as never
   }
 }
 

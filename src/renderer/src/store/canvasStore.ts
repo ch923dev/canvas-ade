@@ -44,6 +44,7 @@ import { makeTransferElements, type TransferElements } from './planningTransfer'
 import { createConnectorSlice } from './slices/connectorSlice'
 import { createFileBoardSlice } from './slices/fileBoardSlice'
 import { createGroupSlice, pruneBoardFromGroups, type ApplyGroupOps } from './slices/groupSlice'
+import { createLayoutSlice, type LayoutSliceState } from './slices/layoutSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
 
 // selectOtherPlanningBoards lives in ./planningTransfer with the rest of the transfer concern;
@@ -87,7 +88,7 @@ export interface CanvasSnapshot {
   groups: NamedGroup[]
 }
 
-export interface CanvasState {
+export interface CanvasState extends LayoutSliceState {
   boards: Board[]
   /**
    * Typed board↔board connectors (M2). Holds ORCHESTRATION connectors in memory; preview
@@ -865,6 +866,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   ...createFileBoardSlice(set, get),
 
   ...createGroupSlice(set, get, { trackedChange, newId }),
+
+  ...createLayoutSlice(set, get, { trackedChange }),
 
   updateBoard: (id, patch) =>
     set((s) => {

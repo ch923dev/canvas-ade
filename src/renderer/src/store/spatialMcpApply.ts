@@ -13,6 +13,7 @@
 import { useCanvasStore } from './canvasStore'
 import { useCanvasViewStore } from './canvasViewStore'
 import { requestCameraFocus } from './cameraRequestStore'
+import { runTidy } from './spatialTidy'
 import { viewportCenterWorld } from '../lib/freeSlot'
 import { applyGroupsCommand } from './groupsMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
@@ -87,48 +88,34 @@ function applySpawnGroup(command: Extract<McpCommand, { type: 'spawnGroup' }>): 
   // an agent's headless spawn). The viewport centre maps to a world point; freeSlot then nudges
   // it off the Command board sitting there, so the zone tucks in beside it IN VIEW — not at the
   // fixed canvas-origin anchor (which lands off-screen once the user has panned). BUG: off-screen
-  // spawn reported 2026-06-18. Falls back to SPAWN_ANCHOR before the first fit (no viewport yet)
-  // OR outside a DOM (the node-env unit tests, where `window` is absent).
-  const at =
-    typeof window === 'undefined'
-      ? SPAWN_ANCHOR
-      : viewportCenterWorld(
-          store.viewport,
-          { w: window.innerWidth, h: window.innerHeight },
-          SPAWN_ANCHOR
-        )
+  // spawn reported 2026-06-18. The centre is the canvas PANE's (the C1 view bus — the window is
+  // wider than the pane by the chrome, which skewed the zone off-centre, I2 P3). Falls back to
+  // SPAWN_ANCHOR before the first fit (no viewport yet) OR with no Canvas mounted (no pane — the
+  // node-env unit tests).
+  const pane = useCanvasViewStore.getState().pane
+  const at = pane ? viewportCenterWorld(store.viewport, pane, SPAWN_ANCHOR) : SPAWN_ANCHOR
   store.spawnGroup({ at, group, members })
   return { ok: true, type: 'spawnGroup' }
 }
 
 function applyTidyBoards(command: Extract<McpCommand, { type: 'tidyBoards' }>): McpCommandAck {
-  // 🔒 P2: reposition the WHOLE canvas via the existing deterministic packer. Reposition-only +
-  // content-less — MAIN sends no geometry; the renderer's OWN `tidyBoards` action computes the
-  // clean arrangement. Re-validate `mode` (defense in depth, mirroring spawnGroup): fall back to
-  // 'smart' for an absent/off-enum value rather than trusting the IPC-crossed string.
-  const raw = command.mode
-  const mode = raw === 'smart' || raw === 'by-type' || raw === 'grid' ? raw : 'smart'
-  // G1: pack toward the PANE aspect exactly like the UI's tidyAndFit (useTidyTile: w / max(1, h)),
-  // read off the session-only view bus the mounted Canvas feeds. No pane (no Canvas mounted) ⇒
-  // no aspect ⇒ the packer's own default, i.e. the pre-S0 behaviour.
-  const pane = useCanvasViewStore.getState().pane
-  const aspect = pane ? pane.w / Math.max(1, pane.h) : undefined
-  // `tidyBoards` is ALREADY ONE undoable `trackedChange` step that no-ops when nothing moved — do
-  // NOT wrap it in beginChange() (that's for the additive content writes). Snapshot positions
-  // around the call so the ack can report how many boards actually moved (0 ⇒ already tidy).
-  const store = useCanvasStore.getState()
-  const before = new Map(store.boards.map((b) => [b.id, { x: b.x, y: b.y }]))
-  store.tidyBoards(mode, aspect)
-  let moved = 0
-  for (const b of useCanvasStore.getState().boards) {
-    const prev = before.get(b.id)
-    if (prev && (prev.x !== b.x || prev.y !== b.y)) moved++
+  // 🔒 Spatial I2 (C5): ONE tidy through the shared engine — the same `runTidy` the `t` key and
+  // the Tidy picker call, so an agent's tidy is the user's tidy. The engine RE-VALIDATES every
+  // field (the shared `parseTidyArgs`: mode enum, template iff tile, scope shape, roles-only
+  // primary/resize) and every id against the LIVE store (unknown ⇒ {ok:false}, docked ⇒
+  // {ok:false}) before anything lands; it applies ONE undo step (x/y always, w/h only where the
+  // engine sized a board) and frames the camera unless `fit:false`. The ack carries the C6 facts.
+  const { type: _type, ...args } = command
+  const run = runTidy(args)
+  if (!run.ok) return { ok: false, error: run.error }
+  const ack: McpCommandAck = { ok: true, type: 'tidyBoards', moved: run.moved }
+  if (run.fitZoom !== undefined) ack.fitZoom = run.fitZoom
+  if (run.readable !== undefined) ack.readable = run.readable
+  if (run.pages !== undefined) ack.pages = run.pages
+  if (run.units) {
+    ack.units = run.units.map((u) => ({ scene: u.scene, heroIds: u.heroIds, why: u.why }))
   }
-  // G4: frame the camera on the result, like tidyAndFit's fitToBoards — through the SAME camera
-  // path focusCamera uses (parked fit-all → useCameraFocusRequests → FIT_FRAME fit). Viewport-only:
-  // no undo involvement, so the tidy stays ONE undo step.
-  requestCameraFocus({ kind: 'all' })
-  return { ok: true, type: 'tidyBoards', moved }
+  return ack
 }
 
 function applyFocusCamera(command: Extract<McpCommand, { type: 'focusCamera' }>): McpCommandAck {

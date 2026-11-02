@@ -72,7 +72,7 @@ export interface FitResult {
   fitZoom: number
   /** `fitZoom >= readableZoom`. */
   readable: boolean
-  /** Present only when `'pages'` actually paged the layout. */
+  /** Present only when `'pages'` actually paged the layout (more than one page). */
   pages?: FitPage[]
 }
 
@@ -105,6 +105,13 @@ interface Shelf extends Size {
 
 const byId = (a: { id: string }, b: { id: string }): number =>
   a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+
+/** A finite, positive size or its fallback (the `roleSizing.sizeOf` rule). */
+const finitePos = (v: number, fallback: number): number =>
+  Number.isFinite(v) && v > 0 ? v : fallback
+
+/** A finite coordinate or 0 (a NaN corner would poison the anchor and every placement). */
+const finiteCoord = (v: number): number => (Number.isFinite(v) ? v : 0)
 
 /** A finite, non-negative option or its default (a NaN/negative gap would overlap boards). */
 const gapOr = (v: number | undefined, fallback: number): number =>
@@ -338,7 +345,17 @@ export function fitLayout(boards: readonly TidyBoard[], opts: FitOptions): FitRe
     return result
   }
 
-  const sorted = [...boards].sort(byId)
+  // Sanitize geometry at entry: a non-finite / non-positive w|h becomes MIN_BOARD_SIZE (else
+  // `shrink`'s floor scale is NaN and every comparison fails), a non-finite x|y becomes 0.
+  const sorted = boards
+    .map((b) => ({
+      ...b,
+      x: finiteCoord(b.x),
+      y: finiteCoord(b.y),
+      w: finitePos(b.w, MIN_BOARD_SIZE.w),
+      h: finitePos(b.h, MIN_BOARD_SIZE.h)
+    }))
+    .sort(byId)
   const original = sizesOf(sorted)
   // Step 7: fewer than 2 boards — nothing to arrange (positions AND sizes unchanged).
   if (sorted.length < 2) {
@@ -359,7 +376,8 @@ export function fitLayout(boards: readonly TidyBoard[], opts: FitOptions): FitRe
 
   if (opts.overflow === 'pages') {
     const { placements, pages } = paginate(packed, origin, unitGap, pane, readableZoom)
-    return finish(placements, original, pages)
+    // `pages` only when the layout actually paged (one page = the plain packing, C4 / C5 ack).
+    return finish(placements, original, pages.length > 1 ? pages : undefined)
   }
 
   // Step 6 `shrink`: ONE factor for every board. Below `floorScale` every board sits at

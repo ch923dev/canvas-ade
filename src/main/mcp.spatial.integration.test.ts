@@ -141,7 +141,11 @@ describe('tidy_canvas / focus_viewport D1 gate over the wire', () => {
       for (const [req] of confirm.mock.calls as unknown as Array<[{ body: string }]>) {
         expect(req.body).toContain('"Worker 1"')
       }
-      expect(sent).toEqual([{ type: 'tidyBoards' }, { type: 'focusCamera', boardId: 't2' }])
+      // D8 (a): the omitted mode reaches the renderer as an IMPLICIT roles (the package never defaults it).
+      expect(sent).toEqual([
+        { type: 'tidyBoards', mode: 'roles', implicit: true },
+        { type: 'focusCamera', boardId: 't2' }
+      ])
     })
 
     it(`🔒 ${tier} tier DENIED: a "declined" error and nothing reaches the renderer`, async () => {
@@ -157,12 +161,30 @@ describe('tidy_canvas / focus_viewport D1 gate over the wire', () => {
     })
   }
 
-  it('an unsupported tidy mode is invalid_input over the wire — before any confirm', async () => {
-    const r = await call('connected', 'tidy_canvas', { mode: 'roles' })
+  it('a host-invalid tidy is invalid_input over the wire — before any confirm', async () => {
+    // The wire accepts overflow with any mode; the host rejects pages for a legacy packer (it
+    // cannot page) rather than silently dropping it — and asks no human first.
+    const r = await call('connected', 'tidy_canvas', { mode: 'smart', overflow: 'pages' })
     expect(r.isError).toBe(true)
     expect(errorCode(r)).toBe('invalid_input')
-    expect(JSON.stringify(r.content)).toMatch(/not supported by this app version yet/)
+    expect(JSON.stringify(r.content)).toMatch(/applies to mode fit \/ roles only/)
     expect(confirm).not.toHaveBeenCalled()
     expect(sent).toEqual([])
+  })
+
+  it('every 0.27 field reaches the renderer: fit / roles / tile over the wire (orchestrator)', async () => {
+    for (const args of [
+      { mode: 'fit', overflow: 'shrink', fit: false, scope: 'visible' },
+      { mode: 'roles', primary: 't2', resize: false },
+      { mode: 'tile', template: 'cols-3', scope: { groupId: 'g1' } }
+    ]) {
+      const r = await call('orchestrator', 'tidy_canvas', args)
+      expect(r.isError).toBeFalsy()
+    }
+    expect(sent).toEqual([
+      { type: 'tidyBoards', mode: 'fit', overflow: 'shrink', fit: false, scope: 'visible' },
+      { type: 'tidyBoards', mode: 'roles', primary: 't2', resize: false },
+      { type: 'tidyBoards', mode: 'tile', template: 'cols-3', scope: { groupId: 'g1' } }
+    ])
   })
 })

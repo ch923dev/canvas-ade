@@ -37,6 +37,13 @@ export interface BoardActions {
    * action to jump to the destination board. No auto-pan elsewhere.
    */
   focusBoard: (id: string) => void
+  /**
+   * Main + sidebar (spatial I2, the ⋯ menu's "Make main board"): this board takes the big slot
+   * and every other undocked board moves into a sidebar beside it — the shared tidy engine with
+   * `primary` (the same arrangement Jarvis's `make_main_board` and an agent's
+   * `arrange_main_board` run), ONE undo step, the camera framed.
+   */
+  makeMain: (id: string) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)

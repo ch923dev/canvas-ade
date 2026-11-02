@@ -2,8 +2,9 @@
  * Layout-preset registry — the FancyZones-style picker's source of truth (pure data).
  *
  * Two kinds:
- * - `tidy` — reposition-only, keeps board sizes (semantic `smart` grouping). Routes through
- *   `tidyLayout` in the store.
+ * - `tidy` — routes through the shared tidy engine (`store/spatialTidy.runTidy`): `roles`
+ *   (role-aware stage; may resize flexible boards, D7), `fit` (groups as units, fit the pane,
+ *   positions only), and the legacy reposition-only packers (`smart`).
  * - `tile` — RESIZE-to-fill, window-manager style. Routes through `tileLayout` + a pane-aspect
  *   area in the store.
  *
@@ -11,8 +12,11 @@
  * the picker — the real layout adapts to the live board count. Keeping them here means the
  * picker UI and the dispatch logic share one ordered list.
  */
-import type { TidyMode } from './tidyLayout'
 import type { TileTemplate } from './tileLayout'
+import type { TidyCommandMode } from '../../../shared/tidyContract'
+
+/** The modes a `tidy` preset can run — every tidy_canvas mode except `tile` (its own kind). */
+export type PresetTidyMode = Exclude<TidyCommandMode, 'tile'>
 
 /** A fractional zone (0..1 of the thumbnail) drawn in the picker. */
 export interface PresetZone {
@@ -26,7 +30,7 @@ export type LayoutPreset =
   | {
       id: string
       kind: 'tidy'
-      tidyMode: TidyMode
+      tidyMode: PresetTidyMode
       label: string
       hint: string
       zones: PresetZone[]
@@ -40,8 +44,42 @@ export type LayoutPreset =
       zones: PresetZone[]
     }
 
-/** Ordered presets shown in the picker (Smart first as the semantic "auto"). */
+/**
+ * Ordered presets shown in the picker (spatial D8 a, DESIGN W6): **By role** first — the `t` key
+ * runs it as the IMPLICIT default (a unit of plain shells keeps its sizes) — then **Fit to
+ * screen**, then Smart. Labels + hints are SPEC C8's, verbatim.
+ */
 export const LAYOUT_PRESETS: LayoutPreset[] = [
+  {
+    id: 'roles',
+    kind: 'tidy',
+    tidyMode: 'roles',
+    label: 'By role',
+    hint: 'Lead / browser gets the big slot; linked boards sit beside it',
+    // One large hero zone + a stacked rail (W6).
+    zones: [
+      { x: 0.06, y: 0.08, w: 0.58, h: 0.84 },
+      { x: 0.68, y: 0.08, w: 0.26, h: 0.26 },
+      { x: 0.68, y: 0.37, w: 0.26, h: 0.26 },
+      { x: 0.68, y: 0.66, w: 0.26, h: 0.26 }
+    ]
+  },
+  {
+    id: 'fit',
+    kind: 'tidy',
+    tidyMode: 'fit',
+    label: 'Fit to screen',
+    hint: 'Keep groups together, fit the window',
+    // Small clusters separated by wider gaps — the group-as-unit idea (W2).
+    zones: [
+      { x: 0.06, y: 0.1, w: 0.17, h: 0.34 },
+      { x: 0.25, y: 0.1, w: 0.17, h: 0.34 },
+      { x: 0.6, y: 0.1, w: 0.17, h: 0.34 },
+      { x: 0.06, y: 0.56, w: 0.17, h: 0.34 },
+      { x: 0.25, y: 0.56, w: 0.17, h: 0.34 },
+      { x: 0.6, y: 0.56, w: 0.34, h: 0.34 }
+    ]
+  },
   {
     id: 'smart',
     kind: 'tidy',

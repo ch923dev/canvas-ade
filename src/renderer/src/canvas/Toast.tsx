@@ -58,11 +58,11 @@ function ToastItem({ toast }: { toast: Toast }): ReactElement {
     >
       <span className="toast-dot" aria-hidden="true" />
       <span className="toast-msg">{toast.message}</span>
-      {toast.action && (
-        <button className="toast-action" onClick={toast.action.run}>
-          {toast.action.label}
+      {[...(toast.action ? [toast.action] : []), ...(toast.actions ?? [])].map((a) => (
+        <button key={a.label} className="toast-action" onClick={a.run}>
+          {a.label}
         </button>
-      )}
+      ))}
       <button className="toast-dismiss" aria-label="Dismiss" onClick={() => dismissToast(toast.id)}>
         ✕
       </button>

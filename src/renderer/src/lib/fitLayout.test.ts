@@ -344,6 +344,37 @@ describe('fitLayout — step 6: overflow when still unreadable', () => {
     expect(t.h).toBeUndefined()
   })
 
+  test('pages is absent when paging leaves ONE page (a single too-big unit) — I2 P3', () => {
+    const boards = [b('a', 0, 0, 9000, 7000), b('b', 9100, 0, 9000, 7000)]
+    const res = fitLayout(boards, {
+      pane,
+      units: [{ id: 'g', boardIds: ['a', 'b'] }],
+      overflow: 'pages'
+    })
+    expect(res.readable).toBe(false)
+    expect(res.pages).toBeUndefined() // one page is no paging: the agent sees plain readable:false
+  })
+
+  test('non-finite sizes / positions never poison a shrink (I2 P3)', () => {
+    const bad = [
+      b('nan', Number.NaN, 0, Number.NaN, Number.NaN),
+      b('inf', 0, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 900),
+      b('zero', 0, 0, 0, 0),
+      ...six
+    ]
+    for (const overflow of ['shrink', 'pages', 'report'] as const) {
+      const res = fitLayout(bad, { pane, overflow })
+      expect(res.placements).toHaveLength(bad.length)
+      for (const p of res.placements) {
+        for (const v of [p.x, p.y, p.w ?? 1, p.h ?? 1]) expect(Number.isFinite(v)).toBe(true)
+      }
+      expect(Number.isFinite(res.fitZoom)).toBe(true)
+      for (const v of [res.bbox.x, res.bbox.y, res.bbox.w, res.bbox.h]) {
+        expect(Number.isFinite(v)).toBe(true)
+      }
+    }
+  })
+
   test('shrink leaves w/h off a readable layout (nothing to resize)', () => {
     const res = fitLayout(six.slice(0, 2), { pane, overflow: 'shrink' })
     expect(res.readable).toBe(true)

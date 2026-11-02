@@ -136,3 +136,26 @@ describe('sticky retention backstop (audit P1-2c)', () => {
     expect(ids[0]).toBe('s1') // s0 (oldest sticky) evicted
   })
 })
+
+describe('toastStore — multiple actions (spatial W3 / W7)', () => {
+  it('passes actions through; an empty list is dropped; a keyed replace swaps them', () => {
+    const run = (): void => {}
+    showToast({
+      id: 'k',
+      message: 'a',
+      actions: [
+        { label: 'Show all', run },
+        { label: 'Undo', run }
+      ]
+    })
+    expect(useToastStore.getState().toasts[0].actions!.map((x) => x.label)).toEqual([
+      'Show all',
+      'Undo'
+    ])
+    showToast({ id: 'k', message: 'b', actions: [] })
+    const [t] = useToastStore.getState().toasts
+    expect(t.message).toBe('b')
+    expect(t.actions).toBeUndefined()
+    expect(useToastStore.getState().toasts).toHaveLength(1)
+  })
+})

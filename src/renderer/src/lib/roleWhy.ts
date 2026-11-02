@@ -8,6 +8,7 @@
  * reshape the agent-facing ack.
  */
 import type { BoardRole, BoardRoleInfo, RoleBoardInput } from '../../../shared/boardRoles'
+import { sanitizeGroupName } from '../../../shared/groupName'
 
 const NOUN: Readonly<Record<BoardRole, string>> = {
   lead: 'lead',
@@ -23,12 +24,8 @@ const NOUN: Readonly<Record<BoardRole, string>> = {
   shell: 'shell'
 }
 
-/** Longest title echoed into a sentence. */
+/** Longest title echoed into a sentence, in code points. */
 const TITLE_MAX = 40
-
-// C0/C1 controls, zero-width + bidi controls, BOM — never echoed into the ack.
-// eslint-disable-next-line no-control-regex
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
 
 export interface WhyContext {
   boards: ReadonlyMap<string, RoleBoardInput>
@@ -41,10 +38,16 @@ export interface WhyContext {
 const roleOf = (ctx: WhyContext, id: string): BoardRole => ctx.roles.get(id)?.role ?? 'file'
 const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`
 
+/**
+ * A title safe to echo into the agent-facing ack: the SHARED group-name sanitizer (controls, bidi,
+ * zero-width and other invisible format characters stripped, whitespace collapsed — one rule for
+ * every label crossing a trust boundary), quotes made typographic, then clamped by CODE POINT so a
+ * surrogate pair (emoji) is never split.
+ */
 function cleanTitle(raw: unknown): string {
   if (typeof raw !== 'string') return ''
-  const t = raw.replace(UNSAFE, '').replace(/\s+/g, ' ').replace(/'/g, '’').trim()
-  return t.length > TITLE_MAX ? `${t.slice(0, TITLE_MAX - 1)}…` : t
+  const cps = [...sanitizeGroupName(raw).replace(/'/g, '’')]
+  return cps.length > TITLE_MAX ? `${cps.slice(0, TITLE_MAX - 1).join('')}…` : cps.join('')
 }
 
 /** `browser 'App'`, or `browser #b8b4c254` without a title. */
@@ -119,10 +122,13 @@ export function unitWhy(ctx: WhyContext, w: WhyInput): string {
   const heroPart = (): string => {
     if (w.heroIds.length === 0) return `${n} boards`
     const names = w.heroIds.map((id) => nameOf(ctx, id)).join(' + ')
+    // Main + sidebar (spatial I2): the user picked the main board — say so, not why a role won.
+    if (w.primary !== undefined && w.heroIds.includes(w.primary)) {
+      return `main = ${names} · ${plural(n - 1, 'board')} in its sidebar`
+    }
     const lead = w.heroIds.find((id) => roleOf(ctx, id) === 'preview') ?? w.heroIds[0]
     const tag = w.heroIds.length > 1 ? 'co-heroes' : 'hero'
-    const primary = w.primary !== undefined && w.heroIds.includes(w.primary) ? ' (primary)' : ''
-    return `${tag} = ${names}: ${heroDetail(ctx, lead)}${primary}`
+    return `${tag} = ${names}: ${heroDetail(ctx, lead)}`
   }
   switch (w.kind) {
     case 'single':

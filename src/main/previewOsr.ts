@@ -636,6 +636,11 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   e.originPorts = observeOriginPorts(sess, (ports) => {
     if (!e.backgrounded) emitEvent({ id, type: 'origin-ports', ports })
   })
+  // A NEW page (main-frame, cross-document) drops the old page's ports, so a stale port cannot
+  // keep linking this preview to the wrong terminal; the new page's requests refill the set.
+  wc.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) e.originPorts?.reset()
+  })
   // Audio (4A): surface a mute toggle while the page plays media. media-started/paused fire
   // regardless of mute, so muting keeps the button visible; the emit is diff-skipped.
   wc.on('media-started-playing', () => emitAudible(e, id, true))

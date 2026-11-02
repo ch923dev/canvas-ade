@@ -182,6 +182,14 @@ function forAll(base: number, check: (c: Case, res: RoleLayoutResult, seed: stri
   }
 }
 
+/** The boards of `opts.primary`'s unit — MAIN + SIDEBAR (I2): every one is sized to its slot,
+ *  so D7's rigid / aspect rules do not apply to them (user decision 2026-11-02). */
+const mainUnitIds = (c: Case, res: RoleLayoutResult): Set<string> => {
+  const primary = c.opts.primary
+  if (primary === undefined) return new Set()
+  return new Set(res.units.filter((u) => u.heroIds.includes(primary)).flatMap((u) => u.boardIds))
+}
+
 const liveById = (c: Case): Map<string, RoleBoardInput> => {
   const m = new Map<string, RoleBoardInput>()
   for (const b of c.boards) if (!b.dockedIn && !m.has(b.id)) m.set(b.id, b)
@@ -246,26 +254,40 @@ describe('roleLayout — §8 guarantees (seeded random canvases)', () => {
     })
   })
 
-  test('rigid boards keep their exact w/h (never sized)', () => {
+  test('rigid boards keep their exact w/h (never sized) — outside main + sidebar', () => {
     forAll(30_000, (c, res, seed) => {
+      const main = mainUnitIds(c, res)
       for (const p of res.placements) {
         const b = liveById(c).get(p.id)!
+        if (main.has(p.id)) continue
         if (sizeClassOf(b.type, c.roles.get(p.id)?.role) !== 'rigid') continue
         expect(p.w === undefined && p.h === undefined, `${seed} ${p.id} (${b.type})`).toBe(true)
       }
     })
   })
 
-  test('previews keep their w:h within ±1 px', () => {
+  test('previews keep their w:h within ±1 px — outside main + sidebar', () => {
     forAll(40_000, (c, res, seed) => {
+      const main = mainUnitIds(c, res)
       for (const p of res.placements) {
-        if (p.w === undefined || p.h === undefined) continue
+        if (p.w === undefined || p.h === undefined || main.has(p.id)) continue
         const b = liveById(c).get(p.id)!
         if (b.type !== 'browser') continue
         const size = sizeOf(b)
         const r = size.w / size.h
         const err = Math.min(Math.abs(p.w - p.h * r), Math.abs(p.h - p.w / r))
         expect(err, `${seed} ${p.id} ${p.w}×${p.h} vs ${size.w}×${size.h}`).toBeLessThanOrEqual(1)
+      }
+    })
+  })
+
+  test('main + sidebar sizes every board it lays out to ≥ its floor (any class)', () => {
+    forAll(45_000, (c, res, seed) => {
+      const main = mainUnitIds(c, res)
+      for (const p of res.placements) {
+        if (!main.has(p.id) || p.w === undefined || p.h === undefined) continue
+        expect(p.w, `${seed} ${p.id}.w`).toBeGreaterThanOrEqual(MIN_BOARD_SIZE.w)
+        expect(p.h, `${seed} ${p.id}.h`).toBeGreaterThanOrEqual(MIN_BOARD_SIZE.h)
       }
     })
   })

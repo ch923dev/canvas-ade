@@ -56,6 +56,7 @@ function makeFacet(over: Partial<JarvisCanvasFacet> = {}): JarvisCanvasFacet {
     visualizePlan: vi.fn(async () => ({ id: 'viz-board-id-123456' })),
     focusViewport: vi.fn(async () => ({ focused: 'board' as const, id: TERM_ID })),
     tidyCanvas: vi.fn(async () => ({ moved: 3 })),
+    makeMainBoard: vi.fn(async () => ({ moved: 3, fitZoom: 0.7, readable: true })),
     describeContexts: vi.fn(async () => ({ version: 1 as const, contexts: [], ungrouped: [] })),
     groupBoards: vi.fn(async () => []),
     editGroups: vi.fn(async () => []),
@@ -80,6 +81,7 @@ describe('catalog + risk tiers', () => {
       'board_cards',
       'focus_viewport',
       'tidy_canvas',
+      'make_main_board',
       'spawn_board',
       'relay_prompt',
       'add_card',
@@ -302,6 +304,120 @@ describe('executeJarvisTool', () => {
     expect(f.isError).toBe(false)
     expect(t.isError).toBe(false)
     expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('tidy_canvas has NO mode (implicit roles) and only an optional boards scope (C7 amendment)', () => {
+    const def = buildJarvisToolDefs().find((d) => d.name === 'tidy_canvas')!
+    const props = (def.input_schema as { properties: Record<string, unknown> }).properties
+    expect(Object.keys(props)).toEqual(['boards'])
+    expect(def.description).toMatch(/use make_main_board instead/)
+    expect(def.input_schema).toMatchObject({ additionalProperties: false })
+    expect(isJarvisToolGated('tidy_canvas')).toBe(false) // tier unchanged: READ, auto-allow
+  })
+
+  it('tidy_canvas with no args forwards {} — the whole-canvas implicit roles', async () => {
+    const facet = makeFacet()
+    await executeJarvisTool('tidy_canvas', {}, { facet, confirm: vi.fn(approve) })
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({})
+  })
+
+  it('tidy_canvas resolves boards (id prefix or exact title) to full ids (S12)', async () => {
+    const facet = makeFacet()
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { boards: [TERM_ID.slice(0, 8), 'Sprint board'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(r.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({ boardIds: [TERM_ID, KANBAN_ID] })
+  })
+
+  it('tidy_canvas DROPS unknown references; all-unknown boards is a no-op (facet never called)', async () => {
+    const facet = makeFacet()
+    const one = await executeJarvisTool(
+      'tidy_canvas',
+      { boards: ['auth api', 'ghost'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(one.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({ boardIds: [TERM_ID] })
+    const none = await executeJarvisTool(
+      'tidy_canvas',
+      { boards: ['ghost', 'phantom'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(none.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledTimes(1)
+  })
+
+  it('make_main_board: required board + optional side enum; auto-allow tier; points away from tidy', () => {
+    const def = buildJarvisToolDefs().find((d) => d.name === 'make_main_board')!
+    expect(def.input_schema).toMatchObject({
+      required: ['board'],
+      additionalProperties: false,
+      properties: { side: { enum: ['auto', 'right', 'left', 'bottom', 'top'] } }
+    })
+    expect(def.description).toMatch(/make the browser the main one/)
+    expect(def.description).toMatch(/EVERY other board/)
+    expect(isJarvisToolGated('make_main_board')).toBe(false)
+  })
+
+  it('make_main_board resolves the board strictly and forwards it (+ side) to the facet', async () => {
+    const facet = makeFacet()
+    const confirm = vi.fn(approve)
+    const r = await executeJarvisTool('make_main_board', { board: 'auth api' }, { facet, confirm })
+    expect(r.isError).toBe(false)
+    expect(facet.makeMainBoard).toHaveBeenCalledWith({ boardId: TERM_ID })
+    expect(r.summary).toBe('make_main_board · "auth api" main · 3 board(s) moved')
+    expect(confirm).not.toHaveBeenCalled()
+    await executeJarvisTool(
+      'make_main_board',
+      { board: TERM_ID.slice(0, 8), side: 'left' },
+      { facet, confirm }
+    )
+    expect(facet.makeMainBoard).toHaveBeenLastCalledWith({ boardId: TERM_ID, side: 'left' })
+    expect(facet.tidyCanvas).not.toHaveBeenCalled() // never a fallback plain tidy
+  })
+
+  it('make_main_board FAILS loudly on an unknown board, a missing board or a bad side', async () => {
+    const facet = makeFacet()
+    for (const input of [{ board: 'ghost' }, {}, { board: 'auth api', side: 'diagonal' }]) {
+      const r = await executeJarvisTool('make_main_board', input, {
+        facet,
+        confirm: vi.fn(approve)
+      })
+      expect(r.isError).toBe(true)
+    }
+    expect(facet.makeMainBoard).not.toHaveBeenCalled()
+  })
+
+  it('make_main_board surfaces the facet error (docked / gone board) instead of tidying', async () => {
+    const facet = makeFacet({
+      makeMainBoard: vi.fn(async () => {
+        throw new Error('that board is not on the canvas (or it is docked inside a swarm board)')
+      })
+    })
+    const r = await executeJarvisTool(
+      'make_main_board',
+      { board: 'auth api' },
+      {
+        facet,
+        confirm: vi.fn(approve)
+      }
+    )
+    expect(r.isError).toBe(true)
+    expect(r.content).toMatch(/docked inside a swarm board/)
+  })
+
+  it('tidy_canvas rejects a malformed boards list (model output is untrusted)', async () => {
+    const facet = makeFacet()
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { boards: 'auth api' },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(r.isError).toBe(true)
+    expect(facet.tidyCanvas).not.toHaveBeenCalled()
   })
 
   it('list_boards projects id8 + title + status (never page content fields)', async () => {

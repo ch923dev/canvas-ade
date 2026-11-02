@@ -16,6 +16,14 @@ export type CameraFocusTarget =
   | { kind: 'board'; id: string }
   | { kind: 'group'; id: string }
   | { kind: 'all' }
+  // Spatial I2 (tidy framing, C5 `fit !== false`). `rect` frames a world rect with FIT_FRAME,
+  // computed from the ARRANGED geometry — race-free against React Flow's not-yet-synced nodes,
+  // which `rf.fitView` would read stale right after a store write. `viewport` sets the exact
+  // camera `roleLayout` solved (the stage at its target zoom). `groupPicker` opens the group
+  // switcher (the W3 toast's "Focus a group" — the F-key verb).
+  | { kind: 'rect'; rect: { x: number; y: number; w: number; h: number } }
+  | { kind: 'viewport'; viewport: { x: number; y: number; zoom: number } }
+  | { kind: 'groupPicker' }
 
 interface CameraRequestState {
   seq: number

@@ -31,6 +31,15 @@ import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 // TYPE-ONLY import of the P4 observability-feed payload. `commandFeedTypes.ts` is a shared,
 // dependency-free leaf; a type import is erased at build so this file stays declaration-only.
 import type { CommandFeedPush } from './commandFeedTypes'
+// TYPE-ONLY import of the spatial tidy contract (C5) — a pure shared leaf; erased at build.
+import type {
+  TidyAckUnit,
+  TidyCommandMode,
+  TidyMainSide,
+  TidyOverflowMode,
+  TidyScope,
+  TidyTileTemplate
+} from './tidyContract'
 import type { SpecOp } from '../renderer/src/lib/specOps'
 
 /** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
@@ -380,11 +389,13 @@ export interface PlanItem {
  *   later lifecycle tools can address each member); the renderer lays out the cluster (free-slot
  *   placement, per-type defaults) and folds the browser's `previewSourceId` onto the terminal.
  *   Content-less like `addBoard` (empty boards), so it is cap-checked, not human-gated.
- * - `tidyBoards` (P2) repositions the WHOLE canvas into a clean, non-overlapping arrangement via the
- *   existing `canvasStore.tidyBoards` action (`smart`/`by-type`/`grid`). Reposition-only + content-less
- *   (never resizes/creates/deletes a board); `tidyBoards` is ALREADY one undoable `trackedChange` step
- *   that no-ops when nothing moved, so the renderer applier calls it directly (no `beginChange`
- *   wrapper). The applier re-validates `mode` (defense in depth) and reports the moved count on the ack.
+ * - `tidyBoards` (P2, widened by spatial I2 / C5) arranges the canvas — or a `scope` of it — into a
+ *   clean, non-overlapping layout: `fit` (units fit the pane), `roles` (role-aware stage; an omitted
+ *   agent `mode` arrives as `roles` + `implicit:true`, D8 a), `tile` (+ `template`), or the legacy
+ *   `smart`/`by-type`/`grid` packers. Content-less: never creates/deletes a board; resizes only under
+ *   `roles` (flexible boards, D7), `tile` and `overflow:'shrink'`. ONE undoable step that no-ops when
+ *   nothing changed; `fit !== false` reframes the camera. The applier re-validates every field with
+ *   the shared `parseTidyArgs` (defense in depth) and acks `moved` + the C6 facts.
  * - `focusCamera` (H1 / Lane H) moves the USER'S VIEWPORT — fit the camera to one board (`boardId`),
  *   one Named Group (`groupId`), or the whole canvas (neither). Viewport-only + content-less (no
  *   board is created, moved, resized, or deleted; the camera is ephemeral session state, the canvas
@@ -484,14 +495,27 @@ export type McpCommand =
         browser?: { id: string }
       }
     }
-  | { type: 'tidyBoards'; mode?: 'smart' | 'by-type' | 'grid' }
+  | {
+      type: 'tidyBoards'
+      mode?: TidyCommandMode
+      template?: TidyTileTemplate
+      scope?: TidyScope
+      overflow?: TidyOverflowMode
+      fit?: boolean
+      primary?: string
+      resize?: boolean
+      side?: TidyMainSide
+      implicit?: boolean
+    }
   | { type: 'focusCamera'; boardId?: string; groupId?: string }
   | { type: 'commandFeed'; feed: CommandFeedPush }
 
 /**
  * The renderer's reply to a McpCommand. `type` echoes the handled command. The optional `moved` (P2)
- * rides on a successful `tidyBoards` ack — the count of boards whose position changed (0 ⇒ already
- * tidy) — so the host can surface it to the agent; absent on every other command. The optional
+ * rides on a successful `tidyBoards` ack — the count of boards whose position or size changed (0 ⇒
+ * already tidy) — with the C6 facts beside it (`fitZoom` / `readable` of the result, `pages` under
+ * `overflow:'pages'`, `units` for `roles`), which MAIN re-sanitizes (`sanitizeTidyAck`) before the
+ * agent sees them; absent on every other command. The optional
  * `rendered` (P4) rides on a successful `commandFeed` ack: `false` means the push landed in the
  * store but there is no Command board on the canvas to show it, which the host DISCLOSES rather
  * than swallowing (an unshown feed reads to the human as "nothing happened"). The optional `groupIds`
@@ -499,7 +523,17 @@ export type McpCommand =
  * the command's `create`.
  */
 export type McpCommandAck =
-  | { ok: true; type: string; moved?: number; rendered?: boolean; groupIds?: string[] }
+  | {
+      ok: true
+      type: string
+      moved?: number
+      rendered?: boolean
+      groupIds?: string[]
+      fitZoom?: number
+      readable?: boolean
+      pages?: number
+      units?: TidyAckUnit[]
+    }
   | { ok: false; error: string }
 
 // ── Audit entry types (formerly hand-mirrored in auditLog.ts + AuditLogViewer.tsx) ──

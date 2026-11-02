@@ -109,6 +109,22 @@ export function memberOf(
   return { id: b.id, cls, w, h, minW: min.w, minH: min.h }
 }
 
+/**
+ * A main + sidebar member (spatial I2, user decision 2026-11-02): EVERY board is flexible — the
+ * main board stretches to fill the main area and each sidebar board (planning / kanban / file and
+ * browsers included) is resized to its sidebar slot. D7's rigid / aspect classes still hold for
+ * By role and Fit to screen. The floor stays the role minimum (a terminal keeps its readable
+ * 490 × 312) — `floor: 'board'` is the D4 shrink.
+ */
+export function mainMemberOf(
+  b: { id: string; type: string; w: number; h: number },
+  floor: 'role' | 'board' = 'role'
+): Member {
+  const { w, h } = sizeOf(b)
+  const min = floor === 'board' ? MIN_BOARD_SIZE : roleMinimum(b.type)
+  return { id: b.id, cls: 'flexible', w, h, minW: min.w, minH: min.h }
+}
+
 /** The pane area a frame may fill: the pane minus `FIT_PADDING_PX` on every side (≥ 1 px). */
 export function availOf(pane: { w: number; h: number }): { w: number; h: number } {
   return {
@@ -360,16 +376,14 @@ export function gridColumns(ms: readonly Member[], avail: { w: number; h: number
   return best
 }
 
-/** Equal cells, `cols` per row in member order; a short last row is centred (S8: 3 + 2). */
-export function solveGrid(
+/** Lay `ms` into equal cells, `cols` per row, filling `frame` (never below the cell minimum);
+ *  a short last row is centred (S8: 3 + 2). */
+function gridCells(
   ms: readonly Member[],
   cols: number,
-  avail: { w: number; h: number },
-  zMax: number
-): Solved {
+  frame: { w: number; h: number }
+): { cells: Cell[]; h: number } {
   const min = gridMin(ms, cols)
-  const z = quantizeZoom(Math.max(FIT_MIN_ZOOM, Math.min(zMax, avail.w / min.w, avail.h / min.h)))
-  const frame = frameAt(avail, z)
   const rowsN = Math.ceil(ms.length / cols)
   const cw = Math.max(min.cw, (frame.w - (cols - 1) * ROLE_GAP) / cols)
   const ch = Math.max(min.ch, (frame.h - (rowsN - 1) * ROLE_GAP) / rowsN)
@@ -383,7 +397,68 @@ export function solveGrid(
     const y = Math.round(top)
     return fitMember(m, { x, y, w: Math.round(left + cw) - x, h: Math.round(top + ch) - y })
   })
-  return { z, cells }
+  // The bottom edge exactly as the last row's cells round it (rows·ch + (rows−1)·gap).
+  return { cells, h: Math.round(rowsN * ch + (rowsN - 1) * ROLE_GAP) }
+}
+
+/** Equal cells, `cols` per row in member order; a short last row is centred (S8: 3 + 2). */
+export function solveGrid(
+  ms: readonly Member[],
+  cols: number,
+  avail: { w: number; h: number },
+  zMax: number
+): Solved {
+  const min = gridMin(ms, cols)
+  const z = quantizeZoom(Math.max(FIT_MIN_ZOOM, Math.min(zMax, avail.w / min.w, avail.h / min.h)))
+  return { z, cells: gridCells(ms, cols, frameAt(avail, z)).cells }
+}
+
+/**
+ * §4 `grid` for a whole unit (`peers`, or any hero-less mix that reaches the grid). The cells are
+ * sized by the NON-rigid members only, and rigid boards (plan / kanban / file — never resized,
+ * D7) sit at their exact size in one shelf row under the grid, `ROLE_GAP` apart. Without this a
+ * single planning board in a peers group inflated EVERY terminal cell to its size (`gridMin`
+ * takes the max over all members — the I2 review P3). With no rigid member (or nothing but rigid
+ * ones) it is exactly `gridColumns` + `solveGrid`.
+ */
+export function solvePeers(
+  ms: readonly Member[],
+  avail: { w: number; h: number },
+  zMax: number
+): { cols: number; rows: number; s: Solved } {
+  const flex = ms.filter((m) => m.cls !== 'rigid')
+  const rigid = ms.filter((m) => m.cls === 'rigid')
+  if (rigid.length === 0 || flex.length === 0) {
+    const cols = gridColumns(ms, avail)
+    return { cols, rows: Math.ceil(ms.length / cols), s: solveGrid(ms, cols, avail, zMax) }
+  }
+  const shelfW = rigid.reduce((v, m) => v + m.w, 0) + (rigid.length - 1) * ROLE_GAP
+  const shelfH = rigid.reduce((v, m) => Math.max(v, m.h), 0)
+  const minFor = (cols: number): { w: number; h: number } => {
+    const g = gridMin(flex, cols)
+    return { w: Math.max(g.w, shelfW), h: g.h + ROLE_GAP + shelfH }
+  }
+  let cols = 1
+  let bestZ = -Infinity
+  for (let c = 1; c <= flex.length; c++) {
+    const min = minFor(c)
+    const z = Math.min(avail.w / min.w, avail.h / min.h)
+    if (z > bestZ + 1e-12) {
+      cols = c
+      bestZ = z
+    }
+  }
+  const min = minFor(cols)
+  const z = quantizeZoom(Math.max(FIT_MIN_ZOOM, Math.min(zMax, avail.w / min.w, avail.h / min.h)))
+  const frame = frameAt(avail, z)
+  const grid = gridCells(flex, cols, { w: frame.w, h: frame.h - ROLE_GAP - shelfH })
+  const cells = [...grid.cells]
+  let x = 0
+  for (const m of rigid) {
+    cells.push({ id: m.id, x, y: grid.h + ROLE_GAP, w: m.w, h: m.h, sized: false })
+    x += m.w + ROLE_GAP
+  }
+  return { cols, rows: Math.ceil(flex.length / cols), s: { z, cells } }
 }
 
 // ── shelf (docs) ─────────────────────────────────────────────────────────────────────────────
