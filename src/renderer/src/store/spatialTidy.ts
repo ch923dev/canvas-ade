@@ -29,7 +29,7 @@ import type { LayoutPlacement } from './slices/layoutSlice'
 import { isDockedTerminal, type Board } from '../lib/boardSchema'
 import { boardsBounds, type BoardRect } from '../lib/boardGeometry'
 import { DEFAULT_ASPECT, tidyLayout } from '../lib/tidyLayout'
-import { tileLayout } from '../lib/tileLayout'
+import { tileArea, tileLayout } from '../lib/tileLayout'
 import { fitLayout, type FitUnit } from '../lib/fitLayout'
 import { roleLayout } from '../lib/roleLayout'
 import {
@@ -60,26 +60,8 @@ import {
   type TidyScope
 } from '../../../shared/tidyContract'
 
-/** Base width (world px) of the pane-aspect block a tile layout fills before the camera fits to
- *  it — absolute size is irrelevant (the fit normalizes it); only the aspect + zones matter. */
-export const TILE_AREA_BASE_W = 2400
-
 /** The pane assumed when no Canvas is mounted (node-env tests, the welcome screen): 16:10. */
 export const FALLBACK_PANE = { w: 1600, h: 1000 } as const
-
-/**
- * The world-space block a tile layout fills: anchored at the boards' top-left corner, sized to
- * the pane `aspect` (w = baseW, h = baseW / aspect). Null when there are no boards. Pure.
- */
-export function tileArea(
-  boards: BoardRect[],
-  aspect: number,
-  baseW = TILE_AREA_BASE_W
-): { x: number; y: number; w: number; h: number } | null {
-  const bb = boardsBounds(boards)
-  if (!bb) return null
-  return { x: bb.minX, y: bb.minY, w: baseW, h: baseW / aspect }
-}
 
 /** One arranged unit (roles), with the names the W7 toast and the ack need. */
 export interface TidyUnitInfo {

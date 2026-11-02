@@ -49,7 +49,12 @@ const isSpawnable = (type: string): type is BoardType =>
  * re-validates the type even though MAIN is trusted (frame-guarded control plane) —
  * defense in depth keeps a malformed spec from forging an off-type board.
  */
-export function applyMcpCommand(command: McpCommand): McpCommandAck {
+export function applyMcpCommand(command: Exclude<McpCommand, { type: 'tidyBoards' }>): McpCommandAck
+export function applyMcpCommand(
+  command: Extract<McpCommand, { type: 'tidyBoards' }>
+): Promise<McpCommandAck>
+export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<McpCommandAck>
+export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<McpCommandAck> {
   // Cross-project routing (2026-07-09): while a project switch is mid-load the store is about to
   // be REPLACED by applyOpenResult — a write applied now would be silently wiped with no trace.
   // Fail the ack instead so MAIN's pending-command drainer re-queues and retries on the next
@@ -394,7 +399,8 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'focusCamera':
     case 'applyGroups':
       // Spatial awareness C5 pre-split: the spatial commands (feature-zone spawn · whole-canvas tidy ·
-      // camera focus) live in spatialMcpApply.ts — same re-validate-then-apply contract.
+      // camera focus) live in spatialMcpApply.ts — same re-validate-then-apply contract. A tidy acks
+      // through a Promise (its engine is a lazy chunk); the reply below waits for it.
       return applySpatialMcpCommand(command)
     case 'commandFeed': {
       // 🔒 P4: carry ONE external worker's live status/result into the EPHEMERAL commandStore so a
@@ -529,13 +535,17 @@ export function useMcpCommands(): void {
     const onCommand = window.api?.mcp?.onCommand
     if (!onCommand) return
     return onCommand((command, reply) => {
-      try {
-        reply(applyMcpCommand(command as McpCommand))
-      } catch (err) {
-        // A malformed envelope must never throw PAST the ack — that strands MAIN's
-        // sendMcpCommand on its 2s timeout. Convert any unexpected throw into a resolved
-        // { ok: false } so the round-trip always completes.
+      // A malformed envelope must never throw PAST the ack — that strands MAIN's
+      // sendMcpCommand on its 2s timeout. Convert any unexpected throw (or a rejected async
+      // apply) into a resolved { ok: false } so the round-trip always completes.
+      const fail = (err: unknown): void =>
         reply({ ok: false, error: err instanceof Error ? err.message : String(err) })
+      try {
+        const ack = applyMcpCommand(command as McpCommand)
+        if (ack instanceof Promise) ack.then(reply, fail)
+        else reply(ack)
+      } catch (err) {
+        fail(err)
       }
     })
   }, [])

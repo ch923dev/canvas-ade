@@ -35,40 +35,40 @@ const positions = (): Array<[string, number, number]> =>
   useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y])
 
 describe('applySpatialMcpCommand tidyBoards (S0 — screen-aware agent tidy)', () => {
-  it('G1: packs toward the mounted PANE aspect (wide pane ⇒ one row, tall pane ⇒ one column)', () => {
+  it('G1: packs toward the mounted PANE aspect (wide pane ⇒ one row, tall pane ⇒ one column)', async () => {
     seedOverlapping()
     useCanvasViewStore.setState({ pane: { w: 4000, h: 400 } })
-    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(new Set(useCanvasStore.getState().boards.map((b) => b.y)).size).toBe(1)
 
     seedOverlapping()
     useCanvasViewStore.setState({ pane: { w: 400, h: 4000 } })
-    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(new Set(useCanvasStore.getState().boards.map((b) => b.x)).size).toBe(1)
   })
 
-  it('G1: passes the aspect exactly like the UI tidy (w / max(1, h)) — same result as a direct call', () => {
+  it('G1: passes the aspect exactly like the UI tidy (w / max(1, h)) — same result as a direct call', async () => {
     seedOverlapping()
     useCanvasStore.getState().tidyBoards('grid', 1600 / 900)
     const expected = positions()
     seedOverlapping()
     useCanvasViewStore.setState({ pane: { w: 1600, h: 900 } })
-    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(positions()).toEqual(expected)
   })
 
-  it('G1: no mounted pane ⇒ no aspect — identical to the packer default (pre-S0 behaviour)', () => {
+  it('G1: no mounted pane ⇒ no aspect — identical to the packer default (pre-S0 behaviour)', async () => {
     seedOverlapping()
     useCanvasStore.getState().tidyBoards('grid')
     const expected = positions()
     seedOverlapping()
-    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(positions()).toEqual(expected)
   })
 
-  it('G4: frames the camera on the ARRANGED bbox via the focusCamera bus, still ONE undo step', () => {
+  it('G4: frames the camera on the ARRANGED bbox via the focusCamera bus, still ONE undo step', async () => {
     seedOverlapping()
-    const ack = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    const ack = await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(ack).toMatchObject({ ok: true, type: 'tidyBoards' })
     expect(useCameraRequestStore.getState().seq).toBe(1)
     // A rect computed from the post-tidy geometry (rf.fitView would read RF's stale nodes).
@@ -76,26 +76,26 @@ describe('applySpatialMcpCommand tidyBoards (S0 — screen-aware agent tidy)', (
     expect(useCanvasStore.getState().past).toHaveLength(1)
   })
 
-  it('G4: an already-tidy canvas still frames the camera (tidy-and-fit, like the UI)', () => {
+  it('G4: an already-tidy canvas still frames the camera (tidy-and-fit, like the UI)', async () => {
     seedOverlapping()
-    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
-    const again = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    const again = await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(again).toMatchObject({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCameraRequestStore.getState().seq).toBe(2)
   })
 
-  it('fit:false leaves the camera alone', () => {
+  it('fit:false leaves the camera alone', async () => {
     seedOverlapping()
-    applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid', fit: false })
+    await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid', fit: false })
     expect(useCameraRequestStore.getState().seq).toBe(0)
   })
 })
 
 describe('applySpatialMcpCommand tidyBoards — I2 routing + the widened C6 ack', () => {
-  it('fit acks { moved, fitZoom, readable } and no units', () => {
+  it('fit acks { moved, fitZoom, readable } and no units', async () => {
     seedOverlapping()
     useCanvasViewStore.setState({ pane: { w: 1600, h: 900 } })
-    const ack = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'fit' })
+    const ack = await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'fit' })
     if (!ack.ok) throw new Error(ack.error)
     expect(ack.moved).toBeGreaterThan(0)
     expect(ack.fitZoom).toBeGreaterThan(0)
@@ -103,9 +103,9 @@ describe('applySpatialMcpCommand tidyBoards — I2 routing + the widened C6 ack'
     expect(ack.units).toBeUndefined()
   })
 
-  it('roles (MAIN sends mode roles + implicit:true for an omitted mode) acks units[] {scene, heroIds, why}', () => {
+  it('roles (MAIN sends mode roles + implicit:true for an omitted mode) acks units[] {scene, heroIds, why}', async () => {
     seedOverlapping()
-    const ack = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'roles', implicit: true })
+    const ack = await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'roles', implicit: true })
     if (!ack.ok) throw new Error(ack.error)
     expect(ack.units?.length).toBeGreaterThan(0)
     for (const u of ack.units ?? []) {
@@ -114,21 +114,37 @@ describe('applySpatialMcpCommand tidyBoards — I2 routing + the widened C6 ack'
     }
   })
 
-  it('re-validates the IPC-crossed command: implicit with a non-roles mode / bad scope ⇒ {ok:false}', () => {
+  it('re-validates the IPC-crossed command: implicit with a non-roles mode / bad scope ⇒ {ok:false}', async () => {
     seedOverlapping()
     const before = useCanvasStore.getState().boards
-    expect(applySpatialMcpCommand({ type: 'tidyBoards', mode: 'fit', implicit: true }).ok).toBe(
-      false
-    )
     expect(
-      applySpatialMcpCommand({
-        type: 'tidyBoards',
-        mode: 'fit',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        scope: { groupId: 'g', boardIds: ['b1'] } as any
-      }).ok
+      (await applySpatialMcpCommand({ type: 'tidyBoards', mode: 'fit', implicit: true })).ok
+    ).toBe(false)
+    expect(
+      (
+        await applySpatialMcpCommand({
+          type: 'tidyBoards',
+          mode: 'fit',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          scope: { groupId: 'g', boardIds: ['b1'] } as any
+        })
+      ).ok
     ).toBe(false)
     expect(useCanvasStore.getState().boards).toBe(before)
+  })
+
+  it("a project switch that starts during the lazy engine import ⇒ 'project-loading', nothing moves", async () => {
+    seedOverlapping()
+    const before = useCanvasStore.getState().boards
+    const pending = applySpatialMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    useCanvasStore.setState((s) => ({ project: { ...s.project, status: 'loading' } }))
+    try {
+      expect(await pending).toEqual({ ok: false, error: 'project-loading' })
+      expect(useCanvasStore.getState().boards).toBe(before)
+      expect(useCanvasStore.getState().past).toHaveLength(0)
+    } finally {
+      useCanvasStore.setState((s) => ({ project: { ...s.project, status: 'welcome' } }))
+    }
   })
 })
 

@@ -385,10 +385,10 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
 
   it('configureBoard drops a non-patchable / ephemeral key (defense in depth)', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    // @ts-expect-error — id is identity, never patchable; must be ignored, not forge a new id
     const ack = applyMcpCommand({
       type: 'configureBoard',
       id: 'srv-1',
-      // @ts-expect-error — id is identity, never patchable; must be ignored, not forge a new id
       patch: { id: 'hacked', launchCommand: 'ok' }
     })
     expect(ack.ok).toBe(true)
@@ -398,10 +398,10 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
 
   it('rejects a configureBoard with a null/non-object patch instead of throwing (ack {ok:false})', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    // @ts-expect-error — malformed patch (null); must be rejected, never throw past the ack
     const ack = applyMcpCommand({
       type: 'configureBoard',
       id: 'srv-1',
-      // @ts-expect-error — malformed patch (null); must be rejected, never throw past the ack
       patch: null
     })
     expect(ack.ok).toBe(false)
@@ -410,9 +410,9 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
   })
 
   it('rejects a removeBoard with a non-string id (ack {ok:false})', () => {
+    // @ts-expect-error — malformed id; must be rejected
     const ack = applyMcpCommand({
       type: 'removeBoard',
-      // @ts-expect-error — malformed id; must be rejected
       id: 123
     })
     expect(ack.ok).toBe(false)
@@ -833,10 +833,10 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
         members: { terminal: { id: 't' } }
       })
       expect(noName.ok).toBe(false)
+      // @ts-expect-error — terminal member is required; a missing one must be rejected
       const noTerminal = applyMcpCommand({
         type: 'spawnGroup',
         group: { id: 'g', name: 'X' },
-        // @ts-expect-error — terminal member is required; a missing one must be rejected
         members: { planning: { id: 'p' } }
       })
       expect(noTerminal.ok).toBe(false)
@@ -845,10 +845,10 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     })
 
     it('rejects a malformed optional member rather than silently dropping it', () => {
+      // @ts-expect-error — browser member present but malformed (no id)
       const ack = applyMcpCommand({
         type: 'spawnGroup',
         group: { id: 'g', name: 'X' },
-        // @ts-expect-error — browser member present but malformed (no id)
         members: { terminal: { id: 't' }, browser: {} }
       })
       expect(ack.ok).toBe(false)
@@ -1033,9 +1033,9 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     }))
   }
 
-  it('repositions overlapping boards, reports the moved count, and is ONE undo step', () => {
+  it('repositions overlapping boards, reports the moved count, and is ONE undo step', async () => {
     seedOverlapping()
-    const ack = applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
+    const ack = await applyMcpCommand({ type: 'tidyBoards', mode: 'grid' })
     expect(ack).toMatchObject({ ok: true, type: 'tidyBoards' })
     if (!ack.ok) throw new Error('expected ok')
     expect(ack.moved).toBeGreaterThan(0)
@@ -1046,10 +1046,10 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     expect(useCanvasStore.getState().past).toHaveLength(1)
   })
 
-  it('REJECTS an off-enum mode (defense in depth, shared parseTidyArgs) and moves nothing', () => {
+  it('REJECTS an off-enum mode (defense in depth, shared parseTidyArgs) and moves nothing', async () => {
     seedOverlapping()
     const before = useCanvasStore.getState().boards
-    const ack = applyMcpCommand({
+    const ack = await applyMcpCommand({
       type: 'tidyBoards',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       mode: 'diagonal' as any
@@ -1059,10 +1059,10 @@ describe('applyMcpCommand tidyBoards (P2 canvas reposition)', () => {
     expect(useCanvasStore.getState().past).toHaveLength(0)
   })
 
-  it('no-ops with < 2 boards — acks moved:0 and pushes no undo step', () => {
+  it('no-ops with < 2 boards — acks moved:0 and pushes no undo step', async () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'solo', type: 'terminal' } })
     useCanvasStore.setState({ past: [], future: [] })
-    const ack = applyMcpCommand({ type: 'tidyBoards' })
+    const ack = await applyMcpCommand({ type: 'tidyBoards' })
     expect(ack).toMatchObject({ ok: true, type: 'tidyBoards', moved: 0 })
     expect(useCanvasStore.getState().past).toHaveLength(0)
   })

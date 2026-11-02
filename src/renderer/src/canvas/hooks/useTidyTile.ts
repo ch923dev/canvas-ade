@@ -7,7 +7,8 @@
  * Spatial I2: every `tidy` preset runs the SHARED engine (`store/spatialTidy.runTidy` — the
  * same one an agent's `tidy_canvas` runs), which applies ONE undo step and frames the camera;
  * the user then gets the W3 / W7 feedback toast (`store/tidyFeedback`). No preset (the `t` key /
- * palette) = the IMPLICIT `roles` default (D8 a); a picked preset is explicit.
+ * palette) = the IMPLICIT `roles` default (D8 a); a picked preset is explicit. The engine is
+ * imported on the first tidy, not at startup (see `runTidyAndReport`).
  */
 import {
   useCallback,
@@ -20,17 +21,30 @@ import {
 import { getViewportForBounds, type ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useCanvasViewTracker } from '../../store/canvasViewStore'
-import { runTidy, tileArea } from '../../store/spatialTidy'
-import { showTidyFeedback } from '../../store/tidyFeedback'
 import { boardsBounds } from '../../lib/boardGeometry'
 import { FIT_FRAME, Z_MAX, Z_MIN } from '../../lib/canvasView'
 import { cameraAnim } from '../../lib/motion'
 import { type LayoutPreset } from '../../lib/layoutPresets'
-import type { TileTemplate } from '../../lib/tileLayout'
+import { tileArea, type TileTemplate } from '../../lib/tileLayout'
+import type { TidyArgsInput } from '../../../../shared/tidyContract'
 
-// The tile area moved into the engine module (the MCP `tile` mode shares it); re-exported so the
+// The tile area lives with the tile packer (the MCP `tile` mode shares it); re-exported so the
 // existing imports keep working.
-export { TILE_AREA_BASE_W, tileArea } from '../../store/spatialTidy'
+export { TILE_AREA_BASE_W, tileArea } from '../../lib/tileLayout'
+
+/**
+ * Run ONE tidy through the shared engine, then show the user its W3 / W7 feedback. The engine
+ * (spatialTidy + the role / fit layout libs, ~24 KB gzip) is a dynamic import so it stays out of
+ * the entry chunk (bundle budget, audit R12): it loads on the first tidy, a local file read.
+ */
+function runTidyAndReport(args: TidyArgsInput): void {
+  void Promise.all([import('../../store/spatialTidy'), import('../../store/tidyFeedback')]).then(
+    ([{ runTidy }, { showTidyFeedback }]) => {
+      const run = runTidy(args)
+      if (run.ok) showTidyFeedback(run)
+    }
+  )
+}
 
 export interface TidyTileDeps {
   paneRef: RefObject<HTMLDivElement | null>
@@ -111,8 +125,7 @@ export function useTidyTile(deps: TidyTileDeps): {
       setActiveTile(null) // a tidy releases any live tiling
       // The engine reads the SAME pane (the view bus `useCanvasViewTracker` feeds from paneRef),
       // applies ONE undo step and frames the camera itself.
-      const run = runTidy(preset ? { mode: preset.tidyMode } : {})
-      if (run.ok) showTidyFeedback(run)
+      runTidyAndReport(preset ? { mode: preset.tidyMode } : {})
     },
     [applyTile, setActiveTile, setFocusedId]
   )
@@ -124,8 +137,7 @@ export function useTidyTile(deps: TidyTileDeps): {
     (id: string) => {
       setFocusedId(null)
       setActiveTile(null)
-      const run = runTidy({ primary: id })
-      if (run.ok) showTidyFeedback(run)
+      runTidyAndReport({ primary: id })
     },
     [setActiveTile, setFocusedId]
   )
