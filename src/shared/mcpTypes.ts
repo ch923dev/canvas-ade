@@ -35,6 +35,7 @@ import type { CommandFeedPush } from './commandFeedTypes'
 import type {
   TidyAckUnit,
   TidyCommandMode,
+  TidyMainSide,
   TidyOverflowMode,
   TidyScope,
   TidyTileTemplate
@@ -503,6 +504,7 @@ export type McpCommand =
       fit?: boolean
       primary?: string
       resize?: boolean
+      side?: TidyMainSide
       implicit?: boolean
     }
   | { type: 'focusCamera'; boardId?: string; groupId?: string }

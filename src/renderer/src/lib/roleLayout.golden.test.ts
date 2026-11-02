@@ -8,8 +8,11 @@
  * Share tolerance: a hero's share is measured against its split's budget on the solved frame
  * (`frameAt(avail, targetZoom)` minus the in-split gaps) and must sit within ±1 percentage point
  * of the §4 figure (62 / 50 / 45 / 70 %) — whole-px slot rounding is the only slack. An
- * aspect-locked hero takes its device aspect instead of a share (§5), and a rigid hero wraps its
- * own size (S14), so those assert their own rule.
+ * aspect-locked hero takes its device aspect instead of a share (§5), so it asserts its own rule.
+ *
+ * S14 was RE-FROZEN on 2026-11-02 (I2 dev check, user decision): `primary` = MAIN + SIDEBAR —
+ * every board in the unit is sized to its slot (the main board fills the main area, the sidebar
+ * splits evenly), so the planning hero no longer keeps its size. D7 still holds without `primary`.
  */
 import { describe, expect, test } from 'vitest'
 import { FIT_UNIT_GAP } from './fitLayout'
@@ -586,20 +589,25 @@ const S13_ULTRAWIDE_LEAD: RoleLayoutResult = {
 
 const S14: RoleLayoutResult = {
   stageKey: 'g:docs',
-  targetZoom: 0.5902,
+  targetZoom: 1,
   readable: true,
-  camera: { x: 373.88, y: 64.01, zoom: 0.5902 },
+  camera: { x: 64, y: 64, zoom: 1 },
   units: [
     {
       key: 'g:docs',
       scene: 'docs',
       heroIds: ['plan1'],
       template: 'hero-rail',
-      why: 'hero = plan #plan1: kept at its size (primary)',
+      why: 'main = plan #plan1 · 3 boards in its sidebar',
       boardIds: ['kb', 'plan1', 'plan2', 'plan3']
     }
   ],
-  placements: [P('kb', 544, 788), P('plan1', 0, 0), P('plan2', 544, 0), P('plan3', 544, 394)]
+  placements: [
+    P('kb', 923, 533, 549, 239),
+    P('plan1', 0, 0, 895, 772),
+    P('plan2', 923, 0, 549, 239),
+    P('plan3', 923, 267, 549, 238)
+  ]
 }
 
 const S15_EXPLICIT: RoleLayoutResult = {
@@ -969,16 +977,25 @@ describe('S13 · screen shapes', () => {
   })
 })
 
-describe('S14 · user override `primary` (a planning board as hero)', () => {
+describe('S14 · user override `primary` = MAIN + SIDEBAR (a planning board as the main board)', () => {
   const res = run(s7(), { primary: 'plan1' })
-  test('structure: the rigid hero wraps its size at the anchor; the rest fill the rail beside it', () => {
+  test('structure: the main board fills the main area at its share; the sidebar splits evenly', () => {
     const unit = res.units[0]
     expect([unit.scene, unit.template, unit.heroIds]).toEqual(['docs', 'hero-rail', ['plan1']])
-    expect(at(res, 'plan1')).toMatchObject({ x: 0, y: 0 })
-    for (const p of res.placements) expect([p.w, p.h]).toEqual([undefined, undefined]) // all rigid
-    for (const id of ['plan2', 'plan3', 'kb'])
-      expect(at(res, id).x).toBeGreaterThanOrEqual(516 + ROLE_GAP)
-    expect(unit.why).toBe('hero = plan #plan1: kept at its size (primary)')
+    const main = at(res, 'plan1')
+    expect(main).toMatchObject({ x: 0, y: 0 })
+    // Every board is sized — rigid planning / kanban included (main + sidebar overrides D7).
+    for (const p of res.placements) expect(p.w !== undefined && p.h !== undefined).toBe(true)
+    const frame = frameAt(availOf(PANE_16_9), res.targetZoom)
+    expect(Math.abs(main.w / (frame.w - ROLE_GAP) - HERO_SHARE.rail)).toBeLessThanOrEqual(0.01)
+    const side = ['plan2', 'plan3', 'kb'].map((id) => at(res, id))
+    for (const s of side) {
+      expect(s.x).toBeGreaterThanOrEqual(main.x + main.w + ROLE_GAP)
+      expect(s.w).toBe(side[0].w) // an even sidebar
+      expect(Math.abs(s.h - side[0].h)).toBeLessThanOrEqual(1)
+    }
+    expect(main.h).toBe(Math.max(...side.map((s) => s.y + s.h))) // fills the full height
+    expect(unit.why).toBe('main = plan #plan1 · 3 boards in its sidebar')
   })
   test('frozen', () => expect(res).toEqual(S14))
 })

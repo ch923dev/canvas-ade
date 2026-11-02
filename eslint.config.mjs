@@ -367,8 +367,10 @@ export default tseslint.config(
     // only live on the element in CanvasInner.
     // 766→767 (kanban axis-picker, review fix): addCentered must pass `configPending` for a kanban
     // so the palette/empty-state create paths reach the New Kanban dialog — one hoisted `at` local.
+    // 767→768 (spatial I2, main + sidebar): the ⋯ menu's "Make main board" needs useTidyTile's
+    // `makeMain` handed to useBoardActions — one dep line; the hook call collapsed to one line.
     // Ratchet DOWNWARD when Canvas.tsx is next split.
-    rules: { 'max-lines': ['error', { max: 767, skipBlankLines: true, skipComments: true }] }
+    rules: { 'max-lines': ['error', { max: 768, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],

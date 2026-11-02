@@ -8,7 +8,8 @@
  *
  * Risk tiers (the J4 gating contract):
  *   - READ tier (auto-allow): list_boards · board_cards · focus_viewport · tidy_canvas ·
- *     list_groups — state reads and reversible viewport/arrangement moves; no confirm.
+ *     make_main_board · list_groups — state reads and reversible viewport/arrangement moves; no
+ *     confirm.
  *   - GATED tier: spawn_board · relay_prompt · add_card · update_card · move_card ·
  *     visualize_plan · group_boards · edit_groups — every one pauses on a human confirm before
  *     anything changes. The group tools (jarvisGroupTools.ts) confirm in the orchestrator's ONE
@@ -37,6 +38,7 @@ import {
   type JarvisGroupFacet
 } from './jarvisGroupTools'
 import type { TidyCanvasResult } from './mcpTidy'
+import { MAIN_SIDES, type TidyMainSide } from '../shared/tidyContract'
 
 /** A Claude Messages-API tool definition (name + JSON-Schema input). */
 export interface JarvisToolDef {
@@ -80,7 +82,9 @@ export interface JarvisCanvasFacet extends JarvisGroupFacet {
   }): Promise<{ id: string; queuedFor?: string }>
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
   /** No `mode` — always the implicit `roles` default (D8 a). Unknown / docked ids are dropped. */
-  tidyCanvas(input: { primary?: string; boardIds?: string[] }): Promise<TidyCanvasResult>
+  tidyCanvas(input: { boardIds?: string[] }): Promise<TidyCanvasResult>
+  /** Main + sidebar: `boardId` main, every other board its sidebar. Throws if docked / gone. */
+  makeMainBoard(input: { boardId: string; side?: TidyMainSide }): Promise<TidyCanvasResult>
   boardCards(boardId: string): Promise<unknown>
 }
 
@@ -90,6 +94,7 @@ export const JARVIS_AUTO_ALLOW = new Set([
   'board_cards',
   'focus_viewport',
   'tidy_canvas',
+  'make_main_board',
   'list_groups'
 ])
 
@@ -136,11 +141,10 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
     {
       name: 'tidy_canvas',
       description:
-        'Arrange the canvas BY ROLE to fit the user\'s screen: the lead or browser gets the big slot and linked boards sit beside it (terminals may be resized; planning/kanban/file boards keep their size). One undoable step; runs without confirmation. Optional: primary = the board to make the hero ("make the browser the main one"); boards = arrange ONLY these boards ("tidy up the terminals"), everything else stays put. Omit both to tidy the whole canvas.',
+        'General clean-up: arrange the canvas BY ROLE to fit the user\'s screen (the lead or browser gets the big slot, linked boards sit beside it; terminals may be resized, planning/kanban/file boards keep their size). One undoable step; runs without confirmation. Optional: boards = arrange ONLY these boards ("tidy up the terminals"), everything else stays put. To make ONE specific board the main one, use make_main_board instead.',
       input_schema: {
         type: 'object',
         properties: {
-          primary: { type: 'string', description: `The hero board. ${BOARD_ARG}` },
           boards: {
             type: 'array',
             items: { type: 'string', description: BOARD_ARG },
@@ -148,6 +152,25 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
             description: 'Arrange only these boards (each a board reference).'
           }
         },
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'make_main_board',
+      description:
+        'Make ONE board the MAIN board: it takes the big slot and EVERY other board on the canvas moves into a sidebar beside it (to its right on a wide screen, under it on a tall one), all fitted to the user\'s screen. Use for "make the browser the main one", "focus on the plan and put the rest on the side", "make the api terminal the big one". Every board is resized to fit: the main board fills the big slot, the others share the sidebar evenly. One undoable step; runs without confirmation. Pass side only when the user names a side.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          board: { type: 'string', description: `The board to make main. ${BOARD_ARG}` },
+          side: {
+            type: 'string',
+            enum: [...MAIN_SIDES],
+            description:
+              'Where the sidebar goes. Default auto (right on a wide screen, bottom on a tall one).'
+          }
+        },
+        required: ['board'],
         additionalProperties: false
       }
     },
@@ -482,18 +505,31 @@ export async function executeJarvisTool(
         // C7 amendment: no mode (implicit roles). References resolve leniently — an unknown or
         // ambiguous one is DROPPED, not fatal (MAIN also drops docked ids); an emptied scope no-ops.
         const model = await deps.facet.describeApp()
-        const primaryRef = optStr(input, 'primary', 200)
-        const primary = primaryRef !== undefined ? tryBoardRef(model, primaryRef) : undefined
         const refs = optStrList(input, 'boards', MAX_ITEMS, 200)
         const boardIds = refs?.flatMap((r) => tryBoardRef(model, r) ?? [])
         if (boardIds !== undefined && boardIds.length === 0) {
           return ok(summarizeJarvisTool(name, 'no matching boards — nothing moved'), { moved: 0 })
         }
-        const outcome = await deps.facet.tidyCanvas({
-          ...(primary !== undefined ? { primary } : {}),
-          ...(boardIds !== undefined ? { boardIds } : {})
-        })
+        const outcome = await deps.facet.tidyCanvas(boardIds !== undefined ? { boardIds } : {})
         return ok(summarizeJarvisTool(name, `${outcome.moved} board(s) moved`), outcome)
+      }
+      case 'make_main_board': {
+        // The target is REQUIRED and resolves strictly: a wrong board fails loudly (the model
+        // re-asks), never a fallback tidy around some other board.
+        const model = await deps.facet.describeApp()
+        const board = resolveBoardRef(model, reqStr(input, 'board', 200))
+        const side = optStr(input, 'side', 10)
+        if (side !== undefined && !(MAIN_SIDES as readonly string[]).includes(side)) {
+          return fail(name, `side must be one of: ${MAIN_SIDES.join(', ')}`)
+        }
+        const outcome = await deps.facet.makeMainBoard({
+          boardId: board.id,
+          ...(side !== undefined ? { side: side as TidyMainSide } : {})
+        })
+        return ok(
+          summarizeJarvisTool(name, `"${board.title}" main · ${outcome.moved} board(s) moved`),
+          outcome
+        )
       }
       case 'spawn_board': {
         const type = reqStr(input, 'type', 20)

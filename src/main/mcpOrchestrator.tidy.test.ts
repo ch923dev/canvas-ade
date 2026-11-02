@@ -178,7 +178,12 @@ describe('tidy_canvas forwards the whole C5 wire (I2)', () => {
       { mode: 'grid', overflow: 'report' },
       { mode: 'grid', overflow: 'report' }
     ],
-    ['fit:true', { fit: true }, { mode: 'roles', implicit: true, fit: true }]
+    ['fit:true', { fit: true }, { mode: 'roles', implicit: true, fit: true }],
+    [
+      'main + sidebar with a pinned side (host-only)',
+      { primary: 'web-1', side: 'bottom' },
+      { mode: 'roles', implicit: true, primary: 'web-1', side: 'bottom' }
+    ]
   ]
   for (const [label, input, cmd] of forwarded) {
     it(`${label} ⇒ ONE tidyBoards carrying exactly those fields`, async () => {
@@ -218,6 +223,23 @@ describe('tidy_canvas forwards the whole C5 wire (I2)', () => {
     expect(await buildOrchestrator(h.registry).tidyCanvas({ mode: 'fit' })).toEqual({ moved: 0 })
   })
 
+  it('primary is MAIN + SIDEBAR in the confirm: names the main board, says the rest is its sidebar', async () => {
+    const h = harness({ moved: 1 })
+    await buildOrchestrator(h.registry).tidyCanvas({ primary: 'web-1', sourceBoardId: 'lead-1' })
+    await buildOrchestrator(h.registry).tidyCanvas({
+      primary: 'web-1',
+      side: 'left',
+      sourceBoardId: 'lead-1'
+    })
+    expect(h.confirms[0].title).toBe('Make it the main board?')
+    expect(h.confirms[0].body).toMatch(
+      /"App" as the main board and every other board in a sidebar\./
+    )
+    expect(h.confirms[1].body).toMatch(/in a sidebar on the left\./)
+    // Honest about sizes (user decision 2026-11-02): main + sidebar resizes every board in it.
+    expect(h.confirms[0].body).toMatch(/Every board in it may be resized: the main board fills/)
+  })
+
   it('the W5 confirm is honest about sizes: roles may resize, fit never does', async () => {
     const h = harness({ moved: 1 })
     const orch = buildOrchestrator(h.registry)
@@ -246,7 +268,9 @@ describe('tidy_canvas validates EVERYTHING before the D1 confirm (invalid_input,
     ['a scope with two keys', { scope: { groupId: 'g', boardIds: ['web-1'] } }],
     ['a non-boolean fit', { fit: 'yes' }],
     ['an unknown primary board', { primary: 'ghost' }],
-    ['a DOCKED primary board', { primary: 'dock-1' }]
+    ['a DOCKED primary board', { primary: 'dock-1' }],
+    ['side without a primary', { side: 'left' }],
+    ['an unknown side', { primary: 'web-1', side: 'diagonal' }]
   ]
   for (const [label, input] of cases) {
     it(`${label} ⇒ invalid_input, no confirm, no command`, async () => {
@@ -285,9 +309,13 @@ describe('jarvisTidyInput (C7 amendment — the Jarvis facet)', () => {
     expect(jarvisTidyInput({}, boards)).toEqual({})
   })
 
-  it('keeps a live primary; drops an unknown or docked one', () => {
+  it('keeps a live primary (+ its side); drops an unknown or docked one WITH its side', () => {
     expect(jarvisTidyInput({ primary: 'web-1' }, boards)).toEqual({ primary: 'web-1' })
-    expect(jarvisTidyInput({ primary: 'ghost' }, boards)).toEqual({})
+    expect(jarvisTidyInput({ primary: 'web-1', side: 'top' }, boards)).toEqual({
+      primary: 'web-1',
+      side: 'top'
+    })
+    expect(jarvisTidyInput({ primary: 'ghost', side: 'top' }, boards)).toEqual({})
     expect(jarvisTidyInput({ primary: 'dock-1' }, boards)).toEqual({})
   })
 
@@ -301,5 +329,57 @@ describe('jarvisTidyInput (C7 amendment — the Jarvis facet)', () => {
     })
     expect(jarvisTidyInput({ boardIds: ['ghost', 'dock-1'] }, boards)).toBeNull()
     expect(jarvisTidyInput({ boardIds: [] }, boards)).toBeNull()
+  })
+})
+
+describe('arrangeMainBoard (the package 0.28 arrange_main_board host method)', () => {
+  it('is tidy with primary = the main board (+ side / scope / fit) — implicit roles, ONE command', async () => {
+    const h = harness({ moved: 3 })
+    const orch = buildOrchestrator(h.registry)
+    expect(await orch.arrangeMainBoard({ boardId: 'web-1' })).toEqual({ moved: 3 })
+    await orch.arrangeMainBoard({ boardId: 'web-1', side: 'bottom', scope: 'visible', fit: false })
+    expect(h.sent).toEqual([
+      { type: 'tidyBoards', mode: 'roles', implicit: true, primary: 'web-1' },
+      {
+        type: 'tidyBoards',
+        mode: 'roles',
+        implicit: true,
+        primary: 'web-1',
+        side: 'bottom',
+        scope: 'visible',
+        fit: false
+      }
+    ])
+  })
+
+  it('a lead / connected caller gets ONE main-board confirm; declined moves nothing', async () => {
+    const h = harness({ moved: 1, approve: false })
+    const err = await buildOrchestrator(h.registry)
+      .arrangeMainBoard({ boardId: 'web-1', sourceBoardId: 'lead-1' })
+      .catch((e: unknown) => e)
+    expect(toolErrorCodeOf(err)).toBe('declined')
+    expect((err as Error).message).toMatch(/^arrange_main_board: declined/)
+    expect(h.confirms).toHaveLength(1)
+    expect(h.confirms[0].title).toBe('Make it the main board?')
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('validates before any confirm: a missing / unknown / docked board or a bad side ⇒ invalid_input', async () => {
+    for (const input of [
+      {},
+      { boardId: '' },
+      { boardId: 'ghost' },
+      { boardId: 'dock-1' },
+      { boardId: 'web-1', side: 'diagonal' }
+    ]) {
+      const h = harness()
+      const err = await buildOrchestrator(h.registry)
+        .arrangeMainBoard({ ...input, sourceBoardId: 'lead-1' })
+        .catch((e: unknown) => e)
+      expect(toolErrorCodeOf(err)).toBe('invalid_input')
+      expect((err as Error).message).toMatch(/^arrange_main_board: /)
+      expect(h.confirms).toHaveLength(0)
+      expect(h.sent).toHaveLength(0)
+    }
   })
 })

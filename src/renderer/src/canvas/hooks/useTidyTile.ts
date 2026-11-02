@@ -1,8 +1,8 @@
 /**
  * Tidy / tile layout actions, extracted from Canvas.tsx (Wave-5 B5 #2). Owns the camera
  * framing (`fitToBoards`), the window-manager tiling (`applyTile`), the preset entry point
- * (`tidyAndFit`), and the responsive-retile ResizeObserver loop. Only `tidyAndFit` is surfaced
- * (the keymap's `t`, the palette and AppChrome's Tidy picker).
+ * (`tidyAndFit`), and the responsive-retile ResizeObserver loop. `tidyAndFit` is surfaced to the
+ * keymap's `t`, the palette and AppChrome's Tidy picker; `makeMain` to the ⋯ menu (board actions).
  *
  * Spatial I2: every `tidy` preset runs the SHARED engine (`store/spatialTidy.runTidy` — the
  * same one an agent's `tidy_canvas` runs), which applies ONE undo step and frames the camera;
@@ -40,7 +40,10 @@ export interface TidyTileDeps {
   activeTileRef: MutableRefObject<TileTemplate | null>
 }
 
-export function useTidyTile(deps: TidyTileDeps): { tidyAndFit: (preset?: LayoutPreset) => void } {
+export function useTidyTile(deps: TidyTileDeps): {
+  tidyAndFit: (preset?: LayoutPreset) => void
+  makeMain: (id: string) => void
+} {
   const { paneRef, rf, setActiveTile, setFocusedId, activeTileRef } = deps
   const tileBoards = useCanvasStore((s) => s.tileBoards)
   // Spatial awareness (S0/C1): park the SAME pane's size (+ the settled camera) on the session-only
@@ -114,6 +117,19 @@ export function useTidyTile(deps: TidyTileDeps): { tidyAndFit: (preset?: LayoutP
     [applyTile, setActiveTile, setFocusedId]
   )
 
+  // Main + sidebar (the ⋯ menu's "Make main board"): the SAME engine with `primary` — `id` takes
+  // the big slot and every other undocked board its sidebar. A one-shot like any tidy: it releases
+  // live tiling and focus; success is silent, an unreadable result gets the W3 toast.
+  const makeMain = useCallback(
+    (id: string) => {
+      setFocusedId(null)
+      setActiveTile(null)
+      const run = runTidy({ primary: id })
+      if (run.ok) showTidyFeedback(run)
+    },
+    [setActiveTile, setFocusedId]
+  )
+
   // Responsive tiling: while a tile preset owns the layout, re-tile to the new window aspect on
   // every pane resize (minimize / restore / fullscreen). rAF-coalesced so a drag-resize storm
   // collapses to one reflow per frame; untracked so it never floods undo history.
@@ -140,5 +156,5 @@ export function useTidyTile(deps: TidyTileDeps): { tidyAndFit: (preset?: LayoutP
     }
   }, [applyTile, paneRef, activeTileRef])
 
-  return { tidyAndFit }
+  return { tidyAndFit, makeMain }
 }

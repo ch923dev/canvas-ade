@@ -15,7 +15,7 @@ import type { BoardPlanning } from './mcpBoardPlanning'
 import type { PlanningEditPatch } from '../shared/mcpTypes'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FindingsPublishResult } from './findingsPublish'
-import type { TidyCanvasHostInput, TidyCanvasResult } from './mcpTidy'
+import type { ArrangeMainBoardHostInput, TidyCanvasHostInput, TidyCanvasResult } from './mcpTidy'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -141,6 +141,7 @@ export type LifecycleOrchestrator = Omit<
   | 'updatePlanningElement'
   | 'removePlanningElement'
   | 'tidyCanvas'
+  | 'arrangeMainBoard'
   | 'addCard'
   | 'moveCard'
   | 'updateCard'
@@ -246,6 +247,13 @@ export type LifecycleOrchestrator = Omit<
    * field (how the 0.27 `sourceBoardId` nearly went un-gated).
    */
   tidyCanvas(input: TidyCanvasHostInput): Promise<TidyCanvasResult>
+  /**
+   * 🔒 Main + sidebar (I2 dev-check amendment) — the package's `arrange_main_board` (0.28, an
+   * OPTIONAL method there, so this host ships it ahead of the pin bump). `boardId` becomes the main
+   * board and every other in-scope board its sidebar: `tidyCanvas` with `primary` (+ `side`), the
+   * same validation, D1 confirm and one undo step (`./mcpTidy`).
+   */
+  arrangeMainBoard(input: ArrangeMainBoardHostInput): Promise<TidyCanvasResult>
   /**
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally

@@ -122,10 +122,13 @@ export function unitWhy(ctx: WhyContext, w: WhyInput): string {
   const heroPart = (): string => {
     if (w.heroIds.length === 0) return `${n} boards`
     const names = w.heroIds.map((id) => nameOf(ctx, id)).join(' + ')
+    // Main + sidebar (spatial I2): the user picked the main board — say so, not why a role won.
+    if (w.primary !== undefined && w.heroIds.includes(w.primary)) {
+      return `main = ${names} · ${plural(n - 1, 'board')} in its sidebar`
+    }
     const lead = w.heroIds.find((id) => roleOf(ctx, id) === 'preview') ?? w.heroIds[0]
     const tag = w.heroIds.length > 1 ? 'co-heroes' : 'hero'
-    const primary = w.primary !== undefined && w.heroIds.includes(w.primary) ? ' (primary)' : ''
-    return `${tag} = ${names}: ${heroDetail(ctx, lead)}${primary}`
+    return `${tag} = ${names}: ${heroDetail(ctx, lead)}`
   }
   switch (w.kind) {
     case 'single':

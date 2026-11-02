@@ -157,6 +157,19 @@
 .board-menu-item[data-danger]:hover {
   color: var(--err);
 }
+/* Spatial I2: a row with a quiet outcome hint on the right ("Make main board · sidebar = rest"),
+   the mono 10px --text-3 shortcut-hint treatment. */
+.board-menu-item--hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.board-menu-hint {
+  margin-left: auto;
+  font: 400 10px/1 var(--mono);
+  color: var(--text-3);
+  white-space: nowrap;
+}
 
 /* D2-A: inline board title edit — the input that swaps in for the title span on
    double-click / F2. Sized to the §3 12px label slot so the 34px bar never reflows. */

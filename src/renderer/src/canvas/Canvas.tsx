@@ -520,9 +520,10 @@ function CanvasInner(): ReactElement {
   )
 
   // Tidy / tile layout actions (paneSize · fitToBoards · applyTile · tidyAndFit + the
-  // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). Only tidyAndFit is
-  // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
-  const { tidyAndFit } = useTidyTile({ paneRef, rf, setActiveTile, setFocusedId, activeTileRef })
+  // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). tidyAndFit is surfaced
+  // to the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button; makeMain to the
+  // ⋯ menu's "Make main board" (via boardActions).
+  const tidy = useTidyTile({ paneRef, rf, setActiveTile, setFocusedId, activeTileRef })
 
   // Drag/place capture overlay state (redesign 2026-06-06; command place-to-create 2026-06-16):
   // drag tools rubber-band, the Command board follows-and-clicks. Forwarded to the overlay below.
@@ -612,6 +613,7 @@ function CanvasInner(): ReactElement {
     cameraFullViewIdRef,
     removeBoardFromAllGroups,
     focusBoardById,
+    makeMain: tidy.makeMain,
     setFocusedId,
     setSelectedConnectorId,
     setConnectPointer,
@@ -719,7 +721,7 @@ function CanvasInner(): ReactElement {
     removeGroup,
     addConnector: addConnectorWithFeedback,
     removeConnector,
-    tidyAndFit,
+    tidyAndFit: tidy.tidyAndFit,
     doUndo,
     doRedo
   })
@@ -733,7 +735,7 @@ function CanvasInner(): ReactElement {
     clearSelection,
     doUndo,
     doRedo,
-    tidyAndFit,
+    tidyAndFit: tidy.tidyAndFit,
     setDiag,
     selectedConnectorId,
     removeConnector,
@@ -1018,7 +1020,7 @@ function CanvasInner(): ReactElement {
               onClose={() => setGroupMenu(null)}
             />
           )}
-          <AppChrome onTidy={tidyAndFit} onFocusGroup={focusGroup} />
+          <AppChrome onTidy={tidy.tidyAndFit} onFocusGroup={focusGroup} />
           <DigestPanel
             digest={digest ?? lastDigest}
             prose={prose}

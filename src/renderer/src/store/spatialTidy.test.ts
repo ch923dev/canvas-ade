@@ -268,7 +268,7 @@ describe('runTidy — roles (C9 / C10) with live signals', () => {
     )
   })
 
-  it('primary forces the hero (S14) and a rigid hero keeps its exact size', () => {
+  it('primary forces the hero (S14) — and, as the MAIN board, even a planning board fills it', () => {
     seed(
       [
         board('terminal', 'agent', 0, 0, { launchCommand: 'claude' } as Partial<Board>),
@@ -277,10 +277,155 @@ describe('runTidy — roles (C9 / C10) with live signals', () => {
       ],
       { groups: [{ id: 'g', name: 'Work', boardIds: ['agent', 'web', 'plan'] }] }
     )
-    const planSize = [byId('plan').w, byId('plan').h]
+    const planArea = byId('plan').w * byId('plan').h
     const run = ok(runTidy({ primary: 'plan' }))
     expect(run.units?.[0].heroIds).toEqual(['plan'])
-    expect([byId('plan').w, byId('plan').h]).toEqual(planSize)
+    expect(byId('plan').w * byId('plan').h).toBeGreaterThan(planArea) // stretched to the main area
+  })
+
+  describe('primary = MAIN + SIDEBAR (I2 dev-check amendment, 2026-11-02)', () => {
+    // The dev-check canvas: two agent terminals (same cwd → one context), a browser, a planning
+    // board, NO groups. Before the amendment the browser was the hero of its OWN unit (kept at its
+    // size, everything else off-stage); now every board is its sidebar.
+    const devCanvas = (): Board[] => [
+      board('terminal', 't1', -396, 246, { agentKind: 'claude', cwd: 'C:/p' } as Partial<Board>),
+      board('terminal', 't2', 885, -465, { agentKind: 'claude', cwd: 'C:/p' } as Partial<Board>),
+      board('browser', 'web', -396, -465),
+      board('planning', 'plan', 885, 246)
+    ]
+    const rects = (): Map<string, Board> =>
+      new Map(useCanvasStore.getState().boards.map((b) => [b.id, b]))
+    const area = (b: Board): number => b.w * b.h
+
+    it('wide pane: the main board is the big slot and EVERY other board is its sidebar (right)', () => {
+      seed(devCanvas())
+      useCanvasViewStore.setState({ pane: { w: 1500, h: 800 } })
+      const run = ok(runTidy({ primary: 'web' }))
+      expect(run.units).toHaveLength(1) // one arrangement — nothing off-stage
+      expect(run.units![0].heroIds).toEqual(['web'])
+      expect([...run.units![0].boardIds].sort()).toEqual(['plan', 't1', 't2', 'web'])
+      const r = rects()
+      const web = r.get('web')!
+      for (const id of ['t1', 't2', 'plan']) {
+        expect(r.get(id)!.x).toBeGreaterThanOrEqual(web.x + web.w) // the sidebar, right
+        expect(area(web)).toBeGreaterThan(area(r.get(id)!))
+      }
+      expect(overlaps(useCanvasStore.getState().boards)).toBe(false)
+      expect(useCameraRequestStore.getState().target).toMatchObject({ kind: 'viewport' })
+    })
+
+    it('a browser main stays the BIGGEST board even when its sidebar wraps to 2 columns', () => {
+      // The e2e scene: 3 terminals at their readable minimum + a planning board. An aspect-locked
+      // (browser) main used to skip the soft hero share and shrink to its board minimum — smaller
+      // than its own sidebar. In main + sidebar every board is flexible (`mainMemberOf`).
+      seed([
+        board('browser', 'web', 0, 0),
+        board('terminal', 't1', 9000, 4000),
+        board('terminal', 't2', -7000, 6000),
+        board('terminal', 'agent', 4000, -9000, { agentKind: 'claude' } as Partial<Board>),
+        board('planning', 'plan', -15000, 8000)
+      ])
+      useCanvasViewStore.setState({ pane: { w: 1500, h: 780 } })
+      const run = ok(runTidy({ primary: 'web' }))
+      expect(run.readable).toBe(true)
+      const r = rects()
+      const web = r.get('web')!
+      for (const id of ['t1', 't2', 'agent', 'plan']) {
+        expect(area(web)).toBeGreaterThan(2 * area(r.get(id)!)) // clearly the main board
+        expect(r.get(id)!.x).toBeGreaterThanOrEqual(web.x + web.w)
+      }
+      expect(overlaps(useCanvasStore.getState().boards)).toBe(false)
+    })
+
+    it('tall pane: the sidebar goes under the main board', () => {
+      seed(devCanvas())
+      useCanvasViewStore.setState({ pane: { w: 800, h: 1000 } })
+      ok(runTidy({ primary: 'web' }))
+      const r = rects()
+      const web = r.get('web')!
+      for (const id of ['t1', 't2', 'plan']) {
+        expect(r.get(id)!.y).toBeGreaterThanOrEqual(web.y + web.h)
+      }
+    })
+
+    it('side pins the sidebar: left / top mirror the rail / strip; right / bottom force them', () => {
+      const sideOf = (side: string): string => {
+        seed(devCanvas())
+        useCanvasViewStore.setState({ pane: { w: 1500, h: 800 } })
+        ok(runTidy({ primary: 'web', side }))
+        const r = rects()
+        const web = r.get('web')!
+        const others = ['t1', 't2', 'plan'].map((id) => r.get(id)!)
+        if (others.every((o) => o.x >= web.x + web.w)) return 'right'
+        if (others.every((o) => o.x + o.w <= web.x)) return 'left'
+        if (others.every((o) => o.y >= web.y + web.h)) return 'bottom'
+        if (others.every((o) => o.y + o.h <= web.y)) return 'top'
+        return 'mixed'
+      }
+      for (const side of ['right', 'left', 'bottom', 'top']) expect(sideOf(side)).toBe(side)
+      expect(sideOf('auto')).toBe('right') // wide pane
+    })
+
+    it('groups do not split it; docked workers stay out; a scope limits the sidebar', () => {
+      seed(
+        [
+          ...devCanvas(),
+          board('swarm', 'sw', 0, 0),
+          board('terminal', 'dock', 0, 0, { dockedIn: 'sw' } as Partial<Board>)
+        ],
+        { groups: [{ id: 'g', name: 'Agents', boardIds: ['t1', 't2'] }] }
+      )
+      const docked = { ...byId('dock') }
+      const run = ok(runTidy({ primary: 'web' }))
+      expect([...run.units![0].boardIds].sort()).toEqual(['plan', 'sw', 't1', 't2', 'web'])
+      expect(byId('dock')).toMatchObject({ x: docked.x, y: docked.y })
+
+      seed(devCanvas())
+      const scoped = ok(runTidy({ primary: 'web', scope: { boardIds: ['web', 't1'] } }))
+      expect([...scoped.units![0].boardIds].sort()).toEqual(['t1', 'web'])
+      expect(byId('plan')).toMatchObject({ x: 885, y: 246 }) // out of scope: untouched
+    })
+
+    it('every board is sized to its slot: the main fills the main area, the sidebar splits evenly', () => {
+      // User decision 2026-11-02: in main + sidebar a planning / kanban / file board in the
+      // sidebar is resized to its slot (D7 holds for By role and Fit), and the main board — a
+      // browser too — stretches to fill the main area, whatever its aspect.
+      seed([
+        ...devCanvas().filter((b) => b.id !== 'plan'),
+        board('planning', 'plan', 885, 246, {
+          w: 1471,
+          h: 764
+        } as Partial<Board>)
+      ])
+      useCanvasViewStore.setState({ pane: { w: 1180, h: 690 } })
+      ok(runTidy({ primary: 'web' }))
+      const r = rects()
+      const web = r.get('web')!
+      const side = ['t1', 't2', 'plan'].map((id) => r.get(id)!)
+      for (const s of side) {
+        expect([s.w, s.h]).toEqual([side[0].w, side[0].h]) // even — the big plan shrank to fit
+        expect(s.x).toBeGreaterThanOrEqual(web.x + web.w)
+      }
+      expect(web.y).toBe(Math.min(...side.map((s) => s.y)))
+      expect(web.y + web.h).toBe(Math.max(...side.map((s) => s.y + s.h))) // full height
+      expect(area(web)).toBeGreaterThan(2 * area(side[0]))
+      expect(overlaps(useCanvasStore.getState().boards)).toBe(false)
+    })
+
+    it('ONE undo step restores the whole canvas', () => {
+      seed(devCanvas())
+      const before = useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y, b.w, b.h])
+      ok(runTidy({ primary: 'web' }))
+      useCanvasStore.getState().undo()
+      expect(useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y, b.w, b.h])).toEqual(
+        before
+      )
+    })
+
+    it('side without primary is rejected', () => {
+      expect(runTidy({ side: 'left' }).ok).toBe(false)
+      expect(runTidy({ primary: 'web', side: 'diagonal' }).ok).toBe(false)
+    })
   })
 
   it('scope moves ONLY the scoped boards (S12); the rest stay put', () => {

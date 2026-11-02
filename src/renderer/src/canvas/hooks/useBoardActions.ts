@@ -24,6 +24,8 @@ export interface BoardActionsDeps {
   removeBoardFromAllGroups: (boardId: string) => void
   /** Canonical camera-fit + dim focus (focusBoardById) — drives the transfer toast's Focus action. */
   focusBoardById: (id: string) => void
+  /** Main + sidebar through the shared tidy engine (useTidyTile) — the ⋯ menu's "Make main board". */
+  makeMain: (id: string) => void
   setFocusedId: Dispatch<SetStateAction<string | null>>
   setSelectedConnectorId: Dispatch<SetStateAction<string | null>>
   setConnectPointer: Dispatch<SetStateAction<{ x: number; y: number } | null>>
@@ -47,6 +49,7 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
     cameraFullViewIdRef,
     removeBoardFromAllGroups,
     focusBoardById,
+    makeMain,
     setFocusedId,
     setSelectedConnectorId,
     setConnectPointer,
@@ -122,7 +125,14 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
       // GROUP-06: ⋯ menu → remove this board from every group it belongs to, in one undo step.
       removeFromAllGroups: (boardId) => removeBoardFromAllGroups(boardId),
       // Cross-board transfer toast → focus the destination board via the canonical camera path.
-      focusBoard: (id) => focusBoardById(id)
+      focusBoard: (id) => focusBoardById(id),
+      // Spatial I2: ⋯ menu → "Make main board". Leave any full view first (the modal / camera fit
+      // would hide the new arrangement and keep a stale full-view id) — the tidy frames the camera.
+      makeMain: (id) => {
+        hardCloseFullView()
+        if (cameraFullViewIdRef.current !== null) exitCameraFullView()
+        makeMain(id)
+      }
     }
   }, [
     duplicateBoard,
@@ -136,6 +146,7 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
     cameraFullViewIdRef,
     removeBoardFromAllGroups,
     focusBoardById,
+    makeMain,
     setFocusedId,
     setSelectedConnectorId,
     setConnectPointer,

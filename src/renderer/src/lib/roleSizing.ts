@@ -109,6 +109,22 @@ export function memberOf(
   return { id: b.id, cls, w, h, minW: min.w, minH: min.h }
 }
 
+/**
+ * A main + sidebar member (spatial I2, user decision 2026-11-02): EVERY board is flexible — the
+ * main board stretches to fill the main area and each sidebar board (planning / kanban / file and
+ * browsers included) is resized to its sidebar slot. D7's rigid / aspect classes still hold for
+ * By role and Fit to screen. The floor stays the role minimum (a terminal keeps its readable
+ * 490 × 312) — `floor: 'board'` is the D4 shrink.
+ */
+export function mainMemberOf(
+  b: { id: string; type: string; w: number; h: number },
+  floor: 'role' | 'board' = 'role'
+): Member {
+  const { w, h } = sizeOf(b)
+  const min = floor === 'board' ? MIN_BOARD_SIZE : roleMinimum(b.type)
+  return { id: b.id, cls: 'flexible', w, h, minW: min.w, minH: min.h }
+}
+
 /** The pane area a frame may fill: the pane minus `FIT_PADDING_PX` on every side (≥ 1 px). */
 export function availOf(pane: { w: number; h: number }): { w: number; h: number } {
   return {

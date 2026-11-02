@@ -75,6 +75,14 @@ describe('parseTidyArgs (C5 — one rule set for MAIN and the renderer)', () => 
     expect(err({ fit: 1 })).toMatch(/fit must be a boolean/)
   })
 
+  it('side needs primary (main + sidebar) and is one of auto / right / left / bottom / top', () => {
+    expect(ok({ primary: 'web-1', side: 'left' })).toMatchObject({ primary: 'web-1', side: 'left' })
+    expect(ok({ mode: 'roles', primary: 'web-1', side: 'auto' }).side).toBe('auto')
+    expect(err({ side: 'left' })).toMatch(/side needs primary/)
+    expect(err({ primary: 'web-1', side: 'diagonal' })).toMatch(/unknown side/)
+    expect(err({ mode: 'fit', side: 'left' })).toMatch(/side needs primary/)
+  })
+
   it('an off-enum mode names the vocabulary', () => {
     expect(err({ mode: 'spiral' })).toMatch(/unknown mode "?spiral"? \(one of: fit, roles/)
   })

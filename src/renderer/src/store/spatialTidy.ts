@@ -34,8 +34,10 @@ import { fitLayout, type FitUnit } from '../lib/fitLayout'
 import { roleLayout } from '../lib/roleLayout'
 import {
   buildRoleUnits,
+  classifyScene,
   deriveRoles,
   type RoleBoardInput,
+  type RoleUnit,
   type Scene
 } from '../../../shared/boardRoles'
 import {
@@ -216,6 +218,34 @@ function unitName(
   return titles.get(id) ?? 'boards'
 }
 
+/**
+ * MAIN + SIDEBAR (`primary`; I2 dev-check amendment 2026-11-02 — the tiling-WM "promote to master"
+ * model, docs/research/2026-11-02-main-sidebar-intent): EVERY in-scope board joins ONE unit whose
+ * hero is the main board, so roleLayout lays it out as `hero-rail` (sidebar right, wide pane) or
+ * `hero-strip` (bottom, tall pane). Groups and contexts do not split it — "make X the main one"
+ * means the rest of the canvas is X's sidebar, not X alone on stage with everything off-screen.
+ */
+function mainUnit(
+  primary: string,
+  st: CanvasState,
+  scoped: Set<string> | null,
+  roles: ReturnType<typeof deriveRoles>,
+  inputs: RoleInput[]
+): RoleUnit[] {
+  const ids = st.boards
+    .filter((b) => !isDockedTerminal(b) && (scoped === null || scoped.has(b.id)))
+    .map((b) => b.id)
+    .sort()
+  return [
+    {
+      key: `main:${primary}`,
+      boardIds: ids,
+      source: 'group',
+      ...classifyScene(ids, inputs, roles)
+    }
+  ]
+}
+
 function planRoles(
   args: TidyArgs,
   st: CanvasState,
@@ -231,11 +261,14 @@ function planRoles(
   const leadBoardId = useOrchestrationStore.getState().leadBoardId
   const roles = deriveRoles(inputs, connectors, { leadBoardId })
   const contexts = deriveContexts(inputs, connectors, st.groups)
-  const units = buildRoleUnits(inputs, connectors, st.groups, contexts, roles)
+  const units = args.primary
+    ? mainUnit(args.primary, st, scoped, roles, inputs)
+    : buildRoleUnits(inputs, connectors, st.groups, contexts, roles)
   const titleMap = new Map(st.boards.map((b) => [b.id, titleOf(b)]))
   const res = roleLayout(inputs, roles, units, {
     pane,
     primary: args.primary,
+    side: args.side,
     scope: scoped ? { boardIds: [...scoped] } : 'all',
     overflow: args.overflow,
     resize: args.resize,

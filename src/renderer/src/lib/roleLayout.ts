@@ -38,6 +38,9 @@ import { READABLE_ZOOM, fitZoom, type Rect } from '../../../shared/spatialGeomet
 import { FIT_UNIT_GAP, fitLayout, type FitOverflow } from './fitLayout'
 import {
   availOf,
+  frameAt,
+  layoutTree,
+  mainMemberOf,
   memberOf,
   quantizeZoom,
   shelfLayout,
@@ -62,12 +65,18 @@ import {
   type Variant
 } from './roleTemplates'
 import { unitWhy, type WhyContext, type WhyInput } from './roleWhy'
+import type { TidyMainSide } from '../../../shared/tidyContract'
 
 export interface RoleLayoutOptions {
   /** Visible canvas pane in screen px (C1 view). */
   pane: { w: number; h: number }
   /** Force the hero (S14) — its unit becomes the stage. */
   primary?: string
+  /**
+   * With `primary` only: pin the side the others go (`right`/`left` = the hero-rail family,
+   * `bottom`/`top` = hero-strip; `left`/`top` mirror it). Default / `auto`: by pane aspect (§4).
+   */
+  side?: TidyMainSide
   /** Arrange only these boards (S12); everything else gets no placement. */
   scope?: 'all' | { boardIds: string[] }
   /** D4. Default `report`. */
@@ -348,7 +357,18 @@ function fitCells(
   return placements.map((p) => ({ ...p, ...sizeOf(ctx.boards.get(p.id)!), sized: false }))
 }
 
-function familyOf(scene: Scene, heroes: Member[], others: Member[], aspect: number): Variant[] {
+function familyOf(
+  scene: Scene,
+  heroes: Member[],
+  others: Member[],
+  aspect: number,
+  side: TidyMainSide = 'auto'
+): Variant[] {
+  if (heroes.length === 1 && side !== 'auto') {
+    return side === 'right' || side === 'left'
+      ? heroRailVariants(heroes, others, aspect)
+      : heroStripVariants(heroes, others)
+  }
   if (heroes.length >= 2) {
     const rail = scene === 'pair' ? aspect >= ULTRAWIDE_MIN_ASPECT : aspect >= DUO_RAIL_MIN_ASPECT
     return rail ? duoRailVariants(heroes, others) : duoStripVariants(heroes, others)
@@ -358,19 +378,34 @@ function familyOf(scene: Scene, heroes: Member[], others: Member[], aspect: numb
     : heroStripVariants(heroes, others)
 }
 
-/** §6 step 1: the first variant that stays readable, else the most readable one. */
+/**
+ * §6 step 1: the first variant that stays readable, else the most readable one. `main` (main +
+ * sidebar) ranks every variant instead: one that keeps the main board's full share first (a
+ * waived share is a main board no bigger than its sidebar), then the most readable — the main
+ * board's on-screen share is the same in each, so the zoom only decides the sidebar's legibility.
+ */
 function pickVariant(
   variants: readonly Variant[],
   ctx: Ctx,
-  zMax: number
+  zMax: number,
+  main = false
 ): { v: Variant; s: Solved } {
-  let best: { v: Variant; s: Solved } | null = null
+  let best: { v: Variant; s: Solved; ok: boolean } | null = null
   for (const v of variants) {
     const s = solveTree(v.root, ctx.avail, zMax, ctx.readable)
-    if (s.z >= ctx.readable) return { v, s }
-    if (best === null || s.z > best.s.z) best = { v, s }
+    if (!main && s.z >= ctx.readable) return { v, s }
+    const ok = !main || layoutTree(v.root, frameAt(ctx.avail, s.z)).shareOk
+    if (best === null || (ok && !best.ok) || (ok === best.ok && s.z > best.s.z)) best = { v, s, ok }
   }
   return best!
+}
+
+/** Main + sidebar: every sidebar slot floors at the LARGEST member floor, so the sidebar splits
+ *  evenly (a WM stack) instead of a planning board shrinking to 160 px beside readable terminals. */
+function evenSidebar(ms: readonly Member[]): Member[] {
+  const minW = ms.reduce((v, m) => Math.max(v, m.minW), 0)
+  const minH = ms.reduce((v, m) => Math.max(v, m.minH), 0)
+  return ms.map((m) => ({ ...m, minW, minH }))
 }
 
 /** Lay one unit out on its own — `stage` fills the pane (zoom ≤ 1), the rest go compact. */
@@ -383,8 +418,11 @@ function layoutUnit(u: PlanUnit, ctx: Ctx, stage: boolean): Laid {
   const heroes = primary !== undefined ? [primary] : u.heroIds.filter((id) => ids.includes(id))
   const zMax = stage ? 1 : COMPACT_MAX_ZOOM
   const shrink = stage && ctx.opts.overflow === 'shrink'
+  // Main + sidebar: every board stretches to its slot (`mainMemberOf`); otherwise D7's classes.
   const member = (floor: 'role' | 'board') => (id: string) =>
-    memberOf(ctx.boards.get(id)!, roleOf(ctx, id), floor)
+    primary !== undefined
+      ? mainMemberOf(ctx.boards.get(id)!, floor)
+      : memberOf(ctx.boards.get(id)!, roleOf(ctx, id), floor)
   const done = (
     kind: WhyInput['kind'],
     template: string,
@@ -451,15 +489,34 @@ function layoutUnit(u: PlanUnit, ctx: Ctx, stage: boolean): Laid {
     return done('grid', `grid/${grid.cols}x${grid.rows}`, g.s.cells, 'sized', [], g.s.z, grid)
   }
   const others = orderOthers(heroes, ids, ctx)
-  const run = (floor: 'role' | 'board', cap: number): { v: Variant; s: Solved } =>
-    pickVariant(
-      familyOf(u.scene, heroes.map(member(floor)), others.map(member(floor)), ctx.aspect),
-      ctx,
-      cap
-    )
+  const run = (floor: 'role' | 'board', cap: number): { v: Variant; s: Solved } => {
+    const om = others.map(member(floor))
+    return primary !== undefined
+      ? pickVariant(
+          familyOf(u.scene, heroes.map(member(floor)), evenSidebar(om), ctx.aspect, ctx.opts.side),
+          ctx,
+          cap,
+          true
+        )
+      : pickVariant(familyOf(u.scene, heroes.map(member(floor)), om, ctx.aspect), ctx, cap)
+  }
   let best = run('role', zMax)
   if (shrink && best.s.z < ctx.readable) best = run('board', Math.min(zMax, ctx.readable))
-  return done('hero', best.v.name, best.s.cells, 'sized', heroes, best.s.z)
+  const side = primary !== undefined ? ctx.opts.side : undefined
+  const flip = side === 'left' ? 'x' : side === 'top' ? 'y' : null
+  const cells = flip ? mirrorCells(best.s.cells, flip) : best.s.cells
+  const template = flip ? `${best.v.name}/${side}` : best.v.name
+  return done('hero', template, cells, 'sized', heroes, best.s.z)
+}
+
+/** Mirror a solved unit along one axis (the sidebar LEFT of / ABOVE the main board). */
+function mirrorCells(cells: readonly Cell[], axis: 'x' | 'y'): Cell[] {
+  if (axis === 'x') {
+    const right = Math.max(...cells.map((c) => c.x + c.w))
+    return cells.map((c) => ({ ...c, x: right - c.x - c.w }))
+  }
+  const bottom = Math.max(...cells.map((c) => c.y + c.h))
+  return cells.map((c) => ({ ...c, y: bottom - c.y - c.h }))
 }
 
 /** The camera zoom that frames a laid-out unit as the stage. */

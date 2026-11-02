@@ -19,6 +19,11 @@ import {
  * tile presets / the legacy packers) as ONE host undo step and acks `{ moved, fitZoom, readable,
  * pages?, units? }`. MAIN re-sanitizes that ack before the agent sees it.
  *
+ * `primary` means MAIN + SIDEBAR (I2 dev-check amendment, 2026-11-02 — the tiling-WM "promote to
+ * master" model): the named board becomes the main board and EVERY other in-scope board forms its
+ * sidebar (right on a wide pane, bottom on a tall one, or the host-only `side`). Not "hero of its own
+ * unit" — that left an ungrouped board alone on stage with everything else off-screen.
+ *
  * D8 (a): an OMITTED `mode` is an implicit `roles` — MAIN sends `mode:'roles', implicit:true`, so a
  * unit of plain shells keeps its sizes; an explicit `mode:'roles'` never falls back. The package
  * must not default `mode` (it does not), or MAIN could not tell the two apart.
@@ -44,6 +49,8 @@ export interface TidyCanvasHostInput {
   fit?: unknown
   primary?: unknown
   resize?: unknown
+  /** Host-only (Jarvis `make_main_board`, the package's `arrange_main_board`): where the sidebar goes. */
+  side?: unknown
   /** 🔒 A lead / connected caller's token-derived board id (set by the package tool, never client input). */
   sourceBoardId?: string
 }
@@ -80,7 +87,11 @@ function arrangeableIds(boards: readonly TidyMirrorBoard[]): Set<string> {
 const clip = (s: string): string => (s.length > 40 ? `${s.slice(0, 40)}…` : s)
 
 /** The confirm's "how" phrase (W5) — names the mode in user terms, never an id. */
-function howPhrase(args: TidyArgs): string {
+function howPhrase(args: TidyArgs, mainTitle: string | undefined): string {
+  if (args.primary !== undefined) {
+    const where = args.side === undefined || args.side === 'auto' ? '' : ` on the ${args.side}`
+    return `with "${clip(mainTitle ?? 'that board')}" as the main board and every other board in a sidebar${where}`
+  }
   switch (args.mode) {
     case 'roles':
       return args.implicit ? 'by role (the default tidy)' : 'by role'
@@ -100,23 +111,26 @@ function scopePhrase(args: TidyArgs): string {
   return 'groupId' in scope ? 'one group' : `${scope.boardIds.length} board(s)`
 }
 
-/** The W5 confirm body — honest about sizes: roles / tile / shrink may resize boards. */
-function confirmBody(who: string, args: TidyArgs): string {
+/** The W5 confirm body — honest about sizes: roles / tile / shrink / main may resize boards. */
+function confirmBody(who: string, args: TidyArgs, mainTitle: string | undefined): string {
   const sizes = !tidyResizes(args)
     ? 'Boards are repositioned only: nothing is created, resized or deleted'
-    : args.mode === 'roles' && args.overflow !== 'shrink'
-      ? 'Terminal-like boards may be resized to their slot and browsers scale with their device ' +
-        'aspect; planning, kanban and file boards keep their size. Nothing is created or deleted'
-      : 'Boards may be resized to fit; nothing is created or deleted'
+    : args.primary !== undefined
+      ? 'Every board in it may be resized: the main board fills the big slot and the others ' +
+        'share the sidebar. Nothing is created or deleted'
+      : args.mode === 'roles' && args.overflow !== 'shrink'
+        ? 'Terminal-like boards may be resized to their slot and browsers scale with their device ' +
+          'aspect; planning, kanban and file boards keep their size. Nothing is created or deleted'
+        : 'Boards may be resized to fit; nothing is created or deleted'
   return (
-    `${who} asked to rearrange ${scopePhrase(args)} ${howPhrase(args)}. ${sizes}, and one ` +
+    `${who} asked to rearrange ${scopePhrase(args)} ${howPhrase(args, mainTitle)}. ${sizes}, and one ` +
     'Ctrl+Z undoes it.'
   )
 }
 
 /** The `tidyBoards` command for validated args — only the fields that are set. */
 function toCommand(args: TidyArgs): McpCommand {
-  const { mode, implicit, template, scope, overflow, fit, primary, resize } = args
+  const { mode, implicit, template, scope, overflow, fit, primary, resize, side } = args
   return {
     type: 'tidyBoards',
     mode,
@@ -126,71 +140,113 @@ function toCommand(args: TidyArgs): McpCommand {
     ...(overflow !== undefined ? { overflow } : {}),
     ...(fit !== undefined ? { fit } : {}),
     ...(primary !== undefined ? { primary } : {}),
-    ...(resize !== undefined ? { resize } : {})
+    ...(resize !== undefined ? { resize } : {}),
+    ...(side !== undefined ? { side } : {})
   }
 }
 
 /**
- * The Jarvis facet's tidy (C7 amendment, 2026-10-17): Jarvis's `tidy_canvas` has NO `mode` (so it
- * is the implicit `roles` default, D8 a) and two optional args — `primary` ("make the browser the
- * main one", S14) and `boardIds` (scope, "tidy up the terminals", S12). Unknown or docked ids are
- * DROPPED (Jarvis resolves references from speech; a stale one must not fail the whole tidy), and
- * a scope that ends up empty is a no-op: returns `null`, and the facet does not tidy at all. A
- * `primary` outside a given scope joins it — the hero must be arranged to lead. Pure.
+ * The Jarvis facet's tidy (C7 amendment, 2026-10-17; split 2026-11-02): Jarvis's `tidy_canvas` has
+ * NO `mode` (so it is the implicit `roles` default, D8 a) and an optional `boardIds` scope ("tidy up
+ * the terminals", S12); its separate `make_main_board` tool sends `primary` (+ `side`) — main +
+ * sidebar. Unknown or docked ids are DROPPED (Jarvis resolves references from speech; a stale one
+ * must not fail the whole tidy), and a scope that ends up empty is a no-op: returns `null`, and the
+ * facet does not tidy at all. A `primary` outside a given scope joins it — the main board must be in
+ * the arrangement it leads. An unknown / docked `primary` drops `side` with it. Pure.
  */
 export function jarvisTidyInput(
-  input: { primary?: string; boardIds?: string[] },
+  input: { primary?: string; boardIds?: string[]; side?: string },
   boards: readonly TidyMirrorBoard[]
 ): TidyCanvasHostInput | null {
   const live = arrangeableIds(boards)
   const primary =
     typeof input.primary === 'string' && live.has(input.primary) ? input.primary : undefined
-  if (input.boardIds === undefined) return primary !== undefined ? { primary } : {}
+  const main =
+    primary !== undefined
+      ? { primary, ...(input.side !== undefined ? { side: input.side } : {}) }
+      : {}
+  if (input.boardIds === undefined) return main
   const ids = [...new Set(input.boardIds.filter((id) => live.has(id)))]
   if (ids.length === 0) return null
   if (primary !== undefined && !ids.includes(primary)) ids.push(primary)
-  return { ...(primary !== undefined ? { primary } : {}), scope: { boardIds: ids } }
+  return { ...main, scope: { boardIds: ids } }
+}
+
+/**
+ * The package's `arrange_main_board` input (0.28 — an OPTIONAL host method, so the app can ship it
+ * before the pin bump): the main board + where its sidebar goes + an optional scope / camera flag.
+ * Typed loosely (`unknown`): the same `parseTidyArgs` rules run on it as `primary` / `side`.
+ */
+export interface ArrangeMainBoardHostInput {
+  boardId?: unknown
+  side?: unknown
+  scope?: unknown
+  fit?: unknown
+  /** 🔒 A lead / connected caller's token-derived board id (set by the package tool). */
+  sourceBoardId?: string
 }
 
 export function createTidyMethod(deps: TidyMethodDeps): {
   tidyCanvas(input: TidyCanvasHostInput): Promise<TidyCanvasResult>
+  arrangeMainBoard(input: ArrangeMainBoardHostInput): Promise<TidyCanvasResult>
 } {
+  /** One tidy, any entry point — `tool` names the caller's tool in every error it sees. */
+  async function tidy(input: TidyCanvasHostInput, tool: string): Promise<TidyCanvasResult> {
+    const raw = input ?? {}
+    const parsed = parseTidyArgs(raw)
+    if (!parsed.ok) throw new McpToolError('invalid_input', `${tool}: ${parsed.error}`)
+    const args = parsed.args
+    const boards = deps.listBoards()
+    const live = arrangeableIds(boards)
+    if (args.primary !== undefined && !live.has(args.primary)) {
+      throw new McpToolError(
+        'invalid_input',
+        `${tool}: board '${clip(args.primary)}' is not a board on the canvas (or it is docked in a swarm board)`
+      )
+    }
+    const scope = args.scope
+    if (scope !== undefined && typeof scope === 'object' && 'boardIds' in scope) {
+      // Only the Jarvis facet sends an id list (the package wire cannot): unknown / docked ids
+      // drop, and nothing left to arrange is a no-op — no confirm, no command.
+      const ids = scope.boardIds.filter((id) => live.has(id))
+      if (ids.length === 0) return { moved: 0 }
+      args.scope = { boardIds: ids }
+    }
+    if (raw.sourceBoardId !== undefined) {
+      const source = boards.find((b) => b.id === raw.sourceBoardId)
+      const who = source ? `The agent in "${source.title}"` : 'A terminal agent'
+      const mainTitle = boards.find((b) => b.id === args.primary)?.title
+      const { approved } = await deps.confirm({
+        title: args.primary !== undefined ? 'Make it the main board?' : 'Tidy the canvas?',
+        body: confirmBody(who, args, mainTitle)
+      })
+      if (!approved) {
+        throw new McpToolError('declined', `${tool}: declined by the user — nothing moved`)
+      }
+    }
+    const ack = await deps.sendCommand(toCommand(args))
+    if (!ack.ok) throw new Error(`${tool} failed: ${ack.error}`)
+    return sanitizeTidyAck(ack as unknown as Record<string, unknown>)
+  }
   return {
-    async tidyCanvas(input) {
+    tidyCanvas: (input) => tidy(input, 'tidy_canvas'),
+    // Main + sidebar as its own intent (I2 dev-check amendment): no mode ⇒ the implicit roles
+    // engine with `primary` = the main board. Same validation, same D1 confirm, same one undo.
+    arrangeMainBoard: async (input) => {
       const raw = input ?? {}
-      const parsed = parseTidyArgs(raw)
-      if (!parsed.ok) throw new McpToolError('invalid_input', `tidy_canvas: ${parsed.error}`)
-      const args = parsed.args
-      const boards = deps.listBoards()
-      const live = arrangeableIds(boards)
-      if (args.primary !== undefined && !live.has(args.primary)) {
-        throw new McpToolError(
-          'invalid_input',
-          `tidy_canvas: primary '${clip(args.primary)}' is not a board on the canvas (or it is docked in a swarm board)`
-        )
+      if (typeof raw.boardId !== 'string' || raw.boardId.length === 0) {
+        throw new McpToolError('invalid_input', 'arrange_main_board: boardId must be a board id')
       }
-      const scope = args.scope
-      if (scope !== undefined && typeof scope === 'object' && 'boardIds' in scope) {
-        // Only the Jarvis facet sends an id list (the package wire cannot): unknown / docked ids
-        // drop, and nothing left to arrange is a no-op — no confirm, no command.
-        const ids = scope.boardIds.filter((id) => live.has(id))
-        if (ids.length === 0) return { moved: 0 }
-        args.scope = { boardIds: ids }
-      }
-      if (raw.sourceBoardId !== undefined) {
-        const source = boards.find((b) => b.id === raw.sourceBoardId)
-        const who = source ? `The agent in "${source.title}"` : 'A terminal agent'
-        const { approved } = await deps.confirm({
-          title: 'Tidy the canvas?',
-          body: confirmBody(who, args)
-        })
-        if (!approved) {
-          throw new McpToolError('declined', 'tidy_canvas: declined by the user — nothing moved')
-        }
-      }
-      const ack = await deps.sendCommand(toCommand(args))
-      if (!ack.ok) throw new Error(`tidy_canvas failed: ${ack.error}`)
-      return sanitizeTidyAck(ack as unknown as Record<string, unknown>)
+      return tidy(
+        {
+          primary: raw.boardId,
+          ...(raw.side !== undefined ? { side: raw.side } : {}),
+          ...(raw.scope !== undefined ? { scope: raw.scope } : {}),
+          ...(raw.fit !== undefined ? { fit: raw.fit } : {}),
+          ...(raw.sourceBoardId !== undefined ? { sourceBoardId: raw.sourceBoardId } : {})
+        },
+        'arrange_main_board'
+      )
     }
   }
 }

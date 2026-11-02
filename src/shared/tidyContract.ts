@@ -22,6 +22,15 @@ export type TidyTileTemplate = (typeof TILE_TEMPLATES)[number]
 export const TIDY_OVERFLOW = ['report', 'pages', 'shrink'] as const
 export type TidyOverflowMode = (typeof TIDY_OVERFLOW)[number]
 
+/**
+ * Where the sidebar goes in a main + sidebar arrangement (`primary`): `auto` = right on a wide pane,
+ * bottom on a tall one (the hero-rail / hero-strip split); the others pin it. Host-side vocabulary
+ * (the Jarvis `make_main_board` tool and the package's `arrange_main_board`), not on 0.27's
+ * `tidy_canvas` wire.
+ */
+export const MAIN_SIDES = ['auto', 'right', 'left', 'bottom', 'top'] as const
+export type TidyMainSide = (typeof MAIN_SIDES)[number]
+
 /** Longest board / group id the contract carries (= the package's `MAX_FOCUS_TARGET_ID`). */
 export const TIDY_ID_MAX = 200
 /** Most ids a `{ boardIds }` scope may name (= the MAIN mirror's board bound). */
@@ -64,6 +73,8 @@ export interface TidyArgs {
   fit?: boolean
   primary?: string
   resize?: boolean
+  /** Only with `primary`: where the sidebar goes (default `auto`). */
+  side?: TidyMainSide
 }
 
 /** The raw shape both callers hand in — every field `unknown`, because both cross a boundary. */
@@ -75,6 +86,7 @@ export interface TidyArgsInput {
   fit?: unknown
   primary?: unknown
   resize?: unknown
+  side?: unknown
   implicit?: unknown
 }
 
@@ -183,6 +195,13 @@ export function parseTidyArgs(raw: TidyArgsInput): TidyArgsResult {
   if (raw.resize !== undefined) {
     if (typeof raw.resize !== 'boolean') return fail('resize must be a boolean')
     args.resize = raw.resize
+  }
+  if (raw.side !== undefined) {
+    if (args.primary === undefined) return fail('side needs primary (the main board)')
+    if (!oneOf(MAIN_SIDES, raw.side)) {
+      return fail(`unknown side ${show(raw.side)} (one of: ${MAIN_SIDES.join(', ')})`)
+    }
+    args.side = raw.side
   }
   return { ok: true, args }
 }
