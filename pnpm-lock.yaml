@@ -46,8 +46,8 @@ importers:
         specifier: 0.1.0
         version: 0.1.0(elkjs@0.12.0)(react@19.2.7)
       '@expanse-ade/mcp':
-        specifier: 0.27.1
-        version: 0.27.1
+        specifier: 0.28.1
+        version: 0.28.1
       '@uiw/codemirror-extensions-langs':
         specifier: ^4.25.10
         version: 4.25.10(@codemirror/autocomplete@6.20.3)(@codemirror/language@6.12.3)(@codemirror/state@6.7.0)(@codemirror/view@6.43.1)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/javascript@1.5.4)(@lezer/lr@1.4.10)
@@ -709,8 +709,8 @@ packages:
       elkjs: '>=0.9.0'
       react: '>=18'
 
-  '@expanse-ade/mcp@0.27.1':
-    resolution: {integrity: sha512-bn7uteWxTkDdAFfClPyubAU8TBk4sk6JLdJdRBO9sAPQqbVGnIcfL+AuKK6R3uwWS2Rd0ZMpuoEyGBzFwBWkIA==}
+  '@expanse-ade/mcp@0.28.1':
+    resolution: {integrity: sha512-A8d9YfwBymxiJ7lrqT1UlMQqPeJAECp32DPeIMi7W4kmeSBL3wcvkLG9EFMqwU1+FyJjYB3FQPlXUVyv1QkXOw==}
     engines: {node: '>=20'}
 
   '@hono/node-server@1.19.14':
@@ -4221,7 +4221,7 @@ snapshots:
       elkjs: 0.12.0
       react: 19.2.7
 
-  '@expanse-ade/mcp@0.27.1':
+  '@expanse-ade/mcp@0.28.1':
     dependencies:
       '@modelcontextprotocol/core': 2.4.0
       '@modelcontextprotocol/express': 2.0.2(@modelcontextprotocol/server@2.4.0)(express@5.3.0)

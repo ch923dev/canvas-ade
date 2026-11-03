@@ -119,6 +119,12 @@ export const APP_TOOLS: readonly AppModelTool[] = [
     tier: 'orchestrator'
   },
   {
+    name: 'arrange_main_board',
+    purpose:
+      'Make ONE board the MAIN board and every other board its sidebar (optional side); every board is resized to fit. One undo. Un-gated for the orchestrator; a lead/connected terminal needs a human confirm.',
+    tier: 'orchestrator'
+  },
+  {
     name: 'focus_viewport',
     purpose:
       "Move the user's camera to a board / a Named Group / fit-all. Un-gated for the orchestrator; a lead/connected terminal needs a human confirm.",

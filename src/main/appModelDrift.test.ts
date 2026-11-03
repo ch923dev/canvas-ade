@@ -123,7 +123,10 @@ describe('F25: APP_TOOLS drift guard — catalog matches @expanse-ade/mcp regist
       'tidy_canvas',
       'focus_viewport',
       'group_boards',
-      'edit_groups'
+      'edit_groups',
+      // 0.28.0 (spatial I2): the main + sidebar intent tool reaches lead/connected like
+      // tidy_canvas, behind the same ONE human confirm.
+      'arrange_main_board'
     ]
 
     it('a lead session registers EXACTLY the orchestration core (own-board dispatch + spawn + barriers)', async () => {
