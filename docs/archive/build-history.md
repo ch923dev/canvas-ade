@@ -5768,3 +5768,21 @@ SHA; CodeQL `js/file-system-race` in the test fixture fixed; CI 4/4; `claude-rev
 inline). Dev check: user PASS in the sandbox project (worker worktree under `.canvas/worktrees/`,
 dirty kept + prompted, Discard → removed, branch kept). Force-push blocked → `main` merged into the
 branch (tree identical to the verified rebase).
+
+## PR #451 — fix(worktrees): Commit/Stash never carry Expanse's agent config (v0.48.2) · squash `d5240303` · 2026-11-03
+
+Follow-up to WS-1 (#450, G12). The swarm Commit disposition ran a plain `git add -A`, so a worker
+worktree's Expanse-provisioned `.mcp.json` — **live bearer token included** — landed on the worker's
+branch (pre-existing since S3; probe-confirmed in #450).
+- `swarmWorktree.ts`: Commit and Stash use a worker-only pathspec excluding `PROVISIONED_PATHS`
+  (`.mcp.json`, `.claude/settings.local.json`, `opencode.json`); counts are the filtered per-file
+  count. Config-only dirt ⇒ nothing is written ("nothing to commit … Discard removes it"); a tree
+  still dirty after Commit/Stash is explained (only Expanse's config left). Discard unchanged.
+  Removing the config automatically (unsync-before-status) stays with WS-8.
+- `swarmWorktree.integration.test.ts`: 60s per-test timeout (one real-git test passed the 5s
+  default under the full suite's parallel load).
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 7901 (2 known `pathSafe`); real git: branch has the
+worker's file, no `.mcp.json`, no token in `git log -p`; SCA 0; smoke 63/63 (push + pre-merge);
+pre-merge `make check` stopped at the ambient `pathSafe` floor on the same SHA; CI 4/4;
+`claude-review` clean (no inline). Dev check: user OK (`WS-1 token fix`).
