@@ -30,6 +30,8 @@ function harness(
     ackOk?: boolean
     approve?: boolean
     ack?: Record<string, unknown>
+    /** Set ⇒ the registry mirrors these Named Groups (`listGroups`). */
+    groups?: Array<{ id: string; name: string; boardIds: string[] }>
   } = {}
 ): Harness {
   const sent: McpCommand[] = []
@@ -66,7 +68,8 @@ function harness(
       confirms.push(req)
       return { approved: opts.approve ?? true }
     },
-    audit: async () => {}
+    audit: async () => {},
+    ...(opts.groups ? { listGroups: () => opts.groups! } : {})
   }
   return { registry, sent, confirms }
 }
@@ -319,6 +322,10 @@ describe('jarvisTidyInput (C7 amendment — the Jarvis facet)', () => {
     expect(jarvisTidyInput({ primary: 'dock-1' }, boards)).toEqual({})
   })
 
+  it('groupId (I3) ⇒ a { groupId } scope verbatim (the tidy method checks it against the mirror)', () => {
+    expect(jarvisTidyInput({ groupId: 'g-api' }, boards)).toEqual({ scope: { groupId: 'g-api' } })
+  })
+
   it('boardIds ⇒ a { boardIds } scope of the live ids; the primary joins it; empty ⇒ null (no-op)', () => {
     expect(jarvisTidyInput({ boardIds: ['t-1', 'ghost', 'dock-1', 't-1'] }, boards)).toEqual({
       scope: { boardIds: ['t-1'] }
@@ -381,5 +388,48 @@ describe('arrangeMainBoard (the package 0.28 arrange_main_board host method)', (
       expect(h.confirms).toHaveLength(0)
       expect(h.sent).toHaveLength(0)
     }
+  })
+})
+
+describe('tidy_canvas scope { groupId } — "tidy a group" (I3)', () => {
+  const groups = [{ id: 'g-api', name: 'api and notes', boardIds: ['lead-1', 'web-1'] }]
+
+  it('a lead / connected caller gets ONE confirm that NAMES the group; approve tidies it', async () => {
+    const h = harness({ moved: 2, groups })
+    await buildOrchestrator(h.registry).tidyCanvas({
+      scope: { groupId: 'g-api' },
+      sourceBoardId: 'lead-1'
+    })
+    expect(h.confirms).toHaveLength(1)
+    expect(h.confirms[0].title).toBe('Tidy the group?')
+    expect(h.confirms[0].body).toMatch(/rearrange the group "api and notes" by role/)
+    expect(h.sent).toEqual([
+      { type: 'tidyBoards', mode: 'roles', implicit: true, scope: { groupId: 'g-api' } }
+    ])
+  })
+
+  it('🔒 declined: nothing is sent', async () => {
+    const h = harness({ groups, approve: false })
+    const err = await buildOrchestrator(h.registry)
+      .tidyCanvas({ scope: { groupId: 'g-api' }, sourceBoardId: 'lead-1' })
+      .catch((e: unknown) => e)
+    expect(toolErrorCodeOf(err)).toBe('declined')
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('an unknown groupId ⇒ invalid_input BEFORE the confirm; nothing sent', async () => {
+    const h = harness({ groups })
+    const err = await buildOrchestrator(h.registry)
+      .tidyCanvas({ scope: { groupId: 'g-ghost' }, sourceBoardId: 'lead-1' })
+      .catch((e: unknown) => e)
+    expect(toolErrorCodeOf(err)).toBe('invalid_input')
+    expect(h.confirms).toHaveLength(0)
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('relocated reaches the agent (C6) when the group had to move to open space', async () => {
+    const h = harness({ groups, ack: { moved: 3, relocated: true, readable: true } })
+    const result = await buildOrchestrator(h.registry).tidyCanvas({ scope: { groupId: 'g-api' } })
+    expect(result).toEqual({ moved: 3, readable: true, relocated: true })
   })
 })

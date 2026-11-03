@@ -369,8 +369,10 @@ export default tseslint.config(
     // so the palette/empty-state create paths reach the New Kanban dialog — one hoisted `at` local.
     // 767→768 (spatial I2, main + sidebar): the ⋯ menu's "Make main board" needs useTidyTile's
     // `makeMain` handed to useBoardActions — one dep line; the hook call collapsed to one line.
+    // 768→761 (spatial I3, Tidy group): GroupContextMenu now closes itself after every row, so the
+    // group-menu handlers here lost their `setGroupMenu(null)` bodies (+1 onTidy line).
     // Ratchet DOWNWARD when Canvas.tsx is next split.
-    rules: { 'max-lines': ['error', { max: 768, skipBlankLines: true, skipComments: true }] }
+    rules: { 'max-lines': ['error', { max: 761, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],

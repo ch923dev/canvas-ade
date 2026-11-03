@@ -306,10 +306,11 @@ describe('executeJarvisTool', () => {
     expect(confirm).not.toHaveBeenCalled()
   })
 
-  it('tidy_canvas has NO mode (implicit roles) and only an optional boards scope (C7 amendment)', () => {
+  it('tidy_canvas has NO mode (implicit roles) and only an optional boards / group scope', () => {
     const def = buildJarvisToolDefs().find((d) => d.name === 'tidy_canvas')!
     const props = (def.input_schema as { properties: Record<string, unknown> }).properties
-    expect(Object.keys(props)).toEqual(['boards'])
+    expect(Object.keys(props)).toEqual(['boards', 'group'])
+    expect(def.description).toMatch(/tidy the api and notes group/)
     expect(def.description).toMatch(/use make_main_board instead/)
     expect(def.input_schema).toMatchObject({ additionalProperties: false })
     expect(isJarvisToolGated('tidy_canvas')).toBe(false) // tier unchanged: READ, auto-allow
@@ -431,5 +432,108 @@ describe('executeJarvisTool', () => {
   it('an unknown tool name refuses', async () => {
     const r = await executeJarvisTool('close_board', {}, { facet: makeFacet(), confirm: approve })
     expect(r.isError).toBe(true)
+  })
+})
+
+describe('tidy_canvas group (I3 — "tidy the api and notes group")', () => {
+  const G_API = 'gapi0000-0000-0000-0000-000000000000'
+  const G_DUP1 = 'gdup1111-0000-0000-0000-000000000000'
+  const G_DUP2 = 'gdup2222-0000-0000-0000-000000000000'
+  const withGroups = (over: Partial<JarvisCanvasFacet> = {}): JarvisCanvasFacet =>
+    makeFacet({
+      describeApp: async () =>
+        model(
+          [
+            { id: KANBAN_ID, type: 'kanban', title: 'Sprint board' },
+            { id: TERM_ID, type: 'terminal', title: 'auth api' }
+          ],
+          [
+            { id: G_API, name: 'api and notes', boardIds: [TERM_ID] },
+            { id: G_DUP1, name: 'Docs', boardIds: [KANBAN_ID] },
+            { id: G_DUP2, name: 'docs', boardIds: [] }
+          ]
+        ),
+      ...over
+    })
+
+  it('by exact name (case-insensitive) or id ⇒ scope { groupId }, no confirm (READ tier)', async () => {
+    const facet = withGroups()
+    const confirm = vi.fn(approve)
+    const r = await executeJarvisTool('tidy_canvas', { group: 'API and Notes' }, { facet, confirm })
+    expect(r.isError).toBe(false)
+    expect(facet.tidyCanvas).toHaveBeenCalledWith({ groupId: G_API })
+    expect(r.summary).toBe('tidy_canvas · group "api and notes" · 3 board(s) moved')
+    await executeJarvisTool('tidy_canvas', { group: G_API }, { facet, confirm })
+    await executeJarvisTool('tidy_canvas', { group: G_API.slice(0, 8) }, { facet, confirm })
+    expect(facet.tidyCanvas).toHaveBeenCalledTimes(3)
+    expect(facet.tidyCanvas).toHaveBeenLastCalledWith({ groupId: G_API })
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('says when the group moved to open space (the C6 relocated fact)', async () => {
+    const facet = withGroups({
+      tidyCanvas: vi.fn(async () => ({ moved: 3, relocated: true as const }))
+    })
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { group: 'api and notes' },
+      {
+        facet,
+        confirm: vi.fn(approve)
+      }
+    )
+    expect(r.summary).toBe('tidy_canvas · group "api and notes" · 3 board(s) moved to open space')
+    expect(JSON.parse(r.content)).toEqual({ moved: 3, relocated: true })
+  })
+
+  it('an unknown group FAILS (never a fallback tidy); an ambiguous one lists numbered candidates', async () => {
+    const facet = withGroups()
+    const unknown = await executeJarvisTool(
+      'tidy_canvas',
+      { group: 'ghost' },
+      {
+        facet,
+        confirm: vi.fn(approve)
+      }
+    )
+    expect(unknown.isError).toBe(true)
+    expect(unknown.content).toMatch(/no group matches "ghost"/)
+    const ambiguous = await executeJarvisTool(
+      'tidy_canvas',
+      { group: 'docs' },
+      {
+        facet,
+        confirm: vi.fn(approve)
+      }
+    )
+    expect(ambiguous.isError).toBe(true)
+    expect(ambiguous.content).toMatch(/ambiguous — candidates: 1\. \[gdup1111\] "Docs" {2}2\./)
+    expect(facet.tidyCanvas).not.toHaveBeenCalled()
+  })
+
+  it('group + boards together is rejected (pass at most one)', async () => {
+    const facet = withGroups()
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { group: 'api and notes', boards: ['auth api'] },
+      { facet, confirm: vi.fn(approve) }
+    )
+    expect(r.isError).toBe(true)
+    expect(r.content).toMatch(/at most one of boards \/ group/)
+    expect(facet.tidyCanvas).not.toHaveBeenCalled()
+  })
+
+  it('a non-string group is rejected (model output is untrusted)', async () => {
+    const facet = withGroups()
+    const r = await executeJarvisTool(
+      'tidy_canvas',
+      { group: 7 },
+      {
+        facet,
+        confirm: vi.fn(approve)
+      }
+    )
+    expect(r.isError).toBe(true)
+    expect(facet.tidyCanvas).not.toHaveBeenCalled()
   })
 })

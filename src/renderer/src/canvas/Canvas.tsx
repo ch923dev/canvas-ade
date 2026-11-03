@@ -1001,22 +1001,15 @@ function CanvasInner(): ReactElement {
                   setNamePopAt(groupMenu.at)
                   setNamingGroupId(groupMenu.id)
                 }
-                setGroupMenu(null)
               }}
-              onFocus={() => {
-                fitGroup(groupMenu.id)
-                setGroupMenu(null)
-              }}
-              onAddSelected={() => {
-                // Animate the absorb re-pack, same as the drag-onto-box and board ⋯-menu paths —
-                // all three add-to-group routes converge on reflowAddToGroup for consistent feedback.
+              onFocus={() => fitGroup(groupMenu.id)}
+              onTidy={() => tidy.tidyGroup(groupMenu.id)}
+              // Animate the absorb re-pack, same as the drag-onto-box and board ⋯-menu paths —
+              // all three add-to-group routes converge on reflowAddToGroup for consistent feedback.
+              onAddSelected={() =>
                 reflowAddToGroup(groupMenu.id, useCanvasStore.getState().selectedIds)
-                setGroupMenu(null)
-              }}
-              onRemove={() => {
-                removeGroup(groupMenu.id)
-                setGroupMenu(null)
-              }}
+              }
+              onRemove={() => removeGroup(groupMenu.id)}
               onClose={() => setGroupMenu(null)}
             />
           )}

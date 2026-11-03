@@ -10,6 +10,11 @@
 import type { Board, NamedGroup } from './boardSchema'
 import { boardsBounds, type BoardRect, type Bounds } from './boardGeometry'
 
+/** World-px the box extends beyond member bounds (depth 0) + the per-nesting inset. Here (pure)
+ *  so geometry that must clear an outline (`groupTidyPlace`) needs no React import. */
+export const GROUP_BOX_PAD = 20
+export const GROUP_BOX_INSET_STEP = 12
+
 export interface GroupBox {
   id: string
   name: string

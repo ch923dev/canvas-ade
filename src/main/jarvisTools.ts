@@ -35,6 +35,7 @@ import type { FocusOutcome } from './mcpFocus'
 import {
   buildJarvisGroupToolDefs,
   executeJarvisGroupTool,
+  resolveGroup,
   type JarvisGroupFacet
 } from './jarvisGroupTools'
 import type { TidyCanvasResult } from './mcpTidy'
@@ -81,8 +82,9 @@ export interface JarvisCanvasFacet extends JarvisGroupFacet {
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
-  /** No `mode` — always the implicit `roles` default (D8 a). Unknown / docked ids are dropped. */
-  tidyCanvas(input: { boardIds?: string[] }): Promise<TidyCanvasResult>
+  /** No `mode` — always the implicit `roles` default (D8 a). Unknown / docked ids are dropped;
+   *  `groupId` (I3) tidies one Named Group — boards outside it never move or get covered. */
+  tidyCanvas(input: { boardIds?: string[]; groupId?: string }): Promise<TidyCanvasResult>
   /** Main + sidebar: `boardId` main, every other board its sidebar. Throws if docked / gone. */
   makeMainBoard(input: { boardId: string; side?: TidyMainSide }): Promise<TidyCanvasResult>
   boardCards(boardId: string): Promise<unknown>
@@ -141,7 +143,7 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
     {
       name: 'tidy_canvas',
       description:
-        'General clean-up: arrange the canvas BY ROLE to fit the user\'s screen (the lead or browser gets the big slot, linked boards sit beside it; terminals may be resized, planning/kanban/file boards keep their size). One undoable step; runs without confirmation. Optional: boards = arrange ONLY these boards ("tidy up the terminals"), everything else stays put. To make ONE specific board the main one, use make_main_board instead.',
+        'General clean-up: arrange the canvas BY ROLE to fit the user\'s screen (the lead or browser gets the big slot, linked boards sit beside it; terminals may be resized, planning/kanban/file boards keep their size). One undoable step; runs without confirmation. Optional, pass at most one: boards = arrange ONLY these boards ("tidy up the terminals"); group = arrange ONLY that named group ("tidy the api and notes group"). With either, every other board stays put and is never covered: if the tidied boards need more room they move, together, to open space (the result then says relocated). To make ONE specific board the main one, use make_main_board instead.',
       input_schema: {
         type: 'object',
         properties: {
@@ -150,6 +152,10 @@ export function buildJarvisToolDefs(): JarvisToolDef[] {
             items: { type: 'string', description: BOARD_ARG },
             maxItems: MAX_ITEMS,
             description: 'Arrange only these boards (each a board reference).'
+          },
+          group: {
+            type: 'string',
+            description: 'Arrange only this group: a group id or exact name.'
           }
         },
         additionalProperties: false
@@ -398,16 +404,11 @@ export function resolveBoardRef(
   return { id: hit.id, title: hit.title, type: hit.type }
 }
 
-/** Resolve a group reference (id or exact name, case-insensitive). */
+/** Resolve a group reference through the group tools' resolver (id / id prefix / exact name,
+ *  case-insensitive; numbered candidates when ambiguous) — one resolver, so the verbs never drift. */
 function resolveGroupRef(model: AppModel, ref: string): { id: string; name: string } {
-  const r = ref.trim()
-  const lower = r.toLowerCase()
-  const hits = model.canvas.groups.filter(
-    (g) => g.id === r || g.name.trim().toLowerCase() === lower
-  )
-  if (hits.length === 0) throw new ToolArgError(`no group matches "${clip(r, 40)}"`)
-  if (hits.length > 1) throw new ToolArgError(`group "${clip(r, 40)}" is ambiguous`)
-  return { id: hits[0].id, name: hits[0].name }
+  const g = resolveGroup(model, ref.trim())
+  return { id: g.id, name: g.name }
 }
 
 /** Resolve a column reference (id or exact title) from a board_cards projection. */
@@ -506,6 +507,18 @@ export async function executeJarvisTool(
         // ambiguous one is DROPPED, not fatal (MAIN also drops docked ids); an emptied scope no-ops.
         const model = await deps.facet.describeApp()
         const refs = optStrList(input, 'boards', MAX_ITEMS, 200)
+        const groupRef = optStr(input, 'group', 200)
+        if (refs !== undefined && groupRef !== undefined) {
+          return fail(name, 'pass at most one of boards / group')
+        }
+        if (groupRef !== undefined) {
+          // I3: a named group resolves STRICTLY (unknown / ambiguous ⇒ the model re-asks) — a
+          // wrong group must never tidy some other set of boards.
+          const g = resolveGroupRef(model, groupRef)
+          const outcome = await deps.facet.tidyCanvas({ groupId: g.id })
+          const moved = `${outcome.moved} board(s) moved${outcome.relocated ? ' to open space' : ''}`
+          return ok(summarizeJarvisTool(name, `group "${g.name}" · ${moved}`), outcome)
+        }
         const boardIds = refs?.flatMap((r) => tryBoardRef(model, r) ?? [])
         if (boardIds !== undefined && boardIds.length === 0) {
           return ok(summarizeJarvisTool(name, 'no matching boards — nothing moved'), { moved: 0 })

@@ -483,3 +483,113 @@ describe('runTidy — tile + legacy packers', () => {
     expect(useCameraRequestStore.getState().seq).toBe(2)
   })
 })
+
+describe('runTidy — a partial scope never moves or covers an outside board (I3)', () => {
+  const rectsOf = (ids: readonly string[]): Array<[string, number, number, number, number]> =>
+    ids.map((id) => {
+      const b = byId(id)
+      return [id, b.x, b.y, b.w, b.h]
+    })
+  const GROUP = ['api', 'notes', 'web']
+  const OUTSIDE = ['nb', 'far']
+
+  /** "api and notes" (terminal + planning + browser) with a neighbour butted against its bottom —
+   *  in the way of the taller "reading order" arrangement the tidy gives the group. */
+  function crowded(): void {
+    seed(
+      [
+        board('terminal', 'api', 0, 0),
+        board('planning', 'notes', 0, 400),
+        board('browser', 'web', 700, 0),
+        board('terminal', 'nb', 0, 800),
+        board('planning', 'far', -3000, -3000)
+      ],
+      { groups: [{ id: 'g', name: 'api and notes', boardIds: [...GROUP] }] }
+    )
+  }
+
+  function finalBox(ids: readonly string[]): { x: number; y: number; w: number; h: number } {
+    const bs = ids.map(byId)
+    const x = Math.min(...bs.map((b) => b.x))
+    const y = Math.min(...bs.map((b) => b.y))
+    const w = Math.max(...bs.map((b) => b.x + b.w)) - x
+    const h = Math.max(...bs.map((b) => b.y + b.h)) - y
+    return { x, y, w, h }
+  }
+
+  it('{groupId}: outside boards are byte-identical, nothing overlaps, ONE undo restores all', () => {
+    crowded()
+    const before = rectsOf([...GROUP, ...OUTSIDE])
+    const outsideBefore = rectsOf(OUTSIDE)
+    const run = ok(runTidy({ scope: { groupId: 'g' } }))
+    expect(run.count).toBe(3)
+    expect(rectsOf(OUTSIDE)).toEqual(outsideBefore)
+    expect(overlaps(useCanvasStore.getState().boards)).toBe(false)
+    expect(useCanvasStore.getState().past).toHaveLength(1)
+    useCanvasStore.getState().undo()
+    expect(rectsOf([...GROUP, ...OUTSIDE])).toEqual(before)
+  })
+
+  it('a collision moves the WHOLE arrangement to open space; the camera follows it', () => {
+    crowded()
+    // The same arrangement with nothing in the way — the shape the relocated group must keep.
+    seed(
+      useCanvasStore.getState().boards.filter((b) => b.id !== 'nb'),
+      {
+        groups: useCanvasStore.getState().groups
+      }
+    )
+    expect(ok(runTidy({ scope: { groupId: 'g' } })).relocated).toBeUndefined()
+    const free = finalBox(GROUP)
+    const offsets = GROUP.map((id) => [byId(id).x - free.x, byId(id).y - free.y, byId(id).w])
+
+    crowded()
+    const run = ok(runTidy({ scope: { groupId: 'g' } }))
+    expect(run.relocated).toBe(true)
+    const box = finalBox(GROUP)
+    expect(GROUP.map((id) => [byId(id).x - box.x, byId(id).y - box.y, byId(id).w])).toEqual(offsets)
+    // The roles camera frames the group (one unit = the stage) at its FINAL spot.
+    const target = useCameraRequestStore.getState().target
+    expect(target?.kind).toBe('viewport')
+    if (target?.kind !== 'viewport') return
+    const { x, y, zoom } = target.viewport
+    expect((WIDE.w / 2 - x) / zoom).toBeCloseTo(box.x + box.w / 2, 0)
+    expect((WIDE.h / 2 - y) / zoom).toBeCloseTo(box.y + box.h / 2, 0)
+  })
+
+  it('a clear footprint stays where the engine put it (no relocation)', () => {
+    seed(
+      [
+        board('terminal', 'api', 0, 0),
+        board('planning', 'notes', 0, 400),
+        board('terminal', 'nb', 5000, 5000)
+      ],
+      { groups: [{ id: 'g', name: 'api and notes', boardIds: ['api', 'notes'] }] }
+    )
+    const run = ok(runTidy({ scope: { groupId: 'g' } }))
+    expect(run.relocated).toBeUndefined()
+    expect(byId('nb')).toMatchObject({ x: 5000, y: 5000 })
+  })
+
+  it("{boardIds} and 'visible' are settled too; scope 'all' is untouched by the rule", () => {
+    seed([board('terminal', 'a', 0, 0), board('terminal', 'b', 0, 0), board('terminal', 'c', 0, 0)])
+    const c0 = rectsOf(['c'])
+    ok(runTidy({ mode: 'smart', scope: { boardIds: ['a', 'b'] } }))
+    expect(rectsOf(['c'])).toEqual(c0)
+    expect(overlaps(useCanvasStore.getState().boards)).toBe(false)
+
+    seed([board('terminal', 'on1', 10, 10), board('terminal', 'on2', 10, 10)])
+    ok(runTidy({ mode: 'smart', scope: 'visible' }))
+    expect(overlaps(useCanvasStore.getState().boards)).toBe(false)
+
+    crowded()
+    expect(ok(runTidy({})).relocated).toBeUndefined()
+  })
+
+  it('primary must still be inside the scope', () => {
+    crowded()
+    const run = runTidy({ primary: 'nb', scope: { groupId: 'g' } })
+    expect(run.ok).toBe(false)
+    expect(useCanvasStore.getState().past).toHaveLength(0)
+  })
+})

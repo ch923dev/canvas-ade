@@ -9,6 +9,9 @@
  *  - W3 — a `fit` (or `roles`) tidy that ends `readable:false`: "Tidied N boards. They're too
  *    small to read at once (P%)." with **Focus a group** (the F-key switcher; only when a group
  *    exists) and **Pages** (re-run with `overflow:'pages'`, REPLACING the previous tidy's step).
+ *  - I3 — a partial tidy (the group menu's "Tidy group") whose arrangement would have covered a
+ *    board outside it, so it moved, whole, to open space: "Group tidied — moved to open space"
+ *    with **Undo**. The camera already followed the group; this one wins over W3 / W7.
  *  - Anything else: silence is the success state (W7) — a stale tidy toast is dismissed.
  *
  * ONE toast at a time (keyed {@link TIDY_TOAST_ID}, replaced in place). The existing `info` toast
@@ -92,6 +95,20 @@ function showAll(run: TidyRun, mark: unknown): void {
 /** Show (or clear) the feedback toast for one finished, user-started tidy. */
 export function showTidyFeedback(run: TidyRun): void {
   const mark = run.moved > 0 ? undoTop() : undefined
+  if (run.relocated) {
+    const scope = run.args.scope
+    const what =
+      typeof scope === 'object' && 'groupId' in scope
+        ? 'Group tidied'
+        : `Tidied ${run.count} board${run.count === 1 ? '' : 's'}`
+    showToast({
+      id: TIDY_TOAST_ID,
+      kind: 'info',
+      message: `${what} — moved to open space`,
+      actions: mark !== undefined ? [{ label: 'Undo', run: once(() => undoTidy(mark)) }] : []
+    })
+    return
+  }
   const units = run.args.mode === 'roles' ? (run.units ?? []) : []
   if (units.length > 1) {
     const [stage, ...off] = units

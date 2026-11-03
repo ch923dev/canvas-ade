@@ -32,8 +32,8 @@ import { buildLayoutDigest, type LayoutDigest } from './layoutModel'
 import { createBoardCardsMethod } from './mcpBoardCards'
 import { createBoardPlanningMethod } from './mcpBoardPlanning'
 import { createPlanningEditMethods } from './mcpPlanningEditGate'
-import { createTidyMethod } from './mcpTidy'
-import { createFocusMethod } from './mcpFocus'
+import { createTidyMethod, type TidyMethodDeps } from './mcpTidy'
+import { createFocusMethod, type FocusMethodDeps } from './mcpFocus'
 import { createFindingsMethod } from './mcpFindings'
 import { createGroupsMethods } from './mcpGroups'
 import { canRelay } from './orchestration/seam'
@@ -385,6 +385,15 @@ export function buildOrchestrator(
       name: g.name,
       boardIds: [...g.boardIds]
     }))
+  // The camera / arrangement methods' shared seams (tidy + focus). `listGroups` only where the
+  // registry mirrors groups: tidy rejects an unknown `{ groupId }` against it (I3), and an
+  // un-mirrored registry must not read as "no groups at all".
+  const spatialDeps: TidyMethodDeps & FocusMethodDeps = {
+    sendCommand: (cmd) => registry.sendCommand(cmd),
+    confirm: (req) => registry.confirm(req),
+    listBoards: () => registry.listBoards(),
+    listGroups: registry.listGroups ? listGroupsProjection : undefined
+  }
 
   return {
     listBoards: listBoardSummaries,
@@ -415,20 +424,11 @@ export function buildOrchestrator(
     // in ./mcpTidy + spread here to keep this file under the max-lines gate. Content-less, one
     // host-undo step: orchestrator tier un-gated; a lead/connected caller (sourceBoardId) pays ONE
     // human confirm first (D1).
-    ...createTidyMethod({
-      sendCommand: (cmd) => registry.sendCommand(cmd),
-      confirm: (req) => registry.confirm(req),
-      listBoards: () => registry.listBoards()
-    }),
+    ...createTidyMethod(spatialDeps),
     // 🔒 H1 focus_viewport — fit the USER'S CAMERA to a board / group / the whole canvas. Built in
     // ./mcpFocus + spread here (the tidy extract-on-touch pattern). Viewport-only, with tidy's D1
     // gate: orchestrator tier un-gated; a lead/connected caller pays ONE human confirm first.
-    ...createFocusMethod({
-      sendCommand: (cmd) => registry.sendCommand(cmd),
-      confirm: (req) => registry.confirm(req),
-      listBoards: () => registry.listBoards(),
-      listGroups: listGroupsProjection
-    }),
+    ...createFocusMethod(spatialDeps),
     // 🔒 P4 publish_findings — forward the registry's already-confirm-gated batch publish (+ an audit
     // line per outcome). Built in ./mcpFindings. Absent registry method ⇒ NO key ⇒ the package skips
     // the tool, which is the whole point: PR #400 wired the registry but never this forward, so the

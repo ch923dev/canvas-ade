@@ -16,6 +16,11 @@
  * changed), x/y always, w/h only where the engine sized a board. `fit !== false` then frames the
  * camera through the SAME bus `focusCamera` uses (`cameraRequestStore`).
  *
+ * A PARTIAL scope (`{groupId}` / `{boardIds}` / `'visible'`; spatial I3, "tidy a group") is settled
+ * by `placeScoped` before it lands: boards outside the scope never move and are never covered — a
+ * footprint that would collide moves, whole and unchanged, to the nearest open space, and the
+ * camera follows it (`relocated: true`). `scope:'all'` has no outside, so it is untouched.
+ *
  * Everything is RE-VALIDATED here (defence in depth — MAIN validated too): the shared
  * `parseTidyArgs`, then every id against the LIVE store (unknown ⇒ error, docked ⇒ error).
  */
@@ -32,6 +37,7 @@ import { DEFAULT_ASPECT, tidyLayout } from '../lib/tidyLayout'
 import { tileArea, tileLayout } from '../lib/tileLayout'
 import { fitLayout, type FitUnit } from '../lib/fitLayout'
 import { roleLayout } from '../lib/roleLayout'
+import { placeScoped } from '../lib/groupTidyPlace'
 import {
   buildRoleUnits,
   classifyScene,
@@ -88,6 +94,9 @@ export interface TidyRun {
   pages?: number
   /** Roles only: the stage first, then the off-stage units. */
   units?: TidyUnitInfo[]
+  /** Partial scope only (I3): the arrangement collided with an outside board and moved, whole,
+   *  to open space. */
+  relocated?: true
 }
 
 export type TidyRunResult = TidyRun | { ok: false; error: string }
@@ -310,6 +319,36 @@ function planFor(
   }
 }
 
+/** A camera target moved by the same world delta as the arrangement it frames. */
+function shiftCamera(c: CameraFocusTarget, dx: number, dy: number): CameraFocusTarget {
+  if (c.kind === 'rect')
+    return { kind: 'rect', rect: { ...c.rect, x: c.rect.x + dx, y: c.rect.y + dy } }
+  if (c.kind !== 'viewport') return c
+  const { x, y, zoom } = c.viewport
+  return { kind: 'viewport', viewport: { x: x - dx * zoom, y: y - dy * zoom, zoom } }
+}
+
+/**
+ * I3: settle a PARTIAL tidy's plan against the boards outside its scope (`placeScoped`) — anchored
+ * at the scope's pre-tidy top-left; a relocated arrangement takes the plan's camera with it.
+ */
+function settleScoped(
+  plan: Plan,
+  targets: readonly Board[],
+  canvas: readonly Board[],
+  scoped: ReadonlySet<string>
+): { plan: Plan; relocated: boolean } {
+  const anchor = {
+    x: Math.min(...targets.map((b) => b.x)),
+    y: Math.min(...targets.map((b) => b.y))
+  }
+  const outside = canvas.filter((b) => !scoped.has(b.id))
+  const res = placeScoped(plan.placements, targets, outside, anchor)
+  const camera =
+    res.relocated && plan.camera ? shiftCamera(plan.camera, res.dx, res.dy) : plan.camera
+  return { plan: { ...plan, placements: res.placements, camera }, relocated: res.relocated }
+}
+
 /**
  * Run ONE tidy (see the module header). `raw` is the C5 argument shape — an omitted `mode` is the
  * implicit `roles` default (D8 a). Returns the C6 facts on success, or the reason it refused (the
@@ -338,7 +377,10 @@ export function runTidy(raw: TidyArgsInput): TidyRunResult {
   const targets = scoped ? canvas.filter((b) => scoped.has(b.id)) : canvas
   if (targets.length === 0) return { ok: true, args, moved: 0, count: 0 }
 
-  const plan = planFor(args, st, targets, scoped, pane)
+  const planned = planFor(args, st, targets, scoped, pane)
+  const { plan, relocated } = scoped
+    ? settleScoped(planned, targets, canvas, scoped)
+    : { plan: planned, relocated: false }
   const moved = useCanvasStore.getState().applyLayout(plan.placements)
 
   const after = useCanvasStore
@@ -358,6 +400,7 @@ export function runTidy(raw: TidyArgsInput): TidyRunResult {
     ...(zoom !== undefined ? { fitZoom: zoom } : {}),
     readable: plan.readable ?? (zoom !== undefined ? zoom >= READABLE_ZOOM : true),
     ...(plan.pages !== undefined ? { pages: plan.pages } : {}),
-    ...(plan.units ? { units: plan.units } : {})
+    ...(plan.units ? { units: plan.units } : {}),
+    ...(relocated ? { relocated: true as const } : {})
   }
 }

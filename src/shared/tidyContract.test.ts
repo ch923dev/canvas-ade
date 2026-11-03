@@ -125,4 +125,10 @@ describe('sanitizeTidyAck (C6 — only clean facts reach the agent)', () => {
     expect(out[0].why.endsWith('…')).toBe(true)
     expect(sanitizeTidyAck({ units: ['junk'] })).toEqual({ moved: 0 })
   })
+
+  it('relocated (I3) passes only as literal true', () => {
+    expect(sanitizeTidyAck({ moved: 3, relocated: true })).toEqual({ moved: 3, relocated: true })
+    expect(sanitizeTidyAck({ moved: 3, relocated: false })).toEqual({ moved: 3 })
+    expect(sanitizeTidyAck({ moved: 3, relocated: 'yes' })).toEqual({ moved: 3 })
+  })
 })

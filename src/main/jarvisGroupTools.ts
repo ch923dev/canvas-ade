@@ -165,7 +165,10 @@ function boardIds(
 }
 
 /** Resolve a group (id, [id] prefix ≥6, or exact name, case-insensitive); ambiguity asks. */
-function resolveGroup(model: AppModel, ref: string): AppModel['canvas']['groups'][number] {
+/** Resolve a group reference: id, id prefix (≥ 6) or exact name (case-insensitive); ambiguity
+ *  answers with NUMBERED candidates (the J5 pattern). The ONE Jarvis group resolver — jarvisTools'
+ *  focus_viewport / tidy_canvas use it too. */
+export function resolveGroup(model: AppModel, ref: string): AppModel['canvas']['groups'][number] {
   const groups = model.canvas.groups
   const byId = groups.filter((g) => g.id === ref || (ref.length >= 6 && g.id.startsWith(ref)))
   const lower = ref.toLowerCase()
