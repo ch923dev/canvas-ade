@@ -34,6 +34,8 @@ import {
 
 let root = ''
 let project = ''
+/** An empty excludes file every fixture repo points `core.excludesFile` at (see {@link makeRepo}). */
+let noIgnores = ''
 
 function fixtureEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
@@ -52,8 +54,6 @@ function git(cwd: string, ...args: string[]): string {
  */
 function makeRepo(dir: string): string {
   mkdirSync(dir, { recursive: true })
-  const noIgnores = join(root, 'no-global-ignores')
-  if (!existsSync(noIgnores)) writeFileSync(noIgnores, '', 'utf8')
   git(dir, 'init', '-q', '-b', 'main')
   git(dir, 'config', 'user.name', 'itest')
   git(dir, 'config', 'user.email', 'itest@example.com')
@@ -80,6 +80,9 @@ beforeAll(() => {
   root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ws1 alloc ')))
   project = join(root, 'my project')
   mkdirSync(project)
+  // Written once, before any repo: the nested `beforeAll`s that call makeRepo run after this.
+  noIgnores = join(root, 'no-global-ignores')
+  writeFileSync(noIgnores, '', 'utf8')
 })
 
 afterAll(() => {
