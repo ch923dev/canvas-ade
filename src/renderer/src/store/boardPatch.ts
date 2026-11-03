@@ -11,7 +11,9 @@ import { withSpecRevisions } from '../lib/specRevisions'
  * in-flight draft/erase, hover). Those stay in component/Zustand session state and
  * are never serialized — see boardSchema.toObject.
  */
-const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
+// v24: `workspaceId` (0 or 1 workspace per board) is common to every type — assign/unassign is an
+// undoable board patch (the PATCHABLE_KEYS-for-additive-field gotcha: unlisted ⇒ silently dropped).
+const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z', 'workspaceId'] as const
 const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   // `agentSessionId`/`agentTranscriptPath` are terminal-only app-learned fields the
   // recap hook (`recap:learned`) patches onto a board so its recap survives reload —

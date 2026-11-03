@@ -62,10 +62,36 @@ export const mcpApi = {
   publishBoards: (payload: {
     // C1 spatial awareness: each board may carry its classified context signals (cwd /
     // previewSourceId / dockedIn / sourceBoardId + the C9 role signals) — never a launch line (D9).
-    boards: Array<{ id: string; type: string; title: string; status: string } & BoardContextFields>
+    // v24: a board's `workspaceId` (absent ⇒ project-level) rides beside them.
+    boards: Array<
+      {
+        id: string
+        type: string
+        title: string
+        status: string
+        workspaceId?: string
+      } & BoardContextFields
+    >
     connectors: Array<{ id: string; sourceId: string; targetId: string; kind: string }>
     // PR-5: Named Board Groups (feature zones) — feeds the app-model's live canvas.groups.
     groups?: Array<{ id: string; name: string; boardIds: string[] }>
+    // v24: project workspaces (mirrors main `WorkspaceMirror`) — MAIN re-validates every field.
+    workspaces?: Array<{
+      id: string
+      name: string
+      goal: string
+      color: string
+      root: string
+      worktrees?: Array<{
+        repoRoot: string
+        worktree: string
+        branch: string
+        baseRef: string
+        base: string
+      }>
+      state?: 'archived'
+      keepLayout?: boolean
+    }>
     // C1: the user's live view (pane · dpr · settled camera · visible world). Session state — a plain
     // cloneable object; MAIN sanitizes it (a bad view is dropped whole) and never persists it.
     view?: CanvasView

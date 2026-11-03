@@ -59,10 +59,11 @@ const legacyAssets = (dir: string): string => join(dir, ASSETS)
  * props, ADDITIVE; v19 = Kanban card-detail fields — description/tags[]/fileRefs[], ADDITIVE;
  * v20 = TerminalBoard `openRouter` routing field, ADDITIVE; v21 = the DiagramElement
  * `'expanse'` engine + spec + importedFrom, BREAKING; v22 = the DiagramElement `revisions`
- * prior-spec snapshots, ADDITIVE; v23 = the `swarm` board type (orchestration S1), BREAKING —
- * see boardSchemaVersion.ts.)
+ * prior-spec snapshots, ADDITIVE; v23 = the `swarm` board type (orchestration S1), BREAKING;
+ * v24 = Project Workspaces — doc-level `workspaces[]` + `repoDefaults`, BREAKING — see
+ * boardSchemaVersion.ts.)
  */
-export const SCHEMA_VERSION = 23
+export const SCHEMA_VERSION = 24
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
@@ -78,9 +79,11 @@ export const SCHEMA_VERSION = 23
  * reader's diagram case hard-fails a non-mermaid engine, so pre-21 apps get the clean update prompt.
  * (v22 — DiagramElement `revisions` — is ADDITIVE and leaves the floor at 21.) The floor moved to
  * 23 with the breaking `swarm` board type (v23, orchestration S1) — pre-23 apps have no `swarm`
- * case in `assertBoard` and would `.bak`-fallback, so they get the clean update prompt.
+ * case in `assertBoard` and would `.bak`-fallback, so they get the clean update prompt. The floor
+ * moved to 24 with the doc-level `workspaces[]` + `repoDefaults` keys (v24, Project Workspaces) — a
+ * pre-24 app would drop both on its next save, so it gets the clean update prompt instead.
  */
-export const MIN_READER_VERSION = 23
+export const MIN_READER_VERSION = 24
 
 export type ProjectResult =
   | {

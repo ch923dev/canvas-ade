@@ -4,7 +4,9 @@ import {
   setActiveAutosaver,
   cancelActiveAutosave,
   SAVED_KEYS,
-  hasSavableChange
+  hasSavableChange,
+  hasDocChange,
+  hasSessionChange
 } from './useAutosave'
 import type { CanvasState } from './canvasStore'
 import { toObject } from '../lib/boardSchema'
@@ -224,7 +226,9 @@ describe('hasSavableChange (autosave dirty-trigger)', () => {
     connectors: [],
     viewport: null,
     groups: [],
-    background: null
+    background: null,
+    workspaces: [],
+    repoDefaults: {}
   }
 
   it('does not arm on pure ephemeral churn (no persisted ref changed)', () => {
@@ -256,16 +260,31 @@ describe('hasSavableChange (autosave dirty-trigger)', () => {
     ).toBe(true)
   })
 
+  it('arms a DOC save on a workspaces-only change (v24) — settings-class, no board edit', () => {
+    const next = { ...base, workspaces: [...base.workspaces] }
+    expect(hasSavableChange(base, next)).toBe(true)
+    expect(hasDocChange(base, next)).toBe(true)
+    expect(hasSessionChange(base, next)).toBe(false)
+  })
+
+  it('arms a DOC save on a repoDefaults-only change (v24 O-10)', () => {
+    const next = { ...base, repoDefaults: { api: { base: 'release' } } }
+    expect(hasDocChange(base, next)).toBe(true)
+  })
+
   // Drift guard: the watched set MUST equal every persisted content key toObject()
   // writes (minus the version stamps). If a future schema adds a doc-level field to
   // toObject without adding it here, this fails — closing the class of bug for good.
   it('SAVED_KEYS mirrors every persisted field toObject() serializes (drift guard)', () => {
-    const doc = toObject([], { x: 0, y: 0, zoom: 1 }, [], [], {
-      kind: 'none',
-      dim: 0.25,
-      saturation: 0.7,
-      gridDots: false
-    })
+    const doc = toObject(
+      [],
+      { x: 0, y: 0, zoom: 1 },
+      [],
+      [],
+      { kind: 'none', dim: 0.25, saturation: 0.7, gridDots: false },
+      // repoDefaults is omitted while empty — seed one so the key is serialized.
+      { workspaces: [], repoDefaults: { api: { base: 'release' } } }
+    )
     const VERSION_KEYS = new Set(['schemaVersion', 'minReaderVersion'])
     const persisted = Object.keys(doc)
       .filter((k) => !VERSION_KEYS.has(k))
