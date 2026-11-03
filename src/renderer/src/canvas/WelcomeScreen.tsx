@@ -6,6 +6,8 @@
 import { useEffect, useState } from 'react'
 import { useCanvasStore, type RecentProject } from '../store/canvasStore'
 import { openProject } from '../store/openProject'
+import { isNewerAppRequiredError } from '../lib/openError'
+import { UpdateNowRow } from './UpdateNowRow'
 
 export default function WelcomeScreen(): React.ReactElement {
   const error = useCanvasStore((s) => s.project.error)
@@ -91,6 +93,8 @@ export default function WelcomeScreen(): React.ReactElement {
     <div className="welcome">
       <h1>Canvas ADE</h1>
       {error && <p className="welcome-error">Could not open project: {error}</p>}
+      {/* WS-12: the one open failure an app update fixes gets an in-place Update now row. */}
+      {isNewerAppRequiredError(error) && <UpdateNowRow />}
       {loading && (
         <p className="welcome-loading" role="status">
           Loading project…

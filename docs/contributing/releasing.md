@@ -172,13 +172,15 @@ still rides on the ADR 0008 gate — an unsigned build wires no updater and show
 ### The tier manifest (`updates.json`)
 
 Source of truth: **`build/updates.json`** (committed). `scripts/gen-updates-json.mjs` stamps `latest`
-from `package.json`, validates the semver keys, and writes the published copy:
+from `package.json` and `minReaderVersion` from source, validates the semver keys and the floor
+record, and writes the published copy:
 
 ```jsonc
 // build/updates.json
 {
-  "minSupported": "0.9.0",              // running version < this  → FORCED (blocking modal)
-  "tiers": { "0.11.0": "recommended" }  // this version            → banner. absent → optional
+  "minSupported": "0.9.0",               // running version < this  → FORCED (blocking modal)
+  "minSupportedByFloor": { "23": "0.9.0" }, // canvas floor → the minSupported it demands (below)
+  "tiers": { "0.11.0": "recommended" }   // this version            → banner. absent → optional
 }
 ```
 
@@ -188,6 +190,54 @@ from `package.json`, validates the semver keys, and writes the published copy:
 - **To make a release louder (not blocking):** add `"x.y.z": "recommended"`.
 - **Fail-open:** if `updates.json` is unreachable, the app **never forces** and defaults to optional —
   a feed blip can't lock anyone out.
+
+### A canvas-format change forces an update (project-workspaces O-2)
+
+When a release raises the canvas compat floor (`MIN_READER_VERSION` in
+`src/renderer/src/lib/boardSchemaVersion.ts`, ADR 0007), every older install can no longer open a
+project the new build has saved ("saved by a newer version of the app"). So that release **forces
+every older install to update**, on the production feed **and** the local feed. Ordinary releases
+change nothing.
+
+Both published `updates.json` files now carry `minReaderVersion` (the release's floor, read from
+source — never hard-coded). Older apps ignore the key. The rules live in `scripts/release-floor.mjs`
+(tests: `scripts/release-floor.test.ts`).
+
+**Production — the PR that raises the floor must also raise `minSupported`.** `build/updates.json`
+records which `minSupported` each floor demands:
+
+```jsonc
+// build/updates.json — the PR that bumps MIN_READER_VERSION 23 → 24 at package.json 0.48.0
+{
+  "minSupported": "0.48.0",                               // raised in the SAME change
+  "minSupportedByFloor": { "23": "0.9.0", "24": "0.48.0" }, // "<new floor>": "<this PR's version>"
+  "tiers": {}
+}
+```
+
+You can't forget it: if `MIN_READER_VERSION` is above the highest recorded floor, the guard in
+`scripts/release-floor.test.ts` fails `pnpm test` (and CI's unit job), and both
+`gen-updates-json.mjs` and `release.mjs` refuse to run. The error names the exact two lines to add.
+Entries must rise with the floor, `minSupported` must be at least the current floor's entry, and
+neither may be above the release's own version. **Rebasing across a version bump re-derives the
+PR's version — update the new floor entry and `minSupported` to match.** (Floors up to 23 predate
+this rule; their entry is the old `0.9.0`.) `node scripts/gen-updates-json.mjs --check` validates
+without writing.
+
+**Local feed — the previous feed file is the record.** `release-local.mjs` reads the feed's current
+`updates.json` before overwriting it:
+
+- floor **rose** since the last local release → `minSupported` = this build's stamp, so every older
+  install gets the blocking modal;
+- floor **unchanged** → no new force; a `minSupported` an earlier floor raise left on the feed is
+  carried forward;
+- previous file **from before this rule** (no `minReaderVersion`) → counted as floor 23;
+- previous file **missing or unreadable** → floor treated as unchanged (no force) + a warning.
+
+The app compares versions without the `-local.N` suffix, so a force can't reach an install on the
+same `X.Y.Z` base — the script warns if that applies; bump `package.json` and re-run.
+`node scripts/release-local.mjs --dry-run` prints the stamp and the `updates.json` it would write,
+then stops (no install, no build, nothing written).
 
 ### Feed hosting — Cloudflare R2 (one-time setup)
 
@@ -249,7 +299,9 @@ close-and-reinstall. It productizes the local test above, with a hard security f
   Full posture: `src/main/localUpdateFeed.ts`.
 - **No upload path:** `release-local.mjs` cannot reach the production feed. Real releases go
   through `scripts/release.mjs` / `production.yml` only.
-- **Never forces:** the local `updates.json` is written with no `minSupported` floor.
+- **Forces only on a format change:** the local `updates.json` gets a `minSupported` floor
+  ONLY when the canvas compat floor rose (see *A canvas-format change forces an update* above);
+  otherwise a personal build never force-blocks.
 
 ### One-time bootstrap
 

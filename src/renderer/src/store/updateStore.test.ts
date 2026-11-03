@@ -1,8 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { selectUpdateBadge, type UpdateStatus } from './updateStore'
+import { selectUpdateBadge, useUpdateStore, type UpdateStatus } from './updateStore'
 
 const badge = (status: UpdateStatus | null): ReturnType<typeof selectUpdateBadge> =>
-  selectUpdateBadge({ status, setStatus: () => {} })
+  selectUpdateBadge({ status, version: '', setStatus: () => {} })
+
+describe('useUpdateStore version latch', () => {
+  it('keeps the update version across the tier-less download events', () => {
+    const { setStatus } = useUpdateStore.getState()
+    setStatus({ state: 'available', version: '0.48.1', tier: 'optional' })
+    setStatus({ state: 'downloading', percent: 40 })
+    expect(useUpdateStore.getState().version).toBe('0.48.1')
+    setStatus({ state: 'ready', version: '0.48.2' })
+    expect(useUpdateStore.getState().version).toBe('0.48.2')
+  })
+})
 
 describe('selectUpdateBadge', () => {
   it('is accent for a pending or downloading update (either non-forced tier)', () => {

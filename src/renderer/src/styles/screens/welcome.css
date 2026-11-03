@@ -29,6 +29,59 @@
   color: var(--err);
   font-size: var(--fs-meta);
 }
+/* WS-12 Update now row, under the "saved by a newer version" open error. Its button is the
+   Welcome primary: accent ink on the wash tint, never a filled button (DESIGN.md §1.2/§1.3). */
+.welcome-update {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 34px;
+}
+.welcome-update-note {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+.welcome-update button {
+  padding: 8px 16px;
+  border-radius: var(--r-board);
+  border: 1px solid var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  transition:
+    color 0.1s,
+    border-color 0.1s;
+}
+.welcome-update button:hover:not(:disabled) {
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.welcome-update button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.welcome-update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 260px;
+}
+.welcome-update-bar {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--inset);
+  overflow: hidden;
+}
+/* Progress = scaleX on a full-width fill (compositor-only; no width/layout animation). */
+.welcome-update-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 0.3s ease-out;
+}
 .welcome-actions {
   display: flex;
   gap: var(--space-12);
