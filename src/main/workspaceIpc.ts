@@ -30,6 +30,7 @@ import {
   getTerminalCwd,
   isBracketedPasteEnabled,
   listPtySessions,
+  readPtyOutput,
   writeToPty
 } from './pty'
 import { createSwarmWorktreeStore } from './swarmWorktree'
@@ -85,8 +86,8 @@ export function registerWorkspaceHandlers(
   )
   ipcMain.handle('workspace:depsPrompt', (e, arg: unknown) => {
     if (foreign(e)) return FORBIDDEN
-    const a = (arg ?? {}) as { workspaceId?: unknown; boardId?: unknown }
-    return store.depsPrompt(str(a.workspaceId), str(a.boardId))
+    const a = (arg ?? {}) as { workspaceId?: unknown; boardId?: unknown; now?: unknown }
+    return store.depsPrompt(str(a.workspaceId), str(a.boardId), { now: a.now === true })
   })
   ipcMain.handle('workspace:pickFolder', async (e): Promise<WorkspacePickResult> => {
     if (foreign(e)) return FORBIDDEN
@@ -154,6 +155,8 @@ export function registerWorkspaceIpc(ipcMain: IpcMain, getWin: () => BrowserWind
       listPtySessions().some((s) => s.id === id && s.status === 'running')
         ? getTerminalCwd(id)
         : undefined,
+    awaitReady: async (boardId) => (await awaitReady(boardId)).outcome,
+    screenTail: (boardId) => readPtyOutput(boardId, { limit: 4000 }).text,
     sendPrompt: async (boardId, text) => {
       const { delivery } = await runGatedWrite({
         type: 'workspace_deps_prompt',

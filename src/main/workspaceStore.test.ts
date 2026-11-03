@@ -5,6 +5,7 @@ import {
   createWorkspaceStore,
   DEPS_PROMPT,
   NOT_A_REPO,
+  trustGateShowing,
   type WorkspaceStoreDeps
 } from './workspaceStore'
 import type { SwarmWorktreeStore } from './swarmWorktree'
@@ -103,6 +104,8 @@ function make(
     liveTerminals: () => [],
     terminalCwd: () => undefined,
     sendPrompt: vi.fn(async () => ({ delivery: 'ready' as const })),
+    awaitReady: async () => 'ready',
+    screenTail: () => '',
     gitFor,
     isDir: (p) => dirs.has(p),
     realpath: async (p) => p,
@@ -482,8 +485,99 @@ describe('dependency prompt (O-9): one fixed prompt, single-use, no install run'
       now: () => t,
       terminalCwd: () => at('.canvas', 'worktrees', 'ws-api')
     })
-    t += 11 * 60_000
+    t += 31 * 60_000
     expect(await store.depsPrompt('ws-id-1', 't1')).toMatchObject({ ok: false })
     expect(deps.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  // Dev-check finding (2026-11-03): in a fresh worktree Claude Code first asks "trust this
+  // folder?", and the prompt's Enter answered it with the default — "No, exit". The prompt is now
+  // HELD (still armed) while that question is the live screen; the human sends it after answering.
+  it('the trust question on screen ⇒ HELD, nothing written, arm kept; sent once it is answered', async () => {
+    let tail = TRUST_LIVE
+    const { store, deps } = await armed({
+      terminalCwd: () => at('.canvas', 'worktrees', 'ws-api'),
+      screenTail: () => tail
+    })
+    expect(await store.depsPrompt('ws-id-1', 't1')).toMatchObject({ ok: false, hold: 'trust-gate' })
+    // Even the human's "send now" never writes into the live question.
+    expect(await store.depsPrompt('ws-id-1', 't1', { now: true })).toMatchObject({
+      hold: 'trust-gate'
+    })
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    tail = TRUST_YES
+    expect(await store.depsPrompt('ws-id-1', 't1', { now: true })).toEqual({
+      ok: true,
+      delivery: 'ready'
+    })
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('an agent that never settled ⇒ HELD (not-ready); a human "send now" goes through', async () => {
+    const { store, deps } = await armed({
+      terminalCwd: () => at('.canvas', 'worktrees', 'ws-api'),
+      awaitReady: async () => 'unconfirmed'
+    })
+    expect(await store.depsPrompt('ws-id-1', 't1')).toMatchObject({ ok: false, hold: 'not-ready' })
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(await store.depsPrompt('ws-id-1', 't1', { now: true })).toMatchObject({ ok: true })
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('a second ask while the first is still waiting is refused (never two prompts)', async () => {
+    let release: (v: string) => void = () => undefined
+    const ready = new Promise<string>((r) => (release = r))
+    const { store, deps } = await armed({
+      terminalCwd: () => at('.canvas', 'worktrees', 'ws-api'),
+      awaitReady: () => ready
+    })
+    const first = store.depsPrompt('ws-id-1', 't1')
+    expect(await store.depsPrompt('ws-id-1', 't1', { now: true })).toMatchObject({ ok: false })
+    release('ready')
+    expect(await first).toMatchObject({ ok: true })
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Claude Code's first-run question as the ANSI-stripped PTY tail shows it (dev-check screenshot).
+const NL = '\r\n'
+const TRUST_LIVE = [
+  ' Do you trust the files in this folder?',
+  '',
+  ' Is this a project you created or one you trust? (Like your own code, a well-known open',
+  ' source project, or work from your team). If not, take a moment to review what is in this',
+  ' folder first.',
+  '',
+  " Claude Code'll be able to read, edit, and execute files here.",
+  '',
+  ' ❯ No, exit',
+  '   Yes, I trust this folder',
+  '',
+  ' Enter to confirm · Esc to cancel',
+  '  '
+].join(NL)
+const TRUST_NO = [TRUST_LIVE, 'PS C:/work/my project/.canvas/worktrees/ws-api> '].join(NL)
+const TRUST_YES = [
+  TRUST_LIVE,
+  '╭───────────────────────────╮',
+  '│ ✻ Welcome to Claude Code! │',
+  '╰───────────────────────────╯',
+  '> ',
+  '  ? for shortcuts'
+].join(NL)
+
+describe('trustGateShowing', () => {
+  it('is live while the confirm footer is the last thing on screen', () => {
+    expect(trustGateShowing(TRUST_LIVE)).toBe(true)
+    // The TUI redraws the question on every arrow key — the LAST copy decides.
+    expect(trustGateShowing(TRUST_LIVE + TRUST_LIVE)).toBe(true)
+  })
+  it('is over once anything is drawn below it — the REPL (Yes) or the shell (No, exit)', () => {
+    expect(trustGateShowing(TRUST_YES)).toBe(false)
+    expect(trustGateShowing(TRUST_NO)).toBe(false)
+  })
+  it('ignores an ordinary screen and a bare confirm footer', () => {
+    expect(trustGateShowing(['PS C:/x> claude', '> ', '  ? for shortcuts'].join(NL))).toBe(false)
+    expect(trustGateShowing(' Enter to confirm · Esc to cancel' + NL)).toBe(false)
   })
 })

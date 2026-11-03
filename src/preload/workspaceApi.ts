@@ -44,7 +44,12 @@ export const workspaceApi = {
   /** Which of these project-relative folders exist (open-time "missing" reconcile). */
   dirsExist: (paths: string[]): Promise<boolean[]> =>
     ipcRenderer.invoke('workspace:dirsExist', paths),
-  /** Spend the single-use dependency prompt armed by `create` on the starter terminal. */
-  depsPrompt: (workspaceId: string, boardId: string): Promise<WorkspaceDepsPromptResult> =>
-    ipcRenderer.invoke('workspace:depsPrompt', { workspaceId, boardId })
+  /** Spend the single-use dependency prompt armed by `create` on the starter terminal. `now` = the
+   *  human's own "Send" for a HELD prompt (skips only the settled-agent check, never the trust gate). */
+  depsPrompt: (
+    workspaceId: string,
+    boardId: string,
+    now = false
+  ): Promise<WorkspaceDepsPromptResult> =>
+    ipcRenderer.invoke('workspace:depsPrompt', { workspaceId, boardId, now })
 }

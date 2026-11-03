@@ -60,8 +60,30 @@ import {
 export const DEPS_PROMPT =
   'This is a fresh git worktree, so its dependencies are not installed. Install them first. Read the lockfiles and manifests to pick the tool (pnpm, npm, pip, poetry, cargo, …), then report what you ran.'
 
-/** The dependency-prompt arm lives this long after create — long enough for an agent to boot. */
-export const DEPS_ARM_TTL_MS = 10 * 60_000
+/** The dependency-prompt arm lives this long after create — long enough for an agent to boot and
+ *  for the human to answer its first-run trust question before sending a held prompt. */
+export const DEPS_ARM_TTL_MS = 30 * 60_000
+
+/** The readiness outcomes that let the prompt go out on its own (no human "Send"). */
+const SETTLED = new Set(['ready', 'ready_latched', 'ready_assumed'])
+
+/**
+ * Whether an agent's first-run folder-trust question is the LIVE screen (Claude Code: "Yes, I trust
+ * this folder" / "No, exit" … "Enter to confirm"). Writing the prompt there would hand the gate an
+ * Enter — whose default is "No, exit". `tail` is the ANSI-stripped PTY tail; the question counts as
+ * live only while nothing but whitespace follows its confirm footer (after the human answers,
+ * the REPL — or, on "No", the shell prompt — is drawn below it).
+ */
+export function trustGateShowing(tail: string): boolean {
+  const end = tail.slice(-2000)
+  if (!/trust\s*(this|the\s*files\s*in\s*this)\s*folder|do\s*you\s*trust/i.test(end)) return false
+  // The LAST confirm footer is the live one (the TUI redraws the whole question on every key).
+  let at = -1
+  for (const m of end.matchAll(/enter\s*to\s*confirm/gi)) at = m.index
+  if (at === -1) return false
+  const after = end.slice(at).split('\n').slice(1).join('\n')
+  return after.replace(/\s+/g, '').length === 0
+}
 
 /** How long `depsPrompt` waits for the starter terminal's PTY session to exist. */
 export const DEPS_SESSION_WAIT_MS = 30_000
@@ -93,6 +115,10 @@ export interface WorkspaceStoreDeps {
   terminalCwd: (boardId: string) => string | undefined
   /** Deliver one prompt through the shared PTY write gate (readiness-gated, audited). */
   sendPrompt: (boardId: string, text: string) => Promise<{ delivery: 'ready' | 'unconfirmed' }>
+  /** The shared readiness waiter's outcome for a terminal (the same latch the gate uses). */
+  awaitReady: (boardId: string) => Promise<string>
+  /** The ANSI-stripped tail of a terminal's output (`pty.readPtyOutput`). Read-only. */
+  screenTail: (boardId: string) => string
   gitFor?: (cwd: string) => SimpleGit
   isDir?: (p: string) => boolean
   realpath?: (p: string) => Promise<string>
@@ -115,7 +141,12 @@ export interface WorkspaceStore {
   remove(req: WorkspaceDeleteRequest): Promise<WorkspaceDeleteResult>
   /** Which of these project-relative folders exist (open-time reconcile). Read-only. */
   dirsExist(paths: string[]): boolean[]
-  depsPrompt(workspaceId: string, boardId: string): Promise<WorkspaceDepsPromptResult>
+  /** `now`: the human's own "Send" — skips only the settled-agent heuristic, never the trust gate. */
+  depsPrompt(
+    workspaceId: string,
+    boardId: string,
+    opts?: { now?: boolean }
+  ): Promise<WorkspaceDepsPromptResult>
 }
 
 /** Is `target` `root` itself or inside it? Both absolute; win32 compares case-insensitively. */
@@ -167,7 +198,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
   const { worktrees } = deps
 
   /** O-9 arms: workspace id → the effective root its starter terminal must be spawned in. */
-  const depsArms = new Map<string, { cwd: string; at: number }>()
+  const depsArms = new Map<string, { cwd: string; at: number; busy: boolean }>()
 
   const realOrSelf = async (p: string): Promise<string> => {
     try {
@@ -317,7 +348,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       }
       const worktreeRel = toRel(project, alloc.worktree)
       if (!base || worktreeRel === null) return undo('git could not read the new worktree.')
-      if (req.deps === true) depsArms.set(id, { cwd, at: now() })
+      if (req.deps === true) depsArms.set(id, { cwd, at: now(), busy: false })
       return {
         ok: true,
         id,
@@ -423,27 +454,52 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       })
     },
 
-    async depsPrompt(workspaceId, boardId) {
-      // Single-use: the arm is spent by the first attempt, whatever its outcome.
+    async depsPrompt(workspaceId, boardId, opts = {}) {
+      // Single-use: the arm is spent by the first WRITE attempt (or a definitive refusal). A HELD
+      // prompt keeps it, so the human can send it once the agent is at its prompt.
       const arm = depsArms.get(workspaceId)
-      depsArms.delete(workspaceId)
       if (!arm || now() - arm.at > DEPS_ARM_TTL_MS) {
+        depsArms.delete(workspaceId)
         return { ok: false, reason: 'No dependency prompt is armed for this workspace.' }
       }
-      let cwd = deps.terminalCwd(boardId)
-      for (let waited = 0; !cwd && waited < DEPS_SESSION_WAIT_MS; waited += DEPS_SESSION_POLL_MS) {
-        await sleep(DEPS_SESSION_POLL_MS)
-        cwd = deps.terminalCwd(boardId)
-      }
-      if (!cwd) return { ok: false, reason: 'The starter terminal never started.' }
-      if (!isWithinPath(await realOrSelf(arm.cwd), await realOrSelf(cwd))) {
-        return { ok: false, reason: "That terminal isn't inside the new workspace." }
+      if (arm.busy) return { ok: false, reason: 'The dependency prompt is already on its way.' }
+      arm.busy = true
+      const spend = (reason: string): WorkspaceDepsPromptResult => {
+        depsArms.delete(workspaceId)
+        return { ok: false, reason }
       }
       try {
-        const { delivery } = await deps.sendPrompt(boardId, DEPS_PROMPT)
-        return { ok: true, delivery }
-      } catch (err) {
-        return { ok: false, reason: errText(err) }
+        let cwd = deps.terminalCwd(boardId)
+        for (let w = 0; !cwd && w < DEPS_SESSION_WAIT_MS; w += DEPS_SESSION_POLL_MS) {
+          await sleep(DEPS_SESSION_POLL_MS)
+          cwd = deps.terminalCwd(boardId)
+        }
+        if (!cwd) return spend('The starter terminal never started.')
+        if (!isWithinPath(await realOrSelf(arm.cwd), await realOrSelf(cwd))) {
+          return spend("That terminal isn't inside the new workspace.")
+        }
+        const settled = SETTLED.has(await deps.awaitReady(boardId))
+        // Never write into the agent's own first-run gate: Claude Code's "trust this folder?"
+        // would take the prompt's Enter as its answer, and the default is "No, exit".
+        if (trustGateShowing(deps.screenTail(boardId))) {
+          return {
+            ok: false,
+            hold: 'trust-gate',
+            reason: 'The agent is asking whether to trust this folder.'
+          }
+        }
+        if (!settled && opts.now !== true) {
+          return { ok: false, hold: 'not-ready', reason: 'The agent has not settled yet.' }
+        }
+        depsArms.delete(workspaceId)
+        try {
+          const { delivery } = await deps.sendPrompt(boardId, DEPS_PROMPT)
+          return { ok: true, delivery }
+        } catch (err) {
+          return { ok: false, reason: errText(err) }
+        }
+      } finally {
+        arm.busy = false
       }
     }
   }

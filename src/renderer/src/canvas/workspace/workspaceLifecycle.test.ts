@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useToastStore } from '../../store/toastStore'
 import type { TerminalBoard } from '../../lib/boardSchema'
 import {
   agentKindFor,
@@ -7,6 +8,7 @@ import {
   finishDelete,
   pickBase,
   sanitizeLaunch,
+  sendDepsPrompt,
   wantsDepsPrompt,
   type CreateWorkspaceInput,
   type WorkspaceApi
@@ -146,7 +148,7 @@ describe('createWorkspaceFlow', () => {
       agentKind: 'claude'
     })
     await vi.waitFor(() => expect(api.depsPrompt).toHaveBeenCalledTimes(1))
-    expect(api.depsPrompt).toHaveBeenCalledWith('ws-1', t.id)
+    expect(api.depsPrompt).toHaveBeenCalledWith('ws-1', t.id, false)
   })
 
   it('a plain shell starter never gets the prompt (it would run it as a command)', async () => {
@@ -237,5 +239,41 @@ describe('finishDelete (O-8)', () => {
     finishDelete(get().workspaces[0], 'removed', true)
     expect(get().boards).toEqual([])
     expect(get().workspaces).toEqual([])
+  })
+})
+
+// Dev-check finding: Claude Code's first-run "trust this folder?" question ate the prompt's Enter.
+// MAIN now HOLDS the prompt; the renderer turns a hold into a sticky toast whose button is the
+// human's own "send it now" — and a sent prompt replaces that toast in place.
+describe('sendDepsPrompt — a held prompt waits for the human', () => {
+  beforeEach(() => useToastStore.setState({ toasts: [] }))
+
+  it('a trust-gate hold shows ONE sticky toast; its button sends with `now`', async () => {
+    const depsPrompt = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, hold: 'trust-gate', reason: 'asking' })
+      .mockResolvedValueOnce({ ok: true, delivery: 'ready' })
+    const api = fakeApi({ depsPrompt })
+    await sendDepsPrompt(api, 'ws-1', 't1')
+    const [held] = useToastStore.getState().toasts
+    expect(held).toMatchObject({ id: 'ws-deps-ws-1', sticky: true })
+    expect(held.message).toMatch(/trust this new worktree/)
+    held.action!.run()
+    await vi.waitFor(() => expect(depsPrompt).toHaveBeenLastCalledWith('ws-1', 't1', true))
+    await vi.waitFor(() =>
+      expect(useToastStore.getState().toasts).toEqual([
+        expect.objectContaining({ id: 'ws-deps-ws-1', sticky: false })
+      ])
+    )
+  })
+
+  it('a definitive refusal is an error toast with no button', async () => {
+    const api = fakeApi({
+      depsPrompt: vi.fn(async () => ({ ok: false as const, reason: 'never started' }))
+    })
+    await sendDepsPrompt(api, 'ws-1', 't1')
+    const [t] = useToastStore.getState().toasts
+    expect(t).toMatchObject({ kind: 'error', sticky: false })
+    expect(t.action).toBeUndefined()
   })
 })

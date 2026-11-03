@@ -9,6 +9,7 @@ vi.mock('./pty', () => ({
   getTerminalCwd: vi.fn(),
   isBracketedPasteEnabled: vi.fn(),
   listPtySessions: vi.fn(() => []),
+  readPtyOutput: vi.fn(() => ({ text: '' })),
   writeToPty: vi.fn()
 }))
 vi.mock('./auditIpc', () => ({ appendAuditEntry: vi.fn() }))
@@ -80,7 +81,12 @@ describe('workspace:* IPC', () => {
       boardId: 'b',
       text: 'rm -rf /'
     })
-    expect(store.depsPrompt).toHaveBeenCalledWith('w', 'b')
+    expect(store.depsPrompt).toHaveBeenCalledWith('w', 'b', { now: false })
+    // `now` is a strict boolean — anything else is a plain (heuristic-gated) ask.
+    await call('workspace:depsPrompt', trusted, { workspaceId: 'w', boardId: 'b', now: 'yes' })
+    expect(store.depsPrompt).toHaveBeenLastCalledWith('w', 'b', { now: false })
+    await call('workspace:depsPrompt', trusted, { workspaceId: 'w', boardId: 'b', now: true })
+    expect(store.depsPrompt).toHaveBeenLastCalledWith('w', 'b', { now: true })
     await call('workspace:delete', trusted, { id: 'w', disposition: 'keep' })
     expect(store.remove).toHaveBeenCalledWith({ id: 'w', disposition: 'keep' })
   })

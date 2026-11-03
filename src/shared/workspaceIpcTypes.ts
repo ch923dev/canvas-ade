@@ -138,7 +138,15 @@ export type WorkspaceDeleteResult =
       running?: string[]
     }
 
+/**
+ * Why a dependency prompt was HELD (not written, still armed): the agent is showing its own
+ * first-run gate (Claude Code's "trust this folder?" — an Enter there answers it), or it has not
+ * settled yet. The human sends it once the agent is at its prompt (`workspace:depsPrompt` with
+ * `now`).
+ */
+export type WorkspaceDepsHold = 'trust-gate' | 'not-ready'
+
 /** `workspace:depsPrompt` outcome. `delivery` mirrors the dispatch gate's honest ack. */
 export type WorkspaceDepsPromptResult =
   | { ok: true; delivery: 'ready' | 'unconfirmed' }
-  | { ok: false; reason: string }
+  | { ok: false; reason: string; hold?: WorkspaceDepsHold }

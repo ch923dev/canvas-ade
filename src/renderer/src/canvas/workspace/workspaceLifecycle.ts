@@ -156,26 +156,49 @@ export async function createWorkspaceFlow(
   return { ok: true, id, ...(terminalId ? { terminalId } : {}), depsArmed }
 }
 
-/** Spend the armed dependency prompt; the outcome is a toast (it lands after the agent boots). */
+/**
+ * Spend the armed dependency prompt; the outcome is a toast (it lands after the agent boots). A
+ * HELD prompt — the agent is asking its own first-run trust question, or never settled — stays
+ * armed behind a sticky toast whose button is the human's "send it now" (`now`).
+ */
 export async function sendDepsPrompt(
   api: WorkspaceApi,
   workspaceId: string,
-  terminalId: string
+  terminalId: string,
+  now = false
 ): Promise<void> {
-  const r = await api.depsPrompt(workspaceId, terminalId).catch((err: unknown) => ({
+  const r = await api.depsPrompt(workspaceId, terminalId, now).catch((err: unknown) => ({
     ok: false as const,
-    reason: err instanceof Error ? err.message : String(err)
+    reason: err instanceof Error ? err.message : String(err),
+    hold: undefined
   }))
-  showToast(
-    r.ok
+  const id = `ws-deps-${workspaceId}`
+  if (!r.ok && r.hold) {
+    showToast({
+      id,
+      sticky: true,
+      message:
+        r.hold === 'trust-gate'
+          ? 'The agent is asking whether to trust this new worktree. Answer it in the terminal, then send the dependency prompt.'
+          : 'The agent has not settled yet. Send the dependency prompt once it is at its prompt.',
+      action: {
+        label: 'Send dependency prompt',
+        run: () => void sendDepsPrompt(api, workspaceId, terminalId, true)
+      }
+    })
+    return
+  }
+  showToast({
+    id,
+    ...(r.ok
       ? {
           message:
             r.delivery === 'ready'
               ? 'Asked the agent to install dependencies.'
               : 'Sent the dependency prompt — the agent had not confirmed it was ready, so check the terminal.'
         }
-      : { message: `The dependency prompt was not sent: ${r.reason}`, kind: 'error' }
-  )
+      : { message: `The dependency prompt was not sent: ${r.reason}`, kind: 'error' as const })
+  })
 }
 
 /** `workspace:status`, retried while MAIN's mirror has not caught up with a just-made record. */

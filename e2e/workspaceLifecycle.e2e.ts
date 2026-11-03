@@ -21,6 +21,8 @@ import { execFileSync } from 'node:child_process'
  */
 
 const REPO = 'svc api'
+/** A carriage return — what the human's Enter sends to the PTY. */
+const ENTER_KEY = '\r'
 
 const gitIn =
   (repo: string) =>
@@ -124,6 +126,35 @@ async function teardown(app: ElectronApplication, tmp: string): Promise<void> {
   // A live shell inside a worktree holds a Windows cwd lock; stop every PTY before the delete.
   await mainCall(app, 'disposeAllPtys').catch(() => undefined)
   await mainCall(app, 'teardownProject', tmp)
+}
+
+type Audit = { type: string; targetId: string; prompt: string; status: string }
+
+/** Create a worktree workspace whose starter terminal runs `agent`, with the deps box ticked. */
+async function createDepsWorkspace(
+  page: Page,
+  name: string,
+  agent: string
+): Promise<{ ws: Ws; term: { id: string }; depsEntries: () => Promise<Audit[]> }> {
+  await openNewDialog(page)
+  await fillWorktree(page, name)
+  await expect(tid(page, 'ws-starter-terminal')).toBeChecked()
+  await tid(page, 'ws-launch').fill(agent)
+  await expect(tid(page, 'ws-deps')).toBeChecked()
+  await create(page)
+  const ws = await wsNamed(page, name)
+  expect(ws, 'worktree workspace recorded').toBeTruthy()
+  const boards = await callE2E<
+    Array<{ id: string; type: string; workspaceId?: string; cwd?: string }>
+  >(page, { m: 'getBoards' })
+  const term = boards.find((b) => b.type === 'terminal' && b.workspaceId === ws!.id)
+  expect(term, 'the starter terminal joined the workspace').toBeTruthy()
+  expect(term!.cwd?.replace(/\\/g, '/')).toContain(`.canvas/worktrees/ws-${name.toLowerCase()}`)
+  const depsEntries = async (): Promise<Audit[]> =>
+    (await apiCall<Audit[]>(page, 'mcp.readAudit', { limit: 200 })).filter(
+      (e) => e.type === 'workspace_deps_prompt' && e.targetId === term!.id
+    )
+  return { ws: ws!, term: term!, depsEntries }
 }
 
 test.describe('@workspace WS-4 lifecycle — create / delete against a real repo', () => {
@@ -261,27 +292,7 @@ test.describe('@workspace WS-4 lifecycle — create / delete against a real repo
       // A stand-in "agent" that reads one line and does nothing with it — so the prompt is
       // delivered, observed, and provably NOT acted on by anything Expanse runs.
       const agent = process.platform === 'win32' ? "$null = Read-Host 'agent'" : 'read -r x'
-      await openNewDialog(page)
-      await fillWorktree(page, 'Deps')
-      await expect(tid(page, 'ws-starter-terminal')).toBeChecked()
-      await tid(page, 'ws-launch').fill(agent)
-      await expect(tid(page, 'ws-deps')).toBeChecked()
-      await create(page)
-
-      const ws = await wsNamed(page, 'Deps')
-      expect(ws, 'worktree workspace recorded').toBeTruthy()
-      const boards = await callE2E<
-        Array<{ id: string; type: string; workspaceId?: string; cwd?: string }>
-      >(page, { m: 'getBoards' })
-      const term = boards.find((b) => b.type === 'terminal' && b.workspaceId === ws!.id)
-      expect(term, 'the starter terminal joined the workspace').toBeTruthy()
-      expect(term!.cwd?.replace(/\\/g, '/')).toContain('.canvas/worktrees/ws-deps')
-
-      type Audit = { type: string; targetId: string; prompt: string; status: string }
-      const depsEntries = async (): Promise<Audit[]> =>
-        (await apiCall<Audit[]>(page, 'mcp.readAudit', { limit: 200 })).filter(
-          (e) => e.type === 'workspace_deps_prompt' && e.targetId === term!.id
-        )
+      const { ws, term, depsEntries } = await createDepsWorkspace(page, 'Deps', agent)
       await expect
         .poll(async () => (await depsEntries()).map((e) => e.status), { timeout: 90_000 })
         .toEqual([expect.stringMatching(/^dispatched/)])
@@ -291,12 +302,49 @@ test.describe('@workspace WS-4 lifecycle — create / delete against a real repo
       )
 
       // The arm is single-use: a second ask from the renderer is refused and writes nothing.
-      const again = await apiCall<{ ok: boolean }>(page, 'workspace.depsPrompt', ws!.id, term!.id)
+      const again = await apiCall<{ ok: boolean }>(page, 'workspace.depsPrompt', ws.id, term.id)
       expect(again.ok).toBe(false)
       expect(await depsEntries()).toHaveLength(1)
       // Expanse ran no install of its own: nothing landed in the worktree beyond the checkout.
       const wt = join(tmp, '.canvas', 'worktrees', 'ws-deps')
       expect(readdirSync(wt)).not.toContain('node_modules')
+    } finally {
+      await teardown(electronApp, tmp)
+    }
+  })
+
+  // Dev-check finding (2026-11-03): in a fresh worktree Claude Code first asks "trust this folder?"
+  // and the prompt's Enter answered it with the default — "No, exit". The stand-in agent here asks
+  // the same shaped question, then (once answered) waits at a prompt like a booted REPL.
+  test('an agent asking its first-run trust question: the prompt is HELD, then sent by the human — once', async ({
+    page,
+    electronApp
+  }) => {
+    test.setTimeout(150_000)
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'ws4 life-', 'ws4-trust')
+    try {
+      makeRepo(tmp)
+      await openProject(page, tmp)
+      const agent =
+        process.platform === 'win32'
+          ? "Write-Host 'Do you trust the files in this folder?'; Write-Host ' Enter to confirm'; $null = Read-Host; Write-Host 'agent ready'; $null = Read-Host 'agent'"
+          : "printf 'Do you trust the files in this folder?\\n Enter to confirm\\n'; read -r a; echo 'agent ready'; read -r b"
+      const { term, depsEntries } = await createDepsWorkspace(page, 'Trust', agent)
+
+      const held = tid(page, 'toast-island').getByText(/trust this new worktree/)
+      await expect(held).toBeVisible({ timeout: 90_000 })
+      expect(await depsEntries(), 'nothing is written into the trust question').toEqual([])
+
+      // The human answers the agent's question in the terminal…
+      expect(await mainCall<boolean>(electronApp, 'writeTerminal', term.id, ENTER_KEY)).toBe(true)
+      // …then sends the held prompt from the toast.
+      await tid(page, 'toast-island')
+        .getByRole('button', { name: 'Send dependency prompt' })
+        .click()
+      await expect
+        .poll(async () => (await depsEntries()).map((e) => e.status), { timeout: 60_000 })
+        .toEqual([expect.stringMatching(/^dispatched/)])
+      await expect(held).toBeHidden()
     } finally {
       await teardown(electronApp, tmp)
     }
