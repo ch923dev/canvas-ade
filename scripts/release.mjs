@@ -3,12 +3,15 @@
  * Cut an update-feed release for one platform and stage it for upload to the R2 bucket.
  *
  * Steps:
+ *   0. Validate the tier manifest + canvas-floor record (gen-updates-json --check) — fail fast.
  *   1. Build with the auto-update gate ON (ENABLE_AUTO_UPDATE=1 → __ENABLE_AUTO_UPDATE__ true).
  *   2. electron-builder --<platform> --publish never  (the generic provider is read-only; the
  *      upload is this script's job, step 5).
  *   3. Assemble a CLEAN feed dir (release/feed/) with only the files the feed serves:
  *      latest*.yml + installer(s) + *.blockmap — NOT win-unpacked or other build junk.
- *   4. Generate updates.json (the tier manifest) into release/feed/.
+ *   4. Generate updates.json (the tier manifest) into release/feed/. It records this release's
+ *      canvas floor (`minReaderVersion`); a floor raise must carry a `minSupported` raise in
+ *      build/updates.json, so every older app is forced to update (step 0 checks it up front).
  *   5. Upload release/feed/ → R2. If R2_REMOTE is set (an rclone remote, e.g. "r2:expanse-updates")
  *      the copy runs; otherwise the exact command is PRINTED so nothing uploads by accident.
  *
@@ -41,6 +44,11 @@ const run = (cmd, extraEnv = {}) => {
     process.exit(r.status ?? 1)
   }
 }
+
+// 0 — fail fast: validate the tier manifest + canvas-floor record BEFORE a minutes-long build.
+// A canvas floor raise (MIN_READER_VERSION) without a matching `minSupported` raise in
+// build/updates.json is refused here (project-workspaces O-2; rules in release-floor.mjs).
+run('node scripts/gen-updates-json.mjs --check')
 
 // 1 + 2 — build with the gate on, package without auto-publishing.
 run('pnpm exec electron-vite build', { ENABLE_AUTO_UPDATE: '1' })

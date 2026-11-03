@@ -16,6 +16,11 @@
  *      LOCAL_UPDATE_CHANNEL=1 (the loopback feed override — personal builds only).
  *   4. Package --win --publish never, output on C:\ — electron-builder pack on the M: ReFS
  *      volume trips Defender EPERM/EBUSY (known machine gotcha).
+ *   2b. Plan updates.json from the feed's PREVIOUS one (scripts/release-floor.mjs): it records
+ *      this build's canvas floor (`minReaderVersion`). If the floor ROSE since the last local
+ *      release, `minSupported` = this stamp, so every older install is FORCED to update
+ *      (project-workspaces O-2). Otherwise no new force (a personal build never force-blocks
+ *      for any other reason); a force an earlier floor raise left on the feed is kept.
  *   5. Stage the feed dir: installer + .blockmap first, updates.json, latest.yml LAST — an
  *      app checking mid-publish must never see a manifest that points at a missing file.
  *   6. Ensure the loopback feed server is up (spawn scripts/serve-local-feed.mjs detached
@@ -25,6 +30,9 @@
  * go through scripts/release.mjs / production.yml only.
  *
  * Usage:  node scripts/release-local.mjs
+ *         node scripts/release-local.mjs --dry-run   (steps 1-2b only: print the stamp + the
+ *                                                     updates.json it WOULD write; no install,
+ *                                                     no build, nothing written)
  * Env:    EXPANSE_LOCAL_FEED_DIR (default C:\expanse\local-feed)
  *         EXPANSE_LOCAL_FEED_PORT (default 8090)
  *         EXPANSE_LOCAL_BUILD_DIR (default C:\expanse\local-build)
@@ -41,8 +49,14 @@ import {
 } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  planLocalManifest,
+  readMinReaderVersion,
+  readPreviousFeedManifest
+} from './release-floor.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const DRY_RUN = process.argv.slice(2).includes('--dry-run')
 const FEED_DIR = process.env.EXPANSE_LOCAL_FEED_DIR ?? 'C:\\expanse\\local-feed'
 const PORT = Number(process.env.EXPANSE_LOCAL_FEED_PORT ?? 8090)
 const OUT_DIR = process.env.EXPANSE_LOCAL_BUILD_DIR ?? 'C:\\expanse\\local-build'
@@ -102,6 +116,41 @@ function cmpTriplet(a, b) {
   return 0
 }
 
+// 2b — plan updates.json NOW (before the minutes-long build) from the feed's PREVIOUS one, which
+// is still on disk: step 5 is what overwrites it. Floor read from source, never hard-coded.
+let floor
+try {
+  floor = readMinReaderVersion(root)
+} catch (err) {
+  die(err.message)
+}
+const feedPlan = planLocalManifest({
+  previous: readPreviousFeedManifest(FEED_DIR),
+  stamped,
+  floor
+})
+for (const w of feedPlan.warnings) process.stderr.write(`[release-local] WARNING: ${w}\n`)
+if (feedPlan.forced)
+  process.stdout.write(
+    `[release-local] canvas floor ${feedPlan.previousFloor} → ${floor} ROSE: forcing every ` +
+      `install below ${stamped} to update (minSupported=${stamped})\n`
+  )
+else if (feedPlan.carried)
+  process.stdout.write(
+    `[release-local] canvas floor ${floor} unchanged: no new force; keeping ` +
+      `minSupported=${feedPlan.manifest.minSupported} from an earlier floor raise\n`
+  )
+else process.stdout.write(`[release-local] canvas floor ${floor}: no forced update\n`)
+
+if (DRY_RUN) {
+  process.stdout.write(
+    `\n[release-local] --dry-run: would write ${join(FEED_DIR, 'updates.json')}:\n` +
+      JSON.stringify(feedPlan.manifest, null, 2) +
+      `\n[release-local] --dry-run: stopping before install/build — nothing was written.\n`
+  )
+  process.exit(0)
+}
+
 // 2.5 — sync + verify runtime deps BEFORE packaging. electron-builder collects node_modules AS-ON-DISK
 // (depth-1) into the asar, so if a dependency pin was bumped in package.json/lockfile but `pnpm install`
 // never ran, the packaged app silently ships the STALE bundled copy. That is exactly how a build pinned
@@ -150,11 +199,10 @@ const payload = built.filter(
 if (payload.length === 0) die(`no ${stamped} installer found in ${OUT_DIR} — did the build fail?`)
 if (!built.includes('latest.yml')) die(`no latest.yml in ${OUT_DIR}`)
 for (const f of payload) copyFileSync(join(OUT_DIR, f), join(FEED_DIR, f))
-// updates.json: never a floor, never a tier — a personal build must never force-block.
-writeFileSync(
-  join(FEED_DIR, 'updates.json'),
-  JSON.stringify({ latest: stamped, tiers: {} }, null, 2) + '\n'
-)
+// updates.json: planned in step 2b. Never a tier; a `minSupported` floor ONLY when the canvas
+// format's floor rose (or an earlier rise's force is still standing) — a personal build never
+// force-blocks for any other reason.
+writeFileSync(join(FEED_DIR, 'updates.json'), JSON.stringify(feedPlan.manifest, null, 2) + '\n')
 copyFileSync(join(OUT_DIR, 'latest.yml'), join(FEED_DIR, 'latest.yml'))
 // prune superseded payloads (the manifest now points elsewhere; keep the feed dir lean).
 for (const f of readdirSync(FEED_DIR)) {
