@@ -14,7 +14,7 @@ authoritative *UX/visual* contract is `../design-reference/`.
 | [`roadmap-mcp-packaging.md`](roadmap-mcp-packaging.md) | How the `@expanse-ade/mcp` library reaches the app (dev `pnpm link` / release bundling / public npmjs publish). | ✅ live |
 | [`roadmap-drawio.md`](roadmap-drawio.md) | Separate feature track — draw.io diagram/dev-tooling integration (D1.1 shipped; D1.2/D2/D3 open). Shapes epic deferred. | ✅ live |
 | [`feature-proposals.md`](feature-proposals.md) | Research-backed feature ideas (proposals only, nothing committed). | ✅ live |
-| [`decisions/`](decisions/) | ADRs (durable contract) — stack, preview gate, LLM egress, … one file per decision. | ✅ live |
+| [`decisions/`](decisions/) | ADRs 0001–0014 (durable contract) — stack, preview gate, LLM egress, … project workspaces (0014); one file per decision. | ✅ live |
 | [`reviews/`](reviews/) | All code reviews & bug hunts. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the current open backlog (none open as of 2026-06-15). | ✅ live |
 | [`research/`](research/) | Standalone research notes feeding the **open** feature tracks only. Shipped research is collapsed (git history). | ✅ live |
 | [`superpowers/`](superpowers/) | Per-slice specs/plans/handoffs for **in-flight** work only (currently empty - populated only while a slice is in flight). Shipped slices are collapsed to `archive/build-history.md` + git history. | ✅ live |

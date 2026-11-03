@@ -5664,3 +5664,26 @@ Gates: vitest 7711 (2 known `pathSafe`); SCA 0; e2e `spatialGroupTidy` + `spatia
 smoke 62/62; bundle 433,230 / 440,000 B; CI green; `claude-review` clean (no findings, no nits).
 Dev check: user-verified (menu row, neighbour untouched + relocate toast, one undo, Jarvis,
 connected-terminal D1 confirm naming the group).
+
+## PR #447 — docs: ADR 0014 — project workspaces (WS-0, v0.47.29) · squash `3e94ab6e` · 2026-11-03
+
+First slice of Project Workspaces (design record `docs/research/2026-11-02-project-workspaces/`,
+slice plan WS-0…WS-12). Docs + comments only.
+- **ADR 0014** records D-1…D-7 + O-1…O-12: doc-level `workspaces[]` + `repoDefaults` +
+  `board.workspaceId` at v24 / floor 24 (Option B; A = extend groups, C = canvas per workspace,
+  and the sidecar file rejected); the swarm allocator generalized, not forked; worktrees at
+  `<project>/.canvas/worktrees/` (supersedes FW-1's "outside the project tree"); `strictCwd`, never
+  `$HOME`; confinement on Expanse-owned surfaces + Claude Code deny rules + sandbox on
+  macOS/Linux/WSL2; live-status + my-notes brief; focus = Tidy-group fit; forced update on a format
+  change on both feeds; base branch remembered per repo.
+- Stale docs fixed: `CLAUDE.md` Git/worktrees (no longer DEFERRED; locked rules verbatim) + two
+  Locked-decisions rows; FW-1 (`:112` superseded, clipping premise corrected); roadmap Deferred +
+  roadmap-mcp M6/T6.1 (scheduled as WS-0…WS-12; T6.1 = generalize); `appModel.ts` "until PR-5"
+  group comments; `docs/README.md` ADR row.
+- Left for owners: `boardSchema.ts:489-490`/`:1305` named-empty-groups comments (WS-2);
+  `M:\expanse\docs\orchestration\01-current-state.md` §A6 (outside the repo); Jarvis "Workspace:"
+  label (WS-10).
+
+Gates: fmt · lint 0 err · tc · `appModelDrift` 6/6; units at the ambient floor (5: `pathSafe` ×2,
+`pty.recapenv` ×3); smoke 62/62 ×2 (push + pre-merge); CI 4/4; `claude-review` clean (no inline).
+Dev check: N/A (no running-app change); ADR + `CLAUDE.md` diff user-approved.

@@ -79,7 +79,11 @@ unlock gates.** Persistence already landed; FW-1 gates the worktree-dependent fe
 
 ## FW-1 · Feature Workspaces — worktree-backed board zones ⭐
 
-- **Status:** deferred (post-MCP phase; decided 2026-05-30)
+- **Status:** deferred (post-MCP phase; decided 2026-05-30). **Now scheduled, re-scoped as Project
+  Workspaces** ([ADR 0014](decisions/0014-project-workspaces.md), 2026-11-03; slices WS-0…WS-12 in
+  `research/2026-11-02-project-workspaces/README.md` §5). A workspace is any folder in the project,
+  optionally backed by a worktree + branch, and is no longer worktree-only. The ADR supersedes this
+  entry where they differ; the text below is kept as the original proposal.
 - **Effort:** high (new spatial-grouping concept + git worktree lifecycle + MCP orchestration)
 - **Roadmap slot:** post-Phase 3, gated on the `canvas-ade-mcp` swarm layer. This is the deferred,
   re-modelled home for git worktrees (originally mis-scoped as "per-board" in Phase 3 Slice C).
@@ -103,14 +107,19 @@ work is actually organised. It is the natural substrate the MCP swarm layer orch
 multi-feature parallel development. Subsumes the worktree dependency of SB-3 / SB-5 / OS-1.
 
 ### Implementation sketch (high level — needs its own brainstorm + spec when the MCP lands)
-- **Zone primitive:** a persisted grouping of board ids + a bound branch/worktree. (Note: a *visual*
-  frame can't clip a live Browser native view — ADR 0002 / the dropped "Frames" idea — so a zone is a
-  data grouping + light affordance, not a clipping container.)
+- **Zone primitive:** a persisted grouping of board ids + a bound branch/worktree. A zone is a
+  data grouping + light affordance, not a clipping container. (Correction 2026-11-03: the original
+  reason, that a frame can't clip a live Browser native view, no longer holds. The native view was
+  removed in OS-3 5C, and OSR Browser boards are DOM `<canvas>` nodes that clip. A zone still needs
+  no clipping frame. ADR 0014 stores it as `board.workspaceId` plus an outline.)
 - **Worktree lifecycle in MAIN** (`simple-git`): create worktree+branch on zone create; the still-
   valid locked rules apply — reuse-if-exists, never nest-init, keep-on-disk + prompt on dirty delete,
   `git worktree remove` never `rm -rf`, frame-guarded IPC.
-- **Worktree location** (open): NOT inside the project working tree (user constraint 2026-05-30) — a
-  sibling dir or userData, decided at spec time.
+- ~~**Worktree location** (open): NOT inside the project working tree (user constraint 2026-05-30) — a
+  sibling dir or userData, decided at spec time.~~ **Superseded by ADR 0014 (O-1, 2026-11-03):**
+  worktrees live at `<project>/.canvas/worktrees/<slug>`, inside the ADR 0009 boundary and hidden
+  from the File Tree. That is the location orchestration S3 signed off (design D1, 2026-07-28) and
+  shipped in `src/main/swarmWorktree.ts`.
 - **Boards inherit the zone's checkout:** a Terminal's `cwd` = the zone worktree path (the existing
   spawn plumbing already threads `cwd`); the Browser previews that worktree's dev server.
 - **MCP orchestration:** the swarm layer assigns/runs agents per zone, merges/cleans branches.
@@ -119,7 +128,8 @@ multi-feature parallel development. Subsumes the worktree dependency of SB-3 / S
 - [ ] `canvas-ade-mcp` swarm layer exists and can own multi-agent orchestration.
 - [ ] Zone grouping primitive persists + round-trips (schema bump + migration).
 - [ ] Worktree add/remove works on Windows under a spaced path; dirty-delete prompt fires.
-- [ ] Worktree files live OUTSIDE the project working tree (user constraint).
+- [ ] ~~Worktree files live OUTSIDE the project working tree (user constraint).~~ Superseded by
+  ADR 0014: they live under `<project>/.canvas/worktrees/`.
 - [ ] `simple-git` in MAIN only, frame-guarded; no Browser→PTY path introduced.
 - **Acceptance:** create two zones on one canvas → each gets its own branch+worktree; the agents in
   each zone edit isolated files; previews + plans scope to their zone; deleting a zone prompts on a
