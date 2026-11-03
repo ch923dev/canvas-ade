@@ -54,6 +54,12 @@ export interface BoardMirror extends BoardContextFields {
    */
   path?: string
   /**
+   * WS-8: the File board holds UNSAVED edits (`type:'file'` only; only ever `true`). The workspace
+   * status writer pauses a Brief's `CONTEXT.md` while it is set, so a refresh never lands under the
+   * human's open buffer. Session state; a non-`true` value drops the field.
+   */
+  unsaved?: true
+  /**
    * Planning board's referenced files (file-tree S5; `type:'planning'` only) — the path + label
    * of each `fileref` element, so an agent can see the files a human pinned to a plan. Bounded
    * ({@link MAX_FILEREFS}) and length-capped per entry. Absent when none.
@@ -713,6 +719,7 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
         agentKind,
         monitorActivity,
         path,
+        unsaved,
         fileRefs,
         x,
         y,
@@ -746,6 +753,7 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       if (typeof path === 'string' && path.length > 0 && path.length <= MAX_FIELD_LEN) {
         entry.path = path
       }
+      if (unsaved === true) entry.unsaved = true
       const refs = sanitizeFileRefs(fileRefs)
       if (refs !== undefined) entry.fileRefs = refs
       // P1 canvas awareness: attach world-space geometry only as FINITE numbers (a non-number /

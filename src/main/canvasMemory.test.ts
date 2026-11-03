@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, statSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  WORKSPACES_DIR,
   createCanvasMemory,
   safeBoardId,
   scaffoldProjectMemory,
@@ -275,6 +276,23 @@ describe('canvasMemory writers — non-fatal on a disk error (T-M3)', () => {
       expect(mem.writeBoard('b1', '# hi')).toBe(false)
       expect(() => mem.writeIndex('# idx')).not.toThrow()
       expect(() => mem.writeProject('# proj')).not.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('WS-8 shared-context dir', () => {
+  it('lives under .canvas/workspaces, is not created eagerly, and only the private body hides it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cm-ws-'))
+    try {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold()
+      expect(m.paths.workspacesDir).toBe(join(dir, '.canvas', WORKSPACES_DIR))
+      expect(existsSync(m.paths.workspacesDir)).toBe(false)
+      // Private: `*` hides everything but canvas.json. Committed: workspaces/ is NOT ignored.
+      expect(IGNORE_PRIVATE.split(/\n/)).toContain('*')
+      expect(IGNORE_COMMITTED).not.toContain('workspaces')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

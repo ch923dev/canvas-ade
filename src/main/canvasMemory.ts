@@ -15,6 +15,14 @@ import { isSafeId } from './safeId'
 const CANVAS_DIR = '.canvas'
 const MEMORY_DIR = 'memory'
 const AUDIT_DIR = 'audit'
+/**
+ * WS-8: the shared-context dir — `workspaces/<id>/CONTEXT.md` + `workspaces/_project/CONTEXT.md`
+ * (`workspaceContext.ts` owns the files and scaffolds them lazily). Private by default (the `*` body
+ * below hides it); with the commit opt-in it is TRACKED (it is deliberately absent from
+ * IGNORE_COMMITTED), so a team shares its notes. Not created eagerly: a project without workspaces
+ * never grows an empty folder.
+ */
+export const WORKSPACES_DIR = 'workspaces'
 const GITIGNORE = '.gitignore'
 /** S2 run-ledger filename parts — the ONE place the `run-<id>.json` shape is spelled. */
 const RUN_PREFIX = 'run-'
@@ -63,6 +71,8 @@ export interface CanvasMemoryPaths {
   root: string
   memoryDir: string
   auditDir: string
+  /** WS-8: the shared-context dir (see {@link WORKSPACES_DIR}). */
+  workspacesDir: string
   gitignore: string
   index: string
   project: string
@@ -122,6 +132,7 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     root,
     memoryDir,
     auditDir,
+    workspacesDir: join(root, WORKSPACES_DIR),
     gitignore,
     index: join(memoryDir, 'MEMORY.md'),
     project: join(memoryDir, 'project.md'),

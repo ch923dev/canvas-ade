@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import {
   installRecapHook,
+  removeAnyRecapHook,
   removeRecapHook,
   isRecapHookInstalled,
   findNodeExecutable,
@@ -218,9 +219,44 @@ describe('recap hook install/merge', () => {
   it('prunes empty containers when our hook was the only one', () => {
     installRecapHook(opts(dir)) // creates hooks.SessionStart with just our entry
     removeRecapHook(dir, '/app/recordSession.js')
+    // No dangling `{ hooks: { SessionStart: [] } }` and no `{}` stub either (G12): the file the
+    // hook alone made is deleted, and the `.claude/` folder it created goes with it.
+    expect(existsSync(join(dir, '.claude', 'settings.local.json'))).toBe(false)
+    expect(existsSync(join(dir, '.claude'))).toBe(false)
+  })
+
+  it('keeps the file (and the user’s keys) when our hook was not all it held', () => {
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.local.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(ls)'] } })
+    )
+    installRecapHook(opts(dir))
+    removeRecapHook(dir, '/app/recordSession.js')
     const cfg = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'))
-    // No dangling `{ hooks: { SessionStart: [] } }` — both keys are pruned.
-    expect(cfg.hooks).toBeUndefined()
+    expect(cfg).toEqual({ permissions: { allow: ['Bash(ls)'] } })
+  })
+
+  it('removeAnyRecapHook strips a recap hook from ANY build path, keeping unrelated hooks', () => {
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    const other = { matcher: '', hooks: [{ type: 'command', command: 'echo', args: ['hi'] }] }
+    writeFileSync(
+      join(dir, '.claude', 'settings.local.json'),
+      JSON.stringify({ hooks: { SessionStart: [other] } })
+    )
+    installRecapHook({ ...opts(dir), scriptPath: '/old/build/hooks/recordSession.js' })
+    removeAnyRecapHook(dir)
+    const cfg = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'))
+    expect(cfg).toEqual({ hooks: { SessionStart: [other] } })
+  })
+
+  it('never re-creates a cwd that no longer exists (focus self-heal on a removed worktree)', () => {
+    const gone = join(dir, 'removed-worktree')
+    installRecapHook(opts(gone))
+    expect(existsSync(gone)).toBe(false)
+    // …while an existing cwd without `.claude/` still gets the hook (the normal first install).
+    installRecapHook(opts(dir))
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(true)
   })
 
   it('F2: installs the SAME exec-form hook under all three events; remove clears all three', () => {
@@ -235,8 +271,7 @@ describe('recap hook install/merge', () => {
       ).toHaveLength(1)
     }
     removeRecapHook(dir, '/app/recordSession.js')
-    const after = JSON.parse(readFileSync(settings, 'utf8'))
-    expect(after.hooks).toBeUndefined()
+    expect(existsSync(settings)).toBe(false) // our hooks were all it held → no `{}` stub (G12)
   })
 
   it('F2: a pre-F2 settings file (SessionStart only) reads as NOT installed → re-ensure upgrades it', () => {

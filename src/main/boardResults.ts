@@ -24,6 +24,21 @@ const results = new Map<string, BoardResult>()
  */
 const synthesized = new Set<string>()
 
+/**
+ * WS-8: listeners told about every recorded result, after it is stored — the workspace status writer
+ * keeps the last 5 per workspace in its `CONTEXT.md`. A throwing listener is isolated (never breaks
+ * the record or the other listeners).
+ */
+const resultListeners = new Set<(id: string, result: BoardResult) => void>()
+
+/** Subscribe to recorded results. Returns an unsubscribe fn. */
+export function onBoardResult(listener: (id: string, result: BoardResult) => void): () => void {
+  resultListeners.add(listener)
+  return () => {
+    resultListeners.delete(listener)
+  }
+}
+
 /** Read a board's last recorded result, or the empty shell if none. Read-only. */
 export function readBoardResult(id: string): BoardResult {
   return results.get(id) ?? { present: false }
@@ -75,6 +90,13 @@ export function recordBoardResult(
   // Hooking the tool instead would have missed the synthesized path — which is exactly the case a
   // human most needs to see, because it means a worker DIED without reporting.
   observeWorkerResult(id, result, opts)
+  for (const listener of resultListeners) {
+    try {
+      listener(id, result)
+    } catch {
+      /* 🔒 one bad listener must not break the record path */
+    }
+  }
 }
 
 /**

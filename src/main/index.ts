@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir, homedir } from 'os'
-import { writeFileSync, mkdtempSync, existsSync, rmSync } from 'fs'
+import { writeFileSync, mkdtempSync, rmSync } from 'fs'
 import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -110,16 +110,13 @@ import { createMcpServersStore } from './mcpServers/mcpServersStore'
 import { registerMcpServersHandlers } from './mcpServers/mcpServersIpc'
 import { bindExternalSyncStore, makeExternalMcpSyncProvider } from './mcpServers/externalSync'
 import { probeExternalServer } from './mcpServers/mcpClientProbe'
-import {
-  isTrustedTranscriptPath,
-  readTranscriptTail,
-  resolveLiveTranscriptPath
-} from './agentTranscript'
+import { resolveLiveTranscriptPath } from './agentTranscript'
+import { makeBoardFactsReader } from './boardFactsReader'
+import { startWorkspaceContext } from './workspaceContextBoot'
 import { createGetAgentMilestones, persistedTranscriptPath } from './agentMilestones'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 import { registerRecapIpc } from './recapIpc'
 import { registerTerminalResumeIpc } from './terminalResume'
-import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 import { startAutoUpdate } from './autoUpdateWiring'
 import { readLocalFeedOverride } from './localUpdateFeed'
@@ -687,25 +684,16 @@ app.whenReady().then(async () => {
   // returns null when there is no transcript yet (nothing to verdict). The synthesizer records a
   // result only for a SETTLED agent and never clobbers an explicit `write_result` (see
   // boardResultSynth.ts). Driven below off the watcher's onIntent settle signal.
-  resultSynth = createResultSynthesizer({
-    getFacts: (boardId) => {
-      const path = resolveBoardTranscript(boardId, recapMap.get(boardId)?.transcriptPath)
-      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return null
-      let runtime: ReturnType<typeof getTerminalRuntime> | undefined
-      try {
-        runtime = getTerminalRuntime(boardId)
-      } catch {
-        runtime = undefined
-      }
-      let tail = ''
-      try {
-        tail = readTranscriptTail(path)
-      } catch {
-        return null // unreadable/vanished transcript — no verdict
-      }
-      if (!tail) return null
-      return computeRecapFacts(tail, runtime, Date.now())
-    }
+  const factsForBoard = makeBoardFactsReader({
+    resolvePath: (id) => resolveBoardTranscript(id, recapMap.get(id)?.transcriptPath),
+    getRuntime: getTerminalRuntime
+  })
+  resultSynth = createResultSynthesizer({ getFacts: factsForBoard })
+  // WS-8: the workspaces' live CONTEXT.md status + the Claude workspace rules (workspaceContextBoot).
+  const workspaceCtx = startWorkspaceContext({
+    getProjectDir: getCurrentDir,
+    recapFacts: factsForBoard,
+    getWin: () => mainWindow
   })
   // Terminal recap (Task 11 — Slice B): create the ONE mtime watcher for this app lifetime.
   // Each learned transcript path (from the recap:learned flow below) is registered here so
@@ -717,6 +705,7 @@ app.whenReady().then(async () => {
     onIntent: (id) => {
       void summaryLoop.onIntent({ boardId: id })
       resultSynth?.onSettle(id)
+      workspaceCtx.onRecapSettle(id)
     }
   })
   const memoryEngine = createMemoryEngine({
@@ -1038,7 +1027,8 @@ app.whenReady().then(async () => {
   })
   const orchestrationSync = makeOrchestrationSyncProvider({
     getProjectDir: getCurrentDir,
-    mintToken: mintTerminalToken
+    mintToken: mintTerminalToken,
+    claudeRulesFor: workspaceCtx.claudeRulesFor
   })
   const externalMcpSync = makeExternalMcpSyncProvider({
     getProjectDir: getCurrentDir,

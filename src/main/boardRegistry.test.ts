@@ -22,6 +22,21 @@ import {
 } from './boardRegistry'
 
 describe('boardRegistry', () => {
+  it('WS-8: keeps a file board’s `unsaved: true` and drops any other value', () => {
+    const out = sanitizeSnapshot([
+      {
+        id: 'f1',
+        type: 'file',
+        title: 'Brief',
+        path: '.canvas/workspaces/w/CONTEXT.md',
+        unsaved: true
+      },
+      { id: 'f2', type: 'file', title: 'Other', unsaved: 'yes' },
+      { id: 'f3', type: 'file', title: 'Clean', unsaved: false }
+    ])
+    expect(out.map((b) => b.unsaved)).toEqual([true, undefined, undefined])
+  })
+
   it('sanitizeSnapshot keeps well-formed entries and drops malformed ones', () => {
     const out = sanitizeSnapshot([
       { id: 'a', type: 'terminal', title: 'T' },

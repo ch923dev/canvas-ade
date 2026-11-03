@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   __resetBoardResults,
+  onBoardResult,
   pruneBoardResults,
   readBoardResult,
   recordBoardResult
@@ -57,5 +58,23 @@ describe('pruneBoardResults (BUG-035)', () => {
     recordBoardResult('b1', { present: true, status: 'success' })
     pruneBoardResults(new Set(['b1', 'b2']))
     expect(readBoardResult('b1')).toEqual({ present: true, status: 'success' })
+  })
+})
+
+describe('onBoardResult (WS-8 hook)', () => {
+  it('tells listeners about every recorded result; a throwing listener breaks nothing', () => {
+    const seen: string[] = []
+    const offBad = onBoardResult(() => {
+      throw new Error('boom')
+    })
+    const off = onBoardResult((id, r) => seen.push(`${id}:${r.status}`))
+    recordBoardResult('b1', { present: true, status: 'success' })
+    recordBoardResult('b2', { present: true, status: 'failure' }, { synthesized: true })
+    expect(seen).toEqual(['b1:success', 'b2:failure'])
+    expect(readBoardResult('b1')).toEqual({ present: true, status: 'success' })
+    off()
+    offBad()
+    recordBoardResult('b3', { present: true, status: 'x' })
+    expect(seen).toHaveLength(2)
   })
 })

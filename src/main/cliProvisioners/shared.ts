@@ -22,7 +22,16 @@
  * `os.homedir()`, so this whole subtree stays unit-testable without an electron mock and adds no
  * electron coupling to `pty.ts`'s import graph.
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmdirSync,
+  rmSync,
+  statSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
@@ -84,6 +93,16 @@ export interface ProvisionStatus {
  * launch line is written — see {@link ../pty}). The async `sync`/`unsync` (the seam contract,
  * used by the modal) simply wrap the synchronous core.
  */
+/**
+ * Per-spawn extras for {@link AppCliProvisioner.writeSync}. Only Claude reads any today.
+ * `claudeRules` (WS-8 / O-5): the workspace deny rules + sandbox flag this cwd should carry — merged
+ * into the user's settings, and an EMPTY value removes what Expanse added before (a board that left
+ * its workspace). Absent ⇒ the rules in the file are not touched at all (the Sync modal's root sync).
+ */
+export interface ProvisionWriteOpts {
+  claudeRules?: { deny: readonly string[]; sandbox: boolean }
+}
+
 export interface AppCliProvisioner {
   readonly id: CliId
   readonly label: string
@@ -92,7 +111,7 @@ export interface AppCliProvisioner {
   /** Installed? Resolved from the CLI's config dir (honest detection — PLAN/mock annotation F). */
   detect(): Promise<boolean>
   /** SYNCHRONOUS write of THIS CLI's config (0o600), authorized by `tok`. Used by the spawn hook. */
-  writeSync(projectDir: string, tok: TerminalToken): string
+  writeSync(projectDir: string, tok: TerminalToken, opts?: ProvisionWriteOpts): string
   /** SYNCHRONOUS removal of ONLY our `canvas-ade` entry (consent revoke). */
   removeSync(projectDir: string): void
   /** Seam contract (async) — thin wrappers over the synchronous core, used by the Sync modal. */
@@ -251,6 +270,33 @@ export function removeFileQuiet(file: string): void {
   } catch {
     /* already gone */
   }
+}
+
+/** Best-effort removal of a directory that is EMPTY (an unsync left `.claude/` with nothing in it).
+ *  A non-empty or missing dir is left alone. Never throws. */
+export function removeDirIfEmpty(dir: string): void {
+  try {
+    if (readdirSync(dir).length === 0) rmdirSync(dir)
+  } catch {
+    /* missing, locked, or not a dir — nothing to tidy */
+  }
+}
+
+/**
+ * Refuse a PROJECT-SCOPED write into a folder that no longer exists. Every config writer here
+ * creates the file's parent on demand, and for `<cwd>/.mcp.json` that parent IS the cwd: a stale
+ * board cwd (a worktree removed with `git worktree remove`) would be silently re-created as an
+ * empty folder holding only our config. The spawn-time hook's try/catch turns this throw into
+ * "no config written", which is exactly right for a cwd that is gone.
+ */
+export function assertTargetDir(dir: string): void {
+  let isDir = false
+  try {
+    isDir = statSync(dir).isDirectory()
+  } catch {
+    isDir = false
+  }
+  if (!isDir) throw new Error(`target folder no longer exists: ${tildeify(dir)}`)
 }
 
 // ── Minimal, safe TOML table upsert (codex `~/.codex/config.toml`) ──────────
