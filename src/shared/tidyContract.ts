@@ -60,6 +60,9 @@ export interface TidyAckFacts {
   readable?: boolean
   pages?: number
   units?: TidyAckUnit[]
+  /** Partial scope only (I3): the arrangement would have covered a board outside the scope, so it
+   *  moved, whole, to open space. Absent otherwise. */
+  relocated?: true
 }
 
 /** Tidy arguments after {@link parseTidyArgs}: every field type-checked, every rule applied. */
@@ -251,5 +254,6 @@ export function sanitizeTidyAck(ack: Record<string, unknown>): TidyAckFacts {
     }
     if (units.length > 0) out.units = units
   }
+  if (ack.relocated === true) out.relocated = true
   return out
 }

@@ -514,7 +514,8 @@ export type McpCommand =
  * The renderer's reply to a McpCommand. `type` echoes the handled command. The optional `moved` (P2)
  * rides on a successful `tidyBoards` ack — the count of boards whose position or size changed (0 ⇒
  * already tidy) — with the C6 facts beside it (`fitZoom` / `readable` of the result, `pages` under
- * `overflow:'pages'`, `units` for `roles`), which MAIN re-sanitizes (`sanitizeTidyAck`) before the
+ * `overflow:'pages'`, `units` for `roles`, `relocated` when a partial-scope tidy moved to open
+ * space — spatial I3), which MAIN re-sanitizes (`sanitizeTidyAck`) before the
  * agent sees them; absent on every other command. The optional
  * `rendered` (P4) rides on a successful `commandFeed` ack: `false` means the push landed in the
  * store but there is no Command board on the canvas to show it, which the host DISCLOSES rather
@@ -533,6 +534,7 @@ export type McpCommandAck =
       readable?: boolean
       pages?: number
       units?: TidyAckUnit[]
+      relocated?: boolean
     }
   | { ok: false; error: string }
 

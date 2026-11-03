@@ -15,11 +15,15 @@ import {
 } from 'react'
 import { useStore } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
-import { computeGroupBoxes, groupMemberRectKey } from '../lib/groupBoxes'
+import {
+  GROUP_BOX_INSET_STEP,
+  GROUP_BOX_PAD,
+  computeGroupBoxes,
+  groupMemberRectKey
+} from '../lib/groupBoxes'
 
-/** World-px the box extends beyond member bounds (depth 0) + the per-nesting inset. */
-export const GROUP_BOX_PAD = 20
-export const GROUP_BOX_INSET_STEP = 12
+// The pads live with the pure geometry (lib/groupBoxes); re-exported so existing imports keep working.
+export { GROUP_BOX_INSET_STEP, GROUP_BOX_PAD } from '../lib/groupBoxes'
 
 /** Single vs double-click debounce window (ms): a mouse single-click defers this long so a
  *  double-click (focus) can cancel the select — kills the old select-then-focus flash (GROUP-02). */

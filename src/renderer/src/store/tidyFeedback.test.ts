@@ -165,3 +165,39 @@ describe('silence is the success state', () => {
     expect(toast()).toBeUndefined()
   })
 })
+
+describe('I3 — a group tidy that moved to open space', () => {
+  it('ONE info toast "Group tidied — moved to open space" with Undo; Undo restores the start', () => {
+    // Two stacked terminals, neighbours butted right of AND below them: wherever the pair
+    // spreads, it collides.
+    seed(
+      [term('a', 0, 0), term('b', 0, 0), term('nr', 448, 0), term('nd', 0, 368)],
+      [{ id: 'g', name: 'api and notes', boardIds: ['a', 'b'] }]
+    )
+    const before = useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y, b.w, b.h])
+    const r = runTidy({ mode: 'grid', scope: { groupId: 'g' } })
+    if (!r.ok) throw new Error(r.error)
+    expect(r.relocated).toBe(true)
+    showTidyFeedback(r)
+    expect(toast()).toMatchObject({ kind: 'info', message: 'Group tidied — moved to open space' })
+    expect(labels()).toEqual(['Undo'])
+    click('Undo')
+    expect(useCanvasStore.getState().boards.map((b) => [b.id, b.x, b.y, b.w, b.h])).toEqual(before)
+    expect(toast()).toBeUndefined()
+  })
+
+  it('wins over W3 / W7 (one toast); a non-group scope names the board count', () => {
+    showTidyFeedback(
+      run({
+        moved: 2,
+        relocated: true,
+        readable: false,
+        fitZoom: 0.1,
+        args: { mode: 'roles', implicit: true, scope: { boardIds: ['a', 'b'] } },
+        units: [unit('api'), unit('web')]
+      })
+    )
+    expect(toast()?.message).toBe('Tidied 2 boards — moved to open space')
+    expect(useToastStore.getState().toasts).toHaveLength(1)
+  })
+})

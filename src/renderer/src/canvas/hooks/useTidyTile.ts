@@ -2,7 +2,8 @@
  * Tidy / tile layout actions, extracted from Canvas.tsx (Wave-5 B5 #2). Owns the camera
  * framing (`fitToBoards`), the window-manager tiling (`applyTile`), the preset entry point
  * (`tidyAndFit`), and the responsive-retile ResizeObserver loop. `tidyAndFit` is surfaced to the
- * keymap's `t`, the palette and AppChrome's Tidy picker; `makeMain` to the ⋯ menu (board actions).
+ * keymap's `t`, the palette and AppChrome's Tidy picker; `makeMain` to the ⋯ menu (board actions);
+ * `tidyGroup` to the group tab's right-click menu (spatial I3).
  *
  * Spatial I2: every `tidy` preset runs the SHARED engine (`store/spatialTidy.runTidy` — the
  * same one an agent's `tidy_canvas` runs), which applies ONE undo step and frames the camera;
@@ -57,6 +58,7 @@ export interface TidyTileDeps {
 export function useTidyTile(deps: TidyTileDeps): {
   tidyAndFit: (preset?: LayoutPreset) => void
   makeMain: (id: string) => void
+  tidyGroup: (groupId: string) => void
 } {
   const { paneRef, rf, setActiveTile, setFocusedId, activeTileRef } = deps
   const tileBoards = useCanvasStore((s) => s.tileBoards)
@@ -142,6 +144,18 @@ export function useTidyTile(deps: TidyTileDeps): {
     [setActiveTile, setFocusedId]
   )
 
+  // Tidy ONE Named Group (spatial I3, the group menu's "Tidy group"): the default arrangement (the
+  // `t` key's implicit roles) scoped to the group. Boards outside it never move or get covered —
+  // if the group needs more room it moves, whole, to open space and the W-toast says so (Undo).
+  const tidyGroup = useCallback(
+    (groupId: string) => {
+      setFocusedId(null)
+      setActiveTile(null)
+      runTidyAndReport({ scope: { groupId } })
+    },
+    [setActiveTile, setFocusedId]
+  )
+
   // Responsive tiling: while a tile preset owns the layout, re-tile to the new window aspect on
   // every pane resize (minimize / restore / fullscreen). rAF-coalesced so a drag-resize storm
   // collapses to one reflow per frame; untracked so it never floods undo history.
@@ -168,5 +182,5 @@ export function useTidyTile(deps: TidyTileDeps): {
     }
   }, [applyTile, paneRef, activeTileRef])
 
-  return { tidyAndFit, makeMain }
+  return { tidyAndFit, makeMain, tidyGroup }
 }

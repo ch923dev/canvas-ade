@@ -36,6 +36,11 @@ import {
  * BEFORE the confirm (`parseTidyArgs` + live-id checks), so the human is never asked to approve a
  * call that cannot run.
  *
+ * Spatial I3 ("tidy a group"): a `{ groupId }` scope is checked against the Named-Group mirror
+ * (when the registry mirrors groups) — unknown ⇒ `invalid_input` before any confirm — and the
+ * confirm NAMES the group. The renderer settles a partial scope so no board outside it moves or is
+ * covered; when the arrangement had to move to open space, the ack carries `relocated: true`.
+ *
  * Pure host module (no electron value import) — unit-tested through the orchestrator harness.
  */
 
@@ -74,6 +79,9 @@ export interface TidyMethodDeps {
   confirm: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
   /** The live renderer mirror — names the requesting board and validates ids before the confirm. */
   listBoards: () => TidyMirrorBoard[]
+  /** The Named-Group mirror — validates + names a `{ groupId }` scope (absent ⇒ unchecked here;
+   *  the renderer still rejects an unknown group). */
+  listGroups?: () => Array<{ id: string; name: string }>
 }
 
 const isDocked = (b: TidyMirrorBoard): boolean =>
@@ -104,15 +112,21 @@ function howPhrase(args: TidyArgs, mainTitle: string | undefined): string {
   }
 }
 
-function scopePhrase(args: TidyArgs): string {
+function scopePhrase(args: TidyArgs, groupName: string | undefined): string {
   const scope = args.scope
   if (scope === undefined || scope === 'all') return 'the canvas'
   if (scope === 'visible') return 'the boards on screen'
-  return 'groupId' in scope ? 'one group' : `${scope.boardIds.length} board(s)`
+  if ('boardIds' in scope) return `${scope.boardIds.length} board(s)`
+  return groupName !== undefined ? `the group "${clip(groupName)}"` : 'one group'
 }
 
 /** The W5 confirm body — honest about sizes: roles / tile / shrink / main may resize boards. */
-function confirmBody(who: string, args: TidyArgs, mainTitle: string | undefined): string {
+function confirmBody(
+  who: string,
+  args: TidyArgs,
+  mainTitle: string | undefined,
+  groupName: string | undefined
+): string {
   const sizes = !tidyResizes(args)
     ? 'Boards are repositioned only: nothing is created, resized or deleted'
     : args.primary !== undefined
@@ -123,8 +137,8 @@ function confirmBody(who: string, args: TidyArgs, mainTitle: string | undefined)
           'aspect; planning, kanban and file boards keep their size. Nothing is created or deleted'
         : 'Boards may be resized to fit; nothing is created or deleted'
   return (
-    `${who} asked to rearrange ${scopePhrase(args)} ${howPhrase(args, mainTitle)}. ${sizes}, and one ` +
-    'Ctrl+Z undoes it.'
+    `${who} asked to rearrange ${scopePhrase(args, groupName)} ${howPhrase(args, mainTitle)}. ` +
+    `${sizes}, and one Ctrl+Z undoes it.`
   )
 }
 
@@ -152,10 +166,12 @@ function toCommand(args: TidyArgs): McpCommand {
  * sidebar. Unknown or docked ids are DROPPED (Jarvis resolves references from speech; a stale one
  * must not fail the whole tidy), and a scope that ends up empty is a no-op: returns `null`, and the
  * facet does not tidy at all. A `primary` outside a given scope joins it — the main board must be in
- * the arrangement it leads. An unknown / docked `primary` drops `side` with it. Pure.
+ * the arrangement it leads. An unknown / docked `primary` drops `side` with it. A `groupId` (I3, a
+ * group Jarvis already resolved against the live model) becomes a `{ groupId }` scope verbatim —
+ * the tidy method then checks it against the group mirror. Pure.
  */
 export function jarvisTidyInput(
-  input: { primary?: string; boardIds?: string[]; side?: string },
+  input: { primary?: string; boardIds?: string[]; groupId?: string; side?: string },
   boards: readonly TidyMirrorBoard[]
 ): TidyCanvasHostInput | null {
   const live = arrangeableIds(boards)
@@ -165,6 +181,7 @@ export function jarvisTidyInput(
     primary !== undefined
       ? { primary, ...(input.side !== undefined ? { side: input.side } : {}) }
       : {}
+  if (input.groupId !== undefined) return { ...main, scope: { groupId: input.groupId } }
   if (input.boardIds === undefined) return main
   const ids = [...new Set(input.boardIds.filter((id) => live.has(id)))]
   if (ids.length === 0) return null
@@ -212,13 +229,28 @@ export function createTidyMethod(deps: TidyMethodDeps): {
       if (ids.length === 0) return { moved: 0 }
       args.scope = { boardIds: ids }
     }
+    let groupName: string | undefined
+    if (scope !== undefined && typeof scope === 'object' && 'groupId' in scope && deps.listGroups) {
+      groupName = deps.listGroups().find((g) => g.id === scope.groupId)?.name
+      if (groupName === undefined) {
+        throw new McpToolError(
+          'invalid_input',
+          `${tool}: group '${clip(scope.groupId)}' is not a group on the canvas (read canvas://contexts)`
+        )
+      }
+    }
     if (raw.sourceBoardId !== undefined) {
       const source = boards.find((b) => b.id === raw.sourceBoardId)
       const who = source ? `The agent in "${source.title}"` : 'A terminal agent'
       const mainTitle = boards.find((b) => b.id === args.primary)?.title
       const { approved } = await deps.confirm({
-        title: args.primary !== undefined ? 'Make it the main board?' : 'Tidy the canvas?',
-        body: confirmBody(who, args, mainTitle)
+        title:
+          args.primary !== undefined
+            ? 'Make it the main board?'
+            : groupName !== undefined
+              ? 'Tidy the group?'
+              : 'Tidy the canvas?',
+        body: confirmBody(who, args, mainTitle, groupName)
       })
       if (!approved) {
         throw new McpToolError('declined', `${tool}: declined by the user — nothing moved`)

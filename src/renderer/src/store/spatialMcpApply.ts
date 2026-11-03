@@ -137,6 +137,7 @@ async function applyTidyBoards(command: TidyBoardsCommand): Promise<McpCommandAc
   if (run.units) {
     ack.units = run.units.map((u) => ({ scene: u.scene, heroIds: u.heroIds, why: u.why }))
   }
+  if (run.relocated) ack.relocated = true
   return ack
 }
 

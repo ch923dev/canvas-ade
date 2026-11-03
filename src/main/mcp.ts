@@ -202,8 +202,8 @@ export interface RunningMcp {
     title?: string
   }): Promise<{ id: string; queuedFor?: string }>
   focusViewport(input: { boardId?: string; groupId?: string }): Promise<FocusOutcome>
-  /** Jarvis's tidy (C7 amendment): no `mode` (implicit roles), optional board scope. */
-  tidyCanvas(input: { boardIds?: string[] }): Promise<TidyCanvasResult>
+  /** Jarvis's tidy (C7 amendment): no `mode` (implicit roles), optional board or group scope. */
+  tidyCanvas(input: { boardIds?: string[]; groupId?: string }): Promise<TidyCanvasResult>
   /**
    * Jarvis's `make_main_board` (I2 dev-check amendment): the board becomes the MAIN board and every
    * other board its sidebar (C5 `primary` + host-only `side`). Throws when the board is not on the

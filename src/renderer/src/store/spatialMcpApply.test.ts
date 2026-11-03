@@ -205,3 +205,27 @@ describe('applySpatialMcpCommand focusCamera / spawnGroup (moved unchanged — C
     expect(useCanvasStore.getState().boards).toHaveLength(0)
   })
 })
+
+describe('applySpatialMcpCommand tidyBoards — I3 group tidy acks `relocated`', () => {
+  it('a group whose arrangement would cover a neighbour moves to open space; the ack says so', async () => {
+    const s = useCanvasStore.getState()
+    s.addBoard('terminal', { x: 0, y: 0 }, { id: 'g1' })
+    s.addBoard('terminal', { x: 0, y: 0 }, { id: 'g2' })
+    s.addBoard('terminal', { x: 0, y: 0 }, { id: 'nb' })
+    useCanvasStore.setState((st) => ({
+      // g1/g2 stacked on one spot; nb sits right where their tidied pair spreads to.
+      boards: st.boards.map((b) => ({ ...b, x: b.id === 'nb' ? 300 : 0, y: 0 })),
+      groups: [{ id: 'grp', name: 'api and notes', boardIds: ['g1', 'g2'] }],
+      past: [],
+      future: []
+    }))
+    const nb = { ...useCanvasStore.getState().boards.find((b) => b.id === 'nb')! }
+    const ack = await applySpatialMcpCommand({
+      type: 'tidyBoards',
+      mode: 'grid',
+      scope: { groupId: 'grp' }
+    })
+    expect(ack).toMatchObject({ ok: true, type: 'tidyBoards', relocated: true })
+    expect(useCanvasStore.getState().boards.find((b) => b.id === 'nb')).toEqual(nb)
+  })
+})
