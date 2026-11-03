@@ -45,4 +45,10 @@ export type TrackedChange = (
 export interface SliceDeps {
   trackedChange: TrackedChange
   newId: () => string
+  /**
+   * canvasStore's armed-gesture-checkpoint rewriter (module-private there, passed by reference like
+   * `trackedChange`). Only a slice that rewrites boards OUTSIDE the undo rail needs it — the
+   * workspace delete, which clears memberships on every rail (workspaceSlice.ts).
+   */
+  rewritePendingBoards?: (apply: (boards: Board[]) => Board[] | null) => void
 }

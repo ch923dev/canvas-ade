@@ -8,8 +8,11 @@ import type {
   BoardType,
   CanvasBackground,
   Connector,
-  ConnectorKind
+  ConnectorKind,
+  RepoDefaults,
+  Workspace
 } from '../lib/boardSchema'
+import type { WorkspaceInput } from '../store/slices/workspaceSlice'
 import type { Tool } from '../store/canvasStore'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
@@ -80,6 +83,14 @@ export interface CanvasE2E {
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
   addGroup: (name: string, ids: string[]) => string
+  /** v24: the workspace records + remembered bases (plain data — serializable). */
+  getWorkspaces: () => { workspaces: Workspace[]; repoDefaults: RepoDefaults }
+  /** v24: create a workspace through the real store action; the new id, or null when refused. */
+  createWorkspace: (input: WorkspaceInput) => string | null
+  /** v24: assign boards to a workspace (null = unassign) through the real undoable store path. */
+  assignBoardsToWorkspace: (ids: string[], workspaceId: string | null) => void
+  /** v24 (O-10): set the remembered base map directly — the WS-4 dialog will own the real writer. */
+  setRepoDefaults: (repoDefaults: RepoDefaults) => void
   /** S6: add a board to a group via the real reflow path (membership + re-pack); for e2e. */
   addToGroupReflowed: (groupId: string, boardId: string) => void
   /**

@@ -29,7 +29,7 @@ export interface Autosaver {
 /**
  * The PERSISTED state slices whose change must arm autosave. This list MUST stay in
  * lock-step with what `toObject()` serializes into canvas.json — boards, connectors,
- * viewport, groups (v6) and background (v9). A field that round-trips to disk but is
+ * viewport, groups (v6), background (v9), workspaces + repoDefaults (v24). A field that round-trips to disk but is
  * MISSING here is silently lost on a settings-only edit: a backdrop pick / dim drag
  * (v9) or a group create/rename (v6) with no board or camera change before the next
  * flush never armed `dirty`, so the blur/quit flush no-op'd and the change vanished on
@@ -41,7 +41,9 @@ export interface Autosaver {
 // whole canvas.json (+ its .bak rotation); a SESSION edit (camera viewport / backdrop) writes only
 // the tiny `.canvas/session.json` sidecar. The doc save still writes viewport/background INLINE
 // (toObject includes them), so the inline copy stays a forward-compatible fallback for old readers.
-export const DOC_KEYS = ['boards', 'connectors', 'groups'] as const
+// v24: `workspaces` + `repoDefaults` are doc-level and settings-class (off the undo rail) — a
+// workspace create/rename with no board edit must still arm the doc save (the v6/v9 silent-loss class).
+export const DOC_KEYS = ['boards', 'connectors', 'groups', 'workspaces', 'repoDefaults'] as const
 export const SESSION_KEYS = ['viewport', 'background'] as const
 /** The full persisted set — the drift-guard test pins THIS (its union) to toObject's output, so a
  *  new persisted field must land in one subset or the other, never neither. */

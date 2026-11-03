@@ -181,6 +181,19 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     addGroup(name, ids) {
       return useCanvasStore.getState().addGroup(name, ids)
     },
+    getWorkspaces() {
+      const { workspaces, repoDefaults } = useCanvasStore.getState()
+      return { workspaces, repoDefaults }
+    },
+    createWorkspace(input) {
+      return useCanvasStore.getState().createWorkspace(input)
+    },
+    assignBoardsToWorkspace(ids, workspaceId) {
+      useCanvasStore.getState().assignBoardsToWorkspace(ids, workspaceId)
+    },
+    setRepoDefaults(repoDefaults) {
+      useCanvasStore.setState({ repoDefaults })
+    },
     addToGroupReflowed(groupId, boardId) {
       host.addToGroupReflowed(groupId, boardId)
     },
@@ -566,6 +579,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         boards: [],
         connectors: [],
         groups: [],
+        // v24 workspaces are per-project document state too (same isolation class as groups).
+        workspaces: [],
+        repoDefaults: {},
         past: [],
         future: [],
         selectedId: null,

@@ -5710,3 +5710,30 @@ SCA 0; smoke 62/62 (push 1), 61 + 1 `swarmLedger` retry (push 2), 62/62 pre-merg
 floor: 5 = `pathSafe` ×2 + `pty.recapenv` ×3); CI 4/4;
 `claude-review` clean ×2 (no inline). Dev check: user-verified (release-local dry-run ×4 scenarios,
 real feed untouched; Update now row on a v99 fixture, dev build → "not available in this build").
+
+## PR #449 — feat(workspaces): WS-2 data model — schema v24 / floor 24 (v0.48.0) · squash `d117511c` · 2026-11-03
+
+Project Workspaces WS-2 (design §4.1; ADR 0014). **Schema v24 / floor 24** — doc-level `workspaces[]`
++ `repoDefaults` (O-10) and BoardCommon `workspaceId` (D-3); migration 23→24 backfills `workspaces: []`.
+- `lib/workspaceSchema.ts`: validation as strict as groups (`sanitizeGroupName` name, one-line goal
+  ≤ 200, ≤ 1 worktree in v1, colour clamp to `blue`) + load reconcile — dangling `workspaceId`
+  cleared, empty workspaces KEPT, escaping root/worktree or duplicate dropped with a load toast
+  (`store/loadNotices.ts`), docked swarm workers inherit the host's id, `repoDefaults` degrades.
+- `src/shared/workspaceRules.ts`: one rule set (paths lexically inside the project; colour tokens
+  `blue · green · amber · violet · teal · rose`) for renderer + MAIN.
+- `store/slices/workspaceSlice.ts`: create / delete / rename / goal are settings-class (off the
+  undo rail); assign/unassign is one undoable step (`workspaceId` in the common patch keys); delete
+  leaves boards project-level on every rail incl. armed checkpoints (O-8). No worktree side effects.
+- MAIN mirror: `main/workspaceMirror.ts` `sanitizeWorkspaces` (bounded like `sanitizePorts`) +
+  `boardRegistry.listWorkspaces()` + per-board `workspaceId`; renderer publishes both on
+  `mcp:boards`. Not exposed to agents (WS-9).
+- `build/updates.json` (WS-12 rule): `minSupportedByFloor["24"] = "0.48.0"`, `minSupported` → 0.48.0.
+- max-lines: groups reconcile → `lib/groupSchema.ts`, `scanOf` → `main/mirrorScan.ts`; `canvasStore`
+  pin 727 → 720. Stale "named-empty groups survive" comments fixed.
+- Merged on user instruction ahead of the PR note's "WS-12 released first" condition — the next
+  release cut from `main` carries floor 24 and forces older apps to update.
+
+Gates: fmt · lint 0 err · tc; units 7413 (2 known `pathSafe`); integration 64/64; e2e
+`workspaces.e2e.ts` (`@core`) 1/1; SCA 0; bundle 436,322 / 440,000 B; smoke 63/63 (push); pre-merge
+`make check` stopped at the ambient `pathSafe` floor (7865 pass) on the same SHA; CI 4/4;
+`claude-review` clean (no inline). Dev check: user PASS in the sandbox project (24 / 24 / `"workspaces": []`).
