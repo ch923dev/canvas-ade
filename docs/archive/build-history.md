@@ -5687,3 +5687,26 @@ slice plan WS-0…WS-12). Docs + comments only.
 Gates: fmt · lint 0 err · tc · `appModelDrift` 6/6; units at the ambient floor (5: `pathSafe` ×2,
 `pty.recapenv` ×3); smoke 62/62 ×2 (push + pre-merge); CI 4/4; `claude-review` clean (no inline).
 Dev check: N/A (no running-app change); ADR + `CLAUDE.md` diff user-approved.
+
+## PR #448 — feat(release): a canvas-format change forces older apps to update + Update now (WS-12, v0.47.30) · squash `66852d25` · 2026-11-03
+
+Project Workspaces WS-12 (O-2, design §4.9). Must be RELEASED (production + local feed) before
+WS-2's v24 / floor 24 ships.
+- `scripts/release-floor.mjs` (pure, tested): both feeds' `updates.json` record `minReaderVersion`
+  (read from `boardSchemaVersion.ts`). **Production:** `build/updates.json` `minSupportedByFloor`
+  (floor → required `minSupported`); a floor above the record fails the unit guard
+  (`release-floor.test.ts`), `gen-updates-json` and `release.mjs` (new step 0 `--check`), naming
+  the two lines to add. **Local:** `release-local.mjs` reads the previous feed `updates.json`; floor
+  rose ⇒ `minSupported` = stamp; pre-rule file = floor 23; missing/unreadable ⇒ unchanged + warn;
+  ordinary releases never force; same-base `-local.N` warning; new `--dry-run`.
+- Welcome screen **Update now** row on the "saved by a newer version" open error
+  (`UpdateNowRow.tsx`, `lib/openError.ts` pinned to the real refusal text): check → auto-download →
+  % → Restart & install; none / offline / dev-build states. `updateStore` latches the version.
+- Docs: `releasing.md` › *A canvas-format change forces an update*.
+- Rebased over #447 via a merge commit (force-push blocked); tree identical to the re-tested rebase.
+
+Gates: fmt · lint 0 err · tc; units 7299 (2 known `pathSafe`); targeted 43/43 on the final tree;
+SCA 0; smoke 62/62 (push 1), 61 + 1 `swarmLedger` retry (push 2), 62/62 pre-merge (gate at the ambient
+floor: 5 = `pathSafe` ×2 + `pty.recapenv` ×3); CI 4/4;
+`claude-review` clean ×2 (no inline). Dev check: user-verified (release-local dry-run ×4 scenarios,
+real feed untouched; Update now row on a v99 fixture, dev build → "not available in this build").
