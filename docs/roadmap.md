@@ -328,7 +328,25 @@ multiplayer/collaboration · hand-drawn (roughjs) whiteboard aesthetic.
   `startMcpServer`. Generated summaries are untrusted passive context — a consuming agent can be
   prompt-injected by them (ADR `decisions/0003-llm-egress.md` › M-expose residual). See `roadmap-mcp.md` › T1.7.
 
-> 🌳 **Feature Workspaces — worktree-backed board zones (post-MCP phase, deferred 2026-05-30).**
+> 🌳 **Project Workspaces — SCHEDULED 2026-11-03, no longer deferred.** Re-scoped from Feature
+> Workspaces below. Decision record: [ADR 0014](decisions/0014-project-workspaces.md). Design and
+> slice plan: `research/2026-11-02-project-workspaces/README.md`.
+> - **What changed.** A workspace is any folder in the project, optionally backed by a worktree +
+>   branch (it is no longer worktree-only). Workspaces share one canvas as zones; a board belongs to
+>   0 or 1 of them. Worktrees live at `<project>/.canvas/worktrees/`, not outside the project.
+> - **Already shipped.** The swarm allocator (orchestration S3, `src/main/swarmWorktree.ts`) is
+>   generalized, not rebuilt.
+> - **Slices WS-0…WS-12.** WS-0 is this ADR and the doc fixes. WS-1 generalizes the allocator.
+>   WS-2 is the data model (schema v24 / floor 24). WS-3 is the spawn path (`strictCwd`). WS-4 is
+>   create/delete. WS-5 is zones, the switcher and fit-to-screen focus. WS-6 is the spatial
+>   projection. WS-7 is confinement. WS-8 is the brief and agent config. WS-9 is the MCP package
+>   P2. WS-10 is Jarvis. WS-11 is migration assists. WS-12 forces an update on a format change,
+>   and must ship in a release before WS-2's.
+> - **MVP:** WS-1, 2, 3, 4, 5, 7, 8 and 12.
+>
+> *Original entry (2026-05-30), kept for history. Where the two differ, ADR 0014 wins:*
+>
+> **Feature Workspaces — worktree-backed board zones (post-MCP phase, deferred 2026-05-30).**
 > The deferred home for git worktrees, re-modelled. A project's infinite canvas hosts multiple
 > **feature zones** — clusters of boards that belong together (e.g. an "Auth/Login" zone = a Terminal
 > building auth + a Browser previewing the login page + a Planning board tracking the auth

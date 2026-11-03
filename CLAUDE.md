@@ -79,13 +79,16 @@ ADR 0002 + `docs/archive/build-history.md` › OS-3). What remains:
   draft/erase, hover — stays in React/Zustand and is NEVER routed into `elements[]` or a board patch
   key (`PATCHABLE_KEYS`). Borrowed from Excalidraw's `cleanAppStateForExport` discipline.
 
-### Git / worktrees — DEFERRED (re-scoped 2026-05-30)
-Worktrees are **deferred to a post-MCP phase** under a better model: **Feature Workspaces** — a
-worktree backs a *feature zone* (a cluster of boards: terminal + browser + planning), **not a single
-board**. Gated on the `canvas-ade-mcp` swarm layer. See `docs/roadmap.md` › Deferred › Feature
-Workspaces. What replaced the worktree-coupled "per-board ports" idea: runtime **port detection →
-push to preview** (Slice C′, shipped — see `docs/archive/build-history.md` › Phase 3-C′).
-Still-valid locked safety rules **for when it is built** (do not re-decide):
+### Git / worktrees — shipped for the swarm; being generalized for Project Workspaces (ADR 0014)
+Worktrees **shipped for the swarm** (orchestration S3): `src/main/swarmWorktree.ts` is the one
+allocator, and it gives each swarm write role its own worktree + branch. They are now being
+**generalized for Project Workspaces** (ADR 0014, the re-scoped Feature Workspaces idea): a
+workspace is a folder in the project, optionally backed by a worktree + branch, and its boards
+run there. The same allocator serves both; it is not forked. Worktrees live at
+**`<project>/.canvas/worktrees/<slug>`**, inside the ADR 0009 boundary. What replaced the
+worktree-coupled "per-board ports" idea: runtime **port detection → push to preview** (Slice C′,
+shipped — see `docs/archive/build-history.md` › Phase 3-C′).
+Locked safety rules (do not re-decide):
 - `git init` is **opt-in**; reuse an existing repo; NEVER auto-init when nested inside a parent repo.
 - On delete with a dirty worktree: **keep on disk + prompt** (commit/stash/discard/keep). Never
   silent `--force`. Always `git worktree remove`, never `rm -rf`.
@@ -101,8 +104,8 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | Shell | User-selectable per board; OS-aware default. |
 | Tweaks panel | Cut entirely. Ship fixed default tokens (blue / dots / compact / soft). |
 | Preview URL | Editable URL bar, persisted per board. |
-| git init / worktrees | **Deferred** to the Feature Workspaces phase (post-MCP). When built: opt-in toggle; reuse-if-exists; never nest-init. |
-| Dirty worktree on delete | Keep on disk + prompt (rule stands for the deferred Feature Workspaces phase). |
+| git init / worktrees | **Shipped** for the swarm (S3); being generalized for Project Workspaces (ADR 0014). Worktrees live at `<project>/.canvas/worktrees/`. Opt-in toggle; reuse-if-exists; never nest-init. |
+| Dirty worktree on delete | Keep on disk + prompt (binds the swarm and Project Workspaces alike). |
 | Per-board ports | **Re-scoped** → runtime port **detection** (parse server-printed URL) + push-to-preview, NOT static assignment/injection. Slice C′. |
 | Preview engine | **OSR** (offscreen → DOM `<canvas>`). Native `WebContentsView` engine + `VITE_PREVIEW_OSR` flag deleted in OS-3 5C. ADR 0002. |
 | Preview liveness | Paint-gate off-screen/below-LOD (frozen last frame); MAX_LIVE existence cap ~4 offscreen windows. |
@@ -125,7 +128,7 @@ src/
   preload/   index.ts (contextBridge + MessagePort forwarding) · index.d.ts
   renderer/  index.html · src/{main.tsx, App.tsx, index.css, env.d.ts} · src/smoke/*
 design-reference/   authoritative design bundle (read-only)
-docs/        README.md (map) · roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0002) ·
+docs/        README.md (map) · roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0014) ·
              reviews/ (all hunts+reviews; README index + newest = open backlog) · research/ ·
              archive/ (build-history.md + git pointers for collapsed per-slice/handoff docs)
 .github/workflows/   pr.yml (check-only) · staging.yml (unsigned matrix on push→main) · production.yml (sign+notarize+publish on Release) · codeql.yml · claude-code-review.yml

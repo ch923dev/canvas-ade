@@ -371,15 +371,39 @@ trigger nothing without the human gate.
 
 ## M6 — Feature Workspaces (worktree enabler)
 
+> **Scheduled 2026-11-03 as Project Workspaces** ([ADR 0014](decisions/0014-project-workspaces.md);
+> slices WS-0…WS-12 in `research/2026-11-02-project-workspaces/README.md` §5).
+> - **What changed.** A workspace is any folder in the project, optionally backed by a worktree +
+>   branch, so it is no longer worktree-only. A board belongs to 0 or 1 workspace. Worktrees live
+>   at `<project>/.canvas/worktrees/`.
+> - **The tasks below map onto the slices:**
+>   - T6.1 → WS-1 (generalize the allocator);
+>   - T6.2 → WS-2 (data model, schema v24 / floor 24) + WS-3 (spawn path, `strictCwd`);
+>   - T6.3 → WS-4 (create/delete lifecycle);
+>   - T6.4 → WS-7 (`spawn_board` / `configure_board` containment) + WS-9 (package P2,
+>     `spawn_board.workspace`).
+> - **Where the two differ, ADR 0014 wins.** The original task text is kept below for history.
+
 **Goal:** git-worktree-per-board-**zone** (a cluster of boards), the locked deferred model — unblocks
 M7 git tools and M9 best-of-N. **Dep:** M3. 🔒 carries the locked safety rules.
 
-### T6.1 — Worktree manager in MAIN
-- **Build:** app — a `simple-git`-backed worktree manager in MAIN (behind frame-guarded IPC):
+### T6.1 — Worktree manager in MAIN → generalize the existing swarm allocator (WS-1)
+- **Now:** the manager **already exists**. Orchestration S3 shipped `src/main/swarmWorktree.ts`,
+  which allocates, reports status, removes and disposes worktrees for swarm workers. T6.1 now means
+  **generalizing that allocator, not building one** (and not forking it):
+  - probe the workspace's repo (`repoDir`) instead of the project dir, so polyrepo projects work;
+  - remove from the owning repo;
+  - take branch and slug parameters, an attach-existing-branch mode, and a `base` parameter that
+    defaults to `HEAD`;
+  - unsync Expanse-provisioned files before reading status.
+
+  Swarm behaviour stays identical.
+- **Build (original):** app — a `simple-git`-backed worktree manager in MAIN (behind frame-guarded IPC):
   create/list/remove. 🔒 **reuse-if-exists**, **never nest-init** (refuse when inside a parent repo),
   always `git worktree remove` (never `rm -rf`).
 - **🧪 e2e:** create a worktree for a zone → assert it exists on disk + in `git worktree list`; remove
-  it cleanly. **Manual:** inspect the worktree dir + branch.
+  it cleanly. **Manual:** inspect the worktree dir + branch. (WS-1 adds: a real temp polyrepo under a
+  spaced path, created off a non-`HEAD` branch.)
 
 ### T6.2 — Zone model (boards → one worktree+branch)
 - **Build:** app — a **feature zone** abstraction: a cluster of boards bound to one worktree+branch;

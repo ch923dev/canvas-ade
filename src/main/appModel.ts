@@ -70,7 +70,7 @@ export interface AppModelConnector {
   kind: string
 }
 
-/** A live Named Group (a feature zone). Empty until PR-5 mirrors groups to MAIN. */
+/** A live Named Group, projected from MAIN's group mirror (`boardRegistry.sanitizeGroups`). */
 export interface AppModelGroup {
   id: string
   name: string
@@ -93,7 +93,7 @@ export interface AppModel {
   canvas: {
     boards: AppModelBoard[]
     connectors: AppModelConnector[]
-    /** [] until PR-5 mirrors Named Groups to MAIN. */
+    /** The live Named Groups (mirrored to MAIN since PR-5); [] when the canvas has none. */
     groups: AppModelGroup[]
   }
   rules: AppModelRules
@@ -341,7 +341,7 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
 export interface AppModelInputs {
   boards: AppModelBoard[]
   connectors: AppModelConnector[]
-  /** PR-5: the Named Groups mirror. Defaults to [] until groups reach MAIN. */
+  /** PR-5: the Named Groups mirror (`mcpOrchestrator.describeApp` passes it). Omitted ⇒ []. */
   groups?: AppModelGroup[]
   rules: AppModelRules
 }
