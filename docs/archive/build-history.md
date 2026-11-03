@@ -5641,3 +5641,26 @@ Gates: vitest 7680 (2 known `pathSafe`); SCA 0; e2e mcp 35/35 + spatial / jarvis
 spatialGroups; smoke 62/62; CI green; review clean. Dev check: user-verified (a `claude` terminal
 → one confirm; approve applies, deny moves nothing). MAIN `node_modules` synced to 0.28.1 with
 the user's OK.
+
+## PR #446 — spatial: tidy a group — partial tidies never move or cover outside boards (I3, v0.47.26) · squash `fdd4af5e` · 2026-11-03
+
+User request (relayed by I1): "tidy the api and notes group… all other boards left as is, the tidy
+calculating the needed size". The group tab's right-click menu gains **Tidy group** (the `t` key's
+implicit roles, `scope: { groupId }`).
+- New pure lib `lib/groupTidyPlace.placeScoped` settles EVERY partial scope (`{groupId}` /
+  `{boardIds}` / `'visible'`) in `runTidy`: a footprint (final sizes) clear of outside boards stays;
+  a colliding one moves WHOLE to the nearest clear slot (`freeSlot` over outside boards only, padded
+  by `GROUP_BOX_PAD`; exhaustion ⇒ right of every outside board). Same delta for every placement and
+  the camera; still ONE undo step. `scope:'all'` unchanged.
+- `relocated: true` rides the C6 ack to the agent (the 0.28.1 package forwards the host result
+  verbatim — no package change) and shows the UI toast "Group tidied — moved to open space" [Undo].
+- MAIN: an unknown `{ groupId }` is `invalid_input` before the D1 confirm; the confirm names the
+  group ("Tidy the group?"). Jarvis `tidy_canvas` gains `group` (exclusive with `boards`), resolved
+  through I1's `resolveGroup` — now the one Jarvis group resolver (`focus_viewport` too).
+- `GroupContextMenu` closes itself after every row → `Canvas.tsx` max-lines 768 → 761;
+  `GROUP_BOX_PAD` moved to `lib/groupBoxes`.
+
+Gates: vitest 7711 (2 known `pathSafe`); SCA 0; e2e `spatialGroupTidy` + `spatial` 5/5 (retries 0);
+smoke 62/62; bundle 433,230 / 440,000 B; CI green; `claude-review` clean (no findings, no nits).
+Dev check: user-verified (menu row, neighbour untouched + relocate toast, one undo, Jarvis,
+connected-terminal D1 confirm naming the group).
