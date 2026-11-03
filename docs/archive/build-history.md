@@ -5737,3 +5737,34 @@ Gates: fmt · lint 0 err · tc; units 7413 (2 known `pathSafe`); integration 64/
 `workspaces.e2e.ts` (`@core`) 1/1; SCA 0; bundle 436,322 / 440,000 B; smoke 63/63 (push); pre-merge
 `make check` stopped at the ambient `pathSafe` floor (7865 pass) on the same SHA; CI 4/4;
 `claude-review` clean (no inline). Dev check: user PASS in the sandbox project (24 / 24 / `"workspaces": []`).
+
+## PR #450 — feat(worktrees): one allocator for swarm + workspaces (WS-1, v0.48.1) · squash `9f30cb23` · 2026-11-03
+
+Project Workspaces WS-1 (design §1.4, §4.3; ADR 0014). `src/main/swarmWorktree.ts` is generalized,
+not forked; **swarm behaviour unchanged**. No IPC / UI / records / schema.
+- `allocate({ repoDir?, slug, branch, base?, attach? })` replaces `allocate(runId, workerName)`:
+  git probed on `repoDir` (must be inside the project → polyrepo works), `base` defaults to `HEAD`.
+  The swarm seam (`swarmChatIpc.ts`) + e2e hook pass `swarmWorkerRequest` = the exact S3
+  slug / `swarm/<run8>/<worker>` / `HEAD`.
+- Attach: `git worktree add <path> <local-branch>`; git's "already used by worktree" refusal
+  surfaces verbatim; non-local branch (would be a detached HEAD) and base+attach refused.
+- `removeIfClean` runs `git worktree remove` from the OWNING repo (`worktree list --porcelain`),
+  never from inside the tree; no `--force`, no branch deletes.
+- `owns()` keeps the shared `.canvas/worktrees/` root and now collapses `..`; refs with a leading
+  `-` / whitespace refused before git. New `listRepos` (root + one level; skips dot-folders,
+  `.canvas`, `node_modules`, links), `listBranches` (no fetch), `workspaceSlug` (`ws-<slug>`),
+  `workspaceBranchFor` (`ws/<slug>`).
+- Dev-check find: the disposition chooser overflowed its card (flex tiles sized by the branch
+  name) → `ConfirmModal` choices are equal grid columns; disposition labels shortened.
+- **G12 = YES** (real-git characterization test): Expanse-provisioned `.mcp.json` +
+  `.claude/settings.local.json` dirty a worktree, and today's unsync leaves `{}` behind → WS-8.
+  ⚠️ Pre-existing: Commit on such a tree commits `.mcp.json` with the live bearer token onto the
+  branch (probe-confirmed) — open follow-up for WS-8 or a small fix.
+
+Gates: fmt · lint 0 err · tc; units 7284 (2 known `pathSafe`); integration 458/458; real-git
+`swarmWorktree.integration.test.ts` 6/6; SCA 0; smoke 63/63 (push + pre-merge); pre-merge
+`make check` stopped at the ambient floor (2 `pathSafe` + 3 `pty.recapenv`, 7893 pass) on the same
+SHA; CodeQL `js/file-system-race` in the test fixture fixed; CI 4/4; `claude-review` clean (no
+inline). Dev check: user PASS in the sandbox project (worker worktree under `.canvas/worktrees/`,
+dirty kept + prompted, Discard → removed, branch kept). Force-push blocked → `main` merged into the
+branch (tree identical to the verified rebase).
