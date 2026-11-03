@@ -34,6 +34,15 @@ const listing = (main: string): string =>
 
 const isWorktreeList = (argv: string[]): boolean => argv[0] === 'worktree' && argv[1] === 'list'
 
+/** The worker-only pathspec: everything except the agent config Expanse provisions. */
+const WORKER_SPEC = [
+  '--',
+  '.',
+  ':(exclude).mcp.json',
+  ':(exclude).claude/settings.local.json',
+  ':(exclude)opencode.json'
+]
+
 interface GitStub {
   checkIsRepo: ReturnType<typeof vi.fn>
   revparse: ReturnType<typeof vi.fn>
@@ -306,14 +315,15 @@ describe('dispose — the four named choices', () => {
     let removed = false
     const raw = vi.fn(async (argv: string[]) => {
       if (argv[0] === 'status') return removed ? '' : ' M a.ts\n M b.ts\n'
-      if (argv[1] === 'commit') removed = true // the tree is clean once committed
+      if (argv[0] === 'commit') removed = true // the tree is clean once committed
       return ''
     })
     const { store } = makeStore({ git: { raw } })
     const out = await store.dispose(WT, 'commit', 'builder-1')
     expect(out.ok).toBe(true)
     expect(out.detail).toContain('committed 2 files')
-    expect(raw).toHaveBeenCalledWith(['add', '-A'])
+    expect(out.detail).toContain('worktree removed, branch kept')
+    expect(raw).toHaveBeenCalledWith(['add', '-A', ...WORKER_SPEC])
     expect(raw).toHaveBeenCalledWith([
       'commit',
       '-m',
@@ -335,8 +345,53 @@ describe('dispose — the four named choices', () => {
       'push',
       '-u',
       '-m',
-      'swarm(builder-1) preserved work'
+      'swarm(builder-1) preserved work',
+      ...WORKER_SPEC
     ])
+  })
+
+  it("🔒 commit + stash leave Expanse's agent config out — it carries a live bearer token", async () => {
+    // Every argv that can put a file on a branch or into a stash carries the exclusions.
+    for (const choice of ['commit', 'stash'] as const) {
+      const raw = vi.fn(async (argv: string[]) => (argv[0] === 'status' ? '?? work.ts\n' : ''))
+      const { store } = makeStore({ git: { raw } })
+      await store.dispose(WT, choice, 'builder-1')
+      const writes = raw.mock.calls
+        .map((c) => c[0] as string[])
+        .filter((a) => a[0] === 'add' || a[0] === 'stash')
+      expect(writes.length).toBeGreaterThan(0)
+      for (const a of writes) expect(a.slice(-WORKER_SPEC.length)).toEqual(WORKER_SPEC)
+    }
+  })
+
+  it('when only Expanse config is dirty, commit/stash write NOTHING and say Discard clears it', async () => {
+    // The raw status still reads dirty (`.mcp.json`), but the worker-only view is empty.
+    for (const choice of ['commit', 'stash'] as const) {
+      const raw = vi.fn(async (argv: string[]) => {
+        if (argv[0] !== 'status') return ''
+        return argv.includes(':(exclude).mcp.json') ? '' : '?? .mcp.json\n'
+      })
+      const { store } = makeStore({ git: { raw } })
+      const out = await store.dispose(WT, choice, 'builder-1')
+      expect(out.ok).toBe(true)
+      expect(out.detail).toContain(`nothing to ${choice}`)
+      expect(out.detail).toContain('Discard removes it')
+      const verbs = raw.mock.calls.map((c) => (c[0] as string[])[0])
+      expect(verbs).not.toContain('add')
+      expect(verbs).not.toContain('commit')
+      expect(verbs).not.toContain('stash')
+    }
+  })
+
+  it('a tree still dirty after a commit is explained: only Expanse config is left', async () => {
+    const raw = vi.fn(async (argv: string[]) => {
+      if (argv[0] !== 'status') return ''
+      return argv.includes(':(exclude).mcp.json') ? '?? work.ts\n' : '?? .mcp.json\n?? work.ts\n'
+    })
+    const { store } = makeStore({ git: { raw } })
+    const out = await store.dispose(WT, 'commit', 'builder-1')
+    expect(out.detail).toContain('committed 1 file onto the branch')
+    expect(out.detail).toContain("only Expanse's own agent config is left in it")
   })
 
   it('discard resets the working tree only — never history, never the branch', async () => {

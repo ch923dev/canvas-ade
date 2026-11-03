@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -31,6 +31,10 @@ import {
  * identity into each throwaway repo's own config — never the global one. The store under test
  * uses its own repo-scoped git env, as in the app.
  */
+
+// Every test here spawns 10–30 real git processes. Alone the file runs in ~5s, but under the full
+// suite's parallel load one test took past the 5s default — a timeout, not a failure.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 
 let root = ''
 let project = ''
@@ -255,5 +259,55 @@ describe('G12 · provisioned agent config vs worktree dirtiness (real git)', () 
     // Fixture teardown: the test, not the product, drops the leftover so git can remove the tree.
     rmSync(join(wt, '.claude'), { recursive: true, force: true })
     expect(await store.removeIfClean(wt)).toEqual({ removed: true })
+  })
+})
+
+describe('G12 follow-up · dispositions never carry Expanse’s agent config (real git)', () => {
+  it('Commit puts the worker’s file on the branch and leaves the token-bearing .mcp.json out', async () => {
+    const repo = makeRepo(join(root, 'token repo'))
+    const store = storeFor(repo)
+    const out = await store.allocate(swarmWorkerRequest('tok12345', 'builder'))
+    if (!out.ok) throw new Error(out.reason)
+    const wt = out.worktree
+
+    writeFileSync(join(wt, 'work.ts'), 'export const x = 1\n', 'utf8')
+    claudeProvisioner.writeSync(wt, { token: 'itest-secret-token', tier: 'connected', port: 1 })
+
+    const r = await store.dispose(wt, 'commit', 'builder')
+    expect(r.ok).toBe(true)
+    expect(r.detail).toContain('committed 1 file onto the branch')
+
+    const onBranch = git(repo, 'ls-tree', '-r', '--name-only', out.branch).split('\n')
+    expect(onBranch).toContain('work.ts')
+    expect(onBranch).not.toContain('.mcp.json')
+    expect(onBranch).not.toContain('.claude/settings.local.json')
+    expect(git(repo, 'log', '-p', 'main..' + out.branch)).not.toContain('itest-secret-token')
+
+    // The token file is still in the tree (never committed), so the tree is kept — and says why.
+    expect(existsSync(wt)).toBe(true)
+    expect(r.detail).toContain("only Expanse's own agent config is left in it")
+    expect((await store.dispose(wt, 'discard', 'builder')).detail).toContain('worktree removed')
+    expect(existsSync(wt)).toBe(false)
+  })
+
+  it('Stash with only Expanse’s config dirty stashes nothing', async () => {
+    const repo = makeRepo(join(root, 'stash repo'))
+    const store = storeFor(repo)
+    const out = await store.allocate(swarmWorkerRequest('stash123', 'builder'))
+    if (!out.ok) throw new Error(out.reason)
+    claudeProvisioner.writeSync(out.worktree, {
+      token: 'itest-secret-token',
+      tier: 'connected',
+      port: 1
+    })
+
+    const r = await store.dispose(out.worktree, 'stash', 'builder')
+    expect(r.ok).toBe(true)
+    expect(r.detail).toContain('nothing to stash')
+    expect(git(repo, 'stash', 'list')).toBe('')
+
+    expect((await store.dispose(out.worktree, 'discard', 'builder')).detail).toContain(
+      'worktree removed'
+    )
   })
 })

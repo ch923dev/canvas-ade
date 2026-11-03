@@ -67,6 +67,28 @@ const MAX_REPO_SCAN = 500
 /** Bound on a ref name we will put in an argv. git's own limits are looser; ours only need to fit. */
 const MAX_REF_LEN = 255
 
+/**
+ * Agent config Expanse itself writes into a terminal's cwd at spawn — `cliProvisioners` (claude
+ * `.mcp.json` + `.claude/settings.local.json`, opencode `opencode.json`; the recap hook shares the
+ * settings file). `.mcp.json` and `opencode.json` carry a LIVE bearer token, so no disposition
+ * ever puts these on a branch or into a stash.
+ */
+export const PROVISIONED_PATHS: readonly string[] = [
+  '.mcp.json',
+  '.claude/settings.local.json',
+  'opencode.json'
+]
+
+/** {@link SwarmWorktreeStore.removeIfClean}'s reason for keeping a dirty tree — the locked policy. */
+const KEPT_DIRTY = 'uncommitted changes — kept on disk'
+
+/** "The whole tree except Expanse's own agent config", as a git pathspec. */
+const WORKER_PATHSPEC: readonly string[] = [
+  '--',
+  '.',
+  ...PROVISIONED_PATHS.map((p) => `:(exclude)${p}`)
+]
+
 export type WorktreeAllocation = { worktree: string; branch: string }
 
 export type AllocateOutcome =
@@ -485,7 +507,7 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
       if (!st.exists) return { removed: false, reason: 'already gone' }
       if (st.dirty) {
         // The locked policy, not a failure: keep on disk, and let the triage row prompt.
-        return { removed: false, reason: 'uncommitted changes — kept on disk' }
+        return { removed: false, reason: KEPT_DIRTY }
       }
       // The repo that OWNS the tree — the project in the swarm's case, a sub-repo in a polyrepo,
       // where the project folder is not a repo and a removal run from it could only fail. Read
@@ -535,38 +557,61 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
           : { ok: false, detail: r.reason ?? 'could not remove the worktree' }
       }
       const git = gitFor(worktree)
+      let n = st.changed
       try {
-        if (choice === 'commit') {
-          await git.raw(['add', '-A'])
-          await git.raw(['commit', '-m', `swarm(${label}): preserve uncommitted work`])
-        } else if (choice === 'stash') {
-          await git.raw(['stash', 'push', '-u', '-m', `swarm(${label}) preserved work`])
-        } else {
+        if (choice === 'discard') {
           // discard — the only destructive branch in this module, reached ONLY through the
           // human's explicitly named choice + its second confirm. Commits already on the branch
           // survive: this resets the working tree, it never touches history and never deletes
           // the branch.
           await git.raw(['checkout', '--', '.'])
           await git.raw(['clean', '-fd'])
+        } else {
+          // 🔒 Commit and stash preserve the WORKER's changes only. Expanse's own agent config
+          // (`PROVISIONED_PATHS`) is left out: a plain `git add -A` committed `.mcp.json` — live
+          // bearer token included — onto the worker's branch. Counted per file (`-uall`), so the
+          // number reported is the number preserved.
+          n = countPorcelain(
+            await git.raw(['status', '--porcelain', '--untracked-files=all', ...WORKER_PATHSPEC])
+          )
+          if (n > 0 && choice === 'commit') {
+            await git.raw(['add', '-A', ...WORKER_PATHSPEC])
+            await git.raw(['commit', '-m', `swarm(${label}): preserve uncommitted work`])
+          } else if (n > 0) {
+            await git.raw([
+              'stash',
+              'push',
+              '-u',
+              '-m',
+              `swarm(${label}) preserved work`,
+              ...WORKER_PATHSPEC
+            ])
+          }
         }
       } catch (err) {
         return { ok: false, detail: `${choice} failed — ${errText(err)}` }
       }
       const r = await this.removeIfClean(worktree)
+      const files = `${n} file${n === 1 ? '' : 's'}`
       const done =
-        choice === 'commit'
-          ? `committed ${st.changed} file${st.changed === 1 ? '' : 's'} onto the branch`
-          : choice === 'stash'
-            ? `stashed ${st.changed} file${st.changed === 1 ? '' : 's'}`
-            : `discarded ${st.changed} uncommitted file${st.changed === 1 ? '' : 's'}`
-      return r.removed
-        ? { ok: true, detail: `${done}; worktree removed, branch kept` }
-        : // The disposition itself landed — say so, and say why the tree is still there, rather
-          // than reporting a failure that would imply the work was not preserved.
-          {
-            ok: true,
-            detail: `${done}; the worktree could not be removed (${r.reason ?? 'unknown'})`
-          }
+        choice !== 'discard' && n === 0
+          ? // Only Expanse's own config is dirty: there was nothing of the worker's to preserve,
+            // and that config keeps the tree from reading clean until it is discarded.
+            `nothing to ${choice} — the only changes are Expanse's own agent config (${PROVISIONED_PATHS.join(', ')}), which never goes on a branch or into a stash; Discard removes it`
+          : choice === 'commit'
+            ? `committed ${files} onto the branch`
+            : choice === 'stash'
+              ? `stashed ${files}`
+              : `discarded ${n} uncommitted file${n === 1 ? '' : 's'}`
+      if (r.removed) return { ok: true, detail: `${done}; worktree removed, branch kept` }
+      // The disposition itself landed — say so, and say why the tree is still there, rather than
+      // reporting a failure that would imply the work was not preserved. After a commit/stash of
+      // the worker's changes, a tree still reading dirty holds only Expanse's own agent config.
+      const why =
+        choice !== 'discard' && n > 0 && r.reason === KEPT_DIRTY
+          ? "only Expanse's own agent config is left in it — Discard removes it"
+          : (r.reason ?? 'unknown')
+      return { ok: true, detail: `${done}; the worktree could not be removed (${why})` }
     },
 
     owns,
