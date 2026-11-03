@@ -4,8 +4,14 @@ import {
   branchLeaf,
   countPorcelain,
   createSwarmWorktreeStore,
+  isArgvSafeRef,
+  mainWorktreeFrom,
+  parseBranchRefs,
   runSlug,
   slugify,
+  swarmWorkerRequest,
+  workspaceBranchFor,
+  workspaceSlug,
   worktreeDirFor,
   type SwarmWorktreeStore
 } from './swarmWorktree'
@@ -22,6 +28,12 @@ import {
 const PROJECT = 'M:/proj'
 const WT = 'M:\\proj\\.canvas\\worktrees\\builder-1'
 
+/** `git worktree list --porcelain` naming `main` as the main worktree (git lists it first). */
+const listing = (main: string): string =>
+  `worktree ${main}\nHEAD abc\nbranch refs/heads/main\n\nworktree ${WT}\nHEAD def\nbranch refs/heads/x\n`
+
+const isWorktreeList = (argv: string[]): boolean => argv[0] === 'worktree' && argv[1] === 'list'
+
 interface GitStub {
   checkIsRepo: ReturnType<typeof vi.fn>
   revparse: ReturnType<typeof vi.fn>
@@ -35,14 +47,21 @@ function makeStore(
     git?: Partial<GitStub>
     exists?: (p: string) => boolean
     isDir?: (p: string) => boolean
+    /** The repo `git worktree list` names as the owner. Default: the project (the swarm shape). */
+    owner?: string
   } = {}
 ): { store: SwarmWorktreeStore; git: GitStub; cwds: string[] } {
+  // `worktree list` (the owning-repo read) is answered here, so a test's own `raw` only ever sees
+  // the argv its assertions are about.
+  const inner = (over.git?.raw ?? vi.fn(async () => '')) as (argv: string[]) => Promise<string>
   const git: GitStub = {
     checkIsRepo: vi.fn(async () => true),
     revparse: vi.fn(async () => PROJECT),
     branchLocal: vi.fn(async () => ({ all: [] as string[] })),
-    raw: vi.fn(async () => ''),
-    ...over.git
+    ...over.git,
+    raw: vi.fn(async (argv: string[]) =>
+      isWorktreeList(argv) ? listing(over.owner ?? PROJECT) : inner(argv)
+    )
   }
   const cwds: string[] = []
   const store = createSwarmWorktreeStore({
@@ -98,7 +117,7 @@ describe('naming', () => {
 describe('allocate', () => {
   it('creates the worktree on a new branch off HEAD and returns the pair', async () => {
     const { store, git } = makeStore()
-    const out = await store.allocate('a1b2c3d4-x', 'builder-1')
+    const out = await store.allocate(swarmWorkerRequest('a1b2c3d4-x', 'builder-1'))
     expect(out).toMatchObject({ ok: true, branch: 'swarm/a1b2c3d4/builder-1' })
     // Base is HEAD, deliberately NOT `main`: every worker starts from the commit the human was
     // looking at, and branching off main would silently rebase the whole swarm.
@@ -114,7 +133,7 @@ describe('allocate', () => {
 
   it('🔒 REFUSES a non-repo project and never runs `git init` (the locked opt-in rule)', async () => {
     const { store, git } = makeStore({ git: { checkIsRepo: vi.fn(async () => false) } })
-    const out = await store.allocate('r', 'builder-1')
+    const out = await store.allocate(swarmWorkerRequest('r', 'builder-1'))
     expect(out.ok).toBe(false)
     expect(out.ok === false && out.reason).toContain('never runs `git init`')
     expect(git.raw).not.toHaveBeenCalled()
@@ -124,7 +143,7 @@ describe('allocate', () => {
     // git said ok but the dir is absent: handing this to the spawn path would silently redirect
     // the builder to $HOME with a green status (A6-3). Refuse instead.
     const { store } = makeStore({ isDir: () => false })
-    const out = await store.allocate('r', 'builder-1')
+    const out = await store.allocate(swarmWorkerRequest('r', 'builder-1'))
     expect(out.ok).toBe(false)
     expect(out.ok === false && out.reason).toContain('home folder')
   })
@@ -137,14 +156,14 @@ describe('allocate', () => {
         })
       }
     })
-    const out = await store.allocate('r', 'builder-1')
+    const out = await store.allocate(swarmWorkerRequest('r', 'builder-1'))
     expect(out.ok).toBe(false)
     expect(out.ok === false && out.reason).toContain('fatal: invalid reference')
   })
 
   it('refuses with no project open rather than guessing a location', async () => {
     const { store } = makeStore({ project: null })
-    expect((await store.allocate('r', 'builder-1')).ok).toBe(false)
+    expect((await store.allocate(swarmWorkerRequest('r', 'builder-1'))).ok).toBe(false)
   })
 
   it('skips a taken path AND a taken branch independently', async () => {
@@ -153,7 +172,7 @@ describe('allocate', () => {
       exists: (p) => p.endsWith('builder-1'),
       git: { branchLocal: vi.fn(async () => ({ all: ['swarm/rrrr/builder-1-2'] })) }
     })
-    const out = await store.allocate('rrrr', 'builder-1')
+    const out = await store.allocate(swarmWorkerRequest('rrrr', 'builder-1'))
     expect(out).toMatchObject({ ok: true, branch: 'swarm/rrrr/builder-1-3' })
   })
 })
@@ -220,16 +239,34 @@ describe('removeIfClean — the locked keep-on-dirty rule', () => {
     expect(argv).not.toContain('branch')
   })
 
-  it('🔒 runs the removal from the PROJECT, never from inside the tree it deletes', async () => {
+  it('🔒 runs the removal from the OWNING REPO, never from inside the tree it deletes', async () => {
     // A git child spawned with its cwd set to the doomed directory holds it open, and Windows
     // refuses to delete any process's cwd — `git worktree remove` then fails "Permission denied"
     // and the worktree leaks. Found by the e2e against a real repo; this is its unit guard.
     const raw = vi.fn(async (_argv: string[]) => '')
     const { store, cwds } = makeStore({ git: { raw } })
     expect(await store.removeIfClean(WT)).toEqual({ removed: true })
-    // The LAST git instance built — the one that ran `worktree remove` — was rooted at the project.
+    // The LAST git instance built — the one that ran `worktree remove` — was rooted at the repo
+    // that owns the tree, which for the swarm is the project.
     expect(cwds[cwds.length - 1]).toBe(PROJECT)
     expect(cwds[cwds.length - 1]).not.toBe(WT)
+  })
+
+  it('🔒 a polyrepo tree is removed from ITS repo, not from the project (which is no repo)', async () => {
+    const raw = vi.fn(async (_argv: string[]) => '')
+    const { store, cwds } = makeStore({ git: { raw }, owner: 'M:/proj/api' })
+    expect(await store.removeIfClean(WT)).toEqual({ removed: true })
+    expect(raw).toHaveBeenCalledWith(['worktree', 'remove', WT])
+    expect(cwds[cwds.length - 1]).toBe('M:/proj/api')
+  })
+
+  it('refuses to remove when the owning repo cannot be read, rather than guessing one', async () => {
+    const raw = vi.fn(async (_argv: string[]) => '')
+    const { store } = makeStore({ git: { raw }, owner: '' })
+    const out = await store.removeIfClean(WT)
+    expect(out.removed).toBe(false)
+    expect(out.reason).toContain('owns it')
+    expect(raw.mock.calls.flatMap((c) => c[0] as string[])).not.toContain('remove')
   })
 
   it('🔒 KEEPS a dirty tree on disk and says why (not an error — it is the policy)', async () => {
@@ -368,13 +405,343 @@ describe('no recursive delete exists anywhere in this module', () => {
       return ''
     })
     const { store } = makeStore({ git: { raw } })
-    await store.allocate('r', 'b1')
+    await store.allocate(swarmWorkerRequest('r', 'b1'))
     await store.dispose(WT, 'discard', 'b1')
     const argv = raw.mock.calls.flatMap((c) => c[0] as string[])
     // `git worktree remove` only — the whole reason `remove-worktree.ps1` exists is that a
     // recursive delete can follow a node_modules junction into the real repo.
     expect(argv.filter((a) => a === 'remove')).toHaveLength(1)
     expect(argv).not.toContain('--force')
+  })
+})
+
+// ── WS-1: the one allocator, generalized for Project Workspaces ─────────────────────────────
+
+/** Per-folder git: `repos` maps a folder to its toplevel; anything else is not a repo. */
+function polyStore(
+  repos: Record<string, string>,
+  over: {
+    branches?: string[]
+    raw?: (argv: string[]) => Promise<string>
+    prefix?: Record<string, string>
+    listDirs?: (p: string) => string[]
+    exists?: (p: string) => boolean
+  } = {}
+): { store: SwarmWorktreeStore; raw: ReturnType<typeof vi.fn>; cwds: string[] } {
+  const raw = vi.fn(over.raw ?? (async (_argv: string[]) => ''))
+  const cwds: string[] = []
+  const store = createSwarmWorktreeStore({
+    getProjectDir: () => PROJECT,
+    gitFor: (cwd) => {
+      cwds.push(cwd)
+      // listRepos hands git `join()`ed paths (backslashes on Windows); key on the `/` form.
+      const key = cwd.replace(/\\/g, '/')
+      return {
+        checkIsRepo: vi.fn(async () => key in repos),
+        revparse: vi.fn(async (args: string[]) =>
+          args[0] === '--show-prefix' ? (over.prefix?.[key] ?? '') : (repos[key] ?? '')
+        ),
+        branchLocal: vi.fn(async () => ({ all: over.branches ?? [] })),
+        raw
+      } as never
+    },
+    exists: over.exists ?? ((): boolean => false),
+    isDir: (): boolean => true,
+    listDirs: over.listDirs
+  })
+  return { store, raw, cwds }
+}
+
+const API = 'M:/proj/api'
+const addArgv = (raw: ReturnType<typeof vi.fn>): string[] | undefined =>
+  raw.mock.calls.map((c) => c[0] as string[]).find((a) => a[0] === 'worktree' && a[1] === 'add')
+
+describe('WS-1 · naming', () => {
+  it('the swarm request is the S3 shape exactly: the project as the repo, base HEAD', () => {
+    // No repoDir / base / attach: the allocator's defaults ARE the swarm's behaviour.
+    expect(swarmWorkerRequest('a1b2c3d4-x', 'Builder #1')).toEqual({
+      slug: 'builder-1',
+      branch: 'swarm/a1b2c3d4/builder-1'
+    })
+  })
+
+  it('workspaces take the ws- leaf and the ws/ branch namespace (O-10)', () => {
+    expect(workspaceSlug('API')).toBe('ws-api')
+    expect(workspaceSlug('')).toBe('ws-worker')
+    expect(workspaceSlug('x'.repeat(200)).length).toBeLessThanOrEqual(48)
+    expect(workspaceBranchFor('Uploader v2')).toBe('ws/uploader-v2')
+  })
+
+  it('isArgvSafeRef refuses an option-shaped or whitespace ref and leaves the rest to git', () => {
+    expect(isArgvSafeRef('release')).toBe(true)
+    expect(isArgvSafeRef('origin/feat/x')).toBe(true)
+    expect(isArgvSafeRef('HEAD')).toBe(true)
+    expect(isArgvSafeRef('--force')).toBe(false)
+    expect(isArgvSafeRef('-b')).toBe(false)
+    expect(isArgvSafeRef('a b')).toBe(false)
+    expect(isArgvSafeRef('a\nb')).toBe(false)
+    expect(isArgvSafeRef('')).toBe(false)
+  })
+
+  it('parseBranchRefs splits local from remote-tracking and drops a remote HEAD', () => {
+    const out = [
+      'refs/heads/main',
+      'refs/heads/feat/x',
+      'refs/remotes/origin/HEAD',
+      'refs/remotes/origin/main',
+      'refs/remotes/upstream/release',
+      'refs/tags/v1',
+      ''
+    ].join('\n')
+    expect(parseBranchRefs(out)).toEqual({
+      local: ['main', 'feat/x'],
+      remote: ['origin/main', 'upstream/release']
+    })
+  })
+
+  it('mainWorktreeFrom reads the first listed worktree — the main one', () => {
+    expect(mainWorktreeFrom(listing('M:/proj/api'))).toBe('M:/proj/api')
+    expect(mainWorktreeFrom('')).toBeNull()
+  })
+})
+
+describe('WS-1 · allocate', () => {
+  it('swarm parity: probes the PROJECT and runs the S3 argv unchanged', async () => {
+    const { store, git, cwds } = makeStore()
+    const out = await store.allocate(swarmWorkerRequest('a1b2c3d4-x', 'builder-1'))
+    expect(out).toEqual({
+      ok: true,
+      worktree: worktreeDirFor(PROJECT, 'builder-1'),
+      branch: 'swarm/a1b2c3d4/builder-1'
+    })
+    expect(cwds[0]).toBe(PROJECT)
+    expect(git.raw).toHaveBeenCalledWith([
+      'worktree',
+      'add',
+      '-b',
+      'swarm/a1b2c3d4/builder-1',
+      worktreeDirFor(PROJECT, 'builder-1'),
+      'HEAD'
+    ])
+  })
+
+  it('polyrepo: probes repoDir (the project is no repo) and still lands under .canvas/worktrees', async () => {
+    const { store, raw, cwds } = polyStore({ [API]: API })
+    const out = await store.allocate({ repoDir: API, slug: 'ws-api', branch: 'ws/api' })
+    expect(out).toEqual({
+      ok: true,
+      worktree: worktreeDirFor(PROJECT, 'ws-api'),
+      branch: 'ws/api'
+    })
+    expect(cwds).not.toContain(PROJECT) // the project folder is never asked to be a repo
+    expect(cwds[cwds.length - 1]).toBe(API) // the write ran in the sub-repo
+    expect(addArgv(raw)).toEqual([
+      'worktree',
+      'add',
+      '-b',
+      'ws/api',
+      worktreeDirFor(PROJECT, 'ws-api'),
+      'HEAD'
+    ])
+  })
+
+  it('a named base replaces HEAD (O-10: api → release)', async () => {
+    const { store, raw } = polyStore({ [API]: API })
+    await store.allocate({ repoDir: API, slug: 'ws-api', branch: 'ws/api', base: 'release' })
+    expect(addArgv(raw)?.at(-1)).toBe('release')
+  })
+
+  it('🔒 refuses a repoDir outside the project, `..` escapes included, without touching git', async () => {
+    for (const repoDir of ['M:/other', 'M:/proj-old/api', 'M:/proj/../other']) {
+      const { store, cwds } = polyStore({ [repoDir]: repoDir })
+      const out = await store.allocate({ repoDir, slug: 'ws-x', branch: 'ws/x' })
+      expect(out.ok).toBe(false)
+      expect(out.ok === false && out.reason).toContain('outside the open project')
+      expect(cwds).toEqual([])
+    }
+  })
+
+  it('🔒 a non-repo sub-folder refuses and never runs `git init`', async () => {
+    const { store, raw } = polyStore({})
+    const out = await store.allocate({ repoDir: API, slug: 'ws-api', branch: 'ws/api' })
+    expect(out.ok === false && out.reason).toContain('never runs `git init`')
+    expect(raw).not.toHaveBeenCalled()
+  })
+
+  it('🔒 refuses an option-shaped base or branch before git sees it', async () => {
+    for (const req of [
+      { slug: 'ws-api', branch: 'ws/api', base: '--force' },
+      { slug: 'ws-api', branch: '-D' }
+    ]) {
+      const { store, cwds } = polyStore({ [API]: API })
+      const out = await store.allocate({ repoDir: API, ...req })
+      expect(out.ok === false && out.reason).toContain('not a usable branch name')
+      expect(cwds).toEqual([])
+    }
+  })
+
+  it('collision-suffixes the leaf and the new branch in step', async () => {
+    const { store } = polyStore(
+      { [API]: API },
+      { branches: ['ws/api'], exists: (p) => p.replace(/\\/g, '/').endsWith('/ws-api-2') }
+    )
+    // attempt 0: branch taken · attempt 1: dir taken · attempt 2: both free.
+    const out = await store.allocate({ repoDir: API, slug: 'ws-api', branch: 'ws/api' })
+    expect(out).toMatchObject({ ok: true, branch: 'ws/api-3' })
+    expect(out.ok && out.worktree.replace(/\\/g, '/')).toMatch(/\/ws-api-3$/)
+  })
+})
+
+describe('WS-1 · attach an existing branch', () => {
+  it('checks the branch out as it is: no -b, no base', async () => {
+    const { store, raw } = polyStore({ [API]: API }, { branches: ['main', 'feat/x'] })
+    const out = await store.allocate({
+      repoDir: API,
+      slug: 'ws-feat',
+      branch: 'feat/x',
+      attach: true
+    })
+    expect(out).toMatchObject({ ok: true, branch: 'feat/x' })
+    expect(addArgv(raw)).toEqual(['worktree', 'add', worktreeDirFor(PROJECT, 'ws-feat'), 'feat/x'])
+  })
+
+  it('suffixes the leaf only — the branch stays the one the human picked', async () => {
+    const { store } = polyStore(
+      { [API]: API },
+      { branches: ['feat/x'], exists: (p) => p.replace(/\\/g, '/').endsWith('/ws-feat') }
+    )
+    const out = await store.allocate({
+      repoDir: API,
+      slug: 'ws-feat',
+      branch: 'feat/x',
+      attach: true
+    })
+    expect(out).toMatchObject({ ok: true, branch: 'feat/x' })
+    expect(out.ok && out.worktree.replace(/\\/g, '/')).toMatch(/\/ws-feat-2$/)
+  })
+
+  it("surfaces git's refusal when the branch is checked out elsewhere", async () => {
+    const { store } = polyStore(
+      { [API]: API },
+      {
+        branches: ['main'],
+        raw: async () => {
+          throw new Error("fatal: 'main' is already used by worktree at 'M:/proj/api'")
+        }
+      }
+    )
+    const out = await store.allocate({ repoDir: API, slug: 'ws-m', branch: 'main', attach: true })
+    expect(out.ok).toBe(false)
+    expect(out.ok === false && out.reason).toContain('already used by worktree')
+  })
+
+  it('refuses a branch that is not local rather than checking out a detached HEAD', async () => {
+    const { store, raw } = polyStore({ [API]: API }, { branches: ['main'] })
+    const out = await store.allocate({
+      repoDir: API,
+      slug: 'ws-r',
+      branch: 'origin/release',
+      attach: true
+    })
+    expect(out.ok === false && out.reason).toContain('no local branch')
+    expect(addArgv(raw)).toBeUndefined()
+  })
+
+  it('refuses a base with attach — a base only applies to a new branch', async () => {
+    const { store, cwds } = polyStore({ [API]: API }, { branches: ['main'] })
+    const out = await store.allocate({
+      repoDir: API,
+      slug: 'ws-m',
+      branch: 'main',
+      base: 'release',
+      attach: true
+    })
+    expect(out.ok).toBe(false)
+    expect(cwds).toEqual([])
+  })
+})
+
+describe('WS-1 · owns resists `..`', () => {
+  it('a path that climbs out of the worktree root is not owned', () => {
+    const { store } = makeStore()
+    expect(store.owns('M:/proj/.canvas/worktrees/../../other')).toBe(false)
+    expect(store.owns('M:\\proj\\.canvas\\worktrees\\..\\..\\x')).toBe(false)
+    expect(store.owns('M:/proj/.canvas/worktrees/x/..')).toBe(false) // the root itself
+    expect(store.owns('M:/proj/.canvas/worktrees/a/../b')).toBe(true) // still inside
+  })
+})
+
+describe('WS-1 · listRepos', () => {
+  const kids = (): string[] => [
+    '.canvas',
+    '.git',
+    '.hidden',
+    'node_modules',
+    'web',
+    'api',
+    'docs',
+    'broken'
+  ]
+  const gitAt = (p: string): boolean =>
+    /\/(api|web|broken|\.hidden|node_modules|\.canvas)\/\.git$/.test(p.replace(/\\/g, '/'))
+
+  it('a polyrepo root lists each repo one level down and skips dot-folders + node_modules', async () => {
+    const { store, cwds } = polyStore(
+      {},
+      { listDirs: kids, exists: gitAt, prefix: { [`${PROJECT}/broken`]: 'broken/' } }
+    )
+    const repos = await store.listRepos(PROJECT)
+    expect(repos.map((r) => r.rel)).toEqual(['api', 'web'])
+    const probed = cwds.map((c) => c.replace(/\\/g, '/'))
+    for (const skipped of ['.canvas', '.hidden', 'node_modules', 'docs']) {
+      expect(probed).not.toContain(`${PROJECT}/${skipped}`) // never even asked
+    }
+  })
+
+  it('a root that is itself a repo comes first', async () => {
+    const { store } = polyStore({ [PROJECT]: PROJECT }, { listDirs: () => [], exists: gitAt })
+    expect(await store.listRepos(PROJECT)).toEqual([{ dir: PROJECT, rel: '' }])
+  })
+})
+
+describe('WS-1 · listBranches', () => {
+  const refs =
+    'refs/heads/main\nrefs/heads/release\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main\n'
+
+  it('returns local + remote-tracking + the current branch, and never fetches', async () => {
+    const { store, raw } = polyStore(
+      { [API]: API },
+      { raw: async (argv) => (argv[0] === 'for-each-ref' ? refs : 'main\n') }
+    )
+    expect(await store.listBranches(API)).toEqual({
+      ok: true,
+      current: 'main',
+      local: ['main', 'release'],
+      remote: ['origin/main']
+    })
+    const argv = raw.mock.calls.flatMap((c) => c[0] as string[])
+    expect(argv).not.toContain('fetch')
+    expect(argv).not.toContain('pull')
+  })
+
+  it('a detached HEAD reads as no current branch', async () => {
+    const { store } = polyStore(
+      { [API]: API },
+      {
+        raw: async (argv) => {
+          if (argv[0] === 'symbolic-ref') throw new Error('exit 1')
+          return refs
+        }
+      }
+    )
+    expect(await store.listBranches(API)).toMatchObject({ ok: true, current: null })
+  })
+
+  it('🔒 refuses a repo outside the project, and a non-repo folder', async () => {
+    const { store: outside } = polyStore({ 'M:/other': 'M:/other' })
+    expect(await outside.listBranches('M:/other')).toMatchObject({ ok: false })
+    const { store: plain } = polyStore({})
+    expect(await plain.listBranches(API)).toMatchObject({ ok: false })
   })
 })
 

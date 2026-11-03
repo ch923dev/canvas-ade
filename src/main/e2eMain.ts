@@ -44,7 +44,7 @@ import { createCanvasMemory } from './canvasMemory'
 // Orchestration S3: the e2e worktree helpers drive the REAL allocator (and the same repo-scoped
 // git env every MAIN git seam uses), so the spec proves the shipped path rather than a fixture.
 import { repoScopedGit } from './gitEnv'
-import { createSwarmWorktreeStore } from './swarmWorktree'
+import { createSwarmWorktreeStore, swarmWorkerRequest } from './swarmWorktree'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
 import { listConnectors } from './boardRegistry'
@@ -662,7 +662,9 @@ export function installE2EMain(
       return true
     },
     swarmAllocateWorktree: (runId, workerName) =>
-      createSwarmWorktreeStore({ getProjectDir: getCurrentDir }).allocate(runId, workerName),
+      createSwarmWorktreeStore({ getProjectDir: getCurrentDir }).allocate(
+        swarmWorkerRequest(runId, workerName)
+      ),
     swarmWorktreeStatus: (worktree) =>
       createSwarmWorktreeStore({ getProjectDir: getCurrentDir }).status(worktree),
     swarmRemoveWorktree: (worktree) =>

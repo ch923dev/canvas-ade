@@ -52,7 +52,11 @@ import {
   type SwarmWorktreeDisposition,
   type SwarmWorktreeStatus
 } from '../shared/swarmLedgerTypes'
-import { createSwarmWorktreeStore, type SwarmWorktreeStore } from './swarmWorktree'
+import {
+  createSwarmWorktreeStore,
+  swarmWorkerRequest,
+  type SwarmWorktreeStore
+} from './swarmWorktree'
 import { createSwarmLedgerSession, type SwarmLedgerSession } from './swarmLedgerSession'
 import {
   createSwarmWatch,
@@ -518,7 +522,8 @@ export function registerSwarmHandlers(
       workerWorktrees: session.workerWorktrees,
       // S3: allocate BEFORE the board spawns (the `safeCwd` constraint). The executor refuses the
       // spawn on anything but success — there is no shared-tree fallback.
-      allocateWorktree: (workerName: string) => worktrees.allocate(runId, workerName),
+      allocateWorktree: (workerName: string) =>
+        worktrees.allocate(swarmWorkerRequest(runId, workerName)),
       releaseWorktree: async (worktree: string): Promise<void> => {
         await worktrees.removeIfClean(worktree)
       },
@@ -714,18 +719,21 @@ export function registerSwarmHandlers(
       const decision = await confirm({
         title: `${held.label} left uncommitted changes`,
         body:
-          `Its worktree is still on disk at ${held.worktree} (branch ${held.branch}) and nothing has been discarded. ` +
-          `Choose what happens to ${files} — Keep is what already happened, and what happens if you cancel. ` +
+          `Its worktree is still on disk at ${held.worktree} with ${files} uncommitted on ${held.branch}, and nothing has been discarded. ` +
+          `Keep is what already happened, and what happens if you cancel. ` +
           `Commit puts them on the worker's own branch; Stash pushes them (including untracked) to the repo stash; ` +
-          `Discard throws them away permanently — commits already on the branch survive either way, and the branch is never deleted.`,
+          `Discard throws them away permanently. Commit, Stash and Discard then remove the worktree — ` +
+          `commits already on the branch survive, and the branch is never deleted.`,
+        // Labels stay short and parallel so the four tiles read at a glance in a 420px card; the
+        // count and the branch live in the body above (Discard repeats both in its second confirm).
         choices: {
           label: 'Disposition',
           default: 'keep',
           options: [
-            { id: 'keep', label: `Keep on disk (${files} untouched)` },
-            { id: 'commit', label: `Commit ${files} onto ${held.branch}, then remove` },
-            { id: 'stash', label: `Stash ${files}, then remove` },
-            { id: 'discard', label: `Discard ${files} permanently, then remove` }
+            { id: 'keep', label: 'Keep on disk' },
+            { id: 'commit', label: 'Commit to branch, then remove' },
+            { id: 'stash', label: 'Stash, then remove' },
+            { id: 'discard', label: 'Discard, then remove' }
           ]
         }
       })

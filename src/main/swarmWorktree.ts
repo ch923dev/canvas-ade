@@ -26,9 +26,16 @@
  *
  * 🔒 Branches are NEVER deleted by Expanse, at any point, including on `discard` — the branch is
  * the human's record of the work, and the merge sequence is built from it.
+ *
+ * Project Workspaces (WS-1) reuse this allocator rather than fork a second one. The repo is no
+ * longer assumed to BE the project: a request names a `repoDir` inside the project (a polyrepo's
+ * `api/`), a branch, an optional base, or an existing branch to attach. Every worktree — swarm
+ * worker or workspace — still lands under the one `.canvas/worktrees/` root that {@link
+ * SwarmWorktreeStore.owns} guards; workspaces take the `ws-` slug namespace. The swarm's request
+ * ({@link swarmWorkerRequest}) is the S3 shape exactly: the project as the repo, base `HEAD`.
  */
-import { existsSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { join, posix } from 'node:path'
 import type { SimpleGit } from 'simple-git'
 import { repoScopedGit } from './gitEnv'
 import type { SwarmWorktreeDisposition, SwarmWorktreeStatus } from '../shared/swarmLedgerTypes'
@@ -42,11 +49,23 @@ export const WORKTREE_SUBDIR = join('.canvas', 'worktrees')
 /** Branch namespace. Run-scoped so two runs in one project never collide (design D2). */
 export const BRANCH_PREFIX = 'swarm'
 
+/** Workspace branch namespace: `ws/<slug>` (Project Workspaces O-10). */
+export const WORKSPACE_BRANCH_PREFIX = 'ws'
+
+/** Workspace worktree leaves are `ws-<slug>`, so they never collide with a worker's leaf. */
+export const WORKSPACE_SLUG_PREFIX = 'ws-'
+
 /** Suffix attempts before allocation gives up rather than looping on a colliding name. */
 const MAX_NAME_ATTEMPTS = 20
 
 /** Bound on a worker name → slug, so a hostile/absurd name cannot become a huge path segment. */
 const MAX_SLUG_LEN = 48
+
+/** Bound on the folders {@link SwarmWorktreeStore.listRepos} looks at, so a huge root stays cheap. */
+const MAX_REPO_SCAN = 500
+
+/** Bound on a ref name we will put in an argv. git's own limits are looser; ours only need to fit. */
+const MAX_REF_LEN = 255
 
 export type WorktreeAllocation = { worktree: string; branch: string }
 
@@ -55,18 +74,61 @@ export type AllocateOutcome =
   /** `reason` is a SENTENCE, shown to the human verbatim — never a bare error code. */
   | { ok: false; reason: string }
 
+export interface AllocateRequest {
+  /**
+   * The folder git is probed in — the repo (or a folder inside it) the worktree is cut from. Must
+   * be inside the project. Absent ⇒ the project itself, which is the swarm's S3 shape.
+   */
+  repoDir?: string
+  /** The worktree's leaf under `.canvas/worktrees/`. Re-slugified here; collision-suffixed. */
+  slug: string
+  /**
+   * The branch to CREATE (collision-suffixed in step with the leaf) — or, with `attach`, the
+   * EXISTING local branch to check out.
+   */
+  branch: string
+  /** What a new branch starts from. Default `HEAD`, the swarm's base. Not allowed with `attach`. */
+  base?: string
+  /**
+   * Check out an existing local branch instead of creating one (`git worktree add <path>
+   * <branch>`). git itself refuses a branch already checked out in another worktree; that
+   * refusal is surfaced verbatim.
+   */
+  attach?: boolean
+}
+
+/** One git repo {@link SwarmWorktreeStore.listRepos} found: its folder, and its path from the project. */
+export interface RepoEntry {
+  dir: string
+  /** `''` for the project root itself, else the child folder's name. */
+  rel: string
+}
+
+export type ListBranchesOutcome =
+  | {
+      ok: true
+      /** The checked-out branch, or `null` when HEAD is detached. */
+      current: string | null
+      /** Local branches: `main`, `release`. */
+      local: string[]
+      /** Remote-tracking branches, remote-qualified: `origin/main`. Never fetched — what is on disk. */
+      remote: string[]
+    }
+  | { ok: false; reason: string }
+
 export interface SwarmWorktreeStore {
   /**
-   * Create a worktree for one worker. Returns the ABSOLUTE path + branch on success. Every
-   * failure is a refusal carrying a human-readable reason; there is no partial-success path and
-   * no fallback to the shared project tree (that fallback is exactly the bug S3 exists to kill).
+   * Create a worktree. Returns the ABSOLUTE path + branch on success. Every failure is a refusal
+   * carrying a human-readable reason; there is no partial-success path and no fallback to the
+   * shared project tree (that fallback is exactly the bug S3 exists to kill).
    */
-  allocate(runId: string, workerName: string): Promise<AllocateOutcome>
+  allocate(req: AllocateRequest): Promise<AllocateOutcome>
   /** Live git facts for one worktree. Never throws — an unreadable tree reads as not-exists. */
   status(worktree: string): Promise<SwarmWorktreeStatus>
   /**
-   * `git worktree remove` (no force) when the tree is CLEAN. A dirty tree is left exactly where
-   * it is — that is the locked policy, not a failure. The branch always survives.
+   * `git worktree remove` (no force) when the tree is CLEAN, run from the repo that OWNS the
+   * worktree. A dirty tree is left exactly where it is — that is the locked policy, not a
+   * failure. The branch always survives.
    */
   removeIfClean(worktree: string): Promise<{ removed: boolean; reason?: string }>
   /**
@@ -82,6 +144,14 @@ export interface SwarmWorktreeStore {
   ): Promise<{ ok: boolean; detail: string }>
   /** Is this path inside the CURRENT project's worktree dir? The guard on every destructive path. */
   owns(worktree: string): boolean
+  /**
+   * The git repos a project holds: the project itself when it is a repo, plus each repo exactly
+   * one folder down (a polyrepo). `.canvas/`, `node_modules/`, dot-folders and links are skipped.
+   * Read-only; never throws.
+   */
+  listRepos(projectDir: string): Promise<RepoEntry[]>
+  /** A repo's local + remote-tracking branches, as they are on disk. Never fetches. */
+  listBranches(repoDir: string): Promise<ListBranchesOutcome>
 }
 
 export interface SwarmWorktreeDeps {
@@ -92,6 +162,8 @@ export interface SwarmWorktreeDeps {
   /** fs seam (tests inject). Default: `node:fs`. */
   exists?: (p: string) => boolean
   isDir?: (p: string) => boolean
+  /** The names of a folder's real sub-directories — links and junctions excluded. */
+  listDirs?: (p: string) => string[]
 }
 
 /**
@@ -122,16 +194,77 @@ export function runSlug(runId: string): string {
   return s || 'run'
 }
 
+/** Attempt 0 is the name itself; attempt n is `<name>-<n+1>`, so the first retry reads `-2`. */
+function suffixed(name: string, attempt: number): string {
+  return attempt === 0 ? name : `${name}-${attempt + 1}`
+}
+
 /** `swarm/a1b2c3d4/builder-1` (design D2). */
 export function branchFor(runId: string, workerSlug: string, attempt = 0): string {
-  const base = `${BRANCH_PREFIX}/${runSlug(runId)}/${workerSlug}`
-  return attempt === 0 ? base : `${base}-${attempt + 1}`
+  return suffixed(`${BRANCH_PREFIX}/${runSlug(runId)}/${workerSlug}`, attempt)
 }
 
 /** `<project>/.canvas/worktrees/<slug>` (design D1). */
 export function worktreeDirFor(projectDir: string, workerSlug: string, attempt = 0): string {
-  const leaf = attempt === 0 ? workerSlug : `${workerSlug}-${attempt + 1}`
-  return join(projectDir, WORKTREE_SUBDIR, leaf)
+  return join(projectDir, WORKTREE_SUBDIR, suffixed(workerSlug, attempt))
+}
+
+/** The swarm's request for one worker: the project as the repo, base `HEAD` — S3 unchanged. */
+export function swarmWorkerRequest(runId: string, workerName: string): AllocateRequest {
+  const slug = slugify(workerName)
+  return { slug, branch: branchFor(runId, slug) }
+}
+
+/** A workspace name → its worktree leaf, `ws-api`. Capped like any slug. */
+export function workspaceSlug(name: string): string {
+  return slugify(`${WORKSPACE_SLUG_PREFIX}${slugify(name)}`)
+}
+
+/** A workspace name → its new branch, `ws/api` (O-10). */
+export function workspaceBranchFor(name: string): string {
+  return `${WORKSPACE_BRANCH_PREFIX}/${slugify(name)}`
+}
+
+/**
+ * Can this ref name go into a git argv? Every argv here is an array (no shell), so the one
+ * injection left is a leading `-`: a base of `--force` would be parsed as an option. Whitespace
+ * and control characters are refused too; anything else that is not a valid refname is left
+ * for git to refuse in its own words.
+ */
+export function isArgvSafeRef(ref: string): boolean {
+  return (
+    typeof ref === 'string' &&
+    ref.length > 0 &&
+    ref.length <= MAX_REF_LEN &&
+    !ref.startsWith('-') &&
+    // eslint-disable-next-line no-control-regex
+    !/[\s\x00-\x1f\x7f]/.test(ref)
+  )
+}
+
+/**
+ * `git for-each-ref --format=%(refname)` output → local and remote-tracking branch names. A
+ * remote's symbolic `HEAD` (`refs/remotes/origin/HEAD`) is not a branch and is dropped.
+ */
+export function parseBranchRefs(out: string): { local: string[]; remote: string[] } {
+  const local: string[] = []
+  const remote: string[] = []
+  for (const line of out.split('\n')) {
+    const ref = line.trim()
+    if (ref.startsWith('refs/heads/')) {
+      local.push(ref.slice('refs/heads/'.length))
+    } else if (ref.startsWith('refs/remotes/')) {
+      const name = ref.slice('refs/remotes/'.length)
+      if (!name.endsWith('/HEAD')) remote.push(name)
+    }
+  }
+  return { local, remote }
+}
+
+/** The main worktree's path from `git worktree list --porcelain` — git always lists it first. */
+export function mainWorktreeFrom(porcelain: string): string | null {
+  const first = porcelain.split('\n').find((l) => l.startsWith('worktree '))
+  return first ? first.slice('worktree '.length).trim() || null : null
 }
 
 /** The branch's last segment — what the card renders when the full ref will not fit. */
@@ -140,9 +273,20 @@ export function branchLeaf(branch: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : branch
 }
 
-/** Normalise for a containment compare that is not fooled by separators or a trailing slash. */
+/**
+ * Normalise for a containment compare that is not fooled by separators, a trailing slash, or a
+ * `..` segment (`…/worktrees/../../x` must not pass as under `worktrees/`). POSIX-normalised after
+ * the separator swap, so it collapses the same way on every OS.
+ */
 function normPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '')
+  return posix.normalize(p.replace(/\\/g, '/')).replace(/\/+$/, '')
+}
+
+/** Is `target` the folder `root` or strictly inside it? */
+function isWithinOrSame(root: string, target: string): boolean {
+  const r = normPath(root)
+  const t = normPath(target)
+  return t === r || t.startsWith(r + '/')
 }
 
 /** `git status --porcelain` output → changed-entry count (untracked included: `-u` is the default). */
@@ -159,6 +303,19 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
         return statSync(p).isDirectory()
       } catch {
         return false
+      }
+    })
+  const listDirs =
+    deps.listDirs ??
+    ((p: string): string[] => {
+      try {
+        // `withFileTypes` reports a link as a link, not as its target — so a junction pointing
+        // outside the project is never offered as one of its repos.
+        return readdirSync(p, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name)
+      } catch {
+        return []
       }
     })
   const gitFor =
@@ -182,8 +339,17 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
     return target.length > root.length && target.startsWith(root + '/')
   }
 
+  /** `git rev-parse --show-prefix` is empty exactly when `dir` is the top of its worktree. */
+  const isRepoTop = async (dir: string): Promise<boolean> => {
+    try {
+      return (await gitFor(dir).revparse(['--show-prefix'])).trim() === ''
+    } catch {
+      return false
+    }
+  }
+
   return {
-    async allocate(runId, workerName) {
+    async allocate(req) {
       const project = deps.getProjectDir()
       if (!project) {
         return {
@@ -192,15 +358,40 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
             'no project is open, so there is nowhere to create a worktree — open a project folder first'
         }
       }
-      const slug = slugify(workerName)
+      const repoDir = req.repoDir ?? project
+      const isProject = normPath(repoDir) === normPath(project)
+      if (!isWithinOrSame(project, repoDir)) {
+        // O-7: a workspace root outside the project is refused in v1, and so is its repo.
+        return {
+          ok: false,
+          reason: `${repoDir} is outside the open project — a worktree can only be cut from a repository inside it`
+        }
+      }
+      const attach = req.attach === true
+      if (attach && req.base !== undefined) {
+        return {
+          ok: false,
+          reason: 'a base only applies to a new branch — attaching checks out the branch as it is'
+        }
+      }
+      const base = req.base ?? 'HEAD'
+      for (const ref of [req.branch, base]) {
+        if (!isArgvSafeRef(ref)) {
+          return { ok: false, reason: `"${ref}" is not a usable branch name` }
+        }
+      }
+      const slug = slugify(req.slug)
       let repoRoot: string
       try {
-        const probe = gitFor(project)
+        // Probe the REPO, not the project: in a polyrepo the project folder holds repos without
+        // being one. `--show-toplevel` only ever REUSES the repo git finds (never `git init`).
+        const probe = gitFor(repoDir)
         if (!(await probe.checkIsRepo())) {
           return {
             ok: false,
-            reason:
-              'the project folder is not a git repository — Expanse never runs `git init` for you. Open a git repository as the project, or spawn a read-only role'
+            reason: isProject
+              ? 'the project folder is not a git repository — Expanse never runs `git init` for you. Open a git repository as the project, or spawn a read-only role'
+              : `${repoDir} is not a git repository — Expanse never runs \`git init\` for you`
           }
         }
         repoRoot = (await probe.revparse(['--show-toplevel'])).trim()
@@ -213,6 +404,7 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
 
       // First free (path, branch) pair. Both must be free: a leftover directory from a previous
       // run and a leftover branch are independent conditions, and `worktree add` fails on either.
+      // Attach mode suffixes the path only — the branch is the one the human picked.
       const git = gitFor(repoRoot)
       let branches: Set<string>
       try {
@@ -220,11 +412,19 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
       } catch (err) {
         return { ok: false, reason: `git could not list branches — ${errText(err)}` }
       }
+      if (attach && !branches.has(req.branch)) {
+        // Not passed through to git: `worktree add <path> origin/x` would quietly check out a
+        // DETACHED head, and a workspace on no branch has nowhere to keep its commits.
+        return {
+          ok: false,
+          reason: `there is no local branch "${req.branch}" to attach — to work from a remote branch, create a new branch based on it`
+        }
+      }
       let chosen: WorktreeAllocation | null = null
       for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
         const worktree = worktreeDirFor(project, slug, attempt)
-        const branch = branchFor(runId, slug, attempt)
-        if (!exists(worktree) && !branches.has(branch)) {
+        const branch = attach ? req.branch : suffixed(req.branch, attempt)
+        if (!exists(worktree) && (attach || !branches.has(branch))) {
           chosen = { worktree, branch }
           break
         }
@@ -237,11 +437,18 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
       }
 
       try {
-        // The one allocate-time git WRITE. Base is the repo's current HEAD, deliberately not
-        // `main`: every worker starts from the commit the human was looking at when the run began,
-        // and branching off `main` would silently rebase the whole swarm onto a branch they are
-        // not on.
-        await git.raw(['worktree', 'add', '-b', chosen.branch, chosen.worktree, 'HEAD'])
+        // The one allocate-time git WRITE. The swarm's base is the repo's current HEAD,
+        // deliberately not `main`: every worker starts from the commit the human was looking at
+        // when the run began, and branching off `main` would silently rebase the whole swarm onto
+        // a branch they are not on. A workspace names its base (O-10: e.g. `release`).
+        //
+        // Attach: git refuses a branch already checked out in another worktree — that refusal is
+        // the guard, and its message reaches the human through the catch below.
+        await git.raw(
+          attach
+            ? ['worktree', 'add', chosen.worktree, chosen.branch]
+            : ['worktree', 'add', '-b', chosen.branch, chosen.worktree, base]
+        )
       } catch (err) {
         return { ok: false, reason: `git worktree add failed — ${errText(err)}` }
       }
@@ -280,17 +487,31 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
         // The locked policy, not a failure: keep on disk, and let the triage row prompt.
         return { removed: false, reason: 'uncommitted changes — kept on disk' }
       }
-      const project = deps.getProjectDir()
-      if (!project) return { removed: false, reason: 'no project is open' }
+      // The repo that OWNS the tree — the project in the swarm's case, a sub-repo in a polyrepo,
+      // where the project folder is not a repo and a removal run from it could only fail. Read
+      // from the worktree itself (git lists the main worktree first), so no caller can name the
+      // wrong repo. This read finishes before the removal starts, so it holds no cwd open.
+      let repoRoot: string | null
       try {
-        // 🔒 Run from the PROJECT, never from inside the worktree being deleted. A git child
+        repoRoot = mainWorktreeFrom(await gitFor(worktree).raw(['worktree', 'list', '--porcelain']))
+      } catch (err) {
+        return {
+          removed: false,
+          reason: `could not find the repository that owns it — ${errText(err)}`
+        }
+      }
+      if (!repoRoot) {
+        return { removed: false, reason: 'could not find the repository that owns it' }
+      }
+      try {
+        // 🔒 Run from the OWNING REPO, never from inside the worktree being deleted. A git child
         // spawned with its cwd set to that directory holds it open, and Windows refuses to
         // delete a directory that is any process's cwd — `git worktree remove` then fails with
         // "Permission denied" and the tree leaks. Caught by the e2e against a real repo.
         //
         // No `--force`, ever, on this path. git refuses a dirty/locked tree itself, which is a
         // second guard behind the status check above.
-        await gitFor(project).raw(['worktree', 'remove', worktree])
+        await gitFor(repoRoot).raw(['worktree', 'remove', worktree])
         return { removed: true }
       } catch (err) {
         return { removed: false, reason: errText(err) }
@@ -348,7 +569,57 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
           }
     },
 
-    owns
+    owns,
+
+    async listRepos(projectDir) {
+      const found: RepoEntry[] = []
+      if (!projectDir) return found
+      try {
+        if (await gitFor(projectDir).checkIsRepo()) found.push({ dir: projectDir, rel: '' })
+      } catch {
+        /* unreadable reads as not-a-repo; the children are still worth a look */
+      }
+      const children = listDirs(projectDir)
+        .filter((name) => !name.startsWith('.') && name !== 'node_modules')
+        .sort()
+        .slice(0, MAX_REPO_SCAN)
+      for (const name of children) {
+        const dir = join(projectDir, name)
+        // A `.git` entry (a dir, or the gitfile of a worktree/submodule) marks a repo's top, and
+        // checking for it first spares a git spawn per ordinary folder. `--show-prefix` then
+        // confirms it: a stray or broken `.git` is not a repo.
+        if (exists(join(dir, '.git')) && (await isRepoTop(dir))) found.push({ dir, rel: name })
+      }
+      return found
+    },
+
+    async listBranches(repoDir) {
+      const project = deps.getProjectDir()
+      if (!project) return { ok: false, reason: 'no project is open' }
+      if (!repoDir || !isWithinOrSame(project, repoDir)) {
+        return { ok: false, reason: `${repoDir} is outside the open project` }
+      }
+      try {
+        const git = gitFor(repoDir)
+        if (!(await git.checkIsRepo())) {
+          return { ok: false, reason: `${repoDir} is not a git repository` }
+        }
+        // Read only what is already on disk: listing must never reach the network, and a
+        // fresher `origin/release` is the human's fetch to run.
+        const { local, remote } = parseBranchRefs(
+          await git.raw(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'])
+        )
+        let current: string | null = null
+        try {
+          current = (await git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim() || null
+        } catch {
+          current = null // detached HEAD: `symbolic-ref --quiet` exits 1
+        }
+        return { ok: true, current, local, remote }
+      } catch (err) {
+        return { ok: false, reason: `git could not list branches — ${errText(err)}` }
+      }
+    }
   }
 }
 
