@@ -22,12 +22,23 @@ export type BadgeColor = 'accent' | 'warn' | 'ok'
 
 interface UpdateState {
   status: UpdateStatus | null
+  /**
+   * The version of the last available / mandatory / ready update ('' until one arrives) — kept
+   * across the tier-less `downloading` events so a progress line can still name it.
+   */
+  version: string
   setStatus: (s: UpdateStatus) => void
 }
 
 export const useUpdateStore = create<UpdateState>((set) => ({
   status: null,
-  setStatus: (status) => set({ status })
+  version: '',
+  setStatus: (status) =>
+    set(
+      status.state === 'available' || status.state === 'mandatory' || status.state === 'ready'
+        ? { status, version: status.version }
+        : { status }
+    )
 }))
 
 /**

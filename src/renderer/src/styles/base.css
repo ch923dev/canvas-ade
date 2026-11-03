@@ -32,7 +32,9 @@
   .welcome-actions button,
   .welcome-recents button,
   .welcome-recents li,
-  .welcome-clear-recents {
+  .welcome-clear-recents,
+  .welcome-update button,
+  .welcome-update-fill {
     transition: none !important;
   }
 }
