@@ -82,6 +82,8 @@ import {
   type OptionValues
 } from './composeCommand'
 import { OpenRouterSection, type OpenRouterValue } from './OpenRouterSection'
+import { WorkspaceScopeRow } from './TerminalWorkspaceField'
+import { useBoardWorkspace, workspaceCwdCopy } from './useBoardWorkspace'
 import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT,
@@ -148,6 +150,10 @@ export function NewTerminalDialog({
   const [shells, setShells] = useState<ShellInfo[]>([])
   const [shell, setShell] = useState(board.shell ?? '')
   const [cwd, setCwd] = useState(board.cwd ?? '')
+  // WS-3: the board's workspace, reflected read-only (membership is set elsewhere — WS-5's dock
+  // checkbox / WS-4's Move to workspace). Blank Working dir = its effective root.
+  const workspaceView = useBoardWorkspace(board.workspaceId)
+  const cwdCopy = workspaceCwdCopy(workspaceView)
   // Absent monitorActivity reads as true, so default the toggle on unless explicitly opted out.
   const [monitor, setMonitor] = useState(board.monitorActivity !== false)
   // v20 OpenRouter routing: enabled/model as ONE value (OpenRouterSection renders the gated
@@ -426,17 +432,20 @@ export function NewTerminalDialog({
             />
           )}
           <OpenRouterSection presetId={presetId} value={openRouter} onChange={onOpenRouterChange} />
+          {workspaceView && <WorkspaceScopeRow view={workspaceView} />}
           <Field label="Working dir">
             <input
               style={{ ...fld, fontFamily: 'var(--mono)' }}
-              placeholder="(blank = project folder)"
+              placeholder={cwdCopy.placeholder}
               spellCheck={false}
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
               onFocus={ringOn}
               onBlur={ringOff}
+              data-test="new-terminal-cwd"
             />
           </Field>
+          {cwdCopy.hint && <span style={checkHint}>{cwdCopy.hint}</span>}
           <button
             type="button"
             style={check}

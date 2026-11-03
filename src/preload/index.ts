@@ -43,6 +43,9 @@ export interface SpawnTerminalOpts {
   /** v20 OpenRouter routing intent (compile-gated feature) — MAIN resolves the key itself;
    *  key material never rides this IPC. Mirrors main `OpenRouterSpawnIntent`. */
   openRouter?: { enabled: boolean; model?: string }
+  /** WS-3: the board's workspace id (absent ⇒ project-level). MAIN resolves the root itself and
+   *  refuses a cwd outside it — a `spawn-failed` with a sentence, never a `$HOME` fallback. */
+  workspaceId?: string
 }
 
 /** Result of `pty:spawn`: on failure `pid` is -1 and `state` is `spawn-failed`. */

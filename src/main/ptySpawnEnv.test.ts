@@ -294,3 +294,38 @@ describe('buildSpawnEnv — P5 per-board env policy (A8-F3 secrets hygiene)', ()
     expect(env.FORCE_HYPERLINK).toBe('1')
   })
 })
+
+describe('buildSpawnEnv — WS-3 workspace vars', () => {
+  const KEYS = ['CANVAS_WORKSPACE_ID', 'CANVAS_WORKSPACE_ROOT', 'CANVAS_WORKSPACE_CONTEXT']
+  afterEach(() => {
+    for (const k of KEYS) delete process.env[k]
+  })
+
+  it('exports the id, root and context path for a workspace board', () => {
+    const env = buildSpawnEnv(undefined, {
+      id: 'b1',
+      workspace: {
+        id: 'ws-api',
+        root: '/p/api',
+        context: '/p/.canvas/workspaces/ws-api/CONTEXT.md'
+      }
+    })
+    expect(env.CANVAS_WORKSPACE_ID).toBe('ws-api')
+    expect(env.CANVAS_WORKSPACE_ROOT).toBe('/p/api')
+    expect(env.CANVAS_WORKSPACE_CONTEXT).toBe('/p/.canvas/workspaces/ws-api/CONTEXT.md')
+  })
+
+  it('a workspace without a context path exports no stale inherited one', () => {
+    process.env.CANVAS_WORKSPACE_CONTEXT = '/parent/CONTEXT.md'
+    const env = buildSpawnEnv(undefined, { id: 'b1', workspace: { id: 'w', root: '/p' } })
+    expect(env.CANVAS_WORKSPACE_ID).toBe('w')
+    expect(env.CANVAS_WORKSPACE_CONTEXT).toBeUndefined()
+  })
+
+  it('a project-level board carries none — inherited values are scrubbed', () => {
+    process.env.CANVAS_WORKSPACE_ID = 'parent'
+    process.env.CANVAS_WORKSPACE_ROOT = '/parent'
+    const env = buildSpawnEnv(undefined, { id: 'b1' })
+    for (const k of KEYS) expect(env[k]).toBeUndefined()
+  })
+})

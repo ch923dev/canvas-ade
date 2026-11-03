@@ -103,3 +103,38 @@ export function normalizeWorkspaceRoot(raw: unknown): string | null {
   if (segments.some((s) => /^[. ]+$/.test(s))) return null
   return segments.length === 0 ? '.' : segments.join('/')
 }
+
+/** The two fields {@link effectiveRoot} reads — structural, so the renderer's `Workspace` and MAIN's
+ *  `WorkspaceMirror` both satisfy it. */
+export interface WorkspaceRootFields {
+  root: string
+  worktrees?: readonly { repoRoot: string; worktree: string }[]
+}
+
+/**
+ * The folder a workspace's boards actually run in (WS-3, design §4.1), project-relative POSIX:
+ *  - no worktree ⇒ the workspace `root` itself;
+ *  - a worktree `w` (v1: at most one) ⇒ `w.worktree` + the part of `root` below `w.repoRoot`, so a
+ *    monorepo subfolder maps into the worktree (repo `.`, root `packages/api` ⇒
+ *    `<wt>/packages/api`) and a polyrepo root IS the worktree (repo `api`, root `api` ⇒ `<wt>`).
+ * Returns `null` when a stored path fails {@link normalizeWorkspaceRoot}, or when `root` does not sit
+ * at or below the worktree's `repoRoot` (the record cannot name a folder inside that worktree). Pure
+ * and lexical like every rule here: MAIN resolves the result against the project and realpaths it
+ * before a spawn trusts it.
+ */
+export function effectiveRoot(ws: WorkspaceRootFields): string | null {
+  const root = normalizeWorkspaceRoot(ws.root)
+  if (root === null) return null
+  const wt = ws.worktrees?.[0]
+  if (!wt) return root
+  const repoRoot = normalizeWorkspaceRoot(wt.repoRoot)
+  const worktree = normalizeWorkspaceRoot(wt.worktree)
+  if (repoRoot === null || worktree === null) return null
+  let below: string
+  if (repoRoot === '.') below = root === '.' ? '' : root
+  else if (root === repoRoot) below = ''
+  else if (root.startsWith(repoRoot + '/')) below = root.slice(repoRoot.length + 1)
+  else return null
+  if (below === '') return worktree
+  return worktree === '.' ? below : `${worktree}/${below}`
+}

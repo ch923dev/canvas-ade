@@ -1,6 +1,7 @@
 // src/main/ptySpawnEnv.ts
 import { filterSpawnEnvBase, type SpawnEnvPolicy } from './spawnEnvPolicy'
 import { resolveOpenRouterRoute, sanitizeOpenRouterModel } from '../shared/openRouterRouting'
+import type { WorkspaceSpawnFacts } from './ptyShells'
 
 /**
  * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
@@ -55,6 +56,19 @@ const NESTED_CLAUDE_ENV = [
   'CLAUDE_CODE_SSE_PORT',
   'CLAUDE_CODE_ENTRYPOINT'
 ] as const
+
+/**
+ * WS-3 (design §4.2): the workspace a spawn belongs to, exported to the shell so recap, hooks and the
+ * agent itself can tell which workspace they run in. Set ONLY for a workspace board (MAIN-resolved by
+ * `ptyShells.resolveSpawnCwd`); every spawn first deletes any INHERITED copy — an Expanse launched
+ * from another Expanse's workspace terminal (`pnpm dev` in a board) carries its parent's values, and
+ * a project-level board must never claim a workspace it is not in.
+ */
+const WORKSPACE_ENV = {
+  id: 'CANVAS_WORKSPACE_ID',
+  root: 'CANVAS_WORKSPACE_ROOT',
+  context: 'CANVAS_WORKSPACE_CONTEXT'
+} as const
 
 /** Per-spawn OpenRouter routing intent (mirrors `TerminalBoard.openRouter` / `SpawnOpts`). */
 export interface OpenRouterSpawnIntent {
@@ -141,6 +155,8 @@ export function buildSpawnEnv(
     /** T1d "Flicker-free terminals" (app-wide setting, read fresh per spawn in pty.ts). When true,
      *  do NOT force alt-screen off → the CLI keeps its default alt-screen (zero resize litter). */
     flickerFree?: boolean
+    /** WS-3: the MAIN-resolved workspace of a workspace board; absent for a project-level board. */
+    workspace?: WorkspaceSpawnFacts
   }
 ): Record<string, string> {
   let recapEnv: Record<string, string> | undefined
@@ -174,6 +190,13 @@ export function buildSpawnEnv(
   // default alt-screen (zero resize litter, #51828); OFF forces it off (selection-during-stream, #332).
   if (opts.flickerFree) delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   else env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1'
+  // WS-3: never inherit a workspace; export this board's own (a deliberate injection, unfiltered).
+  for (const k of Object.values(WORKSPACE_ENV)) delete env[k]
+  if (opts.workspace) {
+    env[WORKSPACE_ENV.id] = opts.workspace.id
+    env[WORKSPACE_ENV.root] = opts.workspace.root
+    if (opts.workspace.context) env[WORKSPACE_ENV.context] = opts.workspace.context
+  }
   // Recap seam LAST word (its documented override contract): can still override the alt-screen key.
   Object.assign(env, recapEnv ?? {})
   for (const k of NESTED_CLAUDE_ENV) delete env[k]

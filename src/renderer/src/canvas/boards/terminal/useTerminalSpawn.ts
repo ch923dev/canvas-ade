@@ -85,6 +85,7 @@ import { createTerminalWriteCoalescer, type TerminalWriteCoalescer } from './ter
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
 import { resolveInitialScrollback } from './terminalScrollback'
+import { spawnWorkspaceFor } from './spawnWorkspace'
 import {
   terminalThemeColors,
   resolveTerminalFontFamily,
@@ -670,17 +671,17 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // Pass only the two consumed fields (not the whole `board`) so exhaustive-deps keys
     // respawn on board.cwd/launchCommand — NOT the board identity (which churns on a
     // move/rename/font-change and would respawn the PTY).
-    const { cwd, launchCommand } = resolveSpawnArgs(
+    const args = resolveSpawnArgs(
       { cwd: board.cwd, launchCommand: board.launchCommand },
       projectDir,
+      spawnWorkspaceFor(board.id), // WS-3: read at spawn time, never a spawn dep
       override
     )
     void window.api
       .spawnTerminal({
         id: board.id,
         shell: board.shell,
-        cwd,
-        launchCommand,
+        ...args,
         cols: term.cols,
         rows: term.rows,
         monitorActivity: monitorActivityRef.current,
@@ -1062,16 +1063,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       if (spawned || !spawnAllowed) return
       if (!finiteDims(fit.proposeDimensions())) return
       spawned = true
-      const { cwd, launchCommand } = resolveSpawnArgs(
+      const args = resolveSpawnArgs(
         { cwd: board.cwd, launchCommand: board.launchCommand },
-        projectDir
+        projectDir,
+        spawnWorkspaceFor(board.id) // WS-3: read at spawn time, never a spawn dep
       )
       window.api
         .spawnTerminal({
           id: board.id,
           shell: board.shell,
-          cwd,
-          launchCommand,
+          ...args,
           cols: term.cols,
           rows: term.rows,
           monitorActivity: monitorActivityRef.current,

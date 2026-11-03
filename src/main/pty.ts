@@ -29,7 +29,7 @@ import {
 } from './ptyOutput'
 import { createChunkBatcher, drainBatch, ownedPort } from './ptyDataBatch'
 import { readTerminalSnapshotAsync } from './terminalSnapshot'
-import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
+import { enumerateShells, resolveShell, resolveSpawnCwd } from './ptyShells'
 import { getCurrentDir } from './projectStore'
 import { createPasteModeTracker } from './ptyPasteMode'
 import { attachPortInput, clampSpawnDim } from './ptyResize'
@@ -90,6 +90,11 @@ export interface SpawnOpts {
    * NEVER crosses this IPC — MAIN resolves it from the encrypted store.
    */
   openRouter?: { enabled: boolean; model?: string }
+  /**
+   * WS-3: the board's workspace id (absent ⇒ project-level). Only an id: MAIN resolves the root from
+   * its OWN workspace mirror and validates `cwd` against it (`ptyShells.resolveSpawnCwd`).
+   */
+  workspaceId?: string
 }
 
 /** Lifecycle state pushed to the renderer over the data plane (2.1). */
@@ -767,8 +772,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     // the PTY at its spawn dimensions and causing TUI misrenders.
     const spawnCols = clampSpawnDim(opts.cols ?? 80, 80)
     const spawnRows = clampSpawnDim(opts.rows ?? 24, 24)
-    // PR-2: resolve the cwd ONCE so the live process and the gitDiff cwd map agree.
-    const spawnCwd = safeCwd(opts.cwd)
+    // PR-2: resolve the cwd ONCE so the live process and the gitDiff cwd map agree. WS-3: a
+    // workspace board's cwd is MAIN-decided and strict — `cwdError` refuses the spawn (never $HOME).
+    const { cwd: spawnCwd, workspace, error: cwdError } = await resolveSpawnCwd(opts)
     // Terminal-copy fix: baseline env (FORCE_HYPERLINK + no-alt-screen for Claude Code)
     // with the recap policy seam spread last — see ptySpawnEnv.ts for the full rationale.
     const env = buildSpawnEnv(recapEnvProvider, {
@@ -776,13 +782,15 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       launchCommand: opts.launchCommand,
       cwd: opts.cwd,
       openRouter: opts.openRouter,
-      flickerFree: isFlickerFree() // T1d: app-wide setting, read fresh per spawn (no cache)
+      flickerFree: isFlickerFree(), // T1d: app-wide setting, read fresh per spawn (no cache)
+      workspace // WS-3: CANVAS_WORKSPACE_* for a workspace board only
     })
     let proc: pty.IPty
     try {
       // Daemon-first (DESIGN.md D2/D4): an IPty-shaped proxy from the PTY host when the gate is
       // ON (sessions survive app restarts), the classic in-proc node-pty otherwise — acquireProc
       // owns the choice + the surfaced fallback. Everything below treats them identically.
+      if (cwdError) throw new Error(cwdError) // WS-3: reported as spawn-failed, like any spawn error
       proc = await acquireProc(opts, shell, args, spawnCols, spawnRows, spawnCwd, env)
     } catch (err) {
       // No live session was registered, so report the failure straight back.

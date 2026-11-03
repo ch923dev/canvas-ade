@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   WORKSPACE_COLORS,
   WORKSPACE_GOAL_MAX,
+  effectiveRoot,
   isValidWorkspaceGoal,
   isValidWorkspaceRef,
   nextWorkspaceColor,
@@ -94,5 +95,50 @@ describe('workspace refs + colours', () => {
     const all = WORKSPACE_COLORS.map((color) => ({ color }))
     expect(nextWorkspaceColor(all)).toBe(WORKSPACE_COLORS[0])
     expect(nextWorkspaceColor([...all, { color: 'blue' }])).toBe(WORKSPACE_COLORS[1])
+  })
+})
+
+describe('effectiveRoot — the folder a workspace runs in (WS-3, §4.1)', () => {
+  const wt = (repoRoot: string, worktree = '.canvas/worktrees/ws-a') => [{ repoRoot, worktree }]
+
+  it.each([
+    ['folder workspace = its root', { root: 'api' }, 'api'],
+    ['folder workspace "." = the project', { root: '.' }, '.'],
+    ['root is canonicalized', { root: './api//src/' }, 'api/src'],
+    ['empty worktree list = the root', { root: 'api', worktrees: [] }, 'api'],
+    [
+      'polyrepo: root IS the repo ⇒ the worktree',
+      { root: 'api', worktrees: wt('api') },
+      '.canvas/worktrees/ws-a'
+    ],
+    [
+      'polyrepo: subfolder of the repo',
+      { root: 'api/src', worktrees: wt('api') },
+      '.canvas/worktrees/ws-a/src'
+    ],
+    [
+      'monorepo: project-repo subfolder',
+      { root: 'packages/api', worktrees: wt('.') },
+      '.canvas/worktrees/ws-a/packages/api'
+    ],
+    [
+      'monorepo: whole project on a branch',
+      { root: '.', worktrees: wt('.') },
+      '.canvas/worktrees/ws-a'
+    ]
+  ] as const)('%s', (_label, ws, want) => {
+    expect(effectiveRoot(ws)).toBe(want)
+  })
+
+  it.each([
+    ['root escapes', { root: '../x' }],
+    ['root absolute', { root: '/etc' }],
+    ['root outside the worktree repo', { root: 'uploader', worktrees: wt('api') }],
+    ['repo name is only a prefix of root', { root: 'api-v2', worktrees: wt('api') }],
+    ['whole project, repo is a subfolder', { root: '.', worktrees: wt('api') }],
+    ['worktree path escapes', { root: 'api', worktrees: wt('api', '../elsewhere') }],
+    ['repoRoot escapes', { root: 'api', worktrees: wt('..') }]
+  ] as const)('null when %s', (_label, ws) => {
+    expect(effectiveRoot(ws)).toBeNull()
   })
 })
