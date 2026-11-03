@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { BoardFrame, BoardMenu } from './BoardFrame'
 import { BoardFullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
-import type { NamedGroup } from '../lib/boardSchema'
+import { createBoard, type NamedGroup } from '../lib/boardSchema'
 
 // `globals: false` in vitest.config means RTL's auto-cleanup hook isn't registered,
 // so each render would leak its DOM (and portaled body content) into the next test.
@@ -211,5 +211,51 @@ describe('BoardMenu — GROUP-06 per-group remove rows', () => {
     fireEvent.pointerDown(row)
     fireEvent.click(row)
     expect(onRemoveFromGroup).toHaveBeenCalledWith('g2')
+  })
+})
+
+// WS-4: the "Move to workspace" rows. BoardWorkspaceMenuItems reads `workspaces` + the board live
+// from the store; a move is ONE undoable store step.
+describe('BoardMenu — WS-4 Move to workspace rows', () => {
+  const board = { ...createBoard('planning', { id: 'b1', x: 0, y: 0 }) }
+  const seedWs = (workspaceId?: string): void =>
+    useCanvasStore.setState({
+      boards: [workspaceId ? { ...board, workspaceId } : board],
+      workspaces: [
+        { id: 'w1', name: 'API', goal: '', color: 'blue', root: 'api' },
+        { id: 'w2', name: 'Web', goal: '', color: 'green', root: 'web' },
+        { id: 'w3', name: 'Old', goal: '', color: 'amber', root: 'old', state: 'archived' }
+      ],
+      past: [],
+      future: []
+    })
+  afterEach(() => useCanvasStore.setState({ boards: [], workspaces: [], past: [], future: [] }))
+  const labels = (): Array<string | undefined> =>
+    [...document.querySelectorAll('.board-menu-item')].map((b) => b.textContent?.trim())
+
+  it('offers every other live workspace (never an archived one) and no project-level row when unassigned', () => {
+    seedWs()
+    render(<BoardMenu boardId="b1" onDelete={() => {}} />)
+    fireEvent.click(screen.getByTitle('More'))
+    expect(labels()).toEqual(expect.arrayContaining(['Move to API', 'Move to Web']))
+    expect(labels()).not.toContain('Move to Old')
+    expect(labels()).not.toContain('Make project-level')
+  })
+
+  it('moves the board in ONE undoable step, and "Make project-level" takes it back out', () => {
+    seedWs('w1')
+    render(<BoardMenu boardId="b1" onDelete={() => {}} />)
+    fireEvent.click(screen.getByTitle('More'))
+    expect(labels()).not.toContain('Move to API') // already there
+    const row = screen.getByText('Move to Web')
+    fireEvent.pointerDown(row)
+    fireEvent.click(row)
+    expect(useCanvasStore.getState().boards[0].workspaceId).toBe('w2')
+    expect(useCanvasStore.getState().past).toHaveLength(1)
+    fireEvent.click(screen.getByTitle('More'))
+    const out = screen.getByText('Make project-level')
+    fireEvent.pointerDown(out)
+    fireEvent.click(out)
+    expect(useCanvasStore.getState().boards[0].workspaceId).toBeUndefined()
   })
 })
