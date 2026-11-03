@@ -1,13 +1,15 @@
 /**
  * The board ⋯ menu (extracted from BoardFrame.tsx at the S1 max-lines ratchet — the
  * boardDefaults precedent): the shared overflow menu every board's title bar mounts, with the
- * spatial-I2 "Make main board" row, the S6 group rows, the S1 caller-supplied extraItems
- * (terminal lead grant/revoke), and the standard Full view / Duplicate / Delete actions.
+ * spatial-I2 "Make main board" row, the S6 group rows, the WS-4 Move-to-workspace rows, the S1
+ * caller-supplied extraItems (terminal lead grant/revoke), and the standard Full view / Duplicate /
+ * Delete actions.
  * BoardFrame re-exports BoardMenu + BoardMenuExtraItem so existing import sites are unchanged.
  */
 import type { MouseEvent, ReactElement } from 'react'
 import { Fragment, useContext, useRef, useState } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
+import { showToast } from '../store/toastStore'
 import { isDockedTerminal } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
 import { IconBtn } from './BoardFrame'
@@ -93,6 +95,50 @@ function BoardGroupMenuItems({
       {onRemoveFromAllGroups &&
         memberGroups.length >= 2 &&
         renderItem('Remove from all groups', false, onRemoveFromAllGroups)}
+    </>
+  )
+}
+
+/**
+ * WS-4 "Move to workspace" rows (a board joins 0 or 1 workspace — D-3): one "Move to {name}" per
+ * other live workspace, plus "Make project-level" when it is in one. ONE undoable step through the
+ * store (`assignBoardsToWorkspace`, which brings a swarm board's docked workers along). A running
+ * terminal is not respawned — its next Start/Restart runs where the spawn path says. Like the group
+ * rows, mounted only while the menu is open, so the workspace subscription costs a closed title bar
+ * nothing.
+ */
+function BoardWorkspaceMenuItems({
+  boardId,
+  renderItem
+}: {
+  boardId: string
+  renderItem: RenderMenuItem
+}): ReactElement | null {
+  const workspaces = useCanvasStore((s) => s.workspaces)
+  const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId))
+  // A docked swarm worker always follows its swarm board — it has no membership of its own.
+  if (!board || isDockedTerminal(board)) return null
+  const current = board.workspaceId
+  const targets = workspaces.filter((w) => w.id !== current && w.state !== 'archived')
+  if (targets.length === 0 && current === undefined) return null
+  const move = (id: string | null, name: string): void => {
+    useCanvasStore.getState().assignBoardsToWorkspace([boardId], id)
+    showToast({
+      message: id ? `Moved to “${name}”.` : 'Moved out of the workspace — now project-level.',
+      action: { label: 'Undo', run: () => useCanvasStore.getState().undo() }
+    })
+  }
+  return (
+    <>
+      <div className="board-menu-cap" aria-hidden="true">
+        Workspace
+      </div>
+      {targets.map((w) => (
+        <span key={`ws-${w.id}`} style={{ display: 'contents' }}>
+          {renderItem(`Move to ${w.name}`, false, () => move(w.id, w.name))}
+        </span>
+      ))}
+      {current !== undefined && renderItem('Make project-level', false, () => move(null, ''))}
     </>
   )
 }
@@ -217,6 +263,7 @@ export function BoardMenu({
               renderItem={item}
             />
           )}
+          {boardId && <BoardWorkspaceMenuItems boardId={boardId} renderItem={item} />}
           {onDelete && item('Delete', true, () => onDelete())}
         </Menu>
       )}

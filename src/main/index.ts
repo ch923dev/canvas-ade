@@ -52,6 +52,7 @@ import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
 import { registerProjectLibraryIpc } from './projectLibrary'
+import { registerWorkspaceIpc } from './workspaceIpc'
 import { registerFileIpc } from './fileIpc'
 import { createFileWatcher, type FileWatcher } from './fileWatch'
 import { runSummarize, defaultDeps } from './llmService'
@@ -890,6 +891,8 @@ app.whenReady().then(async () => {
   registerSpawnCapHandlers(ipcMain, () => mainWindow, userData)
   // Project Library (list/reveal/open files saved under <project>/.canvas/{downloads,assets}).
   registerProjectLibraryIpc(ipcMain, () => mainWindow)
+  // Project Workspaces WS-4: frame-guarded workspace:* lifecycle (create/delete/status) IPC.
+  registerWorkspaceIpc(ipcMain, () => mainWindow)
 
   // ── Recap consent IPC + hook-install policy (Task 10 Step 5) ────────────────────────
   // recap:getConsent / recap:setConsent (frame-guarded inside recapConsent.ts). The decision

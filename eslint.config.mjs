@@ -335,7 +335,10 @@ export default tseslint.config(
     // and it arms the schema-floor guard, which must be live before any save path can run; (b)
     // `provisionDevSandbox(...)` must run in whenReady, where the POST-redirect userData (holding
     // recent-projects.json) exists; (c) their one import line. Ratchet DOWNWARD on the next split.
-    rules: { 'max-lines': ['error', { max: 714, skipBlankLines: true, skipComments: true }] }
+    // 714→716 (Project Workspaces WS-4): the one-line `registerWorkspaceIpc(ipcMain, ...)` beside the
+    // other frame-guarded handler registrations + its import. The lifecycle lives in
+    // workspaceStore.ts / workspaceIpc.ts. Ratchet DOWNWARD on the next split.
+    rules: { 'max-lines': ['error', { max: 716, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/terminal/useTerminalSpawn.ts'],
