@@ -238,21 +238,15 @@ to end the name clash.
 
 ## Alternatives rejected
 
-- **A · Extend `NamedGroup` with a workspace payload.** Rejected:
-  - Multi-membership breaks D-3 unless a new invariant is enforced by every group writer (the
-    store, I1's `edit_groups`, Jarvis).
-  - Empty groups drop on load, orphaning a worktree.
-  - "Ungroup" would destroy a workspace without a dirty prompt.
-  - It forces floor 24 anyway.
-- **C · One canvas per workspace (`.canvas/workspaces/<id>/canvas.json`).** Rejected:
-  - It violates D-2: switching reloads the canvas.
-  - It rules out cross-workspace cables and a shared plan.
-  - It re-plumbs the ADR 0009 layout, project open and switch, background sessions (ADR 0011) and
-    MCP board routing.
-- **The sidecar variant of B (`.canvas/workspaces.json`, no floor bump).** Rejected:
-  - It needs two-file consistency and an undo rail that spans files.
-  - An older app would silently run workspace terminals at the project root, with no confinement.
-    A floor refusal plus a forced update is the safer failure.
+- **A · Extend `NamedGroup` with a workspace payload:** groups are multi-member, drop when empty
+  and ungroup without a dirty prompt, so D-3 and the worktree lifecycle break, and it raises the
+  floor to 24 anyway.
+- **C · One canvas per workspace (`.canvas/workspaces/<id>/canvas.json`):** switching becomes a
+  reload (violates D-2), cross-workspace cables and a shared plan are lost, and project open/switch,
+  background sessions (ADR 0011) and MCP routing all need re-plumbing.
+- **Sidecar variant of B (`.canvas/workspaces.json`, no floor bump):** an older app would silently
+  run workspace terminals at the project root, unconfined; a floor refusal plus a forced update is
+  the safer failure, and it avoids two-file consistency and a cross-file undo rail.
 
 ## Consequences
 
