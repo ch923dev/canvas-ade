@@ -119,6 +119,9 @@ export function useMcpPublish(): void {
   // app self-model's `canvas.groups` goes live. Subscribing re-publishes when a group is
   // created/renamed/membership-changed.
   const groups = useCanvasStore((s) => s.groups)
+  // v24: mirror the workspace records (+ each board's workspaceId below) to MAIN, whose own copy is
+  // the authority WS-3's spawn path resolves a workspace root against (never a renderer-sent root).
+  const workspaces = useCanvasStore((s) => s.workspaces)
   // Subscribe to the runtime slices so a liveness change (terminal start/exit, a
   // browser load/fail) re-publishes even when the durable `boards` array is unchanged.
   const running = useTerminalRuntimeStore((s) => s.running)
@@ -156,10 +159,12 @@ export function useMcpPublish(): void {
       publish({
         boards: snapshot.map((entry, i) => ({
           ...entry,
-          ...boardContextFields(boards[i], signals)
+          ...boardContextFields(boards[i], signals),
+          ...(boards[i].workspaceId ? { workspaceId: boards[i].workspaceId } : {})
         })),
         connectors,
         groups,
+        workspaces,
         ...(view ? { view } : {})
       })
     }, 150)
@@ -168,6 +173,7 @@ export function useMcpPublish(): void {
     boards,
     connectors,
     groups,
+    workspaces,
     running,
     previewById,
     attention,

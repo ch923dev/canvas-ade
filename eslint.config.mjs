@@ -402,7 +402,9 @@ export default tseslint.config(
     // 725→727 (v19 kanban card-detail): two CanvasState members — the ephemeral `pendingFileFocus`
     // field + the `openFileRef` signature — must live in the store's own state type (a slice implements
     // openFileRef but cannot declare it); both are single lines, so the cap moves by exactly two.
-    rules: { 'max-lines': ['error', { max: 727, skipBlankLines: true, skipComments: true }] }
+    // 727→720 (v24 workspaces): the load-notice toast moved out to store/loadNotices.ts and the
+    // workspace state/actions live in slices/workspaceSlice.ts — net seven lines down, ratcheted.
+    rules: { 'max-lines': ['error', { max: 720, skipBlankLines: true, skipComments: true }] }
   },
 
   // Disable all formatting rules that would conflict with Prettier. MUST be last.

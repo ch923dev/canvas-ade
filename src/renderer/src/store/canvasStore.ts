@@ -28,11 +28,10 @@ import {
   MIN_BOARD_SIZE,
   DEFAULT_BOARD_SIZE,
   DEFAULT_BACKGROUND_DIM,
-  DEFAULT_BACKGROUND_SATURATION,
-  SCHEMA_VERSION
+  DEFAULT_BACKGROUND_SATURATION
 } from '../lib/boardSchema'
 import { reconcileSession, type CanvasSession } from '../lib/sessionSidecar'
-import { showToast } from './toastStore'
+import { noticeLoadedDoc } from './loadNotices'
 import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
 import { tidyApply, type TidyMode } from '../lib/tidyLayout'
@@ -45,6 +44,8 @@ import { createConnectorSlice } from './slices/connectorSlice'
 import { createFileBoardSlice } from './slices/fileBoardSlice'
 import { createGroupSlice, pruneBoardFromGroups, type ApplyGroupOps } from './slices/groupSlice'
 import { createLayoutSlice, type LayoutSliceState } from './slices/layoutSlice'
+import { createWorkspaceSlice, loadedWorkspaceState } from './slices/workspaceSlice'
+import type { WorkspaceSliceState } from './slices/workspaceSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
 
 // selectOtherPlanningBoards lives in ./planningTransfer with the rest of the transfer concern;
@@ -88,7 +89,7 @@ export interface CanvasSnapshot {
   groups: NamedGroup[]
 }
 
-export interface CanvasState extends LayoutSliceState {
+export interface CanvasState extends LayoutSliceState, WorkspaceSliceState {
   boards: Board[]
   /**
    * Typed board↔board connectors (M2). Holds ORCHESTRATION connectors in memory; preview
@@ -569,6 +570,7 @@ function applyLoadedDoc(
     // (fromObject already validated it) → fitView / no backdrop, never a blocked load.
     viewport: session?.viewport ?? d.viewport,
     background: session?.background ?? d.background ?? null,
+    ...loadedWorkspaceState(d), // v24 — settings-class, so it never rides the (reset) undo rails
     selectedId: null,
     selectedIds: [],
     past: [],
@@ -868,6 +870,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   ...createGroupSlice(set, get, { trackedChange, newId }),
 
   ...createLayoutSlice(set, get, { trackedChange }),
+
+  ...createWorkspaceSlice(set, get, { trackedChange, newId, rewritePendingBoards }),
 
   updateBoard: (id, patch) =>
     set((s) => {
@@ -1190,7 +1194,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       get().viewport,
       [...memoizedPreviewConnectors(get().boards), ...get().connectors],
       get().groups,
-      get().background
+      get().background,
+      { workspaces: get().workspaces, repoDefaults: get().repoDefaults }
     ),
   loadObject: (doc) => {
     // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):
@@ -1206,7 +1211,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
-    noticeIfNewerDoc(d)
+    noticeLoadedDoc(d)
     applyLoadedDoc(set, d)
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
@@ -1242,7 +1247,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (bak.ok) {
         try {
           const d2 = fromObject(bak.doc)
-          noticeIfNewerDoc(d2)
+          noticeLoadedDoc(d2)
           applyLoadedDoc(set, d2, openProject, session)
           return
         } catch (bakErr) {
@@ -1257,28 +1262,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
-    noticeIfNewerDoc(d)
+    noticeLoadedDoc(d)
     applyLoadedDoc(set, d, openProject, session)
   }
 }))
-
-/**
- * ADR 0007 forward-compatible open: a doc written by a newer app (additive bump) opens
- * fine, but the user should know features may be missing and that the next save
- * re-stamps the file at THIS app's version. Non-blocking info toast, keyed so a
- * project switch replaces rather than stacks it.
- */
-function noticeIfNewerDoc(d: CanvasDoc): void {
-  if (d.schemaVersion > SCHEMA_VERSION) {
-    showToast({
-      id: 'schema-forward-open',
-      kind: 'info',
-      message:
-        `Project was saved by a newer version of the app (schema v${d.schemaVersion}). ` +
-        `Opened in compatibility mode — saving re-stamps it at v${SCHEMA_VERSION}.`
-    })
-  }
-}
 
 /**
  * Machine-driven board patch (#BUG-057): same type-filtered merge as updateBoard but

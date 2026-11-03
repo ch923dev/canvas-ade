@@ -113,8 +113,20 @@
  *   is BREAKING per ADR 0007: a pre-23 `assertBoard` default branch throws on the unknown type,
  *   so the compat floor moves to 23 too. The migration is identity (the type only appears on
  *   newly-authored swarm boards).
+ * - v24 = Project Workspaces (docs/research/2026-11-02-project-workspaces §4.1, O-2): the doc-level
+ *   `workspaces[]` (each `{id, name, goal, color, root, worktrees?, state?, keepLayout?}`, at most
+ *   ONE worktree in v1 — the list shape keeps multi-repo open) and the doc-level `repoDefaults`
+ *   (O-10: the remembered base branch per repo root), plus an optional BoardCommon `workspaceId`
+ *   (0 or 1 workspace per board — D-3; absent ⇒ project-level). A NEW DOC-LEVEL KEY is BREAKING per
+ *   ADR 0007: a pre-24 reader opens the doc but its toObject rebuilds the root object, so its next
+ *   save would DROP every workspace — the compat floor moves to 24 too. Both keys ride the same bump
+ *   (`repoDefaults` alone would raise the floor; together they cost one). The migration backfills an
+ *   empty `workspaces` array; there is nothing else to rewrite. Workspace colours are a closed token
+ *   set with a read-time clamp (an unknown token coerces to the first — the v15 viewport discipline),
+ *   so adding a colour later is ADDITIVE. O-2: a release that raises this floor forces older apps to
+ *   update on both feeds (WS-12), so WS-12 must be released before v24 ships.
  */
-export const SCHEMA_VERSION = 23
+export const SCHEMA_VERSION = 24
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -158,6 +170,9 @@ export const SCHEMA_VERSION = 23
  * DiagramElement `revisions` field is ADDITIVE.) Floor moves to 23 with the v23 `swarm` board
  * type (orchestration S1): an app older than 23 has no `swarm` case in `assertBoard`, so it would
  * HARD-FAIL deep validation on a doc containing one — pre-23 apps get the clean "update the app
- * to open it" message instead of a `.bak`-fallback.
+ * to open it" message instead of a `.bak`-fallback. Floor moves to 24 with the v24 doc-level
+ * `workspaces[]` + `repoDefaults` (Project Workspaces): a pre-24 app would OPEN the doc but drop
+ * both keys on its next save (toObject rebuilds the root) — silently un-assigning every board — so
+ * pre-24 apps get the clean "update the app to open it" message instead.
  */
-export const MIN_READER_VERSION = 23
+export const MIN_READER_VERSION = 24

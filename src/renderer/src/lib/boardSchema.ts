@@ -44,6 +44,9 @@ import {
 import { DEFAULT_KANBAN_COLUMNS, assertKanbanContent } from './kanbanSchema'
 import { assertTerminalContent } from './terminalBoardSchema'
 import { assertSwarmContent, dropDanglingBoardRefs } from './swarmBoardSchema'
+import { reconcileGroups } from './groupSchema'
+import { reconcileWorkspaces, repoDefaultsField } from './workspaceSchema'
+import type { RepoDefaults, Workspace, WorkspaceDocFields } from './workspaceSchema'
 import type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef } from './kanbanSchema'
 import {
   assertDiagramSpec,
@@ -53,6 +56,7 @@ import {
 import type { DiagramSpec, DiagramRevision } from '@expanse-ade/diagram/spec'
 export type { KanbanBoard, KanbanColumn, KanbanCard, KanbanFileRef }
 export type { DiagramSpec, DiagramRevision }
+export type { RepoDefaults, Workspace, WorkspaceWorktree, WorkspaceColor } from './workspaceSchema'
 export { DIAGRAM_REVISION_CAP }
 
 /**
@@ -142,6 +146,9 @@ export interface BoardCommon {
   h: number
   title: string
   z?: number
+  /** v24: the workspace this board belongs to (0 or 1 — D-3). Absent ⇒ project-level. A dangling id
+   *  is cleared on load (workspaceSchema.reconcileWorkspaces). Patchable + undoable (assign). */
+  workspaceId?: string
 }
 
 export interface TerminalBoard extends BoardCommon {
@@ -486,10 +493,10 @@ export interface Connector {
 
 /**
  * A user-named set of boards for durable navigation/grouping purposes. A board may
- * belong to MANY groups (multi-membership is intentional). Named-empty groups survive
- * — a group whose boards were all deleted is kept so the user doesn't lose the name.
- * Forward-compatible with the deferred Feature Workspaces phase, which will add an
- * optional `worktreePath` to back the group with a git worktree.
+ * belong to MANY groups (multi-membership is intentional). Empty groups never persist —
+ * a group whose boards were all deleted is dropped (groupSchema.reconcileGroups, and the
+ * live delete-sweep pruneBoardFromGroups). Worktree backing is NOT a group concern: it
+ * lives on the v24 `Workspace` record (workspaceSchema.ts), and a group may span workspaces.
  */
 export interface NamedGroup {
   id: string
@@ -571,6 +578,11 @@ export interface CanvasDoc {
    * docs and backdrop-less projects serialize byte-identically to pre-v9.
    */
   background?: CanvasBackground
+  /** Project workspaces (schema v24 — a doc-level key, so the floor moved too). Optional so a
+   *  pre-v24 doc still parses; the 23→24 migration backfills `[]` and fromObject always returns one. */
+  workspaces?: Workspace[]
+  /** v24 (O-10): the remembered base branch per repo root. Absent ⇒ none remembered. */
+  repoDefaults?: RepoDefaults
 }
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────
@@ -678,11 +690,12 @@ export function previewConnectorsFor(boards: Board[]): Connector[] {
  * ever replaced immutably, never mutated in place. (Mutating the doc would corrupt the
  * store and break undo / React change detection.)
  *
- * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
- * viewport, boards, connectors, groups}. Ephemeral session state (selected tool, selected
- * element, in-flight draft/erase, hover, the in-flight "connecting" gesture) lives in
- * React/Zustand and MUST NEVER be routed into `board.elements[]`, a board patch key,
- * or `connectors[]`, or it bloats every autosave and resurrects stale state on reload.
+ * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion, viewport,
+ * boards, connectors, groups, background, workspaces, repoDefaults}. Ephemeral session
+ * state (selected tool, selected element, in-flight draft/erase, hover, the in-flight
+ * "connecting" gesture) lives in React/Zustand and MUST NEVER be routed into
+ * `board.elements[]`, a board patch key, or `connectors[]`, or it bloats every autosave and
+ * resurrects stale state on reload.
  * (Excalidraw's cleanAppStateForExport discipline, enforced here by omission.)
  */
 export function toObject(
@@ -690,7 +703,8 @@ export function toObject(
   viewport: CanvasViewport | null,
   connectors: Connector[] = [],
   groups: NamedGroup[] = [],
-  background: CanvasBackground | null = null
+  background: CanvasBackground | null = null,
+  ws: WorkspaceDocFields = { workspaces: [] }
 ): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -702,7 +716,9 @@ export function toObject(
     connectors,
     groups,
     // Omit when unset so a backdrop-less project's canvas.json stays byte-identical to v8.
-    ...(background ? { background } : {})
+    ...(background ? { background } : {}),
+    workspaces: ws.workspaces,
+    ...repoDefaultsField(ws.repoDefaults)
   }
 }
 
@@ -795,7 +811,12 @@ const MIGRATIONS: Record<number, Migration> = {
   // v23: the `swarm` board type (orchestration S1). The type only appears on newly-authored swarm
   // boards, so existing docs have nothing to backfill — identity bump. BREAKING (floor → 23): a
   // pre-23 reader's assertBoard throws on the unknown type (boardSchemaVersion.ts).
-  22: (doc) => ({ ...doc, schemaVersion: 23 })
+  22: (doc) => ({ ...doc, schemaVersion: 23 }),
+  // v24: project workspaces — doc-level `workspaces[]` + `repoDefaults`, and an optional
+  // BoardCommon `workspaceId`. Backfill an empty `workspaces` array (no workspaces yet); nothing
+  // else to rewrite. BREAKING (floor → 24): a NEW doc-level key — a pre-24 reader's toObject
+  // rebuilds the root and would DROP every workspace on its next save (boardSchemaVersion.ts).
+  23: (doc) => ({ ...doc, schemaVersion: 24, workspaces: (doc as CanvasDoc).workspaces ?? [] })
 }
 
 /**
@@ -1129,35 +1150,6 @@ function assertConnector(c: unknown): void {
   }
 }
 
-/** Validate one group (id/name strings + a string[] boardIds); throws on mismatch. */
-function assertGroup(g: unknown): void {
-  if (!isRecord(g)) fail('group is not an object')
-  if (typeof g.id !== 'string') fail('group has a non-string id')
-  if (typeof g.name !== 'string') fail('group has a non-string name')
-  if (!Array.isArray(g.boardIds)) fail('group boardIds is not an array')
-  for (const bid of g.boardIds as unknown[]) {
-    if (typeof bid !== 'string') fail('group boardIds contains a non-string entry')
-  }
-}
-
-/**
- * Reconcile a migrated doc's groups: validates each group, then prunes dangling
- * boardIds (pointing at boards that no longer exist) AND de-duplicates — `boardIds`
- * is set-semantic (a board either belongs or it doesn't), matching the store's
- * `addBoardsToGroup` write-path dedup. Any group left with ZERO members is dropped —
- * empty groups never persist (a group whose boards were all deleted is gone, matching
- * the live delete-sweep in pruneBoardFromGroups; reverses the old named-empty-survives
- * rule). Missing `groups` field (pre-migration or stripped) defaults to `[]`.
- */
-function reconcileGroups(doc: CanvasDoc): NamedGroup[] {
-  const raw = Array.isArray(doc.groups) ? doc.groups : []
-  raw.forEach(assertGroup)
-  const ids = new Set(doc.boards.map((b) => b.id))
-  return (raw as NamedGroup[])
-    .map((g) => ({ ...g, boardIds: [...new Set(g.boardIds.filter((bid) => ids.has(bid)))] }))
-    .filter((g) => g.boardIds.length > 0)
-}
-
 /**
  * Reconcile a migrated doc's connectors into the in-memory shape (Decision B,
  * dual-source). Validates every connector, drops danglers (an endpoint board is gone),
@@ -1302,9 +1294,12 @@ export function fromObject(doc: unknown): CanvasDoc {
   // keep orchestration only in memory (Decision B). Runs post-migrate so a v4 doc's
   // freshly-folded preview connectors are reconciled the same as a v5 doc's.
   migrated.connectors = reconcileConnectors(migrated)
-  // Reconcile groups (v6): validate, prune dangling boardIds, keep named-empty groups.
+  // Reconcile groups (v6): validate, prune dangling boardIds, drop groups left empty.
   // Runs post-migrate so a v5 doc's freshly-backfilled `[]` is handled like a v6 doc's.
-  migrated.groups = reconcileGroups(migrated)
+  migrated.groups = reconcileGroups(migrated, fail, isRecord)
+  // Reconcile workspaces (v24): validate, drop escaping roots (noted for a load toast), clear
+  // dangling board workspaceIds, docked workers inherit their host's (workspaceSchema.ts).
+  reconcileWorkspaces(migrated, fail)
   // Reconcile the backdrop (v9): degrade-don't-reject (see reconcileBackground). Delete
   // the key entirely when it degrades to nothing so the doc matches a backdrop-less save.
   const background = reconcileBackground(migrated)

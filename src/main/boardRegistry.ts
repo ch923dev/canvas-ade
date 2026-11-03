@@ -2,6 +2,8 @@ import type { IpcMain, BrowserWindow, IpcMainEvent } from 'electron'
 import type { DiagramSpec } from '@expanse-ade/diagram/spec'
 import { assertDiagramSpec } from '@expanse-ade/diagram/spec'
 import { isForeignSender } from './ipcGuard'
+import { scanOf } from './mirrorScan'
+import { sanitizeWorkspaces, type WorkspaceMirror } from './workspaceMirror'
 import { visibleWorld } from '../shared/spatialGeometry'
 import {
   MAX_CONTEXT_CWD,
@@ -83,6 +85,12 @@ export interface BoardMirror extends BoardContextFields {
    * on every non-planning board.
    */
   planning?: PlanningMirror
+  /**
+   * v24 Project Workspaces: the workspace this board belongs to (absent ⇒ project-level, D-3). A
+   * bounded id ({@link MAX_CONTEXT_ID}); MAIN resolves it against its OWN {@link listWorkspaces}
+   * mirror (WS-3) — never against a root the renderer sends. Not projected to agents yet (WS-9).
+   */
+  workspaceId?: string
 }
 
 /** A single agent-readable file reference on the board mirror (file-tree S5). Path only, no content. */
@@ -213,6 +221,9 @@ export interface GroupMirror {
   boardIds: string[]
 }
 
+export type { WorkspaceMirror, WorkspaceWorktreeMirror } from './workspaceMirror'
+export { sanitizeWorkspaces }
+
 /**
  * The buckets a renderer is allowed to publish (mirror of `BoardStatusBucket` in
  * `renderer/src/store/boardStatus.ts`). `status` arrives over an IPC channel, so an
@@ -274,6 +285,7 @@ export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatu
 let mirror: BoardMirror[] = []
 let connectorMirror: ConnectorMirror[] = []
 let groupMirror: GroupMirror[] = []
+let workspaceMirror: WorkspaceMirror[] = []
 /** C1: the user's last sanitized canvas view (null until a renderer with a mounted Canvas publishes one). */
 let viewMirror: CanvasView | null = null
 
@@ -294,19 +306,22 @@ function emitStatus(change: BoardStatusChange): void {
   }
 }
 
-/** Replace the stored snapshot and emit the per-board status diffs (M5). Groups (PR-5) and the view
- *  (C1) are metadata-only — stored, never diffed (no status transition rides on them). */
+/** Replace the stored snapshot and emit the per-board status diffs (M5). Groups (PR-5), the view
+ *  (C1) and workspaces (v24) are metadata-only — stored, never diffed (no status transition rides
+ *  on them). */
 function applySnapshot(
   nextBoards: BoardMirror[],
   nextConnectors: ConnectorMirror[],
   nextGroups: GroupMirror[] = [],
-  nextView: CanvasView | null = null
+  nextView: CanvasView | null = null,
+  nextWorkspaces: WorkspaceMirror[] = []
 ): void {
   const changes = diffStatus(mirror, nextBoards)
   mirror = nextBoards
   connectorMirror = nextConnectors
   groupMirror = nextGroups
   viewMirror = nextView
+  workspaceMirror = nextWorkspaces
   for (const c of changes) emitStatus(c)
   for (const cb of snapshotListeners) {
     try {
@@ -347,9 +362,10 @@ export function __applySnapshotForTest(
   boards: BoardMirror[],
   connectors: ConnectorMirror[] = [],
   groups: GroupMirror[] = [],
-  view: CanvasView | null = null
+  view: CanvasView | null = null,
+  workspaces: WorkspaceMirror[] = []
 ): void {
-  applySnapshot(boards, connectors, groups, view)
+  applySnapshot(boards, connectors, groups, view, workspaces)
 }
 
 /** Test seam — clear all status listeners between tests (unit tests only). */
@@ -367,20 +383,6 @@ const MAX_BOARDS = 500
 const MAX_CONNECTORS = 1000
 const MAX_GROUPS = 200
 
-/** How many raw entries a sanitizer may SCAN per output slot it can keep (malformed entries are
- *  skipped, so a cap-sized window alone could starve a payload with a few bad rows). */
-const SCAN_FACTOR = 4
-
-/**
- * Bound a sanitizer's scan BEFORE it iterates (I2 P3). `for…of` walks every index of a sparse
- * array — holes included — so a forged `mcp:boards` array with `length` 2^32-1 and no elements
- * never fills `out` and spins MAIN for minutes. Every loop over IPC data scans at most
- * `cap × SCAN_FACTOR` entries; `slice` copies only that window. A legit payload is never longer.
- */
-function scanOf(input: readonly unknown[], cap: number): readonly unknown[] {
-  const limit = cap * SCAN_FACTOR
-  return input.length > limit ? input.slice(0, limit) : input
-}
 /** Cap a single group's membership so one forged group can't grow MAIN memory unbounded. */
 const MAX_GROUP_MEMBERS = 500
 /** Cap a single planning board's mirrored file references (file-tree S5) so a forged push can't grow MAIN memory. */
@@ -760,6 +762,10 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       if (sanitizedPlanning !== undefined) entry.planning = sanitizedPlanning
       // C1: the classified context signals (each validated/clamped; a bad one drops, board kept).
       Object.assign(entry, sanitizeContextFields(b as Record<string, unknown>))
+      // v24: the board's workspace — a bounded id (over-length / non-string drops the field, board
+      // kept). Whether it names a REAL workspace is resolved against listWorkspaces() at use.
+      const workspaceId = boundedStr((b as BoardMirror).workspaceId, MAX_CONTEXT_ID)
+      if (workspaceId !== undefined) entry.workspaceId = workspaceId
       out.push(entry)
     }
   }
@@ -930,6 +936,11 @@ export function listGroups(): GroupMirror[] {
   return groupMirror
 }
 
+/** Last workspace snapshot the renderer pushed (v24; empty until the renderer publishes). */
+export function listWorkspaces(): WorkspaceMirror[] {
+  return workspaceMirror
+}
+
 /** Test seam — set the mirror directly (unit tests only). */
 export function __setMirrorForTest(next: BoardMirror[]): void {
   mirror = next
@@ -945,14 +956,20 @@ export function __setGroupsForTest(next: GroupMirror[]): void {
   groupMirror = next
 }
 
+/** Test seam — set the workspace mirror directly (unit tests only). */
+export function __setWorkspacesForTest(next: WorkspaceMirror[]): void {
+  workspaceMirror = next
+}
+
 /**
  * Register the renderer→MAIN board-snapshot channel. Sender-guarded so only the
  * main window's main frame can publish (mirrors pty.ts's isForeignSender). The
  * snapshot is control-plane metadata only — never board content.
  *
- * Accepts either the legacy boards-only array OR the `{ boards, connectors, groups, view? }` payload
- * (T4.6 added connectors; PR-5 added groups; C1 added the optional view). An array → connectors +
- * groups stay [] and the view null; an object without a (valid) view → view null.
+ * Accepts either the legacy boards-only array OR the `{ boards, connectors, groups, view?,
+ * workspaces? }` payload (T4.6 added connectors; PR-5 added groups; C1 added the optional view; v24
+ * added workspaces). An array → connectors + groups + workspaces stay [] and the view null; an
+ * object without a (valid) view → view null; one without workspaces (a pre-v24 renderer) → [].
  */
 export function registerBoardRegistryHandler(
   ipcMain: IpcMain,
@@ -967,17 +984,19 @@ export function registerBoardRegistryHandler(
       // Legacy / version-skew only: a renderer predating T4.6 sends a bare boards array.
       applySnapshot(sanitizeSnapshot(payload), [], [])
     } else if (payload && typeof payload === 'object') {
-      const { boards, connectors, groups, view } = payload as {
+      const { boards, connectors, groups, view, workspaces } = payload as {
         boards?: unknown
         connectors?: unknown
         groups?: unknown
         view?: unknown
+        workspaces?: unknown
       }
       applySnapshot(
         sanitizeSnapshot(boards),
         sanitizeConnectors(connectors),
         sanitizeGroups(groups),
-        sanitizeView(view)
+        sanitizeView(view),
+        sanitizeWorkspaces(workspaces)
       )
     }
   })
