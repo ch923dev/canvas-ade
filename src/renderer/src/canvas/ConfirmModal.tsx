@@ -431,10 +431,18 @@ export default function ConfirmModal(): React.ReactElement | null {
               {current.choices.label}
             </div>
           )}
+          {/* Equal columns that can shrink below their content (`minmax(0, 1fr)`): with flex, one
+              long unbreakable word (a branch name) set its tile's minimum width, squeezed the rest
+              and pushed the row out of the card. */}
           <div
             role="radiogroup"
             aria-label={current.choices.label ?? 'Options'}
-            style={{ display: 'flex', gap: 8 }}
+            style={{
+              display: 'grid',
+              gridAutoFlow: 'column',
+              gridAutoColumns: 'minmax(0, 1fr)',
+              gap: 8
+            }}
           >
             {current.choices.options.map((o) => {
               const on = o.id === current.choice
@@ -447,7 +455,8 @@ export default function ConfirmModal(): React.ReactElement | null {
                   data-testid={`confirm-choice-${o.id}`}
                   onClick={() => pickChoice(o.id)}
                   style={{
-                    flex: 1,
+                    minWidth: 0,
+                    overflowWrap: 'anywhere',
                     padding: '9px 8px',
                     borderRadius: 'var(--r-ctl, 5px)',
                     border: `1px solid ${on ? 'var(--accent)' : 'var(--border-subtle)'}`,
