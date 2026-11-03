@@ -52,7 +52,11 @@ import {
   type SwarmWorktreeDisposition,
   type SwarmWorktreeStatus
 } from '../shared/swarmLedgerTypes'
-import { createSwarmWorktreeStore, type SwarmWorktreeStore } from './swarmWorktree'
+import {
+  createSwarmWorktreeStore,
+  swarmWorkerRequest,
+  type SwarmWorktreeStore
+} from './swarmWorktree'
 import { createSwarmLedgerSession, type SwarmLedgerSession } from './swarmLedgerSession'
 import {
   createSwarmWatch,
@@ -518,7 +522,8 @@ export function registerSwarmHandlers(
       workerWorktrees: session.workerWorktrees,
       // S3: allocate BEFORE the board spawns (the `safeCwd` constraint). The executor refuses the
       // spawn on anything but success — there is no shared-tree fallback.
-      allocateWorktree: (workerName: string) => worktrees.allocate(runId, workerName),
+      allocateWorktree: (workerName: string) =>
+        worktrees.allocate(swarmWorkerRequest(runId, workerName)),
       releaseWorktree: async (worktree: string): Promise<void> => {
         await worktrees.removeIfClean(worktree)
       },

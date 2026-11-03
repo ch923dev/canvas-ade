@@ -71,7 +71,10 @@ function worktreeStub(
       if (choice !== 'keep') delete dirty[p]
       return { ok: true, detail: `${choice} done` }
     }),
-    owns: () => true
+    owns: () => true,
+    // WS-1 workspace helpers — the swarm never calls them.
+    listRepos: vi.fn(async () => []),
+    listBranches: vi.fn(async () => ({ ok: false as const, reason: 'stub' }))
   }
 }
 
