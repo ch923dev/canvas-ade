@@ -446,6 +446,10 @@ export type McpCommand =
         // via PATCHABLE_KEYS.terminal. A dangling reference degrades to an ordinary canvas
         // terminal (the fromObject reconcile), never a hidden board.
         dockedIn?: string
+        // WS-7: the workspace the new board joins — derived in MAIN from the CALLER's scope (never
+        // agent input; `mcpWorkspaceGuard`). The applier lands it only when the id names a live
+        // workspace, else acks {ok:false} before any side effect (no silent project-level board).
+        workspaceId?: string
       }
       connector?: { sourceId: string }
     }
@@ -494,6 +498,8 @@ export type McpCommand =
         planning?: { id: string }
         browser?: { id: string }
       }
+      // WS-7: every member joins this workspace (MAIN-derived, the addBoard rule).
+      workspaceId?: string
     }
   | {
       type: 'tidyBoards'

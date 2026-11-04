@@ -39,6 +39,7 @@ import {
   listBoardMirror,
   listConnectors,
   listGroups,
+  listWorkspaces,
   subscribeBoardStatus
 } from './boardRegistry'
 import { readDisplayInfo } from './screenInfo'
@@ -78,6 +79,8 @@ export function createMcpBoot(deps: McpBootDeps): () => Promise<RunningMcp | nul
     listConnectors,
     // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
     listGroups,
+    // WS-7: the workspace mirror — the MCP host's workspace confinement resolves scopes against it.
+    listWorkspaces,
     // C2: the user's live view (renderer mirror) + the display holding the window (read lazily).
     readView: () => ({ view: getCanvasView(), display: readDisplayInfo(getWin()) }),
     listSessions: listPtySessions,

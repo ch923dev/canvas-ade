@@ -16,6 +16,7 @@ import type { PlanningEditPatch } from '../shared/mcpTypes'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FindingsPublishResult } from './findingsPublish'
 import type { ArrangeMainBoardHostInput, TidyCanvasHostInput, TidyCanvasResult } from './mcpTidy'
+import type { WorkspaceMirror } from './workspaceMirror'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -367,6 +368,8 @@ export interface BoardRegistry {
     /** C1: a worker terminal docked in a swarm board (mirror-sanitized) — `canvas://layout` drops it
      *  (stale parking coordinates, not canvas geometry). */
     dockedIn?: string
+    /** v24: the workspace the board belongs to (mirror-sanitized) — WS-7's caller/target scope. */
+    workspaceId?: string
     /** C1/C9: the classified context + role signals (mirror-sanitized, D9) `canvas://layout` derives
      *  each board's `role` from. Never surfaced verbatim on `canvas://boards`. */
     previewSourceId?: string
@@ -416,6 +419,12 @@ export interface BoardRegistry {
    * empty-groups behaviour (read-only — groups are metadata, no action surface).
    */
   listGroups?(): GroupMirrorEntry[]
+  /**
+   * v24 Project Workspaces: MAIN's workspace mirror (`boardRegistry.listWorkspaces`). WS-7 resolves
+   * a caller's and a target's workspace against it (`mcpWorkspaceGuard`). Optional so a registry/
+   * test that does not wire it sees no workspaces — every caller is project-level.
+   */
+  listWorkspaces?(): WorkspaceMirror[]
   /**
    * Spatial awareness C2: the user's view for `canvas://layout` v2 — the sanitized `view` the
    * renderer mirrors (`boardRegistry.getCanvasView`) + the display holding the main window

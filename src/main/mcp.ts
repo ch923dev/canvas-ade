@@ -1,4 +1,6 @@
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
+import { guardWorkspaceScope } from './mcpWorkspaceGuard'
+import { placeSpawn, workspaceName, type WorkspaceScopeDeps } from './workspaceScope'
 import type { BoardResult, RunningMcpServer, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
@@ -142,6 +144,12 @@ export interface RunningMcp {
     /** Swarm docked-terminals: terminal-only hosting swarm board id (validated in mcpLifecycle). */
     dockedIn?: string
   }): Promise<{ id: string }>
+  /**
+   * WS-7: where a Jarvis spawn would land — checked BEFORE the human confirm, so an impossible spawn
+   * is refused instead of approved-then-failed. Throws the scope refusal (a cwd outside the project
+   * or a missing workspace folder); else names the workspace the board would join, if any.
+   */
+  spawnPlacement(input: { type: string; cwd?: string }): { workspace?: string }
   /**
    * Phase C / C1: dispatch a prompt into a board's PTY through the SAME gated path the
    * `assign_prompt` MCP tool uses (sanitize → single-use nonce → human confirm → audit). Exposed
@@ -319,7 +327,14 @@ export async function startMcpServer(
     // reference it without a TDZ hazard — it is assigned right after createMcpHttpServer below,
     // long before any board can close (the only close paths ride the server's own tools).
     let liveHttp: RunningMcpServer | null = null
-    const orchestrator = buildOrchestrator(registry, {
+    // 🔒 WS-7: workspace confinement wraps the WHOLE orchestrator, so every entry point (package
+    // tools, Jarvis, the swarm executor, e2e seams) passes the same scope checks.
+    const scope: WorkspaceScopeDeps = {
+      boards: () => registry.listBoards(),
+      workspaces: () => registry.listWorkspaces?.() ?? [],
+      projectDir: () => registry.currentProjectDir?.() ?? null
+    }
+    const built = buildOrchestrator(registry, {
       cap: opts.cap,
       // C9: `canvas://layout` marks the designated lead board's role from MAIN's own authority.
       leadBoardId: () => lead.designated(),
@@ -337,6 +352,10 @@ export async function startMcpServer(
         lead.onBoardClosed(boardId)
         notifyLead(before)
       }
+    })
+    const orchestrator = guardWorkspaceScope(built, {
+      ...scope,
+      audit: (entry) => registry.audit(entry)
     })
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
@@ -396,6 +415,9 @@ export async function startMcpServer(
       describeApp: () => orchestrator.describeApp(),
       spawnGroup: (input) => orchestrator.spawnGroup(input),
       spawnBoard: (input) => orchestrator.spawnBoard(input),
+      spawnPlacement: (input) => ({
+        workspace: workspaceName(scope, placeSpawn(scope, input).workspaceId)
+      }),
       dispatchPrompt: (boardId, text) => orchestrator.dispatchPrompt(boardId, text),
       handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
       awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),

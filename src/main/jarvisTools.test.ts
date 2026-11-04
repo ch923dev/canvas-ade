@@ -237,6 +237,38 @@ describe('executeJarvisTool', () => {
     expect(facet.spawnBoard).not.toHaveBeenCalled()
   })
 
+  it('WS-7: spawn_board refuses an out-of-scope cwd BEFORE the confirm gate', async () => {
+    const spawnPlacement = vi.fn(() => {
+      throw new Error(
+        'spawn_board: cwd "C:/elsewhere" is outside the project — boards start inside it.'
+      )
+    })
+    const facet = makeFacet({ spawnPlacement })
+    const confirm = vi.fn(approve)
+    const r = await executeJarvisTool(
+      'spawn_board',
+      { type: 'terminal', cwd: 'C:/elsewhere' },
+      { facet, confirm }
+    )
+    expect(spawnPlacement).toHaveBeenCalledWith({ type: 'terminal', cwd: 'C:/elsewhere' })
+    expect(r.isError).toBe(true)
+    expect(r.content).toContain('is outside the project')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(facet.spawnBoard).not.toHaveBeenCalled()
+  })
+
+  it('WS-7: the spawn confirm names the workspace a project-scope cwd joins', async () => {
+    const facet = makeFacet({ spawnPlacement: () => ({ workspace: 'API' }) })
+    const confirm = vi.fn(async (_req: { title: string; body: string }) => ({ approved: true }))
+    await executeJarvisTool(
+      'spawn_board',
+      { type: 'terminal', cwd: 'M:/p/api' },
+      { facet, confirm }
+    )
+    expect(confirm.mock.calls[0][0].body).toContain('(joins workspace "API")')
+    expect(facet.spawnBoard).toHaveBeenCalledWith({ type: 'terminal', cwd: 'M:/p/api' })
+  })
+
   it('spawn_board no longer advertises kanban (schema mirrors the SPAWNABLE allowlist)', () => {
     const def = buildJarvisToolDefs().find((t) => t.name === 'spawn_board')
     expect(def).toBeDefined()
