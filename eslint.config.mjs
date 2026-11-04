@@ -302,7 +302,11 @@ export default tseslint.config(
     // maps — the forgetBoardSideState funnel (boardCwds + bootDirs + idle-check, FIND-009),
     // idleMonitor.poke on the hot onData pump, clearBootDirs before disposeAll's parked reap,
     // and the event-driven monitor's getSession accessor. Ratchet DOWN on next split.
-    rules: { 'max-lines': ['error', { max: 714, skipBlankLines: true, skipComments: true }] }
+    // 714→717 (WS-3 workspace spawn path): the strict cwd policy lives in ptyShells.resolveSpawnCwd
+    // and the env in ptySpawnEnv; the +3 are the spawn-choke-point residue — the `workspaceId`
+    // field on the SpawnOpts IPC contract, the `workspace` facts handed to buildSpawnEnv, and the
+    // `cwdError` throw that routes a refused cwd through the existing spawn-failed path.
+    rules: { 'max-lines': ['error', { max: 717, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/main/index.ts'],
@@ -351,7 +355,9 @@ export default tseslint.config(
     // 706→708 (swarm dock full-view font blow-up): TWO choke-point lines — the `dockPane` deps
     // field and its guard on the counterScale computation (which closes over isFullView +
     // fvWinSize + board dims and cannot leave the hook). Ratchet DOWN on the next split.
-    rules: { 'max-lines': ['error', { max: 708, skipBlankLines: true, skipComments: true }] }
+    // 708→709 (WS-3 workspace spawn path): ONE import line — the spawn-time workspace read lives in
+    // spawnWorkspace.ts and resolveSpawnArgs; both call sites stayed line-neutral (args spread).
+    rules: { 'max-lines': ['error', { max: 709, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],

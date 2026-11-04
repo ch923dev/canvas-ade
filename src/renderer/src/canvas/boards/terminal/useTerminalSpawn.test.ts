@@ -69,8 +69,12 @@ describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
 
   it('a one-shot override (e.g. `claude --resume <id>`) takes precedence over the board command', () => {
     expect(
-      resolveSpawnArgs({ cwd: undefined, launchCommand: 'claude' }, '/proj', 'claude --resume abc')
-        .launchCommand
+      resolveSpawnArgs(
+        { cwd: undefined, launchCommand: 'claude' },
+        '/proj',
+        undefined,
+        'claude --resume abc'
+      ).launchCommand
     ).toBe('claude --resume abc')
   })
 
@@ -78,8 +82,63 @@ describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
     // `??` (not `||`) so a deliberate empty command stays empty rather than silently
     // reverting to the board command — matches the original inline `override ?? board.launchCommand`.
     expect(
-      resolveSpawnArgs({ cwd: undefined, launchCommand: 'claude' }, '/proj', '').launchCommand
+      resolveSpawnArgs({ cwd: undefined, launchCommand: 'claude' }, '/proj', undefined, '')
+        .launchCommand
     ).toBe('')
+  })
+})
+
+describe('resolveSpawnArgs — WS-3 workspace scope (pure)', () => {
+  const none = { cwd: undefined, launchCommand: undefined }
+  const api = { id: 'ws-api', root: 'api' }
+
+  it.each([
+    // [label, board cwd, projectDir, workspace, want cwd, want workspaceId]
+    ['project-level, no cwd ⇒ project dir', undefined, '/proj', undefined, '/proj', undefined],
+    ['project-level, board cwd wins', '/x', '/proj', undefined, '/x', undefined],
+    ['project-level, no project ⇒ undefined', undefined, null, undefined, undefined, undefined],
+    ['workspace, no cwd ⇒ effective root', undefined, '/proj', api, '/proj/api', 'ws-api'],
+    ['workspace, board cwd wins', '/proj/api/src', '/proj', api, '/proj/api/src', 'ws-api'],
+    ['workspace root "." ⇒ project dir', undefined, '/proj', { id: 'w', root: '.' }, '/proj', 'w'],
+    [
+      'workspace worktree root (nested POSIX)',
+      undefined,
+      '/proj/',
+      { id: 'w', root: '.canvas/worktrees/api-auth' },
+      '/proj/.canvas/worktrees/api-auth',
+      'w'
+    ],
+    [
+      'workspace on a Windows project keeps backslashes',
+      undefined,
+      'C:\\Code\\my proj',
+      { id: 'w', root: 'packages/api' },
+      'C:\\Code\\my proj\\packages\\api',
+      'w'
+    ],
+    // MAIN decides from its own mirror: never fall back to the project dir for a workspace board.
+    [
+      'workspace, unresolvable root ⇒ undefined',
+      undefined,
+      '/proj',
+      { id: 'w', root: null },
+      undefined,
+      'w'
+    ],
+    ['workspace, no project ⇒ undefined', undefined, null, api, undefined, 'ws-api']
+  ] as const)('%s', (_label, cwd, projectDir, workspace, wantCwd, wantId) => {
+    const got = resolveSpawnArgs({ ...none, cwd }, projectDir, workspace)
+    expect(got.cwd).toBe(wantCwd)
+    expect(got.workspaceId).toBe(wantId)
+  })
+
+  it('a project-level spawn carries no workspaceId key at all', () => {
+    expect('workspaceId' in resolveSpawnArgs(none, '/proj')).toBe(false)
+  })
+
+  it('the launch override still wins for a workspace board', () => {
+    const got = resolveSpawnArgs({ cwd: undefined, launchCommand: 'claude' }, '/p', api, 'codex')
+    expect(got.launchCommand).toBe('codex')
   })
 })
 

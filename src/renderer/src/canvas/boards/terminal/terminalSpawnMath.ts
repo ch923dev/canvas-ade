@@ -57,10 +57,31 @@ export function fullViewScale(
 }
 
 /**
- * Resolve the PTY spawn descriptor's cwd + launchCommand. Pure, so the cwd fallback
- * chain and the one-shot launch-override precedence are unit-testable in isolation.
- *  - cwd: the board's explicit cwd, else the open project dir, else undefined (MAIN
- *    spawns in os.homedir()).
+ * WS-3: the workspace a terminal spawns in, read at spawn time (`spawnWorkspaceFor`). `root` is the
+ * workspace's project-relative effective root (`shared/workspaceRules.effectiveRoot`), `null` when
+ * the renderer cannot resolve it (MAIN still decides — and refuses — from its own mirror).
+ */
+export interface SpawnWorkspace {
+  id: string
+  root: string | null
+}
+
+/** `<projectDir>/<rel>` with the project dir's own separator; `'.'` is the project dir itself. */
+function underProject(projectDir: string, rel: string): string {
+  if (rel === '.') return projectDir
+  const sep = projectDir.includes('\\') ? '\\' : '/'
+  return projectDir.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+}
+
+/**
+ * Resolve the PTY spawn descriptor's cwd + launchCommand (+ the workspace id MAIN validates
+ * against). Pure, so the cwd fallback chain and the one-shot launch-override precedence are
+ * unit-testable in isolation.
+ *  - cwd, project-level board: the board's explicit cwd, else the open project dir, else
+ *    undefined (MAIN spawns in os.homedir()).
+ *  - cwd, workspace board (WS-3, design §4.2): the board's explicit cwd, else the workspace's
+ *    effective root under the project dir, else undefined (MAIN then starts in the root it resolves
+ *    itself — a workspace spawn never falls back to the home dir).
  *  - launchCommand: a one-shot `override` (e.g. `claude --resume <id>` from the Restart
  *    menu) wins over the board's persisted command. `??` (not `||`) so a deliberate
  *    empty override stays empty rather than reverting to the board command.
@@ -68,12 +89,14 @@ export function fullViewScale(
 export function resolveSpawnArgs(
   board: Pick<TerminalBoardData, 'cwd' | 'launchCommand'>,
   projectDir: string | null | undefined,
+  workspace?: SpawnWorkspace,
   override?: string
-): { cwd: string | undefined; launchCommand: string | undefined } {
-  return {
-    cwd: board.cwd ?? projectDir ?? undefined,
-    launchCommand: override ?? board.launchCommand
-  }
+): { cwd: string | undefined; launchCommand: string | undefined; workspaceId?: string } {
+  const launchCommand = override ?? board.launchCommand
+  if (!workspace) return { cwd: board.cwd ?? projectDir ?? undefined, launchCommand }
+  const root =
+    projectDir && workspace.root !== null ? underProject(projectDir, workspace.root) : undefined
+  return { cwd: board.cwd ?? root, launchCommand, workspaceId: workspace.id }
 }
 
 /**

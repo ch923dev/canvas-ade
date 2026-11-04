@@ -1,6 +1,11 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { listWorkspaces } from './boardRegistry'
+import { isWithin } from './pathSafe'
+import { getCurrentDir } from './projectStore'
+import type { WorkspaceMirror } from './workspaceMirror'
+import { effectiveRoot, type WorkspaceRootFields } from '../shared/workspaceRules'
 
 /** One discoverable shell on this OS, surfaced to the per-board shell picker. */
 export interface ShellInfo {
@@ -73,6 +78,137 @@ export function safeCwd(cwd?: string): string {
     /* not accessible / does not exist → fall through */
   }
   return os.homedir()
+}
+
+/** The workspace fields {@link strictCwd} reads — MAIN's `WorkspaceMirror` satisfies it. */
+export interface StrictCwdWorkspace extends WorkspaceRootFields {
+  id: string
+  name: string
+}
+
+/** The CANVAS_WORKSPACE_* facts a workspace spawn exports (ptySpawnEnv.buildSpawnEnv). */
+export interface WorkspaceSpawnFacts {
+  id: string
+  /** Absolute effective root (lexical, as the prompt shows it). */
+  root: string
+  /** Absolute `<project>/.canvas/workspaces/<id>/CONTEXT.md` (design §4.5; the file is WS-8's).
+   *  Absent when the id is not a plain file-name segment — the path must never leave that dir. */
+  context?: string
+}
+
+/** {@link strictCwd}'s verdict: the folder to spawn in plus the workspace's env facts, or one
+ *  sentence that tells the user what is wrong and what to do. */
+export type StrictCwdResult =
+  | { ok: true; cwd: string; workspace: WorkspaceSpawnFacts }
+  | { ok: false; error: string }
+
+/**
+ * WS-3 (design §4.2): validate a WORKSPACE board's spawn cwd. Unlike {@link safeCwd} it never falls
+ * back to the home dir — a workspace terminal that silently started in `$HOME` would run its agent
+ * outside the workspace. The root comes from MAIN's own mirror record (`ws`), never from the
+ * renderer; the renderer's `cwd` is only a proposal (blank ⇒ the root, relative ⇒ under the root).
+ * Both the root and the cwd are realpath'd and must stay inside the project / the root
+ * ({@link isWithin}), so a `..` or a symlink/junction escape is refused like a missing folder.
+ * Returns the LEXICAL absolute paths (what the user's prompt shows), checked through their realpaths.
+ */
+export function strictCwd(
+  projectDir: string | null,
+  ws: StrictCwdWorkspace | undefined,
+  cwd: string | undefined,
+  realpath: (p: string) => string = (p) => fs.realpathSync.native(p)
+): StrictCwdResult {
+  const fail = (error: string): StrictCwdResult => ({ ok: false, error })
+  if (!ws) {
+    return fail(
+      "This terminal's workspace no longer exists. Make the terminal project-level, or restore the workspace."
+    )
+  }
+  const label = `Workspace "${ws.name}"`
+  if (!projectDir) return fail(`No project is open, so ${label} has no folder to start in.`)
+  const rel = effectiveRoot(ws)
+  if (rel === null) {
+    return fail(`${label} has an invalid folder setting. Remove the workspace and create it again.`)
+  }
+  const shown = rel === '.' ? './' : `${rel}/`
+  /** The realpath of an existing directory, `'file'` for a non-directory, `null` when missing. */
+  const realDir = (p: string): string | 'file' | null => {
+    try {
+      const real = realpath(p)
+      return fs.statSync(real).isDirectory() ? real : 'file'
+    } catch {
+      return null
+    }
+  }
+  const realProject = realDir(projectDir)
+  if (realProject === null || realProject === 'file') {
+    return fail(`The project folder can't be found, so ${label} has no folder to start in.`)
+  }
+  const root = path.resolve(projectDir, rel)
+  const realRoot = realDir(root)
+  const fix = 'Restore it or remove the workspace.'
+  if (realRoot === null) return fail(`${label} folder is missing (${shown}). ${fix}`)
+  if (realRoot === 'file') return fail(`${label} folder (${shown}) is a file, not a folder. ${fix}`)
+  if (!isWithin(realProject, realRoot)) {
+    return fail(`${label} folder (${shown}) links outside the project. ${fix}`)
+  }
+  const want = cwd?.trim() ? path.resolve(root, cwd.trim()) : root
+  if (want !== root) {
+    const realCwd = realDir(want)
+    const pick = `Pick a folder inside ${label} (${shown}).`
+    if (realCwd === null) return fail(`Working dir "${want}" is missing. ${pick}`)
+    if (realCwd === 'file') return fail(`Working dir "${want}" is a file, not a folder. ${pick}`)
+    if (!isWithin(realRoot, realCwd))
+      return fail(`Working dir "${want}" is outside ${label}. ${pick}`)
+  }
+  const context = /^[A-Za-z0-9_-]+$/.test(ws.id)
+    ? path.join(projectDir, '.canvas', 'workspaces', ws.id, 'CONTEXT.md')
+    : undefined
+  return { ok: true, cwd: want, workspace: { id: ws.id, root, ...(context ? { context } : {}) } }
+}
+
+/** A spawn's resolved cwd: `error` set ⇒ refuse the spawn with that sentence (`cwd` is then only
+ *  the proposal, for the error notification). */
+export interface SpawnCwd {
+  cwd: string
+  workspace?: WorkspaceSpawnFacts
+  error?: string
+}
+
+/** How long a workspace spawn waits for MAIN's mirror to learn an id it does not know yet. The
+ *  renderer publishes workspaces on a ~150ms debounce, so a terminal created in the same gesture as
+ *  its workspace (WS-4's starter Terminal) can reach MAIN first — the lead-grant `not-found` retry
+ *  precedent. Bounded, and spent only on an unknown id; a known one never waits. */
+export const WORKSPACE_MIRROR_SETTLE_MS = 1500
+const SETTLE_STEP_MS = 50
+
+/**
+ * The ONE spawn-cwd decision pty.ts makes (WS-3). A project-level board (no `workspaceId`) keeps
+ * {@link safeCwd} exactly as before. A workspace board is resolved against MAIN's OWN mirror
+ * (`listWorkspaces`) and the open project — whatever root the renderer believed is irrelevant — and
+ * validated by {@link strictCwd}. A present-but-malformed id is refused, never read as project-level.
+ */
+export async function resolveSpawnCwd(
+  opts: { cwd?: string; workspaceId?: unknown },
+  deps: {
+    projectDir: () => string | null
+    workspaces: () => readonly WorkspaceMirror[]
+    settleMs?: number
+  } = { projectDir: getCurrentDir, workspaces: listWorkspaces }
+): Promise<SpawnCwd> {
+  if (opts.workspaceId === undefined || opts.workspaceId === null) return { cwd: safeCwd(opts.cwd) }
+  const id = opts.workspaceId
+  const find = (): WorkspaceMirror | undefined =>
+    typeof id === 'string' && id !== '' ? deps.workspaces().find((w) => w.id === id) : undefined
+  let ws = find()
+  const settleMs =
+    typeof id === 'string' && id !== '' ? (deps.settleMs ?? WORKSPACE_MIRROR_SETTLE_MS) : 0
+  for (let waited = 0; !ws && waited < settleMs; waited += SETTLE_STEP_MS) {
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_STEP_MS))
+    ws = find()
+  }
+  const verdict = strictCwd(deps.projectDir(), ws, opts.cwd)
+  if (!verdict.ok) return { cwd: opts.cwd ?? '', error: verdict.error }
+  return { cwd: verdict.cwd, workspace: verdict.workspace }
 }
 
 /**

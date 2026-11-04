@@ -37,8 +37,10 @@ const RESERVED_DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/
  * Re-assert the boundary: `candidate` must be `rootAbs` itself or strictly under it.
  * `path.relative` is the Windows-safe form — a sibling whose name is a prefix of the root
  * (the `/r` vs `/r-evil` collision) yields a `..`-leading or absolute relative, both rejected.
+ * Exported for WS-3's workspace spawn cwd (`ptyShells.strictCwd`): the same predicate, applied to
+ * two realpaths.
  */
-function isWithin(rootAbs: string, candidate: string): boolean {
+export function isWithin(rootAbs: string, candidate: string): boolean {
   const rel = path.relative(rootAbs, candidate)
   return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel))
 }
