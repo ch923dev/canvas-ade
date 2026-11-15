@@ -23,6 +23,7 @@ import {
   readAsset,
   collectAssetIds,
   gcAssets,
+  sweepOrphanAssets,
   SCHEMA_VERSION as MAIN_SCHEMA_VERSION,
   MIN_READER_VERSION as MAIN_MIN_READER_VERSION,
   setSchemaFloorGuard,
@@ -595,6 +596,161 @@ describe('W4 assets pipeline', () => {
       mkdirSync(cvAsset(dir, 'assets', '.trash'), { recursive: true })
       expect(() => gcAssets(dir, new Set())).not.toThrow()
       expect(existsSync(cvAsset(dir, 'assets', '.trash'))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // ── Kanban card attachments (#346) — the reference site the collector did not know ──
+  // Attachments live at boards[].cards[].attachments[].assetId, NOT in boards[].elements[]. The
+  // collector walked only elements + the root background, so every attachment blob was quarantined
+  // on the next project open and its tile rendered "missing".
+  /** A doc with one Kanban board carrying one card with the given attachments. */
+  const kanbanDoc = (attachments: unknown[]): unknown => ({
+    schemaVersion: MAIN_SCHEMA_VERSION,
+    viewport: null,
+    boards: [
+      {
+        id: 'k1',
+        type: 'kanban',
+        columns: [{ id: 'backlog', title: 'Backlog' }],
+        cards: [
+          { id: 'c0', columnId: 'backlog', title: 'no attachments' },
+          { id: 'c1', columnId: 'backlog', title: 'with attachments', attachments }
+        ]
+      }
+    ]
+  })
+
+  it('collectAssetIds collects Kanban card attachment assetIds; a link attachment carries none', () => {
+    const doc = kanbanDoc([
+      { assetId: 'assets/spec.pdf', name: 'spec.pdf', kind: 'file' },
+      { assetId: 'assets/shot.png', name: 'shot.png', kind: 'image', mime: 'image/png', size: 12 },
+      { url: 'https://example.com', name: 'docs', kind: 'link' }
+    ])
+    expect(collectAssetIds(doc)).toEqual(new Set(['assets/spec.pdf', 'assets/shot.png']))
+  })
+
+  it('collectAssetIds tolerates malformed cards / attachments (envelope-only docs reach it)', () => {
+    // MAIN validates the envelope only, so the collector must never throw on a junk subtree.
+    const doc = {
+      schemaVersion: MAIN_SCHEMA_VERSION,
+      boards: [
+        null,
+        { id: 'k1', type: 'kanban', cards: 'nope' },
+        { id: 'k2', type: 'kanban', cards: [null, 7, { attachments: 'nope' }] },
+        { id: 'k3', type: 'kanban', cards: [{ attachments: [null, 7, {}, { assetId: 42 }] }] },
+        { id: 'k4', type: 'kanban', cards: [{ attachments: [{ assetId: 'assets/ok.zip' }] }] }
+      ]
+    }
+    expect(collectAssetIds(doc)).toEqual(new Set(['assets/ok.zip']))
+  })
+
+  it('a Kanban card attachment keeps its blob through gcAssets; an unreferenced blob is still swept', async () => {
+    const dir = tmp()
+    try {
+      const attached = await writeAsset(dir, bytes('attached-pdf'), 'pdf')
+      const orphan = await writeAsset(dir, bytes('nobody-references-me'), 'png')
+      const doc = kanbanDoc([{ assetId: attached.assetId, name: 'spec.pdf', kind: 'file' }])
+      gcAssets(dir, collectAssetIds(doc))
+      expect(readAsset(dir, attached.assetId)).toEqual(bytes('attached-pdf'))
+      expect(existsSync(cvAsset(dir, orphan.assetId))).toBe(false)
+      expect(existsSync(cvAsset(dir, 'assets', '.trash', orphan.assetId.split('/')[1]))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // ── sweepOrphanAssets — the ONE open-time entry point (primary ∪ .bak ∪ session sidecar) ──
+  it('sweepOrphanAssets keeps a wallpaper referenced ONLY by the session sidecar', async () => {
+    // `background` is a SESSION key: picking a file wallpaper without editing a board writes only
+    // .canvas/session.json — canvas.json is not rewritten and never learns the assetId. The sweep
+    // read canvas.json + .bak only, so the fresh wallpaper was quarantined on the next open and
+    // BackdropLayer then persisted kind:'none'.
+    const dir = tmp()
+    try {
+      const wallpaper = await writeAsset(dir, bytes('wallpaper-bytes'), 'png')
+      const orphan = await writeAsset(dir, bytes('orphan-bytes'), 'png')
+      await writeProject(dir, { schemaVersion: MAIN_SCHEMA_VERSION, viewport: null, boards: [] })
+      await writeSession(dir, {
+        viewport: { x: 0, y: 0, zoom: 1 },
+        background: { kind: 'file', assetId: wallpaper.assetId, dim: 0.4, saturation: 1 }
+      })
+      const r = readProject(dir)
+      if (!r.ok) throw new Error('fixture project did not read back')
+      // Guard the premise: the doc itself does NOT reference the wallpaper.
+      expect(collectAssetIds(r.doc).has(wallpaper.assetId)).toBe(false)
+
+      sweepOrphanAssets(r.dir, r.doc, r.session)
+
+      expect(readAsset(dir, wallpaper.assetId)).toEqual(bytes('wallpaper-bytes'))
+      // …and the sweep still sweeps: a genuinely unreferenced blob goes to the quarantine.
+      expect(existsSync(cvAsset(dir, orphan.assetId))).toBe(false)
+      expect(existsSync(cvAsset(dir, 'assets', '.trash', orphan.assetId.split('/')[1]))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('sweepOrphanAssets keeps a .bak-only asset (BUG-016) and tolerates a null session', async () => {
+    const dir = tmp()
+    try {
+      const inBak = await writeAsset(dir, bytes('only-the-backup-has-me'), 'png')
+      const inPrimary = await writeAsset(dir, bytes('the-primary-has-me'), 'png')
+      const withImage = (assetId: string): unknown => ({
+        schemaVersion: MAIN_SCHEMA_VERSION,
+        viewport: null,
+        boards: [{ id: 'p1', type: 'planning', elements: [{ id: 'i', kind: 'image', assetId }] }]
+      })
+      await writeProject(dir, withImage(inBak.assetId)) // first save …
+      await writeProject(dir, withImage(inPrimary.assetId)) // … rotates into .bak on the second
+      const r = readProject(dir)
+      if (!r.ok) throw new Error('fixture project did not read back')
+      expect(r.session).toBeNull() // no sidecar written — the common fresh-project case
+
+      sweepOrphanAssets(r.dir, r.doc, r.session)
+
+      expect(existsSync(cvAsset(dir, inPrimary.assetId))).toBe(true)
+      expect(existsSync(cvAsset(dir, inBak.assetId))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // ── Un-quarantine: a referenced blob sitting in .trash goes back ──
+  it('gcAssets restores a blob from .trash once it is referenced again, and leaves the rest quarantined', async () => {
+    // Heals projects the two bugs above already hit: the doc still names the attachment, the blob
+    // is in the quarantine. Content-addressed ids make this safe — `<sha1>.<ext>` IS its content.
+    const dir = tmp()
+    try {
+      const wanted = await writeAsset(dir, bytes('swept-by-the-old-build'), 'pdf')
+      const unwanted = await writeAsset(dir, bytes('really-is-an-orphan'), 'png')
+      gcAssets(dir, new Set()) // the buggy sweep: both go to the quarantine
+      expect(readAsset(dir, wanted.assetId)).toBeNull()
+
+      gcAssets(dir, new Set([wanted.assetId]))
+
+      expect(readAsset(dir, wanted.assetId)).toEqual(bytes('swept-by-the-old-build'))
+      const trash = readdirSync(cvAsset(dir, 'assets', '.trash'))
+      expect(trash).toEqual([unwanted.assetId.split('/')[1]]) // restored = MOVED out, orphan stays
+      expect(existsSync(cvAsset(dir, unwanted.assetId))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('gcAssets never overwrites a live blob with its .trash copy', async () => {
+    const dir = tmp()
+    try {
+      const a = await writeAsset(dir, bytes('live-copy'), 'png')
+      const file = a.assetId.split('/')[1]
+      mkdirSync(cvAsset(dir, 'assets', '.trash'), { recursive: true })
+      writeFileSync(cvAsset(dir, 'assets', '.trash', file), 'stale-quarantine-copy')
+
+      gcAssets(dir, new Set([a.assetId]))
+
+      expect(readAsset(dir, a.assetId)).toEqual(bytes('live-copy'))
+      expect(existsSync(cvAsset(dir, 'assets', '.trash', file))).toBe(true) // untouched
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

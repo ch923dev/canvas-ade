@@ -21,8 +21,7 @@ import {
   projectName,
   writeAsset,
   readAsset,
-  collectAssetIds,
-  gcAssets,
+  sweepOrphanAssets,
   type ProjectResult
 } from './projectStore'
 import { scaffoldProjectMemory, createCanvasMemory, safeBoardId } from './canvasMemory'
@@ -302,17 +301,11 @@ export function registerProjectHandlers(
     const r = readProject(dir)
     await remember(r)
     if (r.ok) {
-      // BUG-016: collect asset ids from BOTH the primary AND the backup before sweeping.
-      // If the primary is envelope-valid but deep-corrupt, the renderer triggers T5 recovery
-      // (project:reopenFromBak). Without this union, assets referenced only by the backup
-      // are quarantined here before the deep-validation failure is detected — leaving the
-      // T5 recovery path with broken/missing images.
-      // The union is best-effort: a missing/corrupt backup simply contributes an empty set.
-      const primaryIds = collectAssetIds(r.doc)
-      const bakResult = readBak(r.dir)
-      const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
-      const allReferencedIds = new Set<string>([...primaryIds, ...bakIds])
-      gcAssets(r.dir, allReferencedIds)
+      // Open-time asset sweep. The live set (primary ∪ .bak [BUG-016] ∪ session sidecar) is
+      // defined ONCE, in projectStore — this path and project:current each used to build the
+      // union inline, and both copies missed the sidecar (a wallpaper picked without a board
+      // edit lives only in session.json, so it was quarantined on the next open).
+      sweepOrphanAssets(r.dir, r.doc, r.session)
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
       // Terminal recap (Task 10): re-ensure the recap SessionStart hook for an already-consented
       // project. Best-effort — a hook-install failure must NEVER abort the open.
@@ -517,11 +510,9 @@ export function registerProjectHandlers(
       } catch (err) {
         console.warn('[recentProjects] touchRecent failed in project:current (non-fatal)', err)
       }
-      // BUG-016: union primary + backup asset ids before sweeping (same fix as project:open).
-      const primaryIds = collectAssetIds(r.doc)
-      const bakResult = readBak(r.dir)
-      const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
-      gcAssets(r.dir, new Set([...primaryIds, ...bakIds]))
+      // Open-time asset sweep — the same single entry point as project:open (primary ∪ .bak ∪
+      // session sidecar; see sweepOrphanAssets).
+      sweepOrphanAssets(r.dir, r.doc, r.session)
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
       // Terminal recap (Task 10): re-ensure the recap SessionStart hook for an already-consented
       // project on auto-reopen. Best-effort — never abort the reopen.

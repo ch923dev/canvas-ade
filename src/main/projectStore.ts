@@ -550,39 +550,48 @@ export function readAsset(dir: string, assetId: string): Uint8Array | null {
 }
 
 /**
- * Every assetId a doc references (version-independent), from three sources:
- *  - planning `image` elements (`boards[].elements[].assetId`, since W4)
- *  - planning `diagram` elements' derived `svgCache` (`boards[].elements[].svgCache`, since v11/S4).
- *    MUST be included for the SAME reason as images: `gcAssets` runs at every project:open against
- *    this set, so omitting it sweeps the cached SVG to `.trash` on reopen, forcing a needless
- *    re-render (and a blank diagram until it completes) — the documented backdrop-asset gotcha.
- *  - the v9 root `background.assetId` — a `kind:'file'` wallpaper (image OR webm/mp4
- *    video). MUST be included: `gcAssets` runs at every project:open against this set,
- *    so omitting the backdrop asset sweeps the user's wallpaper to `.trash` on reopen,
- *    which `useBackdropMedia` then reads as missing and silently reverts to `kind:'none'`.
+ * Every assetId a doc references (version-independent). `gcAssets` runs at every project open
+ * against this set, so a reference site MISSING here is not a cosmetic gap: its blobs are swept to
+ * `.trash` on the next open and the thing that pointed at them silently breaks. **Adding a new
+ * place that stores an `assetId` means adding it here, with a test.** The sources, exhaustively
+ * (every `window.api.asset.write` caller persists its id into exactly one of these):
+ *  - planning `image` elements — `boards[].elements[].assetId` (since W4).
+ *  - planning `diagram` elements' derived SVG cache — `boards[].elements[].svgCache` (since
+ *    v11/S4). Omitting it forces a needless re-render (and a blank diagram until it completes).
+ *  - Kanban card FILE attachments — `boards[].cards[].attachments[].assetId` (since v19/#346).
+ *    A `kind:'link'` attachment carries a `url` and no `assetId`, so it contributes nothing.
+ *    Omitting these turned every attachment tile into "missing" after one reopen.
+ *  - the root `background.assetId` — a `kind:'file'` wallpaper, image OR webm/mp4 video (since
+ *    v9). Scenes carry no assetId. Omitting it makes `useBackdropMedia` read the wallpaper as
+ *    missing, and `BackdropLayer` then persists `kind:'none'`.
+ *
+ * The SESSION SIDECAR (`.canvas/session.json`) keeps its `background` under the same root key, so
+ * passing the raw sidecar here collects its wallpaper too — `sweepOrphanAssets` relies on that.
+ *
+ * Shape-tolerant on purpose: MAIN validates only the envelope, so any subtree may be junk and a
+ * throw here would abort the open. Not gated on `board.type` either — a field name is the contract.
  */
 export function collectAssetIds(doc: unknown): Set<string> {
   const ids = new Set<string>()
-  const boards = (doc as { boards?: unknown })?.boards
-  if (Array.isArray(boards)) {
-    for (const b of boards) {
-      const els = (b as { elements?: unknown })?.elements
-      if (!Array.isArray(els)) continue
-      for (const el of els) {
-        const kind = el && (el as { kind?: unknown }).kind
-        if (kind === 'image') {
-          const a = (el as { assetId?: unknown }).assetId
-          if (typeof a === 'string' && a.length > 0) ids.add(a)
-        } else if (kind === 'diagram') {
-          const a = (el as { svgCache?: unknown }).svgCache
-          if (typeof a === 'string' && a.length > 0) ids.add(a)
-        }
+  const add = (v: unknown): void => {
+    if (typeof v === 'string' && v.length > 0) ids.add(v)
+  }
+  const boards = (doc as { boards?: unknown } | null)?.boards
+  for (const b of Array.isArray(boards) ? boards : []) {
+    const { elements, cards } = (b ?? {}) as { elements?: unknown; cards?: unknown }
+    for (const el of Array.isArray(elements) ? elements : []) {
+      const e = (el ?? {}) as { kind?: unknown; assetId?: unknown; svgCache?: unknown }
+      if (e.kind === 'image') add(e.assetId)
+      else if (e.kind === 'diagram') add(e.svgCache)
+    }
+    for (const card of Array.isArray(cards) ? cards : []) {
+      const atts = (card as { attachments?: unknown } | null)?.attachments
+      for (const att of Array.isArray(atts) ? atts : []) {
+        add((att as { assetId?: unknown } | null)?.assetId)
       }
     }
   }
-  // v9 root background wallpaper (kind:'file'); scenes carry no assetId.
-  const bgId = (doc as { background?: { assetId?: unknown } })?.background?.assetId
-  if (typeof bgId === 'string' && bgId.length > 0) ids.add(bgId)
+  add((doc as { background?: { assetId?: unknown } } | null)?.background?.assetId)
   return ids
 }
 
@@ -592,8 +601,12 @@ const TRASH = '.trash'
  * Mark-and-sweep: quarantine-move every file in `<dir>/.canvas/assets/` whose `assets/<file>`
  * path is NOT in `referenced` into `<dir>/.canvas/assets/.trash/` (recoverable). Hard-deletion
  * is intentionally avoided — a mis-read/corrupt load must not permanently destroy blobs.
- * No-op when `assets/` is absent. Called ONLY at project open — the undo stack is empty
- * across sessions, so a swept blob is truly unreferenced.
+ * No-op when `assets/` is absent. Called ONLY at project open (via `sweepOrphanAssets`) — the undo
+ * stack is empty across sessions, so a swept blob is truly unreferenced.
+ *
+ * The quarantine is two-way: a blob sitting in `.trash` that `referenced` names again is moved
+ * BACK first (`restoreFromTrash`), so a sweep that ran against too narrow a live set heals itself
+ * on the first open with a correct one.
  *
  * Safety: `collectAssetIds` / `readAsset` match only `ASSET_RE`
  * (`assets/<40-hex>.<ext>`), so the `.trash` directory name can never be a valid assetId
@@ -602,6 +615,8 @@ const TRASH = '.trash'
 export function gcAssets(dir: string, referenced: Set<string>): void {
   const assetsDir = assetsDirOf(dir) // ADR 0009: the canonical blob store under `.canvas/`
   if (!existsSync(assetsDir)) return
+  const trashDir = join(assetsDir, TRASH)
+  restoreFromTrash(assetsDir, trashDir, referenced)
   let files: string[]
   try {
     files = readdirSync(assetsDir)
@@ -612,7 +627,6 @@ export function gcAssets(dir: string, referenced: Set<string>): void {
     if (f === TRASH) continue // never sweep the quarantine dir itself
     if (!referenced.has(`${ASSETS}/${f}`)) {
       try {
-        const trashDir = join(assetsDir, TRASH)
         mkdirSync(trashDir, { recursive: true })
         copyFileSync(join(assetsDir, f), join(trashDir, f))
         unlinkSync(join(assetsDir, f)) // move = copy-then-unlink; the quarantine copy is retained
@@ -621,4 +635,65 @@ export function gcAssets(dir: string, referenced: Set<string>): void {
       }
     }
   }
+}
+
+/**
+ * Un-quarantine: move every `.trash` entry that the live set references — and that is absent from
+ * the live store — back into `assets/`. This is what repairs a project a too-narrow sweep already
+ * hit (Kanban attachments before the collector knew `cards[].attachments[]`; anything a mis-read
+ * doc swept before the user recovered it): the doc still names the id, the bytes are in the
+ * quarantine, and nothing else would ever bring them back.
+ *
+ * Why it is safe to do unprompted:
+ *  - Ids are content-addressed. `<sha1>.<ext>` in `.trash` IS the bytes `assets/<sha1>.<ext>` names,
+ *    so a restore can never surface the "wrong" content for a reference.
+ *  - It walks the quarantine's own directory listing and only LOOKS UP each name in `referenced` —
+ *    no doc-supplied string is ever joined into a path, so a hostile `assetId` cannot steer it.
+ *  - A live copy is never overwritten (present ⇒ skip), and the move is a same-directory-tree
+ *    `renameSync`: atomic, so a crash cannot leave a truncated blob under a name that claims a
+ *    hash (`writeAsset` skips existing files and would never repair one).
+ *
+ * Cost on the open path: nothing when `.trash` is absent or the live set is empty; otherwise one
+ * `readdirSync` plus a Set lookup per quarantined file.
+ */
+function restoreFromTrash(assetsDir: string, trashDir: string, referenced: Set<string>): void {
+  if (referenced.size === 0 || !existsSync(trashDir)) return
+  let trashed: string[]
+  try {
+    trashed = readdirSync(trashDir)
+  } catch {
+    return
+  }
+  for (const f of trashed) {
+    if (!referenced.has(`${ASSETS}/${f}`) || existsSync(join(assetsDir, f))) continue
+    try {
+      renameSync(join(trashDir, f), join(assetsDir, f))
+    } catch {
+      /* locked: it stays quarantined and the next open retries — never abort the open */
+    }
+  }
+}
+
+/**
+ * The open-time asset sweep — the ONE entry point both open paths (`project:open`,
+ * `project:current`) call, so the live set is defined in exactly one place. It is the union of
+ * every persisted file that can name an asset:
+ *  - the doc the open just read (`canvas.json`, or whatever `readProject` fell back to);
+ *  - the backup (`canvas.json.bak`) — BUG-016: an envelope-valid but deep-corrupt primary makes
+ *    the renderer recover from the `.bak` (`project:reopenFromBak`) AFTER this sweep has run, so
+ *    backup-only assets must already be protected. Missing/corrupt backup ⇒ contributes nothing;
+ *  - the session sidecar (`session.json`) — `background` is a SESSION key (`useAutosave`
+ *    `SESSION_KEYS`), so picking a file wallpaper without editing a board writes ONLY the sidecar;
+ *    `canvas.json` is not rewritten and never learns the assetId. Pass the raw `session` that
+ *    `readProject` returned (null when there is no sidecar).
+ *
+ * A new persisted file that can hold an assetId is added HERE; a new field inside one of these
+ * files is added to `collectAssetIds`.
+ */
+export function sweepOrphanAssets(dir: string, doc: unknown, session: unknown): void {
+  const bak = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
+  gcAssets(
+    dir,
+    new Set([...collectAssetIds(doc), ...collectAssetIds(bak), ...collectAssetIds(session)])
+  )
 }

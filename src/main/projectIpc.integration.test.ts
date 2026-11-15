@@ -16,9 +16,11 @@ const { store, recents, electronDialog, canvasMemory } = vi.hoisted(() => ({
     getCurrentDir: vi.fn(),
     setCurrentDir: vi.fn(),
     projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir),
-    // Open-time asset GC (T4): project:current sweeps orphan blobs after a successful
-    // read. Stub both so the handler runs in isolation — collectAssetIds yields the live
-    // id set, gcAssets is a no-op here (its own unit suite covers the sweep).
+    // Open-time asset GC (T4): project:open / project:current sweep orphan blobs after a
+    // successful read, through the ONE store entry point. Stubbed so the handlers run in
+    // isolation — the live-set policy (primary ∪ .bak ∪ session sidecar) and the sweep itself
+    // are covered against a real filesystem in projectStore.test.ts.
+    sweepOrphanAssets: vi.fn(),
     collectAssetIds: vi.fn(() => new Set<string>()),
     gcAssets: vi.fn()
   },
@@ -175,6 +177,7 @@ describe('registerProjectHandlers (T4)', () => {
     // Recovery probe: leaves the open-project bookkeeping alone.
     expect(store.setCurrentDir).not.toHaveBeenCalled()
     expect(recents.touchRecent).not.toHaveBeenCalled()
+    expect(store.sweepOrphanAssets).not.toHaveBeenCalled()
     expect(store.gcAssets).not.toHaveBeenCalled()
   })
 
@@ -187,27 +190,29 @@ describe('registerProjectHandlers (T4)', () => {
     expect(store.readBak).not.toHaveBeenCalled()
   })
 
-  // BUG-016: project:open must call gcAssets with the UNION of primary + backup asset ids.
-  // Pre-fix: gcAssets was called with only the primary doc's ids — a backup-only asset
-  // was quarantined before the renderer's deep-validation failure could trigger T5 recovery.
-  it('BUG-016: project:open unions primary + backup asset ids before gcAssets — backup-only assets are protected', async () => {
-    // Primary doc references asset A only.
-    const primaryDoc = {
-      schemaVersion: 5,
-      viewport: null,
-      boards: [{ id: 'p1', elements: [{ kind: 'image', assetId: 'assets/aaaa.png' }] }]
-    }
-    // Backup doc references asset B (backup-only — not in the primary).
-    const bakDoc = {
-      schemaVersion: 5,
-      viewport: null,
-      boards: [{ id: 'p1', elements: [{ kind: 'image', assetId: 'assets/bbbb.png' }] }]
-    }
-    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: primaryDoc })
-    store.readBak.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: bakDoc })
-    store.collectAssetIds
-      .mockReturnValueOnce(new Set(['assets/aaaa.png'])) // primary
-      .mockReturnValueOnce(new Set(['assets/bbbb.png'])) // backup
+  // The open-time sweep's live set is primary ∪ .bak (BUG-016) ∪ the SESSION SIDECAR. Each open
+  // path used to build that union inline, and both copies missed the sidecar — so a wallpaper
+  // picked without a board edit (written only to .canvas/session.json) was quarantined on the next
+  // open. Both paths now hand the doc AND the sidecar they just read to the one store entry point;
+  // what that entry point keeps is asserted against a real filesystem in projectStore.test.ts.
+  const sidecarOnlyWallpaper = {
+    viewport: { x: 0, y: 0, zoom: 1 },
+    background: { kind: 'file', assetId: 'assets/cccc.png' }
+  }
+  const primaryDoc = {
+    schemaVersion: 5,
+    viewport: null,
+    boards: [{ id: 'p1', elements: [{ kind: 'image', assetId: 'assets/aaaa.png' }] }]
+  }
+
+  it('project:open sweeps through sweepOrphanAssets with the doc AND the session sidecar', async () => {
+    store.readProject.mockReturnValue({
+      ok: true,
+      dir: '/proj',
+      name: 'proj',
+      doc: primaryDoc,
+      session: sidecarOnlyWallpaper
+    })
     // BUG-006: '/proj' must be an APPROVED open target (this test bypasses the OS dialog that would
     // approve it); seed it as a known recent so the new approved-roots guard admits the open.
     recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
@@ -215,14 +220,46 @@ describe('registerProjectHandlers (T4)', () => {
     const cap = createIpcCapture()
     registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
-    // project:open is now async (BUG-010 / BUG-026): await so gcAssets has been called.
+    // project:open is async (BUG-010 / BUG-026): await so the sweep has been called.
     await cap.invoke('project:open', '/proj')
 
-    // gcAssets must have been called with BOTH asset ids (the union).
-    expect(store.gcAssets).toHaveBeenCalledTimes(1)
-    const gcArg = store.gcAssets.mock.calls[0][1] as Set<string>
-    expect(gcArg.has('assets/aaaa.png')).toBe(true) // primary asset retained
-    expect(gcArg.has('assets/bbbb.png')).toBe(true) // backup-only asset also retained (BUG-016 fix)
+    expect(store.sweepOrphanAssets).toHaveBeenCalledTimes(1)
+    expect(store.sweepOrphanAssets).toHaveBeenCalledWith('/proj', primaryDoc, sidecarOnlyWallpaper)
+    // No second, inline sweep with a narrower live set (the drift this entry point removes).
+    expect(store.gcAssets).not.toHaveBeenCalled()
+  })
+
+  it('project:current (auto-reopen) sweeps through the same entry point with the session sidecar', async () => {
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
+    store.readProject.mockReturnValue({
+      ok: true,
+      dir: '/proj',
+      name: 'proj',
+      doc: primaryDoc,
+      session: sidecarOnlyWallpaper
+    })
+
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    await cap.invoke('project:current')
+
+    expect(store.sweepOrphanAssets).toHaveBeenCalledTimes(1)
+    expect(store.sweepOrphanAssets).toHaveBeenCalledWith('/proj', primaryDoc, sidecarOnlyWallpaper)
+    expect(store.gcAssets).not.toHaveBeenCalled()
+  })
+
+  it('a failed read never sweeps (no doc ⇒ no live set ⇒ everything would look orphaned)', async () => {
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
+    store.readProject.mockReturnValue({ ok: false, error: 'No readable canvas.json in /proj' })
+
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    await cap.invoke('project:open', '/proj')
+    await cap.invoke('project:current')
+
+    expect(store.sweepOrphanAssets).not.toHaveBeenCalled()
   })
 })
 
