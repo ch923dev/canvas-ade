@@ -35,7 +35,7 @@ function ProjectLibraryPanelImpl(): ReactElement {
   const [tab, setTab] = useState<Tab>('downloads')
   const [listing, setListing] = useState<LibraryListing | null>(null)
   const asideRef = useRef<HTMLElement>(null)
-  // Bumped when a file lands under .canvas/ (a screenshot saved to assets/, a completed download);
+  // Bumped when a file lands under .canvas/ (a Browser-board screenshot or a completed download);
   // re-lists the open panel so the new file shows up immediately (no manual refresh).
   const refreshNonce = useLibraryStore((s) => s.refreshNonce)
   // Re-list when the open project changes too — otherwise the panel would keep showing the prior

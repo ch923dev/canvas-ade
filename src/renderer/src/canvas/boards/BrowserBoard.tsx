@@ -220,15 +220,15 @@ export function BrowserBoard({
         // BUG-028: main reports whether the clipboard write actually landed.
         const clipOk = res.ok && res.clipboardOk
         if (!res.ok) shotToast({ message: 'Open the preview to screenshot it' })
-        else if (res.assetId) {
-          // A new asset landed in <project>/.canvas/assets/ — re-list the Project Library so the
-          // screenshot shows up immediately (no manual refresh).
+        else if (res.relPath) {
+          // A new file landed in <project>/.canvas/downloads/ — re-list the Project Library so
+          // the screenshot shows up immediately (no manual refresh).
           useLibraryStore.getState().requestRefresh()
           shotToast({
             kind: 'ok',
             message: clipOk
-              ? 'Screenshot copied + saved to assets/'
-              : 'Screenshot saved to assets/ (clipboard unavailable)'
+              ? 'Screenshot copied + saved to downloads/'
+              : 'Screenshot saved to downloads/ (clipboard unavailable)'
           })
         } else if (clipOk) shotToast({ kind: 'ok', message: 'Screenshot copied to clipboard' })
         else
