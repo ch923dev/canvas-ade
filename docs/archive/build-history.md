@@ -5810,3 +5810,31 @@ since the push. Dev check (title-stamped, sandbox project, real UI file inputs):
 reproduced on `origin/main` (3 blobs in `.trash`, "Backdrop file missing" toast, attachment tile
 "missing"); on the fix the attachments are restored from `.trash` on open, and a re-picked
 wallpaper + both attachments survive quit → relaunch.
+
+## PR #454 — fix(browser): screenshots save to .canvas/downloads, not the GC-owned asset store (v0.48.5) · squash `c8384124` · 2026-11-15
+
+The follow-up #453 named. A Browser-board screenshot was content-addressed into
+`.canvas/assets/`, but no document ever stores a screenshot's `assetId`, so the open-time
+mark-and-sweep (`sweepOrphanAssets`) quarantined it into `assets/.trash/` and it vanished from
+Library ▸ Assets after one quit → relaunch, despite the "saved to assets/" toast. There was no
+reference to collect, so the fix moves the file instead of teaching the sweep about it.
+- `previewScreenshot.ts`: `saveScreenshot()` writes `screenshot-YYYY-MM-DD-HHMMSS.png` into
+  `.canvas/downloads/` (the Browser boards' output folder — already listed by Library ▸ Downloads,
+  swept by nothing); never overwrites (`uniqueSavePath` ` (n)` suffix) and saves are serialized
+  in-process so two same-second captures cannot pick the same name. Filename is MAIN-composed.
+- Result field `assetId` → `relPath` (relative to `.canvas/`, the Library's key) through preload,
+  `BrowserBoard` (toast now "saved to downloads/") and the e2e spec.
+- `assets/` keeps its invariant: every blob in it is referenced by a persisted document. Audit of
+  the other writers found none unreferenced (`asset:write` callers all persist their id).
+- Rejected: sparing screenshots inside `assets/` (content-addressed names need a persisted marker
+  file — a second reference system); a new `.canvas/screenshots/` dir (new Library tab for no gain).
+- Not fixed: screenshots already swept into `assets/.trash/` stay there — hash-named, so they are
+  indistinguishable from real orphans; no migration.
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 7977 / 0 failed (TEMP relocated off the 8.3 path);
+`browserScreenshot` e2e 1/1; smoke 63/63 (push + pre-merge `make check`, same SHA); CI 4/4;
+`claude-review` clean (no inline). Regression unit test drives the real `sweepOrphanAssets` — red
+on the old `writeAsset` path. Dev check (title-stamped, sandbox project, real Inspector button):
+bug reproduced on `origin/main` (PNG in `.trash`, Library ▸ Assets empty after relaunch); on the
+fix the screenshot is listed under Library ▸ Downloads and survives quit → relaunch. Plan-viz not
+drawn (`canvas-ade` MCP unreachable all session).
