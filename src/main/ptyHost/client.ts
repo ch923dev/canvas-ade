@@ -483,19 +483,21 @@ class DaemonPty implements IPty {
   }
 
   kill(): void {
+    // The wire addresses sessions by id, and an id is reused at once (Restart), so a proxy speaks
+    // for its id only while it is the one registered under it — pty.ts's isStaleExit discipline.
+    // Not registered means this instance is already over (it exited, or was killed before) and
+    // there is nothing left to kill; a `kill` sent anyway would land on whichever instance holds
+    // the id now.
+    if (handlers.get(this.id) !== this.h) return
     // killTree (pty.ts) taskkills the real pid from MAIN and calls this for the ConPTY
     // dispose — the daemon-side kill op is the authoritative tree reap either way.
     sendMsg({ op: 'kill', id: this.id })
-    // This INSTANCE is finished, and events are routed by id — an id Restart reuses at once.
-    // Unhook it now: the daemon answers a kill with `killed` and nothing more (no `exit`, see
-    // daemonSessions.ts), so nothing else would ever drop this entry, and a stale one would both
-    // pin the dead session's ring and count as a live session in shouldKeepSessionsOnQuit.
-    // Identity-checked like pty.ts's isStaleExit: a replacement that already bound the id (a
-    // late kill from an old proxy) is left exactly as it is.
-    if (handlers.get(this.id) === this.h) {
-      handlers.delete(this.id)
-      ackCounters.delete(this.id)
-    }
+    // Unhook now rather than on the daemon's word. The daemon does report a killed instance's
+    // `exit` (at kill time, daemonSessions.ts), but until this entry is gone it pins the dead
+    // session's handlers, counts as a live session in shouldKeepSessionsOnQuit, and reads as an
+    // interrupted one if the pipe closes first.
+    handlers.delete(this.id)
+    ackCounters.delete(this.id)
   }
 
   clear(): void {

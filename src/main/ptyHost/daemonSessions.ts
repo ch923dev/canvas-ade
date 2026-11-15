@@ -11,8 +11,13 @@
  * act on "the session called <id>": it acts only while ITS OWN session object is still the one
  * registered (`owns`). Without that, the old pty's late exit told the client the fresh session
  * had exited and deleted it from the table, leaving its process running with no way to address it.
- * A session leaves the table by its own exit, by `kill`, or by `shutdown`; after the last two
- * the `killed` ack (or the daemon's exit) is its final word and its pty is silent from then on.
+ *
+ * EVERY SUBSCRIBER STILL HEARS THE END, ONCE. A client drops a session when it is told `exit`, so
+ * a killed instance cannot simply go quiet: `kill` reports its `exit` there and then — its last
+ * output first, and while it still owns the id, so on every connection that `exit` is written
+ * before any `spawned` for a replacement and cannot be read as the replacement's. The process's
+ * real exit, arriving later, is the one that is dropped. `shutdown` reports nothing: the daemon is
+ * gone a moment later and the closing pipe says so.
  */
 import { encodeLine, type ClientMsg, type DaemonMsg, type SessionInfo } from './protocol'
 import { createDaemonRing, daemonRingReplay, pushDaemonRing, type DaemonRing } from './ring'
@@ -37,6 +42,13 @@ export interface DaemonConnLike {
 }
 
 export type SpawnMsg = Extract<ClientMsg, { op: 'spawn' }>
+
+/**
+ * The `exit` code reported for an instance ended by `kill`. Its real code is not known yet when
+ * the exit has to be sent (see the header); 1 is what a force-killed process reports on Windows
+ * (`taskkill /F`), i.e. what subscribers were told before, a second later.
+ */
+export const KILLED_EXIT_CODE = 1
 
 export interface DaemonSessionsDeps {
   /** Start the pty for a `spawn` op. A throw is reported to the client as `spawn-failed`. */
@@ -177,8 +189,9 @@ export function createDaemonSessions(deps: DaemonSessionsDeps): DaemonSessions {
       s.flow.push(d)
     })
     proc.onExit(({ exitCode }) => {
-      // Already unregistered by kill/shutdown (flushed + disposed there): this is the dead
-      // instance's exit arriving late. Reporting it, or deleting by id, would hit the replacement.
+      // Already unregistered by kill/shutdown (flushed, disposed and — for a kill — reported as
+      // exited there): this is the dead instance's real exit arriving late. Reporting it again, or
+      // deleting by id, would hit the replacement.
       if (!owns(msg.id, s)) {
         deps.log(`session ${msg.id}: killed instance's pty closed (code=${exitCode})`)
         return
@@ -266,6 +279,11 @@ export function createDaemonSessions(deps: DaemonSessionsDeps): DaemonSessions {
         const pid = s.proc.pid
         s.flow.flush() // last words before the tree dies (see the onExit note)
         s.flow.dispose()
+        // The instance is over for everyone attached to it — say so NOW, before the id is free
+        // (the header's ordering rule). Its pty's own exit, about a second out, is dropped.
+        for (const sub of s.subscribers) {
+          send(sub, { ev: 'exit', id: msg.id, code: KILLED_EXIT_CODE })
+        }
         sessions.delete(msg.id)
         void deps.killTree(pid).then(() => {
           try {

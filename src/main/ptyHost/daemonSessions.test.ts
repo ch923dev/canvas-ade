@@ -6,7 +6,12 @@
  * output — may be attributed to the instance that now owns the id.
  */
 import { describe, it, expect } from 'vitest'
-import { createDaemonSessions, type DaemonConnLike, type DaemonPtyLike } from './daemonSessions'
+import {
+  KILLED_EXIT_CODE,
+  createDaemonSessions,
+  type DaemonConnLike,
+  type DaemonPtyLike
+} from './daemonSessions'
 import type { ClientMsg, DaemonMsg } from './protocol'
 
 interface FakePty extends DaemonPtyLike {
@@ -130,11 +135,14 @@ describe('daemon session table — instance identity under a reused id', () => {
     table.handle(conn, spawnMsg('X'))
     expect(ptys).toHaveLength(2)
     await finishKills()
-    expect(conn.of('killed')).toHaveLength(1)
+    // The killed instance's end was reported at kill time — BEFORE the replacement's `spawned`,
+    // which is the only place a client can tell the two instances of the id apart.
+    expect(conn.msgs().map((m) => m.ev)).toEqual(['spawned', 'exit', 'spawned', 'killed'])
+    const exitsBefore = conn.of('exit').length
 
-    ptys[0].emitExit(1) // the killed instance's exit, landing late
+    ptys[0].emitExit(1) // the killed instance's real exit, landing late
 
-    expect(conn.of('exit')).toEqual([]) // nothing told the client that X exited
+    expect(conn.of('exit')).toHaveLength(exitsBefore) // nothing told the client the NEW X exited
     table.handle(conn, { op: 'list' })
     expect(listed(conn)).toEqual([{ id: 'X', pid: ptys[1].pid }]) // the replacement is still tracked
     table.handle(conn, { op: 'input', id: 'X', data: 'still-here\r' })
@@ -143,7 +151,7 @@ describe('daemon session table — instance identity under a reused id', () => {
 
     // The replacement's OWN exit is still reported, exactly once, and frees the id.
     ptys[1].emitExit(0)
-    expect(conn.of('exit')).toEqual([{ ev: 'exit', id: 'X', code: 0 }])
+    expect(conn.of('exit').slice(exitsBefore)).toEqual([{ ev: 'exit', id: 'X', code: 0 }])
     table.handle(conn, { op: 'list' })
     expect(listed(conn)).toEqual([])
   })
@@ -167,15 +175,37 @@ describe('daemon session table — instance identity under a reused id', () => {
     expect(second.of('replay')[0]?.data).toBe('fresh-prompt> ')
   })
 
-  it('🔒 `killed` is a killed session’s last word — no exit follows, even with no replacement', async () => {
+  it('🔒 a kill tells every subscriber the session is over exactly once: last output, exit, then `killed` to the killer', async () => {
+    // A client drops a session when it is told `exit`. A killed instance that simply went quiet
+    // would leave anyone attached holding it forever (a second connection, or a client that waits
+    // for the daemon's word) — so the exit is sent at kill time, and the pty's own exit, which
+    // arrives about a second later, adds nothing.
     const { table, conn, ptys, finishKills, ended } = mk()
+    const bystander = fakeConn()
     table.handle(conn, spawnMsg('X'))
+    table.handle(bystander, { op: 'attach', id: 'X' })
+    ptys[0].emitData('last words') // still in this tick's coalescing buffer when the kill lands
     table.handle(conn, { op: 'kill', id: 'X' })
+    expect(conn.msgs().map((m) => m.ev)).toEqual(['spawned', 'pid', 'output', 'exit'])
+    expect(bystander.msgs().map((m) => m.ev)).toEqual(['replay', 'pid', 'output', 'exit'])
     await finishKills()
     ptys[0].emitExit(1)
-    expect(conn.msgs().map((m) => m.ev)).toEqual(['spawned', 'killed'])
+    ptys[0].emitData('after the end')
+    await tick()
+    const exit = { ev: 'exit', id: 'X', code: KILLED_EXIT_CODE }
+    expect(conn.msgs().slice(3)).toEqual([exit, { ev: 'killed', id: 'X' }])
+    expect(bystander.msgs().slice(3)).toEqual([exit]) // told it ended; the ack is the killer's
     expect(ptys[0].kills).toBe(1) // ConPTY handle disposed after the tree-kill
     expect(ended.n).toBe(1) // idleness re-checked once (by the kill), not again by the late exit
+  })
+
+  it('a session that already exited on its own is not reported again by a kill that crosses it', () => {
+    const { table, conn, ptys } = mk()
+    table.handle(conn, spawnMsg('X'))
+    ptys[0].emitExit(5)
+    table.handle(conn, { op: 'kill', id: 'X' })
+    expect(conn.of('exit')).toEqual([{ ev: 'exit', id: 'X', code: 5 }])
+    expect(conn.of('killed')).toHaveLength(1)
   })
 
   it('a session that exits on its own reports its last output, then exit, and frees the id', async () => {
@@ -198,7 +228,7 @@ describe('daemon session table — instance identity under a reused id', () => {
     expect(conn.msgs()).toEqual([{ ev: 'killed', id: 'gone' }])
   })
 
-  it('shutdown tree-kills every session, reports completion once, and their late exits stay silent', async () => {
+  it('shutdown tree-kills every session and reports completion once; no exits — the closing pipe says it', async () => {
     const { table, conn, ptys, finishKills, shutdowns } = mk()
     table.handle(conn, spawnMsg('A'))
     table.handle(conn, spawnMsg('B'))

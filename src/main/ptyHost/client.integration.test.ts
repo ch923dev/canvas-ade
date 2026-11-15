@@ -44,9 +44,13 @@ interface FakeDaemon {
   close(): Promise<void>
 }
 
-/** A daemon stand-in that follows the real contract: hello → hello, spawn → spawned, and a kill
- *  is answered with `killed` and NOTHING else (no `exit` for a killed session). */
-async function startFakeDaemon(): Promise<FakeDaemon> {
+/**
+ * A daemon stand-in that follows the real contract: hello → hello, spawn → spawned, and a kill
+ * reports the session's `exit` at once and then acks with `killed` (daemonSessions.ts).
+ * `exitOnKill: false` is a daemon that goes quiet instead — the client must not depend on it.
+ */
+async function startFakeDaemon(opts: { exitOnKill?: boolean } = {}): Promise<FakeDaemon> {
+  const exitOnKill = opts.exitOnKill ?? true
   const pipe = pipeNameFor(env.userData, Math.random().toString(16).slice(2, 10))
   const ops: ClientMsg[] = []
   const conns = new Set<net.Socket>()
@@ -66,7 +70,10 @@ async function startFakeDaemon(): Promise<FakeDaemon> {
         ops.push(msg)
         if (msg.op === 'hello') reply(c, { ev: 'hello', version: PROTOCOL_VERSION, pid: 1 })
         else if (msg.op === 'spawn') reply(c, { ev: 'spawned', id: msg.id, pid: 4000 + ops.length })
-        else if (msg.op === 'kill') reply(c, { ev: 'killed', id: msg.id })
+        else if (msg.op === 'kill') {
+          if (exitOnKill) reply(c, { ev: 'exit', id: msg.id, code: 1 })
+          reply(c, { ev: 'killed', id: msg.id })
+        }
       }
     })
   })
@@ -130,18 +137,18 @@ describe.skipIf(process.platform !== 'win32')('ptyHost client ⇄ a fake daemon 
   })
 
   describe('a killed proxy is unhooked at once (instance identity under a reused id)', () => {
-    it('🔒 stops counting as a live session — the daemon sends no exit for a killed session', async () => {
+    it('🔒 stops counting as a live session at once, not when the daemon gets round to saying so', async () => {
       daemon = await startFakeDaemon()
       client.setKeepSessionsOnQuit(true)
       const proxy = await client.spawnViaDaemon(spawnOpts('X'))
       expect(client.shouldKeepSessionsOnQuit()).toBe(true)
       proxy.kill()
-      // Nothing else would ever remove it: a lingering entry made a quit with zero live sessions
-      // take the keep/detach path, and pinned the dead session's handlers.
+      // Synchronously: a quit in this same tick must not see a session to keep, and must not
+      // take the keep/detach path for one that was just killed.
       expect(client.shouldKeepSessionsOnQuit()).toBe(false)
     })
 
-    it('🔒 nothing addressed to the id reaches the killed proxy, and its replacement is untouched by a late second kill', async () => {
+    it('🔒 nothing addressed to the id reaches the killed proxy, and a late second kill of it touches neither the replacement nor the daemon', async () => {
       daemon = await startFakeDaemon()
       client.setKeepSessionsOnQuit(true)
       const old = await client.spawnViaDaemon(spawnOpts('X'))
@@ -150,19 +157,24 @@ describe.skipIf(process.platform !== 'win32')('ptyHost client ⇄ a fake daemon 
       old.onData((d) => oldData.push(d))
       old.onExit((e) => oldExits.push(e.exitCode))
       old.kill() // Restart: kill …
-      const fresh = await client.spawnViaDaemon(spawnOpts('X')) // … and respawn under the same id
+      // … and respawn under the same id. The daemon's `exit` for the killed instance arrives in
+      // between, addressed to the same id: it belongs to neither proxy's listeners.
+      const fresh = await client.spawnViaDaemon(spawnOpts('X'))
       const freshData: string[] = []
       const freshExits: number[] = []
       fresh.onData((d) => freshData.push(d))
       fresh.onExit((e) => freshExits.push(e.exitCode))
 
-      old.kill() // a second teardown of the OLD instance must not unhook the new one
+      // A second teardown of the OLD instance: it must neither unhook the new proxy nor send a
+      // `kill` for the id — the daemon would apply it to the replacement.
+      old.kill()
       expect(client.shouldKeepSessionsOnQuit()).toBe(true)
 
       daemon.send({ ev: 'output', id: 'X', data: 'fresh-prompt> ' })
       await until(() => freshData.length > 0)
       expect(freshData).toEqual(['fresh-prompt> '])
       expect(oldData).toEqual([])
+      expect(daemon.ops.filter((m) => m.op === 'kill')).toHaveLength(1)
 
       daemon.send({ ev: 'exit', id: 'X', code: 7 }) // the replacement's OWN exit
       await until(() => freshExits.length > 0)
@@ -170,11 +182,12 @@ describe.skipIf(process.platform !== 'win32')('ptyHost client ⇄ a fake daemon 
       expect(oldExits).toEqual([])
     })
 
-    // The daemon answers a kill with `killed` and no `exit`, so the proxy has to be dropped at
-    // kill time. Left registered, it reads as a running session the next time the pipe closes —
-    // which is every time the daemon idle-exits after its last session was killed.
-    it('🔒 a kill with no respawn leaves nothing behind: the pipe closing later interrupts no session', async () => {
-      daemon = await startFakeDaemon()
+    // The proxy is dropped at kill time, whatever the daemon then says. Against a daemon that
+    // answers a kill with `killed` alone (no `exit`), a proxy left registered would read as a
+    // running session the next time the pipe closes — which is every time the daemon idle-exits
+    // after its last session was killed.
+    it('🔒 a kill with no respawn leaves nothing behind, even if the daemon never reports the exit: the pipe closing later interrupts no session', async () => {
+      daemon = await startFakeDaemon({ exitOnKill: false })
       const notes: string[] = []
       client.setPtyHostNotifier((m) => notes.push(m))
       const proxy = await client.spawnViaDaemon(spawnOpts('X'))
