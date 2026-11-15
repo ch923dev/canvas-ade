@@ -169,6 +169,42 @@ describe.skipIf(process.platform !== 'win32')('ptyHost client ⇄ a fake daemon 
       expect(freshExits).toEqual([7])
       expect(oldExits).toEqual([])
     })
+
+    // The daemon answers a kill with `killed` and no `exit`, so the proxy has to be dropped at
+    // kill time. Left registered, it reads as a running session the next time the pipe closes —
+    // which is every time the daemon idle-exits after its last session was killed.
+    it('🔒 a kill with no respawn leaves nothing behind: the pipe closing later interrupts no session', async () => {
+      daemon = await startFakeDaemon()
+      const notes: string[] = []
+      client.setPtyHostNotifier((m) => notes.push(m))
+      const proxy = await client.spawnViaDaemon(spawnOpts('X'))
+      const exits: number[] = []
+      proxy.onExit((e) => exits.push(e.exitCode))
+      proxy.kill()
+      // An attach the fake daemon never answers: it settles only when the client has handled the
+      // lost connection, so the assertions below cannot run early.
+      const lost = client.attachDaemonSession('never-answered').catch((e: Error) => e.message)
+      await until(() => daemon?.ops.some((m) => m.op === 'attach') ?? false)
+      await daemon.close()
+      daemon = null
+      expect(await lost).toBe('PTY host connection lost')
+      expect(notes).toEqual([])
+      expect(exits).toEqual([])
+    })
+
+    it('a LIVE proxy is still told: one notification and an exit when the pipe closes', async () => {
+      daemon = await startFakeDaemon()
+      const notes: string[] = []
+      client.setPtyHostNotifier((m) => notes.push(m))
+      const proxy = await client.spawnViaDaemon(spawnOpts('X'))
+      const exits: number[] = []
+      proxy.onExit((e) => exits.push(e.exitCode))
+      await daemon.close()
+      daemon = null
+      await until(() => exits.length > 0)
+      expect(exits).toEqual([-1])
+      expect(notes).toEqual(['Terminal host disconnected — running sessions were interrupted.'])
+    })
   })
 
   it('🔒 a character split across two pipe reads reaches the terminal intact', async () => {

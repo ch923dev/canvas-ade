@@ -17,7 +17,7 @@ import { closeElectronApp } from './closeApp'
  * the session → "Keep running in background" → window dies, MAIN stays tray-resident, the
  * shell OUTLIVES the window → trayReopen probe (Playwright can't click the OS tray) → the
  * board reattaches to the SAME pid with replay + live duplex → a config-'stop' close then
- * kills everything and the daemon idle-exits (the no-leak sweep is an assertion).
+ * kills everything and stops the daemon (the no-leak sweep is an assertion).
  *
  * Windows-only: the PTY-host daemon is win32-gated.
  */
@@ -217,7 +217,7 @@ test.describe('@terminal @ptyhost close modal keep → tray residency → reatta
       .poll(() => readTerm(page2, id), { timeout: 20_000 })
       .toContain('CLOSEGUARD-ALIVE-2') // live duplex post-reattach
 
-    // ── Always-stop close: config says 'stop' → no modal, kill-everything, daemon idle-exit ──
+    // ── Always-stop close: config says 'stop' → no modal, kill-everything, daemon stopped ──
     fs.writeFileSync(
       path.join(userData, 'ptyhost-config.json'),
       JSON.stringify({
@@ -229,6 +229,7 @@ test.describe('@terminal @ptyhost close modal keep → tray residency → reatta
     const state = JSON.parse(
       fs.readFileSync(path.join(userData, 'ptyhost-state.json'), 'utf8')
     ) as { daemonPid: number }
+    const proc = app.process() // taken now: Playwright releases the handle once the app is gone
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close())
     await expect
       .poll(() => alive(shellPid), { timeout: 15_000, message: 'shell reaped on stop close' })
@@ -236,10 +237,18 @@ test.describe('@terminal @ptyhost close modal keep → tray residency → reatta
     await expect
       .poll(() => alive(state.daemonPid), {
         timeout: 15_000,
-        message: 'daemon idle-exited (no leak between runs)'
+        message: 'daemon gone (no leak between runs)'
       })
       .toBe(false)
     shellPid = 0
+    // The close IS the quit. Wait for it, so the teardown below always meets an app that has
+    // already exited instead of sometimes racing one that is about to.
+    await expect
+      .poll(() => proc.exitCode !== null || proc.signalCode !== null, {
+        timeout: 15_000,
+        message: 'app quit on the stop-configured close'
+      })
+      .toBe(true)
     await closeElectronApp(app)
   })
 
