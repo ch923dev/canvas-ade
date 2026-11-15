@@ -7,9 +7,13 @@ import { assetsDirOf, downloadsDirOf, getCurrentDir } from './projectStore'
 
 /**
  * Project Library — a project-level browser for files saved INTO the project under `<project>/.canvas/`
- * (ADR 0009): the OSR Browser boards' downloads (`.canvas/downloads/`) and the canvas asset store
- * (`.canvas/assets/`). Distinct from the per-board DevTools Assets/Downloads tabs, which inspect the
- * CURRENT page's network resources — this lists durable files on disk.
+ * (ADR 0009): the OSR Browser boards' output — downloads and screenshots (`.canvas/downloads/`) — and
+ * the canvas asset store (`.canvas/assets/`). Distinct from the per-board DevTools Assets/Downloads
+ * tabs, which inspect the CURRENT page's network resources — this lists durable files on disk.
+ *
+ * The two dirs have different lifetimes: `downloads/` is plain user output, never swept; `assets/`
+ * is the documents' content-addressed blob store and is mark-and-swept on every project open
+ * (`gcAssets`), so only files a persisted document references belong there.
  *
  * Security: every path this module resolves is confined to `<project>/.canvas/{downloads,assets}` and
  * re-validated with `resolve()` + prefix check, so a compromised renderer can neither enumerate nor

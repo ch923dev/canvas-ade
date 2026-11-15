@@ -54,7 +54,7 @@ let screenshotPreview: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   useToastStore.getState().clearToasts()
-  screenshotPreview = vi.fn(async () => ({ ok: true, assetId: null, clipboardOk: true }))
+  screenshotPreview = vi.fn(async () => ({ ok: true, relPath: null, clipboardOk: true }))
   ;(window as unknown as { api: unknown }).api = {
     screenshotPreview,
     openExternalPreview: vi.fn(async () => true),
@@ -318,7 +318,7 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
 
   it('reports failure when the clipboard write failed and nothing was saved', async () => {
     const id = seedBrowser()
-    screenshotPreview.mockResolvedValue({ ok: true, assetId: null, clipboardOk: false })
+    screenshotPreview.mockResolvedValue({ ok: true, relPath: null, clipboardOk: false })
     openInspector(id)
     render(<Harness id={id} />)
     const t = await shoot(id)
@@ -327,24 +327,24 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
     expect(t.kind).toBe('error')
   })
 
-  it('reports partial success when saved to assets but the clipboard failed', async () => {
+  it('reports partial success when saved to downloads but the clipboard failed', async () => {
     const id = seedBrowser()
     screenshotPreview.mockResolvedValue({
       ok: true,
-      assetId: 'assets/abc.png',
+      relPath: 'downloads/screenshot-2026-11-05-090307.png',
       clipboardOk: false
     })
     openInspector(id)
     render(<Harness id={id} />)
     const t = await shoot(id)
-    expect(t.message).toContain('saved to assets/')
+    expect(t.message).toContain('saved to downloads/')
     expect(t.message).not.toContain('copied')
     expect(t.kind).toBe('ok')
   })
 
   it('still reports the clipboard success toast when the copy landed', async () => {
     const id = seedBrowser()
-    screenshotPreview.mockResolvedValue({ ok: true, assetId: null, clipboardOk: true })
+    screenshotPreview.mockResolvedValue({ ok: true, relPath: null, clipboardOk: true })
     openInspector(id)
     render(<Harness id={id} />)
     const t = await shoot(id)

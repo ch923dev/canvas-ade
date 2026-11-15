@@ -27,8 +27,8 @@ const pollNonBlank = (page: Page, id: string, timeoutMs: number): Promise<boolea
   pollCall(page, [{ m: 'osrCanvasNonBlank', a: [id] }], timeoutMs)
 
 test.describe('@preview browser board — screenshot (OSR offscreen window)', () => {
-  test('captures the live OSR preview to an assets/ PNG file', async ({ page, electronApp }) => {
-    // Open a temp project so assets/ resolves.
+  test('captures the live OSR preview to a downloads/ PNG file', async ({ page, electronApp }) => {
+    // Open a temp project so the project's .canvas/downloads/ resolves.
     const projDir = await mainCall<string>(
       electronApp,
       'createTempProject',
@@ -47,19 +47,21 @@ test.describe('@preview browser board — screenshot (OSR offscreen window)', ()
       const painted = await pollNonBlank(page, id, 8000)
       expect(painted, 'OSR painted before screenshot').toBe(true)
 
-      const res = await apiCall<{ ok: boolean; assetId: string | null }>(
+      const res = await apiCall<{ ok: boolean; relPath: string | null }>(
         page,
         'screenshotPreview',
         id
       )
       expect(res.ok, 'screenshot ok').toBe(true)
-      expect(res.assetId, 'assetId returned (project open)').toBeTruthy()
-
-      // ADR 0009: the assetId is still the logical `assets/<sha>.png`, but the blob lives under
-      // `<project>/.canvas/assets/`. Resolve the physical path through `.canvas/`.
-      const abs = await mainCall<string>(electronApp, 'joinPath', projDir, '.canvas', res.assetId!)
+      // Saved as a timestamped file in the Browser boards' output folder, NOT the content-addressed
+      // `assets/` store: nothing references a screenshot, so the open-time asset GC would quarantine
+      // it there. `relPath` is relative to `<project>/.canvas/` (ADR 0009).
+      expect(res.relPath, 'relPath returned (project open)').toMatch(
+        /^downloads\/screenshot-\d{4}-\d{2}-\d{2}-\d{6}( \(\d+\))?\.png$/
+      )
+      const abs = await mainCall<string>(electronApp, 'joinPath', projDir, '.canvas', res.relPath!)
       const exists = await mainCall<boolean>(electronApp, 'fileExists', abs)
-      expect(exists, 'asset PNG written to disk under .canvas/').toBe(true)
+      expect(exists, 'screenshot PNG written to disk under .canvas/downloads/').toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', projDir)
     }

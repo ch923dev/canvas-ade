@@ -64,14 +64,15 @@ export interface DetectedUrl {
   port: number
 }
 
-/** Mirrors main `ScreenshotResult` (preview:screenshot). assetId is the relative
- *  `assets/<sha1>.png` path, or null when nothing was saved. `clipboardOk` reports
+/** Mirrors main `ScreenshotResult` (preview:screenshot). relPath is the saved file's path
+ *  relative to `.canvas/` (`downloads/screenshot-<timestamp>.png`, the Project Library's
+ *  list/reveal key), or null when nothing was saved. `clipboardOk` reports
  *  whether the clipboard copy actually landed (BUG-028: the write can throw).
  *  `ok:false` with reason `not-live` means the view is detached or off-screen so
  *  `capturePage()` would return a blank image; reason `forbidden` means the sender
  *  was not the trusted app renderer (should never occur from normal app flow). */
 export type PreviewScreenshotResult =
-  | { ok: true; assetId: string | null; clipboardOk: boolean }
+  | { ok: true; relPath: string | null; clipboardOk: boolean }
   | { ok: false; reason: 'not-live' | 'forbidden' }
 
 /**
@@ -556,7 +557,7 @@ const api = {
   // Open the preview's current URL in the OS browser (scheme-gated in main).
   openExternalPreview: (url: string): Promise<boolean> =>
     ipcRenderer.invoke('preview:openExternal', url),
-  // Screenshot the live preview -> clipboard + project assets/. { ok:false, reason:'not-live' }
+  // Screenshot the live preview -> clipboard + project .canvas/downloads/. { ok:false, reason:'not-live' }
   // when the offscreen window is missing/off-screen (capturePage is blank then).
   screenshotPreview: (id: string): Promise<PreviewScreenshotResult> =>
     ipcRenderer.invoke('preview:screenshot', id),
