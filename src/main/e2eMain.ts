@@ -36,6 +36,7 @@ import {
 } from './pty'
 import { setVoiceStubEnabled, stubKwsWake } from './voiceEngineStub'
 import { isTrayResident, reopenFromTray } from './trayResidency'
+import { hasUnadoptedSurvivors } from './ptyHost/bridge'
 import { createLifecycleDeliver, type LifecycleBoard } from './lifecycleNotifications'
 import { DEFAULT_NOTIFICATIONS, type NotificationsConfig } from './notificationsConfig'
 import type { LifecycleEvent } from './agentLifecycle'
@@ -68,6 +69,9 @@ export interface E2EMain {
   /** PR-2: drive the tray's "Open Expanse" (Playwright can't click the OS tray) — tears the
    *  tray down, re-warms the survivor list, recreates the window (the adopt-first reattach). */
   trayReopen(): Promise<void>
+  /** Has the boot-time survivor list found a daemon session no board has re-adopted yet? (The
+   *  list is async — a spec that closes the window on such a session waits for this first.) */
+  hasUnadoptedSurvivors(): boolean
   /**
    * Capture a board's offscreen window's last painted frame as a PNG and write it to
    * `absPath`. Returns false if no OSR window / blank. This is the only evidence path for
@@ -591,6 +595,7 @@ export function installE2EMain(
     writeTerminal: debugWriteTerminal,
     trayResident: isTrayResident,
     trayReopen: reopenFromTray,
+    hasUnadoptedSurvivors,
     async captureOsrToFile(id, absPath) {
       const png = await captureOsrPng(id)
       if (!png) return false

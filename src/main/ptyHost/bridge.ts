@@ -7,7 +7,7 @@
 import { app, Notification } from 'electron'
 import * as pty from 'node-pty'
 import type { CloseSessionRow } from '../../shared/closeGuardTypes'
-import { buildKeepableRows } from './closeGuardCore'
+import { buildKeepableRows, pruneSurvivors } from './closeGuardCore'
 import { getCurrentDir } from '../projectStore'
 import { isHeadlessHarness } from '../headlessHarness'
 import { createRing, pushRing, type OutputRing } from '../ptyOutput'
@@ -16,11 +16,14 @@ import {
   attachDaemonSession,
   disconnectPtyHost,
   isDaemonProxy,
+  keepSessionsRequested,
   killDaemonSession,
   listDaemonSessions,
+  listDaemonSessionsStrict,
   reportPtyHostFailure,
   setPtyHostNotifier,
   shouldKeepSessionsOnQuit,
+  shutdownPtyHostDaemon,
   spawnViaDaemon
 } from './client'
 import { ptyHostEnabled, readPtyHostConfig } from './config'
@@ -100,6 +103,9 @@ export function bootPtyHost(opts?: { muted?: boolean }): void {
  * ports closed, procs left alive in the daemon for the relaunch's reattach; every other quit
  * (window close, explicit quit, crash sinks) keeps the kill-everything drain. NEVER the detach
  * path on a normal close — that behavior change waits for the PR-2 close modal.
+ *
+ * "Everything" includes what MAIN holds no proxy for: on a kill drain the daemon itself is told
+ * to stop (quitDrainCore), which is what reaches survivors no board re-adopted.
  */
 export function quitPtyDrain(): Promise<void> {
   if (!deps) return Promise.resolve()
@@ -109,6 +115,8 @@ export function quitPtyDrain(): Promise<void> {
   // binds the real state + collaborators.
   return quitDrainCore({
     keep: shouldKeepSessionsOnQuit(),
+    keepRequested: keepSessionsRequested(),
+    stopDaemon,
     sessions: deps.sessions,
     parked: deps.parked,
     boardCwds: deps.boardCwds,
@@ -132,8 +140,61 @@ interface SessionFacts {
 }
 const sessionFacts = new Map<string, SessionFacts>()
 
-/** Sessions found alive in the daemon at boot (a previous app run kept them): id → info. */
+/**
+ * Daemon sessions this run holds NO proxy for: found alive at boot / tray reopen (a previous app
+ * run kept them), minus the ones a board has since re-adopted or respawned over. An entry leaves
+ * only by owner-scoped reattach or a same-id spawn, so another project's sessions stay here for
+ * the whole run — invisible to pty.ts's maps. The close modal lists them (listKeepableSessions)
+ * and a kill-everything quit stops them (quitPtyDrain → stopDaemon).
+ */
 const daemonSurvivors = new Map<string, SessionInfo>()
+
+/** Upper bounds on the two daemon round-trips that sit in front of the user (the stop inside the
+ *  awaited quit drain; the re-list before the close modal opens) — a daemon that accepts the pipe
+ *  but never answers must not hold either. */
+const STOP_DAEMON_BUDGET_MS = 1_500
+const SURVIVOR_REFRESH_BUDGET_MS = 1_000
+
+function within(work: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref()
+    const done = (): void => {
+      clearTimeout(timer)
+      resolve()
+    }
+    work.then(done, done)
+  })
+}
+
+/**
+ * The kill-everything quit's daemon half: tree-kill every session the daemon holds and let it
+ * exit. Not gated on the rollout setting — it only ever talks to a daemon that is ALREADY
+ * running (found through the state file), so a daemon left over from a run where the setting was
+ * still on is stopped too; with no daemon it is a file-existence check.
+ */
+function stopDaemon(): Promise<void> {
+  daemonSurvivors.clear()
+  return within(shutdownPtyHostDaemon(), STOP_DAEMON_BUDGET_MS)
+}
+
+/** Any daemon session this run has not re-adopted? (Cheap sync gate for the close guard.) */
+export function hasUnadoptedSurvivors(): boolean {
+  return daemonSurvivors.size > 0
+}
+
+/**
+ * Reconcile the un-adopted survivor set with the daemon's CURRENT list (bounded) — called before
+ * the close modal names them, so it never promises to keep, or offers to stop, a session that
+ * already exited on its own.
+ */
+export function refreshDaemonSurvivors(): Promise<void> {
+  if (daemonSurvivors.size === 0) return Promise.resolve()
+  return within(
+    listDaemonSessionsStrict().then((list) => pruneSurvivors(daemonSurvivors, list)),
+    SURVIVOR_REFRESH_BUDGET_MS
+  )
+}
 /** The boot-time survivor list fetch; reattach awaits it so early board mounts can't race it. */
 let survivorsReady: Promise<void> = Promise.resolve()
 /** Effective daemon gate, resolved lazily once per run (config + platform + env, D2). */
@@ -163,6 +224,10 @@ export function warmPtyHostReattach(): Promise<void> {
   if (!isPtyHostActive()) return Promise.resolve()
   survivorsReady = listDaemonSessions()
     .then((list) => {
+      // REPLACE, never accumulate: both callers (boot, tray reopen) run while MAIN holds no
+      // proxy at all, so the fresh list IS the un-adopted set — and an entry left over from the
+      // previous warm-up may name a session that exited while the app sat in the tray.
+      daemonSurvivors.clear()
       for (const info of list) daemonSurvivors.set(info.id, info)
     })
     .catch(() => undefined)
@@ -278,7 +343,8 @@ export async function tryDaemonReattach(id: string): Promise<boolean> {
 }
 
 /**
- * PR-2 close-modal snapshot: every session that would SURVIVE a "keep in background". The
+ * PR-2 close-modal snapshot: every session that would SURVIVE a "keep in background" — MAIN's
+ * own daemon-backed sessions and the daemon's un-adopted survivors alike. The
  * filter semantics live in the PURE buildKeepableRows (closeGuardCore.ts, unit-tested —
  * review #340 [warning]); this wrapper binds the real maps + facts. When the list is empty
  * the close guard skips the modal entirely and the close behaves exactly as today.
@@ -293,6 +359,8 @@ export function listKeepableSessions(
     boardCwds: deps.boardCwds,
     facts: sessionFacts,
     isDaemonProxy,
-    getTitle
+    getTitle,
+    survivors: daemonSurvivors,
+    currentDir: getCurrentDir()
   })
 }

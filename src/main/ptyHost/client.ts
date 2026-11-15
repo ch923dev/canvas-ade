@@ -16,7 +16,7 @@ import { spawn as spawnChild } from 'node:child_process'
 import type { IPty, IDisposable } from 'node-pty'
 import {
   PROTOCOL_VERSION,
-  createLineDecoder,
+  attachLineDecoder,
   encodeLine,
   type ClientMsg,
   type DaemonMsg,
@@ -240,7 +240,7 @@ function connectTo(
       const s = net.connect(pipe)
       inFlight = s
       let settled = false
-      const feed = createLineDecoder<DaemonMsg>((msg) => {
+      attachLineDecoder<DaemonMsg>(s, (msg) => {
         if (!settled && msg.ev === 'hello') {
           settled = true
           if (msg.version !== PROTOCOL_VERSION) {
@@ -259,7 +259,6 @@ function connectTo(
         }
         routeMsg(msg)
       })
-      s.on('data', (c) => feed(c.toString('utf8')))
       // R7: declare the ack/pause capability additively (see protocol.ts). An older daemon —
       // one that survived an app update — ignores the field and behaves exactly as before.
       s.once('connect', () =>
@@ -484,9 +483,21 @@ class DaemonPty implements IPty {
   }
 
   kill(): void {
+    // The wire addresses sessions by id, and an id is reused at once (Restart), so a proxy speaks
+    // for its id only while it is the one registered under it — pty.ts's isStaleExit discipline.
+    // Not registered means this instance is already over (it exited, or was killed before) and
+    // there is nothing left to kill; a `kill` sent anyway would land on whichever instance holds
+    // the id now.
+    if (handlers.get(this.id) !== this.h) return
     // killTree (pty.ts) taskkills the real pid from MAIN and calls this for the ConPTY
     // dispose — the daemon-side kill op is the authoritative tree reap either way.
     sendMsg({ op: 'kill', id: this.id })
+    // Unhook now rather than on the daemon's word. The daemon does report a killed instance's
+    // `exit` (at kill time, daemonSessions.ts), but until this entry is gone it pins the dead
+    // session's handlers, counts as a live session in shouldKeepSessionsOnQuit, and reads as an
+    // interrupted one if the pipe closes first.
+    handlers.delete(this.id)
+    ackCounters.delete(this.id)
   }
 
   clear(): void {
@@ -622,6 +633,13 @@ export function setKeepSessionsOnQuit(v: boolean): void {
 export function shouldKeepSessionsOnQuit(): boolean {
   return keepOnQuit && sock !== null && handlers.size > 0
 }
+/** The raw intent behind this quit, whether or not MAIN holds a session to detach. The quit drain
+ *  needs it apart from shouldKeepSessionsOnQuit: a keep-quit from a project with no terminals has
+ *  nothing to detach, yet must still leave the daemon's OTHER sessions (survivors of an earlier
+ *  run that no board re-adopted) running. */
+export function keepSessionsRequested(): boolean {
+  return keepOnQuit
+}
 
 /** Detach without killing: close the pipe; the daemon keeps every session for the relaunch. */
 export function disconnectPtyHost(): void {
@@ -637,20 +655,81 @@ export function disconnectPtyHost(): void {
   }
 }
 
-/** Ask the daemon to tree-kill everything and exit (e2e teardown sweep / explicit stop-all). */
-export async function shutdownPtyHostDaemon(): Promise<void> {
-  if (!sock) {
+/** How long shutdownPtyHostDaemon waits for the `shutdown` line to leave MAIN before closing. */
+const SHUTDOWN_FLUSH_MS = 500
+
+/**
+ * Reach the daemon WITHOUT ever starting one: reuse the live connection (or one still being
+ * established), else try the daemon the state file names, once. False = no daemon is running.
+ * ensurePtyHost is wrong for a stop: with no daemon it would stage and boot a fresh one just to
+ * be told to exit — on the quit path, where a stale state file is the common case.
+ */
+async function connectExistingDaemon(): Promise<boolean> {
+  if (sock) return true
+  if (ready) {
     try {
-      await ensurePtyHost()
+      await ready
     } catch {
-      return // nothing to shut down
+      /* that attempt failed — nothing came up */
     }
+    return sock !== null
   }
-  sendMsg({ op: 'shutdown' })
-  disconnectPtyHost()
+  let existing: PtyHostState | null = null
+  try {
+    existing = repairState(JSON.parse(fs.readFileSync(stateFile(), 'utf8')))
+  } catch {
+    /* no/torn state file */
+  }
+  if (!existing) return false
+  try {
+    sock = await connectTo(existing.pipe, existing.token, 1)
+    return true
+  } catch {
+    return false // the state file outlived its daemon (it idle-exits; the file stays)
+  }
+}
+
+/**
+ * Ask the daemon to tree-kill EVERY session it holds and exit — the tray's stop-all and every
+ * kill-everything quit (bridge.ts quitPtyDrain). This is the only thing that reaches sessions MAIN
+ * has no proxy for: survivors of a previous run that no board re-adopted. With a live connection
+ * the `shutdown` line is written in the CALLER'S tick (a crash sink exits right after the sync
+ * part of its teardown).
+ */
+export function shutdownPtyHostDaemon(): Promise<void> {
+  if (sock) return sendShutdownAndClose()
+  return connectExistingDaemon().then((up) => (up ? sendShutdownAndClose() : undefined))
+}
+
+function sendShutdownAndClose(): Promise<void> {
+  const s = sock
+  // Let go of the connection FIRST (the disconnectPtyHost contract): the daemon closes the pipe
+  // as it exits, and that must not read as a lost connection (exit fan-out + a "host
+  // disconnected" toast on the way out).
+  sock = null
+  ready = null
+  handlers.clear()
+  ackCounters.clear()
   try {
     fs.rmSync(stateFile(), { force: true })
   } catch {
     /* best-effort */
   }
+  if (!s || s.destroyed) return Promise.resolve()
+  // Close the pipe only once the line has left MAIN (bounded) — a destroy() racing the write
+  // could drop the one message this call exists to deliver.
+  return new Promise<void>((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      try {
+        s.destroy()
+      } catch {
+        /* already gone */
+      }
+      resolve()
+    }
+    const timer = setTimeout(done, SHUTDOWN_FLUSH_MS)
+    timer.unref()
+    s.write(encodeLine({ op: 'shutdown' }), done)
+  })
 }

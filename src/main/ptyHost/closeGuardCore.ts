@@ -12,6 +12,7 @@
  */
 import type { CloseGuardAnswer, CloseSessionRow } from '../../shared/closeGuardTypes'
 import type { CloseWithSessions } from './config'
+import type { SessionInfo } from './protocol'
 
 export type CloseDecision = 'proceed' | 'keep' | 'ask'
 
@@ -61,6 +62,15 @@ export interface KeepableSnapshotDeps {
   facts: ReadonlyMap<string, KeepableFacts>
   isDaemonProxy: (proc: unknown) => boolean
   getTitle: (id: string) => string | undefined
+  /**
+   * Daemon sessions MAIN holds NO proxy for: survivors of a previous run that no board has
+   * re-adopted (bridge.ts daemonSurvivors) — typically another project's agents, kept across a
+   * "Keep running" close. They are running processes that a keep leaves running and a stop
+   * kills, so the modal must name them like any other row.
+   */
+  survivors: ReadonlyMap<string, SessionInfo>
+  /** The ACTIVE project dir — decides whether a survivor may borrow a board title (below). */
+  currentDir: string | null
 }
 
 /** Display command for a session: its launchCommand (what the user is actually running),
@@ -80,8 +90,9 @@ function displayCmd(facts: KeepableFacts | undefined): string {
 /**
  * The close-modal snapshot filter, pure (review #340 [warning] — this decides which sessions
  * the modal PROMISES will survive a keep, so its exclusions are unit-tested like the sibling
- * cores): every session that would genuinely survive — live daemon-backed sessions plus
- * daemon-backed background parks (their procs run headless). In-proc fallback sessions (D2)
+ * cores): every session that would genuinely survive — live daemon-backed sessions, daemon-backed
+ * background parks (their procs run headless), and the daemon's un-adopted survivors (sessions
+ * of a previous run no board re-adopted; MAIN's maps do not hold them). In-proc fallback sessions (D2)
  * are deliberately excluded (they die with this process — listing them under "keep running"
  * would be a lie), as are non-'running' live entries and undo parks (deleted boards).
  */
@@ -116,7 +127,44 @@ export function buildKeepableRows(d: KeepableSnapshotDeps): CloseSessionRow[] {
       lastActivityAt: 0
     })
   }
+  // Un-adopted daemon survivors. MAIN never spawned or attached them in this run, so everything
+  // shown comes from the meta the daemon round-trips (protocol.ts SessionMeta).
+  const listed = new Set(rows.map((r) => r.id))
+  for (const [id, info] of d.survivors) {
+    if (listed.has(id)) continue // MAIN already holds this session — one row each
+    rows.push({
+      id,
+      cmd: displayCmd({
+        launchCommand: info.meta.launchCommand,
+        shell: info.meta.shell,
+        startedAt: 0
+      }),
+      // Titles come from the ACTIVE project's board mirror, and board ids collide across cloned
+      // projects (ADR 0011 R1) — only a survivor this project owns may be named from it.
+      title: (info.meta.projectDir ?? null) === d.currentDir ? (d.getTitle(id) ?? null) : null,
+      cwd: info.meta.cwd || null,
+      running: true, // a live headless process; no idle tracking exists for it
+      startedAt: info.meta.startedAt ?? 0,
+      lastActivityAt: 0
+    })
+  }
   return rows
+}
+
+/**
+ * The un-adopted survivor set is a snapshot from the last daemon list (boot / tray reopen), and
+ * MAIN is not subscribed to those sessions — one that exits on its own leaves no trace here.
+ * Reconcile against a FRESH list before the modal names them: drop the ones the daemon no longer
+ * holds. Never grows the set (ids only the daemon knows are not this helper's call), and `null` —
+ * the list call FAILED, which is not an empty daemon (review #340) — leaves it untouched.
+ */
+export function pruneSurvivors<T>(
+  survivors: Map<string, T>,
+  alive: readonly { id: string }[] | null
+): void {
+  if (alive === null) return
+  const ids = new Set(alive.map((s) => s.id))
+  for (const id of [...survivors.keys()]) if (!ids.has(id)) survivors.delete(id)
 }
 
 /**

@@ -31,7 +31,15 @@ describe('daemonBundle', () => {
     // runtime) precisely so BOTH the daemon and MAIN's client can share one definition of the
     // constants — an ack size and a watermark that disagreed across two files would deadlock a
     // terminal permanently.
+    // `daemonSessions.ts` is the daemon's own session table, split out of daemonMain.ts so the
+    // instance-identity rules are unit-testable; it imports only its three siblings here.
     const names = built.inputs.map((i) => i.replace(/\\/g, '/').split('/').pop()).sort()
-    expect(names).toEqual(['daemonMain.ts', 'flowControl.ts', 'protocol.ts', 'ring.ts'])
+    expect(names).toEqual([
+      'daemonMain.ts',
+      'daemonSessions.ts',
+      'flowControl.ts',
+      'protocol.ts',
+      'ring.ts'
+    ])
   })
 })

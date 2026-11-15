@@ -10,11 +10,11 @@ path at the commit shown.
 review of `main` @ `9d07af84` (v0.48.2) plus the Electron → Rust assessment that
 [ADR 0015](../decisions/0015-legacy-line-fixes-only.md) rests on. 5 P1 / 9 P2 / a short P3 list;
 failure scenarios are traced from code, not reproduced. FIXED since: P1 #1 + #2, the open-time
-asset GC sweeping Kanban attachments and a session-only wallpaper (#453, v0.48.4), and the related
-Browser-board screenshot sweep (#454, v0.48.5). OPEN: P1 #3 + #4 and P2 #6 (PTY host daemon: stale
-exit deletes a same-id replacement, survivors outlive "Stop all & close", per-chunk UTF-8 decode),
-P1 #5 (`spawn_board` prompt runs with no confirm or audit row), P2 #7–#14, and the P3 list. Findings,
-the Rust plan and its limits:
+asset GC sweeping Kanban attachments and a session-only wallpaper (#453, v0.48.4); the related
+Browser-board screenshot sweep (#454, v0.48.5); and P1 #3 + #4 and P2 #6, the PTY host daemon
+defects — a stale exit deleting a same-id replacement, survivors outliving "Stop all & close",
+per-chunk UTF-8 decode (#455, v0.48.6). OPEN: P1 #5 (`spawn_board` prompt runs with no confirm or
+audit row), P2 #7–#14, and the P3 list. Findings, the Rust plan and its limits:
 [`2026-11-15-deep-review-rust-migration.md`](2026-11-15-deep-review-rust-migration.md).
 
 **OPEN BACKLOG: the 2026-07-31 notification-system audit** — full-pipeline audit (MAIN deliver

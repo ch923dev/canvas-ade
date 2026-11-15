@@ -27,7 +27,15 @@ const CLOSE_GRACE_MS = 2_000
  * before.
  */
 export async function closeElectronApp(app: ElectronApplication): Promise<void> {
-  const proc = app.process()
+  let proc: ReturnType<ElectronApplication['process']>
+  try {
+    proc = app.process()
+  } catch {
+    // The app already quit on its own (a spec that drives a real window close) and Playwright has
+    // let go of it: `process()` throws on the released handle. Nothing is left to close, so
+    // nothing can hang either.
+    return
+  }
   // Ask before quitting: this profile's ptyhost-state.json names the checkout's daemon.
   const userData = await app
     .evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
