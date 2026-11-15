@@ -6,6 +6,17 @@ collapsed into a dated summary here once every finding is fixed). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
+**OPEN BACKLOG + MIGRATION ASSESSMENT: the 2026-11-15 deep review** — three-reviewer read-only
+review of `main` @ `9d07af84` (v0.48.2) plus the Electron → Rust assessment that
+[ADR 0015](../decisions/0015-legacy-line-fixes-only.md) rests on. 5 P1 / 9 P2 / a short P3 list;
+failure scenarios are traced from code, not reproduced. FIXED since: P1 #1 + #2, the open-time
+asset GC sweeping Kanban attachments and a session-only wallpaper (#453, v0.48.4), and the related
+Browser-board screenshot sweep (#454, v0.48.5). OPEN: P1 #3 + #4 and P2 #6 (PTY host daemon: stale
+exit deletes a same-id replacement, survivors outlive "Stop all & close", per-chunk UTF-8 decode),
+P1 #5 (`spawn_board` prompt runs with no confirm or audit row), P2 #7–#14, and the P3 list. Findings,
+the Rust plan and its limits:
+[`2026-11-15-deep-review-rust-migration.md`](2026-11-15-deep-review-rust-migration.md).
+
 **OPEN BACKLOG: the 2026-07-31 notification-system audit** — full-pipeline audit (MAIN deliver
 gate · renderer toast/attention state · chrome dock · cross-cutting), 17 ranked findings. The 3
 P1s + 6 key P2s are FIXED in the `feat/notifications-audit` PR (dead tray-click recovery, deliver

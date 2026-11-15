@@ -2,6 +2,25 @@
 
 Guidance for any agent/session working in this repo. Keep it current as decisions land.
 
+## Project status — LEGACY line, fixes only (ADR 0015, 2026-11-15)
+
+**This Electron app is the legacy line.** A Rust version is being built as a **separate project**
+(not in this repo). From 2026-11-15 this repo takes **fixes only**. Read this before starting work:
+
+- **Do:** bug fixes, security fixes, dependency/SCA upkeep, build / packaging / release / CI upkeep,
+  test and doc corrections — through the normal ritual below (worktree branch, patch version bump,
+  dev check, PR, merge on the owner's word).
+- **Do not start new features:** no new board types, subsystems, MCP tools, IPC namespaces, settings
+  or UI surfaces, and no refactors whose purpose is to enable them. Asked for one? Point at ADR 0015
+  and ask the owner once whether it is an exception.
+- **Never add Rust here:** no Rust code, no Cargo workspace, no migration scaffolding for the Rust
+  version's benefit. This repo is that project's read-only reference implementation.
+- **Feature lanes opened before the freeze:** finishing or parking each one is the owner's call.
+  Ask before merging one.
+
+Everything below still describes how this app works and remains the contract for fix work. Full
+decision: `docs/decisions/0015-legacy-line-fixes-only.md`.
+
 ## What this is
 
 An infinite, zoomable desktop canvas (Figma/tldraw-style) for AI-assisted development.
@@ -119,6 +138,7 @@ Locked safety rules (do not re-decide):
 | Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/archive/build-history.md`. |
 | Build matrix | Full: win + mac + linux × x64/arm64 (CI). Local verify = Windows x64 only here. |
 | Target | Single-user desktop (no multiplayer). |
+| Project status | **Legacy line, fixes only** from 2026-11-15. The Rust version is a separate project; no Rust code or migration scaffolding in this repo. Patch version bumps only. ADR 0015. |
 
 ## Repo structure
 
@@ -128,7 +148,7 @@ src/
   preload/   index.ts (contextBridge + MessagePort forwarding) · index.d.ts
   renderer/  index.html · src/{main.tsx, App.tsx, index.css, env.d.ts} · src/smoke/*
 design-reference/   authoritative design bundle (read-only)
-docs/        README.md (map) · roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0014) ·
+docs/        README.md (map) · roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0015) ·
              reviews/ (all hunts+reviews; README index + newest = open backlog) · research/ ·
              archive/ (build-history.md + git pointers for collapsed per-slice/handoff docs)
 .github/workflows/   pr.yml (check-only) · staging.yml (unsigned matrix on push→main) · production.yml (sign+notarize+publish on Release) · codeql.yml · claude-code-review.yml
@@ -394,7 +414,8 @@ Waves 0-5, and the 2026-06-10 full-app audit fix run (#107, 72/72 findings) are 
 + compiler-gated (`__ENABLE_AUTO_UPDATE__`). **The only thing between here and a shipped release is
 external — purchasing the signing certs (Apple Developer ID + a Windows Authenticode/cloud-signing
 cert), adding the secrets, then the first signed Release run** (runbook: `docs/contributing/releasing.md`;
-ADR 0008). Open candidates and "start here next" live in `docs/roadmap.md`.
+ADR 0008). Open candidates and "start here next" live in `docs/roadmap.md` — **frozen for this repo
+since 2026-11-15** (ADR 0015: fixes only); they remain as input for the separate Rust version.
 
 **Live state is deliberately NOT tracked in this file — including the current `main` SHA.** The
 current integration tip, the per-PR landing log, and the in-flight worktree/PR queue all live in
