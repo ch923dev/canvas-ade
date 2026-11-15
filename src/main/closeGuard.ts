@@ -16,7 +16,12 @@ import { app, ipcMain, type BrowserWindow, type IpcMain, type IpcMainEvent } fro
 import type { CloseGuardAnswer, CloseSessionRow } from '../shared/closeGuardTypes'
 import { listBoardMirror } from './boardRegistry'
 import { isForeignSender } from './ipcGuard'
-import { isPtyHostActive, listKeepableSessions } from './ptyHost/bridge'
+import {
+  hasUnadoptedSurvivors,
+  isPtyHostActive,
+  listKeepableSessions,
+  refreshDaemonSurvivors
+} from './ptyHost/bridge'
 import { decideOnClose, normalizeCloseAnswer } from './ptyHost/closeGuardCore'
 import { readPtyHostConfig, writePtyHostConfig, type PtyHostConfig } from './ptyHost/config'
 import { enterTrayResidency, isTrayResident } from './trayResidency'
@@ -109,8 +114,21 @@ export function attachCloseGuard(win: BrowserWindow): void {
 async function askAndRoute(
   win: BrowserWindow,
   deps: CloseGuardDeps,
-  rows: CloseSessionRow[]
+  initialRows: CloseSessionRow[]
 ): Promise<void> {
+  let rows = initialRows
+  if (hasUnadoptedSurvivors()) {
+    // Survivors no board re-adopted come from a boot-time list, and MAIN is not subscribed to
+    // them — re-list (bounded) so the modal never names one that has since exited on its own.
+    await refreshDaemonSurvivors()
+    rows = listKeepableSessions(titleLookup())
+    if (rows.length === 0) {
+      // Everything it would have asked about is already gone: this is a plain close after all.
+      bypassClose = true
+      if (!win.isDestroyed()) win.close()
+      return
+    }
+  }
   const answer = await queryRenderer(ipcMain, win, rows)
   if (answer.remember && answer.action !== 'cancel') {
     try {

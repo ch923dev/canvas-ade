@@ -9,6 +9,7 @@
  * minted by MAIN at daemon spawn — an un-helloed socket gets one error line and is
  * destroyed. Trusted-user-only surface; never a TCP port.
  */
+import { StringDecoder } from 'node:string_decoder'
 
 /** Bump when a message shape changes. MAIN drains-and-respawns on mismatch (D-handshake). */
 export const PROTOCOL_VERSION = 1
@@ -106,7 +107,8 @@ export function encodeLine(msg: ClientMsg | DaemonMsg): string {
 }
 
 /**
- * Incremental NDJSON line decoder. Feed raw socket chunks; emits each complete,
+ * Incremental NDJSON line decoder. Feed DECODED text (socket bytes go through
+ * `attachLineDecoder` below, never a per-chunk `toString`); emits each complete,
  * parseable JSON object. A malformed line is surfaced to `onBadLine` (the daemon
  * answers with an error; the client treats it as protocol corruption) instead of
  * throwing through the socket's data handler.
@@ -130,6 +132,26 @@ export function createLineDecoder<T>(
       }
     }
   }
+}
+
+/**
+ * Wire a pipe socket's reads into the NDJSON decoder — the ONE place either end turns socket
+ * bytes into text. A read boundary falls anywhere, including inside a multibyte UTF-8 character
+ * (every box-drawing glyph and emoji is 3-4 bytes, and a 256 KB `replay` always spans several
+ * reads). Decoding each chunk on its own (`chunk.toString('utf8')`) turns the two halves of such
+ * a character into U+FFFD — silently, because the JSON still parses. `StringDecoder` holds an
+ * incomplete tail back until the rest arrives. Both the daemon and MAIN's client attach through
+ * here so the two ends cannot drift.
+ */
+export function attachLineDecoder<T>(
+  sock: { on(event: 'data', listener: (chunk: Buffer | string) => void): unknown },
+  onMsg: (msg: T) => void,
+  onBadLine?: (line: string) => void
+): void {
+  const utf8 = new StringDecoder('utf8')
+  const feed = createLineDecoder<T>(onMsg, onBadLine)
+  // A string chunk means someone called setEncoding on the socket — already decoded statefully.
+  sock.on('data', (chunk) => feed(typeof chunk === 'string' ? chunk : utf8.write(chunk)))
 }
 
 /**

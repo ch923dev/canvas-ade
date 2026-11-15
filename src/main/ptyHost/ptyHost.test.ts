@@ -6,14 +6,17 @@
  * protocol smoke + the @terminal e2e, not unit-imported (electron / Electron-ABI node-pty).
  */
 import { describe, it, expect } from 'vitest'
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
   PROTOCOL_VERSION,
+  attachLineDecoder,
   createLineDecoder,
   encodeLine,
   verifyHello,
+  type ClientMsg,
   type DaemonMsg
 } from './protocol'
 import { createDaemonRing, daemonRingReplay, daemonRingWrapped, pushDaemonRing } from './ring'
@@ -24,6 +27,7 @@ import {
   buildKeepableRows,
   decideOnClose,
   normalizeCloseAnswer,
+  pruneSurvivors,
   type CloseDecisionInput,
   type KeepableSnapshotDeps
 } from './closeGuardCore'
@@ -82,6 +86,51 @@ describe('protocol codec', () => {
     feed('{not json}\n{"ev":"killed","id":"z"}\n')
     expect(bad).toEqual(['{not json}'])
     expect(seen).toHaveLength(1)
+  })
+
+  it('🔒 a multibyte character split across two socket reads survives — in both directions', () => {
+    // Both ends of the pipe decode through attachLineDecoder. Decoding each socket chunk on its own
+    // (`chunk.toString('utf8')`) turned a character that straddles two reads into U+FFFD, silently
+    // — the JSON still parsed. A 256 KB `replay` always spans several reads, so box-drawing /
+    // emoji TUIs were the ones that came back corrupted after a reattach.
+    const text = '┌─┐ ✅ 你好 👩‍💻 └─┘'
+    const directions: Array<ClientMsg | DaemonMsg> = [
+      { ev: 'output', id: 'b1', data: text }, // daemon → MAIN: PTY output
+      { op: 'input', id: 'b1', data: text } // MAIN → daemon: a paste
+    ]
+    for (const msg of directions) {
+      const bytes = Buffer.from(encodeLine(msg), 'utf8')
+      let midCharacterCuts = 0
+      for (let cut = 1; cut < bytes.length; cut++) {
+        const head = bytes.subarray(0, cut)
+        const tail = bytes.subarray(cut)
+        if ((head.toString('utf8') + tail.toString('utf8')).includes('�')) midCharacterCuts++
+        const sock = new EventEmitter()
+        const seen: unknown[] = []
+        const bad: string[] = []
+        attachLineDecoder(
+          sock,
+          (m) => seen.push(m),
+          (l) => bad.push(l)
+        )
+        sock.emit('data', head)
+        sock.emit('data', tail)
+        expect(seen, `cut at byte ${cut}`).toEqual([msg])
+        expect(bad).toEqual([])
+      }
+      expect(midCharacterCuts).toBeGreaterThan(10) // the cuts really do land inside characters
+    }
+  })
+
+  it('carries a partial character across MANY reads and keeps frames apart', () => {
+    const a: DaemonMsg = { ev: 'output', id: 'a', data: '👩‍💻' }
+    const b: DaemonMsg = { ev: 'output', id: 'b', data: '│' }
+    const bytes = Buffer.concat([Buffer.from(encodeLine(a)), Buffer.from(encodeLine(b))])
+    const sock = new EventEmitter()
+    const seen: unknown[] = []
+    attachLineDecoder(sock, (m) => seen.push(m))
+    for (const byte of bytes) sock.emit('data', Buffer.from([byte])) // one byte per read
+    expect(seen).toEqual([a, b])
   })
 })
 
@@ -304,11 +353,13 @@ describe('quit-path drain (D5 keep-vs-kill, mixed fleet)', () => {
     closed: string[]
     disposed: { v: boolean }
     disconnected: { v: boolean }
+    daemonStops: { n: number }
   } {
     const killed: unknown[] = []
     const closed: string[] = []
     const disposed = { v: false }
     const disconnected = { v: false }
+    const daemonStops = { n: 0 }
     const mkSession = (id: string, proc: unknown) => ({
       proc,
       port: {
@@ -332,6 +383,11 @@ describe('quit-path drain (D5 keep-vs-kill, mixed fleet)', () => {
     return {
       deps: {
         keep,
+        keepRequested: keep,
+        stopDaemon: () => {
+          daemonStops.n++
+          return Promise.resolve()
+        },
         sessions,
         parked,
         boardCwds,
@@ -351,7 +407,8 @@ describe('quit-path drain (D5 keep-vs-kill, mixed fleet)', () => {
       killed,
       closed,
       disposed,
-      disconnected
+      disconnected,
+      daemonStops
     }
   }
 
@@ -378,6 +435,41 @@ describe('quit-path drain (D5 keep-vs-kill, mixed fleet)', () => {
     expect(deps.parked.size).toBe(0)
     expect(deps.boardCwds.size).toBe(0)
     expect(disconnected.v).toBe(true)
+  })
+
+  // The daemon can hold sessions MAIN has no entry for: survivors of a previous run that no board
+  // re-adopted (another project's agents, kept across a "Keep running" close). disposeAllPtys walks
+  // MAIN's maps only, so a stop-all quit used to leave them running headless with no UI at all.
+  it('🔒 stop-all (keep=false) also stops the daemon — the only thing that reaches never-re-adopted survivors', async () => {
+    const { deps, disposed, daemonStops } = mkDeps(false)
+    const done = quitDrainCore(deps)
+    // Issued in the SAME tick as the drain: a crash sink exits right after the sync part.
+    expect(disposed.v).toBe(true)
+    expect(daemonStops.n).toBe(1)
+    await done
+  })
+
+  it('🔒 a keep drain leaves the daemon — and so every un-adopted survivor — alone', async () => {
+    const { deps, daemonStops } = mkDeps(true)
+    await quitDrainCore(deps)
+    expect(daemonStops.n).toBe(0)
+  })
+
+  it('🔒 a keep-quit with NO attached session (update install from a project without terminals) still spares survivors', async () => {
+    // `keep` is false here (nothing of MAIN's to detach), but the QUIT is still a keep-quit:
+    // another project's sessions surviving in the daemon must ride out the update.
+    const { deps, disposed, daemonStops } = mkDeps(false)
+    deps.keepRequested = true
+    await quitDrainCore(deps)
+    expect(disposed.v).toBe(true)
+    expect(daemonStops.n).toBe(0)
+  })
+
+  it('an unreachable daemon never fails the quit drain', async () => {
+    const { deps, disposed } = mkDeps(false)
+    deps.stopDaemon = () => Promise.reject(new Error('pipe gone'))
+    await expect(quitDrainCore(deps)).resolves.toBeUndefined()
+    expect(disposed.v).toBe(true)
   })
 })
 
@@ -549,7 +641,22 @@ describe('buildKeepableRows (close-modal snapshot filter)', () => {
     ]),
     isDaemonProxy: (p) => (p as { brand?: string }).brand === 'daemon',
     getTitle: (id) => (id === 'a' ? 'API server' : undefined),
+    survivors: new Map(),
+    currentDir: 'C:\\proj',
     ...over
+  })
+  const survivor = (id: string, meta: Partial<SessionInfo['meta']> = {}): SessionInfo => ({
+    id,
+    pid: 4242,
+    cols: 80,
+    rows: 24,
+    meta: {
+      projectDir: 'C:\\other-project',
+      cwd: 'C:\\other-project\\api',
+      shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      monitored: true,
+      ...meta
+    }
   })
 
   it('lists daemon-backed live sessions with honest cmd/title/cwd/dot/epochs', () => {
@@ -609,5 +716,88 @@ describe('buildKeepableRows (close-modal snapshot filter)', () => {
     )
     expect(rows.map((r) => r.id)).toEqual(['a'])
     expect(rows[0].running).toBe(true) // headless park: no idle tracking, honest default
+  })
+
+  // Sessions a previous run left in the daemon that no board has re-adopted (another project's
+  // agents). MAIN's maps never see them, so the modal used to say nothing about them — and with no
+  // other row it did not open at all, while "Stop all & close" left them running.
+  it('🔒 lists un-adopted daemon survivors, named from the meta the daemon round-trips', () => {
+    const rows = buildKeepableRows(
+      mkDeps({
+        survivors: new Map([
+          ['s1', survivor('s1', { launchCommand: 'claude', startedAt: 777 })],
+          ['s2', survivor('s2')] // PR-1-era survivor: no launchCommand / startedAt
+        ])
+      })
+    )
+    expect(rows).toEqual([
+      {
+        id: 's1',
+        cmd: 'claude',
+        title: null, // not this project's board — the active mirror must not name it
+        cwd: 'C:\\other-project\\api',
+        running: true, // a live headless process; no idle tracking exists for it
+        startedAt: 777,
+        lastActivityAt: 0
+      },
+      {
+        id: 's2',
+        cmd: 'pwsh',
+        title: null,
+        cwd: 'C:\\other-project\\api',
+        running: true,
+        startedAt: 0,
+        lastActivityAt: 0
+      }
+    ])
+  })
+
+  it('a survivor borrows a board title only when the ACTIVE project owns it (ids collide across clones)', () => {
+    const rows = buildKeepableRows(
+      mkDeps({
+        survivors: new Map([
+          ['a', survivor('a', { projectDir: 'C:\\proj' })], // ours, board not mounted yet
+          ['b', survivor('b')] // another project's
+        ]),
+        getTitle: () => 'API server'
+      })
+    )
+    expect(rows.map((r) => [r.id, r.title])).toEqual([
+      ['a', 'API server'],
+      ['b', null]
+    ])
+  })
+
+  it('never lists one session twice when MAIN already holds the id', () => {
+    const rows = buildKeepableRows(
+      mkDeps({
+        sessions: new Map([['a', { proc: daemon, state: 'running' }]]),
+        survivors: new Map([['a', survivor('a')]])
+      })
+    )
+    expect(rows.map((r) => r.id)).toEqual(['a'])
+  })
+})
+
+describe('pruneSurvivors (the un-adopted list is a boot-time snapshot)', () => {
+  const mk = (): Map<string, { id: string }> =>
+    new Map([
+      ['a', { id: 'a' }],
+      ['b', { id: 'b' }]
+    ])
+  it('drops survivors the daemon no longer lists (they exited on their own)', () => {
+    const m = mk()
+    pruneSurvivors(m, [{ id: 'b' }, { id: 'tracked-by-main' }])
+    expect([...m.keys()]).toEqual(['b']) // pruned, never grown
+  })
+  it('a FAILED list (null) is not an empty daemon — the snapshot is kept', () => {
+    const m = mk()
+    pruneSurvivors(m, null)
+    expect([...m.keys()]).toEqual(['a', 'b'])
+  })
+  it('a confirmed-empty daemon clears it', () => {
+    const m = mk()
+    pruneSurvivors(m, [])
+    expect(m.size).toBe(0)
   })
 })
