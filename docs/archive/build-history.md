@@ -5838,3 +5838,45 @@ on the old `writeAsset` path. Dev check (title-stamped, sandbox project, real In
 bug reproduced on `origin/main` (PNG in `.trash`, Library ▸ Assets empty after relaunch); on the
 fix the screenshot is listed under Library ▸ Downloads and survives quit → relaunch. Plan-viz not
 drawn (`canvas-ade` MCP unreachable all session).
+
+## PR #455 — fix(ptyhost): stale exit killed same-id replacement, stop-all missed un-adopted survivors, split UTF-8 on the pipe (v0.48.6) · squash `6210788b` · 2026-11-15
+
+Three defects in the Windows PTY-host daemon path from the 2026-11-15 deep review (P1 #3, P1 #4,
+P2 #6), each verified against the code first. `PROTOCOL_VERSION` stays 1.
+- **Stale exit (P1 #3).** Restart kills a session and respawns under the same board id; node-pty
+  on Windows reports the old pty's exit ~1 s later, and the daemon's `onExit` deleted whatever
+  held the id — the board saw its fresh session "exit" and the daemon forgot a live process.
+  Reproduced on the real unfixed daemon. Session table + op handlers moved to the pure
+  `ptyHost/daemonSessions.ts` (`daemonMain.ts` is the thin shell); every pty callback acts only
+  while its own session object still holds the id (`owns`). `kill` reports the instance's `exit`
+  (code 1) at kill time — after its last output, before any replacement's `spawned` — and the
+  late real exit + trailing output are dropped. Client: a proxy sends `kill` and unhooks only
+  while it is the one registered for its id.
+- **Un-adopted survivors (P1 #4).** Sessions kept by a "Keep running" close and never re-adopted
+  (another project opened) outlived "Stop all & close". `quitDrainCore`'s kill-everything path now
+  also stops the daemon (bounded 1.5 s, written in the calling tick, never fails the quit) unless
+  the quit asked to keep sessions (`keepRequested`); the keep branch is untouched (ADR 0011).
+  `shutdownPtyHostDaemon()` reaches a daemon this MAIN never connected to via the state file and
+  never starts one. The close modal lists survivors, re-checked against the daemon first.
+- **Split UTF-8 (P2 #6).** Both pipe ends decoded per chunk, so a multibyte character on a read
+  boundary became U+FFFD. `protocol.ts` › `attachLineDecoder` (one `StringDecoder`) on both ends.
+- Consequences worth knowing: every non-keep quit (and the crash sinks) now stops the daemon
+  outright instead of letting it idle out; the stop is not gated on the daemon rollout setting.
+- The first cut dropped a killed session's `exit` entirely — a protocol-v1 behaviour change. The
+  Rust spike's wire-level conformance suite caught it (0 exits, expected 1); fixed before merge.
+- Not fixed: a daemon already running from a pre-fix build keeps the old behaviour until replaced
+  (an update install is a keep-quit and carries it across) — needs a per-instance wire token, i.e.
+  a protocol change. Also noticed, left: a keep drain detaches undo-parked sessions unlisted until
+  relaunch; `spawned` + first `output` in one read can be dropped; the daemon keys by bare board
+  id vs MAIN's (project, id); `acquireProc` does not await the survivor list.
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 8005 / 2 failed (the env-only `pathSafe` pair);
+`closeModalKeep` (2, one new) + `ptyhostReattach` e2e 3/3 at `--retries=0`; smoke 63/63 (push,
+same SHA as merged; no separate pre-merge `make check` — `main` had not moved); CI 4/4;
+`claude-review` clean (no inline). Rust-spike conformance suite against the real daemon: 25
+cases, 22 pass, 0 fail, 1 skipped, 2 still marked `todo` there (the two known legacy defects —
+both now pass). Dev check (title-stamped, sandbox projects): Restart ×5 then ×3 clean; kill
+without respawn → daemon idle-exits, no "Terminal host disconnected"; box-drawing / emoji / CJK
+zero U+FFFD live and after reattach; project-B survivor listed in the close modal and killed by
+"Stop all & close". Not verified: tray icon click, packaged app / update install, full e2e
+matrix. Plan-viz not drawn (`canvas-ade` MCP unreachable all session).
