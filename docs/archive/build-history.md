@@ -5786,3 +5786,27 @@ Gates: fmt · lint 0 err · tc; `pnpm test` 7901 (2 known `pathSafe`); real git:
 worker's file, no `.mcp.json`, no token in `git log -p`; SCA 0; smoke 63/63 (push + pre-merge);
 pre-merge `make check` stopped at the ambient `pathSafe` floor on the same SHA; CI 4/4;
 `claude-review` clean (no inline). Dev check: user OK (`WS-1 token fix`).
+
+## PR #453 — fix(assets): open-time GC keeps Kanban attachments + session-only wallpaper (v0.48.4) · squash `8d7d3bef` · 2026-11-15
+
+Deep-review 2026-11-15 P1 #1 + #2. The open-time mark-and-sweep quarantined blobs that were still
+referenced, because its live set missed two reference sites: Kanban card attachments
+(`boards[].cards[].attachments[].assetId`) and a file wallpaper written only to
+`.canvas/session.json` (`background` is a session key, so a pick without a board edit never
+rewrites `canvas.json`).
+- `projectStore.ts`: `collectAssetIds` walks card attachments (a link carries no `assetId`); new
+  `sweepOrphanAssets(dir, doc, session)` is the one open-time entry point (primary ∪ `.bak` ∪
+  session sidecar); `gcAssets` moves a referenced blob back out of `.trash` (atomic rename, never
+  over a live copy), which repairs projects the attachment bug already hit.
+- `projectIpc.ts`: `project:open` + `project:current` call `sweepOrphanAssets`; the two inline
+  unions (the copies that drifted) are gone.
+- Not fixed: a wallpaper already reverted to `kind:'none'` has no reference left (blob stays in
+  `.trash`; re-pick it); Browser-board screenshots are saved into `assets/` unreferenced and are
+  still swept (follow-up lane `fix/browser-screenshot-gc`).
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 7971 (2 known `pathSafe`); smoke 63/63 (push); CI 4/4;
+`claude-review` clean (no inline). Pre-merge `make check` not re-run — same SHA, `main` unchanged
+since the push. Dev check (title-stamped, sandbox project, real UI file inputs): both bugs
+reproduced on `origin/main` (3 blobs in `.trash`, "Backdrop file missing" toast, attachment tile
+"missing"); on the fix the attachments are restored from `.trash` on open, and a re-picked
+wallpaper + both attachments survive quit → relaunch.
