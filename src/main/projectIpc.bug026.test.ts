@@ -19,6 +19,7 @@ const { store026, canvasMemory026, electronDialog026, recents026 } = vi.hoisted(
     getCurrentDir: vi.fn(),
     setCurrentDir: vi.fn(),
     projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir),
+    sweepOrphanAssets: vi.fn(), // the open-time asset sweep both open paths delegate to
     collectAssetIds: vi.fn(() => new Set<string>()),
     gcAssets: vi.fn(),
     writeAsset: vi.fn(),
