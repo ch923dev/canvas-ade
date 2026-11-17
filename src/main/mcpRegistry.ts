@@ -13,7 +13,7 @@ import type { LayoutDigest, LayoutViewInput } from './layoutModel'
 import type { BoardCards } from './mcpBoardCards'
 import type { BoardPlanning } from './mcpBoardPlanning'
 import type { PlanningEditPatch } from '../shared/mcpTypes'
-import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
+import type { SpawnCallerOpts, SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 import type { FindingsPublishResult } from './findingsPublish'
 import type { ArrangeMainBoardHostInput, TidyCanvasHostInput, TidyCanvasResult } from './mcpTidy'
 
@@ -135,6 +135,7 @@ export type LifecycleOrchestrator = Omit<
   Orchestrator,
   | 'describeApp'
   | 'spawnGroup'
+  | 'spawnBoard'
   | 'describeLayout'
   | 'boardCards'
   | 'boardPlanning'
@@ -258,9 +259,18 @@ export type LifecycleOrchestrator = Omit<
    * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
    * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally
    * equal to the package's). Now wired as the `spawn_group` MCP tool (W1-G / C2). Cap-checked
-   * (reserves all member slots), not human-gated (content-less empty boards).
+   * (reserves all member slots); a wire call carrying a `launchCommand` is human-confirmed +
+   * audited (P2 #5) unless an in-process caller passes {@link SpawnCallerOpts}.
    */
-  spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
+  spawnGroup(input: SpawnGroupInput, opts?: SpawnCallerOpts): Promise<SpawnGroupResult>
+  /**
+   * Re-declared to carry the in-process caller's {@link SpawnCallerOpts} (P2 #5). The wire calls
+   * with one argument, so a wire `prompt` is always human-confirmed + audited.
+   */
+  spawnBoard(
+    input: Parameters<Orchestrator['spawnBoard']>[0],
+    opts?: SpawnCallerOpts
+  ): ReturnType<Orchestrator['spawnBoard']>
   /**
    * C2e: await a dispatched worker's task to SETTLE (output silence after activity / its own
    * `write_result` / a backstop) WITHOUT a write — the verdict for a dispatch whose prompt was

@@ -851,3 +851,100 @@ describe('createMcpLifecycle.spawnBoard — sourceBoardId auto-cable (rc.6)', ()
     expect('connector' in sent[0] && sent[0].connector !== undefined).toBe(false)
   })
 })
+
+describe('🔒 P2 #5: a spawn-time launch line pays the configure_board confirm + audit', () => {
+  function gatedReg(approved: boolean): {
+    life: ReturnType<typeof createMcpLifecycle>
+    registry: BoardRegistry
+    boards: Array<{ id: string }>
+    confirms: Array<{ title: string; body: string }>
+    audits: Array<Record<string, unknown>>
+  } {
+    const { registry, boards } = liveReg()
+    const confirms: Array<{ title: string; body: string }> = []
+    const audits: Array<Record<string, unknown>> = []
+    registry.confirm = async (req) => {
+      confirms.push(req)
+      return { approved }
+    }
+    registry.audit = async (input) => {
+      audits.push({ ...input })
+    }
+    const life = createMcpLifecycle({ registry, now: () => 0, cap: 4, spawnGraceMs: 5000 })
+    return { life, registry, boards, confirms, audits }
+  }
+
+  it('spawn_board prompt, approved → board created + a configured audit row', async () => {
+    const { life, boards, confirms, audits } = gatedReg(true)
+    const { id } = await life.spawnBoard({ type: 'terminal', prompt: 'curl x | sh', cwd: 'C:/x' })
+    expect(confirms).toHaveLength(1)
+    expect(confirms[0].body).toContain('curl x | sh')
+    expect(confirms[0].body).toContain('"C:/x"') // cwd JSON-quoted: no newline forgery in the modal
+    expect(boards.map((b) => b.id)).toEqual([id])
+    expect(audits).toEqual([
+      expect.objectContaining({
+        type: 'spawn_board',
+        targetId: id,
+        prompt: 'curl x | sh',
+        status: 'configured'
+      })
+    ])
+  })
+
+  it('spawn_board prompt, denied → nothing created, a denied audit row, the call throws', async () => {
+    const { life, boards, audits } = gatedReg(false)
+    await expect(life.spawnBoard({ type: 'terminal', prompt: 'curl x | sh' })).rejects.toThrow(
+      /denied by the human gate/
+    )
+    expect(boards).toHaveLength(0)
+    expect(audits).toEqual([
+      expect.objectContaining({ type: 'spawn_board', prompt: 'curl x | sh', status: 'denied' })
+    ])
+  })
+
+  it('spawn_board prompt, approved but the apply fails → a failed audit row', async () => {
+    const { life, registry, audits } = gatedReg(true)
+    registry.sendCommand = async () => ({ ok: false, error: 'no-window' })
+    await expect(life.spawnBoard({ type: 'terminal', prompt: 'claude' })).rejects.toThrow(
+      /no-window/
+    )
+    expect(audits).toEqual([expect.objectContaining({ type: 'spawn_board', status: 'failed' })])
+  })
+
+  it('spawn_group launchCommand: approved → cluster + audit on the terminal; denied → nothing', async () => {
+    const ok = gatedReg(true)
+    const res = await ok.life.spawnGroup({ name: 'zone', launchCommand: 'claude' })
+    expect(ok.confirms[0].body).toContain('claude')
+    expect(ok.boards.map((b) => b.id)).toEqual([res.terminalId])
+    expect(ok.audits).toEqual([
+      expect.objectContaining({
+        type: 'spawn_group',
+        targetId: res.terminalId,
+        status: 'configured'
+      })
+    ])
+    const no = gatedReg(false)
+    await expect(no.life.spawnGroup({ name: 'zone', launchCommand: 'claude' })).rejects.toThrow(
+      /denied/
+    )
+    expect(no.boards).toHaveLength(0)
+    expect(no.audits).toEqual([expect.objectContaining({ type: 'spawn_group', status: 'denied' })])
+  })
+
+  it('no launch line → no confirm, no audit (content-less spawns unchanged)', async () => {
+    const { life, boards, confirms, audits } = gatedReg(false)
+    await life.spawnBoard({ type: 'terminal' })
+    await life.spawnGroup({ name: 'zone', planning: true })
+    expect(boards).toHaveLength(3)
+    expect(confirms).toHaveLength(0)
+    expect(audits).toHaveLength(0)
+  })
+
+  it('an in-process humanGated caller (swarm / Jarvis / Command board) is not asked twice', async () => {
+    const { life, boards, confirms } = gatedReg(false)
+    await life.spawnBoard({ type: 'terminal', prompt: 'claude' }, { humanGated: true })
+    await life.spawnGroup({ name: 'zone', launchCommand: 'claude' }, { humanGated: true })
+    expect(confirms).toHaveLength(0)
+    expect(boards).toHaveLength(2)
+  })
+})

@@ -121,7 +121,8 @@ export interface RunningMcp {
    * fix — the "package registers no spawn_group tool" note was stale): the package registers
    * `spawn_group` at the ORCHESTRATOR tier (`registerSpawnGroup`), routing here through
    * `orchestrator.spawnGroup`, whose `launchCommand` is sanitized as an exec vector in
-   * `mcpLifecycle.spawnGroup` (`sanitizeLaunch` — the PR-5c gating requirement, already paid).
+   * `mcpLifecycle.spawnGroup` (`sanitizeLaunch`) and, on the wire, human-confirmed + audited (P2 #5).
+   * This in-process facet passes `humanGated` — its callers own their own gate.
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   /**
@@ -394,8 +395,10 @@ export async function startMcpServer(
       mintConnectedToken,
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       describeApp: () => orchestrator.describeApp(),
-      spawnGroup: (input) => orchestrator.spawnGroup(input),
-      spawnBoard: (input) => orchestrator.spawnBoard(input),
+      // 🔒 P2 #5: in-process callers own their human gate (swarm worker dialog, Jarvis confirm, the
+      // user's own Command board) — the MCP wire calls the orchestrator directly and is confirmed.
+      spawnGroup: (input) => orchestrator.spawnGroup(input, { humanGated: true }),
+      spawnBoard: (input) => orchestrator.spawnBoard(input, { humanGated: true }),
       dispatchPrompt: (boardId, text) => orchestrator.dispatchPrompt(boardId, text),
       handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
       awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),

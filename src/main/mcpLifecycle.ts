@@ -3,7 +3,7 @@ import type { BoardId } from '@expanse-ade/mcp'
 import { sanitizeDispatchText } from './dispatchSanitize'
 import { sanitizeBoardTitle } from '../shared/boardTitle'
 import { sanitizeGroupName } from '../shared/groupName'
-import type { BoardRegistry } from './mcpRegistry'
+import type { BoardRegistry, DispatchStatus } from './mcpRegistry'
 
 /**
  * 🔒 Board types the MCP layer may spawn — mirrors the renderer's SPAWNABLE allowlist
@@ -106,6 +106,16 @@ const sanitizeOpenRouter = (raw: unknown): SpawnOpenRouter | undefined => {
     : ''
   return { enabled: true, ...(model ? { model } : {}) }
 }
+/**
+ * 🔒 P2 #5: per-call marker for an IN-PROCESS caller that already owns the human gate for this
+ * spawn (the swarm worker-config dialog, Jarvis's spawn confirm, the user's own Command board). The
+ * MCP wire calls `spawnBoard`/`spawnGroup` with ONE argument, so it can never set this: a wire spawn
+ * that carries a launch line always pays the configure_board confirm + audit (fail-closed default).
+ */
+export interface SpawnCallerOpts {
+  humanGated?: boolean
+}
+
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -134,8 +144,8 @@ export interface SpawnGroupInput {
   /**
    * Agentic CLI the terminal member boots as its first PTY line (e.g. `claude`) so a dispatched
    * prompt reaches an AGENT, not a bare shell. Sanitized to a single line here (it becomes a PTY
-   * write). Renderer-originated for the Command board (the user's chosen agent); the future
-   * agent-callable `spawn_group` tool (PR-5c) MUST gate/validate this as an exec vector.
+   * write). Renderer-originated for the Command board (the user's chosen agent); over the MCP wire
+   * (`spawn_group`) it is human-confirmed + audited before the cluster exists (P2 #5).
    */
   launchCommand?: string
   /**
@@ -155,50 +165,53 @@ export interface SpawnGroupResult {
 }
 
 export interface McpLifecycle {
-  spawnBoard(input: {
-    type: string
-    prompt?: string
-    cwd?: string
-    /** Agent-chosen board title (2b); host sanitizes + clamps. Absent/empty ⇒ per-type default. */
-    title?: string
-    /**
-     * BROWSER-ONLY (H3): the initial page the new browser board loads instead of the default.
-     * Validated here as genuine http(s) + clamped (the trust boundary); rejected on a non-browser
-     * type BEFORE any board is created (the prompt/cwd discipline). Loaded by the preview, never
-     * executed.
-     */
-    url?: string
-    /**
-     * Auto-cable (rc.6): the CONNECTED-tier caller's token-derived board id (the package tool
-     * passes ctx.boardId — never client input). When the spawn is a terminal AND this resolves
-     * to a live terminal, the addBoard command also carries a `connector` request so the
-     * renderer creates the spawner→spawned orchestration cable. Otherwise silently ignored.
-     */
-    sourceBoardId?: string
-    /**
-     * TERMINAL-ONLY (v20 / S1 swarm spawn gate): the human-committed OpenRouter routing intent.
-     * Validated here (`sanitizeOpenRouter`); rejected on a non-terminal type (the prompt/cwd
-     * discipline). Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
-     */
-    openRouter?: { enabled: boolean; model?: string }
-    /**
-     * TERMINAL-ONLY (swarm docked-terminals): the hosting SWARM board's id — the spawned worker
-     * terminal is born docked inside that board's viewport. Rejected on a non-terminal type (the
-     * prompt/cwd discipline); a dangling/non-swarm host silently degrades to an ordinary canvas
-     * spawn (the auto-cable precedent — the board is the deliverable, the dock is placement).
-     * Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
-     */
-    dockedIn?: string
-  }): Promise<{ id: BoardId }>
+  spawnBoard(
+    input: {
+      type: string
+      prompt?: string
+      cwd?: string
+      /** Agent-chosen board title (2b); host sanitizes + clamps. Absent/empty ⇒ per-type default. */
+      title?: string
+      /**
+       * BROWSER-ONLY (H3): the initial page the new browser board loads instead of the default.
+       * Validated here as genuine http(s) + clamped (the trust boundary); rejected on a non-browser
+       * type BEFORE any board is created (the prompt/cwd discipline). Loaded by the preview, never
+       * executed.
+       */
+      url?: string
+      /**
+       * Auto-cable (rc.6): the CONNECTED-tier caller's token-derived board id (the package tool
+       * passes ctx.boardId — never client input). When the spawn is a terminal AND this resolves
+       * to a live terminal, the addBoard command also carries a `connector` request so the
+       * renderer creates the spawner→spawned orchestration cable. Otherwise silently ignored.
+       */
+      sourceBoardId?: string
+      /**
+       * TERMINAL-ONLY (v20 / S1 swarm spawn gate): the human-committed OpenRouter routing intent.
+       * Validated here (`sanitizeOpenRouter`); rejected on a non-terminal type (the prompt/cwd
+       * discipline). Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
+       */
+      openRouter?: { enabled: boolean; model?: string }
+      /**
+       * TERMINAL-ONLY (swarm docked-terminals): the hosting SWARM board's id — the spawned worker
+       * terminal is born docked inside that board's viewport. Rejected on a non-terminal type (the
+       * prompt/cwd discipline); a dangling/non-swarm host silently degrades to an ordinary canvas
+       * spawn (the auto-cable precedent — the board is the deliverable, the dock is placement).
+       * Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
+       */
+      dockedIn?: string
+    },
+    opts?: SpawnCallerOpts
+  ): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
    * optional planning + browser member, a Named Group over them, and the browser→terminal preview
    * wiring. Mints every id in MAIN (returned so later lifecycle/dispatch tools can address each
    * member); reserves ALL member slots against the same cap budget as `spawnBoard` BEFORE the
-   * await (so a near-cap group can't burst past it), and releases them on a failed ack. Content-
-   * less (empty boards), so it is cap-checked, not human-gated — the gate stays on content writes.
+   * await (so a near-cap group can't burst past it), and releases them on a failed ack. Cap-checked;
+   * human-gated only when a wire call carries a `launchCommand` (the exec vector, P2 #5).
    */
-  spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
+  spawnGroup(input: SpawnGroupInput, opts?: SpawnCallerOpts): Promise<SpawnGroupResult>
   closeBoard(boardId: BoardId): Promise<void>
 }
 
@@ -222,16 +235,46 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
   }
 
-  const spawnBoard = async (input: {
-    type: string
-    prompt?: string
-    cwd?: string
-    title?: string
-    url?: string
-    sourceBoardId?: string
-    openRouter?: { enabled: boolean; model?: string }
-    dockedIn?: string
-  }): Promise<{ id: BoardId }> => {
+  // 🔒 P2 #5: a spawn-time launch line (spawn_board `prompt` / spawn_group `launchCommand`) is the
+  // SAME exec vector configure_board's launchCommand is — the new terminal's first PTY line — so a
+  // wire spawn that carries one pays configure_board's discipline: mandatory human confirm
+  // (fail-closed, MAIN owns the decision) + an audit row for denied / failed / configured.
+  const auditLaunch = (
+    type: string,
+    targetId: string,
+    prompt: string,
+    status: DispatchStatus,
+    detail: string
+  ): Promise<void> => registry.audit({ type, targetId, prompt, nonce: '', status, detail })
+  const confirmLaunch = async (
+    type: string,
+    targetId: string,
+    launch: string,
+    what: string
+  ): Promise<void> => {
+    const { approved } = await registry.confirm({
+      title: `Spawn ${what} running a command`,
+      body: `Create ${what} that runs this command as its first line?\n\n${launch}`
+    })
+    if (!approved) {
+      await auditLaunch(type, targetId, launch, 'denied', 'launch command denied by the human gate')
+      throw new Error(`${type}: launch command denied by the human gate`)
+    }
+  }
+
+  const spawnBoard = async (
+    input: {
+      type: string
+      prompt?: string
+      cwd?: string
+      title?: string
+      url?: string
+      sourceBoardId?: string
+      openRouter?: { enabled: boolean; model?: string }
+      dockedIn?: string
+    },
+    opts: SpawnCallerOpts = {}
+  ): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
     if (!SPAWNABLE.has(input.type)) {
@@ -290,16 +333,6 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // flatten. This also runs BEFORE the cap reservation, so a rejected prompt burns no slot.
     const launchCommand = hasPrompt ? sanitizeLaunch(input.prompt) : undefined
     const cwd = hasCwd ? input.cwd!.trim() : undefined
-    // 🔒 Runaway-swarm guard: reconcile away user-closed boards first (so a real
-    // slot can be reused), then reject BEFORE minting/sending so a capped spawn has
-    // no side effects.
-    reconcile()
-    const cap = getCap()
-    if (tracked.size >= cap) {
-      throw new Error(
-        `MCP spawn concurrency cap reached (${cap} live spawned boards); close one first`
-      )
-    }
     // MAIN mints the id (server-issued) so the tool can return it to the agent and
     // later lifecycle tools (close/configure) can address the exact board. The
     // renderer builds the full board (free-slot placement, per-type defaults).
@@ -308,6 +341,24 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // receives a single-line, control-char-free, bounded label. Omitted when nothing usable
     // remains → the renderer falls back to the per-type default title.
     const title = sanitizeBoardTitle(input.title)
+    // 🔒 P2 #5 launch gate — BEFORE the cap check + reservation, so a slow human decision never
+    // holds a reserved slot (which reconcile could prune past the grace) and a denial creates
+    // nothing. cwd is JSON-quoted so an embedded newline can't forge text in the modal body.
+    const gatedLaunch = opts.humanGated === true ? undefined : launchCommand
+    if (gatedLaunch) {
+      const what = `a terminal${title ? ` "${title}"` : ''}${cwd ? ` in ${JSON.stringify(cwd)}` : ''}`
+      await confirmLaunch('spawn_board', id, gatedLaunch, what)
+    }
+    // 🔒 Runaway-swarm guard: reconcile away user-closed boards first (so a real
+    // slot can be reused), then reject BEFORE sending so a capped spawn has
+    // no side effects.
+    reconcile()
+    const cap = getCap()
+    if (tracked.size >= cap) {
+      throw new Error(
+        `MCP spawn concurrency cap reached (${cap} live spawned boards); close one first`
+      )
+    }
     // 🔒 Optimistic reservation (BUG-003): the cap check above is synchronous but
     // `sendCommand` yields the event loop. Reserve the slot in `tracked` NOW — BEFORE the
     // await — so a second concurrent spawn near the cap sees the reservation and is rejected
@@ -330,15 +381,38 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         },
         ...(wantCable ? { connector: { sourceId: input.sourceBoardId! } } : {})
       })
-      if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
+      if (!ack.ok) {
+        if (gatedLaunch) {
+          await auditLaunch(
+            'spawn_board',
+            id,
+            gatedLaunch,
+            'failed',
+            `spawn_board failed: ${ack.error}`
+          )
+        }
+        throw new Error(`spawn_board failed: ${ack.error}`)
+      }
     } catch (err) {
       tracked.delete(id)
       throw err
     }
+    if (gatedLaunch) {
+      await auditLaunch(
+        'spawn_board',
+        id,
+        gatedLaunch,
+        'configured',
+        'launch command set via spawn_board'
+      )
+    }
     return { id }
   }
 
-  const spawnGroup = async (input: SpawnGroupInput): Promise<SpawnGroupResult> => {
+  const spawnGroup = async (
+    input: SpawnGroupInput,
+    opts: SpawnCallerOpts = {}
+  ): Promise<SpawnGroupResult> => {
     // G11: the shared group-name rule (`sanitizeGroupName`, also behind group_boards / edit_groups):
     // whitespace collapse (a multi-line name breaks the group-tab layout), control / bidi / invisible
     // strip, clamp to SPAWN_GROUP_MAX_NAME. The renderer re-validates a non-empty string before it
@@ -359,17 +433,6 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     const wantPlanning = input.planning === true
     const wantBrowser = input.browser === true
     const memberCount = 1 + (wantPlanning ? 1 : 0) + (wantBrowser ? 1 : 0)
-    // 🔒 Runaway-swarm guard (mirrors spawnBoard): reconcile away user-closed boards first, then
-    // reject BEFORE minting/sending if the WHOLE cluster would exceed the cap — so a capped group
-    // spawn has no side effects (no half-built zone).
-    reconcile()
-    const cap = getCap()
-    if (tracked.size + memberCount > cap) {
-      throw new Error(
-        `MCP spawn concurrency cap reached (${cap} live spawned boards); spawning this group of ` +
-          `${memberCount} would exceed it — close some first`
-      )
-    }
     // MAIN mints every id (server-issued) so the tool can return them + later lifecycle/dispatch
     // tools can address each member. The renderer lays out the cluster + names the group.
     // Annotate as plain `string` (randomUUID's template-literal type otherwise breaks the
@@ -379,6 +442,23 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     const planningId: string | undefined = wantPlanning ? randomUUID() : undefined
     const browserId: string | undefined = wantBrowser ? randomUUID() : undefined
     const boardIds = [terminalId, planningId, browserId].filter((x): x is string => x !== undefined)
+    // 🔒 P2 #5 launch gate (mirrors spawnBoard): confirm BEFORE the cap check + reservation; the
+    // audit row targets the terminal member (the board that runs the line).
+    const gatedLaunch = opts.humanGated === true ? undefined : launchCommand
+    if (gatedLaunch) {
+      await confirmLaunch('spawn_group', terminalId, gatedLaunch, `a terminal in group "${name}"`)
+    }
+    // 🔒 Runaway-swarm guard (mirrors spawnBoard): reconcile away user-closed boards first, then
+    // reject BEFORE sending if the WHOLE cluster would exceed the cap — so a capped group
+    // spawn has no side effects (no half-built zone).
+    reconcile()
+    const cap = getCap()
+    if (tracked.size + memberCount > cap) {
+      throw new Error(
+        `MCP spawn concurrency cap reached (${cap} live spawned boards); spawning this group of ` +
+          `${memberCount} would exceed it — close some first`
+      )
+    }
     // 🔒 Optimistic reservation (BUG-003, group form): reserve ALL member slots NOW — before the
     // await — so a concurrent spawn near the cap sees them and is rejected rather than both passing
     // the check → cap+N. Release every reserved slot on a failed ack so a rejected group spawn
@@ -399,10 +479,30 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           ...(browserId ? { browser: { id: browserId } } : {})
         }
       })
-      if (!ack.ok) throw new Error(`spawn_group failed: ${ack.error}`)
+      if (!ack.ok) {
+        if (gatedLaunch) {
+          await auditLaunch(
+            'spawn_group',
+            terminalId,
+            gatedLaunch,
+            'failed',
+            `spawn_group failed: ${ack.error}`
+          )
+        }
+        throw new Error(`spawn_group failed: ${ack.error}`)
+      }
     } catch (err) {
       for (const id of boardIds) tracked.delete(id)
       throw err
+    }
+    if (gatedLaunch) {
+      await auditLaunch(
+        'spawn_group',
+        terminalId,
+        gatedLaunch,
+        'configured',
+        'launch command set via spawn_group'
+      )
     }
     return {
       groupId,

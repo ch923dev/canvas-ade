@@ -690,13 +690,16 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     test.slow() // boots a real PTY
     // THE BUG THIS LOCKS OUT: spawn_board accepted `prompt` but silently dropped it — the board
     // spawned a bare shell, ran nothing, and the tool still returned the id (reported success).
-    // The prompt is now the terminal's spawn-time launchCommand (spawn_group parity, no confirm
-    // gate on a freshly-minted board — the gate stays on content writes to EXISTING boards).
+    // The prompt is now the terminal's spawn-time launchCommand — the configure_board exec vector,
+    // so it pays the same human confirm before the board exists (P2 #5). Fire, approve, await.
     const sentinel = 'CANVAS_MCP_SPAWN_PROMPT_OK'
-    const spawn = await mcp.orch.call('spawn_board', {
+    const spawnP = mcp.orch.call('spawn_board', {
       type: 'terminal',
       prompt: `echo ${sentinel}`
     })
+    expect(await pollEval(page, MODAL, 8000)).toBe(true)
+    await evalIn(page, APPROVE)
+    const spawn = await spawnP
     // rc.6: a prompt-carrying spawn returns TWO content blocks — content[0] stays the bare id
     // (back-compat), content[1] is the honest "launch command queued … boots asynchronously"
     // note. Take block 0 for the id and pin the note's presence (the honest-ack contract).

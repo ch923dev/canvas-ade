@@ -13,8 +13,8 @@ failure scenarios are traced from code, not reproduced. FIXED since: P1 #1 + #2,
 asset GC sweeping Kanban attachments and a session-only wallpaper (#453, v0.48.4); the related
 Browser-board screenshot sweep (#454, v0.48.5); and P1 #3 + #4 and P2 #6, the PTY host daemon
 defects — a stale exit deleting a same-id replacement, survivors outliving "Stop all & close",
-per-chunk UTF-8 decode (#455, v0.48.6). OPEN: P1 #5 (`spawn_board` prompt runs with no confirm or
-audit row), P2 #7–#14, and the P3 list. Findings, the Rust plan and its limits:
+per-chunk UTF-8 decode (#455, v0.48.6); and P2 #5, MCP spawn-time launch lines now human-confirmed
++ audited (v0.48.7). OPEN: P2 #7–#14 and the P3 list. Findings, the Rust plan and its limits:
 [`2026-11-15-deep-review-rust-migration.md`](2026-11-15-deep-review-rust-migration.md).
 
 **OPEN BACKLOG: the 2026-07-31 notification-system audit** — full-pipeline audit (MAIN deliver
