@@ -588,6 +588,32 @@ describe('executeSwarmTool', () => {
     expect(third.isError).toBeUndefined()
   })
 
+  it('a denied re-dispatch of a RUNNING writer keeps its slot (no second writer into the tree)', async () => {
+    let deny = false
+    const facet = facetStub({
+      dispatchPrompt: vi.fn(async () => {
+        if (deny) throw new Error('dispatch denied by the human')
+        return { delivery: 'ready' as const }
+      }),
+      dispatchPrompts: vi.fn(async () => [{ boardId: 'w1', status: 'denied' as const }])
+    })
+    const ctx = ctxStub()
+    ctx.workerRoles.set('w1', 'builder')
+    ctx.workerRoles.set('w2', 'builder')
+    const four = { objective: 'o', context: 'c', boundaries: 'b', outputFormat: 'f' }
+    await executeSwarmTool('dispatch_task', { workerId: 'w1', ...four }, facet, ctx)
+    deny = true
+    const again = await executeSwarmTool('dispatch_task', { workerId: 'w1', ...four }, facet, ctx)
+    expect(again.denied).toBe(true)
+    expect(ctx.writeInFlight.has('w1')).toBe(true)
+    // Same for the batch path: a denied row for the running writer must not free its slot.
+    await executeSwarmTool('dispatch_tasks', { tasks: [{ workerId: 'w1', ...four }] }, facet, ctx)
+    expect(ctx.writeInFlight.has('w1')).toBe(true)
+    deny = false
+    const second = await executeSwarmTool('dispatch_task', { workerId: 'w2', ...four }, facet, ctx)
+    expect(second.content).toContain('write cap')
+  })
+
   it('await_worker returns provenance (synthesized ⇒ synthesized, else claimed) + emits settled', async () => {
     const facet = facetStub()
     const ctx = ctxStub()
