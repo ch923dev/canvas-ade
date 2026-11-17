@@ -136,9 +136,12 @@ function makeGetWin() {
 describe('setRecapEnvProvider (Task 8 — injectable env seam)', () => {
   beforeEach(() => {
     spawnSpy.mockClear()
+    // As if this app runs inside another Expanse board: the parent's id must never leak through.
+    vi.stubEnv('CANVAS_RECAP_BOARD', 'outer-board')
   })
 
   afterEach(async () => {
+    vi.unstubAllEnvs()
     // Always reset the provider so module-level state doesn't leak.
     // Re-import to get the live module reference (modules are NOT reset between tests here;
     // we rely on the module singleton for the whole describe block, so we must manually reset).
