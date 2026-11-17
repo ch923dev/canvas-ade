@@ -6,19 +6,28 @@
  *     Claude Code's per-project server trust prompt (the proven zero-prompt path).
  *
  * Both are MERGED (we only ever touch our own keys) and written 0o600. Detection = `~/.claude`.
+ *
+ * WS-8 (O-5): for a terminal inside a Project Workspace the settings file also carries the workspace
+ * deny rules + `sandbox.enabled` (`claudeRules.ts`), merged the same way and recorded in a ledger so
+ * revoke removes exactly what Expanse added. Removal leaves no `{}` stub behind (G12): a settings file
+ * emptied by the unsync is deleted, and so is the `.claude/` folder if that leaves it empty.
  */
 import { join } from 'node:path'
 import type { TerminalToken } from '../orchestration/seam'
+import { mergeRules, ownedRulesFor, setOwnedRules, stripRules } from './claudeRules'
 import {
   type AppCliProvisioner,
   type McpServersConfig,
+  type ProvisionWriteOpts,
   SERVER_NAME,
+  assertTargetDir,
   claudeHome,
   dirExists,
   existingServersMap,
   isRecord,
   mcpEntry,
   readJsonConfig,
+  removeDirIfEmpty,
   removeFileQuiet,
   writeJsonConfig
 } from './shared'
@@ -35,7 +44,9 @@ function settingsLocalPath(projectDir: string): string {
   return join(projectDir, '.claude', 'settings.local.json')
 }
 
-function writeSync(projectDir: string, tok: TerminalToken): string {
+function writeSync(projectDir: string, tok: TerminalToken, opts?: ProvisionWriteOpts): string {
+  // A board cwd that no longer exists (a removed worktree) is never re-created to hold our config.
+  assertTargetDir(projectDir)
   // 1) .mcp.json — set ONLY our server entry, preserve any others the user has. Capture the
   //    pre-write state so a failure below can be rolled back cleanly (see BUG-020).
   const mcpFile = mcpJsonPath(projectDir)
@@ -57,11 +68,20 @@ function writeSync(projectDir: string, tok: TerminalToken): string {
   //    partial failure never orphans a token-bearing file.
   try {
     const setFile = settingsLocalPath(projectDir)
-    const settings = readJsonConfig<SettingsLocal>(setFile) ?? {}
+    let settings = readJsonConfig<SettingsLocal>(setFile) ?? {}
     const enabled = new Set(settings.enabledMcpjsonServers ?? [])
     enabled.add(SERVER_NAME)
     settings.enabledMcpjsonServers = [...enabled]
+    let owned = ownedRulesFor(projectDir)
+    if (opts?.claudeRules) {
+      const r = mergeRules(settings, opts.claudeRules, owned)
+      settings = r.settings as SettingsLocal
+      owned = r.owned
+    }
     writeJsonConfig(setFile, settings)
+    // Recorded only once the file holding them is on disk, so the ledger never claims a rule that
+    // a failed write never placed.
+    if (opts?.claudeRules) setOwnedRules(projectDir, owned)
   } catch (err) {
     if (originalMcp) writeJsonConfig(mcpFile, originalMcp)
     else removeFileQuiet(mcpFile)
@@ -85,12 +105,41 @@ function removeSync(projectDir: string): void {
   }
 
   const setFile = settingsLocalPath(projectDir)
-  const settings = readJsonConfig<SettingsLocal>(setFile)
-  if (settings?.enabledMcpjsonServers?.includes(SERVER_NAME)) {
+  const read = readJsonConfig<SettingsLocal>(setFile)
+  const owned = ownedRulesFor(projectDir)
+  if (!read) {
+    setOwnedRules(projectDir, undefined) // the file (and so every rule we added) is already gone
+    return
+  }
+  let settings = read
+  let changed = false
+  if (settings.enabledMcpjsonServers?.includes(SERVER_NAME)) {
     settings.enabledMcpjsonServers = settings.enabledMcpjsonServers.filter((s) => s !== SERVER_NAME)
     if (settings.enabledMcpjsonServers.length === 0) delete settings.enabledMcpjsonServers
-    writeJsonConfig(setFile, settings)
+    changed = true
   }
+  const stripped = stripRules(settings, owned)
+  if (stripped.changed) {
+    settings = stripped.settings as SettingsLocal
+    changed = true
+  }
+  if (changed) writeOrDropSettings(projectDir, settings)
+  setOwnedRules(projectDir, undefined)
+}
+
+/**
+ * G12: write the settings back, or — when our removal left it empty — delete it, and the `.claude/`
+ * folder with it if nothing else lives there. An emptied `{}` stub is still an untracked file, and
+ * it kept a worktree whose agent wrote nothing reading as dirty.
+ */
+function writeOrDropSettings(projectDir: string, settings: Record<string, unknown>): void {
+  const setFile = settingsLocalPath(projectDir)
+  if (Object.keys(settings).length > 0) {
+    writeJsonConfig(setFile, settings)
+    return
+  }
+  removeFileQuiet(setFile)
+  removeDirIfEmpty(join(projectDir, '.claude'))
 }
 
 export const claudeProvisioner: AppCliProvisioner = {

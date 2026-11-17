@@ -1,14 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { installRecapHook, removeRecapHook } from './agentRecapMap'
@@ -216,15 +208,16 @@ describe('WS-1 · swarm parity on a single-repo project (real git)', () => {
 })
 
 /**
- * G12 — CHARACTERIZATION, not a spec. When a terminal agent starts in a worktree, the spawn-time
- * providers write Expanse's own config into its cwd (`claudeProvisioner.writeSync` → `.mcp.json`
- * + `.claude/settings.local.json`; the recap hook → the same settings file). Pinned here so WS-8,
- * which owns `cliProvisioners/*`, flips the second half when it makes unsync leave nothing behind.
+ * G12 — Expanse's own agent config never keeps a worktree "dirty". When a terminal agent starts in a
+ * worktree, the spawn-time providers write Expanse's config into its cwd (`claudeProvisioner.writeSync`
+ * → `.mcp.json` + `.claude/settings.local.json`; the recap hook → the same settings file). The
+ * allocator's `status` counts only the tree's own files, and `removeIfClean` removes that config
+ * (WS-8 unsync) right before `git worktree remove` — so a tree whose agent wrote nothing is removed.
  * (On a box where Claude Code has run, its global ignore hides the settings file — `.mcp.json`
- * alone still dirties the tree. The fixture's empty excludes file shows the no-ignore case.)
+ * alone still dirties the raw tree. The fixture's empty excludes file shows the no-ignore case.)
  */
 describe('G12 · provisioned agent config vs worktree dirtiness (real git)', () => {
-  it('provisioned files read as dirt, and today’s unsync does not make the tree clean again', async () => {
+  it('a config-only tree reads clean, and the clean removal unsyncs it and removes the tree', async () => {
     const repo = makeRepo(join(root, 'g12 repo'))
     const store = storeFor(repo)
     const out = await store.allocate(swarmWorkerRequest('g12g12g1', 'builder'))
@@ -244,21 +237,37 @@ describe('G12 · provisioned agent config vs worktree dirtiness (real git)', () 
     const porcelain = (): string => git(wt, 'status', '--porcelain', '--untracked-files=all')
     expect(porcelain()).toContain('.mcp.json')
     expect(porcelain()).toContain('.claude/settings.local.json')
-    expect(await store.status(wt)).toMatchObject({ exists: true, dirty: true })
+    // The tree's OWN changes: none.
+    expect(await store.status(wt)).toEqual({ exists: true, dirty: false, changed: 0 })
 
-    // The existing unsync paths remove OUR entries but leave an emptied settings file behind.
+    // The existing unsync paths now leave nothing behind (no `{}` stub).
     claudeProvisioner.removeSync(wt)
     removeRecapHook(wt, scriptPath)
-    expect(existsSync(join(wt, '.mcp.json'))).toBe(false)
-    expect(JSON.parse(readFileSync(join(wt, '.claude', 'settings.local.json'), 'utf8'))).toEqual({})
-    expect(porcelain()).toBe('?? .claude/settings.local.json')
-    expect(await store.status(wt)).toMatchObject({ dirty: true, changed: 1 })
-    // …so the clean-only removal keeps the tree (the locked rule working as designed).
-    expect(await store.removeIfClean(wt)).toMatchObject({ removed: false })
+    expect(porcelain()).toBe('')
 
-    // Fixture teardown: the test, not the product, drops the leftover so git can remove the tree.
-    rmSync(join(wt, '.claude'), { recursive: true, force: true })
+    // And a fresh write is removed by the clean-only removal itself — no Discard needed.
+    claudeProvisioner.writeSync(wt, { token: 'itest-token', tier: 'connected', port: 1 })
+    installRecapHook({
+      projectDir: wt,
+      command: 'node',
+      scriptPath,
+      mapPath: join(root, 'm.jsonl')
+    })
     expect(await store.removeIfClean(wt)).toEqual({ removed: true })
+    expect(existsSync(wt)).toBe(false)
+  })
+
+  it('a tree with the worker’s own change stays dirty and keeps its config', async () => {
+    const repo = makeRepo(join(root, 'g12 dirty repo'))
+    const store = storeFor(repo)
+    const out = await store.allocate(swarmWorkerRequest('g12dirty', 'builder'))
+    if (!out.ok) throw new Error(out.reason)
+    claudeProvisioner.writeSync(out.worktree, { token: 't', tier: 'connected', port: 1 })
+    writeFileSync(join(out.worktree, 'work.ts'), 'export {}\n', 'utf8')
+    expect(await store.status(out.worktree)).toEqual({ exists: true, dirty: true, changed: 1 })
+    expect(await store.removeIfClean(out.worktree)).toMatchObject({ removed: false })
+    expect(existsSync(join(out.worktree, '.mcp.json'))).toBe(true) // a live agent's config stays
+    await store.dispose(out.worktree, 'discard', 'builder')
   })
 })
 
@@ -283,14 +292,12 @@ describe('G12 follow-up · dispositions never carry Expanse’s agent config (re
     expect(onBranch).not.toContain('.claude/settings.local.json')
     expect(git(repo, 'log', '-p', 'main..' + out.branch)).not.toContain('itest-secret-token')
 
-    // The token file is still in the tree (never committed), so the tree is kept — and says why.
-    expect(existsSync(wt)).toBe(true)
-    expect(r.detail).toContain("only Expanse's own agent config is left in it")
-    expect((await store.dispose(wt, 'discard', 'builder')).detail).toContain('worktree removed')
+    // The token file was never committed; the clean removal unsynced it and removed the tree (G12).
+    expect(r.detail).toContain('worktree removed, branch kept')
     expect(existsSync(wt)).toBe(false)
   })
 
-  it('Stash with only Expanse’s config dirty stashes nothing', async () => {
+  it('Stash with only Expanse’s config dirty stashes nothing and removes the tree', async () => {
     const repo = makeRepo(join(root, 'stash repo'))
     const store = storeFor(repo)
     const out = await store.allocate(swarmWorkerRequest('stash123', 'builder'))
@@ -303,11 +310,8 @@ describe('G12 follow-up · dispositions never carry Expanse’s agent config (re
 
     const r = await store.dispose(out.worktree, 'stash', 'builder')
     expect(r.ok).toBe(true)
-    expect(r.detail).toContain('nothing to stash')
+    expect(r.detail).toBe('the worktree was already clean — removed, branch kept')
     expect(git(repo, 'stash', 'list')).toBe('')
-
-    expect((await store.dispose(out.worktree, 'discard', 'builder')).detail).toContain(
-      'worktree removed'
-    )
+    expect(existsSync(out.worktree)).toBe(false)
   })
 })

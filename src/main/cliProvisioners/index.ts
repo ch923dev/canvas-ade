@@ -18,7 +18,9 @@
  */
 import type { TerminalToken } from '../orchestration/seam'
 import { isOrchestrationEnabled } from '../orchestration/seam'
+import type { ClaudeWorkspaceRules } from './claudeRules'
 import { claudeProvisioner } from './claude'
+import { __resetClaudeRulesLedger, bindClaudeRulesLedger } from './claudeRules'
 import { codexProvisioner } from './codex'
 import { geminiProvisioner } from './gemini'
 import { opencodeProvisioner } from './opencode'
@@ -36,6 +38,9 @@ import {
   maskToken
 } from './shared'
 
+export type { ClaudeWorkspaceRules } from './claudeRules'
+export { NO_WORKSPACE_RULES, buildWorkspaceRules } from './claudeRules'
+export { unsyncProvisionedDir } from './unsyncDir'
 export type {
   AppCliProvisioner,
   CliId,
@@ -195,6 +200,8 @@ let provisionedDirsUserData: string | null = null
 /** Bind the userData dir the provisioned-dir store persists through. Idempotent; called once at boot. */
 export function bindProvisionedDirStore(userDataDir: string): void {
   provisionedDirsUserData = userDataDir
+  // WS-8: the Claude workspace-rules ledger persists beside it (same userData, same revoke sweep).
+  bindClaudeRulesLedger(userDataDir)
 }
 
 /**
@@ -232,6 +239,7 @@ function recordProvisionedDir(projectDir: string, targetDir: string): void {
 export function __resetProvisionedDirs(): void {
   provisionedDirs.clear()
   provisionedDirsUserData = null
+  __resetClaudeRulesLedger()
 }
 
 /**
@@ -312,6 +320,12 @@ export type OrchestrationSyncProvider = (opts: {
 export function makeOrchestrationSyncProvider(deps: {
   getProjectDir: () => string | null
   mintToken: (boardId: string) => TerminalToken
+  /**
+   * WS-8 (O-5): the workspace rules a Claude terminal's cwd should carry, read from the MAIN mirror
+   * at spawn (`NO_WORKSPACE_RULES` for a project-level board, which also sweeps rules a previous
+   * workspace member left there). Absent ⇒ the settings file's rules are not touched.
+   */
+  claudeRulesFor?: (boardId: string, targetDir: string) => ClaudeWorkspaceRules
 }): OrchestrationSyncProvider {
   return ({ id, launchCommand, cwd }) => {
     const projectDir = deps.getProjectDir()
@@ -321,7 +335,9 @@ export function makeOrchestrationSyncProvider(deps: {
     // Project-scoped CLIs (.mcp.json / opencode.json) must land where the agent runs (the board
     // cwd); home-scoped CLIs (gemini / codex) ignore the dir argument.
     const targetDir = cwd && cwd.trim() !== '' ? cwd : projectDir
-    PROVISIONERS[cliId].writeSync(targetDir, deps.mintToken(id))
+    const claudeRules =
+      cliId === 'claude' && deps.claudeRulesFor ? deps.claudeRulesFor(id, targetDir) : undefined
+    PROVISIONERS[cliId].writeSync(targetDir, deps.mintToken(id), { claudeRules })
     // FIND-001: remember a divergent target dir so consent-revoke cleans its config too — the
     // root-only unsync would otherwise leave the bearer token on disk in <cwd>/.mcp.json.
     recordProvisionedDir(projectDir, targetDir)

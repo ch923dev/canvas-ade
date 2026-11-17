@@ -13,6 +13,7 @@ import type { TerminalToken } from '../orchestration/seam'
 import {
   type AppCliProvisioner,
   SERVER_NAME,
+  assertTargetDir,
   bearer,
   dirExists,
   existingServersMap,
@@ -47,6 +48,8 @@ function opencodeEntry(port: number, token: string): Record<string, unknown> {
 }
 
 function writeSync(projectDir: string, tok: TerminalToken): string {
+  // A board cwd that no longer exists (a removed worktree) is never re-created to hold our config.
+  assertTargetDir(projectDir)
   const file = configPath(projectDir)
   const cfg = readJsonConfig<OpencodeConfig>(file) ?? {}
   if (!cfg.$schema) cfg.$schema = OPENCODE_SCHEMA

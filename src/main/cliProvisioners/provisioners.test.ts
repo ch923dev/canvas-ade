@@ -214,8 +214,30 @@ describe('claudeProvisioner', () => {
     claudeProvisioner.writeSync(dir, TOK) // creates files holding only our entry
     claudeProvisioner.removeSync(dir)
     expect(existsSync(join(dir, '.mcp.json'))).toBe(false) // only-ours → removed
-    const settings = readJson(join(dir, '.claude', 'settings.local.json'))
-    expect(settings.enabledMcpjsonServers).toBeUndefined()
+    // G12: the settings file held only our key → deleted (no `{}` stub), `.claude/` with it.
+    expect(existsSync(join(dir, '.claude', 'settings.local.json'))).toBe(false)
+    expect(existsSync(join(dir, '.claude'))).toBe(false)
+  })
+
+  it('unsync keeps a settings file that still holds the user’s keys', () => {
+    const dir = freshProject()
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      join(dir, '.claude', 'settings.local.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(ls)'] } })
+    )
+    claudeProvisioner.writeSync(dir, TOK)
+    claudeProvisioner.removeSync(dir)
+    expect(readJson(join(dir, '.claude', 'settings.local.json'))).toEqual({
+      permissions: { allow: ['Bash(ls)'] }
+    })
+  })
+
+  it('never re-creates a target folder that no longer exists', () => {
+    const gone = join(freshProject(), 'removed-worktree')
+    expect(() => claudeProvisioner.writeSync(gone, TOK)).toThrow(/no longer exists/)
+    expect(() => opencodeProvisioner.writeSync(gone, TOK)).toThrow(/no longer exists/)
+    expect(existsSync(gone)).toBe(false)
   })
 
   it('detect reflects ~/.claude presence', async () => {

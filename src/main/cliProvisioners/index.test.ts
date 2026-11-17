@@ -313,3 +313,78 @@ describe('revokeOrchestration ordering (F22)', () => {
     expect(revoke).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('WS-8 · Claude workspace rules through the spawn hook + revoke (O-5)', () => {
+  const RULES = {
+    deny: ['Edit(//m/p/uploader/**)', 'Edit(//m/p/.canvas/workspaces/**)'],
+    sandbox: true
+  }
+  const settingsOf = (dir: string): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'))
+
+  it('a claude spawn in a workspace merges the rules next to the user’s own; revoke removes only ours', async () => {
+    const project = freshProject()
+    const cwd = join(project, 'api')
+    mkdirSync(join(cwd, '.claude'), { recursive: true })
+    const userRaw = { permissions: { deny: ['Read(./.env)'] }, model: 'opus' }
+    writeFileSync(join(cwd, '.claude', 'settings.local.json'), JSON.stringify(userRaw))
+    const seen: Array<[string, string]> = []
+    const sync = makeOrchestrationSyncProvider({
+      getProjectDir: () => project,
+      mintToken,
+      claudeRulesFor: (id, dir) => {
+        seen.push([id, dir])
+        return RULES
+      }
+    })
+    sync({ id: 'b1', launchCommand: 'claude', cwd })
+    expect(seen).toEqual([['b1', cwd]])
+    expect(settingsOf(cwd)).toEqual({
+      permissions: { deny: ['Read(./.env)', ...RULES.deny] },
+      model: 'opus',
+      enabledMcpjsonServers: ['canvas-ade'],
+      sandbox: { enabled: true }
+    })
+
+    await unsyncProvisioners({ projectDir: project })
+    expect(settingsOf(cwd)).toEqual(userRaw) // the user's entries, byte-identical values
+    expect(existsSync(join(cwd, '.mcp.json'))).toBe(false)
+  })
+
+  it('a non-claude CLI is never asked for rules; a rules-free Sync leaves existing rules alone', async () => {
+    const project = freshProject()
+    let asked = 0
+    const sync = makeOrchestrationSyncProvider({
+      getProjectDir: () => project,
+      mintToken,
+      claudeRulesFor: () => {
+        asked++
+        return RULES
+      }
+    })
+    sync({ id: 'b2', launchCommand: 'opencode', cwd: project })
+    expect(asked).toBe(0)
+    sync({ id: 'b3', launchCommand: 'claude', cwd: project })
+    await runProvisionerSync({ projectDir: project, ids: ['claude'], token: TOK })
+    expect((settingsOf(project).permissions as { deny: string[] }).deny).toEqual(RULES.deny)
+  })
+
+  it('revoke in a LATER session still removes the rules (the ledger persists in userData)', async () => {
+    const project = freshProject()
+    const cwd = join(project, 'api')
+    mkdirSync(cwd, { recursive: true })
+    const userData = mkdtempSync(join(TEST_HOME, 'ud-'))
+    bindProvisionedDirStore(userData)
+    makeOrchestrationSyncProvider({
+      getProjectDir: () => project,
+      mintToken,
+      claudeRulesFor: () => RULES
+    })({ id: 'b4', launchCommand: 'claude', cwd })
+
+    __resetProvisionedDirs() // app restart: every in-memory registry is empty
+    bindProvisionedDirStore(userData)
+    loadPersistedProvisionedDirs(userData)
+    await unsyncProvisioners({ projectDir: project })
+    expect(existsSync(join(cwd, '.claude', 'settings.local.json'))).toBe(false)
+  })
+})

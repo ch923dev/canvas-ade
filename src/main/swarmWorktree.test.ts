@@ -58,8 +58,10 @@ function makeStore(
     isDir?: (p: string) => boolean
     /** The repo `git worktree list` names as the owner. Default: the project (the swarm shape). */
     owner?: string
+    /** G12 unsync seam. Default: a recording no-op (unit tests never touch a real folder). */
+    unsync?: (dir: string) => void
   } = {}
-): { store: SwarmWorktreeStore; git: GitStub; cwds: string[] } {
+): { store: SwarmWorktreeStore; git: GitStub; cwds: string[]; unsynced: string[] } {
   // `worktree list` (the owning-repo read) is answered here, so a test's own `raw` only ever sees
   // the argv its assertions are about.
   const inner = (over.git?.raw ?? vi.fn(async () => '')) as (argv: string[]) => Promise<string>
@@ -73,7 +75,12 @@ function makeStore(
     )
   }
   const cwds: string[] = []
+  const unsynced: string[] = []
   const store = createSwarmWorktreeStore({
+    unsyncProvisioned: (dir) => {
+      unsynced.push(dir)
+      over.unsync?.(dir)
+    },
     getProjectDir: () => (over.project === undefined ? PROJECT : over.project),
     gitFor: (cwd) => {
       cwds.push(cwd)
@@ -82,7 +89,7 @@ function makeStore(
     exists: over.exists ?? ((): boolean => false),
     isDir: over.isDir ?? ((): boolean => true)
   })
-  return { store, git, cwds }
+  return { store, git, cwds, unsynced }
 }
 
 describe('naming', () => {
@@ -364,23 +371,50 @@ describe('dispose — the four named choices', () => {
     }
   })
 
-  it('when only Expanse config is dirty, commit/stash write NOTHING and say Discard clears it', async () => {
+  it('G12: when only Expanse config is dirty the tree reads clean — unsynced, removed, nothing written', async () => {
     // The raw status still reads dirty (`.mcp.json`), but the worker-only view is empty.
     for (const choice of ['commit', 'stash'] as const) {
       const raw = vi.fn(async (argv: string[]) => {
         if (argv[0] !== 'status') return ''
         return argv.includes(':(exclude).mcp.json') ? '' : '?? .mcp.json\n'
       })
-      const { store } = makeStore({ git: { raw } })
+      const { store, unsynced } = makeStore({ git: { raw } })
       const out = await store.dispose(WT, choice, 'builder-1')
       expect(out.ok).toBe(true)
-      expect(out.detail).toContain(`nothing to ${choice}`)
-      expect(out.detail).toContain('Discard removes it')
+      expect(out.detail).toBe('the worktree was already clean — removed, branch kept')
+      expect(unsynced).toEqual([WT])
       const verbs = raw.mock.calls.map((c) => (c[0] as string[])[0])
       expect(verbs).not.toContain('add')
       expect(verbs).not.toContain('commit')
       expect(verbs).not.toContain('stash')
     }
+  })
+
+  it('G12: the provisioned-file unsync runs right before `git worktree remove`, never on a dirty tree', async () => {
+    const order: string[] = []
+    const raw = vi.fn(async (argv: string[]) => {
+      if (argv[0] === 'worktree') order.push('remove')
+      return ''
+    })
+    const { store } = makeStore({ git: { raw }, unsync: () => order.push('unsync') })
+    expect(await store.removeIfClean(WT)).toEqual({ removed: true })
+    expect(order).toEqual(['unsync', 'remove'])
+
+    const dirty = makeStore({ git: { raw: vi.fn(async () => ' M work.ts\n') } })
+    expect(await dirty.store.removeIfClean(WT)).toMatchObject({ removed: false })
+    expect(dirty.unsynced).toEqual([])
+  })
+
+  it('G12: status counts only the tree’s own files, per file', async () => {
+    const raw = vi.fn(async (_argv: string[]) => '?? a.ts\n?? b.ts\n')
+    const { store } = makeStore({ git: { raw } })
+    expect(await store.status(WT)).toEqual({ exists: true, dirty: true, changed: 2 })
+    expect(raw).toHaveBeenCalledWith([
+      'status',
+      '--porcelain',
+      '--untracked-files=all',
+      ...WORKER_SPEC
+    ])
   })
 
   it('a tree still dirty after a commit is explained: only Expanse config is left', async () => {

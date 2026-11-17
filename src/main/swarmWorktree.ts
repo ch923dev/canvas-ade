@@ -38,6 +38,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import type { SimpleGit } from 'simple-git'
 import { repoScopedGit } from './gitEnv'
+import { unsyncProvisionedDir } from './cliProvisioners/unsyncDir'
 import type { SwarmWorktreeDisposition, SwarmWorktreeStatus } from '../shared/swarmLedgerTypes'
 
 /** Block-timeout for any single git sub-process, matching `gitDiff`'s bound. */
@@ -186,6 +187,12 @@ export interface SwarmWorktreeDeps {
   isDir?: (p: string) => boolean
   /** The names of a folder's real sub-directories — links and junctions excluded. */
   listDirs?: (p: string) => string[]
+  /**
+   * G12: remove the agent config Expanse itself wrote into a worktree (`PROVISIONED_PATHS` + the
+   * recap hook), run by {@link SwarmWorktreeStore.removeIfClean} right before `git worktree remove`.
+   * Default: `unsyncProvisionedDir`. Tests inject a stub.
+   */
+  unsyncProvisioned?: (dir: string) => void
 }
 
 /**
@@ -318,6 +325,7 @@ export function countPorcelain(out: string): number {
 
 export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktreeStore {
   const exists = deps.exists ?? ((p: string): boolean => existsSync(p))
+  const unsyncProvisioned = deps.unsyncProvisioned ?? unsyncProvisionedDir
   const isDir =
     deps.isDir ??
     ((p: string): boolean => {
@@ -489,7 +497,15 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
       const absent: SwarmWorktreeStatus = { exists: false, dirty: false, changed: 0 }
       if (!worktree || !isDir(worktree)) return absent
       try {
-        const out = await gitFor(worktree).raw(['status', '--porcelain'])
+        // G12: the tree's OWN changes — Expanse's agent config (`PROVISIONED_PATHS`) is not the
+        // worker's work and never counts, so a tree that wrote nothing reads clean. Counted per
+        // file (`-uall`): the number shown is the number a Commit/Stash would carry.
+        const out = await gitFor(worktree).raw([
+          'status',
+          '--porcelain',
+          '--untracked-files=all',
+          ...WORKER_PATHSPEC
+        ])
         const changed = countPorcelain(out)
         return { exists: true, dirty: changed > 0, changed }
       } catch {
@@ -525,6 +541,10 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
       if (!repoRoot) {
         return { removed: false, reason: 'could not find the repository that owns it' }
       }
+      // G12: the tree holds none of the worker's changes, so the only thing that can still keep
+      // git from removing it is the config Expanse wrote there itself — Expanse removes that now.
+      // Only here, on the way out: a live status read never strips a running agent's config.
+      unsyncProvisioned(worktree)
       try {
         // 🔒 Run from the OWNING REPO, never from inside the worktree being deleted. A git child
         // spawned with its cwd set to that directory holds it open, and Windows refuses to
@@ -597,7 +617,7 @@ export function createSwarmWorktreeStore(deps: SwarmWorktreeDeps): SwarmWorktree
         choice !== 'discard' && n === 0
           ? // Only Expanse's own config is dirty: there was nothing of the worker's to preserve,
             // and that config keeps the tree from reading clean until it is discarded.
-            `nothing to ${choice} — the only changes are Expanse's own agent config (${PROVISIONED_PATHS.join(', ')}), which never goes on a branch or into a stash; Discard removes it`
+            `nothing to ${choice} — the only changes were Expanse's own agent config (${PROVISIONED_PATHS.join(', ')}), which never goes on a branch or into a stash`
           : choice === 'commit'
             ? `committed ${files} onto the branch`
             : choice === 'stash'

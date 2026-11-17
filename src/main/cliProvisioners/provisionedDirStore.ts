@@ -101,3 +101,59 @@ export function clearPersistedDirs(userDataDir: string, projectDir: string): voi
   delete store[projectDir]
   writeStore(userDataDir, store)
 }
+
+// ── WS-8 (O-5): the Claude rules Expanse added, per target dir ─────────────────────────────────
+//
+// The workspace deny rules + `sandbox.enabled` are merged INTO the user's own
+// `.claude/settings.local.json`, so revoke must know which entries are OURS: a rule string alone
+// can't say (the user may have written the very same rule). This sidecar records, per absolute
+// target dir, exactly the deny entries Expanse added and whether it set `sandbox.enabled`. Same
+// discipline as the dir store above: userData only, paths + rule strings (never a token), MAIN is
+// the single writer, parse-defensive read.
+
+/** What Expanse itself added to one dir's `.claude/settings.local.json`. */
+export interface OwnedClaudeRules {
+  deny: string[]
+  sandbox: boolean
+}
+
+function rulesFileFor(userDataDir: string): string {
+  return join(userDataDir, 'provisioned-claude-rules.json')
+}
+
+/** Read the owned-rules store. A missing or corrupt file reads as `{}`; malformed entries drop. */
+export function readOwnedRulesStore(userDataDir: string): Record<string, OwnedClaudeRules> {
+  const f = rulesFileFor(userDataDir)
+  if (!existsSync(f)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(f, 'utf8')) as Record<string, unknown>
+    const out: Record<string, OwnedClaudeRules> = {}
+    for (const [dir, v] of Object.entries(parsed)) {
+      if (!v || typeof v !== 'object') continue
+      const { deny, sandbox } = v as { deny?: unknown; sandbox?: unknown }
+      if (!Array.isArray(deny)) continue
+      out[dir] = {
+        deny: deny.filter((d): d is string => typeof d === 'string'),
+        sandbox: sandbox === true
+      }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** Set (or, with `undefined`, drop) one dir's owned rules. Skips the rewrite when nothing changes. */
+export function persistOwnedRules(
+  userDataDir: string,
+  dir: string,
+  owned: OwnedClaudeRules | undefined
+): void {
+  const store = readOwnedRulesStore(userDataDir)
+  const before = JSON.stringify(store[dir])
+  if (owned) store[dir] = owned
+  else delete store[dir]
+  if (JSON.stringify(store[dir]) === before) return
+  mkdirSync(userDataDir, { recursive: true })
+  writeFileAtomic.sync(rulesFileFor(userDataDir), JSON.stringify(store, null, 2), 'utf8')
+}

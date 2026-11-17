@@ -12,7 +12,16 @@
  * without clobbering any pre-existing hooks. Idempotency is keyed on whether
  * our scriptPath already appears in any hook's `args` array.
  */
-import { existsSync, statSync, readFileSync, mkdirSync, watch } from 'node:fs'
+import {
+  existsSync,
+  statSync,
+  readFileSync,
+  mkdirSync,
+  readdirSync,
+  rmdirSync,
+  rmSync,
+  watch
+} from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 
@@ -117,8 +126,37 @@ function readSettings(projectDir: string): SettingsCfg {
   }
 }
 
+/** True when `dir` exists and is a folder. */
+function isDirectory(dir: string): boolean {
+  try {
+    return statSync(dir).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Write the settings back. A cwd that is GONE is never written into: `recursive` mkdir of
+ * `<cwd>/.claude` used to re-create the cwd itself, so the window-focus self-heal — which re-ensures
+ * the hook in every live terminal's last-known cwd — resurrected worktrees removed with
+ * `git worktree remove` as folders holding only this file (seen 2026-11-03). Only `.claude/` itself
+ * is ever created. A config our removal emptied is deleted rather than left as a `{}` stub (G12: an
+ * untracked stub keeps a worktree that wrote nothing reading as dirty), and an emptied `.claude/`
+ * folder goes with it.
+ */
 function writeSettings(projectDir: string, cfg: SettingsCfg): void {
-  mkdirSync(join(projectDir, '.claude'), { recursive: true })
+  if (!isDirectory(projectDir)) return
+  const claudeDir = join(projectDir, '.claude')
+  if (Object.keys(cfg).length === 0) {
+    rmSync(settingsPath(projectDir), { force: true })
+    try {
+      if (readdirSync(claudeDir).length === 0) rmdirSync(claudeDir)
+    } catch {
+      /* missing or locked — nothing to tidy */
+    }
+    return
+  }
+  mkdirSync(claudeDir, { recursive: true })
   writeFileAtomic.sync(settingsPath(projectDir), JSON.stringify(cfg, null, 2), 'utf8')
 }
 
@@ -155,7 +193,7 @@ export function isRecapHookInstalled(projectDir: string, scriptPath: string): bo
  * Pre-existing UNRELATED hooks are preserved. Writes nothing when the result is byte-identical.
  */
 export function installRecapHook(opts: InstallOpts): void {
-  if (!opts.command) return
+  if (!opts.command || !isDirectory(opts.projectDir)) return
   const cfg = readSettings(opts.projectDir)
   cfg.hooks ??= {}
   const hookCmd: HookCmd = {
@@ -188,6 +226,19 @@ export function installRecapHook(opts: InstallOpts): void {
  * register under. Pre-existing unrelated hooks are preserved. Empty containers are pruned.
  */
 export function removeRecapHook(projectDir: string, scriptPath: string): void {
+  stripRecapHooks(projectDir, (h) => argsReferenceScript(h.args, scriptPath))
+}
+
+/**
+ * Removes EVERY recap hook entry (any recordSession.js path — this build's or an earlier one's) from
+ * `projectDir`'s settings. The provisioned-file unsync (G12) uses it before a worktree's dirty check:
+ * whatever recap hook Expanse wrote there is Expanse's to remove, whichever build wrote it.
+ */
+export function removeAnyRecapHook(projectDir: string): void {
+  stripRecapHooks(projectDir, isRecapHook)
+}
+
+function stripRecapHooks(projectDir: string, isOurs: (h: HookCmd) => boolean): void {
   if (!existsSync(settingsPath(projectDir))) return
   const cfg = readSettings(projectDir)
   if (!cfg.hooks) return
@@ -205,9 +256,7 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
       .filter((b) => b && typeof b === 'object')
       .map((b) => ({
         ...b,
-        hooks: Array.isArray(b.hooks)
-          ? b.hooks.filter((h: HookCmd) => !argsReferenceScript(h.args, scriptPath))
-          : []
+        hooks: Array.isArray(b.hooks) ? b.hooks.filter((h: HookCmd) => !isOurs(h)) : []
       }))
       .filter((b) => b.hooks.length > 0)
     // Prune empty containers so removing our last hook leaves a clean file, not a dangling
