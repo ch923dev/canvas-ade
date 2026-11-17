@@ -5911,3 +5911,29 @@ clean; smoke 63/63 on both pushes (no separate pre-merge `make check` — `main`
 CI 4/4 on the fix head; `claude-review` clean both rounds (no inline). No live `pnpm dev` check (the
 owner's landing instructions set the gates as this lane's check); no full e2e matrix. Plan-viz not
 drawn.
+
+## PR #459 — feat(workspaces): confine MCP + Jarvis agents to their workspace (WS-7, v0.48.8) · squash `beb8faa9` · 2026-11-17
+
+Pre-freeze feature lane, merged as an **owner-approved exception to ADR 0015** (second of WS-8,
+WS-7, WS-4). An agent in a workspace stays in it on every surface Expanse owns (ADR 0014 ›
+*As built*). Schema unchanged (24 / 24).
+- `spawn_board` / `spawn_group`: the board joins the CALLER's workspace (a passed `workspaceId`
+  is dropped); cwd must realpath inside it. A project-level caller stays inside the project; a cwd
+  inside a workspace root joins that workspace.
+- `configure_board`: new cwd stays inside the TARGET's workspace (else the project); only the
+  five config keys pass. `relay_prompt(s)`: refused into another workspace's terminal (per row).
+  `tidy_canvas` / `arrange_main_board`: a workspace caller's default scope is its workspace.
+  Jarvis `spawn_board`: containment checked before the confirm, which names the workspace.
+- Policy in `workspaceScope.ts`; ONE decorator (`mcpWorkspaceGuard.ts`) over the host
+  orchestrator in `mcp.ts`, shared by package tools, Jarvis, the swarm executor and e2e seams.
+  Renderer appliers refuse a spawn into a workspace that no longer exists.
+- Known gap, documented: package 0.28.x sends configure/close/planning/card writes without the
+  caller id, so those target checks stay dormant until WS-9's package passes `{ sourceBoardId }`;
+  shell `cd ../x` is out of reach.
+- Rebase: only `package.json` conflicted; the ADR 0014 / research README "as built" version
+  references moved v0.48.4 → v0.48.8 with it.
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 8139 / 2 failed (the env-only `pathSafe` pair); SCA
+clean; smoke 63/63 (push, same SHA as merged; `main` had not moved); CI 4/4; `claude-review` clean
+(no inline). No live `pnpm dev` check (the owner's landing instructions set the gates as this
+lane's check); no full e2e matrix. Plan-viz not drawn.
