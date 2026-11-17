@@ -225,7 +225,9 @@ check on every PR*: a hook can't block it, the discipline guarantees it.
   - `write_result` the board's status+summary when the feature is done. You MAY spawn Terminal/Browser
     boards to exercise the running feature.
   - **Every MCP write is shown to the human for confirmation before it lands** — declined proposals
-    change nothing; nothing the MCP draws ever runs code.
+    change nothing. Drawings (planning/kanban) never run code; the MCP paths that DO put a shell line
+    in a terminal (`spawn_board` `prompt`, `spawn_group`/`configure_board` `launchCommand`,
+    relay/assign) are human-confirmed and audited.
 - **Liveness is required.** The MCP only works when the Expanse app is running and reachable — the
   SessionStart banner reports `✅ LIVE` / `⚠️ app down` / `⚠️ config missing`. If down, start Expanse; the
   plan-viz ritual is still MUST once it is reachable (note in the plan-board comment if you had to defer

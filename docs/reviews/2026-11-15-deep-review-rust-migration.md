@@ -3,7 +3,7 @@
 **Date:** 2026-11-15 · **Reviewed tree:** `main` @ `9d07af84` (v0.48.2; one commit behind `origin/main` — #452 WS-3 not included)
 **Method:** three Opus reviewers (MAIN native surfaces · MAIN data/services · preload + renderer), read-only, plus coordinator spot-checks of the top findings against the code, a health-gate run, and web research on the Rust shell options.
 **Owner decisions, 2026-11-15 (after the first draft):** Electron stays as the **legacy** project and takes **fixes only**; the Rust version is a **separate project**, not a conversion of this repo — recorded as [ADR 0015](../decisions/0015-legacy-line-fixes-only.md). Sections 0, 3.1, 4 and 6 were rewritten to match. The first draft recommended moving pieces into Rust inside the Electron app; that route is ruled out.
-**Fixed since the review:** P1 #1 and #2 (asset GC) by #453, v0.48.4; a third sweep of the same kind (Browser-board screenshots) by #454, v0.48.5; P1 #3 and #4 and P2 #6 (PTY host daemon) by #455, v0.48.6. Everything else in §2 was open when this file was committed.
+**Fixed since the review:** P1 #1 and #2 (asset GC) by #453, v0.48.4; a third sweep of the same kind (Browser-board screenshots) by #454, v0.48.5; P1 #3 and #4 and P2 #6 (PTY host daemon) by #455, v0.48.6; P2 #5 (MCP spawn-time launch line now confirmed + audited) by v0.48.7. Everything else in §2 was open when this file was committed.
 
 ---
 
