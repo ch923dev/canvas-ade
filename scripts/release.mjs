@@ -18,8 +18,9 @@
  * Usage:  node scripts/release.mjs [--win|--mac|--linux]   (default --win)
  *         R2_REMOTE=r2:expanse-updates node scripts/release.mjs --win   # actually upload
  *
- * NOTE: signing is orthogonal — the production CI path signs; this script is the feed mechanics.
- * Run it only for a build you intend to publish. See docs/contributing/releasing.md › Update levels.
+ * NOTE: this script does not sign — electron-builder signs from the CSC env (as production.yml
+ * passes it) — but it REFUSES to run without that env, because it builds the auto-updater in
+ * (ADR 0008). Run it only for a build you intend to publish. See docs/contributing/releasing.md › Update levels.
  */
 import { spawnSync } from 'node:child_process'
 import { readdirSync, copyFileSync, mkdirSync, rmSync, existsSync } from 'node:fs'
@@ -43,6 +44,22 @@ const run = (cmd, extraEnv = {}) => {
     process.stderr.write(`[release] step failed (exit ${r.status}): ${cmd}\n`)
     process.exit(r.status ?? 1)
   }
+}
+
+// ADR 0008: never ship the auto-updater (ENABLE_AUTO_UPDATE=1, below) in an unsigned build. These
+// are the signing env names production.yml passes; electron-builder signs Windows with WIN_CSC_LINK,
+// falling back to CSC_LINK. Linux has no code signing, so it can never cut an updater release.
+// shortcut: a cloud signer (e.g. azureSignOptions) isn't configured yet; add its env here when it is.
+const signingEnv = { win: ['WIN_CSC_LINK', 'CSC_LINK'], mac: ['CSC_LINK'], linux: [] }[platform]
+if (!signingEnv.some((k) => process.env[k])) {
+  process.stderr.write(
+    `[release] refusing: this build turns the auto-updater on (ENABLE_AUTO_UPDATE=1) but ` +
+      (signingEnv.length
+        ? `no ${platform} signing cert is set (${signingEnv.join(' or ')})`
+        : `linux builds cannot be code-signed`) +
+      ` — ADR 0008 forbids an unsigned auto-updating build. See docs/contributing/releasing.md.\n`
+  )
+  process.exit(1)
 }
 
 // 0 — fail fast: validate the tier manifest + canvas-floor record BEFORE a minutes-long build.
