@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { execFileSync } from 'child_process'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join } from 'path'
@@ -44,6 +45,48 @@ const stdio = (over: Partial<ResolvedServer> = {}): ResolvedServer => ({
   ...over
 })
 const readJson = (f: string): Record<string, unknown> => JSON.parse(readFileSync(f, 'utf8'))
+
+describe('project-scoped writers keep secret-bearing files out of git', () => {
+  const git = (cwd: string, ...a: string[]): string =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], {
+      cwd,
+      encoding: 'utf8'
+    })
+  const ignored = (cwd: string, rel: string): boolean => {
+    try {
+      git(cwd, 'check-ignore', '-q', rel)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('appends .mcp.json / opencode.json to info/exclude (anchored, subdir cwd, idempotent)', () => {
+    git(proj, 'init', '-q')
+    const sub = join(proj, 'sub dir')
+    mkdirSync(sub)
+    EXTERNAL_WRITERS.claude.writeServers(sub, [http()])
+    EXTERNAL_WRITERS.claude.writeServers(sub, [http()])
+    EXTERNAL_WRITERS.opencode.writeServers(proj, [http()])
+    expect(ignored(proj, 'sub dir/.mcp.json')).toBe(true)
+    expect(ignored(proj, 'opencode.json')).toBe(true)
+    expect(ignored(proj, '.mcp.json')).toBe(false) // anchored — only the files we wrote
+    const lines = readFileSync(join(proj, '.git', 'info', 'exclude'), 'utf8').split('\n')
+    expect(lines.filter((l) => l === '/sub dir/.mcp.json')).toHaveLength(1)
+    expect(git(proj, 'status', '--porcelain', '--untracked-files=all')).not.toMatch(
+      /\.mcp\.json|opencode\.json/
+    )
+  })
+
+  it('a linked worktree (.git file) writes the common dir exclude', () => {
+    git(proj, 'init', '-q')
+    git(proj, 'commit', '-q', '--allow-empty', '-m', 'init')
+    const wt = join(proj, 'wt')
+    git(proj, 'worktree', 'add', '-q', wt)
+    EXTERNAL_WRITERS.claude.writeServers(wt, [http()])
+    expect(ignored(wt, '.mcp.json')).toBe(true)
+  })
+})
 
 describe('claude external writer', () => {
   it('writes http + stdio entries and enables them in settings.local', () => {
