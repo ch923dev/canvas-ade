@@ -5880,3 +5880,34 @@ without respawn → daemon idle-exits, no "Terminal host disconnected"; box-draw
 zero U+FFFD live and after reattach; project-B survivor listed in the close modal and killed by
 "Stop all & close". Not verified: tray icon click, packaged app / update install, full e2e
 matrix. Plan-viz not drawn (`canvas-ade` MCP unreachable all session).
+
+## PR #456 — feat(workspaces): WS-8 MAIN — live CONTEXT.md status, Claude workspace rules, G12 unsync (v0.48.7) · squash `7e703392` · 2026-11-17
+
+Pre-freeze feature lane, merged as an **owner-approved exception to ADR 0015** (WS-8, WS-7, WS-4
+approved together, in that order). The MAIN half of WS-8 (ADR 0014; design
+`docs/research/2026-11-02-project-workspaces/` §4.5, O-5, O-6). Schema unchanged (24 / 24).
+- **Context files.** `workspaceContext.ts`: path-guarded (safe id, no link on the way down) lazy
+  scaffold of `.canvas/workspaces/<id>/CONTEXT.md` + `_project/CONTEXT.md`.
+- **Live status.** `workspaceStatus.ts`: deterministic writer, marker-bounded splice, ≤ 1 write /
+  5 s per workspace, skip-unchanged, mtime/size re-check before the atomic write, paused while the
+  Brief is unsaved, last 5 results kept in the file, project roll-up. Wired by
+  `workspaceContextBoot.ts`.
+- **Claude workspace rules (O-5).** `cliProvisioners/claudeRules.ts` merges `permissions.deny`
+  `Edit(//<abs>/**)` (other workspace roots, sibling worktrees, `canvas.json`,
+  `.canvas/workspaces/**`) + `sandbox.enabled` (macOS/Linux) into `settings.local.json`; user
+  entries untouched; an owned-rules ledger in userData so revoke removes exactly ours. The deny
+  holds on native Windows (spike).
+- **G12.** Allocator status counts only the tree's own files; `removeIfClean` unsyncs Expanse's
+  config right before `git worktree remove`; an emptied settings file is deleted.
+- **Fix.** Recap hook / provisioners never re-create a cwd that no longer exists (the focus
+  self-heal resurrected removed worktrees via recursive `mkdir`).
+- CodeQL flagged 3 new high alerts on the first push; fixed in code, not dismissed: stat + read
+  through one fd in the status writer, no exists pre-check before the `wx` scaffold create,
+  `oneLine` also strips `--!>`.
+- Not in this PR: the Brief board renderer, "Notify agents", `e2e/workspaceContext.e2e.ts`.
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 8053 / 2 failed (the env-only `pathSafe` pair); SCA
+clean; smoke 63/63 on both pushes (no separate pre-merge `make check` — `main` had not moved);
+CI 4/4 on the fix head; `claude-review` clean both rounds (no inline). No live `pnpm dev` check (the
+owner's landing instructions set the gates as this lane's check); no full e2e matrix. Plan-viz not
+drawn.
