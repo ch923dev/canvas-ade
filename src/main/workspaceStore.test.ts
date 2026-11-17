@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { SimpleGit } from 'simple-git'
 import {
   createWorkspaceStore,
@@ -15,7 +15,8 @@ import type { WorkspaceMirror } from './workspaceMirror'
 // WS-4 lifecycle (design §4.3) against injected fakes: no real git, no real fs. The real-repo
 // path is covered by e2e/workspaceLifecycle.e2e.ts.
 
-const PROJECT = join('C:', 'work', 'my project')
+// resolve(): absolute on every OS (join('C:', …) is RELATIVE on POSIX — the Linux CI leg).
+const PROJECT = resolve('/work', 'my project')
 const at = (...p: string[]): string => join(PROJECT, ...p)
 
 /** A fake simple-git per folder: which folders are repos, their top, their branch. */
@@ -162,7 +163,7 @@ describe('probe', () => {
   })
 
   it('a folder whose repo lies OUTSIDE the project gets no git modes', async () => {
-    const parent = join('C:', 'work')
+    const parent = dirname(PROJECT)
     const r = await make({}, { [PROJECT]: { top: parent } }).store.probe('docs')
     expect(r).toMatchObject({ ok: true, root: 'docs' })
     if (r.ok) {
