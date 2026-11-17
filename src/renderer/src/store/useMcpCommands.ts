@@ -67,7 +67,8 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<Mc
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type, title, launchCommand, cwd, url, openRouter, dockedIn } = command.board
+      const { id, type, title, launchCommand, cwd, url, openRouter, dockedIn, workspaceId } =
+        command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
@@ -123,6 +124,12 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<Mc
       if (dockedIn !== undefined && type !== 'terminal') {
         return { ok: false, error: 'addBoard: dockedIn is terminal-only' }
       }
+      if (
+        workspaceId !== undefined &&
+        (typeof workspaceId !== 'string' || workspaceId.length === 0)
+      ) {
+        return { ok: false, error: 'invalid addBoard workspaceId' }
+      }
       // Auto-cable request (rc.6): shape + terminal-only re-validation BEFORE any side effect
       // (a malformed request must not leave a cable-less board behind an { ok: false } ack).
       if (
@@ -137,6 +144,12 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<Mc
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
       const store = useCanvasStore.getState()
       if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'addBoard' }
+      // WS-7: MAIN placed this board in a workspace from the CALLER's scope. One the live store no
+      // longer has (deleted between MAIN's read and this tick) refuses the spawn rather than
+      // landing a project-level board — an agent in a workspace never spawns outside it.
+      if (workspaceId !== undefined && !store.workspaces.some((w) => w.id === workspaceId)) {
+        return { ok: false, error: 'addBoard: that workspace no longer exists' }
+      }
       // 2b: re-run the SHARED `sanitizeBoardTitle` (defense in depth, a true second pass like the
       // `isSpawnable` re-validation above — not just a length clamp): MAIN already sanitized the title
       // on the real path, but a forged/malformed IPC payload carrying control chars must still get the
@@ -168,7 +181,8 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<Mc
         cwd !== undefined ||
         url !== undefined ||
         openRouter !== undefined ||
-        dockHostLive
+        dockHostLive ||
+        workspaceId !== undefined
       ) {
         store.updateBoard(id, {
           ...(launchCommand ? { launchCommand } : {}),
@@ -180,7 +194,10 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck | Promise<Mc
           ...(openRouter ? { openRouter } : {}),
           // PATCHABLE_KEYS.terminal carries 'dockedIn' — landed in the same synchronous tick as
           // the add, so the board NEVER renders as a canvas node first (no flash-then-dock).
-          ...(dockHostLive ? { dockedIn } : {})
+          ...(dockHostLive ? { dockedIn } : {}),
+          // COMMON_KEYS carries 'workspaceId' — landed before mount, so WS-3's spawn-time read
+          // starts the terminal in the workspace root.
+          ...(workspaceId ? { workspaceId } : {})
         })
       }
       // 🔒 Auto-cable (rc.6): MAIN asks for a directed ORCHESTRATION connector spawner → spawned

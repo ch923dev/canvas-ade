@@ -61,7 +61,7 @@ function applySpawnGroup(command: Extract<McpCommand, { type: 'spawnGroup' }>): 
   // 🔒 PR-5b: create a feature-zone cluster (boards + Named Group + preview wiring) in one
   // undoable step. MAIN minted every id + clamped the name; the renderer re-validates the
   // envelope (defense in depth, mirroring addBoard) before it lands on the canvas.
-  const { group, members } = command
+  const { group, members, workspaceId } = command
   const validId = (m: { id?: unknown } | undefined): m is { id: string } =>
     m !== null && typeof m === 'object' && typeof m.id === 'string' && m.id.length > 0
   if (group === null || typeof group !== 'object' || !validId(group)) {
@@ -93,10 +93,17 @@ function applySpawnGroup(command: Extract<McpCommand, { type: 'spawnGroup' }>): 
   ) {
     return { ok: false, error: 'invalid spawnGroup terminal openRouter' }
   }
+  if (workspaceId !== undefined && (typeof workspaceId !== 'string' || workspaceId.length === 0)) {
+    return { ok: false, error: 'invalid spawnGroup workspaceId' }
+  }
   // Idempotent by group id (mirrors addBoard): a re-delivered spawnGroup whose group already
   // exists is a no-op + ack ok, so it can't push a duplicate zone.
   const store = useCanvasStore.getState()
   if (store.groups.some((g) => g.id === group.id)) return { ok: true, type: 'spawnGroup' }
+  // WS-7: the addBoard rule — a workspace the live store no longer has refuses the whole zone.
+  if (workspaceId !== undefined && !store.workspaces.some((w) => w.id === workspaceId)) {
+    return { ok: false, error: 'spawnGroup: that workspace no longer exists' }
+  }
   // Land the zone where the USER is looking (the Command board is a user-driven dispatch, unlike
   // an agent's headless spawn). The viewport centre maps to a world point; freeSlot then nudges
   // it off the Command board sitting there, so the zone tucks in beside it IN VIEW — not at the
@@ -108,6 +115,13 @@ function applySpawnGroup(command: Extract<McpCommand, { type: 'spawnGroup' }>): 
   const pane = useCanvasViewStore.getState().pane
   const at = pane ? viewportCenterWorld(store.viewport, pane, SPAWN_ANCHOR) : SPAWN_ANCHOR
   store.spawnGroup({ at, group, members })
+  // WS-7: every member joins the caller's workspace in the same tick (no beginChange — it folds
+  // into the zone's one undo step, the addBoard applier pattern).
+  if (workspaceId !== undefined) {
+    for (const m of [members.terminal, members.planning, members.browser]) {
+      if (m) store.updateBoard(m.id, { workspaceId })
+    }
+  }
   return { ok: true, type: 'spawnGroup' }
 }
 

@@ -65,6 +65,8 @@ export interface JarvisCanvasFacet extends JarvisGroupFacet {
     title?: string
     url?: string
   }): Promise<{ id: string }>
+  /** WS-7: where the spawn would land — throws the scope refusal (checked before the confirm). */
+  spawnPlacement?(input: { type: string; cwd?: string }): { workspace?: string }
   dispatchPrompt(boardId: string, text: string): Promise<{ delivery: 'ready' | 'unconfirmed' }>
   addCard(
     boardId: string,
@@ -560,11 +562,20 @@ export async function executeJarvisTool(
         const launch = optStr(input, 'launch_command', 400)
         const cwd = optStr(input, 'cwd', 400)
         const url = optStr(input, 'url', 2000)
+        // WS-7: Jarvis spawns at project scope — a cwd outside the project (or into a workspace
+        // whose folder is gone) is refused BEFORE the confirm, like the kanban case above.
+        let workspace: string | undefined
+        try {
+          workspace = deps.facet.spawnPlacement?.({ type, ...(cwd ? { cwd } : {}) }).workspace
+        } catch (err) {
+          return fail(name, err instanceof Error ? err.message : String(err))
+        }
         const detail = [
           `a ${type} board`,
           title ? `"${title}"` : null,
           launch ? `running: ${launch}` : null,
           cwd ? `in ${cwd}` : null,
+          workspace ? `(joins workspace "${workspace}")` : null,
           url ? `at ${url}` : null
         ]
           .filter(Boolean)

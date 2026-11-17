@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BoardOutput, BoardResult, MemoryDoc } from '@expanse-ade/mcp'
 import { createMcpLifecycle } from './mcpLifecycle'
 import type { BoardRegistry } from './mcpRegistry'
+import type { McpCommand } from './mcpCommand'
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
 const EMPTY_RESULT: BoardResult = { present: false }
@@ -849,5 +850,44 @@ describe('createMcpLifecycle.spawnBoard — sourceBoardId auto-cable (rc.6)', ()
     const { registry, sent } = cableReg([])
     await makeLife(registry).spawnBoard({ type: 'terminal' })
     expect('connector' in sent[0] && sent[0].connector !== undefined).toBe(false)
+  })
+})
+
+describe('WS-7 — the guard-set workspaceId reaches the renderer command', () => {
+  /** Records every command the lifecycle sends. */
+  function sendingReg(): { registry: BoardRegistry; sent: McpCommand[] } {
+    const sent: McpCommand[] = []
+    const registry: BoardRegistry = {
+      listBoards: () => [],
+      listSessions: () => [],
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => {
+        sent.push(cmd)
+        return { ok: true, type: cmd.type }
+      },
+      drainPty: async () => {},
+      ...DISPATCH_DEFAULTS
+    }
+    return { registry, sent }
+  }
+  const makeLife = (registry: BoardRegistry): ReturnType<typeof createMcpLifecycle> =>
+    createMcpLifecycle({ registry, now: () => 0, cap: 8, spawnGraceMs: 5000 })
+
+  it('spawnBoard forwards workspaceId on the addBoard board; absent stays absent', async () => {
+    const { registry, sent } = sendingReg()
+    const life = makeLife(registry)
+    await life.spawnBoard({ type: 'planning', workspaceId: 'ws-api' })
+    await life.spawnBoard({ type: 'planning' })
+    expect(sent[0]).toMatchObject({ type: 'addBoard', board: { workspaceId: 'ws-api' } })
+    expect(sent[1].type === 'addBoard' && 'workspaceId' in sent[1].board).toBe(false)
+  })
+
+  it('spawnGroup forwards workspaceId on the spawnGroup command', async () => {
+    const { registry, sent } = sendingReg()
+    await makeLife(registry).spawnGroup({ name: 'Auth', workspaceId: 'ws-api' })
+    expect(sent[0]).toMatchObject({ type: 'spawnGroup', workspaceId: 'ws-api' })
   })
 })

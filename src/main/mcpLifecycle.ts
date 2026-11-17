@@ -144,6 +144,13 @@ export interface SpawnGroupInput {
    * lands on the created board so `useTerminalSpawn` forwards it for MAIN-side env injection.
    */
   openRouter?: { enabled: boolean; model?: string }
+  /**
+   * The lead caller's token-derived board id (the package's `spawn_group` passes it; never client
+   * input). The host reads it only for WS-7 scope (`mcpWorkspaceGuard`).
+   */
+  sourceBoardId?: string
+  /** WS-7: the workspace every member joins — set ONLY by `mcpWorkspaceGuard` (caller-derived). */
+  workspaceId?: string
 }
 
 /** The minted ids a {@link McpLifecycle.spawnGroup} returns so the orchestrator can address the zone. */
@@ -189,6 +196,11 @@ export interface McpLifecycle {
      * Only the swarm spawn gate sets it — the MCP wire schema does not carry it.
      */
     dockedIn?: string
+    /**
+     * WS-7: the workspace the new board joins — set ONLY by `mcpWorkspaceGuard`, from the caller's
+     * scope (the wire schema does not carry it; the guard drops any value a caller passes).
+     */
+    workspaceId?: string
   }): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
@@ -231,6 +243,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     sourceBoardId?: string
     openRouter?: { enabled: boolean; model?: string }
     dockedIn?: string
+    workspaceId?: string
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
@@ -326,7 +339,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           ...(cwd ? { cwd } : {}),
           ...(url ? { url } : {}),
           ...(openRouter ? { openRouter } : {}),
-          ...(dockedIn ? { dockedIn } : {})
+          ...(dockedIn ? { dockedIn } : {}),
+          ...(input.workspaceId ? { workspaceId: input.workspaceId } : {})
         },
         ...(wantCable ? { connector: { sourceId: input.sourceBoardId! } } : {})
       })
@@ -397,7 +411,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           },
           ...(planningId ? { planning: { id: planningId } } : {}),
           ...(browserId ? { browser: { id: browserId } } : {})
-        }
+        },
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {})
       })
       if (!ack.ok) throw new Error(`spawn_group failed: ${ack.error}`)
     } catch (err) {

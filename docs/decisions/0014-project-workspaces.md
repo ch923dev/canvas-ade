@@ -162,6 +162,31 @@ Expanse hard-refuses on its own surfaces and adds per-CLI config as best effort.
   - Its sandbox does not exist on native Windows.
   - codex and gemini keep machine-global config, which cannot be scoped per workspace.
   - Whether a `//m/...` deny rule holds on Windows is unverified; WS-8 starts with a spike.
+- **As built (WS-7, v0.48.8).** The policy is in `src/main/workspaceScope.ts`. The checks run in
+  ONE decorator, `src/main/mcpWorkspaceGuard.ts`, which wraps the host orchestrator in `mcp.ts`.
+  Every entry point therefore passes through it: package tools, Jarvis, the swarm executor and the
+  e2e seams. Refusals are `invalid_input` with one sentence, and every refused relay or configure
+  call writes a `rejected` audit row.
+  - The new board's workspace comes from the **caller**. A `workspaceId` in the input is dropped.
+    The renderer refuses a spawn into a workspace that has since been deleted, so the board never
+    lands as project-level instead.
+  - `configure_board` cwd is checked against the **target**, so the rule holds whoever calls. A
+    project-level terminal's cwd must stay inside the project; otherwise spawn-then-configure
+    would get around the spawn rule. Only the five config keys pass; `workspaceId` never does.
+  - A swarm-**docked** worker stays project-level. The swarm board carries the membership, and
+    the worker's worktree is outside every workspace root. Its cwd is still kept inside the
+    project.
+  - Jarvis's cwd is checked **before** its confirm, and the confirm names the workspace the board
+    will join.
+  - **Not yet enforced: the target check on most writes.** `@expanse-ade/mcp` 0.28.x calls
+    `configure_board`, `close_board`, the planning-element tools and the card tools without the
+    caller's board id. The guarded methods already take an optional trailing `{ sourceBoardId }`,
+    so the target check starts working once the package passes it (WS-9). Relay, spawn and tidy
+    get the caller from the package today and are enforced now.
+  - A caller whose board is not on the active canvas reads as PROJECT. That covers an agent from
+    a backgrounded project.
+  - `visualize_plan` boards are created project-level.
+  - Shell `cd` is still out of reach (see the limits above).
 
 ### 5. Shared context: live status + my notes (D-6, O-6)
 
@@ -265,6 +290,9 @@ to end the name clash.
 - **MCP v1 needs no package publish:** the synthetic-group projection and tool errors cover it.
   The richer surfaces come later as one publish plus a pin bump (WS-9): `canvas://workspaces`,
   `canvas://workspace/context`, `spawn_board.workspace` and a caller-scoped `canvas://boards`.
+  The same publish passes the caller's `{ sourceBoardId }` as a trailing argument to
+  `configure_board`, `close_board`, the planning-element tools and the card tools. That turns on
+  WS-7's target check for those writes; the host already accepts the argument.
 - **Two worktrees of one repo default to the same dev port.** Expanse detects ports and doesn't
   assign them (Slice C′), so the second server has to pick another port. That is UX copy, not new
   machinery.

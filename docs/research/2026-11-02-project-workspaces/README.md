@@ -464,6 +464,13 @@ The new module is `src/main/workspaceScope.ts`: `callerScope(boardId)`, `assertC
 | board listing / summaries | tier-scoped in the package (†) | P2 (package): a W caller sees W + project-level boards. |
 | PTY env | `CANVAS_RECAP_BOARD` | Add the `CANVAS_WORKSPACE_*` vars (§4.2). |
 
+**Shipped in WS-7 (v0.48.8).** See ADR 0014 › *As built*. Every row from `spawn_board` through
+Jarvis is enforced except one: the **target** check on `configure_board`, close, planning and
+card writes. The package does not yet pass the caller's id for those tools. The host accepts an
+optional trailing `{ sourceBoardId }` and checks it as soon as WS-9's package passes it.
+`configure_board`'s cwd rule is keyed on the target, so it holds today for every caller. It also
+applies to project-level terminals, which must keep their cwd inside the project.
+
 **State plainly in the docs:** none of this stops a shell agent running `cd ../uploader && …`.
 - Claude Code `deny` rules govern its Edit tool, **not Bash redirects** [DOC].
 - Its filesystem sandbox (which defaults writes to the cwd) **doesn't exist on native Windows** [DOC].
