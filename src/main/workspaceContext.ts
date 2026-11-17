@@ -106,12 +106,7 @@ export function ensureScaffold(
 ): string | null {
   const file = contextFilePath(projectDir, workspace.id)
   if (!file) return null
-  try {
-    lstatSync(file)
-    return file
-  } catch {
-    /* missing — scaffold it below */
-  }
+  // No exists-check first: `wx` alone decides (CodeQL js/file-system-race), EEXIST ⇒ keep it.
   mkdirSync(join(projectDir, '.canvas', WORKSPACES_DIR, workspace.id), { recursive: true })
   // Re-check after mkdir: a link planted in the meantime must still refuse.
   if (contextFilePath(projectDir, workspace.id) !== file) return null

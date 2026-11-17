@@ -14,6 +14,7 @@ import {
   createWorkspaceStatusWriter,
   extractStatusBlock,
   hhmm,
+  oneLine,
   spliceStatus,
   type WorkspaceStatusDeps
 } from './workspaceStatus'
@@ -337,5 +338,8 @@ describe('pure helpers', () => {
   })
   it('hhmm is local HH:MM', () => {
     expect(hhmm(NOW)).toBe('14:02')
+  })
+  it('oneLine strips every HTML comment delimiter, including --!>', () => {
+    expect(oneLine('a <!-- b --> c --!> d')).toBe('a b c d')
   })
 })

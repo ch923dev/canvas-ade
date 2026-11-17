@@ -19,7 +19,7 @@
  *
  * The project roll-up (`_project/CONTEXT.md`) follows the same rules, one line per workspace.
  */
-import { statSync, readFileSync } from 'node:fs'
+import { type Stats, closeSync, fstatSync, openSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 import type { BoardResult } from '@expanse-ade/mcp'
@@ -67,7 +67,7 @@ export function oneLine(raw: string, max = LABEL_MAX): string {
   // eslint-disable-next-line no-control-regex -- stripping control characters is the point
   let s = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
   s = s
-    .replace(/<!--|-->/g, ' ')
+    .replace(/<!--|--!?>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s
@@ -322,6 +322,16 @@ interface WsState {
   results: string[] | null
 }
 
+/** Stat + read through ONE fd, so the stat describes exactly the bytes read (CodeQL js/file-system-race). */
+function readWithStat(file: string): { stat: Stats; text: string } {
+  const fd = openSync(file, 'r')
+  try {
+    return { stat: fstatSync(fd), text: readFileSync(fd, 'utf8') }
+  } finally {
+    closeSync(fd)
+  }
+}
+
 export function createWorkspaceStatusWriter(deps: WorkspaceStatusDeps): WorkspaceStatusWriter {
   const now = deps.now ?? Date.now
   const interval = deps.intervalMs ?? STATUS_INTERVAL_MS
@@ -345,13 +355,12 @@ export function createWorkspaceStatusWriter(deps: WorkspaceStatusDeps): Workspac
   /** Splice `block` into `file`; false when unchanged, paused-by-race, or out of attempts. */
   const commit = (file: string, block: string): boolean => {
     for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
-      const before = statSync(file)
-      const text = readFileSync(file, 'utf8')
+      const { stat: before, text } = readWithStat(file)
       const current = extractStatusBlock(text)
       if (current !== null && withoutStamp(current) === withoutStamp(block)) return false
       const next = spliceStatus(text, block)
       deps.beforeCommit?.(file)
-      const after = statSync(file)
+      const after = readWithStat(file).stat
       if (after.mtimeMs !== before.mtimeMs || after.size !== before.size) continue // start over
       writeFileAtomic.sync(file, next, 'utf8')
       return true
