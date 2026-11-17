@@ -15,7 +15,8 @@
  * No worktree side effects here (WS-4 owns `workspace:create/delete` IPC); the store only keeps the
  * record. `trackedChange` + `lastRecorded` stay OWNED by canvasStore (sliceTypes contract).
  */
-import type { Board } from '../../lib/boardSchema'
+import { createBoard, DEFAULT_BOARD_SIZE, type Board, type BoardType } from '../../lib/boardSchema'
+import { freeSlot, PLACE_GAP } from '../../lib/freeSlot'
 import {
   checkWorkspace,
   isWorkspaceNameTaken,
@@ -25,7 +26,9 @@ import {
 } from '../../lib/workspaceSchema'
 import { sanitizeGroupName } from '../../../../shared/groupName'
 import {
+  isValidWorkspaceRef,
   nextWorkspaceColor,
+  normalizeWorkspaceRoot,
   sanitizeWorkspaceGoal,
   type WorkspaceColor
 } from '../../../../shared/workspaceRules'
@@ -43,6 +46,17 @@ export interface WorkspaceInput {
   worktrees?: WorkspaceWorktree[]
 }
 
+/** WS-4 starter boards (§4.3 step 4): placed together in free space, born inside the workspace. */
+export interface WorkspaceStarterSpec {
+  workspaceId: string
+  /** World-space anchor; the row is nudged to the nearest free slot. */
+  at: { x: number; y: number }
+  /** The starter terminal: its agent launch line + the stat-proven ABSOLUTE cwd MAIN returned. */
+  terminal?: { launchCommand?: string; cwd: string; agentKind?: string }
+  /** A Browser board, wired to the starter terminal's dev server when there is one. */
+  browser?: boolean
+}
+
 /** The workspace state + actions canvasStore's `CanvasState` extends (the LayoutSliceState shape). */
 export interface WorkspaceSliceState {
   /** v24 project workspaces. SETTINGS-CLASS — persisted, never on the undo rail. */
@@ -52,8 +66,13 @@ export interface WorkspaceSliceState {
   /** Create a workspace record (not undoable). Returns its id, or null when the input is invalid
    *  (blank name, a root outside the project, a bad worktree) or the name is already taken. */
   createWorkspace: (input: WorkspaceInput) => string | null
-  /** Delete a workspace record (not undoable). Its boards stay, as project-level boards (O-8). */
-  deleteWorkspace: (id: string) => void
+  /**
+   * Delete a workspace record (not undoable). Its boards stay, as project-level boards (O-8).
+   * `cwdUnder` (WS-4, a removed worktree's absolute path): a kept terminal whose cwd pointed inside
+   * it loses that cwd on every rail, so its next Start runs in the project root rather than in a
+   * folder that no longer exists.
+   */
+  deleteWorkspace: (id: string, opts?: { cwdUnder?: string }) => void
   /** Rename (not undoable). False when the id is unknown, the name is blank, or it is taken. */
   renameWorkspace: (id: string, name: string) => boolean
   /** Edit the goal (not undoable). The raw text is normalized to one line of ≤ 200. */
@@ -64,14 +83,51 @@ export interface WorkspaceSliceState {
    * own is ignored for the same reason. No-op for an unknown workspace or when nothing changes.
    */
   assignBoardsToWorkspace: (boardIds: string[], workspaceId: string | null) => void
+  /** WS-4: remember the base branch for a repo (O-10). Not undoable; no-op for a bad key/ref. */
+  setRepoDefault: (repoRoot: string, base: string) => void
+  /** WS-4: archive (kept-on-disk delete) or re-open a workspace. Not undoable. */
+  setWorkspaceArchived: (id: string, archived: boolean) => void
+  /**
+   * WS-4 open-time reconcile: ids of git-backed workspaces whose worktree folder is missing on
+   * disk. EPHEMERAL — never persisted, reset on every load; the spawn path refuses on its own.
+   */
+  workspaceMissing: Record<string, true>
+  setWorkspaceMissing: (ids: string[]) => void
+  /** WS-4: add the starter boards in ONE undoable step. Returns the new ids. */
+  addWorkspaceStarters: (spec: WorkspaceStarterSpec) => { terminalId?: string; browserId?: string }
 }
 
 /** The v24 fields a freshly-loaded doc seeds into the store (canvasStore.applyLoadedDoc). */
 export function loadedWorkspaceState(d: {
   workspaces?: Workspace[]
   repoDefaults?: RepoDefaults
-}): Pick<WorkspaceSliceState, 'workspaces' | 'repoDefaults'> {
-  return { workspaces: d.workspaces ?? [], repoDefaults: d.repoDefaults ?? {} }
+}): Pick<WorkspaceSliceState, 'workspaces' | 'repoDefaults' | 'workspaceMissing'> {
+  return {
+    workspaces: d.workspaces ?? [],
+    repoDefaults: d.repoDefaults ?? {},
+    workspaceMissing: {}
+  }
+}
+
+/** Is absolute path `p` the folder `root` or inside it? Separator- and case-insensitive. */
+export function isUnderPath(root: string, p: string): boolean {
+  const norm = (x: string): string => x.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const r = norm(root)
+  const t = norm(p)
+  return r !== '' && (t === r || t.startsWith(r + '/'))
+}
+
+/** Drop the `cwd` of every terminal spawned inside `root`. The SAME array when none matched. */
+export function clearCwdsUnder(boards: Board[], root: string): Board[] {
+  const hit = (b: Board): boolean =>
+    b.type === 'terminal' && typeof b.cwd === 'string' && isUnderPath(root, b.cwd)
+  if (!boards.some(hit)) return boards
+  return boards.map((b) => {
+    if (!hit(b)) return b
+    const next = { ...b }
+    delete (next as { cwd?: string }).cwd
+    return next
+  })
 }
 
 /** Clear every board's membership in `workspaceId`. Returns the SAME array when nothing referred
@@ -135,9 +191,13 @@ export function createWorkspaceSlice(
       return id
     },
 
-    deleteWorkspace: (id) => {
+    deleteWorkspace: (id, opts) => {
       if (!get().workspaces.some((w) => w.id === id)) return
-      const clear = (boards: Board[]): Board[] => clearWorkspaceRefs(boards, id)
+      const under = opts?.cwdUnder
+      const clear = (boards: Board[]): Board[] => {
+        const kept = clearWorkspaceRefs(boards, id)
+        return under ? clearCwdsUnder(kept, under) : kept
+      }
       // An armed gesture checkpoint is consumed onto `past` later — rewrite it too, or the first
       // edit after this delete would record a snapshot that still points at the dead workspace.
       deps.rewritePendingBoards?.(clear)
@@ -180,6 +240,68 @@ export function createWorkspaceSlice(
         })
         if (!changed) return s
         return trackedChange(s, { boards }, { reflectPresent: false })
+      }),
+
+    setRepoDefault: (raw, base) => {
+      const key = normalizeWorkspaceRoot(raw)
+      if (key === null || !isValidWorkspaceRef(base)) return
+      if (get().repoDefaults[key]?.base === base) return
+      set((s) => ({ repoDefaults: { ...s.repoDefaults, [key]: { base } } }))
+    },
+
+    setWorkspaceArchived: (id, archived) =>
+      set((s) => {
+        const w = s.workspaces.find((x) => x.id === id)
+        if (!w || (w.state === 'archived') === archived) return s
+        const next = { ...w }
+        if (archived) next.state = 'archived'
+        else delete next.state
+        return { workspaces: s.workspaces.map((x) => (x.id === id ? next : x)) }
+      }),
+
+    workspaceMissing: {},
+    setWorkspaceMissing: (ids) =>
+      set({ workspaceMissing: Object.fromEntries(ids.map((i) => [i, true as const])) }),
+
+    addWorkspaceStarters: (spec) => {
+      if (!get().workspaces.some((w) => w.id === spec.workspaceId)) return {}
+      const order: { id: string; type: BoardType }[] = [
+        ...(spec.terminal ? [{ id: newId(), type: 'terminal' as BoardType }] : []),
+        ...(spec.browser ? [{ id: newId(), type: 'browser' as BoardType }] : [])
+      ]
+      if (order.length === 0) return {}
+      // ONE free slot for the whole row, so the starters land together as one contiguous cluster
+      // (the spawnGroup placement), then tiled left to right inside it.
+      const sizes = order.map((m) => DEFAULT_BOARD_SIZE[m.type])
+      const totalW = sizes.reduce((sum, sz) => sum + sz.w, 0) + PLACE_GAP * (sizes.length - 1)
+      const origin = freeSlot(get().boards, spec.at, {
+        w: totalW,
+        h: Math.max(...sizes.map((sz) => sz.h))
       })
+      const terminalId = order.find((m) => m.type === 'terminal')?.id
+      const browserId = order.find((m) => m.type === 'browser')?.id
+      let x = origin.x
+      const added = order.map((m, i) => {
+        const b = createBoard(m.type, { id: m.id, x, y: origin.y, w: sizes[i].w, h: sizes[i].h })
+        x += sizes[i].w + PLACE_GAP
+        b.workspaceId = spec.workspaceId
+        if (b.type === 'terminal' && spec.terminal) {
+          b.cwd = spec.terminal.cwd
+          if (spec.terminal.launchCommand) b.launchCommand = spec.terminal.launchCommand
+          if (spec.terminal.agentKind) b.agentKind = spec.terminal.agentKind
+        }
+        if (b.type === 'browser' && terminalId) b.previewSourceId = terminalId
+        return b
+      })
+      const ids = added.map((b) => b.id)
+      set((s) =>
+        trackedChange(
+          s,
+          { boards: [...s.boards, ...added] },
+          { selection: { selectedId: ids[0], selectedIds: ids }, reflectPresent: false }
+        )
+      )
+      return { ...(terminalId ? { terminalId } : {}), ...(browserId ? { browserId } : {}) }
+    }
   }
 }

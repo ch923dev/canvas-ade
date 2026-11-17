@@ -10,6 +10,7 @@ import { mcpApi } from './mcpApi'
 import { closeGuardApi } from './closeGuardApi'
 import { forwardVoicePort, forwardVoiceTtsPort, forwardVoiceWakePort, voiceApi } from './voice'
 import { swarmApi } from './swarm'
+import { workspaceApi } from './workspaceApi'
 import { jarvisApi } from './jarvis'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
@@ -1030,7 +1031,10 @@ const api = {
 
   // ── PR-2 background sessions: close-modal round trip + Settings › Terminal config rows
   //    (factored to closeGuardApi.ts) ──
-  closeGuard: closeGuardApi
+  closeGuard: closeGuardApi,
+
+  // ── Project Workspaces WS-4: create / delete / status lifecycle (frame-guarded workspace:*) ──
+  workspace: workspaceApi
 }
 
 // Data-plane MessagePort re-posts into the main world (ports can't cross the contextBridge):

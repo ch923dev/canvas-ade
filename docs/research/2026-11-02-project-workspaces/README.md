@@ -584,6 +584,10 @@ Don't touch /uploader.
   - The `f` focus picker lists workspaces first.
 - **Board chrome:** a workspace color pip on the title bar. The terminal header shows the branch.
 - **Create:** the chip menu, the dock, "Make workspace from group" on the group menu, and "Suggest workspaces" (deriveContexts cwd clusters → I1 `BatchConfirmModal`, one row per proposal).
+- **Membership — how a board joins a workspace** (user decisions, 2026-11-03):
+  - **Board menu "Move to workspace"** (WS-4, shipped): every board's ⋯ menu has a Workspace section — one "Move to {name}" row per live workspace, plus "Make project-level" when the board is in one. One undo step; a swarm's docked workers follow their swarm board; a running terminal is not respawned (its next Start/Restart runs where WS-3's spawn path says).
+  - **New boards while a workspace is selected** (WS-5): ONE sticky checkbox beside the dock, `[x] New boards go into ● {name}`. Ticked ⇒ every board added from the dock joins the selected workspace; unticked ⇒ new boards are project-level. It stays as set until the selected workspace changes. Board dialogs (e.g. WS-3's New Terminal) **reuse this rule** — they read the membership the board already carries and add no workspace picker of their own.
+  - **Drag into a zone** (WS-5): dragging any board into a workspace's zone moves it into that workspace. Open for WS-5's design: whether dragging a board *out* of a zone also makes it project-level (WS-4's recommendation: no — out only via the menu or by dropping into another zone, so an accidental drag never changes membership).
 - Per `CLAUDE.md` › *Design artifact before code*, WS-4 and WS-5 each need a signed-off design artifact first.
 
 ### 4.7 Jarvis and MCP touchpoints

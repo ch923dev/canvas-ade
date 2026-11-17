@@ -25,6 +25,7 @@ import { performProjectSwitch } from '../store/projectSwitch'
 import type { BackgroundProjectInfo } from '../../../preload'
 import { Icon } from './Icon'
 import { Menu } from './Menu'
+import { WorkspaceMenu } from './workspace/WorkspaceMenu'
 import { CloseBackgroundModal } from './CloseBackgroundModal'
 import {
   bgBadge,
@@ -200,6 +201,8 @@ export function ProjectSwitcher(): ReactElement {
           <Icon name={switching ? 'refresh' : 'chevron'} size={13} />
         </span>
       </button>
+      {/* Project Workspaces WS-4: the workspace lifecycle entry (WS-5 grows it into the chip). */}
+      <WorkspaceMenu />
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
