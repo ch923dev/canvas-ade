@@ -5937,3 +5937,31 @@ Gates: fmt · lint 0 err · tc; `pnpm test` 8139 / 2 failed (the env-only `pathS
 clean; smoke 63/63 (push, same SHA as merged; `main` had not moved); CI 4/4; `claude-review` clean
 (no inline). No live `pnpm dev` check (the owner's landing instructions set the gates as this
 lane's check); no full e2e matrix. Plan-viz not drawn.
+
+## PR #460 — feat(workspaces): WS-4 lifecycle — create/delete/status, dialogs, Move to workspace (v0.48.9) · squash `f0f20700` · 2026-11-17
+
+Pre-freeze feature lane, merged as an **owner-approved exception to ADR 0015** (last of WS-8,
+WS-7, WS-4). Workspace create / delete / status and board membership (ADR 0014; design §4.3,
+§4.6). Schema unchanged (24 / 24; the records landed with WS-2 #449).
+- MAIN: `workspaceStore.ts` + `workspaceIpc.ts` — frame-guarded `workspace:*` IPC (create /
+  delete / status / listRepos / listBranches) over the WS-1 allocator; allocate → stat-prove →
+  only then return the record. `simple-git` in MAIN only.
+- Create dialog: folder rooted at the project; *folder as-is* / *new worktree + branch* /
+  *attach branch*; base asked once then remembered (`repoDefaults`), `HEAD` + notice when gone;
+  a non-repo disables git modes (never `git init`). Delete dialog: boards Keep / Close; clean ⇒
+  removed (branch kept); dirty ⇒ Commit / Stash / Discard / Keep (Keep ⇒ archived).
+- Dependencies (O-9): ONE fixed audited prompt to the starter agent; Expanse installs nothing. The
+  prompt is HELD while the agent shows its first-run "trust this folder?" question (the lane's dev
+  check found Enter answering it "No, exit"); a sticky toast lets the human send it.
+- Board menu "Move to workspace" / "Make project-level" (one undo step). Workspaces panel lazy, to
+  hold the entry-chunk budget — now 439,461 / 440,000 B gzip (539 B headroom).
+- `CONTEXT.md` not scaffolded here: WS-8's writer scaffolds on its first status write after the
+  board snapshot that carries the new workspace.
+- First CI run: 18 `workspaceStore.test.ts` cases red on Linux — the fixture path
+  `join('C:', …)` is relative on POSIX. Test-only fix (`resolve('/work', …)`).
+
+Gates: fmt · lint 0 err · tc; `pnpm test` 8214 / 2 failed (the env-only `pathSafe` pair); SCA
+clean; `workspaceLifecycle.e2e.ts` 4/4 at `--retries=0`; smoke 63/63 (push; the follow-up push was
+test-only, e2e skipped by scope); CI 4/4 on the fix head; `claude-review` clean (no inline). No
+live `pnpm dev` check on the rebased head (the owner's landing instructions set the gates as this
+lane's check); no full e2e matrix. Plan-viz not drawn.
