@@ -11,6 +11,8 @@
  *   module bundle, so inline-script injection (the real XSS vector) is blocked.
  * - `style-src` keeps `'unsafe-inline'` in BOTH: React inline `style={{}}` attributes (and xterm's
  *   runtime element styles) are pervasive and CSP nonces can't authorize inline style ATTRIBUTES.
+ * - `media-src 'self' blob:` in BOTH: Kanban video/audio attachments and backdrop video play from
+ *   `blob:` URLs, which the `default-src 'self'` fallback would block.
  * - `object-src 'none'` / `base-uri 'self'` / `frame-ancestors 'none'` are hardening backstops
  *   safe in both modes (no <object>/<embed>, no <base> injection, never framed — a desktop app).
  *   Never weaken contextIsolation/sandbox/nodeIntegration to relax these.
@@ -19,13 +21,13 @@ const HARDENING = "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
 
 export const DEV_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data: blob:; font-src 'self' data:; " +
+  "img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; " +
   "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*; " +
   HARDENING
 
 export const PROD_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; " +
+  "img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; " +
   HARDENING
 
 /**

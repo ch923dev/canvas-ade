@@ -650,6 +650,9 @@ export async function executeSwarmTool(
           )
         }
         const pack = rolePackById(ctx.workerRoles.get(workerId))
+        // Only a slot THIS call reserved may be released on failure — a denied re-dispatch of a
+        // still-running writer must not free the slot that writer holds.
+        let reserved = false
         // 🔒 S3 write serialization. The ceiling is a FUNCTION of what actually provisioned: 2
         // writers when each holds its own worktree (the 07 §4.3 policy), but still 1 the moment
         // any in-flight writer shares the project tree. Both refusals name WHICH case fired —
@@ -666,6 +669,7 @@ export async function executeSwarmTool(
             )
           }
           ctx.writeInFlight.add(workerId)
+          reserved = true
         }
         const spec =
           `OBJECTIVE: ${objective}\n\nCONTEXT: ${context}\n\nBOUNDARIES: ${boundaries}\n\n` +
@@ -708,7 +712,7 @@ export async function executeSwarmTool(
             summary: `dispatched → ${workerId}`
           }
         } catch (err) {
-          ctx.writeInFlight.delete(workerId)
+          if (reserved) ctx.writeInFlight.delete(workerId)
           const msg = err instanceof Error ? err.message : String(err)
           const denied = /denied/i.test(msg)
           return {
@@ -792,8 +796,9 @@ export async function executeSwarmTool(
           const p = parsed[i]
           const outcome = outcomes[i]
           if (outcome?.status !== 'dispatched') {
-            // A denied/rejected row never held the tree — release its slot immediately.
-            ctx.writeInFlight.delete(p.workerId)
+            // A denied/rejected row never held the tree — release the slot THIS round reserved
+            // (never one an already-running writer holds).
+            if (newWrites.has(p.workerId)) ctx.writeInFlight.delete(p.workerId)
             continue
           }
           landed += 1

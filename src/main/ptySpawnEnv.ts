@@ -197,6 +197,8 @@ export function buildSpawnEnv(
     env[WORKSPACE_ENV.root] = opts.workspace.root
     if (opts.workspace.context) env[WORKSPACE_ENV.context] = opts.workspace.context
   }
+  // A parent Expanse board's recap id must never be inherited — only the recap seam below sets it.
+  delete env.CANVAS_RECAP_BOARD
   // Recap seam LAST word (its documented override contract): can still override the alt-screen key.
   Object.assign(env, recapEnv ?? {})
   for (const k of NESTED_CLAUDE_ENV) delete env[k]

@@ -25,6 +25,19 @@ describe('CSP policy', () => {
     expect(DEV_CSP).toMatch(/style-src[^;]*'unsafe-inline'/)
   })
 
+  it('both allow blob: media (Kanban video/audio attachments, backdrop video)', () => {
+    expect(PROD_CSP).toContain("media-src 'self' blob:")
+    expect(DEV_CSP).toContain("media-src 'self' blob:")
+  })
+
+  it('index.html placeholder is exactly the dev policy (kept in sync)', () => {
+    const html = readFileSync(
+      fileURLToPath(new URL('../renderer/index.html', import.meta.url)),
+      'utf8'
+    )
+    expect(html).toContain(`content="${DEV_CSP}"`)
+  })
+
   it('injectCspMeta swaps the meta content for the mode policy', () => {
     const html = '<meta http-equiv="Content-Security-Policy" content="PLACEHOLDER" />'
     expect(injectCspMeta(html, false)).toContain(PROD_CSP)

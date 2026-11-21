@@ -23,6 +23,7 @@
  * electron coupling to `pty.ts`'s import graph.
  */
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -33,7 +34,7 @@ import {
   statSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 import type { McpJson } from '@expanse-ade/mcp'
 import type { TerminalToken } from '../orchestration/seam'
@@ -261,6 +262,63 @@ export function readTextConfig(file: string): string | undefined {
 /** Honest "is this CLI installed" probe: its config dir exists (mock annotation F). */
 export function dirExists(dir: string): Promise<boolean> {
   return Promise.resolve(existsSync(dir))
+}
+
+/**
+ * Keep a secret-bearing config we write out of `git add -A`: append it (anchored to the repo top) to
+ * the enclosing repo's `info/exclude` — local only, no tracked change. A worktree's `.git` is a
+ * `gitdir:` pointer and `info/` lives in its common dir. No-op outside a repo / when already
+ * listed; never throws (a failure here must not block the config write). Does not untrack a file
+ * the user already committed.
+ */
+export function excludeFromGit(file: string): void {
+  // Read, never check-then-read (no fs race): a missing file reads as ''.
+  const read = (f: string): string => {
+    try {
+      return readFileSync(f, 'utf8')
+    } catch {
+      return ''
+    }
+  }
+  try {
+    let top = dirname(file)
+    let pointer: string | null // `.git` file contents; null ⇒ `.git` is a directory
+    for (;;) {
+      try {
+        pointer = readFileSync(join(top, '.git'), 'utf8')
+        break
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EISDIR') {
+          pointer = null
+          break
+        }
+      }
+      const up = dirname(top)
+      if (up === top) return
+      top = up
+    }
+    let gitDir = join(top, '.git')
+    if (pointer !== null) {
+      const m = /^gitdir:\s*(.+)$/m.exec(pointer)
+      if (!m) return
+      gitDir = resolve(top, m[1].trim())
+      const common = read(join(gitDir, 'commondir')).trim()
+      if (common) gitDir = resolve(gitDir, common)
+    }
+    const pattern =
+      '/' +
+      relative(top, file)
+        .split(sep)
+        .map((s) => s.replace(/[\\*?[]/g, '\\$&'))
+        .join('/')
+    const exclude = join(gitDir, 'info', 'exclude')
+    const current = read(exclude)
+    if (current.split(/\r?\n/).includes(pattern)) return
+    mkdirSync(dirname(exclude), { recursive: true })
+    appendFileSync(exclude, (current && !current.endsWith('\n') ? '\n' : '') + pattern + '\n')
+  } catch {
+    /* best-effort — never block the config write */
+  }
 }
 
 /** Best-effort delete (used when an `unsync` empties a file we own). Never throws. */

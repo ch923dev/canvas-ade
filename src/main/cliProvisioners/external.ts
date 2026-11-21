@@ -21,6 +21,7 @@ import {
   codexHome,
   codexTableBlock,
   dirExists,
+  excludeFromGit,
   existingServersMap,
   geminiHome,
   isRecord,
@@ -94,6 +95,7 @@ const claudeWriter: ExternalCliWriter = {
     const map = { ...existingServersMap(mcp, 'mcpServers') }
     for (const s of servers) map[s.name] = claudeEntry(s)
     mcp.mcpServers = map
+    excludeFromGit(mcpFile) // plaintext third-party secrets — never let `git add -A` commit them
     writeJsonConfig(mcpFile, mcp)
 
     // Trust-prompt bypass: ensure every written name is in enabledMcpjsonServers (deduped).
@@ -247,6 +249,7 @@ const opencodeWriter: ExternalCliWriter = {
     const map = { ...existingServersMap(cfg, 'mcp') }
     for (const s of servers) map[s.name] = opencodeEntry(s)
     cfg.mcp = map
+    excludeFromGit(file) // plaintext third-party secrets — never let `git add -A` commit them
     writeJsonConfig(file, cfg)
   },
   removeServers(dir, names) {
