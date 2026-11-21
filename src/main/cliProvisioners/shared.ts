@@ -272,20 +272,38 @@ export function dirExists(dir: string): Promise<boolean> {
  * the user already committed.
  */
 export function excludeFromGit(file: string): void {
+  // Read, never check-then-read (no fs race): a missing file reads as ''.
+  const read = (f: string): string => {
+    try {
+      return readFileSync(f, 'utf8')
+    } catch {
+      return ''
+    }
+  }
   try {
     let top = dirname(file)
-    while (!existsSync(join(top, '.git'))) {
+    let pointer: string | null // `.git` file contents; null ⇒ `.git` is a directory
+    for (;;) {
+      try {
+        pointer = readFileSync(join(top, '.git'), 'utf8')
+        break
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EISDIR') {
+          pointer = null
+          break
+        }
+      }
       const up = dirname(top)
       if (up === top) return
       top = up
     }
     let gitDir = join(top, '.git')
-    if (statSync(gitDir).isFile()) {
-      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitDir, 'utf8'))
+    if (pointer !== null) {
+      const m = /^gitdir:\s*(.+)$/m.exec(pointer)
       if (!m) return
       gitDir = resolve(top, m[1].trim())
-      const common = join(gitDir, 'commondir')
-      if (existsSync(common)) gitDir = resolve(gitDir, readFileSync(common, 'utf8').trim())
+      const common = read(join(gitDir, 'commondir')).trim()
+      if (common) gitDir = resolve(gitDir, common)
     }
     const pattern =
       '/' +
@@ -294,7 +312,7 @@ export function excludeFromGit(file: string): void {
         .map((s) => s.replace(/[\\*?[]/g, '\\$&'))
         .join('/')
     const exclude = join(gitDir, 'info', 'exclude')
-    const current = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
+    const current = read(exclude)
     if (current.split(/\r?\n/).includes(pattern)) return
     mkdirSync(dirname(exclude), { recursive: true })
     appendFileSync(exclude, (current && !current.endsWith('\n') ? '\n' : '') + pattern + '\n')
