@@ -67,8 +67,8 @@ importers:
         specifier: ^6.8.9
         version: 6.8.9
       node-pty:
-        specifier: 1.2.0-beta.13
-        version: 1.2.0-beta.13
+        specifier: 1.2.0-beta.18
+        version: 1.2.0-beta.18
       sherpa-onnx-node:
         specifier: ^1.13.3
         version: 1.13.3
@@ -326,8 +326,8 @@ packages:
   '@codemirror/commands@6.10.3':
     resolution: {integrity: sha512-JFRiqhKu+bvSkDLI+rUhJwSxQxYb759W5GBezE8Uc8mHLqC9aV/9aTC7yJSqCtB3F00pylrLCwnyS91Ap5ej4Q==}
 
-  '@codemirror/commands@6.10.4':
-    resolution: {integrity: sha512-Ryk9y9T0FFVF0cUGhAknveAyUOl/A1qReTFi+qPKtOh2Z9F4AUBz3XOrYD4ZEgZirdugVzHvd/2/Wcwy5OliTg==}
+  '@codemirror/commands@6.11.2':
+    resolution: {integrity: sha512-NbH6Q9lmcXvf9s5/mMJIwL2Hjl2NEdsN/dDlezGnaFOQgNZ59dT7ndKUf21/PIjJacD/Ti2Ifi4TsBkO6WHvsg==}
 
   '@codemirror/lang-cpp@6.0.3':
     resolution: {integrity: sha512-URM26M3vunFFn9/sm6rzqrBzDgfWuDixp85uTY49wKudToc2jTHUrKIGGKs+QWND+YLofNNZpxcNGRynFJfvgA==}
@@ -2711,8 +2711,8 @@ packages:
   node-int64@0.4.0:
     resolution: {integrity: sha512-O5lz91xSOeoXP6DulyHfllpq+Eg00MWitZIbtPfoSEvqIHdl5gfcY6hYzDWnj0qD5tz52PI08u9qUvSVeUBeHw==}
 
-  node-pty@1.2.0-beta.13:
-    resolution: {integrity: sha512-ZbbJ7aJdmvRA53bw30D6YSJJKqo1IXTojD0kJeHZ/xZIxr7p1DCmvOmrOnjUo/rn1z4MDwKQGpx0C7K+cRKETw==}
+  node-pty@1.2.0-beta.18:
+    resolution: {integrity: sha512-3Rej3788OnasAwoSmTZhlCeUraJ9CQldtL5b571b9+3Nv47+PaxA5VPIGOOs+16OYQePTrC1Lrs8a9/df5WPRg==}
 
   node-releases@2.0.59:
     resolution: {integrity: sha512-5qr2okC4ItAI0hG5SaV0HoYMpnM/Y6+Oqr7AmPYy/2uEoGvS+GbSKLeRxSS1uAdu59yz0ouzcuXievSgg///WA==}
@@ -3755,7 +3755,7 @@ snapshots:
       '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
 
-  '@codemirror/commands@6.10.4':
+  '@codemirror/commands@6.11.2':
     dependencies:
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.7.0
@@ -5420,7 +5420,7 @@ snapshots:
   codemirror@6.0.2:
     dependencies:
       '@codemirror/autocomplete': 6.20.3
-      '@codemirror/commands': 6.10.4
+      '@codemirror/commands': 6.11.2
       '@codemirror/language': 6.12.3
       '@codemirror/lint': 6.9.7
       '@codemirror/search': 6.7.0
@@ -6474,7 +6474,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.2.0-beta.13:
+  node-pty@1.2.0-beta.18:
     dependencies:
       node-addon-api: 7.1.1
 
